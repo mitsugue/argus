@@ -77,11 +77,15 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
       autoRotateSpeed: number;
       enableZoom: boolean;
       enablePan: boolean;
+      enableRotate: boolean;
     };
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.32;
     controls.enableZoom = false;
     controls.enablePan = false;
+    // Ambient globe — disable user rotation so finger swipes pass
+    // through to the page scroller instead of dragging the canvas.
+    controls.enableRotate = false;
     g.pointOfView({ lat: 20, lng: 100, altitude: 2.3 }, 0);
   }, [size.w, size.h]);
 

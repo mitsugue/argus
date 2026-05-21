@@ -33,6 +33,8 @@
 
 .globe-monitor__canvas canvas {
   outline: none !important;
+  /* Vertical scroll passes through — finger can't drag the globe canvas */
+  touch-action: pan-y !important;
 }
 
 .globe-monitor__readout {
