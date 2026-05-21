@@ -131,17 +131,16 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
 
   return (
     <section className="globe-monitor hud-corner" ref={wrapRef}>
-      <div className="globe-monitor__title">
-        <span className="hud-panel__title">GEO INTEL // EARTH MON</span>
-        <span className="globe-monitor__count">SIGNALS · {pillars.length}</span>
-      </div>
+      <span className="panel-tab">
+        GEO INTEL · {pillars.length} SIGNALS
+      </span>
 
       <div className="globe-monitor__canvas">
         {size.w > 0 && (
           <Globe
             ref={globeRef as React.MutableRefObject<GlobeMethods | undefined>}
             width={size.w}
-            height={size.h - 40}
+            height={size.h}
             backgroundColor="rgba(0,0,0,0)"
             showAtmosphere
             atmosphereColor="#00f3ff"

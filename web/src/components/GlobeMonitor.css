@@ -5,23 +5,9 @@
   flex-direction: column;
   background: var(--hud-bg-panel);
   border: var(--hud-border);
-  overflow: hidden;
+  /* Corner tab peeks above the border; canvas inside is its own clip */
+  overflow: visible;
   min-height: 320px;
-}
-
-.globe-monitor__title {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 10px;
-  border-bottom: var(--hud-border);
-  z-index: 2;
-}
-
-.globe-monitor__count {
-  font-size: 9px;
-  letter-spacing: 2px;
-  color: var(--hud-amber);
 }
 
 .globe-monitor__canvas {

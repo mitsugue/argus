@@ -43,12 +43,9 @@ export const CalibrationTracker: React.FC = () => {
 
   return (
     <section className="calibration hud-corner">
-      <header className="calibration__head">
-        <span className="hud-panel__title">CALIBRATION · {stats.windowDays}D</span>
-        <span className="calibration__sub">
-          {stats.resolvedCount} resolved · {stats.pendingCount} pending
-        </span>
-      </header>
+      <span className="panel-tab">
+        CALIBRATION · {stats.windowDays}D · {stats.resolvedCount}R/{stats.pendingCount}P
+      </span>
 
       <div className="calibration__hero">
         <div className="calibration__pct">

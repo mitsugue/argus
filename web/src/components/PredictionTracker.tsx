@@ -102,12 +102,9 @@ export const PredictionTracker: React.FC = () => {
 
   return (
     <section className="tracker hud-corner">
-      <div className="tracker__head">
-        <span className="hud-panel__title">AI WATCH</span>
-        <span className="tracker__agg">
-          AGG <strong>{fmtPct(aggregateHitRate)}</strong>
-        </span>
-      </div>
+      <span className="panel-tab">
+        AI WATCH · AGG {fmtPct(aggregateHitRate)}
+      </span>
 
       <form onSubmit={onAdd} className="tracker__add">
         <input

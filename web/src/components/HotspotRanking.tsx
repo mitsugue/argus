@@ -30,10 +30,7 @@ export const HotspotRanking: React.FC<Props> = ({
 
   return (
     <section className="hotspots hud-corner">
-      <div className="hotspots__head">
-        <span className="hud-panel__title">HOTSPOTS</span>
-        <span className="hotspots__sub">TOP {ranked.length}</span>
-      </div>
+      <span className="panel-tab">HOTSPOTS · TOP {ranked.length}</span>
       <div className="hotspots__list">
         {ranked.map((p, i) => {
           const active = p.id === selectedId;

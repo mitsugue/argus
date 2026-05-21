@@ -26,13 +26,10 @@ const itemTransition = { type: 'spring' as const, stiffness: 320, damping: 30 };
 export const NewsStream: React.FC<Props> = ({ events, onSelect, selectedPillarId }) => {
   return (
     <section className="news-stream hud-corner">
-      <header className="news-stream__head">
-        <span className="news-stream__title">
-          <span className="news-stream__beacon" />
-          NEWS · LIVE
-        </span>
-        <span className="news-stream__count">{events.length} / 5</span>
-      </header>
+      <span className="panel-tab">
+        <span className="panel-tab__beacon" />
+        NEWS · LIVE · {events.length}/5
+      </span>
 
       <div className="news-stream__list">
         <AnimatePresence initial={false} mode="popLayout">

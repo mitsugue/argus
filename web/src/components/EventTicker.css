@@ -31,20 +31,19 @@
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  /* Fade out at both edges so the text doesn't collide with the corner tab */
+  /* Fade out the right edge so the text doesn't collide with the
+     top-right EVENTS tab. */
   -webkit-mask-image: linear-gradient(
     to right,
-    transparent 0,
-    #000 18px,
-    #000 calc(100% - 28px),
-    transparent 100%
+    #000 0,
+    #000 calc(100% - 80px),
+    transparent calc(100% - 12px)
   );
           mask-image: linear-gradient(
     to right,
-    transparent 0,
-    #000 18px,
-    #000 calc(100% - 28px),
-    transparent 100%
+    #000 0,
+    #000 calc(100% - 80px),
+    transparent calc(100% - 12px)
   );
 }
 

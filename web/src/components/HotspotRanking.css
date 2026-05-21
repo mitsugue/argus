@@ -1,24 +1,13 @@
 .hotspots {
+  position: relative;
   border: var(--hud-border);
   background: var(--hud-bg-panel);
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex-shrink: 0;
-}
-
-.hotspots__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-bottom: var(--hud-border);
-}
-
-.hotspots__sub {
-  font-size: 9px;
-  letter-spacing: 2px;
-  color: var(--hud-amber);
+  overflow: visible;
+  padding-top: 8px;
 }
 
 .hotspots__list {

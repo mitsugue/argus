@@ -103,6 +103,42 @@ button {
 ::-webkit-scrollbar-thumb { background: var(--hud-cyan-faint); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--hud-cyan-dim); }
 
+/* Shared corner tab for panel titles — small, top-right, sits on the border */
+.panel-tab {
+  position: absolute;
+  top: -7px;
+  right: 10px;
+  z-index: 4;
+  padding: 0 7px;
+  background: var(--hud-bg);
+  font-family: var(--hud-font-display);
+  color: var(--hud-cyan);
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  font-weight: 400;
+}
+.panel-tab--amber { color: var(--hud-amber); }
+
+.panel-tab__beacon {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--hud-cyan);
+  box-shadow: 0 0 5px var(--hud-cyan);
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: hud-blink 1.4s step-end infinite;
+}
+.panel-tab--amber .panel-tab__beacon {
+  background: var(--hud-amber);
+  box-shadow: 0 0 5px var(--hud-amber);
+}
+
 /* Reusable HUD primitives */
 .hud-panel {
   background: var(--hud-bg-panel);

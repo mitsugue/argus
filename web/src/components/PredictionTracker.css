@@ -1,29 +1,12 @@
 .tracker {
+  position: relative;
   display: flex;
   flex-direction: column;
   border: var(--hud-border);
   background: var(--hud-bg-panel);
   min-height: 0;
-}
-
-.tracker__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 10px;
-  border-bottom: var(--hud-border);
-}
-
-.tracker__agg {
-  font-size: 9px;
-  letter-spacing: 2px;
-  color: var(--hud-text-dim);
-}
-.tracker__agg strong {
-  color: var(--hud-cyan);
-  margin-left: 6px;
-  font-family: var(--hud-font-display);
-  font-size: 12px;
+  overflow: visible;
+  padding-top: 8px;
 }
 
 .tracker__add {

@@ -1,4 +1,5 @@
 .calibration {
+  position: relative;
   display: flex;
   flex-direction: column;
   border: var(--hud-border);
@@ -6,23 +7,9 @@
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   min-height: 0;
+  overflow: visible;
+  padding-top: 8px;
   gap: 0;
-}
-
-.calibration__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 12px;
-  border-bottom: 1px solid rgba(0, 243, 255, 0.18);
-}
-
-.calibration__sub {
-  font-family: var(--hud-font-display);
-  font-size: 9px;
-  letter-spacing: 1px;
-  color: var(--hud-text-faint);
-  font-weight: 300;
 }
 
 .calibration__hero {
