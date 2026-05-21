@@ -160,9 +160,6 @@
     /* Vertical scroll only — finger can't drag content sideways */
     touch-action: pan-y;
     overscroll-behavior: contain;
-    /* Breathing room so the first panel's corner tab can peek above
-       its border without being clipped by the scroll container's edge. */
-    padding-top: 8px;
   }
   .hud-grid {
     grid-template-columns: 1fr;

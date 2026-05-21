@@ -11,19 +11,20 @@
   height: 30px;
 }
 
-/* Brand label — top-left, matching the shared .panel-tab pattern */
+/* Brand label — top-left, inside the strip, transparent (matches .panel-tab) */
 .ticker-strip__brand {
   position: absolute;
   left: 10px;
-  top: -7px;
+  top: 1px;
   z-index: 4;
-  padding: 0 7px;
-  background: var(--hud-bg);
+  padding: 0 4px;
+  background: transparent;
   font-family: var(--hud-font-display);
   color: var(--hud-cyan);
   font-size: 8px;
   letter-spacing: 2.5px;
   line-height: 1;
+  pointer-events: none;
 }
 
 /* Rail: static clipping window inside the strip — never moves. */
@@ -54,10 +55,12 @@
 .ticker-strip__track {
   display: flex;
   align-items: center;
-  gap: 18px;
   white-space: nowrap;
   height: 100%;
   width: max-content;
+  /* Margin-right on items (not flex gap) so each cell is item+margin and
+     translateX(-50%) lands exactly on the start of the duplicated set —
+     no half-gap jump at the loop seam. */
   animation: ticker-scroll 60s linear infinite;
 }
 
@@ -71,6 +74,7 @@
   align-items: baseline;
   gap: 6px;
   font-size: 11px;
+  margin-right: 18px;
 }
 
 .ticker-strip__lbl {

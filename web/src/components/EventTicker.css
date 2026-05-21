@@ -10,19 +10,20 @@
   height: 26px;
 }
 
-/* Brand label as a small tab on the top-left edge */
+/* Brand label — top-left, inside the strip, transparent */
 .event-ticker__brand {
   position: absolute;
   left: 10px;
-  top: -6px;
+  top: 1px;
   z-index: 4;
-  padding: 0 6px;
-  background: var(--hud-bg);
+  padding: 0 4px;
+  background: transparent;
   font-family: var(--hud-font-display);
   color: var(--hud-amber);
   font-size: 8px;
   letter-spacing: 2.5px;
   line-height: 1;
+  pointer-events: none;
 }
 
 .event-ticker__rail {
@@ -50,13 +51,13 @@
 .event-ticker__track {
   display: flex;
   align-items: center;
-  gap: 28px;
   white-space: nowrap;
   height: 100%;
   width: max-content;
-  /* Duration scaled so px/s matches TickerStrip (60s for ~880px track →
-     ~14.7 px/s). Event lines are roughly 3× longer, hence 170s. */
-  animation: event-scroll 170s linear infinite;
+  /* Margin-right on items (not flex gap) so the duplicated set lines up
+     exactly at translateX(-50%) — no half-gap seam at the loop point.
+     Duration tuned slow enough to actually read each line. */
+  animation: event-scroll 280s linear infinite;
 }
 
 @keyframes event-scroll {
@@ -72,6 +73,7 @@
   color: var(--hud-text-dim);
   letter-spacing: 1px;
   font-weight: 300;
+  margin-right: 28px;
 }
 
 .event-ticker__dot {

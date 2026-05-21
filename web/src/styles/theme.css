@@ -103,14 +103,15 @@ button {
 ::-webkit-scrollbar-thumb { background: var(--hud-cyan-faint); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--hud-cyan-dim); }
 
-/* Shared corner tab for panel titles — small, top-left, sits on the border */
+/* Shared corner tab for panel titles — small, top-left, sits inside the panel.
+   No backdrop ("座布団") so neighbouring panels read through cleanly. */
 .panel-tab {
   position: absolute;
-  top: -7px;
+  top: 1px;
   left: 10px;
   z-index: 4;
-  padding: 0 7px;
-  background: var(--hud-bg);
+  padding: 0 4px;
+  background: transparent;
   font-family: var(--hud-font-display);
   color: var(--hud-cyan);
   font-size: 8px;
