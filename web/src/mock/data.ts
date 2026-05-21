@@ -5,21 +5,24 @@ export const uid = (prefix = 'id') => `${prefix}-${Date.now().toString(36)}-${(_
 
 export const INITIAL_PILLARS: GlobePillar[] = [
   // Asia
-  { id: 'tk', lat: 35.6895, lng: 139.6917, label: 'TYO', region: 'asia', intensity: 0.85, color: 'cyan', detail: 'Nikkei +1.2% / 銘柄監視 184' },
-  { id: 'hk', lat: 22.3193, lng: 114.1694, label: 'HKG', region: 'asia', intensity: 0.55, color: 'cyan', detail: 'HSI +0.4% / Tech rally' },
-  { id: 'sg', lat: 1.3521, lng: 103.8198, label: 'SGX', region: 'asia', intensity: 0.4, color: 'cyan', detail: 'STI flat' },
-  { id: 'sh', lat: 31.2304, lng: 121.4737, label: 'SHA', region: 'asia', intensity: 0.62, color: 'cyan', detail: 'CSI300 +0.8%' },
-  { id: 'kr', lat: 37.5665, lng: 126.978, label: 'SEL', region: 'asia', intensity: 0.45, color: 'cyan', detail: 'KOSPI -0.3%' },
+  { id: 'tk', lat: 35.6895, lng: 139.6917, label: 'TYO', region: 'asia', intensity: 0.85, color: 'cyan', country: 'Japan', countryCode: 'JP', source: '日経', headline: 'Nikkei +1.2% / 銘柄監視 184' },
+  { id: 'hk', lat: 22.3193, lng: 114.1694, label: 'HKG', region: 'asia', intensity: 0.55, color: 'cyan', country: 'Hong Kong', countryCode: 'HK', source: 'SCMP', headline: 'HSI +0.4% / Tech rally' },
+  { id: 'sg', lat: 1.3521, lng: 103.8198, label: 'SGX', region: 'asia', intensity: 0.4, color: 'cyan', country: 'Singapore', countryCode: 'SG', source: 'Straits Times', headline: 'STI flat / 商品先物観望' },
+  { id: 'sh', lat: 31.2304, lng: 121.4737, label: 'SHA', region: 'asia', intensity: 0.62, color: 'cyan', country: 'China', countryCode: 'CN', source: '財新', headline: 'CSI300 +0.8% / EV補助金延長報道' },
+  { id: 'kr', lat: 37.5665, lng: 126.978, label: 'SEL', region: 'asia', intensity: 0.45, color: 'cyan', country: 'South Korea', countryCode: 'KR', source: '中央日報', headline: 'KOSPI -0.3% / Samsung調整' },
   // Middle East
-  { id: 'du', lat: 25.2048, lng: 55.2708, label: 'DXB', region: 'middle-east', intensity: 0.7, color: 'amber', detail: 'Oil futures +2.1%' },
-  { id: 'rh', lat: 24.7136, lng: 46.6753, label: 'RYH', region: 'middle-east', intensity: 0.9, color: 'amber', detail: 'Geopolitical signal ▲' },
-  { id: 'te', lat: 32.0853, lng: 34.7818, label: 'TLV', region: 'middle-east', intensity: 0.55, color: 'amber', detail: 'TASE volume spike' },
+  { id: 'du', lat: 25.2048, lng: 55.2708, label: 'DXB', region: 'middle-east', intensity: 0.7, color: 'amber', country: 'UAE', countryCode: 'AE', source: 'Gulf News', headline: 'Oil futures +2.1% / OPEC+会合控え' },
+  { id: 'rh', lat: 24.7136, lng: 46.6753, label: 'RYH', region: 'middle-east', intensity: 0.9, color: 'amber', country: 'Saudi Arabia', countryCode: 'SA', source: 'Al Arabiya', headline: 'Geopolitical signal ▲ / 増産凍結観測' },
+  { id: 'te', lat: 32.0853, lng: 34.7818, label: 'TLV', region: 'middle-east', intensity: 0.55, color: 'amber', country: 'Israel', countryCode: 'IL', source: 'Haaretz', headline: 'TASE 出来高 spike / 防衛セクター' },
   // US
-  { id: 'ny', lat: 40.7128, lng: -74.006, label: 'NYC', region: 'us', intensity: 0.95, color: 'cyan', detail: 'NYSE pre-market hot' },
-  { id: 'sf', lat: 37.7749, lng: -122.4194, label: 'SFO', region: 'us', intensity: 0.6, color: 'cyan', detail: 'Tech sector rotation' },
-  { id: 'ch', lat: 41.8781, lng: -87.6298, label: 'CHI', region: 'us', intensity: 0.5, color: 'cyan', detail: 'CME futures stable' },
+  { id: 'ny', lat: 40.7128, lng: -74.006, label: 'NYC', region: 'us', intensity: 0.95, color: 'cyan', country: 'United States', countryCode: 'US', source: 'Bloomberg', headline: 'NYSE pre-market hot / NVDA +3.2%' },
+  { id: 'sf', lat: 37.7749, lng: -122.4194, label: 'SFO', region: 'us', intensity: 0.6, color: 'cyan', country: 'United States', countryCode: 'US', source: 'TechCrunch', headline: 'Tech sector rotation / AIインフラ' },
+  { id: 'ch', lat: 41.8781, lng: -87.6298, label: 'CHI', region: 'us', intensity: 0.5, color: 'cyan', country: 'United States', countryCode: 'US', source: 'WSJ', headline: 'CME futures stable / 穀物上昇' },
   // Anomaly
-  { id: 'mx', lat: 19.4326, lng: -99.1332, label: 'MEX', region: 'us', intensity: 0.4, color: 'danger', detail: 'Currency anomaly ⚠' },
+  { id: 'mx', lat: 19.4326, lng: -99.1332, label: 'MEX', region: 'us', intensity: 0.4, color: 'danger', country: 'Mexico', countryCode: 'MX', source: 'Reforma', headline: 'Currency anomaly ⚠ / ペソ急変動' },
+  // Europe additions for visual balance
+  { id: 'ldn', lat: 51.5074, lng: -0.1278, label: 'LDN', region: 'europe', intensity: 0.7, color: 'cyan', country: 'United Kingdom', countryCode: 'GB', source: 'Financial Times', headline: 'FTSE +0.5% / BoE声明待ち' },
+  { id: 'fra', lat: 50.1109, lng: 8.6821, label: 'FRA', region: 'europe', intensity: 0.6, color: 'cyan', country: 'Germany', countryCode: 'DE', source: 'Handelsblatt', headline: 'DAX 反発 / 製造業PMI改善' },
 ];
 
 const SYMBOL_SEED = [

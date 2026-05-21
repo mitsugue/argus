@@ -4,11 +4,14 @@ export interface GlobePillar {
   id: string;
   lat: number;
   lng: number;
-  label: string;
+  label: string; // city / market code
   intensity: number; // 0..1 — pillar height factor
   region: Region;
   color: 'cyan' | 'amber' | 'danger';
-  detail: string;
+  country: string; // e.g. "Japan"
+  countryCode: string; // ISO-3166 alpha-2, used for flag emoji
+  source: string; // news outlet
+  headline: string; // short news line
 }
 
 export interface PredictionRecord {
