@@ -7,6 +7,7 @@ import { TickerStrip } from './components/TickerStrip';
 import { EventTicker } from './components/EventTicker';
 import { NewsStream } from './components/NewsStream';
 import { HotspotRanking } from './components/HotspotRanking';
+import { CalibrationTracker } from './components/CalibrationTracker';
 import { usePillars } from './hooks/usePillars';
 import { useNewsStream } from './hooks/useNewsStream';
 import './styles/layout.css';
@@ -42,6 +43,7 @@ const App: React.FC = () => {
             selectedPillarId={selectedId}
             onSelect={select}
           />
+          <CalibrationTracker />
         </div>
       </div>
 
