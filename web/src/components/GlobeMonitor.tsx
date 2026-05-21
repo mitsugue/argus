@@ -142,6 +142,35 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
     };
   }, [customLayer, size.w]);
 
+  // Wireframe intro: scale + opacity tween once on mount so the line sphere
+  // grows in sync with the textured globe / pillars instead of sitting at
+  // full size from frame 0.
+  useEffect(() => {
+    const FINAL_OPACITY = 0.08;
+    const DURATION = 1600;
+    const mat = customLayer.material as THREE.MeshBasicMaterial;
+    mat.opacity = 0;
+    customLayer.scale.setScalar(0.001);
+
+    const start = performance.now();
+    let raf: number;
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - start) / DURATION);
+      const eased = 1 - Math.pow(1 - t, 3);
+      mat.opacity = FINAL_OPACITY * eased;
+      customLayer.scale.setScalar(Math.max(0.001, eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      // Snap to final on unmount/cleanup so the wireframe isn't stuck mid-grow
+      mat.opacity = FINAL_OPACITY;
+      customLayer.scale.setScalar(1);
+    };
+  }, [customLayer]);
+
   return (
     <section className="globe-monitor hud-corner" ref={wrapRef}>
       <span className="panel-tab">
