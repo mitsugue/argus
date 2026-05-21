@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Globe, { type GlobeMethods } from 'react-globe.gl';
 import * as THREE from 'three';
-import type { GlobePillar } from '../types';
+import type { GlobePillar, GlobePulse } from '../types';
 import { flag } from '../util/flag';
 import './GlobeMonitor.css';
 
@@ -22,9 +22,22 @@ interface Props {
   pillars: GlobePillar[];
   selected: GlobePillar | null;
   onSelect: (id: string | null) => void;
+  pulses: GlobePulse[];
 }
 
-export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect }) => {
+export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pulses }) => {
+  // Quick lookup of which pillars are currently emitting
+  const pulsingIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of pulses) s.add(p.pillarId);
+    return s;
+  }, [pulses]);
+
+  const pulsingColor = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of pulses) m.set(p.pillarId, p.color);
+    return m;
+  }, [pulses]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [countries, setCountries] = useState<CountryFeature[]>([]);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -134,13 +147,21 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect }) =
             pointsData={pillars}
             pointLat={(d: object) => (d as GlobePillar).lat}
             pointLng={(d: object) => (d as GlobePillar).lng}
-            pointColor={(d: object) =>
-              PILLAR_COLORS[(d as GlobePillar).color]
-            }
-            pointAltitude={(d: object) => (d as GlobePillar).intensity * 0.45}
-            pointRadius={(d: object) =>
-              (d as GlobePillar).id === selected?.id ? 0.6 : 0.42
-            }
+            pointColor={(d: object) => {
+              const p = d as GlobePillar;
+              const pulseColor = pulsingColor.get(p.id);
+              return pulseColor ?? PILLAR_COLORS[p.color];
+            }}
+            pointAltitude={(d: object) => {
+              const p = d as GlobePillar;
+              const base = p.intensity * 0.45;
+              return pulsingIds.has(p.id) ? base + 0.25 : base;
+            }}
+            pointRadius={(d: object) => {
+              const p = d as GlobePillar;
+              if (pulsingIds.has(p.id)) return 0.72;
+              return p.id === selected?.id ? 0.6 : 0.42;
+            }}
             pointResolution={6}
             pointLabel={(d: object) => {
               const p = d as GlobePillar;
@@ -151,13 +172,13 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect }) =
               </div>`;
             }}
             onPointClick={(d: object) => onSelect((d as GlobePillar).id)}
-            ringsData={pillars.filter((p) => p.intensity > 0.7)}
-            ringLat={(d: object) => (d as GlobePillar).lat}
-            ringLng={(d: object) => (d as GlobePillar).lng}
-            ringColor={(d: object) => () => PILLAR_COLORS[(d as GlobePillar).color] + 'cc'}
-            ringMaxRadius={5}
-            ringPropagationSpeed={2}
-            ringRepeatPeriod={1400}
+            ringsData={pulses}
+            ringLat={(d: object) => (d as GlobePulse).lat}
+            ringLng={(d: object) => (d as GlobePulse).lng}
+            ringColor={(d: object) => () => (d as GlobePulse).color}
+            ringMaxRadius={7}
+            ringPropagationSpeed={5}
+            ringRepeatPeriod={420}
             polygonsData={countries}
             polygonGeoJsonGeometry={(d: object) => (d as CountryFeature).geometry}
             polygonAltitude={0.006}

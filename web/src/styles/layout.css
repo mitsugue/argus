@@ -154,8 +154,8 @@
     gap: 6px;
     height: auto;
   }
-  /* Mobile: globe first, then news feed, then hotspots + watchlist */
-  .hud-grid__center { order: 1; min-height: 360px; }
-  .hud-grid__left   { order: 2; min-height: auto; }
-  .hud-grid__right  { order: 3; min-height: auto; }
+  /* Mobile: news stream first (primary), then globe, then side panels */
+  .hud-grid__right  { order: 1; min-height: auto; }
+  .hud-grid__center { order: 2; min-height: 320px; }
+  .hud-grid__left   { order: 3; min-height: auto; }
 }

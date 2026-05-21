@@ -91,6 +91,92 @@ export function mutatePillars(pillars: GlobePillar[]): GlobePillar[] {
   });
 }
 
+// Per-pillar rotating headline pool — keeps news stream feeling fresh
+export const HEADLINE_POOL: Record<string, string[]> = {
+  tk: [
+    'Nikkei +1.2% / 銘柄監視 184',
+    'TOPIX 反発 / 内需株主導',
+    '東証出来高 1.4兆円 / 1月以来',
+    '円相場 153円台 / 介入観測再燃',
+    '半導体株 急騰 / Rapidus 報道',
+  ],
+  hk: [
+    'HSI +0.4% / Tech rally',
+    'Tencent 出来高急増',
+    '香港IPO 解禁観測',
+    'ハンセン指数 反発',
+  ],
+  sg: [
+    'STI flat / 商品先物観望',
+    'シンガポール GDP 上方修正',
+    'DBS +2.1% / 金利期待',
+  ],
+  sh: [
+    'CSI300 +0.8% / EV補助金延長報道',
+    '上海総合 反発 / 半導体主導',
+    '人民銀行 流動性供給',
+  ],
+  kr: [
+    'KOSPI -0.3% / Samsung調整',
+    'SK Hynix HBM 増産報道',
+    'ウォン安 1380台',
+  ],
+  du: [
+    'Oil futures +2.1% / OPEC+会合控え',
+    'Dubai 不動産 取引高 過去最高',
+    'WTI 80ドル接近',
+  ],
+  rh: [
+    'Geopolitical signal ▲ / 増産凍結観測',
+    'サウジ ARAMCO 出荷量調整',
+    '中東情勢 緊張高まる',
+    '原油 急騰 / 中東リスクオフ',
+  ],
+  te: [
+    'TASE 出来高 spike / 防衛セクター',
+    'Israel tech IPO 観測',
+    'シェケル 急変動',
+  ],
+  ny: [
+    'NYSE pre-market hot / NVDA +3.2%',
+    'S&P 500 新高値更新',
+    'Treasury yields ▲ 4.31%',
+    'FOMC minutes / hawkish bias',
+    'NYSE 出来高 急増 / AI銘柄',
+  ],
+  sf: [
+    'Tech sector rotation / AIインフラ',
+    'TSMC ADR +2.8% / 受注報道',
+    'Apple サプライヤー 急騰',
+  ],
+  ch: [
+    'CME futures stable / 穀物上昇',
+    'シカゴ小麦 +3% / 天候要因',
+    'CME VIX futures 出来高 急増',
+  ],
+  mx: [
+    'Currency anomaly ⚠ / ペソ急変動',
+    'メキシコ中銀 想定外利下げ',
+    'USMCA 関連 報道',
+  ],
+  ldn: [
+    'FTSE +0.5% / BoE声明待ち',
+    'GBP/USD 急騰 / 1.28突破',
+    'ロンドン株 銀行株主導',
+  ],
+  fra: [
+    'DAX 反発 / 製造業PMI改善',
+    'Siemens 受注 過去最高',
+    'ユーロ圏 CPI 速報',
+  ],
+};
+
+export function pickHeadline(pillarId: string, fallback: string): string {
+  const pool = HEADLINE_POOL[pillarId];
+  if (!pool || pool.length === 0) return fallback;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 export function tickSymbol(s: TrackedSymbol): TrackedSymbol {
   // Simulate actual price drifting toward (or past) predicted
   const now = Date.now();

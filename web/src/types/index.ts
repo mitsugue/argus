@@ -52,3 +52,28 @@ export interface StickyNote {
   z: number;
   color: 'cyan' | 'amber';
 }
+
+export type NewsSeverity = 'normal' | 'critical';
+
+export interface NewsEvent {
+  id: string;
+  pillarId: string;
+  lat: number;
+  lng: number;
+  country: string;
+  countryCode: string;
+  source: string;
+  headline: string;
+  severity: NewsSeverity;
+  receivedAt: number;
+}
+
+export interface GlobePulse {
+  id: string; // same as event id
+  pillarId: string;
+  lat: number;
+  lng: number;
+  color: string; // hex
+  bornAt: number;
+  ttl: number;
+}
