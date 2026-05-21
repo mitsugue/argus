@@ -23,7 +23,7 @@ export const HudFrame: React.FC<Props> = ({ children, top, bottom }) => {
       <header className="hud-frame__header">
         <div className="hud-frame__brand">
           <span className="hud-frame__logo">◈ stockscanner</span>
-          <span className="hud-frame__ver">v3.0.0 · WORLD WATCH</span>
+          <span className="hud-frame__ver">v{__APP_VERSION__} · WORLD WATCH</span>
         </div>
         <div className="hud-frame__meta">
           <span className="hud-frame__pill">
