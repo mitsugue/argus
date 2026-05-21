@@ -4,24 +4,38 @@ import { GlobeMonitor } from './components/GlobeMonitor';
 import { PredictionTracker } from './components/PredictionTracker';
 import { AlertSystem } from './components/AlertSystem';
 import { StickyNotes } from './components/StickyNotes';
-import { MarketReadout, PhasePanel, LogPanel } from './components/SidePanels';
+import { TickerStrip } from './components/TickerStrip';
+import { EventTicker } from './components/EventTicker';
+import { NewsFeed } from './components/NewsFeed';
+import { HotspotRanking } from './components/HotspotRanking';
+import { usePillars } from './hooks/usePillars';
 import './styles/layout.css';
 
 const App: React.FC = () => {
+  const { pillars, selected, selectedId, select } = usePillars();
+
   return (
-    <HudFrame>
-      <div className="hud-col">
-        <MarketReadout />
-        <PhasePanel />
-        <LogPanel />
-      </div>
+    <HudFrame
+      top={<TickerStrip />}
+      bottom={<EventTicker />}
+    >
+      <div className="hud-grid">
+        <div className="hud-grid__left">
+          <NewsFeed pillars={pillars} selectedId={selectedId} onSelect={select} />
+        </div>
 
-      <div className="hud-col hud-col--center">
-        <GlobeMonitor />
-      </div>
+        <div className="hud-grid__center">
+          <GlobeMonitor pillars={pillars} selected={selected} onSelect={select} />
+        </div>
 
-      <div className="hud-col">
-        <PredictionTracker />
+        <div className="hud-grid__right">
+          <HotspotRanking
+            pillars={pillars}
+            selectedId={selectedId}
+            onSelect={select}
+          />
+          <PredictionTracker />
+        </div>
       </div>
 
       <AlertSystem />

@@ -1,7 +1,7 @@
 .alerts {
   position: fixed;
   left: 50%;
-  top: 64px;
+  top: 96px;
   transform: translateX(-50%);
   width: min(420px, calc(100vw - 40px));
   display: flex;
@@ -108,5 +108,5 @@
 .alert--critical .alert__timer { background: var(--hud-danger); }
 
 @media (max-width: 900px) {
-  .alerts { top: 50px; width: calc(100vw - 20px); }
+  .alerts { top: 112px; width: calc(100vw - 20px); }
 }

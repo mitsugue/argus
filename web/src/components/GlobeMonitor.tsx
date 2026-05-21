@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Globe, { type GlobeMethods } from 'react-globe.gl';
 import * as THREE from 'three';
 import type { GlobePillar } from '../types';
-import { INITIAL_PILLARS, mutatePillars } from '../mock/data';
+import { flag } from '../util/flag';
 import './GlobeMonitor.css';
 
 const PILLAR_COLORS: Record<GlobePillar['color'], string> = {
@@ -11,14 +11,6 @@ const PILLAR_COLORS: Record<GlobePillar['color'], string> = {
   danger: '#ff3d57',
 };
 
-// ISO alpha-2 → regional indicator emoji (flag)
-const flag = (code: string) =>
-  code
-    .toUpperCase()
-    .split('')
-    .map((c) => String.fromCodePoint(0x1f1e6 + c.charCodeAt(0) - 65))
-    .join('');
-
 type CountryFeature = {
   type: 'Feature';
   properties: Record<string, unknown>;
@@ -26,15 +18,18 @@ type CountryFeature = {
   geometry: { type: string; coordinates: number[] };
 };
 
-export const GlobeMonitor: React.FC = () => {
-  const [pillars, setPillars] = useState<GlobePillar[]>(INITIAL_PILLARS);
+interface Props {
+  pillars: GlobePillar[];
+  selected: GlobePillar | null;
+  onSelect: (id: string | null) => void;
+}
+
+export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect }) => {
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [selected, setSelected] = useState<GlobePillar | null>(null);
   const [countries, setCountries] = useState<CountryFeature[]>([]);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
 
-  // Load country borders once
   useEffect(() => {
     let cancelled = false;
     fetch('/countries.geojson')
@@ -43,14 +38,13 @@ export const GlobeMonitor: React.FC = () => {
         if (!cancelled) setCountries(data.features ?? []);
       })
       .catch(() => {
-        /* ignore — globe still works without borders */
+        /* globe still works without borders */
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Track container size
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -62,13 +56,6 @@ export const GlobeMonitor: React.FC = () => {
     return () => ro.disconnect();
   }, []);
 
-  // Mutate pillar intensities to simulate live updates
-  useEffect(() => {
-    const t = setInterval(() => setPillars((prev) => mutatePillars(prev)), 1800);
-    return () => clearInterval(t);
-  }, []);
-
-  // Auto-rotate
   useEffect(() => {
     const g = globeRef.current;
     if (!g) return;
@@ -79,26 +66,31 @@ export const GlobeMonitor: React.FC = () => {
       enablePan: boolean;
     };
     controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.35;
+    controls.autoRotateSpeed = 0.32;
     controls.enableZoom = false;
     controls.enablePan = false;
-    g.pointOfView({ lat: 20, lng: 100, altitude: 2.4 }, 0);
+    g.pointOfView({ lat: 20, lng: 100, altitude: 2.3 }, 0);
   }, [size.w, size.h]);
 
-  // HUD-styled globe material
-  const globeMaterial = useMemo(() => {
-    const m = new THREE.MeshPhongMaterial({
-      color: new THREE.Color('#001a1f'),
-      emissive: new THREE.Color('#001218'),
-      shininess: 4,
-      transparent: true,
-      opacity: 0.72,
-      wireframe: false,
-    });
-    return m;
-  }, []);
+  // Camera follows selected pillar
+  useEffect(() => {
+    const g = globeRef.current;
+    if (!g || !selected) return;
+    g.pointOfView({ lat: selected.lat, lng: selected.lng, altitude: 1.7 }, 1100);
+  }, [selected?.id]);
 
-  // Wireframe overlay sphere
+  const globeMaterial = useMemo(
+    () =>
+      new THREE.MeshPhongMaterial({
+        color: new THREE.Color('#001a1f'),
+        emissive: new THREE.Color('#001218'),
+        shininess: 4,
+        transparent: true,
+        opacity: 0.72,
+      }),
+    []
+  );
+
   const customLayer = useMemo(() => {
     const geo = new THREE.SphereGeometry(100.4, 64, 32);
     const mat = new THREE.MeshBasicMaterial({
@@ -110,7 +102,6 @@ export const GlobeMonitor: React.FC = () => {
     return new THREE.Mesh(geo, mat);
   }, []);
 
-  // Inject wireframe overlay once globe scene is ready
   useEffect(() => {
     const g = globeRef.current;
     if (!g) return;
@@ -120,12 +111,6 @@ export const GlobeMonitor: React.FC = () => {
       scene.remove(customLayer);
     };
   }, [customLayer, size.w]);
-
-  const focus = (p: GlobePillar) => {
-    setSelected(p);
-    const g = globeRef.current;
-    if (g) g.pointOfView({ lat: p.lat, lng: p.lng, altitude: 1.6 }, 1100);
-  };
 
   return (
     <section className="globe-monitor hud-corner" ref={wrapRef}>
@@ -149,9 +134,13 @@ export const GlobeMonitor: React.FC = () => {
             pointsData={pillars}
             pointLat={(d: object) => (d as GlobePillar).lat}
             pointLng={(d: object) => (d as GlobePillar).lng}
-            pointColor={(d: object) => PILLAR_COLORS[(d as GlobePillar).color]}
+            pointColor={(d: object) =>
+              PILLAR_COLORS[(d as GlobePillar).color]
+            }
             pointAltitude={(d: object) => (d as GlobePillar).intensity * 0.45}
-            pointRadius={0.42}
+            pointRadius={(d: object) =>
+              (d as GlobePillar).id === selected?.id ? 0.6 : 0.42
+            }
             pointResolution={6}
             pointLabel={(d: object) => {
               const p = d as GlobePillar;
@@ -161,7 +150,7 @@ export const GlobeMonitor: React.FC = () => {
                 <div style="color:#d6f5f7; max-width: 240px; line-height: 1.5;">${p.headline}</div>
               </div>`;
             }}
-            onPointClick={(d: object) => focus(d as GlobePillar)}
+            onPointClick={(d: object) => onSelect((d as GlobePillar).id)}
             ringsData={pillars.filter((p) => p.intensity > 0.7)}
             ringLat={(d: object) => (d as GlobePillar).lat}
             ringLng={(d: object) => (d as GlobePillar).lng}
@@ -176,7 +165,7 @@ export const GlobeMonitor: React.FC = () => {
               const f = d as CountryFeature;
               const sel = selected?.country;
               const name = (f.properties as { ADMIN?: string; NAME?: string }).ADMIN ?? (f.properties as { NAME?: string }).NAME;
-              return sel && name === sel ? 'rgba(0, 243, 255, 0.18)' : 'rgba(0, 243, 255, 0.05)';
+              return sel && name === sel ? 'rgba(0, 243, 255, 0.22)' : 'rgba(0, 243, 255, 0.05)';
             }}
             polygonSideColor={() => 'rgba(0, 243, 255, 0.04)'}
             polygonStrokeColor={() => 'rgba(0, 243, 255, 0.55)'}
@@ -215,7 +204,7 @@ export const GlobeMonitor: React.FC = () => {
             <div className="globe-monitor__detail">{selected.headline}</div>
           </>
         ) : (
-          <div className="globe-monitor__hint">タップ / クリックでスポット選択 · ドラッグで回転</div>
+          <div className="globe-monitor__hint">タップ / クリック · ドラッグで回転</div>
         )}
       </div>
     </section>

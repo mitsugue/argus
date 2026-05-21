@@ -1,0 +1,48 @@
+.event-ticker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 10px;
+  border: var(--hud-border);
+  background: rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 28px;
+}
+
+.event-ticker__brand {
+  font-family: var(--hud-font-display);
+  color: var(--hud-amber);
+  font-size: 9px;
+  letter-spacing: 3px;
+  padding-right: 10px;
+  border-right: var(--hud-border-amber);
+  flex-shrink: 0;
+}
+
+.event-ticker__rail {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  white-space: nowrap;
+  animation: event-scroll 80s linear infinite;
+}
+
+@keyframes event-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.event-ticker__line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--hud-text-dim);
+  letter-spacing: 1px;
+}
+
+.event-ticker__dot {
+  color: var(--hud-cyan);
+}
