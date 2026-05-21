@@ -98,18 +98,6 @@
   display: flex;
 }
 
-.hud-frame__footer {
-  display: flex;
-  justify-content: space-between;
-  padding-top: 4px;
-  border-top: var(--hud-border);
-  font-size: 9px;
-  letter-spacing: 3px;
-  color: var(--hud-text-faint);
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
 .hud-frame__crosshair {
   position: absolute;
   width: 14px;
@@ -165,7 +153,6 @@
   .hud-frame__glyph { width: 16px; height: 16px; }
   .hud-frame__ver { font-size: 8px; letter-spacing: 1px; }
   .hud-frame__clock { font-size: 11px; min-width: auto; }
-  .hud-frame__footer { font-size: 8px; gap: 6px; flex-wrap: wrap; }
 
   .hud-frame__main {
     overflow-y: auto;

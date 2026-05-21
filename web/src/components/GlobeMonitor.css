@@ -19,8 +19,10 @@
 
 .globe-monitor__canvas canvas {
   outline: none !important;
-  /* Vertical scroll passes through — finger can't drag the globe canvas */
-  touch-action: pan-y !important;
+  /* Let OrbitControls capture pointer drags so finger spins the globe.
+     Page-level vertical scroll happens on the surrounding panels — the
+     globe itself is the interactive layer. */
+  touch-action: none !important;
 }
 
 .globe-monitor__readout {

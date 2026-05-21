@@ -73,13 +73,6 @@ export const HudFrame: React.FC<Props> = ({ children, top, bottom }) => {
       <main className="hud-frame__main">{children}</main>
 
       {bottom && <div className="hud-frame__bottom">{bottom}</div>}
-
-      <footer className="hud-frame__footer">
-        <span>ARGUS // PANOPTES NET</span>
-        <span>OPS NOMINAL</span>
-        <span>SEC.LVL: OMEGA</span>
-        <span>EOD //{now.toISOString().slice(0, 10)}</span>
-      </footer>
     </div>
   );
 };

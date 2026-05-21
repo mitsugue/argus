@@ -83,9 +83,11 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
     controls.autoRotateSpeed = 0.32;
     controls.enableZoom = false;
     controls.enablePan = false;
-    // Ambient globe — disable user rotation so finger swipes pass
-    // through to the page scroller instead of dragging the canvas.
-    controls.enableRotate = false;
+    // enableRotate must be true for autoRotate to run AND so finger drag
+    // can spin the globe. Page-level horizontal scroll is already locked
+    // via touch-action: pan-y on body, so we can let the canvas grab
+    // pointer drags freely.
+    controls.enableRotate = true;
     g.pointOfView({ lat: 20, lng: 100, altitude: 2.3 }, 0);
   }, [size.w, size.h]);
 
@@ -205,32 +207,28 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
         )}
       </div>
 
-      <div className="globe-monitor__readout">
-        {selected ? (
-          <>
-            <div className="globe-monitor__row">
-              <span className="hud-label">SRC</span>
-              <span className="hud-value" style={{ fontSize: 12 }}>
-                <span style={{ marginRight: 6 }}>{flag(selected.countryCode)}</span>
-                {selected.country}
-              </span>
-            </div>
-            <div className="globe-monitor__row">
-              <span className="hud-label">OUTLET</span>
-              <span style={{ color: 'var(--hud-amber)', fontSize: 11 }}>{selected.source}</span>
-            </div>
-            <div className="globe-monitor__row">
-              <span className="hud-label">{selected.label} · INT</span>
-              <span style={{ color: PILLAR_COLORS[selected.color], fontSize: 12 }}>
-                {(selected.intensity * 100).toFixed(0)}%
-              </span>
-            </div>
-            <div className="globe-monitor__detail">{selected.headline}</div>
-          </>
-        ) : (
-          <div className="globe-monitor__hint">タップ / クリック · ドラッグで回転</div>
-        )}
-      </div>
+      {selected && (
+        <div className="globe-monitor__readout">
+          <div className="globe-monitor__row">
+            <span className="hud-label">SRC</span>
+            <span className="hud-value" style={{ fontSize: 12 }}>
+              <span style={{ marginRight: 6 }}>{flag(selected.countryCode)}</span>
+              {selected.country}
+            </span>
+          </div>
+          <div className="globe-monitor__row">
+            <span className="hud-label">OUTLET</span>
+            <span style={{ color: 'var(--hud-amber)', fontSize: 11 }}>{selected.source}</span>
+          </div>
+          <div className="globe-monitor__row">
+            <span className="hud-label">{selected.label} · INT</span>
+            <span style={{ color: PILLAR_COLORS[selected.color], fontSize: 12 }}>
+              {(selected.intensity * 100).toFixed(0)}%
+            </span>
+          </div>
+          <div className="globe-monitor__detail">{selected.headline}</div>
+        </div>
+      )}
     </section>
   );
 };
