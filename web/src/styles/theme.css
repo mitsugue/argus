@@ -26,6 +26,8 @@
   /* Typography */
   --hud-font-mono: 'JetBrains Mono', 'Share Tech Mono', ui-monospace, monospace;
   --hud-font-display: 'Share Tech Mono', 'JetBrains Mono', monospace;
+  /* Brand wordmark — Tesla-esque geometric futurist (Orbitron) */
+  --hud-font-brand: 'Orbitron', 'Michroma', 'Eurostile', 'Arial Black', sans-serif;
 
   /* Motion */
   --hud-ease: cubic-bezier(0.22, 1, 0.36, 1);

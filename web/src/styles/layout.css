@@ -29,13 +29,15 @@
 
 .hud-frame__logo {
   color: var(--hud-cyan);
-  font-family: var(--hud-font-display);
-  font-size: 16px;
-  letter-spacing: 4px;
+  font-family: var(--hud-font-brand);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 5px;
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  text-shadow: 0 0 8px rgba(0, 243, 255, 0.35);
 }
 
 .hud-frame__glyph {

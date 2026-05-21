@@ -66,12 +66,14 @@
     <circle cx="188" cy="380"  r="3"/>
   </g>
 
-  <!-- Wordmark (bold) + tagline -->
+  <!-- Wordmark — Tesla-esque geometric futurist -->
   <text x="256" y="460" text-anchor="middle"
-        fill="#00f3ff" font-family="'JetBrains Mono', monospace"
-        font-size="54" font-weight="800" letter-spacing="6"
-        stroke="#00f3ff" stroke-width="1">A.R.G.U.S.</text>
+        fill="#00f3ff"
+        font-family="Orbitron, Michroma, Eurostile, 'Arial Black', sans-serif"
+        font-size="50" font-weight="900" letter-spacing="8"
+        stroke="#00f3ff" stroke-width="0.8">A.R.G.U.S.</text>
   <text x="256" y="492" text-anchor="middle"
-        fill="#ffb700" font-family="'JetBrains Mono', monospace"
-        font-size="13" font-weight="500" letter-spacing="5" opacity="0.85">AUTONOMOUS RISK · GLOBAL UNCERTAINTY · SCANNER</text>
+        fill="#ffb700"
+        font-family="Orbitron, Michroma, sans-serif"
+        font-size="11" font-weight="500" letter-spacing="5" opacity="0.85">AUTONOMOUS RISK · GLOBAL UNCERTAINTY · SCANNER</text>
 </svg>

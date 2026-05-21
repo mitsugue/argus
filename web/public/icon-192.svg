@@ -39,9 +39,10 @@
     <circle cx="160" cy="92" r="2.4"/>
   </g>
 
-  <!-- Wordmark (bold) -->
+  <!-- Wordmark — Tesla-esque geometric futurist -->
   <text x="96" y="186" text-anchor="middle"
-        fill="#00f3ff" font-family="'JetBrains Mono', monospace"
-        font-size="22" font-weight="800" letter-spacing="3"
-        stroke="#00f3ff" stroke-width="0.4">A.R.G.U.S.</text>
+        fill="#00f3ff"
+        font-family="Orbitron, Michroma, Eurostile, 'Arial Black', sans-serif"
+        font-size="20" font-weight="900" letter-spacing="4"
+        stroke="#00f3ff" stroke-width="0.3">A.R.G.U.S.</text>
 </svg>
