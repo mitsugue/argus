@@ -2,31 +2,54 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 10px;
+  padding: 0;
   border: var(--hud-border);
   background: rgba(0, 0, 0, 0.5);
-  overflow: hidden;
+  overflow: visible;
   flex-shrink: 0;
-  height: 28px;
+  height: 26px;
 }
 
+/* Brand label as a small tab on the top-right edge */
 .event-ticker__brand {
+  position: absolute;
+  right: 10px;
+  top: -6px;
+  z-index: 4;
+  padding: 0 6px;
+  background: var(--hud-bg);
   font-family: var(--hud-font-display);
   color: var(--hud-amber);
-  font-size: 9px;
-  letter-spacing: 3px;
-  padding-right: 10px;
-  border-right: var(--hud-border-amber);
-  flex-shrink: 0;
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  line-height: 1;
 }
 
 .event-ticker__rail {
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: 28px;
   white-space: nowrap;
   animation: event-scroll 80s linear infinite;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Fade out at both edges so the text doesn't collide with the corner tab */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 18px,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
+          mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 18px,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
 }
 
 @keyframes event-scroll {
@@ -41,6 +64,7 @@
   font-size: 10px;
   color: var(--hud-text-dim);
   letter-spacing: 1px;
+  font-weight: 300;
 }
 
 .event-ticker__dot {

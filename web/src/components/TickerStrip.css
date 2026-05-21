@@ -2,32 +2,56 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 10px;
+  padding: 0;
   border: var(--hud-border);
   background: var(--hud-bg-panel);
-  overflow: hidden;
+  /* No outer clip — the brand tab needs to peek above the top border */
+  overflow: visible;
   flex-shrink: 0;
-  height: 36px;
+  height: 30px;
 }
 
+/* Brand label as a small tab sitting on the top edge of the strip */
 .ticker-strip__brand {
+  position: absolute;
+  left: 10px;
+  top: -7px;
+  z-index: 4;
+  padding: 0 6px;
+  background: var(--hud-bg);
   font-family: var(--hud-font-display);
   color: var(--hud-cyan);
-  font-size: 10px;
-  letter-spacing: 3px;
-  padding-right: 10px;
-  border-right: var(--hud-border);
-  flex-shrink: 0;
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  line-height: 1;
 }
 
 .ticker-strip__rail {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
   white-space: nowrap;
-  animation: ticker-scroll 65s linear infinite;
+  animation: ticker-scroll 60s linear infinite;
   flex: 1;
+  min-width: 0;
+  height: 100%;
+  /* Rail clips its own scrolling content; tab on the strip stays visible */
+  overflow: hidden;
+  /* Fade out at edges so the scroll doesn't collide with the corner tab */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 28px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
+          mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 28px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
 }
 
 @keyframes ticker-scroll {
@@ -45,12 +69,13 @@
 .ticker-strip__lbl {
   color: var(--hud-text-faint);
   letter-spacing: 1px;
+  font-weight: 300;
 }
 
 .ticker-strip__val {
   font-family: var(--hud-font-display);
   color: var(--hud-text);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .ticker-strip__val.up { color: var(--hud-cyan); }
