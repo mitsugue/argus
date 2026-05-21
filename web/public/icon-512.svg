@@ -66,11 +66,12 @@
     <circle cx="188" cy="380"  r="3"/>
   </g>
 
-  <!-- Wordmark + tagline -->
+  <!-- Wordmark (bold) + tagline -->
   <text x="256" y="460" text-anchor="middle"
-        fill="#00f3ff" font-family="'Share Tech Mono', monospace"
-        font-size="46" font-weight="400" letter-spacing="10">A.R.G.U.S.</text>
-  <text x="256" y="490" text-anchor="middle"
-        fill="#ffb700" font-family="'Share Tech Mono', monospace"
-        font-size="12" font-weight="400" letter-spacing="5" opacity="0.85">AUTONOMOUS RISK · GLOBAL UNCERTAINTY · SCANNER</text>
+        fill="#00f3ff" font-family="'JetBrains Mono', monospace"
+        font-size="54" font-weight="800" letter-spacing="6"
+        stroke="#00f3ff" stroke-width="1">A.R.G.U.S.</text>
+  <text x="256" y="492" text-anchor="middle"
+        fill="#ffb700" font-family="'JetBrains Mono', monospace"
+        font-size="13" font-weight="500" letter-spacing="5" opacity="0.85">AUTONOMOUS RISK · GLOBAL UNCERTAINTY · SCANNER</text>
 </svg>
