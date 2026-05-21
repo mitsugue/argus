@@ -42,6 +42,7 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
   const [countries, setCountries] = useState<CountryFeature[]>([]);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
+  const hasIntroAnimated = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +89,17 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
     // via touch-action: pan-y on body, so we can let the canvas grab
     // pointer drags freely.
     controls.enableRotate = true;
-    g.pointOfView({ lat: 20, lng: 100, altitude: 2.3 }, 0);
+    if (!hasIntroAnimated.current) {
+      // Start far, zoom in. The wireframe sphere lives in the same scene
+      // so it grows together with the textured globe.
+      g.pointOfView({ lat: 20, lng: 100, altitude: 4.5 }, 0);
+      requestAnimationFrame(() => {
+        g.pointOfView({ lat: 20, lng: 100, altitude: 2.3 }, 1600);
+      });
+      hasIntroAnimated.current = true;
+    } else {
+      g.pointOfView({ lat: 20, lng: 100, altitude: 2.3 }, 0);
+    }
   }, [size.w, size.h]);
 
   // Camera follows selected pillar

@@ -180,6 +180,11 @@ export const StickyNotes: React.FC = () => {
               <span className="sticky__tag">MEMO · {n.color.toUpperCase()}</span>
               <button
                 className="sticky__btn"
+                /* Block pointer-down from reaching the Rnd drag handler
+                   so the button's click can fire normally. */
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
                 onClick={() => bringToFront(n.id)}
                 title="bring to front"
               >
@@ -187,6 +192,9 @@ export const StickyNotes: React.FC = () => {
               </button>
               <button
                 className="sticky__btn sticky__btn--close"
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
                 onClick={() => remove(n.id)}
                 title="delete"
               >
