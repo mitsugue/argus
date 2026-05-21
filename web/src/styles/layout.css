@@ -23,7 +23,7 @@
 
 .hud-frame__brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
 }
 
@@ -33,6 +33,14 @@
   font-size: 16px;
   letter-spacing: 4px;
   text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-frame__glyph {
+  filter: drop-shadow(0 0 4px rgba(0, 243, 255, 0.55));
+  flex-shrink: 0;
 }
 
 .hud-frame__ver {
@@ -151,7 +159,8 @@
     padding-left: max(10px, env(safe-area-inset-left, 10px));
     gap: 6px;
   }
-  .hud-frame__logo { font-size: 14px; letter-spacing: 2px; }
+  .hud-frame__logo { font-size: 14px; letter-spacing: 2px; gap: 6px; }
+  .hud-frame__glyph { width: 16px; height: 16px; }
   .hud-frame__ver { font-size: 8px; letter-spacing: 1px; }
   .hud-frame__clock { font-size: 11px; min-width: auto; }
   .hud-frame__footer { font-size: 8px; gap: 6px; flex-wrap: wrap; }

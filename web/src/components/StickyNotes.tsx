@@ -4,7 +4,7 @@ import type { StickyNote } from '../types';
 import { uid } from '../mock/data';
 import './StickyNotes.css';
 
-const STORAGE_KEY = 'stockscanner:sticky:v1';
+const STORAGE_KEY = 'argus:sticky:v1';
 
 const seed = (): StickyNote[] => [
   {
