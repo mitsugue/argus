@@ -6,6 +6,9 @@ dist/
 *.tsbuildinfo
 .vite/
 
+# A.R.G.U.S. ledger (runtime data, persisted on the host disk)
+data/
+
 # OS
 .DS_Store
 

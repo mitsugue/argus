@@ -9,6 +9,11 @@ except Exception:
 import pytz
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
+import argus_ledger  # Local — A.R.G.U.S. prediction ledger (Phase 3)
+try:
+    from flask_cors import CORS  # optional; only needed for cross-origin /api/argus/*
+except Exception:
+    CORS = None
 
 JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY", "").strip().strip('"').strip("'")
 GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY", "")
@@ -935,6 +940,15 @@ BAR_FULL="█"
 BAR_LIGHT="░"
 app        = Flask(__name__)
 BACKGROUND_TASK_RUNNING = False
+
+# Allow the A.R.G.U.S. React frontend (served from Vercel + localhost dev)
+# to call /api/argus/* directly. Other endpoints stay same-origin.
+if CORS is not None:
+    CORS(app, resources={r"/api/argus/*": {"origins": [
+        re.compile(r"^http://localhost(:\d+)?$"),
+        re.compile(r"^http://127\.0\.0\.1(:\d+)?$"),
+        re.compile(r"^https://.*\.vercel\.app$"),
+    ]}})
 
 @app.after_request
 def add_no_cache(response):
@@ -1940,6 +1954,25 @@ def phase4_final_top3():
             push_notify("Gemini確認",
                 "判定:" + verdict + " AGREE リスク:" + str(risk_sc) + "/100\n" + macro_a)
     add_log("\u2705 Ph.4\u5b8c\u4e86 \u2014 TOP3\u78ba\u5b9a" + ("\uff08\u901a\u77e5\u9001\u4fe1\u6e08\u307f\uff09" if SCHEDULED_RUN else ""))
+    # Phase 3: record each pick into the A.R.G.U.S. ledger. Best-effort \u2014
+    # never break the scan flow if the ledger write fails.
+    try:
+        for s in top3:
+            argus_ledger.log_prediction(
+                code=str(s.get("code", "")),
+                name=s.get("name"),
+                direction="up",  # phase4 picks are long candidates by design
+                probability=argus_ledger.score_to_probability(
+                    s.get("combined_score", s.get("final_score")),
+                ),
+                horizon="1d",
+                price_at_prediction=float(s.get("price", 0) or 0),
+                reason_code=(s.get("catalyst_tags") or ["TOP3"])[0]
+                    if isinstance(s.get("catalyst_tags"), list)
+                    else "TOP3",
+            )
+    except Exception as _e:
+        add_log("\u26a0\ufe0f ledger.log_prediction failed: " + str(_e)[:120])
     state.update({"phase":4,"top3_final":top3,"gemini_check":gemini_result,"catalyst_grades":{s["code"]:classify_catalyst_grade(s) for s in top3},"market_condition":state.get("market_condition",""),"macro_summary":state.get("macro_summary",""),"log":LOG_BUFFER[-20:]}); save_state(state)
 def get_realtime_prices(codes):
     """JQuantsのリアルタイムに近い当日価格を取得"""
@@ -1991,6 +2024,16 @@ def phase5_post_open():
     prices_open = get_realtime_prices(codes)
     state["realtime_prices"] = prices_open
     save_state(state)
+
+    # Phase 3: resolve any pending ledger entries with today's open prices.
+    try:
+        resolved_n = argus_ledger.resolve_outcomes(
+            lambda code, _ts: prices_open.get(code),
+        )
+        if resolved_n:
+            add_log("📒 ledger: resolved " + str(resolved_n) + " pending predictions")
+    except Exception as _e:
+        add_log("⚠️ ledger.resolve_outcomes failed: " + str(_e)[:120])
 
     # 各銘柄の初期コンテキスト構築
     contexts = {}
@@ -2303,6 +2346,60 @@ def api_price_now(code):
     """現在価格のみ高速取得"""
     prices = get_realtime_prices([code])
     return jsonify(prices.get(code, {}))
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# A.R.G.U.S. — calibration ledger API (consumed by the React frontend)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@app.route("/api/argus/calibration")
+def api_argus_calibration():
+    """Aggregate hit-rate / Brier / reliability over the rolling window."""
+    try:
+        window = int(request.args.get("window", "30"))
+    except (TypeError, ValueError):
+        window = 30
+    window = max(1, min(window, 365))
+    return jsonify(argus_ledger.aggregate_stats(window_days=window))
+
+
+@app.route("/api/argus/picks/today")
+def api_argus_picks_today():
+    """Today's top-3 picks pulled from the current scan state."""
+    state = load_state() or {}
+    top3 = state.get("top3_final") or []
+    picks = []
+    for s in top3:
+        picks.append({
+            "code": s.get("code", ""),
+            "name": s.get("name"),
+            "price": s.get("price"),
+            "combinedScore": s.get("combined_score") or s.get("final_score"),
+            "probability": argus_ledger.score_to_probability(
+                s.get("combined_score") or s.get("final_score"),
+            ),
+            "direction": "up",
+            "horizon": "1d",
+            "reason": s.get("reason") or s.get("catalyst_summary"),
+            "tags": s.get("catalyst_tags") or [],
+            "killSwitch": bool(s.get("kill_switch")),
+            "warn": bool(s.get("warn_flag")),
+        })
+    return jsonify({
+        "phase": state.get("phase", 0),
+        "asOf": state.get("updated_at") or int(time.time() * 1000),
+        "picks": picks,
+    })
+
+
+@app.route("/api/argus/ledger/recent")
+def api_argus_ledger_recent():
+    """Debug — most recent N entries from the raw ledger."""
+    try:
+        limit = int(request.args.get("limit", "50"))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 500))
+    return jsonify({"entries": argus_ledger.list_recent(limit=limit)})
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Scheduler

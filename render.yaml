@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: argus-backend
+    runtime: python
+    plan: free
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scanner.py
+    autoDeploy: true
+    # Free plan disks are ephemeral. To persist the predictions ledger across
+    # deploys + sleeps, attach a Render Disk (1 GB / $1 mo) and set:
+    #   ARGUS_LEDGER_PATH=/var/data/predictions.jsonl
+    # disk:
+    #   name: argus-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: ARGUS_LEDGER_PATH
+        value: data/predictions.jsonl
+      # Provide your secrets via the Render dashboard, not in this file.
+      - key: JQUANTS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      - key: X_API_BEARER_TOKEN
+        sync: false
+      - key: EDINET_API_KEY
+        sync: false
