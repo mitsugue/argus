@@ -1,0 +1,195 @@
+/* stockscanner v3.0.0 HUD theme tokens */
+:root {
+  /* Palette */
+  --hud-bg: #000000;
+  --hud-bg-panel: rgba(0, 243, 255, 0.04);
+  --hud-bg-panel-strong: rgba(0, 243, 255, 0.07);
+  --hud-cyan: #00f3ff;
+  --hud-cyan-dim: rgba(0, 243, 255, 0.55);
+  --hud-cyan-faint: rgba(0, 243, 255, 0.22);
+  --hud-cyan-line: rgba(0, 243, 255, 0.35);
+  --hud-amber: #ffb700;
+  --hud-amber-dim: rgba(255, 183, 0, 0.6);
+  --hud-amber-faint: rgba(255, 183, 0, 0.18);
+  --hud-text: #d6f5f7;
+  --hud-text-dim: rgba(214, 245, 247, 0.65);
+  --hud-text-faint: rgba(214, 245, 247, 0.35);
+  --hud-danger: #ff3d57;
+  --hud-success: #4ec94e;
+
+  /* Geometry */
+  --hud-border: 1px solid var(--hud-cyan-line);
+  --hud-border-amber: 1px solid rgba(255, 183, 0, 0.4);
+  --hud-radius: 2px;
+  --hud-radius-lg: 4px;
+
+  /* Typography */
+  --hud-font-mono: 'JetBrains Mono', 'Share Tech Mono', ui-monospace, monospace;
+  --hud-font-display: 'Share Tech Mono', 'JetBrains Mono', monospace;
+
+  /* Motion */
+  --hud-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--hud-bg);
+  color: var(--hud-text);
+  font-family: var(--hud-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  /* Disable scroll bounce, optimize touch */
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: manipulation;
+}
+
+body {
+  /* Subtle scan-line ambience, no gradients */
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 3px,
+      rgba(0, 243, 255, 0.012) 3px,
+      rgba(0, 243, 255, 0.012) 4px
+    );
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--hud-cyan);
+  color: var(--hud-bg);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hud-cyan-faint); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--hud-cyan-dim); }
+
+/* Reusable HUD primitives */
+.hud-panel {
+  background: var(--hud-bg-panel);
+  border: var(--hud-border);
+  border-radius: var(--hud-radius);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  position: relative;
+}
+
+.hud-panel--amber {
+  border: var(--hud-border-amber);
+  background: rgba(255, 183, 0, 0.04);
+}
+
+.hud-panel__title {
+  font-family: var(--hud-font-display);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--hud-cyan);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-panel__title::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: var(--hud-cyan);
+  display: inline-block;
+  box-shadow: 0 0 6px var(--hud-cyan);
+}
+
+.hud-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--hud-text-faint);
+  text-transform: uppercase;
+}
+
+.hud-value {
+  font-family: var(--hud-font-display);
+  color: var(--hud-text);
+  font-size: 14px;
+}
+
+.hud-divider {
+  height: 1px;
+  background: var(--hud-cyan-line);
+  width: 100%;
+}
+
+/* Corner brackets — characteristic HUD frame */
+.hud-corner::before,
+.hud-corner::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--hud-cyan);
+  pointer-events: none;
+}
+.hud-corner::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+.hud-corner::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+/* Animations */
+@keyframes hud-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+@keyframes hud-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@keyframes hud-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.hud-blink { animation: hud-blink 1.2s step-end infinite; }
+.hud-pulse { animation: hud-pulse 2s ease-in-out infinite; }

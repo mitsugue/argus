@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#000"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#00f3ff" stroke-width="6"/>
+  <circle cx="256" cy="256" r="80" fill="none" stroke="#ffb700" stroke-width="4"/>
+  <circle cx="256" cy="256" r="6" fill="#00f3ff"/>
+  <line x1="256" y1="40" x2="256" y2="472" stroke="#00f3ff" stroke-width="2" opacity="0.3"/>
+  <line x1="40" y1="256" x2="472" y2="256" stroke="#00f3ff" stroke-width="2" opacity="0.3"/>
+  <text x="256" y="430" text-anchor="middle" fill="#00f3ff" font-family="monospace" font-size="36" font-weight="700" letter-spacing="6">SCANNER</text>
+  <text x="256" y="100" text-anchor="middle" fill="#ffb700" font-family="monospace" font-size="14" font-weight="500" letter-spacing="4">v3.0.0 HUD</text>
+</svg>
