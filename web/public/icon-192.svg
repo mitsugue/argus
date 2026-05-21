@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" fill="#000"/>
+  <circle cx="96" cy="96" r="66" fill="none" stroke="#00f3ff" stroke-width="3"/>
+  <circle cx="96" cy="96" r="30" fill="none" stroke="#ffb700" stroke-width="2"/>
+  <circle cx="96" cy="96" r="2" fill="#00f3ff"/>
+  <line x1="96" y1="18" x2="96" y2="174" stroke="#00f3ff" stroke-width="1" opacity="0.3"/>
+  <line x1="18" y1="96" x2="174" y2="96" stroke="#00f3ff" stroke-width="1" opacity="0.3"/>
+  <text x="96" y="156" text-anchor="middle" fill="#00f3ff" font-family="monospace" font-size="14" font-weight="700" letter-spacing="2">SCANNER</text>
+</svg>

@@ -1,1 +1,12 @@
 .env
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+
+# Claude Code per-user
+.claude/settings.local.json
