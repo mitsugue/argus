@@ -24,9 +24,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'countries.geojson'],
       manifest: {
-        name: 'stockscanner',
-        short_name: 'stockscanner',
-        description: 'HUD investment intelligence dashboard',
+        name: 'A.R.G.U.S.',
+        short_name: 'ARGUS',
+        description: 'Autonomous Risk and Global Uncertainty Scanner',
         theme_color: '#000000',
         background_color: '#000000',
         display: 'fullscreen',
