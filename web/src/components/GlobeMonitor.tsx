@@ -45,7 +45,7 @@ export const GlobeMonitor: React.FC<Props> = ({ pillars, selected, onSelect, pul
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/countries.geojson')
+    fetch(`${import.meta.env.BASE_URL}countries.geojson`)
       .then((r) => r.json())
       .then((data: { features: CountryFeature[] }) => {
         if (!cancelled) setCountries(data.features ?? []);

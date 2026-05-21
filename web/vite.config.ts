@@ -3,12 +3,17 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// GitHub Pages serves the site under /<repo-name>/ — supply this via env at build time.
+// Locally and on other deploy targets (Vercel etc.) set DEPLOY_BASE='/' or leave unset.
+const base = process.env.DEPLOY_BASE ?? '/';
+
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'countries.geojson'],
       manifest: {
         name: 'stockscanner',
         short_name: 'stockscanner',
@@ -17,17 +22,19 @@ export default defineConfig({
         background_color: '#000000',
         display: 'fullscreen',
         orientation: 'portrait',
-        start_url: '/',
-        scope: '/',
+        // Manifest icon src is resolved relative to the manifest URL, so
+        // bare filenames work under any base path.
+        start_url: base,
+        scope: base,
         icons: [
           {
-            src: '/icon-192.svg',
+            src: 'icon-192.svg',
             sizes: '192x192',
             type: 'image/svg+xml',
             purpose: 'any maskable',
           },
           {
-            src: '/icon-512.svg',
+            src: 'icon-512.svg',
             sizes: '512x512',
             type: 'image/svg+xml',
             purpose: 'any maskable',
@@ -35,7 +42,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        navigateFallback: '/index.html',
+        navigateFallback: `${base}index.html`,
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         runtimeCaching: [
           {
