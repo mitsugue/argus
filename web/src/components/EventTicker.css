@@ -10,10 +10,10 @@
   height: 26px;
 }
 
-/* Brand label as a small tab on the top-right edge */
+/* Brand label as a small tab on the top-left edge */
 .event-ticker__brand {
   position: absolute;
-  right: 10px;
+  left: 10px;
   top: -6px;
   z-index: 4;
   padding: 0 6px;
@@ -31,19 +31,19 @@
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  /* Fade out the right edge so the text doesn't collide with the
-     top-right EVENTS tab. */
+  /* Fade out the left edge so the text doesn't collide with the
+     top-left EVENTS tab. */
   -webkit-mask-image: linear-gradient(
     to right,
-    #000 0,
-    #000 calc(100% - 80px),
-    transparent calc(100% - 12px)
+    transparent 12px,
+    #000 80px,
+    #000 100%
   );
           mask-image: linear-gradient(
     to right,
-    #000 0,
-    #000 calc(100% - 80px),
-    transparent calc(100% - 12px)
+    transparent 12px,
+    #000 80px,
+    #000 100%
   );
 }
 

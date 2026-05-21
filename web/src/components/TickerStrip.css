@@ -11,10 +11,10 @@
   height: 30px;
 }
 
-/* Brand label — uses shared .panel-tab styling, pinned top-right */
+/* Brand label — top-left, matching the shared .panel-tab pattern */
 .ticker-strip__brand {
   position: absolute;
-  right: 10px;
+  left: 10px;
   top: -7px;
   z-index: 4;
   padding: 0 7px;
@@ -33,19 +33,19 @@
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  /* Fade out the right edge so scrolling text doesn't collide with the
-     top-right brand tab. Keep the left edge clean. */
+  /* Fade out the left edge so scrolling text doesn't collide with the
+     top-left brand tab. Keep the right edge clean. */
   -webkit-mask-image: linear-gradient(
     to right,
-    #000 0,
-    #000 calc(100% - 140px),
-    transparent calc(100% - 14px)
+    transparent 14px,
+    #000 140px,
+    #000 100%
   );
           mask-image: linear-gradient(
     to right,
-    #000 0,
-    #000 calc(100% - 140px),
-    transparent calc(100% - 14px)
+    transparent 14px,
+    #000 140px,
+    #000 100%
   );
 }
 

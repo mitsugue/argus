@@ -103,11 +103,11 @@ button {
 ::-webkit-scrollbar-thumb { background: var(--hud-cyan-faint); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--hud-cyan-dim); }
 
-/* Shared corner tab for panel titles — small, top-right, sits on the border */
+/* Shared corner tab for panel titles — small, top-left, sits on the border */
 .panel-tab {
   position: absolute;
   top: -7px;
-  right: 10px;
+  left: 10px;
   z-index: 4;
   padding: 0 7px;
   background: var(--hud-bg);
