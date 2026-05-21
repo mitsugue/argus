@@ -44,15 +44,16 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
+  overflow-x: hidden;
   background: var(--hud-bg);
   color: var(--hud-text);
   font-family: var(--hud-font-mono);
   font-size: 12px;
   letter-spacing: 0.02em;
-  /* Disable scroll bounce, optimize touch */
+  /* Disable scroll bounce, lock touch to vertical pan only */
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
-  touch-action: manipulation;
+  touch-action: pan-y;
 }
 
 body {
