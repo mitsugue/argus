@@ -85,12 +85,3 @@
   font-size: 11px;
 }
 
-.ticker-strip__val.up { color: var(--hud-cyan); }
-.ticker-strip__val.down { color: var(--hud-amber); }
-
-.ticker-strip__delta {
-  font-size: 9px;
-  color: var(--hud-text-faint);
-}
-.ticker-strip__delta.up { color: var(--hud-cyan); }
-.ticker-strip__delta.down { color: var(--hud-amber); }

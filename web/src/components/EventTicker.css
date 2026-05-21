@@ -54,7 +54,9 @@
   white-space: nowrap;
   height: 100%;
   width: max-content;
-  animation: event-scroll 80s linear infinite;
+  /* Duration scaled so px/s matches TickerStrip (60s for ~880px track →
+     ~14.7 px/s). Event lines are roughly 3× longer, hence 170s. */
+  animation: event-scroll 170s linear infinite;
 }
 
 @keyframes event-scroll {
