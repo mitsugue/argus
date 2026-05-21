@@ -40,19 +40,21 @@ export const TickerStrip: React.FC = () => {
     <div className="ticker-strip hud-corner">
       <span className="ticker-strip__brand">GLOBAL · PULSE</span>
       <div className="ticker-strip__rail">
-        {metrics.concat(metrics).map((m, i) => {
-          const delta = m.value - m.prev;
-          const cls = delta === 0 ? '' : delta > 0 ? 'up' : 'down';
-          return (
-            <span key={i} className="ticker-strip__item">
-              <span className="ticker-strip__lbl">{m.label}</span>
-              <span className={`ticker-strip__val ${cls}`}>{m.fmt(m.value)}</span>
-              <span className={`ticker-strip__delta ${cls}`}>
-                {delta >= 0 ? '▲' : '▼'}
+        <div className="ticker-strip__track">
+          {metrics.concat(metrics).map((m, i) => {
+            const delta = m.value - m.prev;
+            const cls = delta === 0 ? '' : delta > 0 ? 'up' : 'down';
+            return (
+              <span key={i} className="ticker-strip__item">
+                <span className="ticker-strip__lbl">{m.label}</span>
+                <span className={`ticker-strip__val ${cls}`}>{m.fmt(m.value)}</span>
+                <span className={`ticker-strip__delta ${cls}`}>
+                  {delta >= 0 ? '▲' : '▼'}
+                </span>
               </span>
-            </span>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );

@@ -29,12 +29,14 @@ export const EventTicker: React.FC = () => {
     <div className="event-ticker hud-corner">
       <span className="event-ticker__brand">EVENTS</span>
       <div className="event-ticker__rail">
-        {lines.concat(lines).map((l, i) => (
-          <span key={i} className="event-ticker__line">
-            <span className="event-ticker__dot">›</span>
-            {l}
-          </span>
-        ))}
+        <div className="event-ticker__track">
+          {lines.concat(lines).map((l, i) => (
+            <span key={i} className="event-ticker__line">
+              <span className="event-ticker__dot">›</span>
+              {l}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );

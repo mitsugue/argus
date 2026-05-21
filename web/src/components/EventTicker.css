@@ -26,11 +26,7 @@
 }
 
 .event-ticker__rail {
-  display: flex;
-  align-items: center;
-  gap: 28px;
-  white-space: nowrap;
-  animation: event-scroll 80s linear infinite;
+  position: relative;
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -50,6 +46,16 @@
     #000 calc(100% - 28px),
     transparent 100%
   );
+}
+
+.event-ticker__track {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  white-space: nowrap;
+  height: 100%;
+  width: max-content;
+  animation: event-scroll 80s linear infinite;
 }
 
 @keyframes event-scroll {
