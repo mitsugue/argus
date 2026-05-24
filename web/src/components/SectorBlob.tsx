@@ -25,6 +25,17 @@ const SPRING_K = 130;
 const SPRING_C = 12;
 const SPRING_M = 0.65;
 
+// Edge wobble physics. At rest the outline holds a subtle static shape
+// (DISP_BASE). When the viewBox moves or zooms, velocity kicks the
+// displacement up; when motion stops, the underdamped spring overshoots
+// and oscillates briefly before settling — bubbles in viscous liquid.
+const DISP_BASE = 1.6;
+const DISP_KICK_MULT = 0.11;
+const DISP_KICK_MAX = 7;
+const DISP_K = 80;
+const DISP_C = 6;
+const DISP_M = 1.0;
+
 function findById(n: AnyNode, id: string): AnyNode | null {
   if ('id' in n && n.id === id) return n;
   const kids = (n as AssetNode).children;
@@ -89,7 +100,6 @@ export const SectorBlob: React.FC = () => {
   activeGestureRef.current = activeGesture;
 
   const svgRef = useRef<SVGSVGElement>(null);
-  const turbRef = useRef<SVGFETurbulenceElement>(null);
   const dispRef = useRef<SVGFEDisplacementMapElement>(null);
   const pinchRef = useRef<{
     startDist: number;
@@ -111,41 +121,23 @@ export const SectorBlob: React.FC = () => {
     return () => clearInterval(t);
   }, []);
 
-  // Continuous filter morph: shift the noise frequency AND pulse the
-  // displacement amplitude. Mutates DOM directly — no React re-renders.
-  // This keeps the bubble outlines alive during pan/zoom/idle.
-  useEffect(() => {
-    let raf = 0;
-    const t0 = performance.now();
-    const tick = (now: number) => {
-      const t = (now - t0) / 1000;
-      const tn = turbRef.current;
-      if (tn) {
-        const fx = 0.022 + Math.sin(t * 0.65) * 0.011;
-        const fy = 0.025 + Math.cos(t * 0.48) * 0.010;
-        tn.setAttribute('baseFrequency', `${fx} ${fy}`);
-      }
-      const dn = dispRef.current;
-      if (dn) {
-        const s = 5.5 + Math.sin(t * 0.9) * 1.8; // "sloshing" pulse
-        dn.setAttribute('scale', `${s}`);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  // Spring loop: lives at 60fps. Snap to target during gestures (immediate
-  // tracking), spring toward target otherwise (gummy ぷるん settle).
-  // Writes the viewBox attribute directly — no React reconciliation churn.
+  // Single spring loop: drives the viewBox AND drives an inertia-based
+  // displacement amplitude. The outline does not animate at rest — it
+  // only deforms in response to viewBox motion (pan / zoom), then
+  // overshoots and settles via underdamped spring. No setInterval / sine
+  // wave: this is real physics on real motion energy.
   useEffect(() => {
     let raf = 0;
     let last = performance.now();
     const live = { ...targetRef.current, vx: 0, vy: 0, vw: 0 };
-    const step = (val: number, vel: number, tgt: number, dt: number): [number, number] => {
+    let prevX = live.x;
+    let prevY = live.y;
+    let prevW = live.w;
+    let disp = DISP_BASE;
+    let dispVel = 0;
+    const step = (val: number, vel: number, tgt: number, dt: number, k: number, c: number, m: number): [number, number] => {
       const dx = val - tgt;
-      const a = (-SPRING_K * dx - SPRING_C * vel) / SPRING_M;
+      const a = (-k * dx - c * vel) / m;
       const nv = vel + a * dt;
       return [val + nv * dt, nv];
     };
@@ -159,10 +151,24 @@ export const SectorBlob: React.FC = () => {
         live.w = t.w;
         live.vx = live.vy = live.vw = 0;
       } else {
-        [live.x, live.vx] = step(live.x, live.vx, t.x, dt);
-        [live.y, live.vy] = step(live.y, live.vy, t.y, dt);
-        [live.w, live.vw] = step(live.w, live.vw, t.w, dt);
+        [live.x, live.vx] = step(live.x, live.vx, t.x, dt, SPRING_K, SPRING_C, SPRING_M);
+        [live.y, live.vy] = step(live.y, live.vy, t.y, dt, SPRING_K, SPRING_C, SPRING_M);
+        [live.w, live.vw] = step(live.w, live.vw, t.w, dt, SPRING_K, SPRING_C, SPRING_M);
       }
+      // Motion velocity in source units per second. Zoom (vw) gets a
+      // larger weight because a unit of zoom feels more dramatic than a
+      // unit of pan.
+      const vx = (live.x - prevX) / dt;
+      const vy = (live.y - prevY) / dt;
+      const vw = (live.w - prevW) / dt;
+      prevX = live.x;
+      prevY = live.y;
+      prevW = live.w;
+      const motionMag = Math.hypot(vx, vy) + Math.abs(vw) * 3;
+      const kick = Math.min(DISP_KICK_MAX, motionMag * DISP_KICK_MULT);
+      const dispTarget = DISP_BASE + kick;
+      [disp, dispVel] = step(disp, dispVel, dispTarget, dt, DISP_K, DISP_C, DISP_M);
+      dispRef.current?.setAttribute('scale', `${Math.max(0, disp)}`);
       svgRef.current?.setAttribute('viewBox', `${live.x} ${live.y} ${live.w} ${live.w}`);
       raf = requestAnimationFrame(tick);
     };
@@ -473,9 +479,8 @@ export const SectorBlob: React.FC = () => {
               result="m"
             />
             <feTurbulence
-              ref={turbRef}
               type="fractalNoise"
-              baseFrequency="0.022 0.025"
+              baseFrequency="0.026 0.028"
               numOctaves="2"
               seed="7"
               result="t"
@@ -484,7 +489,7 @@ export const SectorBlob: React.FC = () => {
               ref={dispRef}
               in="m"
               in2="t"
-              scale="5.5"
+              scale={DISP_BASE}
               xChannelSelector="R"
               yChannelSelector="G"
             />
