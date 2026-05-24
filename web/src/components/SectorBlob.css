@@ -1,0 +1,42 @@
+.blob {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Light, clean blue gradient — reference-image inspired */
+  background:
+    radial-gradient(ellipse at 30% 25%, rgba(255, 255, 255, 0.7) 0%, transparent 55%),
+    linear-gradient(180deg, #b6cfe0 0%, #d2e0ea 50%, #e6e4dd 100%);
+  overflow: hidden;
+}
+
+.blob__svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Back button when drilled into a sub-tree */
+.blob__back {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 5;
+  padding: 6px 12px;
+  font-family: var(--hud-font-display);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #1a3a5a;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(40, 80, 120, 0.3);
+  border-radius: 2px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: background 0.15s var(--hud-ease), border-color 0.15s var(--hud-ease);
+}
+.blob__back:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(40, 80, 120, 0.6);
+}

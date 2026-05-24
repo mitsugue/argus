@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { HudFrame } from './components/HudFrame';
-import { SectorBubbles } from './components/SectorBubbles';
+import { SectorBlob } from './components/SectorBlob';
 import { PredictionTracker } from './components/PredictionTracker';
 import { StickyNotes } from './components/StickyNotes';
-import { TickerStrip } from './components/TickerStrip';
-import { EventTicker } from './components/EventTicker';
 import { NewsStream } from './components/NewsStream';
 import { HotspotRanking } from './components/HotspotRanking';
 import { CalibrationTracker } from './components/CalibrationTracker';
@@ -15,20 +13,18 @@ import { useNewsStream } from './hooks/useNewsStream';
 import './styles/layout.css';
 
 const App: React.FC = () => {
-  // Mock pillar data still drives news + hotspots until backend lands.
   const { pillars, selectedId, select } = usePillars();
   const { events } = useNewsStream(pillars);
 
-  // Which tab is open as an overlay (null = bubbles only).
   const [openTab, setOpenTab] = useState<TabKey | null>(null);
   const toggleTab = (key: TabKey) =>
     setOpenTab((prev) => (prev === key ? null : key));
   const closeTab = () => setOpenTab(null);
 
   return (
-    <HudFrame top={<TickerStrip />} bottom={<EventTicker />}>
-      {/* Hierarchical asset-class bubbles (R3F + d3-pack + glass material) */}
-      <SectorBubbles />
+    <HudFrame>
+      {/* The whole world's money as one organic blob cluster. */}
+      <SectorBlob />
 
       <TabRail active={openTab} onToggle={toggleTab} />
 

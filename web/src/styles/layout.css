@@ -28,7 +28,7 @@
 }
 
 .hud-frame__logo {
-  color: var(--hud-cyan);
+  color: var(--shell-text);
   font-family: var(--hud-font-brand);
   font-weight: 700;
   font-size: 17px;
@@ -37,12 +37,13 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  text-shadow: 0 0 8px rgba(0, 243, 255, 0.35);
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.65);
 }
 
 .hud-frame__glyph {
-  filter: drop-shadow(0 0 4px rgba(0, 243, 255, 0.55));
+  filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.6));
   flex-shrink: 0;
+  color: var(--shell-accent);
 }
 
 .hud-frame__ver {
@@ -72,14 +73,14 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--hud-cyan);
-  box-shadow: 0 0 6px var(--hud-cyan);
+  background: var(--shell-accent);
+  box-shadow: 0 0 4px rgba(44, 122, 184, 0.45);
   display: inline-block;
 }
 
 .hud-frame__clock {
   font-family: var(--hud-font-display);
-  color: var(--hud-cyan);
+  color: var(--shell-text);
   font-size: 13px;
   letter-spacing: 2px;
   min-width: 100px;

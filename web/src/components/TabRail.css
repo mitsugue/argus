@@ -8,11 +8,12 @@
   flex-direction: column;
   gap: 6px;
   padding: 4px;
-  background: rgba(14, 20, 30, 0.7);
-  border: 1px solid rgba(160, 180, 210, 0.3);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--shell-border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(40, 80, 120, 0.18);
 }
 
 .tab-rail__btn {
@@ -25,7 +26,7 @@
   height: 44px;
   background: transparent;
   border: 1px solid transparent;
-  color: var(--hud-text-dim);
+  color: var(--shell-text-dim);
   font-family: var(--hud-font-display);
   letter-spacing: 1px;
   cursor: pointer;
@@ -34,16 +35,16 @@
 }
 
 .tab-rail__btn:hover {
-  background: rgba(0, 243, 255, 0.06);
-  border-color: rgba(0, 243, 255, 0.25);
-  color: var(--hud-cyan);
+  background: rgba(44, 122, 184, 0.08);
+  border-color: rgba(44, 122, 184, 0.35);
+  color: var(--shell-accent);
 }
 
 .tab-rail__btn.is-active {
-  background: rgba(0, 243, 255, 0.12);
-  border-color: var(--hud-cyan);
-  color: var(--hud-cyan);
-  box-shadow: 0 0 6px rgba(0, 243, 255, 0.25);
+  background: rgba(44, 122, 184, 0.14);
+  border-color: var(--shell-accent);
+  color: var(--shell-accent);
+  box-shadow: 0 0 6px rgba(44, 122, 184, 0.28);
 }
 
 .tab-rail__glyph {

@@ -10,48 +10,25 @@ export function seedAssets(): AssetTree {
     id: 'root',
     value: 0,
     children: [
-      {
-        id: 'cash',
-        label: 'CASH',
-        value: 18.5,
-        themeTag: 'GLOBAL_M2',
-      },
-      {
-        id: 'bond',
-        label: 'BOND',
-        value: 26.0,
-        themeTag: 'YIELD_PEAK',
-      },
+      { id: 'cash',  label: 'CASH',  value: 18.5, themeTag: 'GLOBAL_M2',  heat: 0.05 },
+      { id: 'bond',  label: 'BOND',  value: 26.0, themeTag: 'YIELD_PEAK', heat: -0.12 },
       {
         id: 'stock',
         label: 'STOCK',
-        value: 0, // sum of children
+        value: 0,
+        heat: 0.22,
         children: [
-          { id: 'it-semi', label: 'IT/SEMI', value: 14.2, themeTag: 'AI_INFRA' },
-          { id: 'bank',    label: 'BANK',    value: 7.8 },
-          { id: 'mfg',     label: 'MFG',     value: 9.1 },
-          { id: 'energy',  label: 'ENERGY',  value: 5.6 },
-          { id: 'health',  label: 'HEALTH',  value: 6.8 },
-          { id: 'consume', label: 'CONSUMER', value: 5.4 },
+          { id: 'it-semi', label: 'IT/SEMI', value: 14.2, themeTag: 'AI_INFRA', heat: 0.45 },
+          { id: 'bank',    label: 'BANK',    value: 7.8,  heat: 0.12 },
+          { id: 'mfg',     label: 'MFG',     value: 9.1,  heat: -0.08 },
+          { id: 'energy',  label: 'ENERGY',  value: 5.6,  heat: 0.32 },
+          { id: 'health',  label: 'HEALTH',  value: 6.8,  heat: -0.18 },
+          { id: 'consume', label: 'CONSUMER', value: 5.4, heat: -0.05 },
         ],
       },
-      {
-        id: 'reit',
-        label: 'REIT',
-        value: 4.2,
-      },
-      {
-        id: 'crypto',
-        label: 'CRYPTO',
-        value: 3.6,
-        alert: true,
-        themeTag: 'BTC_RUN',
-      },
-      {
-        id: 'fx',
-        label: 'FX',
-        value: 7.1,
-      },
+      { id: 'reit',   label: 'REIT',   value: 4.2, heat: -0.22 },
+      { id: 'crypto', label: 'CRYPTO', value: 3.6, alert: true, themeTag: 'BTC_RUN', heat: 0.58 },
+      { id: 'fx',     label: 'FX',     value: 7.1, heat: 0.02 },
     ],
   };
 }

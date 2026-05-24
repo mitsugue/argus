@@ -1,21 +1,32 @@
-/* A.R.G.U.S. HUD theme tokens */
+/* A.R.G.U.S. v8 theme tokens — light blue blob world + dark overlays */
 :root {
-  /* Palette */
-  --hud-bg: #000000;
-  --hud-bg-panel: rgba(0, 243, 255, 0.04);
-  --hud-bg-panel-strong: rgba(0, 243, 255, 0.07);
-  --hud-cyan: #00f3ff;
-  --hud-cyan-dim: rgba(0, 243, 255, 0.55);
-  --hud-cyan-faint: rgba(0, 243, 255, 0.22);
-  --hud-cyan-line: rgba(0, 243, 255, 0.35);
-  --hud-amber: #ffb700;
-  --hud-amber-dim: rgba(255, 183, 0, 0.6);
-  --hud-amber-faint: rgba(255, 183, 0, 0.18);
-  --hud-text: #d6f5f7;
-  --hud-text-dim: rgba(214, 245, 247, 0.65);
-  --hud-text-faint: rgba(214, 245, 247, 0.35);
-  --hud-danger: #ff3d57;
-  --hud-success: #4ec94e;
+  /* OUTER SHELL — light, clean, blends with the blob canvas */
+  --shell-bg: #d4dce5;
+  --shell-panel: rgba(255, 255, 255, 0.55);
+  --shell-panel-strong: rgba(255, 255, 255, 0.78);
+  --shell-text: #1a3a5a;
+  --shell-text-dim: rgba(26, 58, 90, 0.7);
+  --shell-text-faint: rgba(26, 58, 90, 0.45);
+  --shell-accent: #2c7ab8;
+  --shell-border: rgba(40, 80, 120, 0.28);
+
+  /* DARK HUD — retained for overlay panels (News / Calibration / etc.)
+     so they read with modal contrast against the light blob bg */
+  --hud-bg: #d4dce5; /* was #000 — frame body shows this around the blob */
+  --hud-bg-panel: rgba(255, 255, 255, 0.5);
+  --hud-bg-panel-strong: rgba(255, 255, 255, 0.78);
+  --hud-cyan: #2c7ab8;
+  --hud-cyan-dim: rgba(44, 122, 184, 0.6);
+  --hud-cyan-faint: rgba(44, 122, 184, 0.22);
+  --hud-cyan-line: rgba(44, 122, 184, 0.38);
+  --hud-amber: #c47828;
+  --hud-amber-dim: rgba(196, 120, 40, 0.6);
+  --hud-amber-faint: rgba(196, 120, 40, 0.2);
+  --hud-text: #1a3a5a;
+  --hud-text-dim: rgba(26, 58, 90, 0.65);
+  --hud-text-faint: rgba(26, 58, 90, 0.4);
+  --hud-danger: #c83a46;
+  --hud-success: #2c9a4a;
 
   /* Geometry */
   --hud-border: 1px solid var(--hud-cyan-line);
@@ -59,15 +70,6 @@ body,
 }
 
 body {
-  /* Subtle scan-line ambience, no gradients */
-  background-image:
-    repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent 3px,
-      rgba(0, 243, 255, 0.012) 3px,
-      rgba(0, 243, 255, 0.012) 4px
-    );
   user-select: none;
   -webkit-user-select: none;
 }

@@ -15,44 +15,47 @@
   bottom: 36px;
   z-index: 60;
   padding: 8px 14px;
-  border: 1px solid var(--hud-amber);
-  background: rgba(0, 0, 0, 0.65);
-  color: var(--hud-amber);
+  border: 1px solid rgba(196, 120, 40, 0.55);
+  background: rgba(255, 255, 255, 0.78);
+  color: #8a4e1c;
   font-size: 10px;
   letter-spacing: 3px;
   font-family: var(--hud-font-display);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
   transition: all 0.15s var(--hud-ease);
+  box-shadow: 0 4px 12px rgba(40, 80, 120, 0.15);
 }
 .sticky-fab:hover {
-  background: var(--hud-amber);
-  color: var(--hud-bg);
+  background: #c47828;
+  color: #fff;
+  border-color: #c47828;
 }
 
 .sticky {
   display: flex;
   flex-direction: column;
-  background: rgba(0, 8, 10, 0.7);
-  border: 1px solid var(--hud-cyan);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(44, 122, 184, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   overflow: hidden;
+  box-shadow: 0 6px 18px rgba(40, 80, 120, 0.15);
 }
-.sticky--amber { border-color: var(--hud-amber); }
+.sticky--amber { border-color: rgba(196, 120, 40, 0.5); }
 
 .sticky__head {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
-  border-bottom: 1px solid var(--hud-cyan-faint);
+  border-bottom: 1px solid rgba(44, 122, 184, 0.18);
   cursor: move;
-  background: rgba(0, 243, 255, 0.05);
+  background: rgba(44, 122, 184, 0.08);
   flex-shrink: 0;
 }
 .sticky--amber .sticky__head {
-  border-bottom-color: rgba(255, 183, 0, 0.3);
-  background: rgba(255, 183, 0, 0.05);
+  border-bottom-color: rgba(196, 120, 40, 0.22);
+  background: rgba(196, 120, 40, 0.08);
 }
 
 .sticky__tag {

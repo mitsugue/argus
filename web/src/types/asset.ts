@@ -18,6 +18,8 @@ export interface AssetNode {
   themeTag?: string;
   /** Whether this node is currently flagged as anomalous. */
   alert?: boolean;
+  /** Performance heat: -1..1 (red ↔ green). Tints the bubble. */
+  heat?: number;
   children?: AssetNode[];
 }
 
