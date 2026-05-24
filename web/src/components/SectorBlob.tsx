@@ -13,6 +13,7 @@ type PackNode = HierarchyCircularNode<AssetNode | AssetTree>;
 type AnyNode = AssetNode | AssetTree;
 
 const PACK = 100;
+const INITIAL_SCALE = 1.5; // start zoomed in so the mass dominates the viewport
 
 function findById(n: AnyNode, id: string): AnyNode | null {
   if ('id' in n && n.id === id) return n;
@@ -33,72 +34,105 @@ function packChildren(subtreeRoot: AnyNode): PackNode[] {
     })
     .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
 
-  const layout = pack<AnyNode>().size([PACK, PACK]).padding(1.1);
+  const layout = pack<AnyNode>().size([PACK, PACK]).padding(1.2);
   const laidOut = layout(root);
   return (laidOut.children ?? []) as PackNode[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Color — single deep-ocean tone, density varies by depth in the path
+// Color — single deep-ocean tone, density varies by depth
 // ─────────────────────────────────────────────────────────────────────────
 
 const BUBBLE_TONES = [
-  '#3a536d', // depth 1 — shallowest visible
+  '#3a536d', // depth 1
   '#2b425d', // depth 2
   '#21354e', // depth 3
   '#192a40', // depth 4
 ];
-const BUBBLE_ALERT = '#6a8aa0'; // moonlight pale — anomaly only
+const BUBBLE_ALERT = '#6a8aa0';
 
 function bubbleFill(depth: number): string {
   return BUBBLE_TONES[Math.min(depth - 1, BUBBLE_TONES.length - 1)] ?? BUBBLE_TONES[0];
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Gesture thresholds — relative to the scale at which the gesture started
+// ─────────────────────────────────────────────────────────────────────────
+
+const DRILL_RATIO = 1.55; // pinch out by ≥55% from start → drill in
+const POP_RATIO = 0.65;   // pinch in to ≤65% of start → pop back
+const MIN_SCALE = 0.45;
+const MAX_SCALE = 4.5;
+
+// ─────────────────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────────────────
 
-// Pinch / zoom thresholds — cross these on release and we drill / pop.
-const DRILL_SCALE = 1.55;
-const POP_SCALE = 0.7;
-const MIN_SCALE = 0.45;
-const MAX_SCALE = 3.2;
-
 export const SectorBlob: React.FC = () => {
   const [tree, setTree] = useState<AssetTree>(() => seedAssets());
-  // focusPath is the chain from root to the currently focused subtree.
-  // Always starts with 'root'. Tap a bubble → push its id. Back → pop.
   const [focusPath, setFocusPath] = useState<string[]>(['root']);
 
-  // Live pinch scale + origin in SVG coords (0..PACK). Used for both visual
-  // feedback during the gesture and to decide which bubble to drill into.
-  const [scale, setScale] = useState(1);
-  const [origin, setOrigin] = useState<{ x: number; y: number }>({ x: PACK / 2, y: PACK / 2 });
+  // Live transform — scale around `origin`, plus free `pan` translation
+  const [scale, setScale] = useState(INITIAL_SCALE);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [origin, setOrigin] = useState({ x: PACK / 2, y: PACK / 2 });
+  const [activeGesture, setActiveGesture] = useState<null | 'drag' | 'pinch'>(null);
+
   const svgRef = useRef<SVGSVGElement>(null);
+  const turbRef = useRef<SVGFETurbulenceElement>(null);
   const pinchRef = useRef<{
     startDist: number;
     startScale: number;
     clientCx: number;
     clientCy: number;
   } | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    startPan: { x: number; y: number };
+  } | null>(null);
 
-  // Breathe — perturb leaves every 2.4s. Slow enough to feel meditative.
+  // Breathe — perturb leaves slowly. Viscous tempo, not nervous.
   useEffect(() => {
-    const t = setInterval(() => setTree((p) => breatheAssets(p)), 2400);
+    const t = setInterval(() => setTree((p) => breatheAssets(p)), 3600);
     return () => clearInterval(t);
   }, []);
 
+  // Slow morph the displacement-map turbulence — keeps the edges alive.
+  // Mutate the DOM attribute directly so React isn't re-rendered at 60fps.
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      if (now - last > 60) {
+        last = now;
+        const node = turbRef.current;
+        if (node) {
+          const t = (now - t0) / 1000;
+          const fx = 0.022 + Math.sin(t * 0.23) * 0.006;
+          const fy = 0.024 + Math.cos(t * 0.19) * 0.005;
+          node.setAttribute('baseFrequency', `${fx} ${fy}`);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   // Resolve the currently focused subtree and its packed children
-  const { focused, nodes, depth } = useMemo(() => {
+  const { nodes, depth } = useMemo(() => {
     const currentId = focusPath[focusPath.length - 1];
     const focused = currentId === 'root' ? tree : (findById(tree, currentId) as AnyNode);
-    const nodes = packChildren(focused);
-    return { focused, nodes, depth: focusPath.length };
+    const packed = packChildren(focused);
+    return { nodes: packed, depth: focusPath.length };
   }, [tree, focusPath]);
 
-  // Reset zoom whenever the focus changes — start the next level at 1×.
+  // Reset to a clean view on any focus change.
   useEffect(() => {
-    setScale(1);
+    setScale(INITIAL_SCALE);
+    setPan({ x: 0, y: 0 });
     setOrigin({ x: PACK / 2, y: PACK / 2 });
   }, [focusPath]);
 
@@ -110,12 +144,11 @@ export const SectorBlob: React.FC = () => {
 
   const popBack = () => setFocusPath((p) => (p.length > 1 ? p.slice(0, -1) : p));
 
-  // ── Pinch / wheel — flexible zoom + drill gesture ───────────────────────
+  // ── Coordinate helpers ────────────────────────────────────────────────
   const clientToSvg = (clientX: number, clientY: number) => {
     const svg = svgRef.current;
     if (!svg) return { x: PACK / 2, y: PACK / 2 };
     const rect = svg.getBoundingClientRect();
-    // viewBox is square (0..PACK); preserveAspectRatio="meet" letterboxes.
     const side = Math.min(rect.width, rect.height);
     const offX = (rect.width - side) / 2;
     const offY = (rect.height - side) / 2;
@@ -126,7 +159,6 @@ export const SectorBlob: React.FC = () => {
   };
 
   const bubbleAt = (sx: number, sy: number): PackNode | null => {
-    // Pick the smallest (= deepest) containing bubble — feels right under finger.
     let best: PackNode | null = null;
     for (const n of nodes) {
       if (Math.hypot(sx - n.x, sy - n.y) <= n.r) {
@@ -136,33 +168,39 @@ export const SectorBlob: React.FC = () => {
     return best;
   };
 
-  const settleAfterGesture = (finalScale: number, svgCx: number, svgCy: number) => {
-    if (finalScale >= DRILL_SCALE) {
+  const settleAfterGesture = (
+    finalScale: number,
+    startScale: number,
+    svgCx: number,
+    svgCy: number
+  ) => {
+    const ratio = finalScale / startScale;
+    if (ratio >= DRILL_RATIO) {
       const hit = bubbleAt(svgCx, svgCy);
       const d = hit?.data as AssetNode | undefined;
       if (d?.children?.length) {
         setFocusPath((p) => [...p, d.id]);
         return;
       }
-    } else if (finalScale <= POP_SCALE && focusPath.length > 1) {
+    } else if (ratio <= POP_RATIO && focusPath.length > 1) {
       popBack();
-      return;
     }
-    // No threshold crossed → snap back smoothly.
-    setScale(1);
-    setOrigin({ x: PACK / 2, y: PACK / 2 });
+    // No threshold crossed → leave scale + pan where the user left them.
   };
 
+  // ── Pinch (2-finger touch) ────────────────────────────────────────────
   const handleTouchStart = (e: React.TouchEvent<SVGSVGElement>) => {
     if (e.touches.length === 2) {
+      // 2nd finger lands → cancel any in-progress single-finger drag
+      if (dragRef.current) dragRef.current = null;
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
       const clientCx = (t1.clientX + t2.clientX) / 2;
       const clientCy = (t1.clientY + t2.clientY) / 2;
       pinchRef.current = { startDist: dist, startScale: scale, clientCx, clientCy };
-      const svgPt = clientToSvg(clientCx, clientCy);
-      setOrigin(svgPt);
+      setOrigin(clientToSvg(clientCx, clientCy));
+      setActiveGesture('pinch');
     }
   };
 
@@ -179,33 +217,88 @@ export const SectorBlob: React.FC = () => {
   const handleTouchEnd = (e: React.TouchEvent<SVGSVGElement>) => {
     if (!pinchRef.current) return;
     if (e.touches.length < 2) {
-      const { clientCx, clientCy } = pinchRef.current;
+      const { clientCx, clientCy, startScale } = pinchRef.current;
       const svgPt = clientToSvg(clientCx, clientCy);
       const finalScale = scale;
       pinchRef.current = null;
-      settleAfterGesture(finalScale, svgPt.x, svgPt.y);
+      setActiveGesture(null);
+      settleAfterGesture(finalScale, startScale, svgPt.x, svgPt.y);
     }
   };
 
-  // Trackpad pinch (and ctrl+wheel) on desktop. Threshold-on-release uses a
-  // short idle timer so we don't drill mid-pinch.
+  // ── Drag pan (single pointer) ─────────────────────────────────────────
+  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (pinchRef.current) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPan: pan,
+    };
+    setActiveGesture('drag');
+    try {
+      (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* some browsers throw on already-captured */
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!dragRef.current || pinchRef.current) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const side = Math.min(rect.width, rect.height);
+    // svg units per screen pixel — pan is applied AFTER scale in the
+    // transform string, so 1 unit of pan = 1 viewBox unit visually, which
+    // is `side / PACK` pixels on screen at scale = 1, scaled by `scale` otherwise.
+    const f = PACK / side / scale;
+    const dx = (e.clientX - dragRef.current.startX) * f;
+    const dy = (e.clientY - dragRef.current.startY) * f;
+    setPan({
+      x: dragRef.current.startPan.x + dx,
+      y: dragRef.current.startPan.y + dy,
+    });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setActiveGesture(null);
+    try {
+      (e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // ── Wheel — trackpad pinch / ctrl-wheel zoom ──────────────────────────
+  const wheelSessionRef = useRef<{ startScale: number; lastAt: number } | null>(null);
   const wheelSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
     if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
+    const now = performance.now();
+    if (!wheelSessionRef.current || now - wheelSessionRef.current.lastAt > 400) {
+      wheelSessionRef.current = { startScale: scale, lastAt: now };
+    } else {
+      wheelSessionRef.current.lastAt = now;
+    }
     const svgPt = clientToSvg(e.clientX, e.clientY);
     setOrigin(svgPt);
     setScale((s) => {
-      const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s - e.deltaY * 0.01));
+      const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s - e.deltaY * 0.005));
       if (wheelSettleRef.current) clearTimeout(wheelSettleRef.current);
       wheelSettleRef.current = setTimeout(() => {
-        settleAfterGesture(next, svgPt.x, svgPt.y);
-      }, 220);
+        const startScale = wheelSessionRef.current?.startScale ?? next;
+        wheelSessionRef.current = null;
+        settleAfterGesture(next, startScale, svgPt.x, svgPt.y);
+      }, 260);
       return next;
     });
   };
 
-  // Build the breadcrumb labels lazily — walk focusPath and resolve each
+  // ── Breadcrumb ────────────────────────────────────────────────────────
   const crumbs = useMemo(() => {
     const out: { id: string; label: string }[] = [{ id: 'root', label: 'WORLD' }];
     let cur: AnyNode = tree;
@@ -217,6 +310,11 @@ export const SectorBlob: React.FC = () => {
     }
     return out;
   }, [tree, focusPath]);
+
+  // Compose translate + scale-around-origin + pan in viewBox units.
+  // Pan is applied OUTSIDE the scale so it tracks the finger 1:1 after we
+  // divide by `scale` in pointermove.
+  const wrapperTransform = `translate(${pan.x} ${pan.y}) translate(${origin.x} ${origin.y}) scale(${scale}) translate(${-origin.x} ${-origin.y})`;
 
   return (
     <section className="blob">
@@ -230,15 +328,23 @@ export const SectorBlob: React.FC = () => {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onWheel={handleWheel}
-        style={{ touchAction: 'none' }}
+        style={{
+          touchAction: 'none',
+          cursor: activeGesture === 'drag' ? 'grabbing' : 'grab',
+        }}
       >
         <defs>
-          {/* Metaball filter — soft Gaussian blur + alpha threshold.
-              Adjacent bubbles fuse into one organic mass; the threshold
-              keeps each bubble's edge crisp where it's alone. */}
-          <filter id="meta" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="2.2" result="b" />
+          {/* Metaball + organic edge:
+              1) Blur source → 2) alpha threshold so circles fuse into one mass
+              3) Slow-morphing fractal-noise turbulence
+              4) Displace step (2) by step (3) → wobbly, viscous-bubble outline. */}
+          <filter id="meta" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="2.6" result="b" />
             <feColorMatrix
               in="b"
               type="matrix"
@@ -246,91 +352,108 @@ export const SectorBlob: React.FC = () => {
                 1 0 0 0  0
                 0 1 0 0  0
                 0 0 1 0  0
-                0 0 0 18 -8"
+                0 0 0 22 -10"
+              result="m"
+            />
+            <feTurbulence
+              ref={turbRef}
+              type="fractalNoise"
+              baseFrequency="0.022 0.024"
+              numOctaves="2"
+              seed="7"
+              result="t"
+            />
+            <feDisplacementMap
+              in="m"
+              in2="t"
+              scale="6"
+              xChannelSelector="R"
+              yChannelSelector="G"
             />
           </filter>
         </defs>
 
-        {/* Zoom wrapper — scaled about pinch center for live gesture feedback.
-            Built via SVG transform attribute so it nests cleanly with the
-            metaball filter and framer-motion circle animations. */}
+        {/* Pan/zoom wrapper — instant tracking during a gesture, springy
+            settling otherwise (ぷるん). */}
         <g
-          transform={`translate(${origin.x} ${origin.y}) scale(${scale}) translate(${-origin.x} ${-origin.y})`}
+          transform={wrapperTransform}
           style={{
-            transition: pinchRef.current ? 'none' : 'transform 0.45s var(--hud-ease, ease-out)',
+            transition: activeGesture
+              ? 'none'
+              : 'transform 0.55s cubic-bezier(0.34, 1.4, 0.5, 1)',
           }}
         >
+          {/* Fused bubble layer */}
+          <g filter="url(#meta)">
+            <AnimatePresence mode="popLayout">
+              {nodes.map((n) => {
+                const d = n.data as AssetNode;
+                const fill = d.alert ? BUBBLE_ALERT : bubbleFill(depth);
+                return (
+                  <motion.circle
+                    key={focusPath.join('/') + ':' + d.id}
+                    initial={{ cx: PACK / 2, cy: PACK / 2, r: 0, opacity: 0 }}
+                    animate={{ cx: n.x, cy: n.y, r: n.r, opacity: 1 }}
+                    exit={{ r: 0, opacity: 0 }}
+                    transition={{
+                      // Jelly spring — under-damped so the mass jiggles when
+                      // it lands. Higher mass = slower, gummier settling.
+                      type: 'spring',
+                      stiffness: 55,
+                      damping: 10,
+                      mass: 1.4,
+                    }}
+                    fill={fill}
+                  />
+                );
+              })}
+            </AnimatePresence>
+          </g>
 
-        {/* Fused bubble layer — flat matte fill, no gradient / no highlight */}
-        <g filter="url(#meta)">
-          <AnimatePresence mode="popLayout">
+          {/* Crisp overlay — labels + invisible hit targets. */}
+          <AnimatePresence>
             {nodes.map((n) => {
               const d = n.data as AssetNode;
-              const fill = d.alert ? BUBBLE_ALERT : bubbleFill(depth);
+              const showLabel = n.r > 7;
+              const labelSize = Math.max(2.2, Math.min(4.5, n.r * 0.3));
               return (
-                <motion.circle
-                  key={focusPath.join('/') + ':' + d.id}
-                  initial={{ cx: PACK / 2, cy: PACK / 2, r: 0, opacity: 0 }}
-                  animate={{ cx: n.x, cy: n.y, r: n.r, opacity: 1 }}
-                  exit={{ r: 0, opacity: 0 }}
-                  transition={{
-                    type: 'spring',
-                    stiffness: 60,
-                    damping: 18,
-                  }}
-                  fill={fill}
-                />
+                <motion.g
+                  key={focusPath.join('/') + ':o:' + d.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.55 }}
+                  onClick={() => handleClick(d)}
+                  style={{ cursor: d.children?.length ? 'pointer' : 'default' }}
+                >
+                  <motion.circle
+                    animate={{ cx: n.x, cy: n.y, r: n.r }}
+                    transition={{ type: 'spring', stiffness: 55, damping: 10, mass: 1.4 }}
+                    fill="rgba(0,0,0,0)"
+                  />
+                  {showLabel && (
+                    <text
+                      x={n.x}
+                      y={n.y}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize={labelSize}
+                      fontFamily="'JetBrains Mono', monospace"
+                      fontWeight={500}
+                      fill="rgba(220, 228, 236, 0.88)"
+                      style={{ letterSpacing: '0.14em', pointerEvents: 'none' }}
+                    >
+                      {d.label}
+                    </text>
+                  )}
+                </motion.g>
               );
             })}
           </AnimatePresence>
         </g>
-
-        {/* Crisp overlay — minimal labels + click hit-targets.
-            NOT under the metaball filter so text stays sharp. */}
-        <AnimatePresence>
-          {nodes.map((n) => {
-            const d = n.data as AssetNode;
-            const showLabel = n.r > 7;
-            const labelSize = Math.max(2.2, Math.min(4.5, n.r * 0.3));
-            return (
-              <motion.g
-                key={focusPath.join('/') + ':o:' + d.id}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.45 }}
-                onClick={() => handleClick(d)}
-                style={{ cursor: d.children?.length ? 'pointer' : 'default' }}
-              >
-                {/* Invisible hit circle — generous tap target */}
-                <motion.circle
-                  animate={{ cx: n.x, cy: n.y, r: n.r }}
-                  transition={{ type: 'spring', stiffness: 60, damping: 18 }}
-                  fill="rgba(0,0,0,0)"
-                />
-                {showLabel && (
-                  <text
-                    x={n.x}
-                    y={n.y}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fontSize={labelSize}
-                    fontFamily="'JetBrains Mono', monospace"
-                    fontWeight={500}
-                    fill="rgba(220, 228, 236, 0.88)"
-                    style={{ letterSpacing: '0.14em', pointerEvents: 'none' }}
-                  >
-                    {d.label}
-                  </text>
-                )}
-              </motion.g>
-            );
-          })}
-        </AnimatePresence>
-        </g>
       </svg>
 
-      {/* Breadcrumb — only the back affordance; depth shown as dots */}
+      {/* Breadcrumb */}
       <nav className="blob__crumbs" aria-label="depth path">
         {crumbs.map((c, i) => (
           <React.Fragment key={c.id}>
