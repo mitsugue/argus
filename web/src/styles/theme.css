@@ -1,32 +1,38 @@
-/* A.R.G.U.S. v8 theme tokens — light blue blob world + dark overlays */
+/* A.R.G.U.S. v9 theme tokens — deep-ocean monochrome */
 :root {
-  /* OUTER SHELL — light, clean, blends with the blob canvas */
-  --shell-bg: #d4dce5;
-  --shell-panel: rgba(255, 255, 255, 0.55);
-  --shell-panel-strong: rgba(255, 255, 255, 0.78);
-  --shell-text: #1a3a5a;
-  --shell-text-dim: rgba(26, 58, 90, 0.7);
-  --shell-text-faint: rgba(26, 58, 90, 0.45);
-  --shell-accent: #2c7ab8;
-  --shell-border: rgba(40, 80, 120, 0.28);
+  /* World canvas — the dark sea the bubbles live in */
+  --shell-bg: #0a1420;
+  --shell-panel: rgba(20, 32, 50, 0.6);
+  --shell-panel-strong: rgba(20, 32, 50, 0.82);
+  --shell-text: rgba(214, 222, 230, 0.85);
+  --shell-text-dim: rgba(214, 222, 230, 0.55);
+  --shell-text-faint: rgba(214, 222, 230, 0.32);
+  --shell-accent: #6a8aa0;
+  --shell-border: rgba(106, 138, 160, 0.28);
 
-  /* DARK HUD — retained for overlay panels (News / Calibration / etc.)
-     so they read with modal contrast against the light blob bg */
-  --hud-bg: #d4dce5; /* was #000 — frame body shows this around the blob */
-  --hud-bg-panel: rgba(255, 255, 255, 0.5);
-  --hud-bg-panel-strong: rgba(255, 255, 255, 0.78);
-  --hud-cyan: #2c7ab8;
-  --hud-cyan-dim: rgba(44, 122, 184, 0.6);
-  --hud-cyan-faint: rgba(44, 122, 184, 0.22);
-  --hud-cyan-line: rgba(44, 122, 184, 0.38);
-  --hud-amber: #c47828;
-  --hud-amber-dim: rgba(196, 120, 40, 0.6);
-  --hud-amber-faint: rgba(196, 120, 40, 0.2);
-  --hud-text: #1a3a5a;
-  --hud-text-dim: rgba(26, 58, 90, 0.65);
-  --hud-text-faint: rgba(26, 58, 90, 0.4);
-  --hud-danger: #c83a46;
-  --hud-success: #2c9a4a;
+  /* Bubble palette (consumed by SectorBlob) */
+  --bubble-shallow: #2f4660;
+  --bubble-mid: #213450;
+  --bubble-deep: #142235;
+  --bubble-accent: #6a8aa0;
+
+  /* Existing --hud-* tokens kept for overlay panels (News / Calibration
+     / etc.) which already live as dark glass-morphism modals. */
+  --hud-bg: #0a1420;
+  --hud-bg-panel: rgba(20, 32, 50, 0.45);
+  --hud-bg-panel-strong: rgba(20, 32, 50, 0.78);
+  --hud-cyan: #6a8aa0;
+  --hud-cyan-dim: rgba(106, 138, 160, 0.6);
+  --hud-cyan-faint: rgba(106, 138, 160, 0.22);
+  --hud-cyan-line: rgba(106, 138, 160, 0.32);
+  --hud-amber: #8a5e3a;
+  --hud-amber-dim: rgba(138, 94, 58, 0.6);
+  --hud-amber-faint: rgba(138, 94, 58, 0.22);
+  --hud-text: rgba(214, 222, 230, 0.88);
+  --hud-text-dim: rgba(214, 222, 230, 0.55);
+  --hud-text-faint: rgba(214, 222, 230, 0.32);
+  --hud-danger: #8a3a3a;
+  --hud-success: #4a7a5a;
 
   /* Geometry */
   --hud-border: 1px solid var(--hud-cyan-line);

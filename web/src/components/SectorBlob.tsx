@@ -6,233 +6,186 @@ import { breatheAssets, seedAssets } from '../mock/assets';
 import './SectorBlob.css';
 
 // ─────────────────────────────────────────────────────────────────────────
-// Layout helpers
+// Layout — d3.pack on the focused subtree
 // ─────────────────────────────────────────────────────────────────────────
 
 type PackNode = HierarchyCircularNode<AssetNode | AssetTree>;
+type AnyNode = AssetNode | AssetTree;
 
-const PACK_W = 100;
-const PACK_H = 100;
+const PACK = 100;
 
-/**
- * Run d3.pack over the subtree rooted at `focusId` (or the global tree if
- * focus is null). Returns the leaf-level packed circles ready to render.
- */
-function computePack(
-  tree: AssetTree | AssetNode,
-  focusId: string | null,
-): { nodes: PackNode[]; root: PackNode | null } {
-  // Resolve focus subtree
-  let subtreeRoot: AssetTree | AssetNode = tree;
-  if (focusId) {
-    const find = (n: AssetTree | AssetNode): AssetNode | null => {
-      if ('id' in n && n.id === focusId) return n as AssetNode;
-      const kids = (n as AssetNode).children;
-      if (!kids) return null;
-      for (const k of kids) {
-        const hit = find(k);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    const focused = find(tree);
-    if (focused) subtreeRoot = focused;
+function findById(n: AnyNode, id: string): AnyNode | null {
+  if ('id' in n && n.id === id) return n;
+  const kids = (n as AssetNode).children;
+  if (!kids) return null;
+  for (const k of kids) {
+    const hit = findById(k, id);
+    if (hit) return hit;
   }
+  return null;
+}
 
-  const root = hierarchy<AssetNode | AssetTree>(subtreeRoot)
+function packChildren(subtreeRoot: AnyNode): PackNode[] {
+  const root = hierarchy<AnyNode>(subtreeRoot)
     .sum((d) => {
-      // Sum at leaves only (parents inherit). For focused subtree, even the
-      // root has its own children's value.
-      if ('children' in d && d.children && d.children.length) return 0;
-      return d.value;
+      const c = (d as AssetNode).children;
+      return c && c.length ? 0 : (d as AssetNode).value;
     })
     .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
 
-  const layout = pack<AssetNode | AssetTree>()
-    .size([PACK_W, PACK_H])
-    .padding((d) => (d.depth === 0 ? 1 : 2));
-
+  const layout = pack<AnyNode>().size([PACK, PACK]).padding(1.1);
   const laidOut = layout(root);
-
-  // We render the IMMEDIATE children of the displayed root as the bubble
-  // cluster — these are the visible asset classes (or sub-sectors when
-  // drilled in). After layout(), children gain x/y/r.
-  const nodes: PackNode[] = (laidOut.children ?? []) as PackNode[];
-  return { nodes, root: laidOut };
+  return (laidOut.children ?? []) as PackNode[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Color mapping — light-blue base, heat tints toward green / red
+// Color — single deep-ocean tone, density varies by depth in the path
 // ─────────────────────────────────────────────────────────────────────────
 
-const BLUE_DEEP = [70, 130, 175] as const;   // #4682af — base for the bubble core
-const GREEN_TINT = [80, 165, 100] as const;
-const RED_TINT = [200, 70, 70] as const;
+const BUBBLE_TONES = [
+  '#3a536d', // depth 1 — shallowest visible
+  '#2b425d', // depth 2
+  '#21354e', // depth 3
+  '#192a40', // depth 4
+];
+const BUBBLE_ALERT = '#6a8aa0'; // moonlight pale — anomaly only
 
-function mix(a: readonly number[], b: readonly number[], t: number): string {
-  const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
-  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
-}
-
-function bubbleColor(node: AssetNode): { core: string; rim: string; glow: string } {
-  const heat = Math.max(-1, Math.min(1, node.heat ?? 0));
-  let core: string;
-  let glow: string;
-  if (heat >= 0) {
-    core = mix(BLUE_DEEP, GREEN_TINT, heat * 0.6);
-    glow = mix([180, 215, 235], GREEN_TINT, heat * 0.4);
-  } else {
-    core = mix(BLUE_DEEP, RED_TINT, -heat * 0.6);
-    glow = mix([180, 215, 235], RED_TINT, -heat * 0.4);
-  }
-  const rim = node.alert ? 'rgba(200, 60, 70, 0.85)' : 'rgba(40, 80, 120, 0.4)';
-  return { core, rim, glow };
+function bubbleFill(depth: number): string {
+  return BUBBLE_TONES[Math.min(depth - 1, BUBBLE_TONES.length - 1)] ?? BUBBLE_TONES[0];
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Main blob cluster
+// Main component
 // ─────────────────────────────────────────────────────────────────────────
 
 export const SectorBlob: React.FC = () => {
   const [tree, setTree] = useState<AssetTree>(() => seedAssets());
-  const [focusId, setFocusId] = useState<string | null>(null);
+  // focusPath is the chain from root to the currently focused subtree.
+  // Always starts with 'root'. Tap a bubble → push its id. Back → pop.
+  const [focusPath, setFocusPath] = useState<string[]>(['root']);
 
-  // Breathe — perturb leaves every 2 s
+  // Breathe — perturb leaves every 2.4s. Slow enough to feel meditative.
   useEffect(() => {
-    const t = setInterval(() => setTree((p) => breatheAssets(p)), 2000);
+    const t = setInterval(() => setTree((p) => breatheAssets(p)), 2400);
     return () => clearInterval(t);
   }, []);
 
-  const { nodes } = useMemo(() => computePack(tree, focusId), [tree, focusId]);
+  // Resolve the currently focused subtree and its packed children
+  const { focused, nodes, depth } = useMemo(() => {
+    const currentId = focusPath[focusPath.length - 1];
+    const focused = currentId === 'root' ? tree : (findById(tree, currentId) as AnyNode);
+    const nodes = packChildren(focused);
+    return { focused, nodes, depth: focusPath.length };
+  }, [tree, focusPath]);
 
-  // Find focused node for back-button label
-  const focusedNode = useMemo<AssetNode | null>(() => {
-    if (!focusId) return null;
-    const walk = (n: AssetTree | AssetNode): AssetNode | null => {
-      if ('id' in n && n.id === focusId) return n as AssetNode;
-      const kids = (n as AssetNode).children;
-      if (!kids) return null;
-      for (const k of kids) {
-        const h = walk(k);
-        if (h) return h;
-      }
-      return null;
-    };
-    return walk(tree);
-  }, [focusId, tree]);
-
-  const handleBubbleClick = (n: AssetNode) => {
+  const handleClick = (n: AssetNode) => {
     if (n.children && n.children.length > 0) {
-      setFocusId(n.id);
+      setFocusPath((p) => [...p, n.id]);
     }
   };
+
+  const popBack = () => setFocusPath((p) => (p.length > 1 ? p.slice(0, -1) : p));
+
+  // Build the breadcrumb labels lazily — walk focusPath and resolve each
+  const crumbs = useMemo(() => {
+    const out: { id: string; label: string }[] = [{ id: 'root', label: 'WORLD' }];
+    let cur: AnyNode = tree;
+    for (let i = 1; i < focusPath.length; i++) {
+      const next = findById(cur, focusPath[i]) as AssetNode | null;
+      if (!next) break;
+      out.push({ id: next.id, label: next.label });
+      cur = next;
+    }
+    return out;
+  }, [tree, focusPath]);
 
   return (
     <section className="blob">
       <svg
         className="blob__svg"
-        viewBox={`0 0 ${PACK_W} ${PACK_H}`}
+        viewBox={`0 0 ${PACK} ${PACK}`}
         preserveAspectRatio="xMidYMid meet"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          {/* Metaball filter — high blur + alpha threshold so adjacent
-              circles fuse into one organic shape with smooth necks. */}
-          <filter id="metaball" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="1.6" result="blur" />
+          {/* Metaball filter — soft Gaussian blur + alpha threshold.
+              Adjacent bubbles fuse into one organic mass; the threshold
+              keeps each bubble's edge crisp where it's alone. */}
+          <filter id="meta" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="2.2" result="b" />
             <feColorMatrix
-              in="blur"
+              in="b"
               type="matrix"
               values="
                 1 0 0 0  0
                 0 1 0 0  0
                 0 0 1 0  0
-                0 0 0 22 -10"
-              result="goo"
+                0 0 0 18 -8"
             />
-            <feComposite in="SourceGraphic" in2="goo" operator="atop" />
           </filter>
-
-          {/* Per-bubble radial gradients are generated inline below.
-              We also pre-declare a generic highlight gradient. */}
-          <radialGradient id="bubble-highlight" cx="35%" cy="30%" r="50%">
-            <stop offset="0%" stopColor="rgba(255, 255, 255, 0.6)" />
-            <stop offset="60%" stopColor="rgba(255, 255, 255, 0)" />
-          </radialGradient>
         </defs>
 
-        {/* Fused blob layer — metaball-filtered circles produce the soft
-            connecting necks between adjacent bubbles, like the reference. */}
-        <g filter="url(#metaball)">
-          <AnimatePresence>
+        {/* Fused bubble layer — flat matte fill, no gradient / no highlight */}
+        <g filter="url(#meta)">
+          <AnimatePresence mode="popLayout">
             {nodes.map((n) => {
               const d = n.data as AssetNode;
-              const c = bubbleColor(d);
+              const fill = d.alert ? BUBBLE_ALERT : bubbleFill(depth);
               return (
                 <motion.circle
-                  key={d.id}
-                  initial={{ cx: PACK_W / 2, cy: PACK_H / 2, r: 0 }}
-                  animate={{ cx: n.x, cy: n.y, r: n.r }}
+                  key={focusPath.join('/') + ':' + d.id}
+                  initial={{ cx: PACK / 2, cy: PACK / 2, r: 0, opacity: 0 }}
+                  animate={{ cx: n.x, cy: n.y, r: n.r, opacity: 1 }}
                   exit={{ r: 0, opacity: 0 }}
-                  transition={{ type: 'spring', stiffness: 70, damping: 16 }}
-                  fill={c.core}
+                  transition={{
+                    type: 'spring',
+                    stiffness: 60,
+                    damping: 18,
+                  }}
+                  fill={fill}
                 />
               );
             })}
           </AnimatePresence>
         </g>
 
-        {/* Highlight + label overlay (sharp, NOT going through the metaball
-            filter) — preserves crisp text and the glassy specular spot. */}
+        {/* Crisp overlay — minimal labels + click hit-targets.
+            NOT under the metaball filter so text stays sharp. */}
         <AnimatePresence>
           {nodes.map((n) => {
             const d = n.data as AssetNode;
-            const c = bubbleColor(d);
-            const showLabel = n.r > 6;
+            const showLabel = n.r > 7;
+            const labelSize = Math.max(2.2, Math.min(4.5, n.r * 0.3));
             return (
               <motion.g
-                key={d.id + ':overlay'}
+                key={focusPath.join('/') + ':o:' + d.id}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.4 }}
-                onClick={() => handleBubbleClick(d)}
+                transition={{ duration: 0.45 }}
+                onClick={() => handleClick(d)}
                 style={{ cursor: d.children?.length ? 'pointer' : 'default' }}
               >
-                <motion.ellipse
-                  animate={{ cx: n.x - n.r * 0.25, cy: n.y - n.r * 0.35, rx: n.r * 0.45, ry: n.r * 0.28 }}
-                  transition={{ type: 'spring', stiffness: 70, damping: 16 }}
-                  fill="url(#bubble-highlight)"
-                  pointerEvents="none"
+                {/* Invisible hit circle — generous tap target */}
+                <motion.circle
+                  animate={{ cx: n.x, cy: n.y, r: n.r }}
+                  transition={{ type: 'spring', stiffness: 60, damping: 18 }}
+                  fill="rgba(0,0,0,0)"
                 />
-                {d.alert && (
-                  <motion.circle
-                    animate={{ cx: n.x, cy: n.y, r: n.r * 0.98 }}
-                    transition={{ type: 'spring', stiffness: 70, damping: 16 }}
-                    fill="none"
-                    stroke={c.rim}
-                    strokeWidth={0.4}
-                    pointerEvents="none"
-                  />
-                )}
                 {showLabel && (
-                  <motion.text
-                    animate={{ x: n.x, y: n.y + 0.6 }}
-                    transition={{ type: 'spring', stiffness: 70, damping: 16 }}
+                  <text
+                    x={n.x}
+                    y={n.y}
                     textAnchor="middle"
                     dominantBaseline="middle"
-                    fontSize={Math.max(2.2, Math.min(5.5, n.r * 0.38))}
+                    fontSize={labelSize}
                     fontFamily="'JetBrains Mono', monospace"
-                    fontWeight={600}
-                    fill="rgba(255, 255, 255, 0.95)"
-                    style={{
-                      letterSpacing: '0.1em',
-                      pointerEvents: 'none',
-                      textShadow: '0 1px 2px rgba(20, 50, 80, 0.4)',
-                    }}
+                    fontWeight={500}
+                    fill="rgba(220, 228, 236, 0.88)"
+                    style={{ letterSpacing: '0.14em', pointerEvents: 'none' }}
                   >
                     {d.label}
-                  </motion.text>
+                  </text>
                 )}
               </motion.g>
             );
@@ -240,9 +193,25 @@ export const SectorBlob: React.FC = () => {
         </AnimatePresence>
       </svg>
 
-      {focusedNode && (
-        <button className="blob__back" onClick={() => setFocusId(null)} aria-label="back to global view">
-          ← {focusedNode.label}
+      {/* Breadcrumb — only the back affordance; depth shown as dots */}
+      <nav className="blob__crumbs" aria-label="depth path">
+        {crumbs.map((c, i) => (
+          <React.Fragment key={c.id}>
+            <button
+              className={`blob__crumb${i === crumbs.length - 1 ? ' is-current' : ''}`}
+              onClick={() => setFocusPath(focusPath.slice(0, i + 1))}
+              disabled={i === crumbs.length - 1}
+            >
+              {c.label}
+            </button>
+            {i < crumbs.length - 1 && <span className="blob__crumb-sep">/</span>}
+          </React.Fragment>
+        ))}
+      </nav>
+
+      {focusPath.length > 1 && (
+        <button className="blob__back" onClick={popBack} aria-label="step back">
+          ←
         </button>
       )}
     </section>

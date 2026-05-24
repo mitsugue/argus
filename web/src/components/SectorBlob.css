@@ -4,11 +4,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Light, clean blue gradient — reference-image inspired */
-  background:
-    radial-gradient(ellipse at 30% 25%, rgba(255, 255, 255, 0.7) 0%, transparent 55%),
-    linear-gradient(180deg, #b6cfe0 0%, #d2e0ea 50%, #e6e4dd 100%);
   overflow: hidden;
+  /* Deep ocean — pure dark, no gradient */
+  background: #0a1420;
 }
 
 .blob__svg {
@@ -17,26 +15,64 @@
   display: block;
 }
 
-/* Back button when drilled into a sub-tree */
+/* Breadcrumb across the top — minimalist depth path */
+.blob__crumbs {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--hud-font-display);
+  font-size: 9px;
+  letter-spacing: 2.5px;
+  z-index: 5;
+  pointer-events: auto;
+}
+
+.blob__crumb {
+  background: transparent;
+  border: none;
+  color: rgba(214, 222, 230, 0.45);
+  cursor: pointer;
+  padding: 4px 2px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  transition: color 0.2s var(--hud-ease);
+}
+.blob__crumb:hover:not(:disabled) {
+  color: rgba(214, 222, 230, 0.85);
+}
+.blob__crumb.is-current {
+  color: rgba(214, 222, 230, 0.85);
+  cursor: default;
+}
+
+.blob__crumb-sep {
+  color: rgba(214, 222, 230, 0.2);
+}
+
+/* Step-back chevron */
 .blob__back {
   position: absolute;
   top: 14px;
   left: 14px;
   z-index: 5;
-  padding: 6px 12px;
+  width: 28px;
+  height: 28px;
+  background: rgba(20, 32, 50, 0.6);
+  border: 1px solid rgba(106, 138, 160, 0.3);
+  color: rgba(214, 222, 230, 0.85);
   font-family: var(--hud-font-display);
-  font-size: 11px;
-  letter-spacing: 2px;
-  color: #1a3a5a;
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(40, 80, 120, 0.3);
-  border-radius: 2px;
+  font-size: 14px;
+  line-height: 1;
   cursor: pointer;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   transition: background 0.15s var(--hud-ease), border-color 0.15s var(--hud-ease);
 }
 .blob__back:hover {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(40, 80, 120, 0.6);
+  background: rgba(20, 32, 50, 0.85);
+  border-color: rgba(106, 138, 160, 0.6);
 }
