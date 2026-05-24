@@ -1,6 +1,6 @@
 import React from 'react';
 import { HudFrame } from './components/HudFrame';
-import { GlobeMonitor } from './components/GlobeMonitor';
+import { SectorNetwork } from './components/SectorNetwork';
 import { PredictionTracker } from './components/PredictionTracker';
 import { StickyNotes } from './components/StickyNotes';
 import { TickerStrip } from './components/TickerStrip';
@@ -13,8 +13,11 @@ import { useNewsStream } from './hooks/useNewsStream';
 import './styles/layout.css';
 
 const App: React.FC = () => {
-  const { pillars, selected, selectedId, select } = usePillars();
-  const { events, pulses } = useNewsStream(pillars);
+  // pillars + news are still mock-driven and feed the side panels. The
+  // sector network (center) is its own data world for now — the bridge
+  // between "sectors → today's stock picks" lands in Phase 2.
+  const { pillars, selectedId, select } = usePillars();
+  const { events } = useNewsStream(pillars);
 
   return (
     <HudFrame top={<TickerStrip />} bottom={<EventTicker />}>
@@ -29,12 +32,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="hud-grid__center">
-          <GlobeMonitor
-            pillars={pillars}
-            selected={selected}
-            onSelect={select}
-            pulses={pulses}
-          />
+          <SectorNetwork />
         </div>
 
         <div className="hud-grid__right">
