@@ -1,0 +1,40 @@
+.sector-bubbles {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  /* Soft sky → warm horizon gradient, image-4 inspired tones */
+  background:
+    radial-gradient(ellipse at 65% 30%, rgba(255, 255, 255, 0.55) 0%, transparent 55%),
+    linear-gradient(180deg, #b3c8d8 0%, #c8d5e0 45%, #e8d8c8 100%);
+}
+
+.sector-bubbles > canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  outline: none !important;
+  touch-action: none !important;
+}
+
+/* drei <Html> labels — rendered above each bubble */
+.asset-label {
+  font-family: var(--hud-font-display);
+  letter-spacing: 2px;
+  color: #1a2a40;
+  text-shadow:
+    0 0 4px rgba(255, 255, 255, 0.7),
+    0 1px 2px rgba(255, 255, 255, 0.9);
+  user-select: none;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.asset-label--d1 { font-size: 18px; }
+.asset-label--d2 { font-size: 11px; opacity: 0.85; font-weight: 500; }
+
+.asset-label.is-alert {
+  color: #8a1f24;
+  text-shadow:
+    0 0 6px rgba(255, 200, 200, 0.8),
+    0 1px 2px rgba(255, 255, 255, 0.9);
+}

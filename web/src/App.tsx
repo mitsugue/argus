@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { HudFrame } from './components/HudFrame';
-import { SectorNetwork } from './components/SectorNetwork';
+import { SectorBubbles } from './components/SectorBubbles';
 import { PredictionTracker } from './components/PredictionTracker';
 import { StickyNotes } from './components/StickyNotes';
 import { TickerStrip } from './components/TickerStrip';
@@ -27,8 +27,8 @@ const App: React.FC = () => {
 
   return (
     <HudFrame top={<TickerStrip />} bottom={<EventTicker />}>
-      {/* Bubbles fill the entire main area now. */}
-      <SectorNetwork />
+      {/* Hierarchical asset-class bubbles (R3F + d3-pack + glass material) */}
+      <SectorBubbles />
 
       <TabRail active={openTab} onToggle={toggleTab} />
 

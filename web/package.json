@@ -1,7 +1,7 @@
 {
   "name": "argus-web",
   "private": true,
-  "version": "6.0.0",
+  "version": "7.0.0",
   "type": "module",
   "description": "A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner",
   "scripts": {
@@ -11,6 +11,10 @@
     "lint": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
+    "@types/d3-hierarchy": "^3.1.7",
+    "d3-hierarchy": "^3.1.2",
     "framer-motion": "^11.11.17",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
