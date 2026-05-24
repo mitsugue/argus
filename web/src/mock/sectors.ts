@@ -4,19 +4,21 @@ import type { NetworkSnapshot, SectorLink, SectorNode } from '../types/sector';
  * 12 macro sectors that map roughly to GICS / typical macro buckets,
  * plus a handful of cross-sector links so the force graph has structure.
  */
+// Curated sector palette — muted, harmonious-but-distinguishable hues so each
+// bubble reads as its own sector at a glance against the light background.
 const SECTOR_SEED: Array<Omit<SectorNode, 'flow' | 'alert'> & { alert?: SectorNode['alert'] }> = [
-  { id: 'tech',       label: 'TECH',        depth: 'sector', parentId: null, liquidity: 1900, themeTag: 'AI_INFRA' },
-  { id: 'semi',       label: 'SEMI',        depth: 'sector', parentId: null, liquidity: 1450, themeTag: 'AI_INFRA' },
-  { id: 'finance',    label: 'FINANCIALS',  depth: 'sector', parentId: null, liquidity: 1300 },
-  { id: 'energy',     label: 'ENERGY',      depth: 'sector', parentId: null, liquidity: 1180 },
-  { id: 'commodity',  label: 'COMMODITIES', depth: 'sector', parentId: null, liquidity: 1100, themeTag: 'COPPER_CYCLE' },
-  { id: 'defense',    label: 'DEFENSE',     depth: 'sector', parentId: null, liquidity: 760, alert: 'alert', themeTag: 'GEOPOLITICS' },
-  { id: 'healthcare', label: 'HEALTH',      depth: 'sector', parentId: null, liquidity: 1020 },
-  { id: 'consumer',   label: 'CONSUMER',    depth: 'sector', parentId: null, liquidity: 870 },
-  { id: 'realestate', label: 'REIT',        depth: 'sector', parentId: null, liquidity: 540 },
-  { id: 'utilities',  label: 'UTILITIES',   depth: 'sector', parentId: null, liquidity: 460 },
-  { id: 'crypto',     label: 'CRYPTO',      depth: 'sector', parentId: null, liquidity: 690, alert: 'warm' },
-  { id: 'jp-small',   label: 'JP SMALL',    depth: 'sector', parentId: null, liquidity: 380, themeTag: 'JP_IPO_WAVE' },
+  { id: 'tech',       label: 'TECH',        depth: 'sector', parentId: null, liquidity: 1900, themeTag: 'AI_INFRA',     color: '#3a6ea8' },
+  { id: 'semi',       label: 'SEMI',        depth: 'sector', parentId: null, liquidity: 1450, themeTag: 'AI_INFRA',     color: '#6e4fa0' },
+  { id: 'finance',    label: 'FINANCIALS',  depth: 'sector', parentId: null, liquidity: 1300,                            color: '#b08a3a' },
+  { id: 'energy',     label: 'ENERGY',      depth: 'sector', parentId: null, liquidity: 1180,                            color: '#b86a2c' },
+  { id: 'commodity',  label: 'COMMODITIES', depth: 'sector', parentId: null, liquidity: 1100, themeTag: 'COPPER_CYCLE',  color: '#a05038' },
+  { id: 'defense',    label: 'DEFENSE',     depth: 'sector', parentId: null, liquidity: 760,  alert: 'alert', themeTag: 'GEOPOLITICS', color: '#a83a3a' },
+  { id: 'healthcare', label: 'HEALTH',      depth: 'sector', parentId: null, liquidity: 1020,                            color: '#3a9090' },
+  { id: 'consumer',   label: 'CONSUMER',    depth: 'sector', parentId: null, liquidity: 870,                             color: '#9c5278' },
+  { id: 'realestate', label: 'REIT',        depth: 'sector', parentId: null, liquidity: 540,                             color: '#7a8a4a' },
+  { id: 'utilities',  label: 'UTILITIES',   depth: 'sector', parentId: null, liquidity: 460,                             color: '#5a6e8a' },
+  { id: 'crypto',     label: 'CRYPTO',      depth: 'sector', parentId: null, liquidity: 690,  alert: 'warm',             color: '#c8742c' },
+  { id: 'jp-small',   label: 'JP SMALL',    depth: 'sector', parentId: null, liquidity: 380,  themeTag: 'JP_IPO_WAVE',   color: '#3a8ab8' },
 ];
 
 const LINK_SEED: SectorLink[] = [

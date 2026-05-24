@@ -23,6 +23,8 @@ export interface SectorNode {
   alert: AlertLevel;
   /** Optional theme tag — e.g. "COPPER_SUPERCYCLE", surfaced in tooltip. */
   themeTag?: string;
+  /** Hex color for this sector's bubble. Identifies the sector at a glance. */
+  color: string;
 }
 
 export interface SectorLink {
