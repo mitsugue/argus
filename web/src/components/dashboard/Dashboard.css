@@ -634,6 +634,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+.section-head__link {
+  font-size: 11px;
+  color: var(--text-sub);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  transition: color 0.12s var(--ease);
+}
+.section-head__link:hover {
+  color: var(--blue);
+}
+.section-head__link::after {
+  content: ' →';
+  color: var(--text-faint);
+}
+.section-head__link:hover::after {
+  color: var(--blue);
+}
+
 @media (max-width: 720px) {
   .hero__lists {
     grid-template-columns: 1fr;

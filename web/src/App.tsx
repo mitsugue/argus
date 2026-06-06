@@ -9,13 +9,17 @@ import { Watchlist } from './routes/Watchlist';
 import { CorePortfolio } from './routes/CorePortfolio';
 import { todayJudgment } from './mock/dashboard';
 
-const ROUTES: Record<RouteKey, React.FC> = {
+interface RouteProps {
+  onNavigate: (key: RouteKey) => void;
+}
+
+const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   command:   CommandCenter,
-  alerts:    ActionAlerts,
-  regime:    MarketRegime,
-  events:    EventRadar,
-  watchlist: Watchlist,
-  core:      CorePortfolio,
+  alerts:    ActionAlerts as React.FC<RouteProps>,
+  regime:    MarketRegime as React.FC<RouteProps>,
+  events:    EventRadar as React.FC<RouteProps>,
+  watchlist: Watchlist as React.FC<RouteProps>,
+  core:      CorePortfolio as React.FC<RouteProps>,
 };
 
 const App: React.FC = () => {
@@ -33,7 +37,7 @@ const App: React.FC = () => {
       }
       lastUpdated={lastUpdated}
     >
-      <Active />
+      <Active onNavigate={setRoute} />
     </AppShell>
   );
 };
