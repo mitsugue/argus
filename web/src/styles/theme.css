@@ -48,6 +48,23 @@
 
   /* Motion */
   --hud-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Action label tokens — single source of truth.
+     Components must read from these vars, never hardcode the hex. */
+  --action-escape:    #c44a4a;
+  --action-escape-bg: rgba(196, 74, 74, 0.12);
+  --action-partial:    #c89a4a;
+  --action-partial-bg: rgba(200, 154, 74, 0.12);
+  --action-wait:       #6a8aa0;
+  --action-wait-bg:    rgba(106, 138, 160, 0.12);
+  --action-pullback:    #7888b8;
+  --action-pullback-bg: rgba(120, 136, 184, 0.12);
+  --action-dip:        #4a9a8a;
+  --action-dip-bg:     rgba(74, 154, 138, 0.12);
+  --action-add:        #4ac8b8;
+  --action-add-bg:     rgba(74, 200, 184, 0.12);
+  --action-idle:       #4a5a6a;
+  --action-idle-bg:    rgba(74, 90, 106, 0.18);
 }
 
 * {

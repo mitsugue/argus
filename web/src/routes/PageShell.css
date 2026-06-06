@@ -1,0 +1,80 @@
+/* Shared page shell — every route uses this so the title bar and
+   horizontal rhythm match. */
+
+.page {
+  position: absolute;
+  inset: 0;
+  padding: 14px 14px 14px 78px; /* left padding clears the NavRail */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.page__head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hud-cyan-line);
+}
+
+.page__crumb {
+  font-family: var(--hud-font-display);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--hud-text-faint);
+  text-transform: uppercase;
+}
+
+.page__title {
+  font-family: var(--hud-font-display);
+  font-size: 18px;
+  letter-spacing: 4px;
+  color: var(--shell-text);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.page__subtitle {
+  font-family: var(--hud-font-mono);
+  font-size: 11px;
+  color: var(--hud-text-dim);
+  margin-left: auto;
+}
+
+.page__section-title {
+  font-family: var(--hud-font-display);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--hud-text-dim);
+  text-transform: uppercase;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(106, 138, 160, 0.18);
+  margin-bottom: 10px;
+}
+
+.page__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1;
+  color: var(--hud-text-faint);
+  font-family: var(--hud-font-display);
+  letter-spacing: 4px;
+  font-size: 11px;
+}
+
+.page__empty-mark {
+  font-size: 38px;
+  color: var(--hud-cyan-dim);
+  letter-spacing: 0;
+}
+
+@media (max-width: 900px) {
+  .page {
+    padding-left: 68px;
+  }
+}

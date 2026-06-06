@@ -1,58 +1,30 @@
 import React, { useState } from 'react';
 import { HudFrame } from './components/HudFrame';
-import { SectorBlob } from './components/SectorBlob';
-import { PredictionTracker } from './components/PredictionTracker';
-import { StickyNotes } from './components/StickyNotes';
-import { NewsStream } from './components/NewsStream';
-import { HotspotRanking } from './components/HotspotRanking';
-import { CalibrationTracker } from './components/CalibrationTracker';
-import { TabRail, type TabKey } from './components/TabRail';
-import { OverlayPanel } from './components/OverlayPanel';
-import { usePillars } from './hooks/usePillars';
-import { useNewsStream } from './hooks/useNewsStream';
+import { NavRail, type RouteKey } from './components/NavRail';
+import { CommandCenter } from './routes/CommandCenter';
+import { ActionAlerts } from './routes/ActionAlerts';
+import { MarketRegime } from './routes/MarketRegime';
+import { EventRadar } from './routes/EventRadar';
+import { Watchlist } from './routes/Watchlist';
+import { CorePortfolio } from './routes/CorePortfolio';
 import './styles/layout.css';
 
+const ROUTES: Record<RouteKey, React.FC> = {
+  command:   CommandCenter,
+  alerts:    ActionAlerts,
+  regime:    MarketRegime,
+  events:    EventRadar,
+  watchlist: Watchlist,
+  core:      CorePortfolio,
+};
+
 const App: React.FC = () => {
-  const { pillars, selectedId, select } = usePillars();
-  const { events } = useNewsStream(pillars);
-
-  const [openTab, setOpenTab] = useState<TabKey | null>(null);
-  const toggleTab = (key: TabKey) =>
-    setOpenTab((prev) => (prev === key ? null : key));
-  const closeTab = () => setOpenTab(null);
-
+  const [route, setRoute] = useState<RouteKey>('command');
+  const Active = ROUTES[route];
   return (
     <HudFrame>
-      {/* The whole world's money as one organic blob cluster. */}
-      <SectorBlob />
-
-      <TabRail active={openTab} onToggle={toggleTab} />
-
-      <OverlayPanel open={openTab === 'news'} onClose={closeTab}>
-        <NewsStream
-          events={events}
-          selectedPillarId={selectedId}
-          onSelect={select}
-        />
-      </OverlayPanel>
-
-      <OverlayPanel open={openTab === 'calibration'} onClose={closeTab}>
-        <CalibrationTracker />
-      </OverlayPanel>
-
-      <OverlayPanel open={openTab === 'hotspots'} onClose={closeTab}>
-        <HotspotRanking
-          pillars={pillars}
-          selectedId={selectedId}
-          onSelect={select}
-        />
-      </OverlayPanel>
-
-      <OverlayPanel open={openTab === 'watch'} onClose={closeTab}>
-        <PredictionTracker />
-      </OverlayPanel>
-
-      <StickyNotes />
+      <Active />
+      <NavRail active={route} onSelect={setRoute} />
     </HudFrame>
   );
 };

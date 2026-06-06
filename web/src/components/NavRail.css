@@ -1,0 +1,67 @@
+.nav-rail {
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left, 10px));
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(20, 32, 50, 0.6);
+  border: 1px solid rgba(106, 138, 160, 0.28);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.nav-rail__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 52px;
+  height: 52px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(214, 222, 230, 0.5);
+  font-family: var(--hud-font-display);
+  cursor: pointer;
+  transition: background 0.15s var(--hud-ease), border-color 0.15s var(--hud-ease), color 0.15s var(--hud-ease);
+}
+
+.nav-rail__btn:hover {
+  background: rgba(106, 138, 160, 0.1);
+  border-color: rgba(106, 138, 160, 0.4);
+  color: rgba(214, 222, 230, 0.92);
+}
+
+.nav-rail__btn.is-active {
+  background: rgba(106, 138, 160, 0.18);
+  border-color: var(--shell-accent);
+  color: rgba(214, 222, 230, 0.95);
+}
+
+.nav-rail__glyph {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.nav-rail__label {
+  font-size: 8px;
+  letter-spacing: 1.5px;
+  line-height: 1;
+}
+
+@media (max-width: 900px) {
+  .nav-rail {
+    left: 6px;
+  }
+  .nav-rail__btn {
+    width: 46px;
+    height: 46px;
+  }
+  .nav-rail__glyph { font-size: 16px; }
+  .nav-rail__label { font-size: 7px; }
+}
