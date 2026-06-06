@@ -50,6 +50,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       <header className="shell__header">
         <div className="shell__brand">
           <span className="shell__brand-name">A.R.G.U.S.</span>
+          <span className="shell__brand-version">v{__APP_VERSION__}</span>
           <span className="shell__brand-tag">
             Autonomous Risk and Global Uncertainty Scanner
           </span>

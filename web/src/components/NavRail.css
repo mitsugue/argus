@@ -37,43 +37,6 @@
   text-transform: uppercase;
 }
 
-/* Bottom-pinned version stamp — quiet provenance, no chrome. */
-.nav__footer {
-  margin-top: auto;
-  padding: 12px 10px 4px;
-  font-size: 10px;
-  color: var(--text-faint);
-  letter-spacing: 0.02em;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.nav__footer-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--text-faint);
-}
-
-.nav__review-link {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--text-muted);
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  letter-spacing: 0.02em;
-  transition: color 0.12s var(--ease);
-}
-.nav__review-link:hover {
-  color: var(--blue);
-}
-.nav__review-link.is-active {
-  color: var(--blue);
-}
-
 .nav__group-label {
   font-size: 10px;
   font-weight: 500;
@@ -121,19 +84,59 @@
   background: var(--blue);
 }
 
+/* Bottom-pinned footer — version + AI review link. Visible at all sizes
+   so the user can always reach the review sheet and see the build. */
+.nav__footer {
+  margin-top: auto;
+  padding: 12px 10px 4px;
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Respect the iOS home-indicator inset. */
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
+}
+
+.nav__footer-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.nav__review-link {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: color 0.12s var(--ease);
+}
+.nav__review-link:hover {
+  color: var(--blue);
+}
+.nav__review-link.is-active {
+  color: var(--blue);
+}
+
 @media (max-width: 720px) {
   .nav {
-    width: 56px;
+    width: 64px;
     padding: 10px 6px;
   }
   .nav__group-label,
-  .nav__today-label,
-  .nav__footer {
+  .nav__today-label {
     display: none;
   }
   .nav__today {
     padding: 8px;
     align-items: center;
+    margin-bottom: 4px;
   }
   .nav__btn {
     justify-content: center;
@@ -143,5 +146,22 @@
   .nav__dot {
     width: 7px;
     height: 7px;
+  }
+  /* Footer stays — stack version above the AI-review link tightly,
+     no horizontal dot. */
+  .nav__footer {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 0 max(4px, env(safe-area-inset-bottom));
+    font-size: 9px;
+  }
+  .nav__footer-dot {
+    display: none;
+  }
+  .nav__review-link {
+    margin-left: 0;
+    font-size: 9px;
+    text-align: center;
   }
 }
