@@ -1,10 +1,11 @@
 import React from 'react';
-import { PageShell, Placeholder } from './PageShell';
+import { PageShell } from './PageShell';
+import { SectorBlob } from '../components/SectorBlob';
 import { todayJudgment } from '../mock/dashboard';
 import '../components/dashboard/Dashboard.css';
 
 const REGIME_GLOSSARY: { tag: string; gloss: string }[] = [
-  { tag: 'Risk On',              gloss: 'Equities and high-beta leading; defensives lag.' },
+  { tag: 'Risk On',               gloss: 'Equities and high-beta leading; defensives lag.' },
   { tag: 'Risk Off',              gloss: 'Defensives lead; equities and credit weaken.' },
   { tag: 'Event Risk',            gloss: 'Major scheduled catalyst within the window; entries throttled.' },
   { tag: 'Rates Pressure',        gloss: 'Yields rising — duration assets and growth multiples compress.' },
@@ -29,7 +30,11 @@ export const MarketRegime: React.FC = () => {
         <div className="card">
           <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
             {todayJudgment.regime.map((r) => (
-              <span className="hero__tag" key={r} style={{ fontSize: 12, padding: '4px 10px' }}>
+              <span
+                className="hero__tag"
+                key={r}
+                style={{ fontSize: 12, padding: '4px 10px' }}
+              >
                 {r}
               </span>
             ))}
@@ -42,7 +47,27 @@ export const MarketRegime: React.FC = () => {
 
       <section>
         <div className="section-head">
+          <span className="section-head__title">Capital concentration</span>
+          <span className="section-head__count">
+            supporting layer
+          </span>
+        </div>
+        <div className="regime-viz">
+          <SectorBlob />
+        </div>
+        <div className="regime-viz__caption">
+          <span>
+            Bubble size ≈ relative weight by asset class. Tap or pinch a
+            bubble to drill into its sub-composition.
+          </span>
+          <span className="regime-viz__caption-hint">Mock data</span>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
           <span className="section-head__title">Regime glossary</span>
+          <span className="section-head__count">{REGIME_GLOSSARY.length} tags</span>
         </div>
         <div className="card" style={{ padding: 0 }}>
           <div className="core-list" style={{ padding: '4px 22px' }}>
@@ -57,11 +82,6 @@ export const MarketRegime: React.FC = () => {
           </div>
         </div>
       </section>
-
-      <Placeholder
-        title="Capital-flow visualization (supporting layer)"
-        note="The old bubble view will return here as a supporting visual only — not the main UI."
-      />
     </PageShell>
   );
 };

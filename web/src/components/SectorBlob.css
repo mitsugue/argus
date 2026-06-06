@@ -5,8 +5,12 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  /* Deep ocean — pure dark, no gradient */
-  background: #0a1420;
+  background: var(--bg);
+}
+
+/* Embedded — let the parent card paint its own surface behind the viz. */
+.regime-viz .blob {
+  background: transparent;
 }
 
 .blob__svg {
@@ -15,18 +19,19 @@
   display: block;
 }
 
-/* Breadcrumb across the top — minimalist depth path */
+/* Breadcrumb across the top — minimal depth path. */
 .blob__crumbs {
   position: absolute;
-  top: 16px;
+  top: 12px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 6px;
-  font-family: var(--hud-font-display);
-  font-size: 9px;
-  letter-spacing: 2.5px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   z-index: 5;
   pointer-events: auto;
 }
@@ -34,45 +39,43 @@
 .blob__crumb {
   background: transparent;
   border: none;
-  color: rgba(214, 222, 230, 0.45);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 4px 2px;
-  letter-spacing: 2.5px;
-  text-transform: uppercase;
-  transition: color 0.2s var(--hud-ease);
+  transition: color 0.15s var(--ease);
 }
 .blob__crumb:hover:not(:disabled) {
-  color: rgba(214, 222, 230, 0.85);
+  color: var(--text-sub);
 }
 .blob__crumb.is-current {
-  color: rgba(214, 222, 230, 0.85);
+  color: var(--text-main);
   cursor: default;
 }
 
 .blob__crumb-sep {
-  color: rgba(214, 222, 230, 0.2);
+  color: var(--text-faint);
 }
 
 /* Step-back chevron */
 .blob__back {
   position: absolute;
-  top: 14px;
-  left: 14px;
+  top: 10px;
+  left: 12px;
   z-index: 5;
   width: 28px;
   height: 28px;
-  background: rgba(20, 32, 50, 0.6);
-  border: 1px solid rgba(106, 138, 160, 0.3);
-  color: rgba(214, 222, 230, 0.85);
-  font-family: var(--hud-font-display);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-sub);
+  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  transition: background 0.15s var(--hud-ease), border-color 0.15s var(--hud-ease);
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease), color 0.12s var(--ease);
 }
 .blob__back:hover {
-  background: rgba(20, 32, 50, 0.85);
-  border-color: rgba(106, 138, 160, 0.6);
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
+  color: var(--text-main);
 }

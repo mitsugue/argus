@@ -557,21 +557,24 @@ export const SectorBlob: React.FC = () => {
         </AnimatePresence>
       </svg>
 
-      {/* Breadcrumb */}
-      <nav className="blob__crumbs" aria-label="depth path">
-        {crumbs.map((c, i) => (
-          <React.Fragment key={c.id}>
-            <button
-              className={`blob__crumb${i === crumbs.length - 1 ? ' is-current' : ''}`}
-              onClick={() => setFocusPath(focusPath.slice(0, i + 1))}
-              disabled={i === crumbs.length - 1}
-            >
-              {c.label}
-            </button>
-            {i < crumbs.length - 1 && <span className="blob__crumb-sep">/</span>}
-          </React.Fragment>
-        ))}
-      </nav>
+      {/* Breadcrumb — only shown after the user has drilled at least one level.
+          At the root WORLD there is nowhere to navigate, so it adds clutter. */}
+      {focusPath.length > 1 && (
+        <nav className="blob__crumbs" aria-label="depth path">
+          {crumbs.map((c, i) => (
+            <React.Fragment key={c.id}>
+              <button
+                className={`blob__crumb${i === crumbs.length - 1 ? ' is-current' : ''}`}
+                onClick={() => setFocusPath(focusPath.slice(0, i + 1))}
+                disabled={i === crumbs.length - 1}
+              >
+                {c.label}
+              </button>
+              {i < crumbs.length - 1 && <span className="blob__crumb-sep">/</span>}
+            </React.Fragment>
+          ))}
+        </nav>
+      )}
 
       {focusPath.length > 1 && (
         <button className="blob__back" onClick={popBack} aria-label="step back">

@@ -413,6 +413,37 @@
   color: var(--text-sub);
 }
 
+/* ── Regime viz embed ───────────────────────────────────────────────── */
+
+.regime-viz {
+  position: relative;
+  height: 420px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  margin-top: 4px;
+}
+
+.regime-viz__caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.regime-viz__caption-hint {
+  color: var(--text-faint);
+}
+
+@media (max-width: 720px) {
+  .regime-viz {
+    height: 360px;
+  }
+}
+
 /* ── Watch row (per-stock) ──────────────────────────────────────────── */
 
 .watch-list {
