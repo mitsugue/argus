@@ -110,6 +110,26 @@ export const CORE_ACTIONS: Record<CoreActionKey, ActionDef> = {
   },
 };
 
+// Display order — urgent / caution on the left, positive on the right.
+// Used by any UI that needs to render the full label list (legend, AI
+// Review sheet, future filter chips).
+export const ACTION_ORDER: ActionKey[] = [
+  'EXIT',
+  'TRIM',
+  'WAIT_FOR_PULLBACK',
+  'WAIT',
+  'HOLD',
+  'BUY_DIP',
+  'ADD',
+];
+
+export const CORE_ACTION_ORDER: CoreActionKey[] = [
+  'CONTINUE',
+  'GRADUAL_ADD',
+  'WAIT_LUMP',
+  'NO_SELL',
+];
+
 export function actionDef(key: ActionKey | CoreActionKey): ActionDef {
   return (
     (ACTIONS as Record<string, ActionDef>)[key] ??

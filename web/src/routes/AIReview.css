@@ -1,0 +1,190 @@
+/* Dedicated styles for the AI Review page — reads more like long-form
+   documentation than a dashboard. Optimised for ChatGPT / LLM eval:
+   high-contrast text, clear hierarchy, copy-friendly markdown export. */
+
+.review {
+  max-width: 880px;
+  padding: 28px 32px 80px;
+  line-height: 1.65;
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.review h1 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+}
+
+.review__tagline {
+  color: var(--text-sub);
+  font-size: 14px;
+  margin-bottom: 28px;
+}
+
+.review__toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 32px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.review__copy {
+  padding: 6px 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+.review__copy:hover {
+  background: var(--surface-hi);
+  border-color: var(--line-strong);
+}
+.review__copy.is-copied {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.review__meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.review h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 32px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.review h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 18px 0 6px;
+  letter-spacing: 0.01em;
+}
+
+.review p {
+  color: var(--text-main);
+  margin: 6px 0 12px;
+}
+
+.review p.dim {
+  color: var(--text-sub);
+}
+
+.review ul, .review ol {
+  padding-left: 22px;
+  margin: 6px 0 12px;
+}
+.review li {
+  margin: 4px 0;
+  color: var(--text-main);
+}
+.review li::marker {
+  color: var(--text-faint);
+}
+
+.review code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--cyan);
+  background: var(--surface);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.review__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 10px 0 14px;
+}
+.review__table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+}
+.review__table td {
+  padding: 8px 10px 8px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-main);
+  vertical-align: top;
+}
+.review__table tr:last-child td {
+  border-bottom: 0;
+}
+
+.review__swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.review__swatch-chip {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.review__swatch-hex {
+  font-family: var(--font-mono);
+  color: var(--text-sub);
+  font-size: 11px;
+}
+
+.review__action-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review__panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 10px 0 16px;
+}
+
+.review__panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sub);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.review__columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 720px) {
+  .review {
+    padding: 18px 14px 60px;
+    font-size: 13px;
+  }
+  .review__columns {
+    grid-template-columns: 1fr;
+  }
+}

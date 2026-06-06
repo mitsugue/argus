@@ -56,6 +56,24 @@
   background: var(--text-faint);
 }
 
+.nav__review-link {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: color 0.12s var(--ease);
+}
+.nav__review-link:hover {
+  color: var(--blue);
+}
+.nav__review-link.is-active {
+  color: var(--blue);
+}
+
 .nav__group-label {
   font-size: 10px;
   font-weight: 500;

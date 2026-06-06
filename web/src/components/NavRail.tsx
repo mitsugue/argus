@@ -26,14 +26,21 @@ const NAV: NavItem[] = [
 ];
 
 interface Props {
-  active: RouteKey;
+  // null when the user is on the (hidden) AI Review route — no main item is "active" then
+  active: RouteKey | null;
   onSelect: (key: RouteKey) => void;
-  // The headline judgment — pinned at the top so it stays visible across
-  // every page. Clicking jumps back to the Command Center.
   todayCall: { action: ActionKey; risk: RiskLevel };
+  onReviewLink?: () => void;
+  isReview?: boolean;
 }
 
-export const NavRail: React.FC<Props> = ({ active, onSelect, todayCall }) => {
+export const NavRail: React.FC<Props> = ({
+  active,
+  onSelect,
+  todayCall,
+  onReviewLink,
+  isReview,
+}) => {
   return (
     <nav className="nav" aria-label="Sections">
       <button
@@ -61,6 +68,15 @@ export const NavRail: React.FC<Props> = ({ active, onSelect, todayCall }) => {
       <div className="nav__footer">
         <span className="nav__footer-dot" />
         <span>v{__APP_VERSION__}</span>
+        {onReviewLink && (
+          <button
+            className={`nav__review-link ${isReview ? 'is-active' : ''}`}
+            onClick={onReviewLink}
+            title="Open the AI review sheet"
+          >
+            AI review
+          </button>
+        )}
       </div>
     </nav>
   );
