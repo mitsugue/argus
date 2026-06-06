@@ -1,41 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <radialGradient id="iris" cx="32" cy="32" r="14" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#00f3ff" stop-opacity="0.18"/>
-      <stop offset="1" stop-color="#00f3ff" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="64" height="64" fill="#000"/>
-
-  <!-- Hexagonal frame -->
-  <polygon points="32,4 56,17 56,47 32,60 8,47 8,17"
-           fill="none" stroke="#00f3ff" stroke-width="1.2" opacity="0.85"/>
-
-  <!-- Outer iris glow -->
-  <circle cx="32" cy="32" r="14" fill="url(#iris)"/>
-
-  <!-- Main eye -->
-  <circle cx="32" cy="32" r="13" fill="none" stroke="#00f3ff" stroke-width="1.4"/>
-  <circle cx="32" cy="32" r="7" fill="none" stroke="#ffb700" stroke-width="1.1"/>
-  <circle cx="32" cy="32" r="2.2" fill="#00f3ff"/>
-
-  <!-- Crosshair -->
-  <line x1="32" y1="6"  x2="32" y2="14" stroke="#00f3ff" stroke-width="0.8" opacity="0.55"/>
-  <line x1="32" y1="50" x2="32" y2="58" stroke="#00f3ff" stroke-width="0.8" opacity="0.55"/>
-  <line x1="6"  y1="32" x2="14" y2="32" stroke="#00f3ff" stroke-width="0.8" opacity="0.55"/>
-  <line x1="50" y1="32" x2="58" y2="32" stroke="#00f3ff" stroke-width="0.8" opacity="0.55"/>
-
-  <!-- 8 surrounding eyes of Argus -->
-  <g fill="#00f3ff">
-    <circle cx="47.85" cy="16.15" r="1.4"/>
-    <circle cx="16.15" cy="16.15" r="1.4"/>
-    <circle cx="47.85" cy="47.85" r="1.4"/>
-    <circle cx="16.15" cy="47.85" r="1.4"/>
-  </g>
-  <g fill="#ffb700">
-    <circle cx="32" cy="11"  r="1.1"/>
-    <circle cx="32" cy="53"  r="1.1"/>
-    <circle cx="11" cy="32"  r="1.1"/>
-    <circle cx="53" cy="32"  r="1.1"/>
-  </g>
+  <!-- Calm v7 favicon — minimal eye on a dark navy surface.
+       Palette mirrors the app: bg #0B1118, text-sub #8B98A7,
+       text-muted #5F6B78, blue accent #60A5FA. -->
+  <rect width="64" height="64" rx="12" fill="#0B1118"/>
+  <circle cx="32" cy="32" r="18" fill="none" stroke="#8B98A7" stroke-width="1.6" stroke-opacity="0.75"/>
+  <circle cx="32" cy="32" r="9.5" fill="none" stroke="#5F6B78" stroke-width="1" stroke-opacity="0.65"/>
+  <circle cx="32" cy="32" r="3.4" fill="#60A5FA"/>
+  <!-- Argus motif — 4 quiet satellite eyes at cardinal points. -->
+  <circle cx="32" cy="8.5"  r="1.2" fill="#5F6B78"/>
+  <circle cx="32" cy="55.5" r="1.2" fill="#5F6B78"/>
+  <circle cx="8.5"  cy="32" r="1.2" fill="#5F6B78"/>
+  <circle cx="55.5" cy="32" r="1.2" fill="#5F6B78"/>
 </svg>

@@ -27,8 +27,8 @@ export default defineConfig({
         name: 'A.R.G.U.S.',
         short_name: 'ARGUS',
         description: 'Autonomous Risk and Global Uncertainty Scanner',
-        theme_color: '#000000',
-        background_color: '#000000',
+        theme_color: '#0B1118',
+        background_color: '#0B1118',
         display: 'fullscreen',
         orientation: 'portrait',
         // Manifest icon src is resolved relative to the manifest URL, so
