@@ -1,0 +1,449 @@
+/* Shared dashboard primitives — cards, hero, grids, rows. */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px 22px;
+}
+
+.card--hero {
+  padding: 28px 28px 24px;
+}
+
+.card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  letter-spacing: 0.01em;
+}
+
+.card__meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.card__divider {
+  height: 1px;
+  background: var(--line);
+  margin: 14px 0;
+}
+
+/* ── Hero (Daily Command Center primary card) ───────────────────────── */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.hero__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.hero__primary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.hero__label {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hero__judgment {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.hero__attrs {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+}
+
+.hero__attr {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hero__attr-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.hero__regime-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hero__tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: var(--text-sub);
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.hero__summary {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-main);
+  max-width: 64ch;
+}
+
+.hero__reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hero__reasons-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.hero__reason {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--text-main);
+  line-height: 1.5;
+}
+
+.hero__reason-num {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  min-width: 18px;
+}
+
+.hero__lists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.hero__list-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hero__list-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hero__list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.hero__list-items--avoid {
+  color: var(--text-sub);
+}
+
+.hero__next {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.hero__next-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hero__next-text {
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+/* Risk indicator — small horizontal bar with value */
+.risk {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.risk__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--risk-fg);
+}
+
+.risk__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  text-transform: capitalize;
+}
+
+/* ── Action Alert grid + card ───────────────────────────────────────── */
+
+.alert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.alert-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.alert-card:hover {
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
+}
+
+.alert-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.alert-card__class {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.alert-card__reason {
+  font-size: 12px;
+  color: var(--text-sub);
+  line-height: 1.55;
+}
+
+.alert-card__meta {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.alert-card__meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.alert-card__meta-value {
+  color: var(--text-sub);
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+}
+
+.alert-card__data {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+.alert-card__next {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.alert-card__next strong {
+  color: var(--text-sub);
+  font-weight: 500;
+}
+
+/* ── Event Row ──────────────────────────────────────────────────────── */
+
+.event-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.event-row {
+  display: grid;
+  grid-template-columns: 80px 1fr auto auto;
+  gap: 18px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.event-row:last-child {
+  border-bottom: 0;
+}
+
+.event-row__when {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-row__title {
+  font-size: 13px;
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.event-row__kind {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.event-row__impact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-sub);
+  text-transform: capitalize;
+}
+
+.event-row__impact-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.event-row__note {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: -6px;
+  padding-bottom: 4px;
+}
+
+/* ── Core list row ──────────────────────────────────────────────────── */
+
+.core-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.core-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.core-row:last-child {
+  border-bottom: 0;
+}
+
+.core-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.core-row__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.core-row__market {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+}
+
+.core-row__reason {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+/* ── Section header (inside CommandCenter) ──────────────────────────── */
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.section-head__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  letter-spacing: -0.005em;
+}
+
+.section-head__count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .hero__lists {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .event-row {
+    grid-template-columns: 64px 1fr auto;
+  }
+  .event-row__kind {
+    display: none;
+  }
+}

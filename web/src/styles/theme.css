@@ -1,70 +1,59 @@
-/* A.R.G.U.S. v9 theme tokens — deep-ocean monochrome */
+/* A.R.G.U.S. v7 — Calm Command Center palette.
+   Bloomberg Terminal + Linear + Raycast + Stripe Dashboard.
+   Calm, dark, intelligent. No HUD, no cyberpunk, no neon glow. */
+
 :root {
-  /* World canvas — the dark sea the bubbles live in */
-  --shell-bg: #0a1420;
-  --shell-panel: rgba(20, 32, 50, 0.6);
-  --shell-panel-strong: rgba(20, 32, 50, 0.82);
-  --shell-text: rgba(214, 222, 230, 0.85);
-  --shell-text-dim: rgba(214, 222, 230, 0.55);
-  --shell-text-faint: rgba(214, 222, 230, 0.32);
-  --shell-accent: #6a8aa0;
-  --shell-border: rgba(106, 138, 160, 0.28);
+  /* Surfaces — deep navy/black */
+  --bg:           #0B1118;
+  --surface:      #111A24;
+  --surface-soft: #162231;
+  --surface-hi:   #1B2A3D;
+  --line:         rgba(255, 255, 255, 0.07);
+  --line-strong:  rgba(255, 255, 255, 0.12);
 
-  /* Bubble palette (consumed by SectorBlob) */
-  --bubble-shallow: #2f4660;
-  --bubble-mid: #213450;
-  --bubble-deep: #142235;
-  --bubble-accent: #6a8aa0;
+  /* Text */
+  --text-main:  #E6EDF3;
+  --text-sub:   #8B98A7;
+  --text-muted: #5F6B78;
+  --text-faint: rgba(95, 107, 120, 0.6);
 
-  /* Existing --hud-* tokens kept for overlay panels (News / Calibration
-     / etc.) which already live as dark glass-morphism modals. */
-  --hud-bg: #0a1420;
-  --hud-bg-panel: rgba(20, 32, 50, 0.45);
-  --hud-bg-panel-strong: rgba(20, 32, 50, 0.78);
-  --hud-cyan: #6a8aa0;
-  --hud-cyan-dim: rgba(106, 138, 160, 0.6);
-  --hud-cyan-faint: rgba(106, 138, 160, 0.22);
-  --hud-cyan-line: rgba(106, 138, 160, 0.32);
-  --hud-amber: #8a5e3a;
-  --hud-amber-dim: rgba(138, 94, 58, 0.6);
-  --hud-amber-faint: rgba(138, 94, 58, 0.22);
-  --hud-text: rgba(214, 222, 230, 0.88);
-  --hud-text-dim: rgba(214, 222, 230, 0.55);
-  --hud-text-faint: rgba(214, 222, 230, 0.32);
-  --hud-danger: #8a3a3a;
-  --hud-success: #4a7a5a;
-
-  /* Geometry */
-  --hud-border: 1px solid var(--hud-cyan-line);
-  --hud-border-amber: 1px solid rgba(255, 183, 0, 0.4);
-  --hud-radius: 2px;
-  --hud-radius-lg: 4px;
-
-  /* Typography */
-  --hud-font-mono: 'JetBrains Mono', 'Share Tech Mono', ui-monospace, monospace;
-  --hud-font-display: 'Share Tech Mono', 'JetBrains Mono', monospace;
-  /* Brand wordmark — Tesla-esque geometric futurist (Orbitron) */
-  --hud-font-brand: 'Orbitron', 'Michroma', 'Eurostile', 'Arial Black', sans-serif;
-
-  /* Motion */
-  --hud-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Accent palette — used sparingly */
+  --red:    #F87171;
+  --amber:  #FBBF24;
+  --blue:   #60A5FA;
+  --cyan:   #22D3EE;
+  --green:  #34D399;
+  --gray:   #64748B;
 
   /* Action label tokens — single source of truth.
-     Components must read from these vars, never hardcode the hex. */
-  --action-escape:    #c44a4a;
-  --action-escape-bg: rgba(196, 74, 74, 0.12);
-  --action-partial:    #c89a4a;
-  --action-partial-bg: rgba(200, 154, 74, 0.12);
-  --action-wait:       #6a8aa0;
-  --action-wait-bg:    rgba(106, 138, 160, 0.12);
-  --action-pullback:    #7888b8;
-  --action-pullback-bg: rgba(120, 136, 184, 0.12);
-  --action-dip:        #4a9a8a;
-  --action-dip-bg:     rgba(74, 154, 138, 0.12);
-  --action-add:        #4ac8b8;
-  --action-add-bg:     rgba(74, 200, 184, 0.12);
-  --action-idle:       #4a5a6a;
-  --action-idle-bg:    rgba(74, 90, 106, 0.18);
+     Foreground + soft wash background, each. */
+  --action-exit:        var(--red);
+  --action-exit-bg:     rgba(248, 113, 113, 0.1);
+  --action-trim:        var(--amber);
+  --action-trim-bg:     rgba(251, 191, 36, 0.1);
+  --action-wait:        var(--gray);
+  --action-wait-bg:     rgba(100, 116, 139, 0.1);
+  --action-pullback:    var(--blue);
+  --action-pullback-bg: rgba(96, 165, 250, 0.1);
+  --action-dip:         var(--cyan);
+  --action-dip-bg:      rgba(34, 211, 238, 0.1);
+  --action-add:         var(--green);
+  --action-add-bg:      rgba(52, 211, 153, 0.1);
+  --action-hold:        var(--text-muted);
+  --action-hold-bg:     rgba(139, 152, 167, 0.07);
+
+  /* Risk level tokens */
+  --risk-low:     var(--green);
+  --risk-med:     var(--amber);
+  --risk-high:    var(--red);
+  --risk-extreme: #DC2626;
+
+  /* Typography */
+  --font-sans: 'Inter', 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
@@ -80,16 +69,14 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  overflow-x: hidden;
-  background: var(--hud-bg);
-  color: var(--hud-text);
-  font-family: var(--hud-font-mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  /* Disable scroll bounce, lock touch to vertical pan only */
+  background: var(--bg);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overscroll-behavior: none;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
 }
 
 body {
@@ -99,8 +86,7 @@ body {
 
 input,
 textarea {
-  font-family: inherit;
-  font-size: inherit;
+  font: inherit;
   color: inherit;
   background: transparent;
   border: none;
@@ -110,151 +96,16 @@ textarea {
 }
 
 button {
-  font-family: inherit;
+  font: inherit;
   color: inherit;
   background: transparent;
   border: none;
   cursor: pointer;
+  padding: 0;
 }
 
-::selection {
-  background: var(--hud-cyan);
-  color: var(--hud-bg);
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--text-sub);
 }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--hud-cyan-faint); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: var(--hud-cyan-dim); }
-
-/* Shared corner tab for panel titles — small, top-left, sits inside the panel.
-   No backdrop ("座布団") so neighbouring panels read through cleanly. */
-.panel-tab {
-  position: absolute;
-  top: 1px;
-  left: 10px;
-  z-index: 4;
-  padding: 0 4px;
-  background: transparent;
-  font-family: var(--hud-font-display);
-  color: var(--hud-cyan);
-  font-size: 8px;
-  letter-spacing: 2.5px;
-  line-height: 1;
-  text-transform: uppercase;
-  white-space: nowrap;
-  pointer-events: none;
-  font-weight: 400;
-}
-.panel-tab--amber { color: var(--hud-amber); }
-
-.panel-tab__beacon {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--hud-cyan);
-  box-shadow: 0 0 5px var(--hud-cyan);
-  margin-right: 6px;
-  vertical-align: middle;
-  animation: hud-blink 1.4s step-end infinite;
-}
-.panel-tab--amber .panel-tab__beacon {
-  background: var(--hud-amber);
-  box-shadow: 0 0 5px var(--hud-amber);
-}
-
-/* Reusable HUD primitives */
-.hud-panel {
-  background: var(--hud-bg-panel);
-  border: var(--hud-border);
-  border-radius: var(--hud-radius);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  position: relative;
-}
-
-.hud-panel--amber {
-  border: var(--hud-border-amber);
-  background: rgba(255, 183, 0, 0.04);
-}
-
-.hud-panel__title {
-  font-family: var(--hud-font-display);
-  font-size: 10px;
-  letter-spacing: 3px;
-  color: var(--hud-cyan);
-  text-transform: uppercase;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.hud-panel__title::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  background: var(--hud-cyan);
-  display: inline-block;
-  box-shadow: 0 0 6px var(--hud-cyan);
-}
-
-.hud-label {
-  font-size: 9px;
-  letter-spacing: 2px;
-  color: var(--hud-text-faint);
-  text-transform: uppercase;
-}
-
-.hud-value {
-  font-family: var(--hud-font-display);
-  color: var(--hud-text);
-  font-size: 14px;
-}
-
-.hud-divider {
-  height: 1px;
-  background: var(--hud-cyan-line);
-  width: 100%;
-}
-
-/* Corner brackets — characteristic HUD frame */
-.hud-corner::before,
-.hud-corner::after {
-  content: '';
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border: 1px solid var(--hud-cyan);
-  pointer-events: none;
-}
-.hud-corner::before {
-  top: -1px;
-  left: -1px;
-  border-right: none;
-  border-bottom: none;
-}
-.hud-corner::after {
-  bottom: -1px;
-  right: -1px;
-  border-left: none;
-  border-top: none;
-}
-
-/* Animations */
-@keyframes hud-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
-}
-@keyframes hud-sweep {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-@keyframes hud-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
-}
-
-.hud-blink { animation: hud-blink 1.2s step-end infinite; }
-.hud-pulse { animation: hud-pulse 2s ease-in-out infinite; }

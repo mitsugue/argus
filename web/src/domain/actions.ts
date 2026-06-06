@@ -1,151 +1,118 @@
-// Action label design system — the single source of truth for every place
-// the app shows an action label (color, icon, Japanese text). Components
-// must NEVER hardcode a color or icon for these labels — read from here.
+// Action label design system — single source of truth. Every component
+// that renders an action label must read from here; hardcoded colors are
+// a code smell.
 
 import type { ActionKey, CoreActionKey } from '../types/action';
 
 export interface ActionDef {
   key: ActionKey | CoreActionKey;
-  en: string;            // canonical English
-  jp: string;            // short Japanese label (3–6 chars)
-  icon: string;          // single-glyph icon (matches command-center mono aesthetic)
-  cssVar: string;        // CSS custom property name for the foreground color
-  bgVar: string;         // CSS custom property name for the wash background
-  semantic:
-    | 'urgent'
-    | 'secure'
-    | 'neutral'
-    | 'patient'
-    | 'opportunity'
-    | 'positive'
-    | 'idle';
+  label: string;       // short display label (used in pills)
+  longLabel: string;   // for hero-card rendering
+  cssVar: string;      // foreground color CSS variable
+  bgVar: string;       // soft wash background CSS variable
+  tone: 'urgent' | 'caution' | 'neutral' | 'patient' | 'opportunity' | 'positive' | 'idle';
 }
 
-// ── Tactical actions — used everywhere except the core portfolio ─────────
+// Tactical actions — used for everything except the core long-term portfolio.
 export const ACTIONS: Record<ActionKey, ActionDef> = {
-  ESCAPE: {
-    key: 'ESCAPE',
-    en: 'ESCAPE',
-    jp: '逃げる',
-    icon: '⏏',
-    cssVar: '--action-escape',
-    bgVar: '--action-escape-bg',
-    semantic: 'urgent',
+  EXIT: {
+    key: 'EXIT',
+    label: 'Exit',
+    longLabel: 'EXIT',
+    cssVar: '--action-exit',
+    bgVar: '--action-exit-bg',
+    tone: 'urgent',
   },
-  TAKE_PARTIAL_PROFIT: {
-    key: 'TAKE_PARTIAL_PROFIT',
-    en: 'PARTIAL',
-    jp: '一部利確',
-    icon: '◐',
-    cssVar: '--action-partial',
-    bgVar: '--action-partial-bg',
-    semantic: 'secure',
+  TRIM: {
+    key: 'TRIM',
+    label: 'Trim',
+    longLabel: 'TRIM',
+    cssVar: '--action-trim',
+    bgVar: '--action-trim-bg',
+    tone: 'caution',
   },
   WAIT: {
     key: 'WAIT',
-    en: 'WAIT',
-    jp: '見送る',
-    icon: '‖',
+    label: 'Wait',
+    longLabel: 'WAIT',
     cssVar: '--action-wait',
     bgVar: '--action-wait-bg',
-    semantic: 'neutral',
+    tone: 'neutral',
   },
-  PULL_BACK: {
-    key: 'PULL_BACK',
-    en: 'PULL BACK',
-    jp: '引きつける',
-    icon: '⌖',
+  WAIT_FOR_PULLBACK: {
+    key: 'WAIT_FOR_PULLBACK',
+    label: 'Wait for Pullback',
+    longLabel: 'WAIT FOR PULLBACK',
     cssVar: '--action-pullback',
     bgVar: '--action-pullback-bg',
-    semantic: 'patient',
+    tone: 'patient',
   },
-  BUY_THE_DIP: {
-    key: 'BUY_THE_DIP',
-    en: 'DIP',
-    jp: '拾う',
-    icon: '▽',
+  BUY_DIP: {
+    key: 'BUY_DIP',
+    label: 'Buy Dip',
+    longLabel: 'BUY DIP',
     cssVar: '--action-dip',
     bgVar: '--action-dip-bg',
-    semantic: 'opportunity',
+    tone: 'opportunity',
   },
   ADD: {
     key: 'ADD',
-    en: 'ADD',
-    jp: '追加する',
-    icon: '△',
+    label: 'Add',
+    longLabel: 'ADD',
     cssVar: '--action-add',
     bgVar: '--action-add-bg',
-    semantic: 'positive',
+    tone: 'positive',
   },
-  DO_NOTHING: {
-    key: 'DO_NOTHING',
-    en: 'HOLD',
-    jp: '何もしない',
-    icon: '○',
-    cssVar: '--action-idle',
-    bgVar: '--action-idle-bg',
-    semantic: 'idle',
+  HOLD: {
+    key: 'HOLD',
+    label: 'Hold',
+    longLabel: 'HOLD',
+    cssVar: '--action-hold',
+    bgVar: '--action-hold-bg',
+    tone: 'idle',
   },
 };
 
-// Display order on a 7-cell legend — urgent on the left, positive on the right.
-export const ACTION_ORDER: ActionKey[] = [
-  'ESCAPE',
-  'TAKE_PARTIAL_PROFIT',
-  'PULL_BACK',
-  'WAIT',
-  'DO_NOTHING',
-  'BUY_THE_DIP',
-  'ADD',
-];
-
-// ── Core portfolio actions — index funds get their own calm vocabulary ──
+// Core (long-term index) portfolio — quieter vocabulary. Index funds
+// should not appear next to tactical-action labels.
 export const CORE_ACTIONS: Record<CoreActionKey, ActionDef> = {
-  ACCUMULATE_CONTINUE: {
-    key: 'ACCUMULATE_CONTINUE',
-    en: 'CONTINUE',
-    jp: '積立継続',
-    icon: '∞',
+  CONTINUE: {
+    key: 'CONTINUE',
+    label: 'Continue',
+    longLabel: 'CONTINUE',
     cssVar: '--action-add',
     bgVar: '--action-add-bg',
-    semantic: 'positive',
+    tone: 'positive',
   },
-  WAIT_LUMP_SUM: {
-    key: 'WAIT_LUMP_SUM',
-    en: 'HOLD LUMP',
-    jp: '一括待機',
-    icon: '‖',
-    cssVar: '--action-wait',
-    bgVar: '--action-wait-bg',
-    semantic: 'neutral',
-  },
-  ADD_GRADUALLY: {
-    key: 'ADD_GRADUALLY',
-    en: 'GRADUAL',
-    jp: '段階追加',
-    icon: '▽',
+  GRADUAL_ADD: {
+    key: 'GRADUAL_ADD',
+    label: 'Gradual Add',
+    longLabel: 'GRADUAL ADD',
     cssVar: '--action-dip',
     bgVar: '--action-dip-bg',
-    semantic: 'opportunity',
+    tone: 'opportunity',
   },
-  NO_SELL_NEEDED: {
-    key: 'NO_SELL_NEEDED',
-    en: 'STEADY',
-    jp: '売却不要',
-    icon: '○',
-    cssVar: '--action-idle',
-    bgVar: '--action-idle-bg',
-    semantic: 'idle',
+  WAIT_LUMP: {
+    key: 'WAIT_LUMP',
+    label: 'Wait Lump',
+    longLabel: 'WAIT LUMP',
+    cssVar: '--action-wait',
+    bgVar: '--action-wait-bg',
+    tone: 'neutral',
+  },
+  NO_SELL: {
+    key: 'NO_SELL',
+    label: 'No Sell',
+    longLabel: 'NO SELL',
+    cssVar: '--action-hold',
+    bgVar: '--action-hold-bg',
+    tone: 'idle',
   },
 };
 
-export const CORE_ACTION_ORDER: CoreActionKey[] = [
-  'ACCUMULATE_CONTINUE',
-  'ADD_GRADUALLY',
-  'WAIT_LUMP_SUM',
-  'NO_SELL_NEEDED',
-];
-
 export function actionDef(key: ActionKey | CoreActionKey): ActionDef {
-  return (ACTIONS as Record<string, ActionDef>)[key] ?? (CORE_ACTIONS as Record<string, ActionDef>)[key];
+  return (
+    (ACTIONS as Record<string, ActionDef>)[key] ??
+    (CORE_ACTIONS as Record<string, ActionDef>)[key]
+  );
 }

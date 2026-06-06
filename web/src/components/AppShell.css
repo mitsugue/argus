@@ -1,0 +1,100 @@
+/* The whole app fits in a fixed-viewport flex column: slim header on top,
+   sidebar + main below. No safe-area HUD chrome — just enough padding. */
+
+.shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.shell__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.shell__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.shell__brand-name {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--text-main);
+}
+
+.shell__brand-tag {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-sub);
+  letter-spacing: 0.01em;
+}
+
+.shell__meta {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.shell__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-sub);
+}
+
+.shell__status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.shell__updated {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.shell__updated-label {
+  color: var(--text-faint);
+  margin-right: 6px;
+}
+
+.shell__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.shell__main {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+}
+
+@media (max-width: 720px) {
+  .shell__header {
+    padding: 12px 14px;
+  }
+  .shell__brand {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  .shell__brand-tag {
+    display: none;
+  }
+}

@@ -1,22 +1,22 @@
-// Action-decision domain types. The whole new app speaks this vocabulary —
-// every alert, every watchlist row, every daily judgment carries an ActionKey.
+// Action-decision domain types. Every alert, every watchlist row, every
+// daily judgment carries one of these labels.
 
 export type ActionKey =
-  | 'ESCAPE'
-  | 'TAKE_PARTIAL_PROFIT'
+  | 'EXIT'
+  | 'TRIM'
   | 'WAIT'
-  | 'PULL_BACK'
-  | 'BUY_THE_DIP'
+  | 'WAIT_FOR_PULLBACK'
+  | 'BUY_DIP'
   | 'ADD'
-  | 'DO_NOTHING';
+  | 'HOLD';
 
-// Core (= long-term index) portfolio uses its own vocabulary so that
-// "ESCAPE / 逃げる" never appears next to NISA積立 — different mental mode.
+// Core (long-term index) portfolio uses its own quieter vocabulary so
+// "EXIT" never sits next to a NISA accumulation row.
 export type CoreActionKey =
-  | 'ACCUMULATE_CONTINUE'
-  | 'WAIT_LUMP_SUM'
-  | 'ADD_GRADUALLY'
-  | 'NO_SELL_NEEDED';
+  | 'CONTINUE'
+  | 'GRADUAL_ADD'
+  | 'WAIT_LUMP'
+  | 'NO_SELL';
 
 export type AssetClass =
   | 'JP_STOCK'
@@ -27,6 +27,7 @@ export type AssetClass =
   | 'REIT'
   | 'BOND'
   | 'CRYPTO'
+  | 'COMMODITY'
   | 'USDJPY';
 
 export type Confidence = 'low' | 'med' | 'high';

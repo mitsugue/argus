@@ -1,80 +1,65 @@
-/* Shared page shell — every route uses this so the title bar and
-   horizontal rhythm match. */
-
 .page {
-  position: absolute;
-  inset: 0;
-  padding: 14px 14px 14px 78px; /* left padding clears the NavRail */
-  overflow-y: auto;
+  padding: 28px 32px 60px;
+  max-width: 1200px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 28px;
 }
 
 .page__head {
   display: flex;
-  align-items: baseline;
-  gap: 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--hud-cyan-line);
+  flex-direction: column;
+  gap: 4px;
 }
 
 .page__crumb {
-  font-family: var(--hud-font-display);
-  font-size: 10px;
-  letter-spacing: 3px;
-  color: var(--hud-text-faint);
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .page__title {
-  font-family: var(--hud-font-display);
-  font-size: 18px;
-  letter-spacing: 4px;
-  color: var(--shell-text);
-  text-transform: uppercase;
-  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-main);
 }
 
 .page__subtitle {
-  font-family: var(--hud-font-mono);
-  font-size: 11px;
-  color: var(--hud-text-dim);
-  margin-left: auto;
-}
-
-.page__section-title {
-  font-family: var(--hud-font-display);
-  font-size: 10px;
-  letter-spacing: 3px;
-  color: var(--hud-text-dim);
-  text-transform: uppercase;
-  padding-bottom: 6px;
-  border-bottom: 1px dashed rgba(106, 138, 160, 0.18);
-  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-sub);
 }
 
 .page__empty {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex: 1;
-  color: var(--hud-text-faint);
-  font-family: var(--hud-font-display);
-  letter-spacing: 4px;
-  font-size: 11px;
+  gap: 6px;
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
 
-.page__empty-mark {
-  font-size: 38px;
-  color: var(--hud-cyan-dim);
-  letter-spacing: 0;
+.page__empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-sub);
 }
 
-@media (max-width: 900px) {
+.page__empty-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
   .page {
-    padding-left: 68px;
+    padding: 18px 14px 40px;
+  }
+  .page__title {
+    font-size: 18px;
   }
 }

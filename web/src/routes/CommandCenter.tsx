@@ -1,46 +1,90 @@
 import React from 'react';
 import { PageShell } from './PageShell';
-import { ActionBadge } from '../components/action/ActionBadge';
-import { ACTION_ORDER, CORE_ACTION_ORDER } from '../domain/actions';
+import { HeroCard } from '../components/dashboard/HeroCard';
+import { AlertCard } from '../components/dashboard/AlertCard';
+import { EventRow } from '../components/dashboard/EventRow';
+import { CoreRow } from '../components/dashboard/CoreRow';
+import {
+  actionAlerts,
+  indexFundStatus,
+  todayJudgment,
+  upcomingEvents,
+} from '../mock/dashboard';
+import '../components/dashboard/Dashboard.css';
 
-// Phase 1 landing — shows the action-label design system so the user can
-// see every label rendered with its color/icon/JP text. Real Daily
-// Command Center content (judgment / reasons / events / assets) lands here
-// in Phase 3.
+// Daily action priority (per spec): individual stocks → satellites → index.
+// Index funds are deliberately separated below so they're not visually
+// promoted as daily-trade targets.
+const SATELLITE_CLASSES = new Set([
+  'JP_STOCK',
+  'US_STOCK',
+  'GOLD',
+  'REIT',
+  'BOND',
+  'CRYPTO',
+  'COMMODITY',
+  'USDJPY',
+]);
+
+const formatDate = (iso: string) => {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+};
+
 export const CommandCenter: React.FC = () => {
+  const satellites = actionAlerts.filter((a) => SATELLITE_CLASSES.has(a.assetClass));
+  const events = upcomingEvents.slice().sort((a, b) => a.at - b.at).slice(0, 4);
+
   return (
-    <PageShell crumb="01 · COMMAND" title="司令塔" subtitle="design system preview">
+    <PageShell title="Daily Command Center" subtitle={formatDate(todayJudgment.date)}>
+      <HeroCard judgment={todayJudgment} />
+
       <section>
-        <h2 className="page__section-title">tactical actions — 個別株 / コモディティ / 為替</h2>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {ACTION_ORDER.map((a) => (
-            <ActionBadge key={a} action={a} size="lg" showEn />
+        <div className="section-head">
+          <span className="section-head__title">Action Alerts</span>
+          <span className="section-head__count">
+            {satellites.length} satellite classes
+          </span>
+        </div>
+        <div className="alert-grid">
+          {satellites.map((c) => (
+            <AlertCard key={c.assetClass} card={c} />
           ))}
         </div>
       </section>
 
       <section>
-        <h2 className="page__section-title">core actions — 長期インデックス</h2>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {CORE_ACTION_ORDER.map((a) => (
-            <ActionBadge key={a} action={a} size="lg" showEn />
+        <div className="section-head">
+          <span className="section-head__title">Event Radar</span>
+          <span className="section-head__count">
+            next {events.length} events
+          </span>
+        </div>
+        <div className="card event-list">
+          {events.map((e) => (
+            <EventRow key={e.id} event={e} />
           ))}
         </div>
       </section>
 
       <section>
-        <h2 className="page__section-title">三サイズ</h2>
-        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-          <ActionBadge action="ESCAPE" size="sm" />
-          <ActionBadge action="ESCAPE" size="md" />
-          <ActionBadge action="ESCAPE" size="lg" />
+        <div className="section-head">
+          <span className="section-head__title">Core Portfolio</span>
+          <span className="section-head__count">
+            {indexFundStatus.length} positions
+          </span>
+        </div>
+        <div className="card core-list">
+          {indexFundStatus.map((p) => (
+            <CoreRow key={p.symbol} position={p} />
+          ))}
         </div>
       </section>
-
-      <p style={{ color: 'var(--hud-text-faint)', fontSize: 11, lineHeight: 1.7, marginTop: 12 }}>
-        この上に Phase 3 で daily judgment(今日の総合判断・リスク・主要理由3点・今日触らないアセット・1文サマリー)を載せる。<br />
-        色/アイコン/JP ラベルは <code style={{ color: 'var(--hud-cyan)' }}>web/src/domain/actions.ts</code> の単一ソースから供給。
-      </p>
     </PageShell>
   );
 };
