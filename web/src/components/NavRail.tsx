@@ -1,4 +1,6 @@
 import React from 'react';
+import { ActionPill } from './action/ActionBadge';
+import type { ActionKey, RiskLevel } from '../types/action';
 import './NavRail.css';
 
 export type RouteKey =
@@ -26,11 +28,23 @@ const NAV: NavItem[] = [
 interface Props {
   active: RouteKey;
   onSelect: (key: RouteKey) => void;
+  // The headline judgment — pinned at the top so it stays visible across
+  // every page. Clicking jumps back to the Command Center.
+  todayCall: { action: ActionKey; risk: RiskLevel };
 }
 
-export const NavRail: React.FC<Props> = ({ active, onSelect }) => {
+export const NavRail: React.FC<Props> = ({ active, onSelect, todayCall }) => {
   return (
     <nav className="nav" aria-label="Sections">
+      <button
+        className="nav__today"
+        onClick={() => onSelect('command')}
+        aria-label="Jump to today's command center"
+      >
+        <span className="nav__today-label">Today's call</span>
+        <ActionPill action={todayCall.action} />
+      </button>
+
       <div className="nav__group-label">Workspace</div>
       {NAV.map((n) => (
         <button
@@ -43,6 +57,11 @@ export const NavRail: React.FC<Props> = ({ active, onSelect }) => {
           {n.label}
         </button>
       ))}
+
+      <div className="nav__footer">
+        <span className="nav__footer-dot" />
+        <span>v{__APP_VERSION__}</span>
+      </div>
     </nav>
   );
 };

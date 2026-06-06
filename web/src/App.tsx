@@ -24,7 +24,13 @@ const App: React.FC = () => {
   const lastUpdated = new Date(todayJudgment.updatedAt);
   return (
     <AppShell
-      sidebar={<NavRail active={route} onSelect={setRoute} />}
+      sidebar={
+        <NavRail
+          active={route}
+          onSelect={setRoute}
+          todayCall={{ action: todayJudgment.overall, risk: todayJudgment.risk }}
+        />
+      }
       lastUpdated={lastUpdated}
     >
       <Active />
