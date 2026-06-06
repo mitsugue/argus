@@ -413,6 +413,174 @@
   color: var(--text-sub);
 }
 
+/* ── Watch row (per-stock) ──────────────────────────────────────────── */
+
+.watch-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.watch-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.watch-row:last-child {
+  border-bottom: 0;
+}
+
+.watch-row__primary {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 18px;
+  align-items: baseline;
+}
+
+.watch-row__id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.watch-row__symbol {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  letter-spacing: 0.01em;
+}
+
+.watch-row__name {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+.watch-row__price-block {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-row__price {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+.watch-row__change {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-sub);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.watch-row__change--up {
+  color: var(--green);
+}
+
+.watch-row__change--down {
+  color: var(--red);
+}
+
+.watch-row__change-abs {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.watch-row__action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.watch-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-row__dot {
+  color: var(--text-faint);
+}
+
+.watch-row__guidance {
+  text-transform: capitalize;
+}
+.watch-row__guidance--beat    { color: var(--green); }
+.watch-row__guidance--inline  { color: var(--text-sub); }
+.watch-row__guidance--miss    { color: var(--red); }
+
+.watch-row__news {
+  font-size: 12px;
+  color: var(--text-sub);
+  line-height: 1.5;
+  /* keep headline on one line; ellipsize if it's wider than the card */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-row__reason {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding-left: 10px;
+  border-left: 2px solid var(--line-strong);
+}
+
+@media (max-width: 720px) {
+  .watch-row__primary {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    row-gap: 6px;
+  }
+  .watch-row__action {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .watch-row__price-block {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .watch-row__news {
+    white-space: normal;
+  }
+}
+
+/* Watchlist header — summary counts of action labels in scope. */
+
+.watch-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 11px;
+  color: var(--text-sub);
+  padding: 8px 0 4px;
+}
+
+.watch-summary__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.watch-summary__count {
+  font-family: var(--font-mono);
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Section header (inside CommandCenter) ──────────────────────────── */
 
 .section-head {
