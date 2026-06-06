@@ -5,9 +5,10 @@ import type {
   MarketEvent,
 } from '../types/dashboard';
 
-// Static seed data — replaced by a real scanner backend later. Values
-// chosen to reflect a plausible "event-risk Tuesday before CPI": cautious
-// across satellites, steady on core. NOT trading advice.
+// Mock content. Display text (summary, reasons, news, regime notes) is
+// rendered in Japanese — the user prefers JP for information until they
+// settle in. UI chrome (labels, action keys, section titles) stays
+// English so the design system remains consistent.
 
 export const todayJudgment: DailyJudgment = {
   date: '2026-06-09',
@@ -15,16 +16,16 @@ export const todayJudgment: DailyJudgment = {
   risk: 'high',
   regime: ['Event Risk', 'Rates Pressure'],
   summary:
-    'Conditions are unstable ahead of US CPI within 24 hours. Avoid aggressive entries; wait for confirmation after the release.',
+    '米CPI発表まで24時間以内、相場は不安定。積極的なエントリーを避け、発表後の確認まで待つ。',
   reasons: [
-    'US CPI is scheduled within 24 hours and consensus is uncertain.',
-    'US 10Y yield is rising — bond market is repricing rate expectations.',
-    'Nasdaq futures opened weak with thin overnight breadth.',
+    '米CPIが24時間以内に発表予定。コンセンサスが揺れている。',
+    '米10年金利が上昇中 — 債券市場が利上げ期待を再評価している。',
+    'ナスダック先物は弱含み、オーバーナイトの値幅も薄い。',
   ],
-  assetsToTouch: ['Gold (hedge)', 'Cash reserves', 'JP large-cap defensive'],
-  assetsToAvoid: ['US growth stocks', 'High-beta crypto', 'Long-duration bonds'],
+  assetsToTouch: ['金(ヘッジ)', '現金比率', '日本大型ディフェンシブ'],
+  assetsToAvoid: ['米グロース株', 'ハイベータ暗号資産', '長期国債'],
   nextCondition:
-    'CPI print at 08:30 ET — wait for confirmation, then re-evaluate within 30 minutes.',
+    '8:30 ET の CPI 発表 — 確認まで待ち、30 分以内に再評価。',
   updatedAt: Date.now(),
 };
 
@@ -35,27 +36,27 @@ export const actionAlerts: AssetActionCard[] = [
     action: 'WAIT',
     confidence: 'med',
     risk: 'med',
-    reason: 'TSE breadth flat; major themes on hold ahead of US CPI.',
+    reason: 'TSE の値幅は横ばい。主要テーマは米CPI を控え様子見。',
     dataPoints: [
       'TOPIX adv/dec ratio: 1.02',
-      'Foreign net flow: -¥48bn (5d)',
-      'Margin long ratio: 3.4 (elevated)',
+      '海外勢ネットフロー: -¥48bn (5d)',
+      '信用買い比率: 3.4(高水準)',
     ],
-    nextCondition: 'US CPI clears → re-screen morning gappers.',
+    nextCondition: '米CPI 通過後 → 朝の値動き銘柄を再スクリーン。',
   },
   {
     assetClass: 'US_STOCK',
     displayName: 'US Individual Stocks',
-    action: 'WAIT_FOR_PullBACK' as never, // placeholder for typing; replaced below
+    action: 'WAIT_FOR_PULLBACK',
     confidence: 'high',
     risk: 'high',
-    reason: 'Mag-7 stretched, breadth weak — wait for orderly pullback.',
+    reason: 'Mag-7 は買われすぎ、値幅は薄い。秩序ある押し目を待つ。',
     dataPoints: [
       'SPX RSI(14): 71',
-      '% > 50DMA: 58%',
-      'VIX: 17.4 (rising)',
+      '50DMA 超え銘柄: 58%',
+      'VIX: 17.4(上昇中)',
     ],
-    nextCondition: 'SPX -2% intraday or VIX > 22 → re-evaluate.',
+    nextCondition: 'SPX 日中 -2% または VIX > 22 → 再評価。',
   },
   {
     assetClass: 'GOLD',
@@ -63,13 +64,13 @@ export const actionAlerts: AssetActionCard[] = [
     action: 'HOLD',
     confidence: 'high',
     risk: 'low',
-    reason: 'Holding as the event hedge — momentum positive but extended.',
+    reason: 'イベントヘッジとして保持。モメンタムは正だが伸び切り感あり。',
     dataPoints: [
-      'XAU/USD: 2,348 (+0.4% 5d)',
-      'Real yield: 1.8% (range-bound)',
-      'GLD net inflow: +$220m (5d)',
+      'XAU/USD: 2,348(+0.4% 5d)',
+      '実質利回り: 1.8%(レンジ)',
+      'GLD ネット流入: +$220m(5d)',
     ],
-    nextCondition: 'CPI surprise to upside → trim partial.',
+    nextCondition: 'CPI 上振れ → 部分利確。',
   },
   {
     assetClass: 'REIT',
@@ -77,9 +78,9 @@ export const actionAlerts: AssetActionCard[] = [
     action: 'WAIT',
     confidence: 'med',
     risk: 'med',
-    reason: 'Rate-sensitive — sit out until duration risk clears.',
-    dataPoints: ['VNQ -1.1% (5d)', 'US 10Y: 4.42%'],
-    nextCondition: '10Y back below 4.30% → re-evaluate.',
+    reason: '金利感応度が高い。デュレーションリスクが落ち着くまで見送り。',
+    dataPoints: ['VNQ -1.1%(5d)', '米10Y: 4.42%'],
+    nextCondition: '米10Y が 4.30% を割る → 再評価。',
   },
   {
     assetClass: 'BOND',
@@ -87,13 +88,13 @@ export const actionAlerts: AssetActionCard[] = [
     action: 'WAIT_FOR_PULLBACK',
     confidence: 'high',
     risk: 'med',
-    reason: 'Yields rising — wait for the curve to stabilize before adding duration.',
+    reason: '利回り上昇中。カーブが安定するまでデュレーションは増やさない。',
     dataPoints: [
-      'TLT -1.8% (5d)',
-      'US 10Y: 4.42% (+12 bps 5d)',
+      'TLT -1.8%(5d)',
+      '米10Y: 4.42%(+12 bps 5d)',
       '2s10s: -32 bps',
     ],
-    nextCondition: '10Y peaks and reverses → start phased buys.',
+    nextCondition: '10Y がピークアウト → 段階買い開始。',
   },
   {
     assetClass: 'CRYPTO',
@@ -101,13 +102,13 @@ export const actionAlerts: AssetActionCard[] = [
     action: 'TRIM',
     confidence: 'med',
     risk: 'high',
-    reason: 'BTC/ETH extended into event risk — secure partial profit.',
+    reason: 'BTC/ETH はイベントリスクに対し伸び切り。一部利確で確保。',
     dataPoints: [
-      'BTC: $68,200 (+9% 7d)',
-      'ETH: $3,820 (+11% 7d)',
-      'Funding: 0.04% (elevated)',
+      'BTC: $68,200(+9% 7d)',
+      'ETH: $3,820(+11% 7d)',
+      'ファンディング: 0.04%(高水準)',
     ],
-    nextCondition: 'Funding > 0.06% or BTC > $71k → trim more.',
+    nextCondition: 'ファンディング > 0.06% または BTC > $71k → さらに利確。',
   },
   {
     assetClass: 'COMMODITY',
@@ -115,9 +116,9 @@ export const actionAlerts: AssetActionCard[] = [
     action: 'WAIT',
     confidence: 'low',
     risk: 'med',
-    reason: 'Mixed signals across oil and base metals — no clear edge.',
-    dataPoints: ['WTI: $76.2', 'Copper: $4.18'],
-    nextCondition: 'OPEC headline or China PMI surprise.',
+    reason: '原油・基礎金属でシグナル混在。明確なエッジなし。',
+    dataPoints: ['WTI: $76.2', '銅: $4.18'],
+    nextCondition: 'OPEC ヘッドラインまたは中国 PMI のサプライズ。',
   },
   {
     assetClass: 'USDJPY',
@@ -125,18 +126,15 @@ export const actionAlerts: AssetActionCard[] = [
     action: 'WAIT',
     confidence: 'high',
     risk: 'med',
-    reason: 'Range-bound around 157 — intervention risk caps upside.',
+    reason: '157 円付近でレンジ。介入リスクが上値を抑える。',
     dataPoints: [
       'USD/JPY: 157.2',
-      'MoF rhetoric: elevated',
-      'Vol-1M: 8.4%',
+      '財務省レトリック: 強含み',
+      '1M インプライド: 8.4%',
     ],
-    nextCondition: '158.5 break or BOJ comment → reassess.',
+    nextCondition: '158.5 突破または BOJ コメント → 再評価。',
   },
 ];
-
-// Patch the typo from above so we don't carry the bogus literal in shipped data.
-actionAlerts[1].action = 'WAIT_FOR_PULLBACK';
 
 export const indexFundStatus: CorePosition[] = [
   {
@@ -144,28 +142,28 @@ export const indexFundStatus: CorePosition[] = [
     name: 'eMAXIS Slim S&P 500',
     market: 'JP',
     action: 'CONTINUE',
-    reason: 'Monthly accumulation on schedule; valuation expensive but trend intact.',
+    reason: '積立は予定通り。バリュエーションは割高だがトレンドは継続。',
   },
   {
     symbol: 'eMAXIS Slim All-Country',
-    name: 'eMAXIS Slim All-Country (オルカン)',
+    name: 'eMAXIS Slim 全世界株式(オルカン)',
     market: 'JP',
     action: 'CONTINUE',
-    reason: 'Continue NISA monthly contribution as planned.',
+    reason: 'NISA 積立を予定通り継続。',
   },
   {
     symbol: 'VTI',
     name: 'Vanguard Total Stock Market ETF',
     market: 'US',
     action: 'WAIT_LUMP',
-    reason: 'Hold extra lump-sum until post-CPI re-pricing.',
+    reason: '追加一括は CPI 後の値直しまで保留。',
   },
   {
     symbol: 'Nikkei 225 Index',
-    name: 'Nikkei 225 Index Fund',
+    name: '日経 225 連動型',
     market: 'JP',
     action: 'GRADUAL_ADD',
-    reason: 'TOPIX pullback offers a phased entry — add over 3 weeks.',
+    reason: 'TOPIX 押し目で段階エントリー。3 週間で追加。',
   },
 ];
 
@@ -176,38 +174,38 @@ export const upcomingEvents: MarketEvent[] = [
   {
     id: 'cpi-jun',
     kind: 'CPI',
-    title: 'US CPI (May)',
+    title: '米CPI(5月)',
     at: t0 + 1 * day,
     impact: 'high',
-    note: 'Headline expected 3.4% YoY. Largest single risk this week.',
+    note: '総合 3.4% YoY 予想。今週最大のリスク。',
   },
   {
     id: 'fomc-jun',
     kind: 'FOMC',
-    title: 'FOMC Decision',
+    title: 'FOMC 政策決定',
     at: t0 + 2 * day,
     impact: 'extreme',
-    note: 'Rate held expected; dot plot & SEP are the variable.',
+    note: '金利据え置き予想。ドットプロットと SEP が変数。',
   },
   {
     id: 'pce-jun',
     kind: 'PCE',
-    title: 'US PCE (May)',
+    title: '米PCE(5月)',
     at: t0 + 22 * day,
     impact: 'high',
   },
   {
     id: 'boj-jul',
     kind: 'BOJ',
-    title: 'BOJ Policy Meeting',
+    title: '日銀 政策決定会合',
     at: t0 + 30 * day,
     impact: 'high',
-    note: 'JGB taper pace and FX guidance in focus.',
+    note: 'JGB テーパー速度と為替ガイダンスに注目。',
   },
   {
     id: 'nflx-q',
     kind: 'EARNINGS',
-    title: 'NFLX Earnings',
+    title: 'NFLX 決算',
     at: t0 + 12 * day,
     impact: 'med',
   },

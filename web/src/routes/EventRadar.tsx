@@ -4,12 +4,14 @@ import { EventRow } from '../components/dashboard/EventRow';
 import { upcomingEvents } from '../mock/dashboard';
 import '../components/dashboard/Dashboard.css';
 
+// Window labels stay short English (D-7..D+1) — they're structural.
+// Stage label + note in JP for the user's transition phase.
 const ESCALATION = [
-  { window: 'D-7', label: 'Caution',                     note: 'Awareness; no scaling-down required.' },
-  { window: 'D-3', label: 'Reduce aggressive entries',   note: 'Avoid new high-conviction satellite positions.' },
-  { window: 'D-1', label: 'Avoid large new positions',   note: 'Hold cash; no event-window entries.' },
-  { window: 'D',   label: 'Wait until release',          note: 'Sit out. Reassess within 30 minutes after print.' },
-  { window: 'D+1', label: 'Evaluate cleared / dip-buy',  note: 'Either risk cleared → re-engage, or opportunity → phased buy.' },
+  { window: 'D-7', label: '警戒(認識)',           note: '認識のみ。ポジション縮小は不要。' },
+  { window: 'D-3', label: '新規エントリー抑制',     note: '新規の高確信サテライト・ポジションを避ける。' },
+  { window: 'D-1', label: '大きな新規ポジ禁止',     note: '現金保持。イベントウィンドウ内の新規エントリーなし。' },
+  { window: 'D',   label: '発表まで様子見',         note: 'ポジションを動かさず。発表後 30 分以内に再評価。' },
+  { window: 'D+1', label: '解消 / 押し目買い判定', note: 'リスク解消なら再エントリー、押し目なら段階買い。' },
 ];
 
 export const EventRadar: React.FC = () => {

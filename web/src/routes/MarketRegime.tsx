@@ -4,17 +4,19 @@ import { SectorBlob } from '../components/SectorBlob';
 import { todayJudgment } from '../mock/dashboard';
 import '../components/dashboard/Dashboard.css';
 
+// Tag keys stay English (UI vocabulary) — gloss is rendered in JP for
+// the user's transition phase.
 const REGIME_GLOSSARY: { tag: string; gloss: string }[] = [
-  { tag: 'Risk On',               gloss: 'Equities and high-beta leading; defensives lag.' },
-  { tag: 'Risk Off',              gloss: 'Defensives lead; equities and credit weaken.' },
-  { tag: 'Event Risk',            gloss: 'Major scheduled catalyst within the window; entries throttled.' },
-  { tag: 'Rates Pressure',        gloss: 'Yields rising — duration assets and growth multiples compress.' },
-  { tag: 'Liquidity Tightening',  gloss: 'CB policy or financial conditions are tightening.' },
-  { tag: 'JPY Shock',             gloss: 'USD/JPY moving fast; intervention risk elevated.' },
-  { tag: 'Gold Hedge',            gloss: 'Gold leading on macro stress or real-yield reversal.' },
-  { tag: 'Crypto Heat',           gloss: 'BTC/ETH overextended, funding elevated.' },
-  { tag: 'Capitulation',          gloss: 'Forced selling; sentiment washed out.' },
-  { tag: 'Buyable Pullback',      gloss: 'Healthy reset in an intact uptrend.' },
+  { tag: 'Risk On',               gloss: '株式・ハイベータが牽引、ディフェンシブは遅れる。' },
+  { tag: 'Risk Off',              gloss: 'ディフェンシブが先導、株式・クレジットが弱含み。' },
+  { tag: 'Event Risk',            gloss: 'ウィンドウ内に主要触媒。新規エントリーを抑制。' },
+  { tag: 'Rates Pressure',        gloss: '金利上昇 — デュレーション資産とグロース倍率が圧縮。' },
+  { tag: 'Liquidity Tightening',  gloss: '中銀政策または金融条件が引き締まっている。' },
+  { tag: 'JPY Shock',             gloss: 'USD/JPY が急変、介入リスク高まる。' },
+  { tag: 'Gold Hedge',            gloss: 'マクロ不安または実質利回り反転で金が先行。' },
+  { tag: 'Crypto Heat',           gloss: 'BTC/ETH 過熱、ファンディング上昇。' },
+  { tag: 'Capitulation',          gloss: '投げ売り発生、センチメント枯渇。' },
+  { tag: 'Buyable Pullback',      gloss: '健全な押し目、上昇トレンドは継続。' },
 ];
 
 export const MarketRegime: React.FC = () => {

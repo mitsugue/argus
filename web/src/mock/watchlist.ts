@@ -1,7 +1,8 @@
 import type { WatchEntry, WatchJP, WatchUS } from '../types/watch';
 
-// Mock watchlist — plausible "Tuesday before US CPI" snapshot.
-// 4 JP large-caps + 4 US large-caps. NOT trading advice.
+// News headlines and scanner reasons are in Japanese — the user reads
+// JP for raw info during the transition. Company names, action labels,
+// data points (numbers / mono-typeset metadata) stay English.
 
 const now = Date.now();
 
@@ -20,9 +21,9 @@ const jpWatch: WatchJP[] = [
     jsfBorrowed: 320,
     jsfLent: 140,
     earningsDate: '2026-08-05',
-    newsHeadline: 'Reuters · Toyota raises FY EV unit plan after strong NA demand',
+    newsHeadline: 'ロイター · トヨタ、北米需要好調で FY EV 販売計画を上方修正',
     action: 'HOLD',
-    reason: 'Trend intact, valuation fair — sit through CPI before action.',
+    reason: 'トレンド継続、バリュエーション妥当。CPI 通過まで様子見。',
     updatedAt: now,
   },
   {
@@ -39,9 +40,9 @@ const jpWatch: WatchJP[] = [
     jsfBorrowed: 1_120,
     jsfLent: 620,
     earningsDate: '2026-08-07',
-    newsHeadline: 'Bloomberg · Vision Fund mark-to-market widens on US growth re-rating',
+    newsHeadline: 'ブルームバーグ · 米グロース再評価で Vision Fund の含み損が拡大',
     action: 'TRIM',
-    reason: 'Margin long stretched; weakest of the megacaps into event risk.',
+    reason: '信用買い残が伸び切り。大型株中ではイベント前で最も弱い。',
     updatedAt: now,
   },
   {
@@ -56,9 +57,9 @@ const jpWatch: WatchJP[] = [
     marginLong: 6_240,
     marginShort: 2_130,
     earningsDate: '2026-08-08',
-    newsHeadline: 'Nikkei · PS5 holiday lineup expanded; semiconductor split timing in focus',
+    newsHeadline: '日経 · PS5 年末ラインナップ拡充、半導体分社の時期に注目',
     action: 'WAIT',
-    reason: 'Range-bound around VWAP — no edge until catalyst.',
+    reason: 'VWAP 付近でレンジ。触媒待ち。',
     updatedAt: now,
   },
   {
@@ -73,9 +74,9 @@ const jpWatch: WatchJP[] = [
     marginLong: 4_180,
     marginShort: 1_240,
     earningsDate: '2026-08-12',
-    newsHeadline: 'Reuters · SOX index weakness drags Japan WFE names',
+    newsHeadline: 'ロイター · SOX 指数の弱さが日本の半導体製造装置株を引き下げ',
     action: 'WAIT_FOR_PULLBACK',
-    reason: 'High-quality name; want a controlled drop into prior support.',
+    reason: '優良銘柄。前回サポートまでのコントロールされた下落を待つ。',
     updatedAt: now,
   },
 ];
@@ -93,9 +94,9 @@ const usWatch: WatchUS[] = [
     rateSensitivity: 'high',
     guidance: 'beat',
     earningsDate: '2026-08-27',
-    newsHeadline: 'CNBC · Hyperscaler 2027 capex guides confirm AI infra runway',
+    newsHeadline: 'CNBC · ハイパースケーラーの 2027 設備投資計画が AI インフラの継続を確認',
     action: 'TRIM',
-    reason: 'Crowded; partial profit-take before CPI is prudent.',
+    reason: '混雑したトレード。CPI 前の一部利確が無難。',
     updatedAt: now,
   },
   {
@@ -110,9 +111,9 @@ const usWatch: WatchUS[] = [
     rateSensitivity: 'med',
     guidance: 'inline',
     earningsDate: '2026-07-30',
-    newsHeadline: 'Bloomberg · China iPhone unit growth modestly positive in May',
+    newsHeadline: 'ブルームバーグ · 5 月の中国 iPhone 販売は緩やかにプラス',
     action: 'HOLD',
-    reason: 'Defensive megacap — let it ride through the print.',
+    reason: 'ディフェンシブな大型株。発表は持ち越し。',
     updatedAt: now,
   },
   {
@@ -127,9 +128,9 @@ const usWatch: WatchUS[] = [
     rateSensitivity: 'high',
     guidance: 'miss',
     earningsDate: '2026-07-23',
-    newsHeadline: 'Reuters · Cybercab production timeline pushed; FSD takes priority',
+    newsHeadline: 'ロイター · Cybercab 量産時期を後ろ倒し、FSD を優先',
     action: 'EXIT',
-    reason: 'Trend down, guidance miss, high-beta into CPI — defensive call.',
+    reason: '下落トレンド、ガイダンス未達、CPI 前のハイベータ。ディフェンシブな判断。',
     updatedAt: now,
   },
   {
@@ -144,9 +145,9 @@ const usWatch: WatchUS[] = [
     rateSensitivity: 'med',
     guidance: 'beat',
     earningsDate: '2026-07-31',
-    newsHeadline: 'WSJ · Ads-on-Reels monetization improving quarter over quarter',
+    newsHeadline: 'WSJ · Reels の広告収益化が四半期ごとに改善',
     action: 'ADD',
-    reason: 'Earnings momentum + healthy sector tape — phased add.',
+    reason: '決算モメンタム + セクター堅調。段階追加。',
     updatedAt: now,
   },
 ];
