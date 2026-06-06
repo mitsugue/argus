@@ -15,8 +15,8 @@ export type ActionKey =
 export type CoreActionKey =
   | 'CONTINUE'
   | 'GRADUAL_ADD'
-  | 'WAIT_LUMP'
-  | 'NO_SELL';
+  | 'DEFER_LUMP_SUM'
+  | 'NO_SELL_ACTION';
 
 export type AssetClass =
   | 'JP_STOCK'

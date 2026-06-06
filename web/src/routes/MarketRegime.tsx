@@ -1,11 +1,12 @@
 import React from 'react';
 import { PageShell } from './PageShell';
-import { SectorBlob } from '../components/SectorBlob';
-import { todayJudgment } from '../mock/dashboard';
+import { RegimeMatrix } from '../components/regime/RegimeMatrix';
+import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
+import { regimeMatrix, rotationBoard } from '../mock/regime';
 import '../components/dashboard/Dashboard.css';
 
-// Tag keys stay English (UI vocabulary) — gloss is rendered in JP for
-// the user's transition phase.
+// Regime tag keys stay English (UI vocabulary) — gloss is JP for the
+// transition phase.
 const REGIME_GLOSSARY: { tag: string; gloss: string }[] = [
   { tag: 'Risk On',               gloss: '株式・ハイベータが牽引、ディフェンシブは遅れる。' },
   { tag: 'Risk Off',              gloss: 'ディフェンシブが先導、株式・クレジットが弱含み。' },
@@ -23,47 +24,22 @@ export const MarketRegime: React.FC = () => {
   return (
     <PageShell
       title="Market Regime"
-      subtitle="Classification of the current environment. Supports the judgment; never replaces it."
+      subtitle="Current cross-asset environment and capital rotation. Visualizations support the action labels; they are not trading signals by themselves."
     >
       <section>
         <div className="section-head">
-          <span className="section-head__title">Active regime</span>
+          <span className="section-head__title">Regime Matrix</span>
+          <span className="section-head__count">classification, not forecast</span>
         </div>
-        <div className="card">
-          <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-            {todayJudgment.regime.map((r) => (
-              <span
-                className="hero__tag"
-                key={r}
-                style={{ fontSize: 12, padding: '4px 10px' }}
-              >
-                {r}
-              </span>
-            ))}
-          </div>
-          <p style={{ fontSize: 13, color: 'var(--text-sub)', lineHeight: 1.65 }}>
-            {todayJudgment.summary}
-          </p>
-        </div>
+        <RegimeMatrix state={regimeMatrix} />
       </section>
 
       <section>
         <div className="section-head">
-          <span className="section-head__title">Capital concentration</span>
-          <span className="section-head__count">
-            supporting layer
-          </span>
+          <span className="section-head__title">Capital Rotation Board</span>
+          <span className="section-head__count">{rotationBoard.length} asset classes</span>
         </div>
-        <div className="regime-viz">
-          <SectorBlob />
-        </div>
-        <div className="regime-viz__caption">
-          <span>
-            Bubble size ≈ relative weight by asset class. Tap or pinch a
-            bubble to drill into its sub-composition.
-          </span>
-          <span className="regime-viz__caption-hint">Mock data</span>
-        </div>
+        <CapitalRotationBoard rows={rotationBoard} />
       </section>
 
       <section>

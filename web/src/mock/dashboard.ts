@@ -10,22 +10,24 @@ import type {
 // settle in. UI chrome (labels, action keys, section titles) stays
 // English so the design system remains consistent.
 
+// Top reasons are interpretive — they say WHY today's posture is what it
+// is, not just "CPI in 24h" (the header chip already says that).
 export const todayJudgment: DailyJudgment = {
   date: '2026-06-09',
   overall: 'WAIT',
   risk: 'high',
   regime: ['Event Risk', 'Rates Pressure'],
   summary:
-    '米CPI発表まで24時間以内、相場は不安定。積極的なエントリーを避け、発表後の確認まで待つ。',
+    'マクロイベントウィンドウが活発。確信度は通常より低い。発表後の確認まで新規エントリーを抑制。',
   reasons: [
-    '米CPIが24時間以内に発表予定。コンセンサスが揺れている。',
-    '米10年金利が上昇中 — 債券市場が利上げ期待を再評価している。',
-    'ナスダック先物は弱含み、オーバーナイトの値幅も薄い。',
+    'マクロイベントウィンドウが活発で、確信度が通常より低い。',
+    '金利上昇が長期デュレーション資産を圧迫している。',
+    'ハイベータ銘柄でオーバーナイトのモメンタムが弱い。',
   ],
   assetsToTouch: ['金(ヘッジ)', '現金比率', '日本大型ディフェンシブ'],
   assetsToAvoid: ['米グロース株', 'ハイベータ暗号資産', '長期国債'],
   nextCondition:
-    '8:30 ET の CPI 発表 — 確認まで待ち、30 分以内に再評価。',
+    'CPI 通過 → イールド反応を確認 → BUY DIP 候補を再評価。',
   updatedAt: Date.now(),
 };
 
@@ -155,7 +157,7 @@ export const indexFundStatus: CorePosition[] = [
     symbol: 'VTI',
     name: 'Vanguard Total Stock Market ETF',
     market: 'US',
-    action: 'WAIT_LUMP',
+    action: 'DEFER_LUMP_SUM',
     reason: '追加一括は CPI 後の値直しまで保留。',
   },
   {

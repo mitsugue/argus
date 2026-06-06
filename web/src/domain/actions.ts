@@ -92,18 +92,18 @@ export const CORE_ACTIONS: Record<CoreActionKey, ActionDef> = {
     bgVar: '--action-dip-bg',
     tone: 'opportunity',
   },
-  WAIT_LUMP: {
-    key: 'WAIT_LUMP',
-    label: 'Wait Lump',
-    longLabel: 'WAIT LUMP',
+  DEFER_LUMP_SUM: {
+    key: 'DEFER_LUMP_SUM',
+    label: 'Defer Lump Sum',
+    longLabel: 'DEFER LUMP SUM',
     cssVar: '--action-wait',
     bgVar: '--action-wait-bg',
     tone: 'neutral',
   },
-  NO_SELL: {
-    key: 'NO_SELL',
-    label: 'No Sell',
-    longLabel: 'NO SELL',
+  NO_SELL_ACTION: {
+    key: 'NO_SELL_ACTION',
+    label: 'No Sell Action',
+    longLabel: 'NO SELL ACTION',
     cssVar: '--action-hold',
     bgVar: '--action-hold-bg',
     tone: 'idle',
@@ -126,8 +126,8 @@ export const ACTION_ORDER: ActionKey[] = [
 export const CORE_ACTION_ORDER: CoreActionKey[] = [
   'CONTINUE',
   'GRADUAL_ADD',
-  'WAIT_LUMP',
-  'NO_SELL',
+  'DEFER_LUMP_SUM',
+  'NO_SELL_ACTION',
 ];
 
 export function actionDef(key: ActionKey | CoreActionKey): ActionDef {
