@@ -1,12 +1,28 @@
 import React from 'react';
+import type { RiskLevel } from '../types/action';
 import './AppShell.css';
+
+interface NextEvent {
+  title: string;       // short event title
+  kind: string;        // CPI / FOMC / BOJ ...
+  daysAway: number;    // 0 = today, 1 = tomorrow
+  impact: RiskLevel;
+  onClick?: () => void;
+}
 
 interface Props {
   sidebar: React.ReactNode;
   children: React.ReactNode;
-  // ISO timestamp of the most recent judgment refresh — formatted in-place.
   lastUpdated: Date;
+  nextEvent?: NextEvent;
 }
+
+const IMPACT_COLOR: Record<RiskLevel, string> = {
+  low:     'var(--risk-low)',
+  med:     'var(--risk-med)',
+  high:    'var(--risk-high)',
+  extreme: 'var(--risk-extreme)',
+};
 
 function formatLastUpdated(d: Date): string {
   const now = new Date();
@@ -19,9 +35,16 @@ function formatLastUpdated(d: Date): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-// Slim header (brand + status + last-updated) on top, sidebar + main below.
-// No clock, no "UPLINK MOCK", no crosshairs, no terminal ornaments.
-export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated }) => {
+function formatDaysAway(days: number): string {
+  if (days === 0) return 'today';
+  if (days === 1) return 'in 1d';
+  if (days < 0) return `${-days}d ago`;
+  return `in ${days}d`;
+}
+
+// Slim header (brand + next event + status + last-updated) on top,
+// sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
+export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent }) => {
   return (
     <div className="shell">
       <header className="shell__header">
@@ -32,6 +55,19 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated }) =>
           </span>
         </div>
         <div className="shell__meta">
+          {nextEvent && (
+            <button
+              className="shell__next-event"
+              onClick={nextEvent.onClick}
+              style={{ ['--ne-fg' as string]: IMPACT_COLOR[nextEvent.impact] }}
+              aria-label={`Next event: ${nextEvent.title}, ${formatDaysAway(nextEvent.daysAway)}`}
+            >
+              <span className="shell__next-event-dot" />
+              <span className="shell__next-event-label">Next</span>
+              {nextEvent.kind}
+              <span className="shell__next-event-when">· {formatDaysAway(nextEvent.daysAway)}</span>
+            </button>
+          )}
           <span className="shell__status">Market Open</span>
           <span className="shell__updated">
             <span className="shell__updated-label">Updated</span>

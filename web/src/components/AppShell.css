@@ -73,6 +73,40 @@
   margin-right: 6px;
 }
 
+/* Next-event chip — small, colored dot, clickable. */
+.shell__next-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-sub);
+  background: transparent;
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease), color 0.12s var(--ease);
+}
+.shell__next-event:hover {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--text-main);
+}
+.shell__next-event-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ne-fg);
+}
+.shell__next-event-label {
+  color: var(--text-faint);
+  margin-right: 1px;
+}
+.shell__next-event-when {
+  font-family: var(--font-mono);
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+}
+
 .shell__body {
   flex: 1;
   display: flex;
@@ -95,6 +129,10 @@
     gap: 2px;
   }
   .shell__brand-tag {
+    display: none;
+  }
+  .shell__updated,
+  .shell__status {
     display: none;
   }
 }
