@@ -29,7 +29,7 @@ const ROUTES = [
   ['Action Alerts', 'Core and satellite asset-class cards with full reasoning, supporting data, and next condition'],
   ['Market Regime', 'Capital Rotation Board (primary) + Regime Matrix (supporting view, compact) + Regime Summary + 10-tag glossary. The old bubble visualization is retired from the main experience'],
   ['Event Radar',   'Upcoming events list + D-7 → D+1 escalation policy'],
-  ['Watchlist',     'JP + US dense rows with action label, news, scanner reason; sorted by urgency'],
+  ['Watchlist',     'Dense JP / US watchlist rows with action label, news, scanner rationale, and urgency sorting'],
   ['Core Portfolio','Long-term index status with calm vocabulary (Continue / Gradual Add / Defer Lump Sum / No Sell Action)'],
 ];
 
@@ -63,7 +63,7 @@ const OPEN_QUESTIONS = [
   'Watchlist row density: is JP/US dense-line right, or should rows expand on click for full data?',
   'Action vocabulary: are 7 tactical labels enough, or do we need sub-actions (e.g., "trim 1/3" vs "trim 1/2")?',
   'Cross-page navigation: enough handles (Today\'s call pill, Next event chip, section-head links), or missing connections?',
-  'JP/EN mix: working as a transition mode, or confusing? Should there be a global EN-only toggle?',
+  'JP/EN mix: working as an intentional bilingual structure, or confusing? Should there be a global EN-only toggle?',
   'Should asset-class display names (Japan Individual Stocks etc.) also be JP, or stay structural English?',
   'Are the Regime Matrix and Capital Rotation Board clear enough to replace the old bubble visualization?',
   'Is the Capital Rotation Board readable at a glance without numeric values, or does it need a minimal score indicator?',
@@ -140,7 +140,7 @@ ${CORE_ACTION_ORDER.map((k: CoreActionKey) => {
 
 ## Layout
 
-- Slim header: A.R.G.U.S. + tagline on left; "Next event" chip + "Market Open" + "Updated Nh ago" on right
+- Slim header: A.R.G.U.S. + tagline on left; "Next event" chip + "Market Open" + "Updated {timeAgo}" on right (e.g., "Updated 15m ago", "Updated 2h ago", "Updated just now")
 - Sidebar (168 px): "Today's call" pill at top, 6 routes, version stamp at bottom — pill behavior is STABLE across pages (does not dim or change on the Today page)
 - Main: scrollable padded content
 - Mobile (< 720 px): sidebar collapses to a 56 px dot rail; the "Today's call" pill stays visible
@@ -355,7 +355,7 @@ export const AIReview: React.FC = () => {
 
       <h2>Layout</h2>
       <ul>
-        <li><strong>Header (slim, 14 px padding).</strong> Brand A.R.G.U.S. + tagline on left. Next-event chip with impact-colored dot, "Market Open", and "Updated Nh ago" on right.</li>
+        <li><strong>Header (slim, 14 px padding).</strong> Brand A.R.G.U.S. + tagline on left. Next-event chip with impact-colored dot, "Market Open", and "Updated {'{timeAgo}'}" on right (rendered as e.g., "Updated 15m ago", "Updated 2h ago", "Updated just now" — never the literal placeholder).</li>
         <li><strong>Sidebar (168 px).</strong> "Today's call" pill at top — STABLE across pages (does not dim or change). Six route buttons. Version stamp at bottom.</li>
         <li><strong>Main.</strong> Scrollable padded content area.</li>
         <li><strong>Mobile (&lt; 720 px).</strong> Sidebar collapses to a 64 px dot rail; "Today's call" pill stays visible; "Market Open" + "Updated" hidden; brand version pill, next event chip, AI review link in footer stay.</li>

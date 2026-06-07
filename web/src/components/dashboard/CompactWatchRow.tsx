@@ -23,7 +23,7 @@ function changeClass(pct: number): string {
 }
 
 // Today-page preview row. Per spec the Today page only shows:
-//   ticker / name / action / price + Δ / one short scanner reason /
+//   ticker / name / action / price + Δ / one short scanner rationale /
 //   next trigger. No volume, no VWAP, no margin / JSF / guidance — those
 //   live on the full Watchlist page so the home view stays scan-friendly.
 export const CompactWatchRow: React.FC<Props> = ({ entry }) => {

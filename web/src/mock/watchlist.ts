@@ -1,6 +1,6 @@
 import type { WatchEntry, WatchJP, WatchUS } from '../types/watch';
 
-// News headlines and scanner reasons are in Japanese — the user reads
+// News headlines and scanner rationale are in Japanese — the user reads
 // JP for raw info during the transition. Company names, action labels,
 // data points (numbers / mono-typeset metadata) stay English.
 
