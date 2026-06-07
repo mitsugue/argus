@@ -5,8 +5,8 @@ import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { regimeMatrix, regimeSummary, rotationBoard } from '../mock/regime';
 import '../components/dashboard/Dashboard.css';
 
-// Regime tag keys stay English (UI vocabulary) — gloss is JP for the
-// transition phase.
+// Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
+// bilingual split, not a transition mistake.
 const REGIME_GLOSSARY: { tag: string; gloss: string }[] = [
   { tag: 'Risk On',               gloss: '株式・ハイベータが牽引、ディフェンシブは遅れる。' },
   { tag: 'Risk Off',              gloss: 'ディフェンシブが先導、株式・クレジットが弱含み。' },

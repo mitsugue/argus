@@ -5,7 +5,8 @@ import { upcomingEvents } from '../mock/dashboard';
 import '../components/dashboard/Dashboard.css';
 
 // Window labels stay short English (D-7..D+1) — they're structural.
-// Stage label + note in JP for the user's transition phase.
+// Stage label + note in JP — intentional: market commentary stays in
+// Japanese while structural window codes stay English.
 const ESCALATION = [
   { window: 'D-7', label: '警戒(認識)',           note: '認識のみ。ポジション縮小は不要。' },
   { window: 'D-3', label: '新規エントリー抑制',     note: '新規の高確信サテライト・ポジションを避ける。' },

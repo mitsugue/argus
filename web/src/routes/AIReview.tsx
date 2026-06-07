@@ -26,7 +26,7 @@ const PALETTE = [
 
 const ROUTES = [
   ['Today',         'Daily Command Center — hero judgment + Top Rotations + compact priority watchlist + compact event preview + compact core preview'],
-  ['Action Alerts', '9 asset-class cards (8 satellites + index funds list) with full reasoning + supporting data + next condition'],
+  ['Action Alerts', 'Core and satellite asset-class cards with full reasoning, supporting data, and next condition'],
   ['Market Regime', 'Capital Rotation Board (primary) + Regime Matrix (supporting view, compact) + Regime Summary + 10-tag glossary. The old bubble visualization is retired from the main experience'],
   ['Event Radar',   'Upcoming events list + D-7 → D+1 escalation policy'],
   ['Watchlist',     'JP + US dense rows with action label, news, scanner reason; sorted by urgency'],
@@ -54,7 +54,7 @@ const DROPPED = [
   'Orbitron / Share Tech Mono / Michroma fonts',
   'Sci-fi letter-spacing (4px+) on body and headings',
   'Design-system-preview as the home page',
-  '3D libs as active UI concepts (R3F, globe.gl, force-graph-3d — still in deps, no longer rendered)',
+  '3D / force-graph visual concepts from the active UI',
   'Bubble visualization as the primary Market Regime interface',
 ];
 
@@ -66,7 +66,7 @@ const OPEN_QUESTIONS = [
   'JP/EN mix: working as a transition mode, or confusing? Should there be a global EN-only toggle?',
   'Should asset-class display names (Japan Individual Stocks etc.) also be JP, or stay structural English?',
   'Are the Regime Matrix and Capital Rotation Board clear enough to replace the old bubble visualization?',
-  'Is the Capital Rotation Board flow meter (track + dot) readable at a glance, or would a numeric column work better?',
+  'Is the Capital Rotation Board readable at a glance without numeric values, or does it need a minimal score indicator?',
 ];
 
 const GAPS = [
@@ -76,10 +76,10 @@ const GAPS = [
   'No real backend wiring — scanner.py exists, frontend not consuming',
   'No real capital rotation data source yet (Capital Rotation Board is mock)',
   'No scoring formula for the Regime Matrix position (x, y are hand-set in mock)',
-  'No audit trail explaining why a regime shifted',
+  'No regime-shift audit trail explaining why Market Regime changed',
+  'No historical judgment log for past daily calls and action labels',
   'No history of past Top Rotations',
   'No user-specific exposure weighting across asset classes',
-  'No history / audit log for past judgments',
   'No tooltip explanations on hover for action labels',
   'No portfolio P&L / dollar exposure rendering',
 ];
@@ -87,11 +87,23 @@ const GAPS = [
 function buildMarkdown(version: string): string {
   return `# A.R.G.U.S. — AI Review Sheet (v${version})
 
-**Identity.** A.R.G.U.S. = Autonomous Risk and Global Uncertainty Scanner. Personal action-decision engine for daily investing. Not a chart app. Not a visual toy. Answers: what is today's call, what is the risk, why, what to touch, what to avoid, what to wait for next.
+**Identity.** A.R.G.U.S. = Autonomous Risk and Global Uncertainty Scanner. A personal action-decision engine for daily investing. Not a chart app. Not a visual toy. **A calm investment command center that classifies market conditions into action categories, with market visuals serving as evidence rather than spectacle.** Answers: what is today's call, what is the risk, why, what to touch, what to avoid, what to wait for next — and what would change the current posture.
 
 **Live URL.** https://mitsugue.github.io/stock-scanner/
 
 **Primary product shift (v8.0 → v8.1).** v8 retires the old capital-flow visualization-first approach. The product center is now action judgment. Market visuals (Regime Matrix, Capital Rotation Board, Top Rotations) exist only to support decisions, not to become the main experience. The bubble / SectorBlob viz is retired from the main UI.
+
+---
+
+## Market visuals rule
+
+Market visuals must never become the primary experience. They should always answer one of three questions:
+
+1. Where is capital rotating?
+2. What regime are we in?
+3. How does this support the current action labels?
+
+Visuals are supporting evidence, not trading signals by themselves. This rule exists because older versions of A.R.G.U.S. were too focused on visualizing capital flow; v8.1 keeps visuals only as decision-support tools.
 
 ---
 
@@ -102,7 +114,7 @@ function buildMarkdown(version: string): string {
 - No decorative crosshairs, no fake terminal chrome, no Orbitron brand
 - Single primary action visually dominant; secondary state quiet
 - 10-second rule: user understands today's call within 10 seconds of opening the app
-- Bilingual content during user transition phase: English chrome, Japanese info content
+- Intentional bilingual structure: English chrome for system clarity, Japanese content for market commentary, news, scanner rationale, and user-facing investment reasoning
 
 ---
 
@@ -216,9 +228,14 @@ export const AIReview: React.FC = () => {
       <p>
         A.R.G.U.S. = <em>Autonomous Risk and Global Uncertainty Scanner</em>. A
         personal action-decision engine for daily investing. Not a chart app.
-        Not a visual toy. The app must answer, within 10 seconds: what is today's
-        call, what is the risk, why, which assets to touch, which to avoid, what
-        to wait for next.
+        Not a visual toy. <strong>A calm investment command center that classifies
+        market conditions into action categories, with market visuals serving as
+        evidence rather than spectacle.</strong>
+      </p>
+      <p>
+        The app must answer, within 10 seconds: what is today's call, what is
+        the risk, why, which assets to touch, which to avoid, what to wait for
+        next — and what would change the current posture.
       </p>
 
       <h2>Primary product shift (v8)</h2>
@@ -230,12 +247,29 @@ export const AIReview: React.FC = () => {
         main experience. The bubble / SectorBlob viz is retired from the main UI.
       </p>
 
+      <h2>Market visuals rule</h2>
+      <p>
+        Market visuals must never become the primary experience. They should
+        always answer one of three questions:
+      </p>
+      <ol>
+        <li>Where is capital rotating?</li>
+        <li>What regime are we in?</li>
+        <li>How does this support the current action labels?</li>
+      </ol>
+      <p>
+        Visuals are <strong>supporting evidence, not trading signals by
+        themselves</strong>. This rule exists because older versions of
+        A.R.G.U.S. were too focused on visualizing capital flow; v8.1 keeps
+        visuals only as decision-support tools.
+      </p>
+
       <h2>Design philosophy</h2>
       <ul>
         <li>Bloomberg Terminal + Linear + Raycast + Stripe Dashboard — calm, precise, credible</li>
         <li>Dark navy, no HUD, no cyberpunk neon, no decorative crosshairs</li>
         <li>Single primary action visually dominant; everything else muted</li>
-        <li>Bilingual during transition: English chrome (labels, action keys, sections), Japanese info content (summary, reasons, news, scanner notes)</li>
+        <li><strong>Intentional bilingual structure.</strong> English chrome for system clarity; Japanese content for market commentary, news, scanner rationale, and user-facing investment reasoning. This mix is by design — not a transition mistake.</li>
         <li>10-second rule for the daily call</li>
       </ul>
 
