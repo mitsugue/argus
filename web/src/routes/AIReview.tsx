@@ -89,7 +89,7 @@ function buildMarkdown(version: string): string {
 
 **Identity.** A.R.G.U.S. = Autonomous Risk and Global Uncertainty Scanner. A personal action-decision engine for daily investing. Not a chart app. Not a visual toy. **A calm investment command center that classifies market conditions into action categories, with market visuals serving as evidence rather than spectacle.** Answers: what is today's call, what is the risk, why, what to touch, what to avoid, what to wait for next — and what would change the current posture.
 
-**Live URL.** https://mitsugue.github.io/stock-scanner/
+**Live URL.** https://mitsugue.github.io/argus/
 
 **Primary product shift (v8.0 → v8.1).** v8 retires the old capital-flow visualization-first approach. The product center is now action judgment. Market visuals (Regime Matrix, Capital Rotation Board, Top Rotations) exist only to support decisions, not to become the main experience. The bubble / SectorBlob viz is retired from the main UI.
 
@@ -220,7 +220,7 @@ export const AIReview: React.FC = () => {
           {copied ? '✓ Copied markdown' : 'Copy as markdown'}
         </button>
         <span className="review__meta">
-          v{version} · live at <code>mitsugue.github.io/stock-scanner/</code>
+          v{version} · live at <code>mitsugue.github.io/argus/</code>
         </span>
       </div>
 

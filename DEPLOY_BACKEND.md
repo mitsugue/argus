@@ -8,7 +8,7 @@ React frontend on Vercel to call it.
 
 1. Push `main` to GitHub (already done if you got this far).
 2. Open https://dashboard.render.com → **New +** → **Web Service**.
-3. Connect the `mitsugue/stock-scanner` repo.
+3. Connect the `mitsugue/argus` repo.
 4. Render will pick up `render.yaml` automatically. Confirm:
    - **Runtime**: Python
    - **Build**: `pip install -r requirements.txt`
@@ -42,7 +42,7 @@ whatever has run since the last deploy.
 
 ## 2. Point the Vercel frontend at it
 
-1. Vercel dashboard → your `stock-scanner` project → **Settings** →
+1. Vercel dashboard → your `argus` project → **Settings** →
    **Environment Variables** → add:
    - **Key**: `VITE_ARGUS_BACKEND_URL`
    - **Value**: `https://argus-backend.onrender.com` (the URL from step 1)
