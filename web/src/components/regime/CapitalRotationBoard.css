@@ -1,3 +1,7 @@
+/* Capital Rotation Board — calm cross-asset money-flow reading. Three
+   signals per row only: Flow (meter + label) · Strength · Role. No
+   action labels here. */
+
 .rotation {
   display: flex;
   flex-direction: column;
@@ -5,10 +9,10 @@
 
 .rotation__row {
   display: grid;
-  grid-template-columns: 1fr 60px 80px 1fr auto;
-  gap: 16px;
+  grid-template-columns: minmax(160px, 1.4fr) 120px 110px auto auto;
+  gap: 18px;
   align-items: center;
-  padding: 12px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
 }
 .rotation__row:last-child {
@@ -22,94 +26,110 @@
   min-width: 0;
 }
 
-/* Flow arrow + strength + driver are compact mono cells. */
-.rotation__flow {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-sub);
-}
-.rotation__flow-arrow {
-  font-size: 14px;
-  line-height: 1;
-}
-.rotation__flow--inflow         { color: var(--green); }
-.rotation__flow--slight-inflow  { color: var(--text-sub); }
-.rotation__flow--neutral        { color: var(--text-muted); }
-.rotation__flow--slight-outflow { color: var(--text-sub); }
-.rotation__flow--outflow        { color: var(--red); }
+/* ── Flow meter ─────────────────────────────────────────────────────── */
 
-.rotation__strength {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
+.rotation__meter {
+  position: relative;
+  height: 8px;
+  background: var(--surface-soft);
+  border-radius: 999px;
+  overflow: visible;
 }
-.rotation__strength-bar {
-  width: 4px;
-  border-radius: 1px;
+
+.rotation__meter-center {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 50%;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.rotation__meter-dot {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
   background: var(--text-muted);
+  border: 2px solid var(--bg);
+  transition: left 0.3s var(--ease), background 0.2s var(--ease);
 }
-.rotation__strength--low    .rotation__strength-bar:nth-child(1) { height: 7px; }
-.rotation__strength--low    .rotation__strength-bar:nth-child(n+2) { background: var(--line); height: 12px; }
-.rotation__strength--med    .rotation__strength-bar:nth-child(1) { height: 7px; }
-.rotation__strength--med    .rotation__strength-bar:nth-child(2) { height: 10px; }
-.rotation__strength--med    .rotation__strength-bar:nth-child(3) { background: var(--line); height: 12px; }
-.rotation__strength--high   .rotation__strength-bar:nth-child(1) { height: 7px; }
-.rotation__strength--high   .rotation__strength-bar:nth-child(2) { height: 10px; }
-.rotation__strength--high   .rotation__strength-bar:nth-child(3) { height: 12px; }
+.rotation__meter-dot--out      { background: var(--red); }
+.rotation__meter-dot--in       { background: var(--green); }
+.rotation__meter-dot--neutral  { background: var(--text-muted); }
 
-.rotation__driver {
+/* ── Flow label ─────────────────────────────────────────────────────── */
+
+.rotation__flow-label {
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-sub);
-  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rotation__flow-label--out      { color: var(--red); }
+.rotation__flow-label--in       { color: var(--green); }
+.rotation__flow-label--neutral  { color: var(--text-sub); }
+
+/* ── Strength chip ──────────────────────────────────────────────────── */
+
+.rotation__chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
   background: var(--surface-soft);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  display: inline-block;
-  justify-self: start;
+  color: var(--text-sub);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.rotation__next {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.5;
-  margin-top: -4px;
-  padding-left: 0;
-}
-
-.rotation__next-label {
-  color: var(--text-faint);
-  margin-right: 6px;
+/* Role chip — same calm style as the strength chip; role meaning lives
+   in the label text itself, not in heavy color. */
+.rotation__chip--role {
+  background: transparent;
+  color: var(--text-main);
 }
 
 @media (max-width: 720px) {
   .rotation__row {
     grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
+    grid-template-rows: auto auto auto;
     row-gap: 6px;
+    column-gap: 12px;
   }
   .rotation__asset {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .rotation__meter {
     grid-column: 1;
-    grid-row: 1;
-  }
-  .rotation__action {
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: end;
-  }
-  .rotation__flow,
-  .rotation__strength,
-  .rotation__driver {
-    grid-column: auto;
     grid-row: 2;
   }
-  .rotation__next {
+  .rotation__flow-label {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: right;
+  }
+  .rotation__chips {
+    grid-column: 1 / -1;
     grid-row: 3;
+    display: flex;
+    gap: 8px;
+  }
+}
+
+/* On desktop the chips are direct children of the row grid; on mobile
+   they're wrapped in .rotation__chips so they share one grid cell. */
+.rotation__chips {
+  display: contents;
+}
+@media (max-width: 720px) {
+  .rotation__chips {
+    display: flex;
   }
 }

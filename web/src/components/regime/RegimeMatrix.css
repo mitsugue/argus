@@ -5,6 +5,25 @@
   align-items: start;
 }
 
+/* Quieter variant used on the Market Regime page below the Capital
+   Rotation Board — smaller plot, tighter sidebar. */
+.matrix--compact {
+  grid-template-columns: 1fr 240px;
+  gap: 16px;
+}
+.matrix--compact .matrix__plot {
+  padding: 10px;
+}
+.matrix--compact .matrix__sidebar {
+  gap: 12px;
+}
+.matrix--compact .matrix__sidebar-value {
+  font-size: 13px;
+}
+.matrix--compact .matrix__sidebar-row {
+  padding-bottom: 8px;
+}
+
 .matrix__plot {
   position: relative;
   background: var(--surface);

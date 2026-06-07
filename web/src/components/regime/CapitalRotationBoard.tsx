@@ -1,64 +1,57 @@
 import React from 'react';
-import { ActionPill } from '../action/ActionBadge';
-import type { CapitalRotationRow, FlowDirection, FlowStrength } from '../../types/regime';
+import type { CapitalRotationRow } from '../../types/regime';
 import './CapitalRotationBoard.css';
 
 interface Props {
   rows: CapitalRotationRow[];
 }
 
-const FLOW_ARROW: Record<FlowDirection, string> = {
-  inflow:          '↑',
-  'slight-inflow': '↗',
-  neutral:         '→',
-  'slight-outflow':'↘',
-  outflow:         '↓',
-};
+// Color the flow only when it's clearly directional. Near-zero stays
+// muted so the eye reads only meaningful moves.
+function flowKind(value: number): 'out' | 'in' | 'neutral' {
+  if (value <= -20) return 'out';
+  if (value >= 20) return 'in';
+  return 'neutral';
+}
 
-const FLOW_LABEL: Record<FlowDirection, string> = {
-  inflow:          'Inflow',
-  'slight-inflow': 'Slight In',
-  neutral:         'Neutral',
-  'slight-outflow':'Slight Out',
-  outflow:         'Outflow',
-};
+// Map flow value (-100 .. +100) to a percentage along the meter.
+function meterLeft(value: number): string {
+  const clamped = Math.max(-100, Math.min(100, value));
+  return `${((clamped + 100) / 200) * 100}%`;
+}
 
-const STRENGTH_LABEL: Record<FlowStrength, string> = {
-  low:  'L',
-  med:  'M',
-  high: 'H',
-};
-
-// Row-table of where money appears to be rotating across asset classes.
-// Replaces the v5 "Capital Concentration" bubble — same intent (where
-// money is), expressed as a serious financial diagnostic rather than a
-// decorative visual.
+// Cross-asset money-flow reading. Three signals per row: Flow (meter +
+// label), Strength, Role. No action labels — those live on Action
+// Alerts / Watchlist so this view stays a pure flow diagnostic.
 export const CapitalRotationBoard: React.FC<Props> = ({ rows }) => {
   return (
     <div className="card rotation">
-      {rows.map((r) => (
-        <div className="rotation__row" key={r.assetClass}>
-          <span className="rotation__asset">{r.assetClass}</span>
-          <span className={`rotation__flow rotation__flow--${r.flow}`}>
-            <span className="rotation__flow-arrow" aria-hidden>{FLOW_ARROW[r.flow]}</span>
-            {FLOW_LABEL[r.flow]}
-          </span>
-          <span className={`rotation__strength rotation__strength--${r.strength}`}
-            aria-label={`strength ${r.strength}`}>
-            <span className="rotation__strength-bar" />
-            <span className="rotation__strength-bar" />
-            <span className="rotation__strength-bar" />
-            <span style={{ marginLeft: 4 }}>{STRENGTH_LABEL[r.strength]}</span>
-          </span>
-          <span className="rotation__driver">{r.driver}</span>
-          <span className="rotation__action">
-            <ActionPill action={r.action} size="sm" />
-          </span>
-          <p className="rotation__next">
-            <span className="rotation__next-label">Next</span>{r.nextCondition}
-          </p>
-        </div>
-      ))}
+      {rows.map((r) => {
+        const kind = flowKind(r.flowValue);
+        return (
+          <div className="rotation__row" key={r.assetClass}>
+            <span className="rotation__asset">{r.assetClass}</span>
+            <div
+              className="rotation__meter"
+              role="img"
+              aria-label={`${r.flow}, ${r.flowValue}`}
+            >
+              <span className="rotation__meter-center" aria-hidden />
+              <span
+                className={`rotation__meter-dot rotation__meter-dot--${kind}`}
+                style={{ left: meterLeft(r.flowValue) }}
+              />
+            </div>
+            <span className={`rotation__flow-label rotation__flow-label--${kind}`}>
+              {r.flow}
+            </span>
+            <div className="rotation__chips">
+              <span className="rotation__chip">{r.strength}</span>
+              <span className="rotation__chip rotation__chip--role">{r.role}</span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 };

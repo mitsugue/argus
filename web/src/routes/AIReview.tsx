@@ -16,28 +16,36 @@ const PALETTE = [
   ['--text-main',    '#E6EDF3', 'primary text'],
   ['--text-sub',     '#8B98A7', 'secondary text'],
   ['--text-muted',   '#5F6B78', 'meta text'],
-  ['--red',          '#F87171', 'EXIT / high risk'],
+  ['--red',          '#F87171', 'EXIT / high risk / outflow'],
   ['--amber',        '#FBBF24', 'TRIM / medium risk'],
-  ['--blue',         '#60A5FA', 'WAIT_FOR_PULLBACK'],
+  ['--blue',         '#60A5FA', 'WAIT_FOR_PULLBACK / regime accent'],
   ['--cyan',         '#22D3EE', 'BUY_DIP / GRADUAL_ADD'],
-  ['--green',        '#34D399', 'ADD / CONTINUE / low risk'],
-  ['--gray',         '#64748B', 'WAIT / WAIT_LUMP'],
+  ['--green',        '#34D399', 'ADD / CONTINUE / low risk / inflow'],
+  ['--gray',         '#64748B', 'WAIT / DEFER_LUMP_SUM / NO_SELL_ACTION'],
 ];
 
 const ROUTES = [
-  ['Today',         'Daily Command Center — hero judgment + alerts grid + priority watchlist + events + core preview'],
-  ['Action Alerts', '9 asset-class cards (8 satellites + index funds list)'],
-  ['Market Regime', 'Active regime + bubble viz (subordinate supporting layer) + 10-tag glossary'],
+  ['Today',         'Daily Command Center — hero judgment + Top Rotations + compact priority watchlist + compact event preview + compact core preview'],
+  ['Action Alerts', '9 asset-class cards (8 satellites + index funds list) with full reasoning + supporting data + next condition'],
+  ['Market Regime', 'Capital Rotation Board (primary) + Regime Matrix (supporting view, compact) + Regime Summary + 10-tag glossary. The old bubble visualization is retired from the main experience'],
   ['Event Radar',   'Upcoming events list + D-7 → D+1 escalation policy'],
   ['Watchlist',     'JP + US dense rows with action label, news, scanner reason; sorted by urgency'],
-  ['Core Portfolio','Long-term index status with calm vocabulary'],
+  ['Core Portfolio','Long-term index status with calm vocabulary (Continue / Gradual Add / Defer Lump Sum / No Sell Action)'],
 ];
 
 const KEPT = [
-  'HudFrame → AppShell (slim header, no chrome)',
-  'theme tokens (structure preserved, palette swapped)',
-  'SectorBlob (now subordinate viz in Market Regime, not main)',
-  'Backend scanner.py + argus_ledger.py (untouched, ready to wire)',
+  'AppShell — slim header, persistent sidebar (Today\'s call pill stable across pages)',
+  'Theme token structure (palette swapped, shape preserved)',
+  'Backend scanner.py + argus_ledger.py — untouched, ready to wire',
+  'English chrome + Japanese market commentary balance',
+];
+
+const REPLACED = [
+  'Capital Concentration → Regime Matrix + Capital Rotation Board',
+  'SectorBlob as main Market Regime visual → retired (optional legacy only if it ever earns its keep)',
+  'Dense Today preview → compact command summary (full detail moved to detail pages)',
+  'Today reasons that literally repeated "CPI in 24h" → interpretive reasons (event window, rates pressure, overnight momentum)',
+  'WAIT_LUMP → DEFER_LUMP_SUM, NO_SELL → NO_SELL_ACTION',
 ];
 
 const DROPPED = [
@@ -46,7 +54,8 @@ const DROPPED = [
   'Orbitron / Share Tech Mono / Michroma fonts',
   'Sci-fi letter-spacing (4px+) on body and headings',
   'Design-system-preview as the home page',
-  '3D libs in DOM (R3F, globe.gl, force-graph-3d — still in deps but unused)',
+  '3D libs as active UI concepts (R3F, globe.gl, force-graph-3d — still in deps, no longer rendered)',
+  'Bubble visualization as the primary Market Regime interface',
 ];
 
 const OPEN_QUESTIONS = [
@@ -56,7 +65,8 @@ const OPEN_QUESTIONS = [
   'Cross-page navigation: enough handles (Today\'s call pill, Next event chip, section-head links), or missing connections?',
   'JP/EN mix: working as a transition mode, or confusing? Should there be a global EN-only toggle?',
   'Should asset-class display names (Japan Individual Stocks etc.) also be JP, or stay structural English?',
-  'Is the Market Regime bubble useful as supporting layer, or does it still feel like a leftover from v5?',
+  'Are the Regime Matrix and Capital Rotation Board clear enough to replace the old bubble visualization?',
+  'Is the Capital Rotation Board flow meter (track + dot) readable at a glance, or would a numeric column work better?',
 ];
 
 const GAPS = [
@@ -64,6 +74,11 @@ const GAPS = [
   'No detail panel when clicking an alert or watchlist row',
   'No filter chips on Watchlist (e.g., "show EXIT only")',
   'No real backend wiring — scanner.py exists, frontend not consuming',
+  'No real capital rotation data source yet (Capital Rotation Board is mock)',
+  'No scoring formula for the Regime Matrix position (x, y are hand-set in mock)',
+  'No audit trail explaining why a regime shifted',
+  'No history of past Top Rotations',
+  'No user-specific exposure weighting across asset classes',
   'No history / audit log for past judgments',
   'No tooltip explanations on hover for action labels',
   'No portfolio P&L / dollar exposure rendering',
@@ -75,6 +90,8 @@ function buildMarkdown(version: string): string {
 **Identity.** A.R.G.U.S. = Autonomous Risk and Global Uncertainty Scanner. Personal action-decision engine for daily investing. Not a chart app. Not a visual toy. Answers: what is today's call, what is the risk, why, what to touch, what to avoid, what to wait for next.
 
 **Live URL.** https://mitsugue.github.io/stock-scanner/
+
+**Primary product shift (v8.0 → v8.1).** v8 retires the old capital-flow visualization-first approach. The product center is now action judgment. Market visuals (Regime Matrix, Capital Rotation Board, Top Rotations) exist only to support decisions, not to become the main experience. The bubble / SectorBlob viz is retired from the main UI.
 
 ---
 
@@ -112,7 +129,7 @@ ${CORE_ACTION_ORDER.map((k: CoreActionKey) => {
 ## Layout
 
 - Slim header: A.R.G.U.S. + tagline on left; "Next event" chip + "Market Open" + "Updated Nh ago" on right
-- Sidebar (168 px): "Today's call" pill at top, 6 routes, version stamp at bottom
+- Sidebar (168 px): "Today's call" pill at top, 6 routes, version stamp at bottom — pill behavior is STABLE across pages (does not dim or change on the Today page)
 - Main: scrollable padded content
 - Mobile (< 720 px): sidebar collapses to a 56 px dot rail; the "Today's call" pill stays visible
 
@@ -122,20 +139,23 @@ ${ROUTES.map(([name, desc]) => `- **${name}** — ${desc}`).join('\n')}
 
 ## Persistent state visible across every page
 
-- Today's call pill (sidebar top)
+- Today's call pill (sidebar top) — consistent, never page-specific
 - Next critical event chip with impact-colored dot (header right)
-- Version stamp (sidebar bottom)
+- Version stamp (sidebar bottom, header pill)
 
 ---
 
 ## Mock data
 
-Plausible "Tuesday before US CPI" snapshot. Conservative across satellites (Wait / Wait for Pullback / Trim), steady on core (Continue / Wait Lump / Gradual Add). NOT trading advice — the goal is to motivate the UI shapes, not to model real markets.
+Plausible "Tuesday before US CPI" snapshot. Cautious across satellites (Wait / Wait for Pullback / Trim), steady on core (Continue / Defer Lump Sum / Gradual Add). NOT trading advice — the goal is to motivate the UI shapes, not to model real markets.
 
 ## Decisions log
 
 **Kept:**
 ${KEPT.map((s) => `- ${s}`).join('\n')}
+
+**Replaced:**
+${REPLACED.map((s) => `- ${s}`).join('\n')}
 
 **Dropped:**
 ${DROPPED.map((s) => `- ${s}`).join('\n')}
@@ -163,7 +183,6 @@ export const AIReview: React.FC = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
-      // Clipboard API not available (insecure context etc.) — fallback: open in new window for manual select.
       const w = window.open('', '_blank');
       if (w) {
         w.document.body.style.fontFamily = 'monospace';
@@ -200,6 +219,15 @@ export const AIReview: React.FC = () => {
         Not a visual toy. The app must answer, within 10 seconds: what is today's
         call, what is the risk, why, which assets to touch, which to avoid, what
         to wait for next.
+      </p>
+
+      <h2>Primary product shift (v8)</h2>
+      <p>
+        v8 retires the old capital-flow visualization-first approach. The product
+        center is now <strong>action judgment</strong>. Market visuals
+        (<em>Regime Matrix</em>, <em>Capital Rotation Board</em>, <em>Top
+        Rotations</em>) exist only to support decisions, not to become the
+        main experience. The bubble / SectorBlob viz is retired from the main UI.
       </p>
 
       <h2>Design philosophy</h2>
@@ -294,9 +322,9 @@ export const AIReview: React.FC = () => {
       <h2>Layout</h2>
       <ul>
         <li><strong>Header (slim, 14 px padding).</strong> Brand A.R.G.U.S. + tagline on left. Next-event chip with impact-colored dot, "Market Open", and "Updated Nh ago" on right.</li>
-        <li><strong>Sidebar (168 px).</strong> "Today's call" pill at top (clickable, jumps to Command Center). Six route buttons. Version stamp at bottom.</li>
+        <li><strong>Sidebar (168 px).</strong> "Today's call" pill at top — STABLE across pages (does not dim or change). Six route buttons. Version stamp at bottom.</li>
         <li><strong>Main.</strong> Scrollable padded content area.</li>
-        <li><strong>Mobile (&lt; 720 px).</strong> Sidebar collapses to a 56 px dot rail; "Today's call" pill stays visible; "Market Open" + "Updated" hidden, brand + next event chip stay.</li>
+        <li><strong>Mobile (&lt; 720 px).</strong> Sidebar collapses to a 64 px dot rail; "Today's call" pill stays visible; "Market Open" + "Updated" hidden; brand version pill, next event chip, AI review link in footer stay.</li>
       </ul>
 
       <h2>Routes</h2>
@@ -308,9 +336,17 @@ export const AIReview: React.FC = () => {
 
       <h2>Persistent always-visible state</h2>
       <ol>
-        <li>Today's call pill in sidebar top (the answer to "what is today's call?")</li>
+        <li>Today's call pill in sidebar top (the answer to "what is today's call?") — consistent across every page, never page-specific</li>
         <li>Next critical event chip in header right (the answer to "what should I wait for next?")</li>
-        <li>Version stamp at sidebar bottom (build provenance)</li>
+        <li>Version stamp at sidebar bottom and header brand pill (build provenance)</li>
+      </ol>
+
+      <h2>Market Regime structure (v8.1)</h2>
+      <ol>
+        <li><strong>Capital Rotation Board (primary).</strong> Three signals per asset class — flow direction (meter + label), strength (Low / Medium / High), role (Risk / Defensive / Hedge / Duration / Liquidity). No action labels — those live on Action Alerts / Watchlist so this view stays a pure flow diagnostic.</li>
+        <li><strong>Regime Matrix (supporting).</strong> Compact 2-axis chart: Risk Off ↔ Risk On × Rates Relief ↔ Rates Pressure. Current location dot + asset class context dots. Smaller than v8.0.</li>
+        <li><strong>Regime Summary.</strong> Short bilingual paragraph — English headline + JP commentary.</li>
+        <li><strong>Regime Glossary.</strong> Ten regime tags with Japanese definitions.</li>
       </ol>
 
       <h2>Mock data</h2>
@@ -325,11 +361,17 @@ export const AIReview: React.FC = () => {
           </ul>
         </div>
         <div className="review__panel">
-          <div className="review__panel-title">Dropped</div>
+          <div className="review__panel-title">Replaced</div>
           <ul>
-            {DROPPED.map((s) => <li key={s}>{s}</li>)}
+            {REPLACED.map((s) => <li key={s}>{s}</li>)}
           </ul>
         </div>
+      </div>
+      <div className="review__panel" style={{ marginTop: 8 }}>
+        <div className="review__panel-title">Dropped</div>
+        <ul>
+          {DROPPED.map((s) => <li key={s}>{s}</li>)}
+        </ul>
       </div>
 
       <h2>Open questions for review</h2>

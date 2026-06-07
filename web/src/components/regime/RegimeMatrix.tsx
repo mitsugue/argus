@@ -4,6 +4,9 @@ import './RegimeMatrix.css';
 
 interface Props {
   state: RegimeMatrixState;
+  /** Render the smaller, quieter variant used as a supporting view
+      beneath the Capital Rotation Board. */
+  compact?: boolean;
 }
 
 // 2-axis classification of the current cross-asset environment.
@@ -27,7 +30,7 @@ function plotY(y: number): number {
   return PAD_T + ((1 - y) / 2) * (H - PAD_T - PAD_B);
 }
 
-export const RegimeMatrix: React.FC<Props> = ({ state }) => {
+export const RegimeMatrix: React.FC<Props> = ({ state, compact = false }) => {
   const cx = plotX(state.x);
   const cy = plotY(state.y);
   // Highlight the active quadrant with a faint tint.
@@ -37,7 +40,7 @@ export const RegimeMatrix: React.FC<Props> = ({ state }) => {
   const tintH = (H - PAD_T - PAD_B) / 2;
 
   return (
-    <div className="matrix">
+    <div className={`matrix${compact ? ' matrix--compact' : ''}`}>
       <div className="matrix__plot">
         <svg
           className="matrix__svg"

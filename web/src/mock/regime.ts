@@ -25,94 +25,35 @@ export const regimeMatrix: RegimeMatrixState = {
   ],
 };
 
+// Capital Rotation Board — three signals only: Flow, Strength, Role.
+// No action labels here; those live on Action Alerts / Watchlist.
 export const rotationBoard: CapitalRotationRow[] = [
-  {
-    assetClass: 'US Equities',
-    flow: 'slight-outflow',
-    strength: 'med',
-    driver: 'Event Risk',
-    action: 'WAIT',
-    nextCondition: 'CPI 通過後にブレッドスを再評価。',
-  },
-  {
-    assetClass: 'Japan Equities',
-    flow: 'neutral',
-    strength: 'med',
-    driver: 'Event Risk',
-    action: 'WAIT',
-    nextCondition: '米市場の方向感が見えるまで様子見。',
-  },
-  {
-    assetClass: 'US Growth / High Beta',
-    flow: 'outflow',
-    strength: 'high',
-    driver: 'Rates Pressure',
-    action: 'WAIT_FOR_PULLBACK',
-    nextCondition: '10Y がピークアウトすれば段階エントリー。',
-  },
-  {
-    assetClass: 'Japan Individual Stocks',
-    flow: 'neutral',
-    strength: 'med',
-    driver: 'Event Risk',
-    action: 'WAIT',
-    nextCondition: 'US CPI の方向感を見て翌朝再スクリーン。',
-  },
-  {
-    assetClass: 'Bonds',
-    flow: 'neutral',
-    strength: 'low',
-    driver: 'Yield Watch',
-    action: 'WAIT_FOR_PULLBACK',
-    nextCondition: '10Y のピーク確認 → デュレーション拡大。',
-  },
-  {
-    assetClass: 'Gold',
-    flow: 'inflow',
-    strength: 'med',
-    driver: 'Hedge Demand',
-    action: 'HOLD',
-    nextCondition: 'CPI 上振れ → 部分利確。',
-  },
-  {
-    assetClass: 'REITs',
-    flow: 'outflow',
-    strength: 'med',
-    driver: 'Rates Pressure',
-    action: 'WAIT',
-    nextCondition: '10Y が 4.30% を割れば再評価。',
-  },
-  {
-    assetClass: 'Crypto',
-    flow: 'outflow',
-    strength: 'high',
-    driver: 'Crypto Heat Cooling',
-    action: 'TRIM',
-    nextCondition: 'ファンディング > 0.06% → さらに利確。',
-  },
-  {
-    assetClass: 'USD/JPY',
-    flow: 'neutral',
-    strength: 'med',
-    driver: 'JPY Shock 警戒',
-    action: 'WAIT',
-    nextCondition: '158.5 突破または BOJ コメント → 再評価。',
-  },
-  {
-    assetClass: 'Cash',
-    flow: 'inflow',
-    strength: 'med',
-    driver: 'Defensive Rotation',
-    action: 'HOLD',
-    nextCondition: 'CPI 通過後の押し目を待つ。',
-  },
+  { assetClass: 'US Equities',            flow: 'Slight Outflow', flowValue: -25, strength: 'Medium', role: 'Risk' },
+  { assetClass: 'Japan Equities',         flow: 'Neutral',         flowValue:   0, strength: 'Medium', role: 'Risk' },
+  { assetClass: 'US Growth / High Beta',  flow: 'Outflow',         flowValue: -70, strength: 'High',   role: 'Risk' },
+  { assetClass: 'Gold',                   flow: 'Inflow',          flowValue:  65, strength: 'Medium', role: 'Hedge' },
+  { assetClass: 'Cash',                   flow: 'Inflow',          flowValue:  55, strength: 'Medium', role: 'Liquidity' },
+  { assetClass: 'Crypto',                 flow: 'Outflow',         flowValue: -75, strength: 'High',   role: 'Risk' },
+  { assetClass: 'Bonds',                  flow: 'Neutral',         flowValue:   5, strength: 'Low',    role: 'Duration' },
+  { assetClass: 'REITs',                  flow: 'Slight Outflow',  flowValue: -35, strength: 'Medium', role: 'Duration' },
+  { assetClass: 'USD/JPY',                flow: 'Neutral',         flowValue:  10, strength: 'Medium', role: 'Liquidity' },
 ];
 
-// Today's 3-second money-flow scan. Lighter than the full board.
+// Today's 3-second money-flow scan — same conceptual signal as the full
+// board, compressed to one-line "from → to" headlines.
 export const topRotations: TopRotation[] = [
-  { from: 'Growth',       to: 'Cash' },
-  { from: 'High Beta',    to: 'Gold' },
-  { from: 'New Entries',  to: 'Deferred' },
-  { from: 'REITs',        to: 'Wait until rates cool' },
-  { from: 'Crypto',       to: 'Trim overheated names' },
+  { from: 'Growth',      to: 'Cash' },
+  { from: 'High Beta',   to: 'Gold' },
+  { from: 'New Entries', to: 'Deferred' },
+  { from: 'REITs',       to: 'Wait until rates cool' },
+  { from: 'Crypto',      to: 'Outflow' },
+  { from: 'Bonds',       to: 'Neutral / Watch' },
 ];
+
+// Short prose summary rendered below the matrix on the regime page.
+// English header line + JP body, matching the bilingual chrome/content
+// split used elsewhere.
+export const regimeSummary = {
+  headline: 'Current location: Risk Off / Rates Pressure.',
+  body: 'ハイベータ・グロース株から資金が流出し、現金・金・ディフェンシブへ回転している。CPI 通過まで新規の積極エントリーは抑制し、デュレーション資産は様子見が妥当。',
+};

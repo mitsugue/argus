@@ -1,5 +1,3 @@
-import type { ActionKey } from './action';
-
 // Cross-asset diagnostic types. A.R.G.U.S. classifies the current market —
 // it does NOT predict the future. These shapes hold the classification,
 // not forecasts.
@@ -14,33 +12,43 @@ export interface RegimeAxisPoint {
 }
 
 export interface RegimeMatrixState {
-  x: number;                       // current location, [-1, 1]
-  y: number;                       // current location, [-1, 1]
-  quadrantLabel: string;           // e.g., "Risk Off / Rates Pressure"
-  primaryRegime: string;           // e.g., "Event Risk"
-  secondaryRegime: string;         // e.g., "Rates Pressure"
-  posture: string;                 // e.g., "Wait. Avoid aggressive new entries..."
-  assets: RegimeAxisPoint[];       // optional context dots
+  x: number;
+  y: number;
+  quadrantLabel: string;
+  primaryRegime: string;
+  secondaryRegime: string;
+  posture: string;
+  assets: RegimeAxisPoint[];
 }
 
 // ── Capital Rotation Board ───────────────────────────────────────────
+// Pure cross-asset money-flow reading. NOT an action-label table —
+// action labels live on Action Alerts / Watchlist. Per the v8.1 spec the
+// board carries only three signals per asset row: Flow, Strength, Role.
 
-export type FlowDirection =
-  | 'inflow'
-  | 'slight-inflow'
-  | 'neutral'
-  | 'slight-outflow'
-  | 'outflow';
+export type FlowLabel =
+  | 'Outflow'
+  | 'Slight Outflow'
+  | 'Neutral'
+  | 'Slight Inflow'
+  | 'Inflow';
 
-export type FlowStrength = 'low' | 'med' | 'high';
+export type FlowStrength = 'Low' | 'Medium' | 'High';
+
+export type AssetRole =
+  | 'Risk'
+  | 'Defensive'
+  | 'Hedge'
+  | 'Duration'
+  | 'Liquidity';
 
 export interface CapitalRotationRow {
   assetClass: string;
-  flow: FlowDirection;
+  flow: FlowLabel;
+  /** -100 (full outflow) .. +100 (full inflow). Drives the flow meter. */
+  flowValue: number;
   strength: FlowStrength;
-  driver: string;                  // e.g., "Rates Pressure", "Hedge Demand"
-  action: ActionKey;
-  nextCondition: string;
+  role: AssetRole;
 }
 
 // ── Top Rotations (Today summary) ────────────────────────────────────

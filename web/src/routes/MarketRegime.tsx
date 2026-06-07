@@ -1,8 +1,8 @@
 import React from 'react';
 import { PageShell } from './PageShell';
-import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
-import { regimeMatrix, rotationBoard } from '../mock/regime';
+import { RegimeMatrix } from '../components/regime/RegimeMatrix';
+import { regimeMatrix, regimeSummary, rotationBoard } from '../mock/regime';
 import '../components/dashboard/Dashboard.css';
 
 // Regime tag keys stay English (UI vocabulary) — gloss is JP for the
@@ -20,26 +20,55 @@ const REGIME_GLOSSARY: { tag: string; gloss: string }[] = [
   { tag: 'Buyable Pullback',      gloss: '健全な押し目、上昇トレンドは継続。' },
 ];
 
+// Order per v8.1 spec:
+//   Subtitle → Capital Rotation Board (primary) → Regime Matrix
+//   (supporting, compact) → Regime Summary → Glossary.
+// The bubble / SectorBlob viz is retired from the main experience.
 export const MarketRegime: React.FC = () => {
   return (
     <PageShell
       title="Market Regime"
-      subtitle="Current cross-asset environment and capital rotation. Visualizations support the action labels; they are not trading signals by themselves."
+      subtitle="Current cross-asset environment and capital rotation. Visualizations support action labels; they are not trading signals by themselves."
     >
       <section>
         <div className="section-head">
-          <span className="section-head__title">Regime Matrix</span>
-          <span className="section-head__count">classification, not forecast</span>
+          <span className="section-head__title">Capital Rotation Board</span>
+          <span className="section-head__count">
+            {rotationBoard.length} asset classes
+          </span>
         </div>
-        <RegimeMatrix state={regimeMatrix} />
+        <CapitalRotationBoard rows={rotationBoard} />
       </section>
 
       <section>
         <div className="section-head">
-          <span className="section-head__title">Capital Rotation Board</span>
-          <span className="section-head__count">{rotationBoard.length} asset classes</span>
+          <span className="section-head__title">Regime Matrix</span>
+          <span className="section-head__count">supporting view</span>
         </div>
-        <CapitalRotationBoard rows={rotationBoard} />
+        <RegimeMatrix state={regimeMatrix} compact />
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Regime Summary</span>
+        </div>
+        <div className="card">
+          <p style={{
+            fontSize: 13,
+            color: 'var(--text-main)',
+            fontWeight: 500,
+            marginBottom: 8,
+          }}>
+            {regimeSummary.headline}
+          </p>
+          <p style={{
+            fontSize: 13,
+            color: 'var(--text-sub)',
+            lineHeight: 1.7,
+          }}>
+            {regimeSummary.body}
+          </p>
+        </div>
       </section>
 
       <section>
