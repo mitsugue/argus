@@ -634,6 +634,46 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Live / connecting / mock pill for the Watchlist Japan section (J-Quants).
+   margin-right:auto sits it next to the title and pushes the count right. */
+.watch-status {
+  margin-left: 8px;
+  margin-right: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--text-sub);
+}
+.watch-status::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.watch-status--live { color: var(--text-main); }
+.watch-status--live::before { background: var(--green); }
+.watch-status--mock { color: var(--text-sub); }
+.watch-status--mock::before { background: var(--amber); }
+.watch-status--connecting::before {
+  background: var(--cyan);
+  animation: watch-status-pulse 1.1s ease-in-out infinite;
+}
+@keyframes watch-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
 .section-head__link {
   font-size: 11px;
   color: var(--text-sub);

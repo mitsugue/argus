@@ -1628,30 +1628,6 @@ def get_japan_watchlist_snapshot():
 def api_argus_japan_watchlist():
     return jsonify(get_japan_watchlist_snapshot())
 
-@app.route("/api/argus/japan-watchlist/debug")
-def api_argus_japan_watchlist_debug():
-    # TEMPORARY setup-triage route. Makes one direct V2 test call and reports
-    # only NON-sensitive diagnostics: whether the API key is present, a masked
-    # key hint, and J-Quants' own HTTP status / error message. No secret value
-    # is ever returned. Remove once the watchlist is confirmed live.
-    out = {"hasApiKey": bool(_JQUANTS_API_KEY), "expectedEnvVars": ["JQUANTS_API_KEY"]}
-    if _JQUANTS_API_KEY:
-        k = _JQUANTS_API_KEY
-        out["apiKeyHint"] = (k[:3] + "***" + k[-2:]) if len(k) > 6 else "***"
-        try:
-            frm = (datetime.now(TZ_JST) - timedelta(days=150)).strftime("%Y-%m-%d")
-            r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
-                             headers={"x-api-key": _JQUANTS_API_KEY},
-                             params={"code": "8058", "from": frm}, timeout=10)
-            out["testStatus"] = r.status_code
-            if r.status_code == 200:
-                out["testRows"] = len(r.json().get("data", []))
-            else:
-                out["testError"] = r.text[:200]
-        except Exception as e:
-            out["exception"] = f"{type(e).__name__}: {str(e)[:160]}"
-    return jsonify(out)
-
 
 # ━━━ Scheduler ━━━
 def is_us_trading_day():

@@ -3,7 +3,8 @@ import { PageShell } from './PageShell';
 import { WatchRow } from '../components/dashboard/WatchRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { watchlist } from '../mock/watchlist';
-import type { WatchEntry } from '../types/watch';
+import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
+import type { WatchEntry, WatchJP, JapanStockQuote } from '../types/watch';
 import type { ActionKey } from '../types/action';
 import '../components/dashboard/Dashboard.css';
 
@@ -32,16 +33,44 @@ function tally(entries: WatchEntry[]): { action: ActionKey; count: number }[] {
     .sort((a, b) => URGENCY[a.action] - URGENCY[b.action]);
 }
 
+// Live J-Quants rows carry price/change/volume only — there is no AI action
+// label yet, so show a neutral placeholder. Wiring the scanner's action is a
+// separate step. (VWAP / margin / news are also absent from daily bars.)
+const JP_PLACEHOLDER_ACTION: ActionKey = 'HOLD';
+
+function toWatchJP(q: JapanStockQuote): WatchJP {
+  return {
+    market: 'JP',
+    symbol: q.symbol,
+    name: q.name,
+    price: q.price,
+    changePct: q.changePct,
+    changeAbs: q.changeAbs,
+    volume: q.volume,
+    action: JP_PLACEHOLDER_ACTION,
+    updatedAt: Date.now(),
+  };
+}
+
 export const Watchlist: React.FC = () => {
-  const jpRows = useMemo(
-    () => watchlist.filter((e) => e.market === 'JP').sort(sortByUrgency),
-    []
+  // Japan rows are live from J-Quants (backend), with connecting/mock states.
+  const { data: jp, phase, attempt } = useJapanWatchlist();
+
+  const jpRows = useMemo<WatchJP[]>(
+    () => (jp ? jp.stocks.map(toWatchJP) : []),
+    [jp],
   );
+  // United States stays on seed data until wired to a real source.
   const usRows = useMemo(
     () => watchlist.filter((e) => e.market === 'US').sort(sortByUrgency),
-    []
+    [],
   );
-  const summary = useMemo(() => tally(watchlist), []);
+  const summary = useMemo(() => tally([...jpRows, ...usRows]), [jpRows, usRows]);
+
+  const jpStatusLabel =
+    phase === 'connecting'
+      ? attempt > 1 ? `waking backend · try ${attempt}` : 'connecting'
+      : phase; // 'live' | 'mock'
 
   return (
     <PageShell
@@ -60,7 +89,12 @@ export const Watchlist: React.FC = () => {
       <section>
         <div className="section-head">
           <span className="section-head__title">Japan</span>
-          <span className="section-head__count">{jpRows.length} names</span>
+          <span className={`watch-status watch-status--${phase}`}>{jpStatusLabel}</span>
+          {phase === 'live' && jp?.asOf ? (
+            <span className="section-head__count">live · as of {jp.asOf}</span>
+          ) : (
+            <span className="section-head__count">{jpRows.length} names</span>
+          )}
         </div>
         <div className="card watch-list">
           {jpRows.map((row) => (

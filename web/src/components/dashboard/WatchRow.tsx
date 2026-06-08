@@ -45,8 +45,12 @@ function formatEarnings(iso: string): string {
 const JpMeta: React.FC<{ row: WatchJP }> = ({ row }) => (
   <div className="watch-row__meta">
     <span>Vol {formatVolume(row.volume)}</span>
-    <span className="watch-row__dot">·</span>
-    <span>VWAP {row.vwapDeltaPct > 0 ? '+' : ''}{row.vwapDeltaPct.toFixed(2)}%</span>
+    {row.vwapDeltaPct != null && (
+      <>
+        <span className="watch-row__dot">·</span>
+        <span>VWAP {row.vwapDeltaPct > 0 ? '+' : ''}{row.vwapDeltaPct.toFixed(2)}%</span>
+      </>
+    )}
     {(row.marginLong != null && row.marginShort != null) && (
       <>
         <span className="watch-row__dot">·</span>
