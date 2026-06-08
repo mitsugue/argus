@@ -318,7 +318,11 @@ if CORS is not None:
     CORS(app, resources={r"/api/argus/*": {"origins": [
         re.compile(r"^http://localhost(:\d+)?$"),
         re.compile(r"^http://127\.0\.0\.1(:\d+)?$"),
-        re.compile(r"^https://.*\.vercel\.app$"),
+        # Pin Vercel to this project's deploys (argus*.vercel.app) rather than
+        # any *.vercel.app — the latter let any attacker-controlled Vercel
+        # subdomain read the /api/argus/* endpoints. Adjust the prefix if the
+        # Vercel project is ever renamed.
+        re.compile(r"^https://argus[a-z0-9-]*\.vercel\.app$"),
         re.compile(r"^https://mitsugue\.github\.io$"),
     ]}})
 
@@ -343,15 +347,27 @@ def safe_json(text):
     try: return json.loads(text.replace('\n', ' '))
     except Exception: return {}
 
+# Reentrant lock guarding STATE_FILE: serializes reads/writes across the scan
+# worker, scheduler, and request threads. Reentrant so a load→modify→save done
+# while already holding the lock (see add_log) doesn't deadlock.
+_STATE_LOCK = threading.RLock()
+
 def load_state():
-    try:
-        with open(STATE_FILE, "r") as f: return json.load(f)
-    except Exception: return {"phase": 0, "log": []}
+    with _STATE_LOCK:
+        try:
+            with open(STATE_FILE, "r") as f: return json.load(f)
+        except Exception: return {"phase": 0, "log": []}
 
 def save_state(state):
-    try:
-        with open(STATE_FILE, "w") as f: json.dump(state, f, ensure_ascii=False, default=str)
-    except Exception: pass
+    # Atomic write: dump to a temp file then os.replace, so a concurrent reader
+    # never sees a half-written (truncated) file — which previously surfaced as
+    # load_state() falling back to {"phase": 0} and momentarily resetting phase.
+    with _STATE_LOCK:
+        try:
+            tmp = f"{STATE_FILE}.{os.getpid()}.tmp"
+            with open(tmp, "w") as f: json.dump(state, f, ensure_ascii=False, default=str)
+            os.replace(tmp, STATE_FILE)
+        except Exception: pass
 
 def clear_state():
     save_state({"phase": 0, "log": []})
@@ -360,11 +376,14 @@ def add_log(msg):
     now = datetime.now(TZ_JST)
     entry = f"[{now.strftime('%H:%M:%S')}] {msg}"
     LOG_BUFFER.append(entry)
-    state = load_state()
-    logs = state.get("log", [])
-    logs.append(entry)
-    state["log"] = logs[-50:]
-    save_state(state)
+    # Hold the lock across the whole read-modify-write so concurrent add_log
+    # calls can't clobber each other's appended lines.
+    with _STATE_LOCK:
+        state = load_state()
+        logs = state.get("log", [])
+        logs.append(entry)
+        state["log"] = logs[-50:]
+        save_state(state)
 
 def push_notify(title, msg, priority="default"):
     if not SCHEDULED_RUN: return
@@ -549,11 +568,23 @@ def get_finnhub_macro():
     except Exception: pass
     return result
 # ━━━ moomoo OpenAPI Functions ━━━
-_MOOMOO_FAILED = False  # Once failed, skip all further attempts this session
+# A failed connect (often a transient OpenD hiccup / connect timeout) used to
+# latch moomoo off for the whole process lifetime. Instead, back off for a
+# bounded window and retry automatically, so a single boot-time blip doesn't
+# permanently disable order book / margin features.
+_MOOMOO_RETRY_AFTER = 0.0   # epoch seconds; skip moomoo attempts until this time
+_MOOMOO_BACKOFF_SEC = 600   # 10 min cool-down after a failure
+
+def _moomoo_blocked():
+    return time.time() < _MOOMOO_RETRY_AFTER
+
+def _moomoo_mark_failed():
+    global _MOOMOO_RETRY_AFTER
+    _MOOMOO_RETRY_AFTER = time.time() + _MOOMOO_BACKOFF_SEC
 
 def moomoo_connect_quote():
-    global MOOMOO_QUOTE_CTX, _MOOMOO_FAILED
-    if not MOOMOO_AVAILABLE or _MOOMOO_FAILED: return None
+    global MOOMOO_QUOTE_CTX
+    if not MOOMOO_AVAILABLE or _moomoo_blocked(): return None
     try:
         if MOOMOO_QUOTE_CTX is None:
             import socket
@@ -565,14 +596,14 @@ def moomoo_connect_quote():
             MOOMOO_QUOTE_CTX = OpenQuoteContext(host=MOOMOO_HOST, port=MOOMOO_PORT)
         return MOOMOO_QUOTE_CTX
     except Exception as e:
-        add_log(f"[WARN] moomoo unavailable ({e}) — order book disabled this session")
+        add_log(f"[WARN] moomoo unavailable ({e}) — order book disabled for {_MOOMOO_BACKOFF_SEC // 60} min")
         MOOMOO_QUOTE_CTX = None
-        _MOOMOO_FAILED = True
+        _moomoo_mark_failed()
         return None
 
 def moomoo_connect_trade():
-    global MOOMOO_TRADE_CTX, _MOOMOO_FAILED
-    if not MOOMOO_AVAILABLE or _MOOMOO_FAILED: return None
+    global MOOMOO_TRADE_CTX
+    if not MOOMOO_AVAILABLE or _moomoo_blocked(): return None
     try:
         if MOOMOO_TRADE_CTX is None:
             import socket
@@ -583,9 +614,9 @@ def moomoo_connect_trade():
             MOOMOO_TRADE_CTX = OpenSecTradeContext(filter_trdmarket=None, host=MOOMOO_HOST, port=MOOMOO_PORT, security_firm=None)
         return MOOMOO_TRADE_CTX
     except Exception as e:
-        add_log(f"[WARN] moomoo unavailable ({e}) — margin features disabled this session")
+        add_log(f"[WARN] moomoo unavailable ({e}) — margin features disabled for {_MOOMOO_BACKOFF_SEC // 60} min")
         MOOMOO_TRADE_CTX = None
-        _MOOMOO_FAILED = True
+        _moomoo_mark_failed()
         return None
 
 def get_order_book(symbol, num=10):
