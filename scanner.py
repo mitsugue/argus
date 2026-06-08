@@ -1519,20 +1519,17 @@ def api_argus_rates():
     return jsonify(get_rates_snapshot())
 
 
-# ━━━ J-Quants (live Japan watchlist) ━━━
-# Credentials live ONLY in Render env (server-side) — never exposed to the
-# frontend, never a VITE_ var. J-Quants auth is two-step: (mailaddress +
-# password) → refreshToken (~1wk) → idToken (~24h). We prefer an explicit
-# refresh token if one is provided, otherwise derive it from mail+password so
-# the backend self-refreshes indefinitely with no weekly maintenance.
-_JQUANTS_BASE          = "https://api.jquants.com/v1"
-_JQUANTS_MAIL          = os.environ.get("JQUANTS_MAILADDRESS")
-_JQUANTS_PASS          = os.environ.get("JQUANTS_PASSWORD")
-_JQUANTS_REFRESH_TOKEN = os.environ.get("JQUANTS_REFRESH_TOKEN")
+# ━━━ J-Quants V2 (live Japan watchlist) ━━━
+# J-Quants migrated v1 → V2: the old mailaddress/password token flow is
+# discontinued (returns HTTP 410). V2 uses a single API key from the dashboard,
+# passed in the `x-api-key` header. The key lives ONLY in Render env — never
+# exposed to the frontend, never a VITE_ var.
+_JQUANTS_BASE    = "https://api.jquants.com/v2"
+_JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY")
 
-# The watched names. `code` is the J-Quants query code (4-char TSE codes are
-# accepted directly, incl. the alphanumeric 285A). `mock` holds plausible
-# fallback values so the mock state renders sensibly when creds are unset or a
+# The watched names. `symbol` is the TSE code passed straight to V2 (4-char
+# codes incl. the alphanumeric 285A are accepted). `mock` holds plausible
+# fallback values so the mock state renders sensibly when the key is unset or a
 # fetch fails — they are NOT real quotes.
 _JP_WATCHLIST = [
     {"symbol": "8058", "name": "Mitsubishi Heavy Industries", "mock": {"price": 2900.0, "changeAbs": 26.0,  "changePct": 0.90,  "volume": 9_800_000}},
@@ -1544,62 +1541,8 @@ _JP_WATCHLIST = [
     {"symbol": "9501", "name": "Tokyo Electric Power",        "mock": {"price": 720.0,   "changeAbs": -4.0,   "changePct": -0.55, "volume": 14_200_000}},
 ]
 
-# idToken cache (~23h) and snapshot cache (10 min, like the rates snapshot).
-_JQUANTS_TOKEN = {"id": None, "expires": 0.0}
-_JP_CACHE      = {"data": None, "expires": 0.0}
-_JP_CACHE_TTL  = 600
-# Last auth attempt's non-sensitive diagnostics (no secret values) — surfaced
-# by the temporary /api/argus/japan-watchlist/debug route for setup triage.
-_JQUANTS_DIAG  = {}
-
-def _jquants_id_token():
-    """A valid J-Quants idToken (cached ~23h), or None if unavailable.
-
-    Never raises — any auth failure returns None so the snapshot degrades to
-    mock rather than 500ing. Records non-sensitive diagnostics in _JQUANTS_DIAG.
-    """
-    now = time.time()
-    if _JQUANTS_TOKEN["id"] and now < _JQUANTS_TOKEN["expires"]:
-        return _JQUANTS_TOKEN["id"]
-    diag = {"hasMail": bool(_JQUANTS_MAIL), "hasPassword": bool(_JQUANTS_PASS),
-            "hasRefreshToken": bool(_JQUANTS_REFRESH_TOKEN)}
-    def _save(stage):
-        diag["stage"] = stage
-        _JQUANTS_DIAG.clear(); _JQUANTS_DIAG.update(diag)
-    try:
-        refresh = _JQUANTS_REFRESH_TOKEN
-        if not refresh:
-            if not (_JQUANTS_MAIL and _JQUANTS_PASS):
-                _save("missing-credentials"); return None
-            r = requests.post(f"{_JQUANTS_BASE}/token/auth_user",
-                              json={"mailaddress": _JQUANTS_MAIL, "password": _JQUANTS_PASS},
-                              timeout=10)
-            diag["authUserStatus"] = r.status_code
-            if r.status_code != 200:
-                diag["authUserError"] = r.text[:200]  # J-Quants message; no secret echoed
-            r.raise_for_status()
-            refresh = r.json().get("refreshToken")
-            diag["gotRefreshToken"] = bool(refresh)
-            if not refresh:
-                _save("no-refresh-token"); return None
-        r2 = requests.post(f"{_JQUANTS_BASE}/token/auth_refresh",
-                           params={"refreshtoken": refresh}, timeout=10)
-        diag["authRefreshStatus"] = r2.status_code
-        if r2.status_code != 200:
-            diag["authRefreshError"] = r2.text[:200]
-        r2.raise_for_status()
-        idtok = r2.json().get("idToken")
-        diag["gotIdToken"] = bool(idtok)
-        if not idtok:
-            _save("no-id-token"); return None
-        _JQUANTS_TOKEN["id"]      = idtok
-        _JQUANTS_TOKEN["expires"] = now + 23 * 3600
-        _save("ok")
-        return idtok
-    except Exception as e:
-        diag["exception"] = f"{type(e).__name__}: {str(e)[:160]}"
-        _save("exception")
-        return None
+_JP_CACHE     = {"data": None, "expires": 0.0}
+_JP_CACHE_TTL = 600
 
 def _jp_mock_quote(s):
     m = s["mock"]
@@ -1610,21 +1553,29 @@ def _jp_mock_quote(s):
     }
 
 def _q_close(q):
-    # Standard daily_quotes carries Close; fall back to AdjustmentClose.
-    v = q.get("Close")
-    return v if v is not None else q.get("AdjustmentClose")
+    # V2 abbreviated fields: C = close; fall back to AdjC (adjusted close).
+    v = q.get("C")
+    return v if v is not None else q.get("AdjC")
 
-def _jquants_fetch_quote(s, id_token):
-    """Latest + previous daily quote for one symbol → normalized dict or mock."""
+def _jquants_fetch_quote(s, headers):
+    """Latest + previous daily bar for one symbol → normalized dict or mock."""
     try:
         # Window the query (~150d) so we get the two most recent rows without
         # pulling full history; covers the free plan's ~12-week lag plus buffer.
         frm = (datetime.now(TZ_JST) - timedelta(days=150)).strftime("%Y-%m-%d")
-        r = requests.get(f"{_JQUANTS_BASE}/prices/daily_quotes",
-                         headers={"Authorization": f"Bearer {id_token}"},
-                         params={"code": s["symbol"], "from": frm}, timeout=10)
-        r.raise_for_status()
-        rows = [q for q in r.json().get("daily_quotes", []) if _q_close(q) is not None]
+        rows = []
+        params = {"code": s["symbol"], "from": frm}
+        for _ in range(6):  # follow pagination defensively (usually one page)
+            r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
+                             headers=headers, params=params, timeout=10)
+            r.raise_for_status()
+            body = r.json()
+            rows.extend(body.get("data", []))
+            pk = body.get("pagination_key")
+            if not pk:
+                break
+            params["pagination_key"] = pk
+        rows = [q for q in rows if _q_close(q) is not None]
         rows.sort(key=lambda q: q.get("Date", ""))
         if len(rows) < 2:
             return _jp_mock_quote(s)
@@ -1632,7 +1583,7 @@ def _jquants_fetch_quote(s, id_token):
         close  = float(_q_close(latest))
         pclose = float(_q_close(prev))
         change = round(close - pclose, 2)
-        vol    = latest.get("Volume")
+        vol    = latest.get("Vo")
         return {
             "symbol": s["symbol"], "name": s["name"],
             "price": close,
@@ -1660,11 +1611,11 @@ def get_japan_watchlist_snapshot():
     now = time.time()
     if _JP_CACHE["data"] is not None and now < _JP_CACHE["expires"]:
         return _JP_CACHE["data"]
-    id_token = _jquants_id_token()
-    if not id_token:
-        return _jp_mock_snapshot()  # no creds / auth failed
+    if not _JQUANTS_API_KEY:
+        return _jp_mock_snapshot()  # no API key configured
+    headers = {"x-api-key": _JQUANTS_API_KEY}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(_JP_WATCHLIST)) as ex:
-        stocks = list(ex.map(lambda s: _jquants_fetch_quote(s, id_token), _JP_WATCHLIST))
+        stocks = list(ex.map(lambda s: _jquants_fetch_quote(s, headers), _JP_WATCHLIST))
     overall = "live" if any(q["status"] == "live" for q in stocks) else "mock"
     as_of   = max((q["date"] for q in stocks if q.get("date")), default=None)
     snapshot = {"status": overall, "asOf": as_of, "stocks": stocks}
@@ -1679,18 +1630,26 @@ def api_argus_japan_watchlist():
 
 @app.route("/api/argus/japan-watchlist/debug")
 def api_argus_japan_watchlist_debug():
-    # TEMPORARY setup-triage route. Forces a fresh auth attempt and reports only
-    # NON-sensitive diagnostics: which env vars are present (booleans), a masked
-    # email hint, and J-Quants' own HTTP status / error message. No secret value
+    # TEMPORARY setup-triage route. Makes one direct V2 test call and reports
+    # only NON-sensitive diagnostics: whether the API key is present, a masked
+    # key hint, and J-Quants' own HTTP status / error message. No secret value
     # is ever returned. Remove once the watchlist is confirmed live.
-    _JQUANTS_TOKEN["id"] = None
-    _JQUANTS_TOKEN["expires"] = 0.0
-    _jquants_id_token()
-    out = dict(_JQUANTS_DIAG)
-    if _JQUANTS_MAIL:
-        m = _JQUANTS_MAIL
-        out["mailHint"] = (m[:2] + "***@" + m.split("@", 1)[1]) if "@" in m else (m[:2] + "***")
-    out["expectedEnvVars"] = ["JQUANTS_MAILADDRESS", "JQUANTS_PASSWORD", "JQUANTS_REFRESH_TOKEN(optional)"]
+    out = {"hasApiKey": bool(_JQUANTS_API_KEY), "expectedEnvVars": ["JQUANTS_API_KEY"]}
+    if _JQUANTS_API_KEY:
+        k = _JQUANTS_API_KEY
+        out["apiKeyHint"] = (k[:3] + "***" + k[-2:]) if len(k) > 6 else "***"
+        try:
+            frm = (datetime.now(TZ_JST) - timedelta(days=150)).strftime("%Y-%m-%d")
+            r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
+                             headers={"x-api-key": _JQUANTS_API_KEY},
+                             params={"code": "8058", "from": frm}, timeout=10)
+            out["testStatus"] = r.status_code
+            if r.status_code == 200:
+                out["testRows"] = len(r.json().get("data", []))
+            else:
+                out["testError"] = r.text[:200]
+        except Exception as e:
+            out["exception"] = f"{type(e).__name__}: {str(e)[:160]}"
     return jsonify(out)
 
 

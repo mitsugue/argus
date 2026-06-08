@@ -20,14 +20,9 @@ services:
       - key: ARGUS_LEDGER_PATH
         value: data/predictions.jsonl
       # Provide your secrets via the Render dashboard, not in this file.
-      # J-Quants (live Japan watchlist): set mailaddress + password (the
-      # backend self-refreshes the token). JQUANTS_REFRESH_TOKEN is an
-      # optional override if you'd rather supply a portal refresh token.
-      - key: JQUANTS_MAILADDRESS
-        sync: false
-      - key: JQUANTS_PASSWORD
-        sync: false
-      - key: JQUANTS_REFRESH_TOKEN
+      # J-Quants V2 (live Japan watchlist): a single dashboard API key, sent
+      # in the x-api-key header (v1 mailaddress/password is discontinued).
+      - key: JQUANTS_API_KEY
         sync: false
       # FRED (live rates snapshot) — also dashboard-only.
       - key: FRED_API_KEY
