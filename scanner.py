@@ -1519,6 +1519,146 @@ def api_argus_rates():
     return jsonify(get_rates_snapshot())
 
 
+# ━━━ J-Quants (live Japan watchlist) ━━━
+# Credentials live ONLY in Render env (server-side) — never exposed to the
+# frontend, never a VITE_ var. J-Quants auth is two-step: (mailaddress +
+# password) → refreshToken (~1wk) → idToken (~24h). We prefer an explicit
+# refresh token if one is provided, otherwise derive it from mail+password so
+# the backend self-refreshes indefinitely with no weekly maintenance.
+_JQUANTS_BASE          = "https://api.jquants.com/v1"
+_JQUANTS_MAIL          = os.environ.get("JQUANTS_MAILADDRESS")
+_JQUANTS_PASS          = os.environ.get("JQUANTS_PASSWORD")
+_JQUANTS_REFRESH_TOKEN = os.environ.get("JQUANTS_REFRESH_TOKEN")
+
+# The watched names. `code` is the J-Quants query code (4-char TSE codes are
+# accepted directly, incl. the alphanumeric 285A). `mock` holds plausible
+# fallback values so the mock state renders sensibly when creds are unset or a
+# fetch fails — they are NOT real quotes.
+_JP_WATCHLIST = [
+    {"symbol": "8058", "name": "Mitsubishi Heavy Industries", "mock": {"price": 2900.0, "changeAbs": 26.0,  "changePct": 0.90,  "volume": 9_800_000}},
+    {"symbol": "9984", "name": "SoftBank Group",              "mock": {"price": 9_800.0, "changeAbs": -180.0, "changePct": -1.80, "volume": 8_100_000}},
+    {"symbol": "5801", "name": "Furukawa Electric",           "mock": {"price": 6_400.0, "changeAbs": 120.0,  "changePct": 1.91,  "volume": 3_200_000}},
+    {"symbol": "5803", "name": "Fujikura",                    "mock": {"price": 7_200.0, "changeAbs": 210.0,  "changePct": 3.01,  "volume": 11_500_000}},
+    {"symbol": "6584", "name": "Sanoh Industrial",            "mock": {"price": 1_480.0, "changeAbs": -8.0,   "changePct": -0.54, "volume": 410_000}},
+    {"symbol": "285A", "name": "Kioxia Holdings",             "mock": {"price": 1_820.0, "changeAbs": 35.0,   "changePct": 1.96,  "volume": 5_600_000}},
+    {"symbol": "9501", "name": "Tokyo Electric Power",        "mock": {"price": 720.0,   "changeAbs": -4.0,   "changePct": -0.55, "volume": 14_200_000}},
+]
+
+# idToken cache (~23h) and snapshot cache (10 min, like the rates snapshot).
+_JQUANTS_TOKEN = {"id": None, "expires": 0.0}
+_JP_CACHE      = {"data": None, "expires": 0.0}
+_JP_CACHE_TTL  = 600
+
+def _jquants_id_token():
+    """A valid J-Quants idToken (cached ~23h), or None if unavailable.
+
+    Never raises — any auth failure returns None so the snapshot degrades to
+    mock rather than 500ing.
+    """
+    now = time.time()
+    if _JQUANTS_TOKEN["id"] and now < _JQUANTS_TOKEN["expires"]:
+        return _JQUANTS_TOKEN["id"]
+    try:
+        refresh = _JQUANTS_REFRESH_TOKEN
+        if not refresh:
+            if not (_JQUANTS_MAIL and _JQUANTS_PASS):
+                return None  # no credentials configured → mock
+            r = requests.post(f"{_JQUANTS_BASE}/token/auth_user",
+                              json={"mailaddress": _JQUANTS_MAIL, "password": _JQUANTS_PASS},
+                              timeout=10)
+            r.raise_for_status()
+            refresh = r.json().get("refreshToken")
+            if not refresh:
+                return None
+        r2 = requests.post(f"{_JQUANTS_BASE}/token/auth_refresh",
+                           params={"refreshtoken": refresh}, timeout=10)
+        r2.raise_for_status()
+        idtok = r2.json().get("idToken")
+        if not idtok:
+            return None
+        _JQUANTS_TOKEN["id"]      = idtok
+        _JQUANTS_TOKEN["expires"] = now + 23 * 3600
+        return idtok
+    except Exception:
+        return None
+
+def _jp_mock_quote(s):
+    m = s["mock"]
+    return {
+        "symbol": s["symbol"], "name": s["name"],
+        "price": m["price"], "changeAbs": m["changeAbs"], "changePct": m["changePct"],
+        "volume": m["volume"], "date": None, "status": "mock",
+    }
+
+def _q_close(q):
+    # Standard daily_quotes carries Close; fall back to AdjustmentClose.
+    v = q.get("Close")
+    return v if v is not None else q.get("AdjustmentClose")
+
+def _jquants_fetch_quote(s, id_token):
+    """Latest + previous daily quote for one symbol → normalized dict or mock."""
+    try:
+        # Window the query (~150d) so we get the two most recent rows without
+        # pulling full history; covers the free plan's ~12-week lag plus buffer.
+        frm = (datetime.now(TZ_JST) - timedelta(days=150)).strftime("%Y-%m-%d")
+        r = requests.get(f"{_JQUANTS_BASE}/prices/daily_quotes",
+                         headers={"Authorization": f"Bearer {id_token}"},
+                         params={"code": s["symbol"], "from": frm}, timeout=10)
+        r.raise_for_status()
+        rows = [q for q in r.json().get("daily_quotes", []) if _q_close(q) is not None]
+        rows.sort(key=lambda q: q.get("Date", ""))
+        if len(rows) < 2:
+            return _jp_mock_quote(s)
+        latest, prev = rows[-1], rows[-2]
+        close  = float(_q_close(latest))
+        pclose = float(_q_close(prev))
+        change = round(close - pclose, 2)
+        vol    = latest.get("Volume")
+        return {
+            "symbol": s["symbol"], "name": s["name"],
+            "price": close,
+            "changeAbs": change,
+            "changePct": round((change / pclose) * 100, 2) if pclose else 0.0,
+            "volume": int(vol) if vol is not None else 0,
+            "date": latest.get("Date"),
+            "status": "live",
+        }
+    except Exception:
+        return _jp_mock_quote(s)
+
+def _jp_mock_snapshot():
+    return {"status": "mock", "asOf": None,
+            "stocks": [_jp_mock_quote(s) for s in _JP_WATCHLIST]}
+
+def get_japan_watchlist_snapshot():
+    """Live snapshot of the watched Japan names (price/change/volume/date).
+
+    Mirrors the rates snapshot: parallel fetch, 10-min cache (live only), and
+    a mock fallback so the UI always renders. `asOf` is the latest data date
+    actually returned, so freshness (free plan ~12wk lag vs paid T-1) is
+    surfaced honestly rather than assumed.
+    """
+    now = time.time()
+    if _JP_CACHE["data"] is not None and now < _JP_CACHE["expires"]:
+        return _JP_CACHE["data"]
+    id_token = _jquants_id_token()
+    if not id_token:
+        return _jp_mock_snapshot()  # no creds / auth failed
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(_JP_WATCHLIST)) as ex:
+        stocks = list(ex.map(lambda s: _jquants_fetch_quote(s, id_token), _JP_WATCHLIST))
+    overall = "live" if any(q["status"] == "live" for q in stocks) else "mock"
+    as_of   = max((q["date"] for q in stocks if q.get("date")), default=None)
+    snapshot = {"status": overall, "asOf": as_of, "stocks": stocks}
+    if overall == "live":
+        _JP_CACHE["data"]    = snapshot
+        _JP_CACHE["expires"] = now + _JP_CACHE_TTL
+    return snapshot
+
+@app.route("/api/argus/japan-watchlist")
+def api_argus_japan_watchlist():
+    return jsonify(get_japan_watchlist_snapshot())
+
+
 # ━━━ Scheduler ━━━
 def is_us_trading_day():
     return datetime.now(TZ_ET).weekday() < 5
