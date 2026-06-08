@@ -31,6 +31,20 @@ services:
       # apikey query param server-side.
       - key: TWELVEDATA_API_KEY
         sync: false
+      # AI Judgment Layer v1 (optional second-opinion review). Backend-only.
+      # Disabled unless AI_JUDGE_ENABLED is true. Admin token gates POST run.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: GEMINI_JUDGE_MODEL
+        sync: false
+      - key: AI_JUDGE_ENABLED
+        sync: false
+      - key: AI_JUDGE_MAX_RUNS_PER_DAY
+        sync: false
+      - key: ARGUS_ADMIN_TOKEN
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY

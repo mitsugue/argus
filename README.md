@@ -87,6 +87,7 @@ list and Render deploy steps.
 | US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
+| AI Judgment Layer v1 (second-opinion review of the rule labels) | OpenAI primary + Gemini double-check (backend-only, cached, admin-triggered) | **optional** |
 | Market Regime, Alerts, earnings, flow/news scanners | mock | pending real wiring |
 
 Watchlist **action** labels come from the **Action Label Engine v0** — a
@@ -96,6 +97,18 @@ deliberately conservative: it only emits `HOLD` / `WAIT` / `WAIT FOR PULLBACK`
 in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
+
+The **AI Judgment Layer v1** is an optional *second-opinion* layer on top of the
+rule engine (it never replaces it — the rule label is always preserved). OpenAI
+is the primary judge and Gemini an independent double-check; the arbiter is
+conservative (blocks `ADD`/`BUY DIP`/`EXIT`/`TRIM` in v1 and defers to Gemini on
+high-severity disagreement). It is **backend-only** (keys live in Render env,
+never in the frontend or logs), **disabled by default** (`AI_JUDGE_ENABLED`),
+cached ~30 min, and runs are **admin-triggered** via `POST /api/argus/ai-judgment/run`
+with an `X-ARGUS-ADMIN-TOKEN` header (the public frontend only reads the cached
+`GET /api/argus/ai-judgment`). Env vars: `OPENAI_API_KEY`, `OPENAI_MODEL`,
+`GEMINI_API_KEY`, `GEMINI_JUDGE_MODEL`, `AI_JUDGE_ENABLED`,
+`AI_JUDGE_MAX_RUNS_PER_DAY`, `ARGUS_ADMIN_TOKEN`.
 
 Event Radar (Phase 1) covers FOMC, BOJ, CPI, PPI, Employment Situation, JOLTS,
 PCE / Personal Income and Outlays, GDP, and Treasury auctions. It is

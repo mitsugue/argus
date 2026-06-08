@@ -703,6 +703,32 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
+
+/* AI Review — second-opinion panel (OpenAI + Gemini). Calm, not a feed. */
+.ai-review {
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+.ai-review__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-review__title { font-size: 13px; font-weight: 600; color: var(--text-main); }
+.ai-review__models {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  margin-left: auto;
+}
+.ai-review__summary { margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text-sub); }
+.ai-review__risk { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
+.ai-review__notes { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.ai-review__note {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 11px; color: var(--text-sub);
+}
+.ai-review__sym { font-family: var(--font-mono); font-weight: 600; color: var(--text-main); min-width: 46px; }
+.ai-review__flow { font-family: var(--font-mono); color: var(--text-sub); }
+.ai-review__view { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
+.ai-review__reason { flex: 1 1 240px; min-width: 0; color: var(--text-faint); }
 @keyframes watch-status-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.25; }

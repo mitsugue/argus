@@ -2119,6 +2119,282 @@ def api_argus_action_labels():
     return jsonify(get_action_labels())
 
 
+# ━━━ AI Judgment Layer v1 (OpenAI primary + Gemini double-check) ━━━
+# A SECOND-OPINION layer on top of the deterministic rule engine — it never
+# replaces it (the rule label is always preserved). Backend-only: keys live in
+# Render env, never reach the frontend or logs. Disabled by default; runs are
+# cached (30 min) and admin-triggered, never on page load. Conservative arbiter:
+# blocks aggressive AI calls (ADD/BUY DIP/EXIT/TRIM) in v1 and defers to Gemini
+# on high-severity disagreement.
+_OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
+_OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-4o-mini"
+_GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-2.5-flash"
+_AI_JUDGE_ENABLED      = os.environ.get("AI_JUDGE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+try:
+    _AI_JUDGE_MAX_RUNS = int(os.environ.get("AI_JUDGE_MAX_RUNS_PER_DAY", "24") or 24)
+except Exception:
+    _AI_JUDGE_MAX_RUNS = 24
+_ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
+
+_AI_CACHE_TTL  = 1800  # 30 min
+_AI_CACHE      = {"data": None, "expires": 0.0}
+_AI_RUN_STATE  = {"date": None, "count": 0}
+_AI_LOCK       = threading.Lock()
+
+_AI_CONSERVATIVE = {"WAIT", "HOLD", "WAIT FOR PULLBACK"}
+_AI_RANK = {"EXIT": 0, "TRIM": 1, "WAIT FOR PULLBACK": 2, "WAIT": 3, "BUY DIP": 4, "ADD": 5, "HOLD": 6}
+
+def _ai_most_conservative(a, b):
+    # Smaller rank = more defensive; prefer the more defensive of the two.
+    return a if _AI_RANK.get(a, 99) <= _AI_RANK.get(b, 99) else b
+
+def _build_ai_snapshot():
+    """Compact, secret-free structured snapshot for the AI judges."""
+    al = get_action_labels()
+    rates = get_rates_snapshot()
+    ev = get_events_snapshot()
+    urgent = [{"title": e["title"], "country": e["country"], "impact": e["impact"],
+               "escalation": e["escalation"], "daysUntil": e["daysUntil"]}
+              for e in (ev.get("events", []) if isinstance(ev, dict) else [])
+              if e.get("escalation") in ("D", "D-1", "D-3")]
+    labels = [{"symbol": l["symbol"], "market": l["market"], "name": l["name"],
+               "ruleAction": l["action"], "risk": l["risk"], "confidence": l["confidence"],
+               "changePct": l["supportingData"]["changePct"], "volume": l["supportingData"]["volume"],
+               "eventEscalation": l["supportingData"]["eventEscalation"],
+               "reasonJa": l["reasonJa"], "nextConditionJa": l["nextConditionJa"]}
+              for l in al.get("labels", [])]
+    snap = {
+        "marketPosture": al.get("marketPosture"),
+        "rates": {k: rates.get(k) for k in ("ratesPressure", "riskVolatility", "summary")} if isinstance(rates, dict) else {},
+        "urgentEvents": urgent,
+        "labels": labels,
+    }
+    return snap, al
+
+_OPENAI_SYSTEM = (
+    "You are the ARGUS AI judgment layer. ARGUS is NOT a prediction engine: it classifies current "
+    "market conditions into action categories and explains stance/reason/risk/confidence/what-would-"
+    "change. You REVIEW and critique a deterministic rule engine's labels using ONLY the provided "
+    "structured snapshot. Do NOT fabricate news, VWAP, order flow, order book, or analyst data, and "
+    "do NOT claim intraday rate direction. Be conservative: prefer WAIT/HOLD/WAIT FOR PULLBACK. "
+    "ADD/BUY DIP require explicit stabilization or a positive setup in the data; EXIT/TRIM require a "
+    "severe rule condition or clear risk evidence; if uncertain, choose WAIT or HOLD. State data "
+    "limitations honestly. All *Ja fields must be concise Japanese. Return STRICT JSON only."
+)
+
+def _openai_judge(snapshot):
+    if not _OPENAI_API_KEY:
+        return None, "unavailable"
+    try:
+        import openai
+        client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        user = ("Review these rule-based ARGUS labels and return strict JSON with keys: status, model, "
+                "asOf, summaryJa, marketRiskJa, modelPosture (RISK_ON|CAUTIOUS|RISK_OFF|EVENT_WAIT), and "
+                "labels[] each with symbol, aiView (confirm|caution|disagree), suggestedAction "
+                "(EXIT|TRIM|WAIT|WAIT FOR PULLBACK|BUY DIP|ADD|HOLD), confidence (0..1), risk "
+                "(low|medium|high), reasonJa, whatCouldChangeJa, redFlags[], dataLimitations[]. "
+                "Snapshot:\n" + json.dumps(snapshot, ensure_ascii=False))
+        resp = client.chat.completions.create(
+            model=_OPENAI_MODEL,
+            messages=[{"role": "system", "content": _OPENAI_SYSTEM}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            timeout=45,
+        )
+        out = safe_json(resp.choices[0].message.content or "")
+        if not isinstance(out, dict) or not isinstance(out.get("labels"), list):
+            return None, "partial"
+        return out, "live"
+    except Exception as e:
+        add_log(f"[AI] openai judge failed: {type(e).__name__}")
+        return None, "unavailable"
+
+def _gemini_check(snapshot, openai_out):
+    if not google_genai or not GEMINI_API_KEY:
+        return None, "unavailable"
+    try:
+        client = google_genai.Client(api_key=GEMINI_API_KEY)
+        prompt = (
+            "あなたはARGUSの独立検証役です。以下の市場スナップショット・ルールラベル・OpenAIの提案を検証し、"
+            "(1)裏付けのない主張、(2)直近の重大リスク、(3)OpenAI提案が強気/積極的すぎないか、(4)注意すべき銘柄、"
+            "を点検してください。捏造は禁止。STRICT JSONのみを返す。キー: status, model, summaryJa, "
+            "disagreements[] (symbol, issueJa, severity(low|medium|high), recommendedConservativeAction"
+            "(WAIT|HOLD|WAIT FOR PULLBACK)), globalRedFlags[].\n"
+            "SNAPSHOT:\n" + json.dumps(snapshot, ensure_ascii=False) +
+            "\nOPENAI:\n" + json.dumps(openai_out or {}, ensure_ascii=False))
+        cfg = None
+        try:
+            from google.genai import types as _gt
+            cfg = _gt.GenerateContentConfig(tools=[_gt.Tool(google_search=_gt.GoogleSearch())])
+        except Exception:
+            cfg = None
+        resp = (client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt, config=cfg)
+                if cfg else client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt))
+        out = safe_json(getattr(resp, "text", "") or "")
+        if not isinstance(out, dict) or "disagreements" not in out:
+            return None, "partial"
+        return out, "live"
+    except Exception as e:
+        add_log(f"[AI] gemini check failed: {type(e).__name__}")
+        return None, "unavailable"
+
+def _arbitrate_ai(al, openai_out, gemini_out):
+    oai_by = {l.get("symbol"): l for l in (openai_out.get("labels", []) if isinstance(openai_out, dict) else [])}
+    gem_by = {d.get("symbol"): d for d in (gemini_out.get("disagreements", []) if isinstance(gemini_out, dict) else [])}
+    labels = []
+    for rl in al.get("labels", []):
+        sym = rl["symbol"]
+        rule_action = rl["action"]
+        oai = oai_by.get(sym)
+        gem = gem_by.get(sym)
+        final = rule_action
+        view = "unavailable"
+        reason = rl["reasonJa"]
+        what = rl["nextConditionJa"]
+        oai_reason = ""
+        gem_check = ""
+        redflags, datalim = [], []
+        conf, risk = rl["confidence"], rl["risk"]
+
+        if isinstance(oai, dict):
+            view = oai.get("aiView", "caution")
+            oai_reason = (oai.get("reasonJa") or "")[:240]
+            what = (oai.get("whatCouldChangeJa") or what) or what
+            redflags = [str(x)[:120] for x in (oai.get("redFlags") or [])][:4]
+            datalim = [str(x)[:120] for x in (oai.get("dataLimitations") or [])][:4]
+            if isinstance(oai.get("confidence"), (int, float)):
+                conf = round(float(oai["confidence"]), 2)
+            if oai.get("risk") in ("low", "medium", "high"):
+                risk = oai["risk"]
+            sug = oai.get("suggestedAction", "")
+            if sug in _AI_CONSERVATIVE:
+                final = sug
+            elif sug in ("ADD", "BUY DIP"):
+                final = rule_action; view = "caution"
+                datalim = datalim + ["v1ではADD/BUY DIPは採用しない(確証データ不足)"]
+            elif sug in ("EXIT", "TRIM"):
+                final = "WAIT"; view = "caution"
+                datalim = datalim + ["v1ではEXIT/TRIMは採用せずWAITに留める"]
+            reason = oai_reason or reason
+
+        if isinstance(gem, dict):
+            gem_check = (gem.get("issueJa") or "")[:240]
+            sev = gem.get("severity", "low")
+            rec = gem.get("recommendedConservativeAction", "WAIT")
+            if rec not in _AI_CONSERVATIVE:
+                rec = "WAIT"
+            if sev == "high":
+                final = rec; view = "disagree"
+                reason = gem_check or reason
+            elif sev == "medium":
+                final = _ai_most_conservative(final, rec)
+                if view == "confirm":
+                    view = "caution"
+
+        labels.append({
+            "symbol": sym, "market": rl["market"], "ruleAction": rule_action,
+            "aiFinalAction": final, "aiView": view, "confidence": conf, "risk": risk,
+            "reasonJa": reason, "whatCouldChangeJa": what,
+            "openaiReasonJa": oai_reason, "geminiCheckJa": gem_check,
+            "redFlags": redflags, "dataLimitations": datalim,
+            "status": rl.get("status", "live"),
+        })
+    return labels
+
+def _ai_now_iso():
+    return datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _ai_disabled_payload():
+    return {"status": "disabled", "reason": "AI judgment layer is disabled",
+            "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": "cached",
+            "models": {"primary": None, "checker": None},
+            "summaryJa": "", "marketRiskJa": "", "labels": []}
+
+def _rule_only_payload(al, run_mode="cached", status="partial"):
+    labels = [{"symbol": l["symbol"], "market": l["market"], "ruleAction": l["action"],
+               "aiFinalAction": l["action"], "aiView": "unavailable", "confidence": l["confidence"],
+               "risk": l["risk"], "reasonJa": l["reasonJa"], "whatCouldChangeJa": l["nextConditionJa"],
+               "openaiReasonJa": "", "geminiCheckJa": "", "redFlags": [], "dataLimitations": [],
+               "status": l.get("status", "live")} for l in al.get("labels", [])]
+    return {"status": "mock" if al.get("status") == "mock" else status,
+            "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": run_mode,
+            "models": {"primary": None, "checker": None},
+            "summaryJa": "AI判定は未実行(ルールベースのみ表示)。", "marketRiskJa": "",
+            "labels": labels}
+
+def run_ai_judgment(run_mode="manual"):
+    """Run a fresh AI judgment (OpenAI + Gemini), arbitrate, and cache. Never raises."""
+    if not _AI_JUDGE_ENABLED:
+        return _ai_disabled_payload()
+    with _AI_LOCK:
+        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        if _AI_RUN_STATE["date"] != today:
+            _AI_RUN_STATE["date"] = today
+            _AI_RUN_STATE["count"] = 0
+        if run_mode == "manual" and _AI_RUN_STATE["count"] >= _AI_JUDGE_MAX_RUNS:
+            cached = _AI_CACHE["data"]
+            if cached:
+                return {**cached, "runMode": "cached"}
+            snap, al = _build_ai_snapshot()
+            return _rule_only_payload(al, run_mode="cached")
+        _AI_RUN_STATE["count"] += 1
+
+    snap, al = _build_ai_snapshot()
+    openai_out, oai_status = _openai_judge(snap)
+    gemini_out, gem_status = _gemini_check(snap, openai_out)
+    labels = _arbitrate_ai(al, openai_out, gemini_out)
+
+    ai_ok = (1 if oai_status == "live" else 0) + (1 if gem_status == "live" else 0)
+    if al.get("status") == "mock":
+        status = "mock"
+    elif ai_ok == 2:
+        status = "live"
+    else:
+        status = "partial"
+
+    summary = (openai_out.get("summaryJa") if isinstance(openai_out, dict) else "") or \
+              (al.get("marketPosture", {}) or {}).get("rationaleJa", "")
+    market_risk = (openai_out.get("marketRiskJa") if isinstance(openai_out, dict) else "") or ""
+    if isinstance(gemini_out, dict) and gemini_out.get("globalRedFlags"):
+        flags = " / ".join(str(x)[:80] for x in gemini_out["globalRedFlags"][:3])
+        market_risk = (market_risk + " ").strip() + (f"[Gemini: {flags}]" if flags else "")
+
+    payload = {
+        "status": status, "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1",
+        "runMode": run_mode,
+        "models": {"primary": (_OPENAI_MODEL if oai_status == "live" else None),
+                   "checker": (_GEMINI_JUDGE_MODEL if gem_status == "live" else None)},
+        "summaryJa": summary[:400], "marketRiskJa": market_risk[:400], "labels": labels,
+    }
+    if status != "mock":
+        _AI_CACHE["data"] = payload
+        _AI_CACHE["expires"] = time.time() + _AI_CACHE_TTL
+    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_GEMINI_JUDGE_MODEL} "
+            f"symbols={len(labels)} oai={oai_status} gem={gem_status} status={status} "
+            f"runs_today={_AI_RUN_STATE['count']}")
+    return payload
+
+@app.route("/api/argus/ai-judgment")
+def api_argus_ai_judgment():
+    # Frontend-safe: never triggers a fresh AI call. Returns cache, or a
+    # rule-only payload when no fresh run exists, or disabled.
+    if not _AI_JUDGE_ENABLED:
+        return jsonify(_ai_disabled_payload())
+    cached = _AI_CACHE["data"]
+    if cached and time.time() < _AI_CACHE["expires"]:
+        return jsonify({**cached, "runMode": "cached"})
+    _, al = _build_ai_snapshot()
+    return jsonify(_rule_only_payload(al, run_mode="cached"))
+
+@app.route("/api/argus/ai-judgment/run", methods=["POST"])
+def api_argus_ai_judgment_run():
+    # Admin-gated: requires X-ARGUS-ADMIN-TOKEN == ARGUS_ADMIN_TOKEN.
+    token = request.headers.get("X-ARGUS-ADMIN-TOKEN", "")
+    if not _ARGUS_ADMIN_TOKEN or token != _ARGUS_ADMIN_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify(run_ai_judgment(run_mode="manual"))
+
+
 # ━━━ Scheduler ━━━
 def is_us_trading_day():
     return datetime.now(TZ_ET).weekday() < 5

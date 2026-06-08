@@ -5,6 +5,7 @@ import { ActionPill } from '../components/action/ActionBadge';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useActionLabels } from '../hooks/useActionLabels';
+import { AIReview } from '../components/dashboard/AIReview';
 import type { WatchEntry, WatchJP, WatchUS, JapanStockQuote, USStockQuote } from '../types/watch';
 import type { ActionLabel } from '../types/actionLabels';
 import type { ActionKey } from '../types/action';
@@ -105,6 +106,8 @@ export const Watchlist: React.FC = () => {
           <span className="watch-posture__note">{labels.marketPosture.rationaleJa}</span>
         </div>
       )}
+
+      <AIReview />
 
       <div className="watch-summary">
         {summary.map(({ action, count }) => (
