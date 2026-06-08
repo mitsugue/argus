@@ -87,7 +87,8 @@ list and Render deploy steps.
 | US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
-| AI Judgment Layer v1 (second-opinion review of the rule labels) | OpenAI primary + Gemini double-check (backend-only, cached, admin-triggered) | **optional** |
+| AI Security Gate v1 + GPT-5.5 Pro Handoff (manual second opinion) | internal (no AI API calls yet) | **live (gate + handoff)** |
+| Automated AI judgment (GPT-5.5 primary + Gemini double-check) | OpenAI + Gemini | pending (v8.10.x+) |
 | Market Regime, Alerts, earnings, flow/news scanners | mock | pending real wiring |
 
 Watchlist **action** labels come from the **Action Label Engine v0** — a
@@ -98,17 +99,39 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
-The **AI Judgment Layer v1** is an optional *second-opinion* layer on top of the
-rule engine (it never replaces it — the rule label is always preserved). OpenAI
-is the primary judge and Gemini an independent double-check; the arbiter is
-conservative (blocks `ADD`/`BUY DIP`/`EXIT`/`TRIM` in v1 and defers to Gemini on
-high-severity disagreement). It is **backend-only** (keys live in Render env,
-never in the frontend or logs), **disabled by default** (`AI_JUDGE_ENABLED`),
-cached ~30 min, and runs are **admin-triggered** via `POST /api/argus/ai-judgment/run`
-with an `X-ARGUS-ADMIN-TOKEN` header (the public frontend only reads the cached
-`GET /api/argus/ai-judgment`). Env vars: `OPENAI_API_KEY`, `OPENAI_MODEL`,
-`GEMINI_API_KEY`, `GEMINI_JUDGE_MODEL`, `AI_JUDGE_ENABLED`,
-`AI_JUDGE_MAX_RUNS_PER_DAY`, `ARGUS_ADMIN_TOKEN`.
+**v8.10.0 — AI Security Gate v1 + GPT-5.5 Pro Handoff.** This version adds the
+*safety/cost infrastructure* for future expensive AI runs plus a manual Pro
+review workflow. **No OpenAI/Gemini API call is made in this version** (the
+OpenAI/Gemini judge code is kept dormant for a future version).
+
+- **Security Gate v1** — `POST /api/argus/ai-judgment/run` is admin-gated
+  (`X-ARGUS-ADMIN-TOKEN` == `ARGUS_ADMIN_TOKEN`; 401 if missing/wrong, 503 if the
+  token isn't configured) and validates `AI_JUDGE_ENABLED`, a runtime soft lock
+  (`AI_JUDGE_LOCKED` + repeated-failure auto-lock), a daily cap
+  (`AI_JUDGE_MAX_RUNS_PER_DAY`, default 3), a minimum interval
+  (`AI_JUDGE_MIN_INTERVAL_MINUTES`, default 30) and a country allow-list
+  (`AI_JUDGE_ALLOW_COUNTRIES`, default JP, via CF-IPCountry). When the gate
+  passes it returns `{"status":"ready", ... "AI execution not implemented in
+  this version."}` — it does NOT call any model. `GET /api/argus/ai-judgment` is
+  public/safe and returns `disabled` / `ai-judge-v1-pending`. Admin-only
+  `GET /api/argus/security-status` and `POST /api/argus/security-unlock` manage
+  the lock/limits. `send_security_alert()` logs alerts now and is structured for
+  a Phase-2 Resend/SendGrid + signed "It was me / not me" links integration
+  (`SECURITY_ALERT_EMAIL`/`PROVIDER`/`WEBHOOK`). The run ledger is in-memory
+  (resets on dyno restart; move to persistent storage later if needed).
+- **GPT-5.5 Pro Handoff** — `GET /api/argus/pro-handoff` aggregates the current
+  ARGUS state (rates, events, both watchlists, action labels) into one
+  copy-paste prompt for **manual** ChatGPT GPT-5.5 Pro review. The "Copy for
+  GPT-5.5 Pro" button on the Watchlist copies it to the clipboard. This makes
+  **no** API call, costs nothing, and exposes no secrets. (ChatGPT Pro
+  subscription is separate from OpenAI API billing.)
+- Future **v8.10.x+** can wire the automated GPT-5.5 API + Gemini double-check;
+  expensive AI calls must stay backend-protected, cached, and rate-limited
+  behind this gate. Env vars: `OPENAI_API_KEY`, `OPENAI_MODEL`,
+  `GEMINI_API_KEY`, `GEMINI_JUDGE_MODEL`, `AI_JUDGE_ENABLED`,
+  `AI_JUDGE_MAX_RUNS_PER_DAY`, `AI_JUDGE_MIN_INTERVAL_MINUTES`, `AI_JUDGE_LOCKED`,
+  `AI_JUDGE_ALLOW_COUNTRIES`, `ARGUS_ADMIN_TOKEN`,
+  `SECURITY_ALERT_EMAIL`/`PROVIDER`/`WEBHOOK`.
 
 Event Radar (Phase 1) covers FOMC, BOJ, CPI, PPI, Employment Situation, JOLTS,
 PCE / Personal Income and Outlays, GDP, and Treasury auctions. It is

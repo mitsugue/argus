@@ -2119,27 +2119,48 @@ def api_argus_action_labels():
     return jsonify(get_action_labels())
 
 
-# ━━━ AI Judgment Layer v1 (OpenAI primary + Gemini double-check) ━━━
-# A SECOND-OPINION layer on top of the deterministic rule engine — it never
-# replaces it (the rule label is always preserved). Backend-only: keys live in
-# Render env, never reach the frontend or logs. Disabled by default; runs are
-# cached (30 min) and admin-triggered, never on page load. Conservative arbiter:
-# blocks aggressive AI calls (ADD/BUY DIP/EXIT/TRIM) in v1 and defers to Gemini
-# on high-severity disagreement.
+# ━━━ AI Judgment Layer (OpenAI primary + Gemini double-check) — DORMANT ━━━
+# NOTE: The OpenAI/Gemini judge functions below are kept for a FUTURE version
+# (GPT-5.5 API + Gemini double-check, v8.10.x+). They are NOT wired to any
+# endpoint in this version — no OpenAI/Gemini call is made. The live AI run path
+# is replaced by the Security Gate v1 placeholder + the manual GPT-5.5 Pro
+# handoff export below.
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
 _OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-4o-mini"
 _GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-2.5-flash"
-_AI_JUDGE_ENABLED      = os.environ.get("AI_JUDGE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
-try:
-    _AI_JUDGE_MAX_RUNS = int(os.environ.get("AI_JUDGE_MAX_RUNS_PER_DAY", "24") or 24)
-except Exception:
-    _AI_JUDGE_MAX_RUNS = 24
 _ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
 
-_AI_CACHE_TTL  = 1800  # 30 min
-_AI_CACHE      = {"data": None, "expires": 0.0}
-_AI_RUN_STATE  = {"date": None, "count": 0}
-_AI_LOCK       = threading.Lock()
+# ── AI safety / Security Gate v1 config ──────────────────────────────
+_AI_JUDGE_ENABLED  = os.environ.get("AI_JUDGE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+def _int_env(name, default):
+    try: return int(os.environ.get(name, str(default)) or default)
+    except Exception: return default
+_AI_JUDGE_MAX_RUNS      = _int_env("AI_JUDGE_MAX_RUNS_PER_DAY", 3)
+_AI_JUDGE_MIN_INTERVAL  = _int_env("AI_JUDGE_MIN_INTERVAL_MINUTES", 30)
+_AI_JUDGE_LOCKED_ENV    = os.environ.get("AI_JUDGE_LOCKED", "false").strip().lower() in ("1", "true", "yes", "on")
+_AI_JUDGE_ALLOW_COUNTRIES = [c.strip().upper() for c in os.environ.get("AI_JUDGE_ALLOW_COUNTRIES", "JP").split(",") if c.strip()]
+_SECURITY_ALERT_EMAIL    = os.environ.get("SECURITY_ALERT_EMAIL", "")
+_SECURITY_ALERT_PROVIDER = os.environ.get("SECURITY_ALERT_PROVIDER", "")
+_SECURITY_ALERT_WEBHOOK  = os.environ.get("SECURITY_ALERT_WEBHOOK", "")
+
+# In-memory run ledger + security state (v1). NOTE: in-memory only — resets on
+# dyno restart. Move to a persistent store (Render disk / DB) if durable limits
+# are needed later.
+_AI_LOCK = threading.Lock()
+_AI_GATE_STATE = {
+    "date": None,            # JST date string for the daily counter
+    "count": 0,              # runs counted today
+    "lastRunTs": 0.0,        # epoch of last allowed run (min-interval)
+    "failedAttempts": 0,     # consecutive bad/unauthorized admin attempts
+    "softLocked": False,     # runtime soft lock after repeated failures
+}
+_FAILED_ATTEMPTS_LOCK_THRESHOLD = 5
+
+# Reserved for the DORMANT v8.10.0 AI orchestration (run_ai_judgment below) —
+# not used by any wired endpoint in this version.
+_AI_CACHE_TTL = 1800
+_AI_CACHE     = {"data": None, "expires": 0.0}
+_AI_RUN_STATE = {"date": None, "count": 0}
 
 _AI_CONSERVATIVE = {"WAIT", "HOLD", "WAIT FOR PULLBACK"}
 _AI_RANK = {"EXIT": 0, "TRIM": 1, "WAIT FOR PULLBACK": 2, "WAIT": 3, "BUY DIP": 4, "ADD": 5, "HOLD": 6}
@@ -2374,25 +2395,232 @@ def run_ai_judgment(run_mode="manual"):
             f"runs_today={_AI_RUN_STATE['count']}")
     return payload
 
+# ━━━ Security Gate v1 (protects future expensive AI runs) ━━━
+def _client_meta():
+    """Best-effort client metadata from common proxy headers. No secrets."""
+    h = request.headers
+    fwd = (h.get("X-Forwarded-For", "").split(",")[0] or "").strip()
+    return {
+        "ip": h.get("CF-Connecting-IP") or fwd or (request.remote_addr or ""),
+        "country": (h.get("CF-IPCountry") or "").upper(),
+        "userAgent": (h.get("User-Agent") or "")[:160],
+    }
+
+def _is_locked():
+    return _AI_JUDGE_LOCKED_ENV or _AI_GATE_STATE["softLocked"]
+
+def send_security_alert(event):
+    """Phase-1 security alert: structured log only (never fails the app, never
+    logs the admin token). Phase-2 (documented, not built): wire Resend/SendGrid
+    using SECURITY_ALERT_* with subject/timestamp/IP/country/user-agent and
+    signed "It was me / It was not me" action links."""
+    try:
+        meta = event.get("meta", {})
+        add_log(f"[SECURITY] {event.get('type', 'event')} ip={meta.get('ip', '')} "
+                f"country={meta.get('country', '')} ua={(meta.get('userAgent', '') or '')[:60]} "
+                f"failed={_AI_GATE_STATE['failedAttempts']} locked={_is_locked()}")
+        if _SECURITY_ALERT_EMAIL and not _SECURITY_ALERT_PROVIDER:
+            add_log("[SECURITY] SECURITY_ALERT_EMAIL set but no SECURITY_ALERT_PROVIDER (no-op in v1)")
+    except Exception:
+        pass
+
+def _require_admin():
+    """(authorized, error_payload, http_code). 503 if token unconfigured; 401 if
+    missing/wrong (tracks failed attempts → soft lock). Never logs the token."""
+    if not _ARGUS_ADMIN_TOKEN:
+        return False, {"error": "admin_unconfigured",
+                       "message": "Admin token is not configured on the server."}, 503
+    token = request.headers.get("X-ARGUS-ADMIN-TOKEN", "")
+    if not token or token != _ARGUS_ADMIN_TOKEN:
+        with _AI_LOCK:
+            _AI_GATE_STATE["failedAttempts"] += 1
+            if _AI_GATE_STATE["failedAttempts"] >= _FAILED_ATTEMPTS_LOCK_THRESHOLD:
+                _AI_GATE_STATE["softLocked"] = True
+        send_security_alert({"type": "admin_auth_failed", "meta": _client_meta()})
+        return False, {"error": "unauthorized"}, 401
+    return True, None, 200
+
+def _ai_run_gate():
+    """(allowed, payload, http_code). Validates enabled/locked/country/interval/
+    daily-limit. Records the run when allowed. In-memory ledger (resets on dyno
+    restart — move to persistent storage if durable limits are needed)."""
+    now = time.time()
+    meta = _client_meta()
+    if not _AI_JUDGE_ENABLED:
+        return False, {"status": "disabled", "reason": "AI judgment is not enabled yet.",
+                       "asOf": _ai_now_iso(), "locked": _is_locked()}, 200
+    if _is_locked():
+        send_security_alert({"type": "run_blocked_locked", "meta": meta})
+        return False, {"status": "locked", "reason": "AI run gate is locked.",
+                       "locked": True, "asOf": _ai_now_iso()}, 403
+    if _AI_JUDGE_ALLOW_COUNTRIES and meta["country"] and meta["country"] not in _AI_JUDGE_ALLOW_COUNTRIES:
+        send_security_alert({"type": "run_blocked_country", "meta": meta})
+        return False, {"status": "blocked", "reason": f"country {meta['country']} not in allow list.",
+                       "asOf": _ai_now_iso()}, 403
+    with _AI_LOCK:
+        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        if _AI_GATE_STATE["date"] != today:
+            _AI_GATE_STATE["date"] = today
+            _AI_GATE_STATE["count"] = 0
+        last = _AI_GATE_STATE["lastRunTs"]
+        if last and (now - last) < _AI_JUDGE_MIN_INTERVAL * 60:
+            wait_m = int((_AI_JUDGE_MIN_INTERVAL * 60 - (now - last)) // 60) + 1
+            return False, {"status": "rate_limited",
+                           "reason": f"min interval {_AI_JUDGE_MIN_INTERVAL}m; retry in ~{wait_m}m",
+                           "runCountToday": _AI_GATE_STATE["count"], "asOf": _ai_now_iso()}, 429
+        if _AI_GATE_STATE["count"] >= _AI_JUDGE_MAX_RUNS:
+            return False, {"status": "rate_limited",
+                           "reason": f"daily limit {_AI_JUDGE_MAX_RUNS} reached",
+                           "runCountToday": _AI_GATE_STATE["count"], "asOf": _ai_now_iso()}, 429
+        _AI_GATE_STATE["count"] += 1
+        _AI_GATE_STATE["lastRunTs"] = now
+        _AI_GATE_STATE["failedAttempts"] = 0
+        count = _AI_GATE_STATE["count"]
+    return True, {"runCountToday": count}, 200
+
 @app.route("/api/argus/ai-judgment")
 def api_argus_ai_judgment():
-    # Frontend-safe: never triggers a fresh AI call. Returns cache, or a
-    # rule-only payload when no fresh run exists, or disabled.
-    if not _AI_JUDGE_ENABLED:
-        return jsonify(_ai_disabled_payload())
-    cached = _AI_CACHE["data"]
-    if cached and time.time() < _AI_CACHE["expires"]:
-        return jsonify({**cached, "runMode": "cached"})
-    _, al = _build_ai_snapshot()
-    return jsonify(_rule_only_payload(al, run_mode="cached"))
+    # Public + frontend-safe. Never triggers AI. AI execution is pending.
+    return jsonify({"status": "disabled", "engineVersion": "ai-judge-v1-pending",
+                    "reason": "AI judgment is not enabled yet.", "asOf": _ai_now_iso()})
 
 @app.route("/api/argus/ai-judgment/run", methods=["POST"])
 def api_argus_ai_judgment_run():
-    # Admin-gated: requires X-ARGUS-ADMIN-TOKEN == ARGUS_ADMIN_TOKEN.
-    token = request.headers.get("X-ARGUS-ADMIN-TOKEN", "")
-    if not _ARGUS_ADMIN_TOKEN or token != _ARGUS_ADMIN_TOKEN:
-        return jsonify({"error": "unauthorized"}), 401
-    return jsonify(run_ai_judgment(run_mode="manual"))
+    # Security gate only — NO OpenAI/Gemini call in this version.
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    allowed, info, code = _ai_run_gate()
+    if not allowed:
+        return jsonify(info), code
+    return jsonify({"status": "ready",
+                    "message": "AI run gate passed. AI execution not implemented in this version.",
+                    "asOf": _ai_now_iso(), "runCountToday": info.get("runCountToday", 0),
+                    "locked": _is_locked()})
+
+@app.route("/api/argus/security-status")
+def api_argus_security_status():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    with _AI_LOCK:
+        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        count = _AI_GATE_STATE["count"] if _AI_GATE_STATE["date"] == today else 0
+        return jsonify({
+            "asOf": _ai_now_iso(), "locked": _is_locked(), "lockedByEnv": _AI_JUDGE_LOCKED_ENV,
+            "softLocked": _AI_GATE_STATE["softLocked"], "failedAttempts": _AI_GATE_STATE["failedAttempts"],
+            "allowedCountries": _AI_JUDGE_ALLOW_COUNTRIES, "runCountToday": count,
+            "minIntervalMinutes": _AI_JUDGE_MIN_INTERVAL, "dailyLimit": _AI_JUDGE_MAX_RUNS,
+            "aiJudgeEnabled": _AI_JUDGE_ENABLED, "alertEmailConfigured": bool(_SECURITY_ALERT_EMAIL),
+        })
+
+@app.route("/api/argus/security-unlock", methods=["POST"])
+def api_argus_security_unlock():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    with _AI_LOCK:
+        _AI_GATE_STATE["softLocked"] = False
+        _AI_GATE_STATE["failedAttempts"] = 0
+    send_security_alert({"type": "security_unlocked", "meta": _client_meta()})
+    return jsonify({"status": "unlocked", "softLocked": False, "failedAttempts": 0,
+                    "lockedByEnv": _AI_JUDGE_LOCKED_ENV, "locked": _is_locked(), "asOf": _ai_now_iso()})
+
+
+# ━━━ GPT-5.5 Pro Handoff Export (manual review — NO API call, NO cost) ━━━
+_PRO_HANDOFF_CACHE = {"data": None, "expires": 0.0}
+_PRO_HANDOFF_TTL   = 180  # 3 min
+
+def _compose_pro_prompt(rates, jp, us, ev, al):
+    now_jst = datetime.now(TZ_JST)
+    L = []
+    L.append("You are GPT-5.5 Pro acting as a second-opinion investment decision reviewer for ARGUS.")
+    L.append("")
+    L.append("# ARGUS frame")
+    L.append("- ARGUS is NOT a prediction engine. It classifies CURRENT market conditions into action categories.")
+    L.append("- The user wants: today's stance, risks, reasons, what to touch, what to avoid, what to wait for, and what would change the decision.")
+    L.append("- Use calm, conservative decision logic. Do NOT hallucinate news, flow, VWAP, or unseen data.")
+    L.append("- If information is insufficient, say so and prefer WAIT/HOLD.")
+    L.append("")
+    L.append(f"# Timestamp\n- {now_jst.strftime('%Y-%m-%d %H:%M')} JST (timezone: Asia/Tokyo)")
+    L.append("")
+    L.append("# Current live data")
+    if isinstance(rates, dict):
+        def _rv(k):
+            d = rates.get(k) or {}
+            return d.get("latestValue")
+        L.append("## Rates / VIX")
+        L.append(f"- US10Y: {_rv('us10y')}  US2Y: {_rv('us2y')}  Real10Y: {_rv('usReal10y')}  VIX: {_rv('vix')}")
+        L.append(f"- ratesPressure: {rates.get('ratesPressure')}  riskVolatility: {rates.get('riskVolatility')}  ({rates.get('status')})")
+    if isinstance(ev, dict):
+        L.append("## Event Radar (urgent first)")
+        order = {"D": 0, "D-1": 1, "D-3": 2, "D-7": 3, "D+1": 4, "normal": 5}
+        evs = sorted(ev.get("events", []), key=lambda e: (order.get(e.get("escalation"), 9), e.get("daysUntil", 999)))
+        for e in evs[:12]:
+            when = e.get("localTimeJst") or e.get("eventDate") or ""
+            L.append(f"- [{e.get('escalation')}] {e.get('title')} | {e.get('country')}/{e.get('category')} | {when} | impact={e.get('impact')} | {e.get('source')} | {e.get('rationaleJa', '')}")
+    def _wl(snap, label):
+        if not isinstance(snap, dict):
+            return
+        L.append(f"## {label} ({snap.get('status')}{', asOf ' + snap['asOf'] if snap.get('asOf') else ''})")
+        for s in snap.get("stocks", []):
+            L.append(f"- {s.get('symbol')} {s.get('name')}: {s.get('price')} ({s.get('changePct')}%) vol={s.get('volume')} {s.get('date') or ''}")
+    _wl(jp, "Japan Watchlist")
+    _wl(us, "US Watchlist")
+    if isinstance(al, dict):
+        mp = al.get("marketPosture", {}) or {}
+        L.append(f"## Action Label Engine (rule v0) — marketPosture: {mp.get('label')} ({mp.get('rationaleJa', '')})")
+        for l in al.get("labels", []):
+            L.append(f"- {l.get('symbol')} [{l.get('market')}]: ruleAction={l.get('action')} risk={l.get('risk')} conf={l.get('confidence')} | {l.get('reasonJa', '')} | next: {l.get('nextConditionJa', '')}")
+    L.append("")
+    L.append("# Data limitations (be honest about these)")
+    L.append("- No direct VWAP unless real. No moomoo order flow yet. No order book / tape yet.")
+    L.append("- No live earnings yet. No consensus/actual economic-release interpretation yet.")
+    L.append("- Rule engine v0 is conservative and does NOT output EXIT/TRIM.")
+    L.append("")
+    L.append("# Your tasks")
+    L.append("1. Overall stance: RISK_ON / CAUTIOUS / RISK_OFF / EVENT_WAIT.")
+    L.append("2. Today's decision: what to touch, what to avoid, what to wait for.")
+    L.append("3. Symbol-by-symbol: confirm / caution / disagree with the ARGUS rule label, conservatively.")
+    L.append("4. Any label changes you recommend, with conservative reasoning.")
+    L.append("5. Key risks for the next 24–72h.")
+    L.append("6. What would change the decision.")
+    L.append("7. Questions / missing data that would materially improve judgment.")
+    L.append("8. A final concise command-center summary in Japanese.")
+    L.append("")
+    L.append("# Output format (Japanese reasoning, English action labels)")
+    L.append("- Executive Judgment / Today's Action Map / Symbol Review / Event-Rates Risk / What Changes the Decision / Data Limitations / Final Command")
+    L.append("")
+    L.append("# Important")
+    L.append("- Do not give financial advice as certainty. Treat this as decision support.")
+    L.append("- Do not invent data. When in doubt, downgrade to WAIT/HOLD.")
+    return "\n".join(L)
+
+def _build_pro_handoff():
+    rates = get_rates_snapshot(); jp = get_japan_watchlist_snapshot()
+    us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
+    def _st(x): return x.get("status", "mock") if isinstance(x, dict) else "mock"
+    src = {"rates": _st(rates), "japanWatchlist": _st(jp), "usWatchlist": _st(us),
+           "events": _st(ev), "actionLabels": _st(al)}
+    warnings = [f"{k} is {v}" for k, v in src.items() if v != "live"]
+    prompt = _compose_pro_prompt(rates, jp, us, ev, al)
+    live_n = sum(1 for v in src.values() if v == "live")
+    status = "live" if live_n == len(src) else ("partial" if live_n > 0 else "mock")
+    return {"status": status, "asOf": _ai_now_iso(), "engineVersion": "pro-handoff-v1",
+            "title": "ARGUS GPT-5.5 Pro Handoff", "promptText": prompt, "charCount": len(prompt),
+            "sourceStatuses": src, "warnings": warnings}
+
+@app.route("/api/argus/pro-handoff")
+def api_argus_pro_handoff():
+    # Frontend-safe: aggregates cached snapshots into a copy-paste prompt. No
+    # admin token, no secrets, no OpenAI/Gemini call. Short cache (3 min).
+    now = time.time()
+    if _PRO_HANDOFF_CACHE["data"] and now < _PRO_HANDOFF_CACHE["expires"]:
+        return jsonify(_PRO_HANDOFF_CACHE["data"])
+    payload = _build_pro_handoff()
+    _PRO_HANDOFF_CACHE["data"] = payload
+    _PRO_HANDOFF_CACHE["expires"] = now + _PRO_HANDOFF_TTL
+    return jsonify(payload)
 
 
 # ━━━ Scheduler ━━━
