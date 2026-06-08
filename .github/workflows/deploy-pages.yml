@@ -2,8 +2,11 @@ name: Deploy web/ to GitHub Pages
 
 on:
   push:
+    # Deploy only from main. The github-pages environment allows deploys from
+    # main (and gh-pages) only, so triggering on a feature branch produced a
+    # build that always failed at the deploy step — noisy failure emails for no
+    # reason. Feature work reaches Pages by merging/fast-forwarding into main.
     branches:
-      - claude/youthful-hopper
       - main
     paths:
       - 'web/**'
