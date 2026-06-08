@@ -26,10 +26,11 @@ function changeFmt(p: FredSeriesPoint): string {
     const sign = p.change > 0 ? '+' : p.change < 0 ? '−' : '';
     return `${sign}${Math.abs(p.change).toFixed(1)}`;
   }
-  // Rates: bps with sign.
-  const bps = p.changeBp;
+  // Rates: bps with sign. Derive the sign from the *rounded* value so a
+  // sub-bp move that rounds to 0 renders as "0 bp" (flat), never "+0 bp".
+  const bps = Math.round(p.changeBp);
   const sign = bps > 0 ? '+' : bps < 0 ? '−' : '';
-  return `${sign}${Math.abs(bps).toFixed(0)} bp`;
+  return `${sign}${Math.abs(bps)} bp`;
 }
 
 function changeClass(change: number): string {

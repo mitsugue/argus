@@ -1428,8 +1428,10 @@ def _classify_rates_pressure(dgs10_change):
     return "Neutral"
 
 def _classify_risk_volatility(vix_level):
-    if vix_level > 22: return "High"
-    if vix_level > 18: return "Medium"
+    # Inclusive lower edges (matching the Medium edge in
+    # _classify_rates_pressure): VIX >= 22 = High fear, >= 18 = elevated.
+    if vix_level >= 22: return "High"
+    if vix_level >= 18: return "Medium"
     return "Low"
 
 def get_rates_snapshot():
@@ -1439,7 +1441,13 @@ def get_rates_snapshot():
     vix    = series["VIXCLS"]
     rates_pressure  = _classify_rates_pressure(us10y["change"])
     risk_volatility = _classify_risk_volatility(vix["latestValue"])
-    overall_status  = "live" if all(s["status"] == "live" for s in series.values()) else "mock"
+    # Top-level status reflects the data behind the *displayed signals*:
+    # ratesPressure derives from DGS10 and riskVolatility from VIXCLS, and the
+    # summary is built from both. The secondary cells (2Y, real 10Y) don't
+    # drive any signal, so a flaky DFII10/DGS2 must NOT flip the whole snapshot
+    # to "mock" while 10Y + VIX are genuinely live. Each series still carries
+    # its own per-series `status` for cell-level accuracy.
+    overall_status  = "live" if us10y["status"] == "live" and vix["status"] == "live" else "mock"
     summary = (
         f"10Y {us10y['latestValue']:.2f}% ({us10y['changeBp']:+.0f}bp), "
         f"VIX {vix['latestValue']:.1f}. "
