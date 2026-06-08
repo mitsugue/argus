@@ -7,6 +7,7 @@ import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useActionLabels } from '../hooks/useActionLabels';
 import { AIReview } from '../components/dashboard/AIReview';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
+import { CorporateCatalysts } from '../components/dashboard/CorporateCatalysts';
 import type { WatchEntry, WatchJP, WatchUS, JapanStockQuote, USStockQuote } from '../types/watch';
 import type { ActionLabel } from '../types/actionLabels';
 import type { ActionKey } from '../types/action';
@@ -113,6 +114,7 @@ export const Watchlist: React.FC = () => {
       </div>
 
       <AIReview />
+      <CorporateCatalysts />
 
       <div className="watch-summary">
         {summary.map(({ action, count }) => (

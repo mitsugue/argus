@@ -57,6 +57,12 @@ services:
         sync: false
       - key: SECURITY_ALERT_WEBHOOK
         sync: false
+      # Corporate Catalyst Layer. SEC EDGAR needs a descriptive User-Agent with
+      # a real contact email (SEC policy). TDnet add-on stays off until enabled.
+      - key: SEC_USER_AGENT
+        sync: false
+      - key: JQUANTS_TDNET_ENABLED
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY

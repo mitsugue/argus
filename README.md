@@ -88,6 +88,7 @@ list and Render deploy steps.
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
 | AI Security Gate v1 + GPT-5.5 Pro Handoff (manual second opinion) | internal (no AI API calls yet) | **live (gate + handoff)** |
+| Corporate Catalyst Layer (earnings / filings / news / disclosures) | SEC EDGAR + Finnhub + J-Quants (TDnet pending) | **live / partial** |
 | Automated AI judgment (GPT-5.5 primary + Gemini double-check) | OpenAI + Gemini | pending (v8.10.x+) |
 | Market Regime, Alerts, earnings, flow/news scanners | mock | pending real wiring |
 
@@ -132,6 +133,29 @@ OpenAI/Gemini judge code is kept dormant for a future version).
   `AI_JUDGE_MAX_RUNS_PER_DAY`, `AI_JUDGE_MIN_INTERVAL_MINUTES`, `AI_JUDGE_LOCKED`,
   `AI_JUDGE_ALLOW_COUNTRIES`, `ARGUS_ADMIN_TOKEN`,
   `SECURITY_ALERT_EMAIL`/`PROVIDER`/`WEBHOOK`.
+
+**v9.0.0 — Corporate Catalyst Layer.** `GET /api/argus/catalysts` surfaces the
+company-specific events behind watchlist moves (earnings, filings, news,
+disclosures) for the 11 watched names, and is folded into the Pro Handoff
+prompt. It never fabricates — each source degrades to unavailable/partial
+honestly, and it returns metadata only (no filing text, no long article bodies).
+Sources:
+- **SEC EDGAR** — official US filings (8-K / 10-Q / 10-K) via `data.sec.gov`,
+  **no API key**; set `SEC_USER_AGENT` to `ARGUS/1.0 your-real-email` (SEC policy
+  requires a descriptive UA with contact). Cached 6h.
+- **Finnhub** — US earnings calendar (≤90d) + 7-day company-news *metadata* if
+  `FINNHUB_API_KEY` is set, else unavailable. Cached ~45m.
+- **J-Quants V2** — JP earnings calendar (`/v2/equities/earnings-calendar`, next
+  business day) + latest financial disclosure (`/v2/fins/details`) per symbol if
+  the plan supports it, else partial/unavailable. Cached 6h.
+- **TDnet add-on** — `pending_addon` (off unless `JQUANTS_TDNET_ENABLED=true`);
+  future optional enhancement for intraday Japan disclosures. No TDnet scraping.
+
+Catalyst risk is conservative (earnings ≤3d → high/wait_for_event; ≤7d → medium;
+recent 8-K ≤3d or news spike → caution; recent JP disclosure → post_event_review).
+Env vars: `SEC_USER_AGENT` (recommended), `FINNHUB_API_KEY` (optional),
+`JQUANTS_API_KEY` (existing), `JQUANTS_TDNET_ENABLED` (default false). Still
+pending: Market Regime, Alerts, order-book/flow, earnings *interpretation*.
 
 Event Radar (Phase 1) covers FOMC, BOJ, CPI, PPI, Employment Situation, JOLTS,
 PCE / Personal Income and Outlays, GDP, and Treasury auctions. It is

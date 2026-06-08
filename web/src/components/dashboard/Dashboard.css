@@ -748,6 +748,31 @@
 .pro-handoff__btn:disabled { opacity: 0.6; cursor: default; }
 .pro-handoff__manual { width: 100%; }
 .pro-handoff__hint { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; }
+/* Corporate Catalysts — compact company-event panel. Calm, not a feed. */
+.catalysts {
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+.catalysts__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.catalysts__title { font-size: 13px; font-weight: 600; color: var(--text-main); }
+.catalysts__sources {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; margin-left: auto;
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-faint);
+}
+.catalysts__src { display: inline-flex; align-items: center; gap: 4px; }
+.catalysts__dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
+.catalysts__srcst { text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
+.catalysts__empty { margin-top: 10px; font-size: 12px; color: var(--text-faint); }
+.catalysts__list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.catalysts__item { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--text-sub); }
+.catalysts__sym { font-family: var(--font-mono); font-weight: 600; color: var(--text-main); min-width: 46px; }
+.catalysts__risk { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; min-width: 56px; }
+.catalysts__data { font-family: var(--font-mono); color: var(--text-faint); }
+.catalysts__reason { flex: 1 1 220px; min-width: 0; color: var(--text-faint); }
+
 .pro-handoff__text {
   width: 100%;
   min-height: 160px;

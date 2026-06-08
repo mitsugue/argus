@@ -2531,7 +2531,7 @@ def api_argus_security_unlock():
 _PRO_HANDOFF_CACHE = {"data": None, "expires": 0.0}
 _PRO_HANDOFF_TTL   = 180  # 3 min
 
-def _compose_pro_prompt(rates, jp, us, ev, al):
+def _compose_pro_prompt(rates, jp, us, ev, al, cat=None):
     now_jst = datetime.now(TZ_JST)
     L = []
     L.append("You are GPT-5.5 Pro acting as a second-opinion investment decision reviewer for ARGUS.")
@@ -2572,10 +2572,31 @@ def _compose_pro_prompt(rates, jp, us, ev, al):
         L.append(f"## Action Label Engine (rule v0) — marketPosture: {mp.get('label')} ({mp.get('rationaleJa', '')})")
         for l in al.get("labels", []):
             L.append(f"- {l.get('symbol')} [{l.get('market')}]: ruleAction={l.get('action')} risk={l.get('risk')} conf={l.get('confidence')} | {l.get('reasonJa', '')} | next: {l.get('nextConditionJa', '')}")
+    if isinstance(cat, dict):
+        L.append("## Corporate catalysts (company-specific)")
+        for it in cat.get("items", []):
+            e = it.get("earnings", {}) or {}
+            parts = [f"risk={it.get('catalystRisk')}", f"impact={it.get('actionImpact')}"]
+            if e.get("date"):
+                parts.append(f"earnings {e.get('date')} (D-{e.get('daysUntil')})")
+            if it.get("filings"):
+                f0 = it["filings"][0]
+                parts.append(f"recent {f0.get('form')} {f0.get('filingDate')} (+{len(it['filings'])} filings)")
+            if it.get("news"):
+                parts.append(f"news {len(it['news'])} (7d)")
+            for d in it.get("disclosures", []):
+                if d.get("status") == "live":
+                    parts.append(f"disclosure {d.get('type')} {d.get('date')}")
+            L.append(f"- {it.get('symbol')} [{it.get('market')}]: " + " | ".join(parts) + f" | {it.get('summaryJa', '')}")
+            # top news headline only (metadata, no body)
+            if it.get("news"):
+                n0 = it["news"][0]
+                L.append(f"    news: {n0.get('headline', '')} — {n0.get('publisher', '')} {n0.get('url', '')}")
     L.append("")
     L.append("# Data limitations (be honest about these)")
     L.append("- No direct VWAP unless real. No moomoo order flow yet. No order book / tape yet.")
-    L.append("- No live earnings yet. No consensus/actual economic-release interpretation yet.")
+    L.append("- Catalysts: SEC filing metadata + Finnhub earnings/news + J-Quants disclosure dates only — NO filing-text/article-body analysis. JP earnings calendar covers ~next business day only; TDnet is a pending add-on.")
+    L.append("- No consensus/actual economic-release interpretation yet.")
     L.append("- Rule engine v0 is conservative and does NOT output EXIT/TRIM.")
     L.append("")
     L.append("# Your tasks")
@@ -2599,11 +2620,12 @@ def _compose_pro_prompt(rates, jp, us, ev, al):
 def _build_pro_handoff():
     rates = get_rates_snapshot(); jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
+    cat = get_catalysts_snapshot()
     def _st(x): return x.get("status", "mock") if isinstance(x, dict) else "mock"
     src = {"rates": _st(rates), "japanWatchlist": _st(jp), "usWatchlist": _st(us),
-           "events": _st(ev), "actionLabels": _st(al)}
+           "events": _st(ev), "actionLabels": _st(al), "catalysts": _st(cat)}
     warnings = [f"{k} is {v}" for k, v in src.items() if v != "live"]
-    prompt = _compose_pro_prompt(rates, jp, us, ev, al)
+    prompt = _compose_pro_prompt(rates, jp, us, ev, al, cat)
     live_n = sum(1 for v in src.values() if v == "live")
     status = "live" if live_n == len(src) else ("partial" if live_n > 0 else "mock")
     return {"status": status, "asOf": _ai_now_iso(), "engineVersion": "pro-handoff-v1",
@@ -2621,6 +2643,276 @@ def api_argus_pro_handoff():
     _PRO_HANDOFF_CACHE["data"] = payload
     _PRO_HANDOFF_CACHE["expires"] = now + _PRO_HANDOFF_TTL
     return jsonify(payload)
+
+
+# ━━━ Corporate Catalyst Layer v1 ━━━
+# Company-specific catalysts behind watchlist moves: US filings (SEC EDGAR,
+# keyless), US earnings + news (Finnhub, key optional), JP earnings + financial
+# disclosure (J-Quants V2). No filing-text scraping, no long article bodies, no
+# fabrication — sources degrade to unavailable/partial honestly. TDnet is a
+# pending optional add-on. Cached to avoid provider abuse.
+_SEC_CIK = {"NVDA": "0001045810", "AAPL": "0000320193", "TSLA": "0001318605", "META": "0001326801"}
+_SEC_USER_AGENT = os.environ.get("SEC_USER_AGENT", "") or "ARGUS/1.0 contact@example.com"
+_SEC_FORMS = {"8-K", "10-Q", "10-K"}
+_CAT_HORIZON_DAYS = 90
+_JQUANTS_TDNET_ENABLED = os.environ.get("JQUANTS_TDNET_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+_US_CAT_SYMBOLS = [("NVDA", "NVIDIA"), ("AAPL", "Apple"), ("TSLA", "Tesla"), ("META", "Meta Platforms")]
+_JP_CAT_SYMBOLS = [("8058", "Mitsubishi Heavy Industries"), ("9984", "SoftBank Group"),
+                   ("5801", "Furukawa Electric"), ("5803", "Fujikura"), ("6584", "Sanoh Industrial"),
+                   ("285A", "Kioxia Holdings"), ("9501", "Tokyo Electric Power")]
+
+_SEC_CACHE  = {}                                   # symbol -> {data, expires}
+_FINN_CACHE = {}                                   # symbol -> {data, expires}
+_JQ_CAT_CACHE = {"data": None, "expires": 0.0}
+_CAT_CACHE  = {"data": None, "expires": 0.0}       # assembled snapshot, 30 min
+
+def _sec_filings(symbol):
+    cik = _SEC_CIK.get(symbol)
+    if not cik:
+        return [], "unavailable"
+    c = _SEC_CACHE.get(symbol)
+    if c and time.time() < c["expires"]:
+        return c["data"], "live"
+    try:
+        r = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json",
+                         headers={"User-Agent": _SEC_USER_AGENT, "Accept-Encoding": "gzip"}, timeout=12)
+        r.raise_for_status()
+        rec = r.json().get("filings", {}).get("recent", {})
+        forms = rec.get("form", []); dates = rec.get("filingDate", [])
+        accs = rec.get("accessionNumber", []); docs = rec.get("primaryDocument", [])
+        out = []
+        for i in range(len(forms)):
+            if forms[i] not in _SEC_FORMS:
+                continue
+            acc = accs[i] if i < len(accs) else ""
+            doc = docs[i] if i < len(docs) else ""
+            url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
+                   if acc and doc else f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}")
+            out.append({"source": "SEC EDGAR", "form": forms[i], "filingDate": dates[i] if i < len(dates) else None,
+                        "accessionNumber": acc, "url": url, "status": "live"})
+            if len(out) >= 5:
+                break
+        _SEC_CACHE[symbol] = {"data": out, "expires": time.time() + 6 * 3600}
+        return out, "live"
+    except Exception:
+        return [], "error"
+
+def _finnhub_catalyst(symbol):
+    if not FINNHUB_API_KEY:
+        return {"earnings": None, "news": []}, "unavailable"
+    c = _FINN_CACHE.get(symbol)
+    if c and time.time() < c["expires"]:
+        return c["data"], "live"
+    earnings, news = None, []
+    got = False
+    try:
+        today = datetime.now(pytz.utc).date()
+        ec = finnhub_get("calendar/earnings",
+                         {"from": today.isoformat(), "to": (today + timedelta(days=_CAT_HORIZON_DAYS)).isoformat(),
+                          "symbol": symbol})
+        cal = (ec or {}).get("earningsCalendar", []) if isinstance(ec, dict) else []
+        cal = [e for e in cal if e.get("date")]
+        if cal:
+            e = sorted(cal, key=lambda x: x["date"])[0]
+            earnings = {"date": e.get("date"), "epsEstimate": e.get("epsEstimate"),
+                        "revenueEstimate": e.get("revenueEstimate"), "epsActual": e.get("epsActual"),
+                        "revenueActual": e.get("revenueActual")}
+        got = True
+    except Exception:
+        pass
+    try:
+        u = datetime.now(pytz.utc).date()
+        nws = finnhub_get("company-news", {"symbol": symbol,
+                          "from": (u - timedelta(days=7)).isoformat(), "to": u.isoformat()})
+        for a in (nws or [])[:6]:
+            ts = a.get("datetime")
+            iso = datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ts else None
+            news.append({"source": "Finnhub", "headline": (a.get("headline", "") or "")[:200],
+                         "publisher": a.get("source", ""), "publishedAt": iso, "url": a.get("url", ""),
+                         "status": "live"})
+        got = True
+    except Exception:
+        pass
+    if not got:
+        return {"earnings": None, "news": []}, "error"
+    data = {"earnings": earnings, "news": news}
+    _FINN_CACHE[symbol] = {"data": data, "expires": time.time() + 2700}  # 45 min
+    return data, "live"
+
+def _jquants_catalysts():
+    if _JQ_CAT_CACHE["data"] is not None and time.time() < _JQ_CAT_CACHE["expires"]:
+        return _JQ_CAT_CACHE["data"], "live"
+    if not _JQUANTS_API_KEY:
+        return {"nextEarn": {}, "details": {}}, "unavailable"
+    headers = {"x-api-key": _JQUANTS_API_KEY}
+    next_earn, details = {}, {}
+    any_ok = False
+    try:  # next-business-day earnings announcements (whole list, match our codes)
+        r = requests.get(f"{_JQUANTS_BASE}/equities/earnings-calendar", headers=headers, timeout=10)
+        if r.status_code == 200:
+            for row in r.json().get("data", []):
+                code4 = str(row.get("Code", ""))[:4]
+                if row.get("Date") and code4:
+                    next_earn[code4] = row["Date"]
+            any_ok = True
+    except Exception:
+        pass
+    for sym, _ in _JP_CAT_SYMBOLS:  # latest disclosed financials (DisclosedDate)
+        try:
+            r = requests.get(f"{_JQUANTS_BASE}/fins/details", headers=headers, params={"code": sym}, timeout=10)
+            if r.status_code == 200:
+                body = r.json()
+                rows = body.get("data") or body.get("details") or body.get("fins_details") or []
+                rows = [x for x in rows if isinstance(x, dict) and x.get("DisclosedDate")]
+                if rows:
+                    latest = sorted(rows, key=lambda x: x["DisclosedDate"])[-1]
+                    details[sym] = {"date": latest.get("DisclosedDate"),
+                                    "type": latest.get("TypeOfDocument", "") or "financial_summary"}
+                    any_ok = True
+        except Exception:
+            pass
+    data = {"nextEarn": next_earn, "details": details}
+    _JQ_CAT_CACHE["data"] = data
+    _JQ_CAT_CACHE["expires"] = time.time() + 6 * 3600
+    return data, ("live" if any_ok else "unavailable")
+
+def _days_until(date_str, today):
+    try:
+        return (datetime.strptime(date_str[:10], "%Y-%m-%d").date() - today).days
+    except Exception:
+        return None
+
+def _catalyst_assess(earnings_days, recent_filing_days, news_24h, jp_disc_days):
+    # Conservative priority: earnings > material filing > news spike > JP disclosure.
+    if earnings_days is not None and 0 <= earnings_days <= 3:
+        return "high", "wait_for_event"
+    if earnings_days is not None and 0 <= earnings_days <= 7:
+        return "medium", "wait_for_event"
+    if recent_filing_days is not None and 0 <= recent_filing_days <= 3:
+        return "medium", "caution"
+    if news_24h >= 3:
+        return "medium", "caution"
+    if jp_disc_days is not None and 0 <= jp_disc_days <= 7:
+        return "medium", "post_event_review"
+    return "low", "none"
+
+def get_catalysts_snapshot():
+    if _CAT_CACHE["data"] is not None and time.time() < _CAT_CACHE["expires"]:
+        return _CAT_CACHE["data"]
+    today = datetime.now(TZ_JST).date()
+    sec_statuses, finn_statuses = [], []
+    items = []
+
+    # US — SEC filings + Finnhub earnings/news
+    for sym, name in _US_CAT_SYMBOLS:
+        filings, sec_st = _sec_filings(sym); sec_statuses.append(sec_st)
+        fdata, finn_st = _finnhub_catalyst(sym); finn_statuses.append(finn_st)
+        earnings = fdata.get("earnings")
+        news = fdata.get("news", [])
+        e_days = _days_until(earnings["date"], today) if earnings and earnings.get("date") else None
+        recent_filing_days = None
+        for f in filings:
+            if f.get("form") in ("8-K", "10-Q", "10-K") and f.get("filingDate"):
+                d = (today - datetime.strptime(f["filingDate"], "%Y-%m-%d").date()).days
+                if d >= 0 and (recent_filing_days is None or d < recent_filing_days):
+                    recent_filing_days = d
+        n24 = 0
+        for n in news:
+            if n.get("publishedAt"):
+                try:
+                    age = (datetime.now(pytz.utc) - datetime.strptime(n["publishedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)).total_seconds()
+                    if age <= 86400:
+                        n24 += 1
+                except Exception:
+                    pass
+        risk, impact = _catalyst_assess(e_days, recent_filing_days, n24, None)
+        bits = []
+        if e_days is not None:
+            bits.append(f"決算まで{e_days}日")
+        if recent_filing_days is not None and recent_filing_days <= 3:
+            bits.append("直近の重要開示(8-K等)あり")
+        if n24 >= 3:
+            bits.append(f"24h以内のニュース{n24}件")
+        summary = "、".join(bits) if bits else "目立つ銘柄固有イベントなし"
+        rationale = {
+            "wait_for_event": "決算など重要イベント前のため、イベント通過まで新規の追いかけを避ける。",
+            "caution": "銘柄固有の材料が出ており、過度な追いかけを避け値動きを確認する。",
+            "post_event_review": "直近の開示後のため、織り込みと反応を確認してから判断する。",
+            "none": "銘柄固有の触媒は乏しく、相場全体の地合いに従う。",
+        }[impact]
+        item_status = "live" if (sec_st == "live" or finn_st == "live") else "partial"
+        items.append({
+            "symbol": sym, "market": "US", "name": name, "catalystRisk": risk, "summaryJa": summary,
+            "earnings": {"status": "live" if earnings else ("unavailable" if finn_st != "live" else "live"),
+                         "date": (earnings or {}).get("date"), "daysUntil": e_days if e_days is not None else 0,
+                         "epsEstimate": (earnings or {}).get("epsEstimate"),
+                         "revenueEstimate": (earnings or {}).get("revenueEstimate")},
+            "filings": filings, "news": news, "disclosures": [],
+            "rationaleJa": rationale, "actionImpact": impact, "status": item_status,
+        })
+
+    # JP — J-Quants earnings calendar + financial disclosure
+    jq, jq_st = _jquants_catalysts()
+    for sym, name in _JP_CAT_SYMBOLS:
+        e_date = jq.get("nextEarn", {}).get(sym)
+        e_days = _days_until(e_date, today) if e_date else None
+        disc = jq.get("details", {}).get(sym)
+        disc_days = _days_until(disc["date"], today) if disc and disc.get("date") else None
+        disclosures = []
+        if disc:
+            disclosures.append({"source": "J-Quants", "type": "financial_summary",
+                                "date": disc.get("date"), "title": disc.get("type", "financial summary"),
+                                "status": "live"})
+        if _JQUANTS_TDNET_ENABLED is False:
+            disclosures.append({"source": "J-Quants", "type": "tdnet_pending", "date": None,
+                                "title": "TDnet add-on pending", "status": "pending_addon"})
+        risk, impact = _catalyst_assess(e_days, None, 0, disc_days)
+        bits = []
+        if e_days is not None:
+            bits.append(f"決算発表まで{e_days}日")
+        if disc_days is not None and disc_days <= 7:
+            bits.append("直近の財務開示あり")
+        summary = "、".join(bits) if bits else "目立つ銘柄固有イベントなし"
+        rationale = {
+            "wait_for_event": "決算発表が近いため、発表通過まで新規の追いかけを避ける。",
+            "caution": "銘柄固有の材料があり、過度な追いかけを避ける。",
+            "post_event_review": "直近の開示後のため、内容と市場の反応を確認してから判断する。",
+            "none": "銘柄固有の触媒は乏しく、相場全体の地合いに従う。",
+        }[impact]
+        items.append({
+            "symbol": sym, "market": "JP", "name": name, "catalystRisk": risk, "summaryJa": summary,
+            "earnings": {"status": "live" if e_date else "unavailable", "date": e_date,
+                         "daysUntil": e_days if e_days is not None else 0,
+                         "epsEstimate": None, "revenueEstimate": None},
+            "filings": [], "news": [], "disclosures": disclosures,
+            "rationaleJa": rationale, "actionImpact": impact,
+            "status": "live" if jq_st == "live" else "partial",
+        })
+
+    sec_overall = "live" if "live" in sec_statuses else ("error" if "error" in sec_statuses else "unavailable")
+    finn_overall = ("live" if "live" in finn_statuses else
+                    ("error" if "error" in finn_statuses else "unavailable"))
+    live_sources = sum(1 for s in (sec_overall, finn_overall, jq_st) if s == "live")
+    status = "live" if live_sources == 3 else ("partial" if live_sources >= 1 else "mock")
+    now_iso = _ai_now_iso()
+    snapshot = {
+        "status": status, "asOf": now_iso, "engineVersion": "catalyst-v1", "horizonDays": _CAT_HORIZON_DAYS,
+        "sources": [
+            {"name": "SEC EDGAR", "status": sec_overall, "lastUpdated": now_iso if sec_overall == "live" else None},
+            {"name": "Finnhub", "status": finn_overall, "lastUpdated": now_iso if finn_overall == "live" else None},
+            {"name": "J-Quants", "status": jq_st, "lastUpdated": now_iso if jq_st == "live" else None},
+            {"name": "TDnet Add-on", "status": "pending_addon"},
+        ],
+        "items": items,
+    }
+    _CAT_CACHE["data"] = snapshot
+    _CAT_CACHE["expires"] = time.time() + 1800  # 30 min assembly cache
+    return snapshot
+
+@app.route("/api/argus/catalysts")
+def api_argus_catalysts():
+    return jsonify(get_catalysts_snapshot())
 
 
 # ━━━ Scheduler ━━━
