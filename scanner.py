@@ -1548,38 +1548,57 @@ _JP_WATCHLIST = [
 _JQUANTS_TOKEN = {"id": None, "expires": 0.0}
 _JP_CACHE      = {"data": None, "expires": 0.0}
 _JP_CACHE_TTL  = 600
+# Last auth attempt's non-sensitive diagnostics (no secret values) — surfaced
+# by the temporary /api/argus/japan-watchlist/debug route for setup triage.
+_JQUANTS_DIAG  = {}
 
 def _jquants_id_token():
     """A valid J-Quants idToken (cached ~23h), or None if unavailable.
 
     Never raises — any auth failure returns None so the snapshot degrades to
-    mock rather than 500ing.
+    mock rather than 500ing. Records non-sensitive diagnostics in _JQUANTS_DIAG.
     """
     now = time.time()
     if _JQUANTS_TOKEN["id"] and now < _JQUANTS_TOKEN["expires"]:
         return _JQUANTS_TOKEN["id"]
+    diag = {"hasMail": bool(_JQUANTS_MAIL), "hasPassword": bool(_JQUANTS_PASS),
+            "hasRefreshToken": bool(_JQUANTS_REFRESH_TOKEN)}
+    def _save(stage):
+        diag["stage"] = stage
+        _JQUANTS_DIAG.clear(); _JQUANTS_DIAG.update(diag)
     try:
         refresh = _JQUANTS_REFRESH_TOKEN
         if not refresh:
             if not (_JQUANTS_MAIL and _JQUANTS_PASS):
-                return None  # no credentials configured → mock
+                _save("missing-credentials"); return None
             r = requests.post(f"{_JQUANTS_BASE}/token/auth_user",
                               json={"mailaddress": _JQUANTS_MAIL, "password": _JQUANTS_PASS},
                               timeout=10)
+            diag["authUserStatus"] = r.status_code
+            if r.status_code != 200:
+                diag["authUserError"] = r.text[:200]  # J-Quants message; no secret echoed
             r.raise_for_status()
             refresh = r.json().get("refreshToken")
+            diag["gotRefreshToken"] = bool(refresh)
             if not refresh:
-                return None
+                _save("no-refresh-token"); return None
         r2 = requests.post(f"{_JQUANTS_BASE}/token/auth_refresh",
                            params={"refreshtoken": refresh}, timeout=10)
+        diag["authRefreshStatus"] = r2.status_code
+        if r2.status_code != 200:
+            diag["authRefreshError"] = r2.text[:200]
         r2.raise_for_status()
         idtok = r2.json().get("idToken")
+        diag["gotIdToken"] = bool(idtok)
         if not idtok:
-            return None
+            _save("no-id-token"); return None
         _JQUANTS_TOKEN["id"]      = idtok
         _JQUANTS_TOKEN["expires"] = now + 23 * 3600
+        _save("ok")
         return idtok
-    except Exception:
+    except Exception as e:
+        diag["exception"] = f"{type(e).__name__}: {str(e)[:160]}"
+        _save("exception")
         return None
 
 def _jp_mock_quote(s):
@@ -1657,6 +1676,22 @@ def get_japan_watchlist_snapshot():
 @app.route("/api/argus/japan-watchlist")
 def api_argus_japan_watchlist():
     return jsonify(get_japan_watchlist_snapshot())
+
+@app.route("/api/argus/japan-watchlist/debug")
+def api_argus_japan_watchlist_debug():
+    # TEMPORARY setup-triage route. Forces a fresh auth attempt and reports only
+    # NON-sensitive diagnostics: which env vars are present (booleans), a masked
+    # email hint, and J-Quants' own HTTP status / error message. No secret value
+    # is ever returned. Remove once the watchlist is confirmed live.
+    _JQUANTS_TOKEN["id"] = None
+    _JQUANTS_TOKEN["expires"] = 0.0
+    _jquants_id_token()
+    out = dict(_JQUANTS_DIAG)
+    if _JQUANTS_MAIL:
+        m = _JQUANTS_MAIL
+        out["mailHint"] = (m[:2] + "***@" + m.split("@", 1)[1]) if "@" in m else (m[:2] + "***")
+    out["expectedEnvVars"] = ["JQUANTS_MAILADDRESS", "JQUANTS_PASSWORD", "JQUANTS_REFRESH_TOKEN(optional)"]
+    return jsonify(out)
 
 
 # ━━━ Scheduler ━━━
