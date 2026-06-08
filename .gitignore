@@ -1,4 +1,8 @@
 .env
+# Machine-local Vite env overrides (e.g. web/.env.local). Committed
+# wiring lives in web/.env.production instead.
+.env.local
+.env.*.local
 
 # Node / Vite
 node_modules/
