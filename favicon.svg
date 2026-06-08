@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Calm v7 favicon — minimal eye on a dark navy surface.
+       Palette mirrors the app: bg #0B1118, text-sub #8B98A7,
+       text-muted #5F6B78, blue accent #60A5FA. -->
+  <rect width="64" height="64" rx="12" fill="#0B1118"/>
+  <circle cx="32" cy="32" r="18" fill="none" stroke="#8B98A7" stroke-width="1.6" stroke-opacity="0.75"/>
+  <circle cx="32" cy="32" r="9.5" fill="none" stroke="#5F6B78" stroke-width="1" stroke-opacity="0.65"/>
+  <circle cx="32" cy="32" r="3.4" fill="#60A5FA"/>
+  <!-- Argus motif — 4 quiet satellite eyes at cardinal points. -->
+  <circle cx="32" cy="8.5"  r="1.2" fill="#5F6B78"/>
+  <circle cx="32" cy="55.5" r="1.2" fill="#5F6B78"/>
+  <circle cx="8.5"  cy="32" r="1.2" fill="#5F6B78"/>
+  <circle cx="55.5" cy="32" r="1.2" fill="#5F6B78"/>
+</svg>

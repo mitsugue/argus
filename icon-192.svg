@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- v7 app icon (192) — calm minimal eye + A.R.G.U.S. wordmark in Inter.
+       Inherits the new palette: bg #0B1118, text-main #E6EDF3,
+       text-sub #8B98A7, text-muted #5F6B78, blue #60A5FA. -->
+  <rect width="192" height="192" rx="36" fill="#0B1118"/>
+
+  <!-- Eye: outer ring, inner ring, blue pupil -->
+  <circle cx="96" cy="82" r="46" fill="none" stroke="#8B98A7" stroke-width="2.4" stroke-opacity="0.75"/>
+  <circle cx="96" cy="82" r="26" fill="none" stroke="#5F6B78" stroke-width="1.6" stroke-opacity="0.65"/>
+  <circle cx="96" cy="82" r="8.5" fill="#60A5FA"/>
+
+  <!-- Argus motif — 4 quiet satellite eyes at cardinal points around the iris. -->
+  <circle cx="96"  cy="22"  r="3" fill="#5F6B78"/>
+  <circle cx="96"  cy="142" r="3" fill="#5F6B78"/>
+  <circle cx="36"  cy="82"  r="3" fill="#5F6B78"/>
+  <circle cx="156" cy="82"  r="3" fill="#5F6B78"/>
+
+  <!-- Wordmark in Inter — calm, no neon stroke. -->
+  <text x="96" y="172" text-anchor="middle"
+        fill="#E6EDF3"
+        font-family="Inter, 'Noto Sans JP', system-ui, sans-serif"
+        font-size="20" font-weight="700" letter-spacing="2">A.R.G.U.S.</text>
+</svg>
