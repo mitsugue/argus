@@ -45,6 +45,8 @@ services:
         sync: false
       - key: AI_JUDGE_MIN_INTERVAL_MINUTES
         sync: false
+      - key: AI_JUDGE_CACHE_TTL_MINUTES
+        sync: false
       - key: AI_JUDGE_LOCKED
         sync: false
       - key: AI_JUDGE_ALLOW_COUNTRIES

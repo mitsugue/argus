@@ -3,7 +3,7 @@ import type { AIJudgment } from '../types/aiJudgment';
 
 // connecting | live | partial | mock | disabled. Reads the CACHED judgment only
 // (GET) — never triggers an AI run (that is an admin-gated POST).
-export type ConnPhase = 'connecting' | 'live' | 'partial' | 'mock' | 'disabled';
+export type ConnPhase = 'connecting' | 'live' | 'partial' | 'mock' | 'disabled' | 'no_cached_result';
 
 interface State {
   data: AIJudgment | null;

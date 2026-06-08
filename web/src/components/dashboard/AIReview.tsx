@@ -28,15 +28,28 @@ function noteworthy(l: AIJudgmentLabel): boolean {
 export const AIReview: React.FC = () => {
   const { data, phase } = useAIJudgment();
 
-  // Disabled / no data / no AI content → render nothing (keep the page calm).
-  if (!data || phase === 'disabled' || phase === 'mock') return null;
-  const hasContent = !!data.summaryJa || data.labels.some(noteworthy);
-  if (!hasContent) return null;
+  // Disabled / mock / connecting → render nothing (keep the page calm).
+  if (!data || phase === 'disabled' || phase === 'mock' || phase === 'connecting') return null;
 
-  const notes = data.labels.filter(noteworthy);
-  const models = [data.models.primary && `OpenAI ${data.models.primary}`,
+  const models = [data.models.primary && `GPT ${data.models.primary}`,
                   data.models.checker && `Gemini ${data.models.checker}`].filter(Boolean).join(' · ');
 
+  // Enabled but no admin-run cached yet → calm one-line pending panel.
+  if (phase === 'no_cached_result') {
+    return (
+      <section className="ai-review">
+        <div className="ai-review__head">
+          <span className="ai-review__title">AI Review</span>
+          <span className="watch-status watch-status--partial">no cached result</span>
+          <span className="ai-review__models">{models || 'GPT-5.5 + Gemini'}</span>
+        </div>
+        <div className="ai-review__summary">AI判定は未実行です(管理者による実行待ち)。ルールラベルが現在の判断です。</div>
+      </section>
+    );
+  }
+
+  const notes = data.labels.filter(noteworthy);
+  const flags = data.globalRedFlags ?? [];
   return (
     <section className="ai-review">
       <div className="ai-review__head">
@@ -46,6 +59,9 @@ export const AIReview: React.FC = () => {
       </div>
       {data.summaryJa && <div className="ai-review__summary">{data.summaryJa}</div>}
       {data.marketRiskJa && <div className="ai-review__risk">リスク: {data.marketRiskJa}</div>}
+      {flags.length > 0 && (
+        <div className="ai-review__risk">⚑ {flags.join(' / ')}</div>
+      )}
       {notes.length > 0 && (
         <div className="ai-review__notes">
           {notes.map((l) => (

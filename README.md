@@ -87,9 +87,9 @@ list and Render deploy steps.
 | US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
-| AI Security Gate v1 + GPT-5.5 Pro Handoff (manual second opinion) | internal (no AI API calls yet) | **live (gate + handoff)** |
+| GPT-5.5 Pro Handoff (manual high-stakes second opinion) | manual copy-paste (no API call) | **live** |
 | Corporate Catalyst Layer (earnings / filings / news / disclosures) | SEC EDGAR + Finnhub + J-Quants (TDnet pending) | **live / partial** |
-| Automated AI judgment (GPT-5.5 primary + Gemini double-check) | OpenAI + Gemini | pending (v8.10.x+) |
+| AI Judgment Layer v1 (automated second opinion) | GPT-5.5 primary + Gemini double-check (admin-triggered, cached) | **live (admin-run)** |
 | Market Regime, Alerts, earnings, flow/news scanners | mock | pending real wiring |
 
 Watchlist **action** labels come from the **Action Label Engine v0** — a
@@ -126,13 +126,34 @@ OpenAI/Gemini judge code is kept dormant for a future version).
   GPT-5.5 Pro" button on the Watchlist copies it to the clipboard. This makes
   **no** API call, costs nothing, and exposes no secrets. (ChatGPT Pro
   subscription is separate from OpenAI API billing.)
-- Future **v8.10.x+** can wire the automated GPT-5.5 API + Gemini double-check;
-  expensive AI calls must stay backend-protected, cached, and rate-limited
-  behind this gate. Env vars: `OPENAI_API_KEY`, `OPENAI_MODEL`,
-  `GEMINI_API_KEY`, `GEMINI_JUDGE_MODEL`, `AI_JUDGE_ENABLED`,
-  `AI_JUDGE_MAX_RUNS_PER_DAY`, `AI_JUDGE_MIN_INTERVAL_MINUTES`, `AI_JUDGE_LOCKED`,
-  `AI_JUDGE_ALLOW_COUNTRIES`, `ARGUS_ADMIN_TOKEN`,
-  `SECURITY_ALERT_EMAIL`/`PROVIDER`/`WEBHOOK`.
+**v9.1.0 — Automated AI Judgment Layer v1 is live (admin-run).** `GPT-5.5`
+(OpenAI, primary reviewer) + `gemini-2.5-flash` (independent double-check, with
+Google Search grounding when the client supports it) review the rule-based
+labels behind the Security Gate. The conservative arbiter always preserves the
+rule label, blocks `ADD`/`BUY DIP`/`EXIT`/`TRIM` unless both models support it,
+and defers to Gemini on high-severity disagreement; malformed/failed model
+output degrades to partial / rule-only. **GPT-5.5 Pro is NOT used automatically**
+— it stays the manual Copy-for-GPT-5.5-Pro Handoff path (and a future Deep Scan).
+- The public frontend reads the **cached** judgment only via
+  `GET /api/argus/ai-judgment` (never triggers a model call; returns `disabled`
+  or `no_cached_result` when there's nothing cached).
+- A fresh run is **admin-only**: `POST /api/argus/ai-judgment/run` with header
+  `X-ARGUS-ADMIN-TOKEN`, behind the gate (enabled flag, daily limit, min
+  interval, country allow-list, soft lock). Example (placeholder token only):
+  ```
+  curl -X POST https://argus-backend-3j2m.onrender.com/api/argus/ai-judgment/run \
+    -H "X-ARGUS-ADMIN-TOKEN: <ARGUS_ADMIN_TOKEN>"
+  ```
+- Cost control: `AI_JUDGE_ENABLED` gates execution; `AI_JUDGE_MAX_RUNS_PER_DAY`
+  and `AI_JUDGE_MIN_INTERVAL_MINUTES` are enforced; results cache for
+  `AI_JUDGE_CACHE_TTL_MINUTES`. API keys live ONLY in Render env. ChatGPT Pro
+  subscription is separate from OpenAI API billing; the GPT-5.5 Pro Handoff is
+  free because it is manual copy-paste.
+- Env vars: `OPENAI_API_KEY`, `OPENAI_MODEL` (default gpt-5.5), `GEMINI_API_KEY`,
+  `GEMINI_JUDGE_MODEL` (default gemini-2.5-flash), `AI_JUDGE_ENABLED`,
+  `AI_JUDGE_MAX_RUNS_PER_DAY`, `AI_JUDGE_MIN_INTERVAL_MINUTES`,
+  `AI_JUDGE_CACHE_TTL_MINUTES`, `AI_JUDGE_LOCKED`, `AI_JUDGE_ALLOW_COUNTRIES`,
+  `ARGUS_ADMIN_TOKEN`, `SECURITY_ALERT_EMAIL`/`PROVIDER`/`WEBHOOK`.
 
 **v9.0.0 — Corporate Catalyst Layer.** `GET /api/argus/catalysts` surfaces the
 company-specific events behind watchlist moves (earnings, filings, news,

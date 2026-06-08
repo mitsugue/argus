@@ -1,6 +1,6 @@
 // Mirrors the backend /api/argus/ai-judgment shape (AI Judgment Layer v1).
 
-export type AIStatus = 'live' | 'partial' | 'mock' | 'disabled';
+export type AIStatus = 'live' | 'partial' | 'mock' | 'disabled' | 'no_cached_result';
 export type AIView = 'confirm' | 'caution' | 'disagree' | 'unavailable';
 
 export interface AIJudgmentLabel {
@@ -20,6 +20,8 @@ export interface AIJudgmentLabel {
   status: 'live' | 'partial' | 'mock';
 }
 
+export interface GroundingSource { title: string; url: string; }
+
 export interface AIJudgment {
   status: AIStatus;
   asOf: string;
@@ -29,4 +31,6 @@ export interface AIJudgment {
   summaryJa: string;
   marketRiskJa: string;
   labels: AIJudgmentLabel[];
+  globalRedFlags?: string[];
+  groundingSources?: GroundingSource[];
 }

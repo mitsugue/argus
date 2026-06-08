@@ -2126,7 +2126,7 @@ def api_argus_action_labels():
 # is replaced by the Security Gate v1 placeholder + the manual GPT-5.5 Pro
 # handoff export below.
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
-_OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-4o-mini"
+_OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.5"
 _GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-2.5-flash"
 _ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
 
@@ -2156,11 +2156,10 @@ _AI_GATE_STATE = {
 }
 _FAILED_ATTEMPTS_LOCK_THRESHOLD = 5
 
-# Reserved for the DORMANT v8.10.0 AI orchestration (run_ai_judgment below) —
-# not used by any wired endpoint in this version.
-_AI_CACHE_TTL = 1800
-_AI_CACHE     = {"data": None, "expires": 0.0}
-_AI_RUN_STATE = {"date": None, "count": 0}
+# Final AI-judgment cache (v9.1). GET reads this; only an admin-gated POST run
+# writes it. In-memory (resets on dyno restart).
+_AI_CACHE_TTL = _int_env("AI_JUDGE_CACHE_TTL_MINUTES", 30) * 60
+_AI_RESULT_CACHE = {"data": None, "expires": 0.0}
 
 _AI_CONSERVATIVE = {"WAIT", "HOLD", "WAIT FOR PULLBACK"}
 _AI_RANK = {"EXIT": 0, "TRIM": 1, "WAIT FOR PULLBACK": 2, "WAIT": 3, "BUY DIP": 4, "ADD": 5, "HOLD": 6}
@@ -2206,23 +2205,29 @@ _OPENAI_SYSTEM = (
 def _openai_judge(snapshot):
     if not _OPENAI_API_KEY:
         return None, "unavailable"
+    user = ("Review these rule-based ARGUS labels and return STRICT JSON with keys: status, model, "
+            "asOf, summaryJa, marketRiskJa, modelPosture (RISK_ON|CAUTIOUS|RISK_OFF|EVENT_WAIT), and "
+            "labels[] each with symbol, aiView (confirm|caution|disagree), suggestedAction "
+            "(EXIT|TRIM|WAIT|WAIT FOR PULLBACK|BUY DIP|ADD|HOLD), confidence (0..1), risk "
+            "(low|medium|high), reasonJa, whatCouldChangeJa, redFlags[], dataLimitations[]. "
+            "Snapshot:\n" + json.dumps(snapshot, ensure_ascii=False))
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-        user = ("Review these rule-based ARGUS labels and return strict JSON with keys: status, model, "
-                "asOf, summaryJa, marketRiskJa, modelPosture (RISK_ON|CAUTIOUS|RISK_OFF|EVENT_WAIT), and "
-                "labels[] each with symbol, aiView (confirm|caution|disagree), suggestedAction "
-                "(EXIT|TRIM|WAIT|WAIT FOR PULLBACK|BUY DIP|ADD|HOLD), confidence (0..1), risk "
-                "(low|medium|high), reasonJa, whatCouldChangeJa, redFlags[], dataLimitations[]. "
-                "Snapshot:\n" + json.dumps(snapshot, ensure_ascii=False))
-        resp = client.chat.completions.create(
-            model=_OPENAI_MODEL,
-            messages=[{"role": "system", "content": _OPENAI_SYSTEM}, {"role": "user", "content": user}],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            timeout=45,
-        )
-        out = safe_json(resp.choices[0].message.content or "")
+        text = None
+        try:
+            # Current best practice for gpt-5.x: the Responses API.
+            resp = client.responses.create(model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM,
+                                            input=user, timeout=60)
+            text = getattr(resp, "output_text", None)
+        except Exception:
+            # Fallback for SDKs/models without the Responses API.
+            resp = client.chat.completions.create(
+                model=_OPENAI_MODEL,
+                messages=[{"role": "system", "content": _OPENAI_SYSTEM}, {"role": "user", "content": user}],
+                response_format={"type": "json_object"}, timeout=60)
+            text = resp.choices[0].message.content
+        out = safe_json(text or "")
         if not isinstance(out, dict) or not isinstance(out.get("labels"), list):
             return None, "partial"
         return out, "live"
@@ -2231,33 +2236,50 @@ def _openai_judge(snapshot):
         return None, "unavailable"
 
 def _gemini_check(snapshot, openai_out):
+    """Returns (out|None, status, grounding_enabled)."""
     if not google_genai or not GEMINI_API_KEY:
-        return None, "unavailable"
+        return None, "unavailable", False
+    grounding_enabled = False
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
         prompt = (
-            "あなたはARGUSの独立検証役です。以下の市場スナップショット・ルールラベル・OpenAIの提案を検証し、"
-            "(1)裏付けのない主張、(2)直近の重大リスク、(3)OpenAI提案が強気/積極的すぎないか、(4)注意すべき銘柄、"
-            "を点検してください。捏造は禁止。STRICT JSONのみを返す。キー: status, model, summaryJa, "
-            "disagreements[] (symbol, issueJa, severity(low|medium|high), recommendedConservativeAction"
-            "(WAIT|HOLD|WAIT FOR PULLBACK)), globalRedFlags[].\n"
+            "あなたはARGUSの独立検証役です。以下の市場スナップショット・ルールラベル・GPTの提案を検証し、"
+            "(1)裏付けのない主張、(2)直近の重大リスク(web情報があれば反映)、(3)GPT提案が強気/積極的すぎないか、"
+            "(4)注意すべき銘柄、(5)最終アクションを引き下げるべきか、を点検してください。捏造は禁止。"
+            "STRICT JSONのみを返す。キー: status, model, summaryJa, disagreements[] "
+            "(symbol, issueJa, severity(low|medium|high), recommendedConservativeAction(WAIT|HOLD|WAIT FOR PULLBACK)), "
+            "globalRedFlags[], groundingSources[] (title,url)。\n"
             "SNAPSHOT:\n" + json.dumps(snapshot, ensure_ascii=False) +
-            "\nOPENAI:\n" + json.dumps(openai_out or {}, ensure_ascii=False))
+            "\nGPT:\n" + json.dumps(openai_out or {}, ensure_ascii=False))
         cfg = None
         try:
             from google.genai import types as _gt
             cfg = _gt.GenerateContentConfig(tools=[_gt.Tool(google_search=_gt.GoogleSearch())])
+            grounding_enabled = True
         except Exception:
-            cfg = None
+            cfg, grounding_enabled = None, False
         resp = (client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt, config=cfg)
                 if cfg else client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt))
         out = safe_json(getattr(resp, "text", "") or "")
         if not isinstance(out, dict) or "disagreements" not in out:
-            return None, "partial"
-        return out, "live"
+            return None, "partial", grounding_enabled
+        # Best-effort: pull real grounding citations from response metadata.
+        try:
+            srcs = []
+            for c in (getattr(resp, "candidates", []) or []):
+                gm = getattr(c, "grounding_metadata", None)
+                for ch in (getattr(gm, "grounding_chunks", []) or []):
+                    web = getattr(ch, "web", None)
+                    if web:
+                        srcs.append({"title": getattr(web, "title", "") or "", "url": getattr(web, "uri", "") or ""})
+            if srcs and not out.get("groundingSources"):
+                out["groundingSources"] = srcs[:5]
+        except Exception:
+            pass
+        return out, "live", grounding_enabled
     except Exception as e:
         add_log(f"[AI] gemini check failed: {type(e).__name__}")
-        return None, "unavailable"
+        return None, "unavailable", grounding_enabled
 
 def _arbitrate_ai(al, openai_out, gemini_out):
     oai_by = {l.get("symbol"): l for l in (openai_out.get("labels", []) if isinstance(openai_out, dict) else [])}
@@ -2325,44 +2347,20 @@ def _arbitrate_ai(al, openai_out, gemini_out):
 def _ai_now_iso():
     return datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def _ai_disabled_payload():
-    return {"status": "disabled", "reason": "AI judgment layer is disabled",
+def _ai_disabled_payload(status="disabled", reason="AI judgment is not enabled yet."):
+    return {"status": status, "reason": reason,
             "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": "cached",
-            "models": {"primary": None, "checker": None},
-            "summaryJa": "", "marketRiskJa": "", "labels": []}
+            "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_JUDGE_MODEL},
+            "summaryJa": "", "marketRiskJa": "", "labels": [],
+            "globalRedFlags": [], "groundingSources": []}
 
-def _rule_only_payload(al, run_mode="cached", status="partial"):
-    labels = [{"symbol": l["symbol"], "market": l["market"], "ruleAction": l["action"],
-               "aiFinalAction": l["action"], "aiView": "unavailable", "confidence": l["confidence"],
-               "risk": l["risk"], "reasonJa": l["reasonJa"], "whatCouldChangeJa": l["nextConditionJa"],
-               "openaiReasonJa": "", "geminiCheckJa": "", "redFlags": [], "dataLimitations": [],
-               "status": l.get("status", "live")} for l in al.get("labels", [])]
-    return {"status": "mock" if al.get("status") == "mock" else status,
-            "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": run_mode,
-            "models": {"primary": None, "checker": None},
-            "summaryJa": "AI判定は未実行(ルールベースのみ表示)。", "marketRiskJa": "",
-            "labels": labels}
-
-def run_ai_judgment(run_mode="manual"):
-    """Run a fresh AI judgment (OpenAI + Gemini), arbitrate, and cache. Never raises."""
-    if not _AI_JUDGE_ENABLED:
-        return _ai_disabled_payload()
-    with _AI_LOCK:
-        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
-        if _AI_RUN_STATE["date"] != today:
-            _AI_RUN_STATE["date"] = today
-            _AI_RUN_STATE["count"] = 0
-        if run_mode == "manual" and _AI_RUN_STATE["count"] >= _AI_JUDGE_MAX_RUNS:
-            cached = _AI_CACHE["data"]
-            if cached:
-                return {**cached, "runMode": "cached"}
-            snap, al = _build_ai_snapshot()
-            return _rule_only_payload(al, run_mode="cached")
-        _AI_RUN_STATE["count"] += 1
-
+def _execute_ai_judgment(run_mode="manual"):
+    """Run a fresh AI judgment (GPT-5.5 primary + Gemini double-check), arbitrate,
+    cache, return. Never raises. The security gate / run limits are enforced by
+    the caller (POST route) — this function performs the actual model work."""
     snap, al = _build_ai_snapshot()
     openai_out, oai_status = _openai_judge(snap)
-    gemini_out, gem_status = _gemini_check(snap, openai_out)
+    gemini_out, gem_status, grounding_enabled = _gemini_check(snap, openai_out)
     labels = _arbitrate_ai(al, openai_out, gemini_out)
 
     ai_ok = (1 if oai_status == "live" else 0) + (1 if gem_status == "live" else 0)
@@ -2376,23 +2374,24 @@ def run_ai_judgment(run_mode="manual"):
     summary = (openai_out.get("summaryJa") if isinstance(openai_out, dict) else "") or \
               (al.get("marketPosture", {}) or {}).get("rationaleJa", "")
     market_risk = (openai_out.get("marketRiskJa") if isinstance(openai_out, dict) else "") or ""
-    if isinstance(gemini_out, dict) and gemini_out.get("globalRedFlags"):
-        flags = " / ".join(str(x)[:80] for x in gemini_out["globalRedFlags"][:3])
-        market_risk = (market_risk + " ").strip() + (f"[Gemini: {flags}]" if flags else "")
+    global_flags, grounding = [], []
+    if isinstance(gemini_out, dict):
+        global_flags = [str(x)[:120] for x in (gemini_out.get("globalRedFlags") or [])][:5]
+        grounding = [{"title": str(g.get("title", ""))[:160], "url": str(g.get("url", ""))[:300]}
+                     for g in (gemini_out.get("groundingSources") or []) if isinstance(g, dict)][:5]
 
     payload = {
-        "status": status, "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1",
-        "runMode": run_mode,
+        "status": status, "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": run_mode,
         "models": {"primary": (_OPENAI_MODEL if oai_status == "live" else None),
                    "checker": (_GEMINI_JUDGE_MODEL if gem_status == "live" else None)},
         "summaryJa": summary[:400], "marketRiskJa": market_risk[:400], "labels": labels,
+        "globalRedFlags": global_flags, "groundingSources": grounding,
     }
     if status != "mock":
-        _AI_CACHE["data"] = payload
-        _AI_CACHE["expires"] = time.time() + _AI_CACHE_TTL
-    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_GEMINI_JUDGE_MODEL} "
-            f"symbols={len(labels)} oai={oai_status} gem={gem_status} status={status} "
-            f"runs_today={_AI_RUN_STATE['count']}")
+        _AI_RESULT_CACHE["data"] = payload
+        _AI_RESULT_CACHE["expires"] = time.time() + _AI_CACHE_TTL
+    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_GEMINI_JUDGE_MODEL} symbols={len(labels)} "
+            f"oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
     return payload
 
 # ━━━ Security Gate v1 (protects future expensive AI runs) ━━━
@@ -2480,23 +2479,26 @@ def _ai_run_gate():
 
 @app.route("/api/argus/ai-judgment")
 def api_argus_ai_judgment():
-    # Public + frontend-safe. Never triggers AI. AI execution is pending.
-    return jsonify({"status": "disabled", "engineVersion": "ai-judge-v1-pending",
-                    "reason": "AI judgment is not enabled yet.", "asOf": _ai_now_iso()})
+    # Public + frontend-safe. Reads the cached judgment ONLY — never calls a model.
+    if not _AI_JUDGE_ENABLED:
+        return jsonify(_ai_disabled_payload("disabled", "AI judgment is not enabled yet."))
+    cached = _AI_RESULT_CACHE["data"]
+    if cached and time.time() < _AI_RESULT_CACHE["expires"]:
+        return jsonify({**cached, "runMode": "cached"})
+    return jsonify(_ai_disabled_payload("no_cached_result",
+                                        "No cached AI judgment yet — an admin-triggered run is required."))
 
 @app.route("/api/argus/ai-judgment/run", methods=["POST"])
 def api_argus_ai_judgment_run():
-    # Security gate only — NO OpenAI/Gemini call in this version.
+    # Admin-gated fresh run: GPT-5.5 primary + Gemini double-check. NEVER reachable
+    # from the public frontend (admin token required).
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     allowed, info, code = _ai_run_gate()
     if not allowed:
         return jsonify(info), code
-    return jsonify({"status": "ready",
-                    "message": "AI run gate passed. AI execution not implemented in this version.",
-                    "asOf": _ai_now_iso(), "runCountToday": info.get("runCountToday", 0),
-                    "locked": _is_locked()})
+    return jsonify(_execute_ai_judgment(run_mode="manual"))
 
 @app.route("/api/argus/security-status")
 def api_argus_security_status():
