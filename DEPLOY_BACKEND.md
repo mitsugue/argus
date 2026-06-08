@@ -26,7 +26,7 @@ React frontend on Vercel to call it.
    - `ARGUS_LEDGER_PATH=data/predictions.jsonl` (already in render.yaml)
 6. Click **Create Web Service**. First build ≈ 2–3 min.
 
-Render gives you a URL like `https://argus-backend.onrender.com`. Note it.
+Render gives you a URL like `https://argus-backend-3j2m.onrender.com`. Note it.
 
 ### Persistent ledger (recommended)
 
@@ -46,7 +46,7 @@ whatever has run since the last deploy.
 1. Vercel dashboard → your `argus` project → **Settings** →
    **Environment Variables** → add:
    - **Key**: `VITE_ARGUS_BACKEND_URL`
-   - **Value**: `https://argus-backend.onrender.com` (the URL from step 1)
+   - **Value**: `https://argus-backend-3j2m.onrender.com` (the URL from step 1)
    - **Environment**: Production + Preview
 2. Trigger a redeploy (Deployments → ... → Redeploy).
 
@@ -59,9 +59,9 @@ once Phase 5 lands. CORS is already configured on the backend for
 After Render finishes deploying, hit these from your browser:
 
 ```
-https://argus-backend.onrender.com/api/argus/calibration
-https://argus-backend.onrender.com/api/argus/picks/today
-https://argus-backend.onrender.com/api/argus/ledger/recent
+https://argus-backend-3j2m.onrender.com/api/argus/calibration
+https://argus-backend-3j2m.onrender.com/api/argus/picks/today
+https://argus-backend-3j2m.onrender.com/api/argus/ledger/recent
 ```
 
 Expected:
@@ -76,7 +76,7 @@ The scheduler in `scanner.py` runs `phase1..phase4` daily at JST 08:30
 on weekdays. To kick a one-off:
 
 ```bash
-curl -X POST https://argus-backend.onrender.com/api/run
+curl -X POST https://argus-backend-3j2m.onrender.com/api/run
 ```
 
 Wait ~5–10 minutes for phases to complete. After phase 4 finishes,

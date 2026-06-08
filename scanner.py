@@ -1,4 +1,4 @@
-# STOCK SCANNER v2.0 - 米国株AIプレデター (velvet-razor)
+# A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
 import os, time, requests, anthropic, json, threading, re, math, statistics
 try:
@@ -114,7 +114,7 @@ def finnhub_rate_limit():
 HTML = """<!DOCTYPE html>
 <html lang="ja"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>US STOCK SCANNER v2.0</title>
+<title>A.R.G.U.S. — backend</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -184,7 +184,7 @@ header{display:flex;align-items:center;margin-bottom:10px;padding-bottom:8px;bor
 .price-chg-up{color:#4ec94e}.price-chg-dn{color:#f44747}
 </style></head><body>
 <header>
-  <div><div class="logo" id="logoBtn" onclick="location.reload()">US STOCK SCANNER</div><div class="sub">velvet-razor v2.0 — US Market AI Predator</div></div>
+  <div><div class="logo" id="logoBtn" onclick="location.reload()">A.R.G.U.S.</div><div class="sub">velvet-razor v2.0 — Autonomous Risk and Global Uncertainty Scanner</div></div>
   <div style="margin-left:auto;text-align:right">
   <div class="time" id="clk">--:--:-- ET</div>
   <div id="statusBadge" style="font-size:11px;font-weight:700;color:#4ec94e;margin-top:2px">&#9679; ONLINE</div>
@@ -1502,7 +1502,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     sched = get_jst_schedule()
-    add_log(f"🚀 US Stock Scanner v2.0 ({'Summer DST' if is_dst_now() else 'Winter'})")
+    add_log(f"🚀 A.R.G.U.S. backend v2.0 ({'Summer DST' if is_dst_now() else 'Winter'})")
     add_log(f"  Ph.1:{sched['ph1']} Ph.5:{sched['ph5_1']} JST")
     if MOOMOO_AVAILABLE: add_log(f"  moomoo: {MOOMOO_HOST}:{MOOMOO_PORT}")
     else: add_log("  ⚠️ moomoo-api not installed")
