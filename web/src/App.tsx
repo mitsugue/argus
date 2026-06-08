@@ -7,6 +7,7 @@ import { MarketRegime } from './routes/MarketRegime';
 import { EventRadar } from './routes/EventRadar';
 import { Watchlist } from './routes/Watchlist';
 import { CorePortfolio } from './routes/CorePortfolio';
+import { Guide } from './routes/Guide';
 import { AIReview } from './routes/AIReview';
 import { todayJudgment, upcomingEvents } from './mock/dashboard';
 
@@ -21,6 +22,7 @@ const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   events:    EventRadar as React.FC<RouteProps>,
   watchlist: Watchlist as React.FC<RouteProps>,
   core:      CorePortfolio as React.FC<RouteProps>,
+  guide:     Guide as React.FC<RouteProps>,
 };
 
 const App: React.FC = () => {

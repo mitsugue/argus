@@ -69,7 +69,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <section>
         <div className="section-head">
           <span className="section-head__title">Top Rotations</span>
-          <button className="section-head__link" onClick={() => onNavigate('regime')}>
+          <button
+            className="section-head__link"
+            onClick={() => {
+              // Signal Market Regime to scroll to the full board after it mounts
+              // (fixes the iPhone half-wrong landing position).
+              try { sessionStorage.setItem('argus.scrollTo', 'full-board'); } catch { /* ignore */ }
+              onNavigate('regime');
+            }}
+          >
             full board
           </button>
         </div>

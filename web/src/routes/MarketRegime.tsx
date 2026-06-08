@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { PageShell } from './PageShell';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
@@ -26,12 +26,28 @@ const REGIME_GLOSSARY: { tag: string; gloss: string }[] = [
 //   (supporting, compact) → Regime Summary → Glossary.
 // The bubble / SectorBlob viz is retired from the main experience.
 export const MarketRegime: React.FC = () => {
+  // When arriving via the "full board" link, scroll to the board after layout
+  // is ready (double rAF), landing cleanly below the sticky header (the section
+  // carries scroll-margin-top). Fixes the iPhone half-wrong jump.
+  useEffect(() => {
+    let target: string | null = null;
+    try { target = sessionStorage.getItem('argus.scrollTo'); } catch { /* ignore */ }
+    if (target !== 'full-board') return;
+    try { sessionStorage.removeItem('argus.scrollTo'); } catch { /* ignore */ }
+    const id = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        document.getElementById('full-board')?.scrollIntoView({ block: 'start' });
+      }),
+    );
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   return (
     <PageShell
       title="Market Regime"
       subtitle="Current cross-asset environment and capital rotation. Visualizations support action labels; they are not trading signals by themselves."
     >
-      <section>
+      <section id="full-board" className="regime-anchor">
         <div className="section-head">
           <span className="section-head__title">Capital Rotation Board</span>
           <span className="section-head__count">

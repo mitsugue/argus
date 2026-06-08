@@ -9,7 +9,8 @@ export type RouteKey =
   | 'regime'
   | 'events'
   | 'watchlist'
-  | 'core';
+  | 'core'
+  | 'guide';
 
 interface NavItem {
   key: RouteKey;
@@ -64,6 +65,15 @@ export const NavRail: React.FC<Props> = ({
           {n.label}
         </button>
       ))}
+
+      <button
+        className={`nav__btn nav__btn--guide ${active === 'guide' ? 'is-active' : ''}`}
+        onClick={() => onSelect('guide')}
+        aria-current={active === 'guide' ? 'page' : undefined}
+      >
+        <span className="nav__dot" aria-hidden />
+        Glossary / Guide
+      </button>
 
       <div className="nav__footer">
         <span className="nav__footer-dot" />

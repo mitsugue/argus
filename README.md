@@ -155,6 +155,34 @@ output degrades to partial / rule-only. **GPT-5.5 Pro is NOT used automatically*
   `AI_JUDGE_CACHE_TTL_MINUTES`, `AI_JUDGE_LOCKED`, `AI_JUDGE_ALLOW_COUNTRIES`,
   `ARGUS_ADMIN_TOKEN`, `SECURITY_ALERT_EMAIL`/`PROVIDER`/`WEBHOOK`.
 
+**v9.2.0 — Unified asset Watchlist + Strategy Cards.** The Watchlist is now a
+unified asset manager (tabs: All / Japan / US / Core / Crypto) over a single
+asset model.
+- **Japanese names:** JP stocks display Japanese names. **8058 = 三菱商事**
+  (Mitsubishi Corporation) — NOT 三菱重工 (Mitsubishi Heavy Industries = 7011);
+  symbol↔name is curated, never guessed. The backend serves `nameJa`.
+- **Add / remove / reorder** with localStorage persistence (key
+  `argus.assets.v1`, cap 50). *Limitation: per browser/device — no cross-device
+  sync yet (would need auth + a database).* Reorder is via up/down controls in
+  the All tab (stable on mobile).
+- **Strategy Cards v1:** each row expands (accordion) to a rule-based strategy —
+  strategy / why / what to wait for / what changes it / catalyst note / data
+  limitations / "updated Xm ago", derived in the frontend from
+  `/action-labels` + watchlist quotes + `/catalysts`. A **Rescan** button
+  refreshes the rule-based snapshots (stale-while-revalidate; **no OpenAI/Gemini
+  call**). Scenario probabilities (1–3 trading days, sum to 100) are
+  decision-support, NOT prediction.
+- **Core / funds:** Core/manual funds live in the same model (calm core labels
+  CONTINUE / GRADUAL ADD / DEFER LUMP SUM / NO SELL ACTION); no live NAV claimed
+  for non-listed mutual funds. The Core Portfolio route is unchanged.
+- **Crypto:** addable as an asset type; v9.2.0 keeps it **manual / pending**
+  (no live CoinGecko quotes yet — a backend `/crypto-watchlist` is a v9.x hook).
+- **Top Rotations "full board"** now lands cleanly on the Capital Rotation Board
+  on mobile (anchored target + deferred scroll). **Glossary / Guide** route added
+  at the sidebar bottom (用語一覧 + 使い方, Japanese). Pro Handoff unchanged (no
+  AI calls). Still pending: automated AI judgment run (admin/keys), live crypto,
+  non-listed fund NAV, moomoo flow/order book, cross-device sync.
+
 **v9.0.0 — Corporate Catalyst Layer.** `GET /api/argus/catalysts` surfaces the
 company-specific events behind watchlist moves (earnings, filings, news,
 disclosures) for the 11 watched names, and is folded into the Pro Handoff

@@ -1528,17 +1528,20 @@ _JQUANTS_BASE    = "https://api.jquants.com/v2"
 _JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY")
 
 # The watched names. `symbol` is the TSE code passed straight to V2 (4-char
-# codes incl. the alphanumeric 285A are accepted). `mock` holds plausible
-# fallback values so the mock state renders sensibly when the key is unset or a
-# fetch fails — they are NOT real quotes.
+# codes incl. the alphanumeric 285A are accepted). `name` is the Japanese display
+# name. `mock` holds plausible fallback values so the mock state renders sensibly
+# when the key is unset or a fetch fails — they are NOT real quotes.
+# IMPORTANT: symbol↔name mapping must NOT be guessed. 8058 = 三菱商事 (Mitsubishi
+# Corporation), NOT 三菱重工 (Mitsubishi Heavy Industries, which is 7011). Verify
+# any new code against the official issue list before adding it here.
 _JP_WATCHLIST = [
-    {"symbol": "8058", "name": "Mitsubishi Heavy Industries", "mock": {"price": 2900.0, "changeAbs": 26.0,  "changePct": 0.90,  "volume": 9_800_000}},
-    {"symbol": "9984", "name": "SoftBank Group",              "mock": {"price": 9_800.0, "changeAbs": -180.0, "changePct": -1.80, "volume": 8_100_000}},
-    {"symbol": "5801", "name": "Furukawa Electric",           "mock": {"price": 6_400.0, "changeAbs": 120.0,  "changePct": 1.91,  "volume": 3_200_000}},
-    {"symbol": "5803", "name": "Fujikura",                    "mock": {"price": 7_200.0, "changeAbs": 210.0,  "changePct": 3.01,  "volume": 11_500_000}},
-    {"symbol": "6584", "name": "Sanoh Industrial",            "mock": {"price": 1_480.0, "changeAbs": -8.0,   "changePct": -0.54, "volume": 410_000}},
-    {"symbol": "285A", "name": "Kioxia Holdings",             "mock": {"price": 1_820.0, "changeAbs": 35.0,   "changePct": 1.96,  "volume": 5_600_000}},
-    {"symbol": "9501", "name": "Tokyo Electric Power",        "mock": {"price": 720.0,   "changeAbs": -4.0,   "changePct": -0.55, "volume": 14_200_000}},
+    {"symbol": "8058", "name": "三菱商事", "mock": {"price": 2900.0, "changeAbs": 26.0,  "changePct": 0.90,  "volume": 9_800_000}},
+    {"symbol": "9984", "name": "ソフトバンクグループ",              "mock": {"price": 9_800.0, "changeAbs": -180.0, "changePct": -1.80, "volume": 8_100_000}},
+    {"symbol": "5801", "name": "古河電気工業",           "mock": {"price": 6_400.0, "changeAbs": 120.0,  "changePct": 1.91,  "volume": 3_200_000}},
+    {"symbol": "5803", "name": "フジクラ",                    "mock": {"price": 7_200.0, "changeAbs": 210.0,  "changePct": 3.01,  "volume": 11_500_000}},
+    {"symbol": "6584", "name": "三櫻工業",            "mock": {"price": 1_480.0, "changeAbs": -8.0,   "changePct": -0.54, "volume": 410_000}},
+    {"symbol": "285A", "name": "キオクシアホールディングス",             "mock": {"price": 1_820.0, "changeAbs": 35.0,   "changePct": 1.96,  "volume": 5_600_000}},
+    {"symbol": "9501", "name": "東京電力ホールディングス",        "mock": {"price": 720.0,   "changeAbs": -4.0,   "changePct": -0.55, "volume": 14_200_000}},
 ]
 
 _JP_CACHE     = {"data": None, "expires": 0.0}
@@ -1547,7 +1550,7 @@ _JP_CACHE_TTL = 600
 def _jp_mock_quote(s):
     m = s["mock"]
     return {
-        "symbol": s["symbol"], "name": s["name"],
+        "symbol": s["symbol"], "name": s["name"], "nameJa": s["name"],
         "price": m["price"], "changeAbs": m["changeAbs"], "changePct": m["changePct"],
         "volume": m["volume"], "date": None, "status": "mock",
     }
@@ -1585,7 +1588,7 @@ def _jquants_fetch_quote(s, headers):
         change = round(close - pclose, 2)
         vol    = latest.get("Vo")
         return {
-            "symbol": s["symbol"], "name": s["name"],
+            "symbol": s["symbol"], "name": s["name"], "nameJa": s["name"],
             "price": close,
             "changeAbs": change,
             "changePct": round((change / pclose) * 100, 2) if pclose else 0.0,
@@ -1651,7 +1654,7 @@ _US_CACHE_TTL = 600
 def _us_mock_quote(s):
     m = s["mock"]
     return {
-        "symbol": s["symbol"], "name": s["name"],
+        "symbol": s["symbol"], "name": s["name"], "nameJa": s["name"],
         "price": m["price"], "changeAbs": m["changeAbs"], "changePct": m["changePct"],
         "volume": m["volume"], "date": None, "status": "mock",
     }
@@ -1952,13 +1955,13 @@ def api_argus_events():
 # invented VWAP/flow/news. Conservative by design: prefers WAIT/HOLD when
 # unsure, never EXIT, and never TRIM in v0 (no trend/flow confirmation yet).
 _ACTION_SYMBOLS = [
-    {"symbol": "8058", "market": "JP", "name": "Mitsubishi Heavy Industries", "cls": "jp_industrial"},
-    {"symbol": "9984", "market": "JP", "name": "SoftBank Group",              "cls": "jp_momentum"},
-    {"symbol": "5801", "market": "JP", "name": "Furukawa Electric",           "cls": "jp_momentum"},
-    {"symbol": "5803", "market": "JP", "name": "Fujikura",                    "cls": "jp_momentum"},
-    {"symbol": "6584", "market": "JP", "name": "Sanoh Industrial",            "cls": "jp_momentum"},
-    {"symbol": "285A", "market": "JP", "name": "Kioxia Holdings",             "cls": "jp_momentum"},
-    {"symbol": "9501", "market": "JP", "name": "Tokyo Electric Power",        "cls": "jp_utility"},
+    {"symbol": "8058", "market": "JP", "name": "三菱商事", "cls": "jp_industrial"},
+    {"symbol": "9984", "market": "JP", "name": "ソフトバンクグループ",              "cls": "jp_momentum"},
+    {"symbol": "5801", "market": "JP", "name": "古河電気工業",           "cls": "jp_momentum"},
+    {"symbol": "5803", "market": "JP", "name": "フジクラ",                    "cls": "jp_momentum"},
+    {"symbol": "6584", "market": "JP", "name": "三櫻工業",            "cls": "jp_momentum"},
+    {"symbol": "285A", "market": "JP", "name": "キオクシアホールディングス",             "cls": "jp_momentum"},
+    {"symbol": "9501", "market": "JP", "name": "東京電力ホールディングス",        "cls": "jp_utility"},
     {"symbol": "NVDA", "market": "US", "name": "NVIDIA",                      "cls": "us_growth"},
     {"symbol": "AAPL", "market": "US", "name": "Apple",                       "cls": "us_growth"},
     {"symbol": "TSLA", "market": "US", "name": "Tesla",                       "cls": "us_growth"},
@@ -2711,9 +2714,9 @@ _CAT_HORIZON_DAYS = 90
 _JQUANTS_TDNET_ENABLED = os.environ.get("JQUANTS_TDNET_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 
 _US_CAT_SYMBOLS = [("NVDA", "NVIDIA"), ("AAPL", "Apple"), ("TSLA", "Tesla"), ("META", "Meta Platforms")]
-_JP_CAT_SYMBOLS = [("8058", "Mitsubishi Heavy Industries"), ("9984", "SoftBank Group"),
-                   ("5801", "Furukawa Electric"), ("5803", "Fujikura"), ("6584", "Sanoh Industrial"),
-                   ("285A", "Kioxia Holdings"), ("9501", "Tokyo Electric Power")]
+_JP_CAT_SYMBOLS = [("8058", "三菱商事"), ("9984", "ソフトバンクグループ"),
+                   ("5801", "古河電気工業"), ("5803", "フジクラ"), ("6584", "三櫻工業"),
+                   ("285A", "キオクシアホールディングス"), ("9501", "東京電力ホールディングス")]
 
 _SEC_CACHE  = {}                                   # symbol -> {data, expires}
 _FINN_CACHE = {}                                   # symbol -> {data, expires}
