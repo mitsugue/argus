@@ -85,10 +85,20 @@ list and Render deploy steps.
 | US rates + VIX (10Y / 2Y / Real 10Y / VIX) | FRED (St. Louis Fed) | **live** |
 | Japan watchlist (price / change / volume / date, 7 names) | J-Quants V2 | **live** |
 | US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
-| Alerts, regime, event radar | mock | pending real wiring |
+| Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
+| Alerts, Market Regime, earnings, deeper scanners | mock | pending real wiring |
 
 The Japan watchlist's per-row **action** label is still a placeholder
 (`HOLD`); wiring it to the AI scanner is a separate step.
+
+Event Radar (Phase 1) is schedule/risk-timing only — no forecast/actual/
+consensus. Treasury auctions are fetched **live** from TreasuryDirect's JSON
+API; FOMC / BOJ / CPI / PPI / Employment / PCE / GDP dates are **curated from
+official 2026 calendars** (Fed, BOJ, and the OMB/OIRA PFEI schedule) and served
+directly rather than scraped — refresh the table for 2027. Top-level status is
+`partial` if the live auction fetch fails. JOLTS is **pending** (not in the
+PFEI principal-indicator schedule). Today/CommandCenter's compact event preview
+still uses seed data — only the Event Radar page is wired to live events.
 
 Market visuals (Regime Matrix, Capital Rotation Board, Top Rotations)
 are supporting evidence for the action labels — never trading signals by

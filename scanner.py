@@ -1734,6 +1734,212 @@ def api_argus_us_watchlist():
     return jsonify(get_us_watchlist_snapshot())
 
 
+# ━━━ Event Radar (live official calendar) ━━━
+# Phase 1 = schedule/risk timing only (no forecast/actual/consensus). Sources:
+#   - TreasuryDirect: fetched LIVE at runtime (machine-readable JSON API).
+#   - FOMC / BOJ / BLS / BEA: curated from official calendars + the OMB/OIRA
+#     PFEI CY2026 release schedule. These are official, fixed published dates —
+#     served directly rather than scraped at runtime (robust, no brittle HTML).
+#     Refresh this table for 2027. Escalation/daysUntil are recomputed every
+#     request (Asia/Tokyo perspective); only the TreasuryDirect fetch is cached.
+_EVENTS_CURATED_ASOF = "2026-06-08"
+_TZ_ET               = pytz.timezone("America/New_York")
+_EVENT_HORIZON_DAYS  = 60   # only surface events within ~2 months (calm radar)
+
+_FOMC_2026 = ["2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09"]
+_BOJ_2026  = ["2026-06-16", "2026-07-31", "2026-09-18", "2026-10-30", "2026-12-18"]
+_BOJ_OUTLOOK = {"2026-07-31", "2026-10-30"}
+_CPI_2026  = ["2026-06-10", "2026-07-14", "2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10"]
+_PPI_2026  = ["2026-06-11", "2026-07-15", "2026-08-13", "2026-09-10", "2026-10-15", "2026-11-13", "2026-12-15"]
+_NFP_2026  = ["2026-06-05", "2026-07-02", "2026-08-07", "2026-09-04", "2026-10-02", "2026-11-06", "2026-12-04"]
+_PCE_2026  = ["2026-06-25", "2026-07-30", "2026-08-26", "2026-09-30", "2026-10-29", "2026-11-25", "2026-12-23"]
+_GDP_2026  = ["2026-06-25", "2026-07-30", "2026-08-26", "2026-09-30", "2026-10-29", "2026-11-25", "2026-12-23"]
+
+_EVENT_RATIONALE = {
+    "fomc":    "金利・ドル円・米国グロース株のリスク許容度を左右するため、イベント前後はポジションサイズと追いかけ買いを抑える。",
+    "cpi":     "インフレ再加速は米金利上昇とグロース株のバリュエーション圧迫につながるため、発表前後の指数・金利・為替を確認する。",
+    "ppi":     "卸売物価はCPIの先行指標で米金利に影響するため、発表後の金利方向を確認する。",
+    "nfp":     "雇用の強弱は利下げ期待と景気減速懸念の両方に影響するため、発表後の金利方向を優先して確認する。",
+    "pce":     "FRBが重視するインフレ指標。再加速は米金利上昇とグロース株圧迫につながるため、発表前後の金利・為替を確認する。",
+    "gdp":     "成長の強弱は景気見通しと金利方向を左右するため、発表後の金利・株指数の反応を確認する。",
+    "boj":     "円金利・ドル円・日本株グロース/輸出株の地合いに影響するため、会合前後は円高・金利上昇・銀行株/輸出株の反応を見る。",
+    "auction": "国債入札の弱さは長期金利上昇を通じてNASDAQや高PER株に圧力をかけるため、入札前後のUS10YとQQQを確認する。",
+}
+
+# (dates, et_time, kind, title, category, country, source, impact, linkedAssets)
+_EVENT_SPECS = [
+    (_FOMC_2026, "14:00", "fomc", "FOMC Rate Decision",                "central_bank", "US", "Federal Reserve",             "high",   ["USDJPY", "US10Y", "US2Y", "QQQ", "NVDA"]),
+    (_CPI_2026,  "08:30", "cpi",  "US CPI (Consumer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "QQQ", "SPY"]),
+    (_NFP_2026,  "08:30", "nfp",  "US Employment Situation",           "jobs",         "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "SPY", "QQQ"]),
+    (_PPI_2026,  "08:30", "ppi",  "US PPI (Producer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "QQQ"]),
+    (_PCE_2026,  "08:30", "pce",  "US PCE / Personal Income & Outlays", "inflation",   "US", "Bureau of Economic Analysis", "high",   ["US10Y", "USDJPY", "QQQ"]),
+    (_GDP_2026,  "08:30", "gdp",  "US GDP",                            "growth",       "US", "Bureau of Economic Analysis", "high",   ["US10Y", "SPY", "USDJPY"]),
+    (_BOJ_2026,  None,    "boj",  "BOJ Monetary Policy Meeting",       "central_bank", "JP", "Bank of Japan",               "high",   ["USDJPY", "JP10Y", "9984", "8058"]),
+]
+
+# Each source maps to its curated lastUpdated marker; TreasuryDirect is dynamic.
+_EVENT_SOURCE_NAMES = ["Federal Reserve", "Bureau of Labor Statistics",
+                       "Bureau of Economic Analysis", "Bank of Japan"]
+
+_TD_CACHE = {"data": None, "status": None, "expires": 0.0}
+
+def _event_timing(date_str, et_time, today_jst):
+    """Return (eventTimeUtc, localTimeJst, daysUntil) computed from Tokyo time.
+
+    When a precise ET time is known we localize → UTC → JST so the JST date (and
+    thus escalation) reflects the user's timezone. Date-only events (BOJ — no
+    fixed announcement time) keep UTC/JST null and use the published date.
+    """
+    if et_time:
+        et = _TZ_ET.localize(datetime.strptime(f"{date_str} {et_time}", "%Y-%m-%d %H:%M"))
+        utc = et.astimezone(pytz.utc)
+        jst = et.astimezone(TZ_JST)
+        return (utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                jst.strftime("%Y-%m-%d %H:%M JST"),
+                (jst.date() - today_jst).days)
+    d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    return (None, None, (d - today_jst).days)
+
+def _escalation(days):
+    if days == 0:        return "D"
+    if days == 1:        return "D-1"
+    if days in (2, 3):   return "D-3"
+    if 4 <= days <= 7:   return "D-7"
+    if days == -1:       return "D+1"
+    return "normal"
+
+def _build_curated_events(today_jst):
+    out = []
+    for dates, et_time, kind, title, cat, country, source, impact, assets in _EVENT_SPECS:
+        for d in dates:
+            utc, jst_local, days = _event_timing(d, et_time, today_jst)
+            if days < -1 or days > _EVENT_HORIZON_DAYS:
+                continue
+            t = title + " (Outlook Report)" if (kind == "boj" and d in _BOJ_OUTLOOK) else title
+            prefix = "jp" if country == "JP" else "us"
+            out.append({
+                "id": f"{prefix}-{kind}-{d}",
+                "title": t, "category": cat, "country": country, "source": source,
+                "impact": impact, "eventTimeUtc": utc, "eventDate": d,
+                "localTimeJst": jst_local, "daysUntil": days,
+                "escalation": _escalation(days), "rationaleJa": _EVENT_RATIONALE[kind],
+                "linkedAssets": assets, "status": "live",
+            })
+    return out
+
+def _fetch_treasury_raw():
+    """Fetch upcoming Treasury auctions (live JSON). Returns (list, status)."""
+    tenors = {"2-Year", "5-Year", "7-Year", "10-Year", "20-Year", "30-Year"}
+    try:
+        r = requests.get("https://www.treasurydirect.gov/TA_WS/securities/upcoming",
+                         params={"format": "json"}, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, list):
+            return [], "error"
+        rows, seen = [], set()
+        for a in data:
+            if not isinstance(a, dict):
+                continue
+            if a.get("securityType") not in ("Note", "Bond"):
+                continue
+            term = a.get("securityTerm")
+            auc  = a.get("auctionDate")
+            if term not in tenors or not auc:
+                continue
+            date_str = str(auc)[:10]
+            key = (term, date_str)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({"term": term, "date": date_str,
+                         "impact": "high" if term in ("10-Year", "20-Year", "30-Year") else "medium"})
+        return rows, "live"
+    except Exception:
+        return [], "error"
+
+def _treasury_auctions_cached():
+    now = time.time()
+    if _TD_CACHE["data"] is not None and now < _TD_CACHE["expires"]:
+        return _TD_CACHE["data"], _TD_CACHE["status"]
+    rows, status = _fetch_treasury_raw()
+    _TD_CACHE["data"], _TD_CACHE["status"] = rows, status
+    # Cache a good fetch for 6h; back off only briefly on error so it recovers.
+    _TD_CACHE["expires"] = now + (6 * 3600 if status == "live" else 300)
+    return rows, status
+
+def _build_auction_events(today_jst):
+    rows, status = _treasury_auctions_cached()
+    out = []
+    for a in rows:
+        days = (datetime.strptime(a["date"], "%Y-%m-%d").date() - today_jst).days
+        if days < -1 or days > _EVENT_HORIZON_DAYS:
+            continue
+        slug = a["term"].lower().replace("-", "")
+        out.append({
+            "id": f"us-treasury-{slug}-{a['date']}",
+            "title": f"US Treasury {a['term']} Auction",
+            "category": "treasury", "country": "US", "source": "TreasuryDirect",
+            "impact": a["impact"], "eventTimeUtc": None, "eventDate": a["date"],
+            "localTimeJst": None, "daysUntil": days, "escalation": _escalation(days),
+            "rationaleJa": _EVENT_RATIONALE["auction"],
+            "linkedAssets": ["US10Y", "QQQ"], "status": "live",
+        })
+    return out, status
+
+def get_events_snapshot():
+    """Aggregated official event calendar for ARGUS Event Radar (Phase 1).
+
+    Curated sources (Fed/BLS/BEA/BOJ) are always available; TreasuryDirect is
+    fetched live. Top-level status is "live" when the auction fetch succeeds,
+    "partial" when it fails (curated calendar still served), "mock" only if the
+    whole build fails.
+    """
+    try:
+        today_jst = datetime.now(TZ_JST).date()
+        events = _build_curated_events(today_jst)
+        auctions, td_status = _build_auction_events(today_jst)
+        events += auctions
+        td_src_status = "live" if td_status == "live" else "error"
+        sources = [{"name": n, "status": "live", "lastUpdated": f"{_EVENTS_CURATED_ASOF}T00:00:00Z"}
+                   for n in _EVENT_SOURCE_NAMES]
+        sources.append({
+            "name": "TreasuryDirect", "status": td_src_status,
+            "lastUpdated": (datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if td_status == "live" else None),
+        })
+        status = "live" if td_status == "live" else "partial"
+        return {
+            "status": status,
+            "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "timezone": "Asia/Tokyo",
+            "sources": sources,
+            "events": events,
+        }
+    except Exception:
+        return _events_mock_snapshot()
+
+def _events_mock_snapshot():
+    # Last-resort fallback only (curated build is offline, so this is unlikely).
+    return {
+        "status": "mock",
+        "asOf": None,
+        "timezone": "Asia/Tokyo",
+        "sources": [{"name": n, "status": "mock", "lastUpdated": None}
+                    for n in _EVENT_SOURCE_NAMES + ["TreasuryDirect"]],
+        "events": [{
+            "id": "us-fomc-mock", "title": "FOMC Rate Decision", "category": "central_bank",
+            "country": "US", "source": "Federal Reserve", "impact": "high",
+            "eventTimeUtc": None, "eventDate": None, "localTimeJst": None,
+            "daysUntil": 0, "escalation": "normal", "rationaleJa": _EVENT_RATIONALE["fomc"],
+            "linkedAssets": ["USDJPY", "US10Y", "QQQ"], "status": "mock",
+        }],
+    }
+
+@app.route("/api/argus/events")
+def api_argus_events():
+    return jsonify(get_events_snapshot())
+
+
 # ━━━ Scheduler ━━━
 def is_us_trading_day():
     return datetime.now(TZ_ET).weekday() < 5
