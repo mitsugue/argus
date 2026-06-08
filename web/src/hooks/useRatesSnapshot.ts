@@ -62,54 +62,102 @@ const MOCK_SNAPSHOT: RatesSnapshot = {
   status:         'mock',
 };
 
+// Connection phase, surfaced to the UI so a cold-starting backend reads
+// as "connecting" rather than snapping straight to "mock":
+//   connecting — a fetch attempt is in flight (incl. retries)
+//   live       — backend answered with live FRED data
+//   mock       — backend answered with mock data, OR all attempts failed
+export type ConnPhase = 'connecting' | 'live' | 'mock';
+
 interface State {
   data: RatesSnapshot | null;
   error: string | null;
   loading: boolean;
+  phase: ConnPhase;
+  // 1-based attempt counter, so the UI can show "waking backend · try 2".
+  attempt: number;
+}
+
+// Render's free tier spins the backend down when idle; the first request
+// after a sleep can take 30–60s while the dyno wakes. Rather than fall
+// back to mock on that first miss, we retry a couple of times with a per-
+// attempt timeout, staying in the "connecting" phase, and only settle on
+// mock once every attempt is exhausted.
+const MAX_ATTEMPTS = 3; // initial + 2 retries
+const ATTEMPT_TIMEOUT_MS = 8_000; // abort a hung attempt so we can retry
+const RETRY_DELAYS_MS = [3_000, 6_000]; // wait before attempt 2, then 3
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
 }
 
 /**
  * Snapshot of US rates + VIX, normalized to action-relevant signals.
  *
  * Source of truth is the backend `/api/argus/rates` endpoint, which
- * wraps FRED. If `VITE_ARGUS_BACKEND_URL` is unset, OR the backend
- * is unreachable, OR FRED itself returns nothing, the hook falls back
- * to the mock snapshot above with `status === "mock"`. The UI can
- * surface that status so reviewers always know which mode they're in.
+ * wraps FRED. If `VITE_ARGUS_BACKEND_URL` is unset the hook serves the
+ * mock snapshot immediately. Otherwise it attempts the fetch up to
+ * MAX_ATTEMPTS times (covering Render cold starts), staying in the
+ * `connecting` phase between tries, and only falls back to the mock
+ * snapshot (`phase === "mock"`) once every attempt has failed. The UI
+ * can surface `phase`/`attempt` so reviewers always know which mode
+ * they're in — live, connecting, or mock.
  */
 export function useRatesSnapshot(): State {
   const [state, setState] = useState<State>({
     data: null,
     error: null,
     loading: true,
+    phase: 'connecting',
+    attempt: 0,
   });
 
   useEffect(() => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: MOCK_SNAPSHOT, error: null, loading: false });
+      setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock', attempt: 0 });
       return;
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/rates';
     let cancelled = false;
-    const ctrl = new AbortController();
-    fetch(url, { signal: ctrl.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<RatesSnapshot>;
-      })
-      .then((data) => {
+
+    async function run() {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         if (cancelled) return;
-        setState({ data, error: null, loading: false });
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        setState({ data: MOCK_SNAPSHOT, error: msg, loading: false });
-      });
+        setState((s) => ({ ...s, phase: 'connecting', loading: true, attempt, error: null }));
+
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
+        try {
+          const r = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(timer);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = (await r.json()) as RatesSnapshot;
+          if (cancelled) return;
+          // Trust the payload's own status: a 200 can still carry mock
+          // data if FRED failed on the backend side.
+          setState({ data, error: null, loading: false, phase: data.status, attempt });
+          return;
+        } catch (err: unknown) {
+          clearTimeout(timer);
+          if (cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          if (attempt < MAX_ATTEMPTS) {
+            // Stay in "connecting" and wait before the next attempt.
+            setState((s) => ({ ...s, error: msg, phase: 'connecting', loading: true, attempt }));
+            await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
+            continue;
+          }
+          // Every attempt exhausted → settle on the mock snapshot.
+          setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock', attempt });
+          return;
+        }
+      }
+    }
+
+    void run();
     return () => {
       cancelled = true;
-      ctrl.abort();
     };
   }, []);
 

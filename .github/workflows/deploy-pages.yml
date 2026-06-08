@@ -1,0 +1,66 @@
+name: Deploy web/ to GitHub Pages
+
+on:
+  push:
+    branches:
+      - claude/youthful-hopper
+      - main
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          DEPLOY_BASE: /argus/
+          # Wire the ARGUS UI to the live Render backend so the Rates
+          # Snapshot / status pill render `live` instead of `mock`. This
+          # is also set in web/.env.production (auto-loaded by Vite); the
+          # explicit value here makes the wiring visible in CI logs and
+          # keeps it working even if that file is absent. Not a secret —
+          # it's a public endpoint the client calls directly, and VITE_-
+          # prefixed vars are client-exposed by design.
+          VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

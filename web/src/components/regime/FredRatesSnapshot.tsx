@@ -64,13 +64,17 @@ const VOL_COLOR: Record<RiskVolatilityLabel, string> = {
 // ── component ────────────────────────────────────────────────────────
 
 export const FredRatesSnapshot: React.FC = () => {
-  const { data, loading } = useRatesSnapshot();
-  if (loading || !data) {
+  const { data, phase, attempt } = useRatesSnapshot();
+  // Cold-start window: a fetch attempt (or retry) is in flight and we have
+  // no payload yet. Show "connecting" / "waking backend" instead of mock so
+  // a sleeping Render dyno doesn't read as a failure.
+  if (phase === 'connecting' || !data) {
+    const label = attempt > 1 ? `waking backend · try ${attempt}` : 'connecting';
     return (
       <div className="card fred">
         <header className="fred__head">
           <span className="fred__title">FRED Rates Snapshot</span>
-          <span className="fred__status fred__status--mock">loading</span>
+          <span className="fred__status fred__status--connecting">{label}</span>
         </header>
       </div>
     );
