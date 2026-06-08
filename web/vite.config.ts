@@ -3,22 +3,40 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 // GitHub Pages serves the site under /<repo-name>/ — supply this via env at build time.
 // Locally and on other deploy targets (Vercel etc.) set DEPLOY_BASE='/' or leave unset.
 const base = process.env.DEPLOY_BASE ?? '/';
 
-const pkg = JSON.parse(
-  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf-8'),
-) as { version: string };
+const packageJsonUrl = new URL('./package.json', import.meta.url);
+const readVersion = (): string =>
+  (JSON.parse(readFileSync(packageJsonUrl, 'utf-8')) as { version: string }).version;
+
+// `__APP_VERSION__` resolves to a runtime global that this plugin injects fresh
+// into index.html on EVERY load (dev-serve per reload, and once at build time).
+// So a dev-server *reload* shows the latest version without a restart — the
+// plain build-time `define` alone would freeze it until the server restarts.
+// esbuild `define` only accepts a JSON value or a bare entity name, so the value
+// is the entity name `globalThis.__ARGUS_VERSION__` (the injected global), not an
+// expression.
+const argusVersionInjector = {
+  name: 'argus-version-injector',
+  transformIndexHtml() {
+    return [{
+      tag: 'script',
+      injectTo: 'head-prepend' as const,
+      children: `globalThis.__ARGUS_VERSION__=${JSON.stringify(readVersion())};`,
+    }];
+  },
+};
 
 export default defineConfig({
   base,
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: 'globalThis.__ARGUS_VERSION__',
   },
   plugins: [
+    argusVersionInjector,
     react(),
     VitePWA({
       registerType: 'autoUpdate',
