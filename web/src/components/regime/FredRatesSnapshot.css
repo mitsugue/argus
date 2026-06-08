@@ -84,6 +84,22 @@
   color: var(--text-faint);
   letter-spacing: 0.05em;
   text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* A mock series inside an otherwise-live snapshot: dim the cell and tag it so
+   the fallback value isn't mistaken for live data. */
+.fred__cell--mock { opacity: 0.55; }
+.fred__cell-badge {
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 1.4;
 }
 
 .fred__cell-value {

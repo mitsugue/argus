@@ -39,14 +39,27 @@ function changeClass(change: number): string {
   return 'fred__cell-change fred__cell-change--flat';
 }
 
-// Cell with label + value + change row.
-const Cell: React.FC<{ label: string; point: FredSeriesPoint }> = ({ label, point }) => (
-  <div className="fred__cell">
-    <span className="fred__cell-label">{label}</span>
-    <span className="fred__cell-value">{valueFmt(point)}</span>
-    <span className={changeClass(point.change)}>{changeFmt(point)}</span>
-  </div>
-);
+// Cell with label + value + change row. A series can be `mock` even when the
+// top-level snapshot is `live` (the aggregate status only tracks the signal-
+// driving 10Y + VIX), so mark a mock series at the cell level — dimmed with a
+// small badge — rather than presenting a fallback value as if it were live.
+const Cell: React.FC<{ label: string; point: FredSeriesPoint }> = ({ label, point }) => {
+  const isMock = point.status === 'mock';
+  return (
+    <div className={`fred__cell${isMock ? ' fred__cell--mock' : ''}`}>
+      <span className="fred__cell-label">
+        {label}
+        {isMock && (
+          <span className="fred__cell-badge" title="Series unavailable — showing mock value">
+            mock
+          </span>
+        )}
+      </span>
+      <span className="fred__cell-value">{valueFmt(point)}</span>
+      <span className={changeClass(point.change)}>{changeFmt(point)}</span>
+    </div>
+  );
+};
 
 // Color mapping for the signal dots — same palette as risk/action tokens.
 const PRESSURE_COLOR: Record<RatesPressureLabel, string> = {

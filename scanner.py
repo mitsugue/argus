@@ -1,6 +1,6 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
-import os, time, requests, anthropic, json, threading, re, math, statistics
+import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures
 try:
     from google import genai as google_genai
     from google.genai import types as genai_types
@@ -1465,9 +1465,24 @@ def _classify_risk_volatility(vix_level):
     if vix_level >= 18: return "Medium"
     return "Low"
 
+# Server-side cache for the rates snapshot. FRED rates update at most daily,
+# yet each call fans out to 4 FRED requests; without a cache every hit paid
+# that cost and slowed the cold-start path. Only a genuinely-live snapshot is
+# cached — a mock result is never pinned, so a transient FRED failure is
+# retried on the next request instead of being served for the whole TTL.
+_RATES_CACHE     = {"data": None, "expires": 0.0}
+_RATES_CACHE_TTL = 600  # seconds (10 min)
+
 def get_rates_snapshot():
     """Combined snapshot of the four watched series + derived signals."""
-    series = {sid: fetch_fred_series(sid) for sid in _FRED_SERIES}
+    now = time.time()
+    if _RATES_CACHE["data"] is not None and now < _RATES_CACHE["expires"]:
+        return _RATES_CACHE["data"]
+    # Fetch the four series concurrently (previously sequential: up to 4×8s).
+    # fetch_fred_series never raises, so each future resolves to a normalized
+    # dict or the per-series mock fallback. dict(zip(...)) keeps FRED-id order.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(_FRED_SERIES)) as ex:
+        series = dict(zip(_FRED_SERIES, ex.map(fetch_fred_series, _FRED_SERIES)))
     us10y  = series["DGS10"]
     vix    = series["VIXCLS"]
     rates_pressure  = _classify_rates_pressure(us10y["change"])
@@ -1484,7 +1499,7 @@ def get_rates_snapshot():
         f"VIX {vix['latestValue']:.1f}. "
         f"Pressure: {rates_pressure}, Vol: {risk_volatility}."
     )
-    return {
+    snapshot = {
         "us10y":          series["DGS10"],
         "us2y":           series["DGS2"],
         "usReal10y":      series["DFII10"],
@@ -1494,6 +1509,10 @@ def get_rates_snapshot():
         "summary":        summary,
         "status":         overall_status,
     }
+    if overall_status == "live":
+        _RATES_CACHE["data"]    = snapshot
+        _RATES_CACHE["expires"] = now + _RATES_CACHE_TTL
+    return snapshot
 
 @app.route("/api/argus/rates")
 def api_argus_rates():
