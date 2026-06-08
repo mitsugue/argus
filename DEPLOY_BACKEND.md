@@ -18,6 +18,7 @@ React frontend on Vercel to call it.
    - `JQUANTS_API_KEY`
    - `GEMINI_API_KEY`
    - `ANTHROPIC_API_KEY`
+   - `FRED_API_KEY` (powers `/api/argus/rates` — see https://fred.stlouisfed.org/docs/api/api_key.html; missing → endpoint returns mock fallback with `status: "mock"`)
    - `FINNHUB_API_KEY` (optional)
    - `NEWS_API_KEY` (optional)
    - `X_API_BEARER_TOKEN` (optional)

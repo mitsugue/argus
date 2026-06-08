@@ -1,0 +1,147 @@
+/* Calm minimal card. Header on the left, status pill on the right.
+   Four metric cells in a grid; two signal rows below. */
+
+.fred {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+}
+
+.fred__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fred__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.fred__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+.fred__status::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.fred__status--live {
+  color: var(--text-main);
+}
+.fred__status--live::before {
+  background: var(--green);
+}
+.fred__status--mock {
+  color: var(--text-sub);
+}
+.fred__status--mock::before {
+  background: var(--amber);
+}
+
+.fred__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.fred__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fred__cell-label {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.fred__cell-value {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.fred__cell-change {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+}
+.fred__cell-change--up   { color: var(--red); }
+.fred__cell-change--down { color: var(--green); }
+.fred__cell-change--flat { color: var(--text-muted); }
+
+/* Signal pair — Rates Pressure / Volatility Risk */
+.fred__signals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.fred__signal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fred__signal-label {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.fred__signal-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.fred__signal-value::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sig-color, var(--text-muted));
+}
+
+.fred__footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .fred__grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

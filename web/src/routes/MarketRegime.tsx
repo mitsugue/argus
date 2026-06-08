@@ -2,6 +2,7 @@ import React from 'react';
 import { PageShell } from './PageShell';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
+import { FredRatesSnapshot } from '../components/regime/FredRatesSnapshot';
 import { regimeMatrix, regimeSummary, rotationBoard } from '../mock/regime';
 import '../components/dashboard/Dashboard.css';
 
@@ -69,6 +70,14 @@ export const MarketRegime: React.FC = () => {
             {regimeSummary.body}
           </p>
         </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">FRED Rates Snapshot</span>
+          <span className="section-head__count">first live data source</span>
+        </div>
+        <FredRatesSnapshot />
       </section>
 
       <section>

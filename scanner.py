@@ -311,13 +311,15 @@ claude     = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 STATE_FILE = "/tmp/scan_state.json"
 app        = Flask(__name__)
 
-# CORS for /api/argus/* — lets the React frontend (Vercel + localhost dev)
-# call the ledger endpoints. Other routes stay same-origin.
+# CORS for /api/argus/* — lets the React frontend (Vercel, GitHub Pages,
+# and localhost dev) call the ledger / rates endpoints. Other routes
+# stay same-origin.
 if CORS is not None:
     CORS(app, resources={r"/api/argus/*": {"origins": [
         re.compile(r"^http://localhost(:\d+)?$"),
         re.compile(r"^http://127\.0\.0\.1(:\d+)?$"),
         re.compile(r"^https://.*\.vercel\.app$"),
+        re.compile(r"^https://mitsugue\.github\.io$"),
     ]}})
 
 @app.after_request
@@ -1335,6 +1337,129 @@ def api_argus_ledger_recent():
         limit = 50
     limit = max(1, min(limit, 500))
     return jsonify({"entries": argus_ledger.list_recent(limit=limit)})
+
+
+# ━━━ FRED rates snapshot ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Server-side only — never expose FRED_API_KEY to the frontend.
+
+_FRED_API_KEY = os.environ.get("FRED_API_KEY")
+_FRED_BASE    = "https://api.stlouisfed.org/fred/series/observations"
+_FRED_SERIES  = {
+    "DGS10":  "US 10Y Treasury yield",
+    "DGS2":   "US 2Y Treasury yield",
+    "DFII10": "US 10Y real yield",
+    "VIXCLS": "VIX",
+}
+# Plausible "Tuesday before US CPI" mock state — used when FRED_API_KEY
+# is absent or any per-series fetch fails. Each tuple is (latest, prev).
+_FRED_MOCK = {
+    "DGS10":  (4.42, 4.30),
+    "DGS2":   (4.65, 4.60),
+    "DFII10": (1.85, 1.82),
+    "VIXCLS": (17.4, 17.0),
+}
+
+def _fred_normalize(series_id, latest, prev, latest_date, status):
+    change = float(latest) - float(prev)
+    return {
+        "seriesId":      series_id,
+        "label":         _FRED_SERIES.get(series_id, series_id),
+        "latestValue":   round(float(latest), 4),
+        "previousValue": round(float(prev),   4),
+        "change":        round(change, 4),
+        # For rates (DGS*), values are in percentage points → bps = ×100.
+        # For VIX it's a vol index; the same multiplier still gives a
+        # readable centi-unit move (1.0 → 100). Frontends should treat
+        # VIX changeBp as informational only.
+        "changeBp":      round(change * 100, 1),
+        "latestDate":    latest_date,
+        "status":        status,
+    }
+
+def _fred_mock_series(series_id):
+    latest, prev = _FRED_MOCK[series_id]
+    return _fred_normalize(
+        series_id, latest, prev,
+        datetime.now().strftime("%Y-%m-%d"),
+        "mock",
+    )
+
+def fetch_fred_series(series_id):
+    """Fetch latest two non-missing observations for a FRED series.
+
+    Returns a normalized dict on success, the mock fallback on failure.
+    Never raises — failure modes (no key / network error / missing data)
+    all degrade to mock so the UI always renders.
+    """
+    if series_id not in _FRED_SERIES:
+        return None
+    if not _FRED_API_KEY:
+        return _fred_mock_series(series_id)
+    try:
+        r = requests.get(_FRED_BASE, params={
+            "series_id":  series_id,
+            "api_key":    _FRED_API_KEY,
+            "file_type":  "json",
+            "sort_order": "desc",
+            # FRED uses '.' for missing values; pull a small safety margin
+            # so we always have two real observations to diff.
+            "limit":      8,
+        }, timeout=8)
+        r.raise_for_status()
+        obs = [o for o in r.json().get("observations", [])
+               if o.get("value") not in (None, ".", "")]
+        if len(obs) < 2:
+            return _fred_mock_series(series_id)
+        return _fred_normalize(
+            series_id,
+            obs[0]["value"], obs[1]["value"],
+            obs[0]["date"],
+            "live",
+        )
+    except Exception:
+        return _fred_mock_series(series_id)
+
+def _classify_rates_pressure(dgs10_change):
+    """Per v8.4 spec — based on the absolute US 10Y change (pp)."""
+    c = dgs10_change
+    if c >  0.08: return "High"
+    if c >= 0.03: return "Medium"
+    if c < -0.03: return "Relief"
+    return "Neutral"
+
+def _classify_risk_volatility(vix_level):
+    if vix_level > 22: return "High"
+    if vix_level > 18: return "Medium"
+    return "Low"
+
+def get_rates_snapshot():
+    """Combined snapshot of the four watched series + derived signals."""
+    series = {sid: fetch_fred_series(sid) for sid in _FRED_SERIES}
+    us10y  = series["DGS10"]
+    vix    = series["VIXCLS"]
+    rates_pressure  = _classify_rates_pressure(us10y["change"])
+    risk_volatility = _classify_risk_volatility(vix["latestValue"])
+    overall_status  = "live" if all(s["status"] == "live" for s in series.values()) else "mock"
+    summary = (
+        f"10Y {us10y['latestValue']:.2f}% ({us10y['changeBp']:+.0f}bp), "
+        f"VIX {vix['latestValue']:.1f}. "
+        f"Pressure: {rates_pressure}, Vol: {risk_volatility}."
+    )
+    return {
+        "us10y":          series["DGS10"],
+        "us2y":           series["DGS2"],
+        "usReal10y":      series["DFII10"],
+        "vix":            series["VIXCLS"],
+        "ratesPressure":  rates_pressure,
+        "riskVolatility": risk_volatility,
+        "summary":        summary,
+        "status":         overall_status,
+    }
+
+@app.route("/api/argus/rates")
+def api_argus_rates():
+    return jsonify(get_rates_snapshot())
+
 
 # ━━━ Scheduler ━━━
 def is_us_trading_day():
