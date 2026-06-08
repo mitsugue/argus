@@ -36,7 +36,7 @@ const ROUTES = [
 const KEPT = [
   'AppShell — slim header, persistent sidebar (Today\'s call pill stable across pages)',
   'Theme token structure (palette swapped, shape preserved)',
-  'Backend scanner.py + argus_ledger.py — untouched, ready to wire',
+  'Backend scanner.py + argus_ledger.py — now wired live (FRED rates, J-Quants JP + Twelve Data US watchlists, Event Radar, Action Labels, Corporate Catalysts, Pro Handoff)',
   'English chrome + Japanese market commentary balance',
 ];
 
@@ -70,10 +70,10 @@ const OPEN_QUESTIONS = [
 ];
 
 const GAPS = [
-  'Watchlist add/remove UI — currently mock-only, no input',
+  'Watchlist add/remove UI — not built yet (the watchlist symbol set is fixed/curated)',
   'No detail panel when clicking an alert or watchlist row',
   'No filter chips on Watchlist (e.g., "show EXIT only")',
-  'No real backend wiring — scanner.py exists, frontend not consuming',
+  'Automated OpenAI/Gemini AI judgment not live yet — action labels are rule-based (Action Label Engine v0); GPT-5.5 Pro review is manual via Pro Handoff',
   'No real capital rotation data source yet (Capital Rotation Board is mock)',
   'No scoring formula for the Regime Matrix position (x, y are hand-set in mock)',
   'No regime-shift audit trail explaining why Market Regime changed',
@@ -157,9 +157,9 @@ ${ROUTES.map(([name, desc]) => `- **${name}** — ${desc}`).join('\n')}
 
 ---
 
-## Mock data
+## Current data state
 
-Plausible "Tuesday before US CPI" snapshot. Cautious across satellites (Wait / Wait for Pullback / Trim), steady on core (Continue / Defer Lump Sum / Gradual Add). NOT trading advice — the goal is to motivate the UI shapes, not to model real markets.
+LIVE: FRED rates/VIX, J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar (official calendars + Treasury auctions), Action Label Engine v0 (rule-based), Corporate Catalysts (SEC EDGAR + Finnhub + J-Quants), and the manual GPT-5.5 Pro Handoff export. Still mock/pending: Market Regime scoring, Alerts scanner, Capital Rotation source, automated OpenAI/Gemini judgment, and some Today/CommandCenter compact previews. NOT trading advice — decision support only.
 
 ## Decisions log
 
@@ -383,8 +383,8 @@ export const AIReview: React.FC = () => {
         <li><strong>Regime Glossary.</strong> Ten regime tags with Japanese definitions.</li>
       </ol>
 
-      <h2>Mock data</h2>
-      <p>Plausible "Tuesday before US CPI" snapshot. Cautious across satellites, steady on core. NOT trading advice — the data motivates the UI shapes, not real markets.</p>
+      <h2>Current data state</h2>
+      <p>LIVE: FRED rates/VIX, J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar, Action Label Engine v0 (rule-based), Corporate Catalysts, and the manual GPT-5.5 Pro Handoff. Still mock/pending: Market Regime scoring, Alerts scanner, Capital Rotation source, automated OpenAI/Gemini judgment, some Today previews. NOT trading advice — decision support only.</p>
 
       <h2>Decisions log</h2>
       <div className="review__columns">

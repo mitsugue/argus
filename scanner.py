@@ -2531,49 +2531,76 @@ def api_argus_security_unlock():
 _PRO_HANDOFF_CACHE = {"data": None, "expires": 0.0}
 _PRO_HANDOFF_TTL   = 180  # 3 min
 
-def _compose_pro_prompt(rates, jp, us, ev, al, cat=None):
+def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled"):
     now_jst = datetime.now(TZ_JST)
     L = []
+    L.append("# A.R.G.U.S. — GPT-5.5 Pro Handoff")
     L.append("You are GPT-5.5 Pro acting as a second-opinion investment decision reviewer for ARGUS.")
     L.append("")
-    L.append("# ARGUS frame")
-    L.append("- ARGUS is NOT a prediction engine. It classifies CURRENT market conditions into action categories.")
-    L.append("- The user wants: today's stance, risks, reasons, what to touch, what to avoid, what to wait for, and what would change the decision.")
-    L.append("- Use calm, conservative decision logic. Do NOT hallucinate news, flow, VWAP, or unseen data.")
-    L.append("- If information is insufficient, say so and prefer WAIT/HOLD.")
+
+    # ── 1. Product Identity (static constitution) ──
+    L.append("## 1. Product Identity")
+    L.append("- A.R.G.U.S. = Autonomous Risk and Global Uncertainty Scanner.")
+    L.append("- A personal action-decision engine for daily investing. NOT a chart app. NOT a prediction engine.")
+    L.append("- A calm investment command center that classifies CURRENT market conditions into action categories.")
+    L.append("- It answers: today's call, the risk, the reason, what to touch, what to avoid, what to wait for, and what would change the posture.")
     L.append("")
-    L.append(f"# Timestamp\n- {now_jst.strftime('%Y-%m-%d %H:%M')} JST (timezone: Asia/Tokyo)")
+
+    # ── 2. Design / Interpretation Rules (static) ──
+    L.append("## 2. Design / Interpretation Rules")
+    L.append("- Market visuals are supporting evidence, not the primary experience.")
+    L.append("- Intentional bilingual: English chrome + Japanese reasoning.")
+    L.append("- Calm Bloomberg Terminal + Linear + Raycast + Stripe Dashboard direction. No HUD / cyberpunk / neon / fake terminal styling.")
+    L.append("- Tactical action labels: EXIT / TRIM / WAIT / WAIT FOR PULLBACK / BUY DIP / ADD / HOLD.")
+    L.append("- Core (long-term index) labels: CONTINUE / GRADUAL ADD / DEFER LUMP SUM / NO SELL ACTION.")
     L.append("")
-    L.append("# Current live data")
+
+    # ── 3. Current Live State (generated from backend snapshots) ──
+    L.append("## 3. Current Live State")
+    L.append(f"- asOf: {now_jst.strftime('%Y-%m-%d %H:%M')} JST (Asia/Tokyo)")
+    def _st(x):
+        return x.get("status", "unavailable") if isinstance(x, dict) else "unavailable"
+    L.append("- Source statuses: "
+             f"rates={_st(rates)}, japanWatchlist={_st(jp)}, usWatchlist={_st(us)}, events={_st(ev)}, "
+             f"actionLabels={_st(al)}, catalysts={_st(cat) if isinstance(cat, dict) else 'unavailable'}, "
+             f"proHandoff=live, aiJudgment={aij_status}")
     if isinstance(rates, dict):
         def _rv(k):
             d = rates.get(k) or {}
-            return d.get("latestValue")
-        L.append("## Rates / VIX")
-        L.append(f"- US10Y: {_rv('us10y')}  US2Y: {_rv('us2y')}  Real10Y: {_rv('usReal10y')}  VIX: {_rv('vix')}")
-        L.append(f"- ratesPressure: {rates.get('ratesPressure')}  riskVolatility: {rates.get('riskVolatility')}  ({rates.get('status')})")
+            return f"{d.get('latestValue')} ({d.get('latestDate', '')})"
+        L.append("### Rates / VIX")
+        L.append(f"- US10Y {_rv('us10y')} | US2Y {_rv('us2y')} | Real10Y {_rv('usReal10y')} | VIX {_rv('vix')}")
+        L.append(f"- ratesPressure={rates.get('ratesPressure')} | riskVolatility={rates.get('riskVolatility')} | status={rates.get('status')}")
     if isinstance(ev, dict):
-        L.append("## Event Radar (urgent first)")
+        L.append("### Event Radar (urgent first)")
         order = {"D": 0, "D-1": 1, "D-3": 2, "D-7": 3, "D+1": 4, "normal": 5}
         evs = sorted(ev.get("events", []), key=lambda e: (order.get(e.get("escalation"), 9), e.get("daysUntil", 999)))
-        for e in evs[:12]:
+        for e in evs[:14]:
             when = e.get("localTimeJst") or e.get("eventDate") or ""
-            L.append(f"- [{e.get('escalation')}] {e.get('title')} | {e.get('country')}/{e.get('category')} | {when} | impact={e.get('impact')} | {e.get('source')} | {e.get('rationaleJa', '')}")
+            assets = ",".join(e.get("linkedAssets", []) or [])
+            L.append(f"- [{e.get('escalation')}] {e.get('title')} | {e.get('country')}/{e.get('category')} | {when} | "
+                     f"impact={e.get('impact')} | assets:{assets} | {e.get('source')}({e.get('status')}) | {e.get('rationaleJa', '')}")
     def _wl(snap, label):
         if not isinstance(snap, dict):
             return
-        L.append(f"## {label} ({snap.get('status')}{', asOf ' + snap['asOf'] if snap.get('asOf') else ''})")
+        L.append(f"### {label} (status={snap.get('status')}{', asOf ' + snap['asOf'] if snap.get('asOf') else ''})")
         for s in snap.get("stocks", []):
-            L.append(f"- {s.get('symbol')} {s.get('name')}: {s.get('price')} ({s.get('changePct')}%) vol={s.get('volume')} {s.get('date') or ''}")
+            L.append(f"- {s.get('symbol')} {s.get('name')}: {s.get('price')} ({s.get('changePct')}%) "
+                     f"vol={s.get('volume')} {s.get('date') or ''} [{s.get('status')}]")
     _wl(jp, "Japan Watchlist")
     _wl(us, "US Watchlist")
     if isinstance(al, dict):
         mp = al.get("marketPosture", {}) or {}
-        L.append(f"## Action Label Engine (rule v0) — marketPosture: {mp.get('label')} ({mp.get('rationaleJa', '')})")
+        L.append(f"### Action Label Engine ({al.get('engineVersion', 'action-v0')}, status={al.get('status')}) — "
+                 f"marketPosture: {mp.get('label')} ({mp.get('rationaleJa', '')})")
         for l in al.get("labels", []):
-            L.append(f"- {l.get('symbol')} [{l.get('market')}]: ruleAction={l.get('action')} risk={l.get('risk')} conf={l.get('confidence')} | {l.get('reasonJa', '')} | next: {l.get('nextConditionJa', '')}")
+            sd = l.get("supportingData", {}) or {}
+            L.append(f"- {l.get('symbol')} [{l.get('market')}]: ruleAction={l.get('action')} risk={l.get('risk')} "
+                     f"conf={l.get('confidence')} | chg={sd.get('changePct')}% ev={sd.get('eventEscalation')} "
+                     f"rates={sd.get('ratesPosture')} | {l.get('reasonJa', '')} | next: {l.get('nextConditionJa', '')}")
     if isinstance(cat, dict):
-        L.append("## Corporate catalysts (company-specific)")
+        L.append(f"### Corporate Catalysts ({cat.get('engineVersion', 'catalyst-v1')}, status={cat.get('status')})")
+        L.append("- Sources: " + ", ".join(f"{s.get('name')}={s.get('status')}" for s in cat.get("sources", [])))
         for it in cat.get("items", []):
             e = it.get("earnings", {}) or {}
             parts = [f"risk={it.get('catalystRisk')}", f"impact={it.get('actionImpact')}"]
@@ -2581,40 +2608,60 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None):
                 parts.append(f"earnings {e.get('date')} (D-{e.get('daysUntil')})")
             if it.get("filings"):
                 f0 = it["filings"][0]
-                parts.append(f"recent {f0.get('form')} {f0.get('filingDate')} (+{len(it['filings'])} filings)")
+                parts.append(f"recent {f0.get('form')} {f0.get('filingDate')} ({f0.get('url', '')}) +{len(it['filings'])} filings")
             if it.get("news"):
                 parts.append(f"news {len(it['news'])} (7d)")
             for d in it.get("disclosures", []):
                 if d.get("status") == "live":
                     parts.append(f"disclosure {d.get('type')} {d.get('date')}")
             L.append(f"- {it.get('symbol')} [{it.get('market')}]: " + " | ".join(parts) + f" | {it.get('summaryJa', '')}")
-            # top news headline only (metadata, no body)
             if it.get("news"):
                 n0 = it["news"][0]
                 L.append(f"    news: {n0.get('headline', '')} — {n0.get('publisher', '')} {n0.get('url', '')}")
     L.append("")
-    L.append("# Data limitations (be honest about these)")
-    L.append("- No direct VWAP unless real. No moomoo order flow yet. No order book / tape yet.")
-    L.append("- Catalysts: SEC filing metadata + Finnhub earnings/news + J-Quants disclosure dates only — NO filing-text/article-body analysis. JP earnings calendar covers ~next business day only; TDnet is a pending add-on.")
-    L.append("- No consensus/actual economic-release interpretation yet.")
-    L.append("- Rule engine v0 is conservative and does NOT output EXIT/TRIM.")
+
+    # ── 4. Current AI State (explicit) ──
+    L.append("## 4. Current AI State")
+    L.append("- The action labels above are RULE-BASED (Action Label Engine v0). They are NOT generated by GPT or Gemini.")
+    L.append(f"- Automated OpenAI/Gemini judgment is {'LIVE' if aij_status == 'live' else 'PENDING / DISABLED'} (/api/argus/ai-judgment status={aij_status}).")
+    L.append("- This Pro Handoff does NOT call OpenAI or Gemini and costs nothing.")
+    L.append("- The user manually pastes this prompt into ChatGPT GPT-5.5 Pro for a high-stakes second opinion.")
     L.append("")
-    L.append("# Your tasks")
-    L.append("1. Overall stance: RISK_ON / CAUTIOUS / RISK_OFF / EVENT_WAIT.")
-    L.append("2. Today's decision: what to touch, what to avoid, what to wait for.")
-    L.append("3. Symbol-by-symbol: confirm / caution / disagree with the ARGUS rule label, conservatively.")
-    L.append("4. Any label changes you recommend, with conservative reasoning.")
-    L.append("5. Key risks for the next 24–72h.")
-    L.append("6. What would change the decision.")
-    L.append("7. Questions / missing data that would materially improve judgment.")
-    L.append("8. A final concise command-center summary in Japanese.")
+
+    # ── 5. Data Limitations (true current limitations) ──
+    L.append("## 5. Data Limitations")
+    if aij_status != "live":
+        L.append("- No automatic OpenAI/Gemini AI judgment yet (currently disabled/pending).")
+    L.append("- No moomoo order flow / order book / tape yet. No VWAP (no real source).")
+    if isinstance(cat, dict):
+        L.append("- Catalysts are metadata only (SEC filing metadata + Finnhub earnings/news + J-Quants disclosure dates) — NO filing-text/article-body analysis; JP earnings calendar covers ~next business day; TDnet add-on pending.")
+        L.append("- No earnings interpretation (actual vs consensus) yet.")
+    else:
+        L.append("- No corporate catalyst layer / earnings interpretation yet.")
+    L.append("- Market Regime is not live-scored yet (mock). Alerts scanner is not live yet (mock).")
+    L.append("- No historical judgment log and no user-specific exposure weighting yet.")
+    L.append("- Today/CommandCenter compact previews may still use seed data.")
+    L.append("- Action Label Engine v0 is conservative and does NOT output EXIT/TRIM/ADD/BUY DIP (only HOLD/WAIT/WAIT FOR PULLBACK) until later upgraded.")
     L.append("")
-    L.append("# Output format (Japanese reasoning, English action labels)")
-    L.append("- Executive Judgment / Today's Action Map / Symbol Review / Event-Rates Risk / What Changes the Decision / Data Limitations / Final Command")
+
+    # ── 6. GPT-5.5 Pro Review Task ──
+    L.append("## 6. GPT-5.5 Pro Review Task")
+    L.append("Produce, using this exact structure:")
+    L.append("- Executive Judgment")
+    L.append("- Today's Action Map (what to touch / avoid / wait for)")
+    L.append("- Symbol Review (confirm / caution / disagree with each ARGUS rule label)")
+    L.append("- Event/Rates Risk")
+    L.append("- What Changes the Decision")
+    L.append("- Data Limitations")
+    L.append("- Final Command (concise command-center summary)")
     L.append("")
-    L.append("# Important")
-    L.append("- Do not give financial advice as certainty. Treat this as decision support.")
-    L.append("- Do not invent data. When in doubt, downgrade to WAIT/HOLD.")
+    L.append("Instructions:")
+    L.append("- Reason in Japanese; keep action labels in English.")
+    L.append("- Do NOT fabricate news, VWAP, flow, order book, analyst ratings, or any unprovided data.")
+    L.append("- Do NOT treat this as certain financial advice — it is decision support.")
+    L.append("- Review whether ARGUS rule labels are too aggressive, too conservative, or appropriate.")
+    L.append("- When in doubt, downgrade to WAIT/HOLD.")
+    L.append("- Clearly separate what is supported by the current data, what is inference, and what is missing.")
     return "\n".join(L)
 
 def _build_pro_handoff():
@@ -2622,15 +2669,19 @@ def _build_pro_handoff():
     us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
     cat = get_catalysts_snapshot()
     def _st(x): return x.get("status", "mock") if isinstance(x, dict) else "mock"
+    # Automated AI judgment is pending/disabled (the /api/argus/ai-judgment GET
+    # returns disabled); reflect that truthfully without affecting data status.
+    aij_status = "live" if _AI_JUDGE_ENABLED else "disabled"
     src = {"rates": _st(rates), "japanWatchlist": _st(jp), "usWatchlist": _st(us),
            "events": _st(ev), "actionLabels": _st(al), "catalysts": _st(cat)}
     warnings = [f"{k} is {v}" for k, v in src.items() if v != "live"]
-    prompt = _compose_pro_prompt(rates, jp, us, ev, al, cat)
+    prompt = _compose_pro_prompt(rates, jp, us, ev, al, cat, aij_status)
     live_n = sum(1 for v in src.values() if v == "live")
     status = "live" if live_n == len(src) else ("partial" if live_n > 0 else "mock")
+    source_statuses = {**src, "proHandoff": "live", "aiJudgment": aij_status}
     return {"status": status, "asOf": _ai_now_iso(), "engineVersion": "pro-handoff-v1",
             "title": "ARGUS GPT-5.5 Pro Handoff", "promptText": prompt, "charCount": len(prompt),
-            "sourceStatuses": src, "warnings": warnings}
+            "sourceStatuses": source_statuses, "warnings": warnings}
 
 @app.route("/api/argus/pro-handoff")
 def api_argus_pro_handoff():
