@@ -4,7 +4,9 @@ import { WatchRow } from '../components/dashboard/WatchRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
+import { useActionLabels } from '../hooks/useActionLabels';
 import type { WatchEntry, WatchJP, WatchUS, JapanStockQuote, USStockQuote } from '../types/watch';
+import type { ActionLabel } from '../types/actionLabels';
 import type { ActionKey } from '../types/action';
 import '../components/dashboard/Dashboard.css';
 
@@ -19,6 +21,9 @@ const URGENCY: Record<ActionKey, number> = {
   HOLD: 6,
 };
 
+const sortByUrgency = (a: WatchEntry, b: WatchEntry) =>
+  URGENCY[a.action as ActionKey] - URGENCY[b.action as ActionKey];
+
 // Distinct actions that appear in scope — used for the summary chip strip.
 function tally(entries: WatchEntry[]): { action: ActionKey; count: number }[] {
   const counts = new Map<ActionKey, number>();
@@ -30,50 +35,63 @@ function tally(entries: WatchEntry[]): { action: ActionKey; count: number }[] {
     .sort((a, b) => URGENCY[a.action] - URGENCY[b.action]);
 }
 
-// Live rows carry price/change/volume only — there is no AI action label yet,
-// so show a neutral placeholder. Wiring the scanner's action is a later step.
-const PLACEHOLDER_ACTION: ActionKey = 'HOLD';
+const ACTION_KEYS: ActionKey[] = ['EXIT', 'TRIM', 'WAIT', 'WAIT_FOR_PULLBACK', 'BUY_DIP', 'ADD', 'HOLD'];
+// Backend sends English action strings ("WAIT FOR PULLBACK"); normalize to the
+// frontend's underscored ActionKey. Falls back to HOLD when no label is present.
+function toActionKey(a?: string): ActionKey {
+  const k = (a ?? 'HOLD').replace(/ /g, '_');
+  return (ACTION_KEYS as string[]).includes(k) ? (k as ActionKey) : 'HOLD';
+}
 
-function toWatchJP(q: JapanStockQuote): WatchJP {
+// Map a live quote + (optional) action label into a watch row. Price/volume
+// come from the watchlist hook; action/reason/confidence/risk from the label.
+function toRow<M extends 'JP' | 'US'>(
+  q: JapanStockQuote | USStockQuote,
+  market: M,
+  label: ActionLabel | undefined,
+): WatchJP | WatchUS {
   return {
-    market: 'JP',
+    market,
     symbol: q.symbol,
     name: q.name,
     price: q.price,
     changePct: q.changePct,
     changeAbs: q.changeAbs,
     volume: q.volume,
-    action: PLACEHOLDER_ACTION,
+    action: toActionKey(label?.action),
+    reason: label?.reasonJa,
+    confidence: label?.confidence,
+    signalRisk: label?.risk,
+    nextConditionJa: label?.nextConditionJa,
     updatedAt: Date.now(),
-  };
+  } as WatchJP | WatchUS;
 }
 
-function toWatchUS(q: USStockQuote): WatchUS {
-  return {
-    market: 'US',
-    symbol: q.symbol,
-    name: q.name,
-    price: q.price,
-    changePct: q.changePct,
-    changeAbs: q.changeAbs,
-    volume: q.volume,
-    action: PLACEHOLDER_ACTION,
-    updatedAt: Date.now(),
-  };
-}
-
-function statusLabel(phase: 'connecting' | 'live' | 'mock', attempt: number): string {
+function statusLabel(phase: 'connecting' | 'live' | 'partial' | 'mock', attempt: number): string {
   if (phase === 'connecting') return attempt > 1 ? `waking backend · try ${attempt}` : 'connecting';
-  return phase; // 'live' | 'mock'
+  return phase; // 'live' | 'partial' | 'mock'
 }
 
 export const Watchlist: React.FC = () => {
-  // Both watchlists are live from the backend, each with connecting/mock states.
   const { data: jp, phase: jpPhase, attempt: jpAttempt } = useJapanWatchlist();
   const { data: us, phase: usPhase, attempt: usAttempt } = useUSWatchlist();
+  const { data: labels } = useActionLabels();
 
-  const jpRows = useMemo<WatchJP[]>(() => (jp ? jp.stocks.map(toWatchJP) : []), [jp]);
-  const usRows = useMemo<WatchUS[]>(() => (us ? us.stocks.map(toWatchUS) : []), [us]);
+  // symbol → action label (rule-based engine v0). Empty when labels unavailable.
+  const labelMap = useMemo(() => {
+    const m = new Map<string, ActionLabel>();
+    (labels?.labels ?? []).forEach((l) => m.set(l.symbol, l));
+    return m;
+  }, [labels]);
+
+  const jpRows = useMemo<WatchJP[]>(
+    () => (jp ? jp.stocks.map((s) => toRow(s, 'JP', labelMap.get(s.symbol)) as WatchJP).sort(sortByUrgency) : []),
+    [jp, labelMap],
+  );
+  const usRows = useMemo<WatchUS[]>(
+    () => (us ? us.stocks.map((s) => toRow(s, 'US', labelMap.get(s.symbol)) as WatchUS).sort(sortByUrgency) : []),
+    [us, labelMap],
+  );
   const summary = useMemo(() => tally([...jpRows, ...usRows]), [jpRows, usRows]);
 
   return (
@@ -81,6 +99,13 @@ export const Watchlist: React.FC = () => {
       title="Watchlist"
       subtitle="Tracked names with their action label. Sorted by urgency — defensive calls first."
     >
+      {labels?.marketPosture && (
+        <div className="watch-posture">
+          <span className="watch-posture__label">{labels.marketPosture.label.replace('_', ' ')}</span>
+          <span className="watch-posture__note">{labels.marketPosture.rationaleJa}</span>
+        </div>
+      )}
+
       <div className="watch-summary">
         {summary.map(({ action, count }) => (
           <span className="watch-summary__item" key={action}>

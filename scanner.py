@@ -1946,6 +1946,179 @@ def api_argus_events():
     return jsonify(get_events_snapshot())
 
 
+# ━━━ Action Label Engine v0 (rule-based, internal) ━━━
+# Classifies the watched names into ARGUS action categories using EXISTING live
+# data only (rates + watchlists + events). No external LLM, no new APIs, no
+# invented VWAP/flow/news. Conservative by design: prefers WAIT/HOLD when
+# unsure, never EXIT, and never TRIM in v0 (no trend/flow confirmation yet).
+_ACTION_SYMBOLS = [
+    {"symbol": "8058", "market": "JP", "name": "Mitsubishi Heavy Industries", "cls": "jp_industrial"},
+    {"symbol": "9984", "market": "JP", "name": "SoftBank Group",              "cls": "jp_momentum"},
+    {"symbol": "5801", "market": "JP", "name": "Furukawa Electric",           "cls": "jp_momentum"},
+    {"symbol": "5803", "market": "JP", "name": "Fujikura",                    "cls": "jp_momentum"},
+    {"symbol": "6584", "market": "JP", "name": "Sanoh Industrial",            "cls": "jp_momentum"},
+    {"symbol": "285A", "market": "JP", "name": "Kioxia Holdings",             "cls": "jp_momentum"},
+    {"symbol": "9501", "market": "JP", "name": "Tokyo Electric Power",        "cls": "jp_utility"},
+    {"symbol": "NVDA", "market": "US", "name": "NVIDIA",                      "cls": "us_growth"},
+    {"symbol": "AAPL", "market": "US", "name": "Apple",                       "cls": "us_growth"},
+    {"symbol": "TSLA", "market": "US", "name": "Tesla",                       "cls": "us_growth"},
+    {"symbol": "META", "market": "US", "name": "Meta Platforms",             "cls": "us_growth"},
+]
+
+def _rates_posture(rates):
+    # Derived from the snapshot's ratesPressure (computed from the 10Y change
+    # FRED gives us — a real signal), stated cautiously. No intraday claims.
+    rp = rates.get("ratesPressure") if isinstance(rates, dict) else None
+    if rp in ("High", "Medium"): return "elevated"
+    if rp == "Relief":           return "easing"
+    return "neutral"
+
+def _region_event_escalation(events, region):
+    """Most severe relevant high-impact escalation for a region (or None)."""
+    sev = {"D": 3, "D-1": 3, "D-3": 2}
+    best, best_sev = None, 0
+    for e in events:
+        if e.get("impact") != "high":
+            continue
+        esc = e.get("escalation")
+        if esc not in sev:
+            continue
+        t = e.get("title", "")
+        rel = ("BOJ" in t) if region == "JP" else (
+            e.get("country") == "US" and any(k in t for k in ("FOMC", "CPI", "PCE", "Employment")))
+        if rel and sev[esc] > best_sev:
+            best, best_sev = esc, sev[esc]
+    return best
+
+def _classify_symbol(meta, chg, esc, posture):
+    """Transparent v0 rules. Returns (action, risk, confidence, reasonJa, nextJa)."""
+    high_beta = meta["cls"] in ("us_growth", "jp_momentum")
+    imminent  = esc in ("D", "D-1")
+    near      = esc == "D-3"
+    elevated_event = imminent or near
+
+    if chg <= -7:
+        action, risk, conf = "WAIT", "high", 0.82
+        reason = "下落モメンタムが大きく、急落の途中で拾うのは避ける。"
+        nxt = "下げ止まり・下げ幅の縮小・翌セッションでの確認を待つ。"
+    elif chg <= -5:
+        action, risk, conf = "WAIT", "high", 0.70
+        reason = "大きめの下落でリスクが高く、急落の途中で拾うのは避ける。"
+        nxt = "株価が下げ止まり、出来高を伴って安定するかを確認する。"
+    elif chg >= 5:
+        action, risk, conf = "WAIT FOR PULLBACK", "medium", 0.65
+        reason = "大きく上昇した直後で、追いかけ買いは避ける。"
+        nxt = "押し目を作り過熱が和らぐかを確認する。"
+    elif 2 <= chg < 5:
+        if imminent or (near and high_beta):
+            action, risk, conf = "WAIT FOR PULLBACK", "medium", 0.55
+            reason = "上昇後かつ重要イベント接近のため、追いかけ買いを避ける。"
+            nxt = "イベント通過後の反応と押し目の有無を確認する。"
+        else:
+            action, risk, conf = "HOLD", "medium", 0.50
+            reason = "緩やかな上昇でトレンドは継続。新規の追いかけは控える。"
+            nxt = "上昇の継続性と次のイベント日程を確認する。"
+    elif -2 < chg < 2:
+        if elevated_event and high_beta:
+            action, risk, conf = "WAIT", "medium", 0.55
+            reason = "値動きは小さいが重要イベントが近く、高ベータ銘柄は様子見。"
+            nxt = "イベント通過後の金利・為替・指数の反応を確認する。"
+        else:
+            action, risk, conf = "HOLD", ("medium" if elevated_event else "low"), 0.45
+            reason = "値動きは限定的でトレンドに変化なし。"
+            nxt = "次のイベントと値動きの変化を確認する。"
+    else:  # -5 < chg <= -2
+        if elevated_event or posture == "elevated":
+            action, risk, conf = "WAIT", "medium", 0.55
+            reason = "やや軟調かつイベント/金利のリスクがあり、新規は様子見。"
+            nxt = "下げ止まりとイベント通過後の方向を確認する。"
+        else:
+            action, risk, conf = "HOLD", "medium", 0.45
+            reason = "やや軟調だが過度な売り材料はなく保有継続。"
+            nxt = "下げ幅の拡大や地合いの悪化がないかを確認する。"
+
+    # Rate-sensitive growth/momentum caution wording (v0 — no intraday claim).
+    if high_beta and posture == "elevated":
+        reason += " 金利水準がグロース株の上値を抑えやすい点も考慮。"
+    return action, risk, round(conf, 2), reason, nxt
+
+def get_action_labels():
+    """Rule-based action labels for the watched names, aggregated server-side."""
+    rates = get_rates_snapshot()
+    jp    = get_japan_watchlist_snapshot()
+    us    = get_us_watchlist_snapshot()
+    ev    = get_events_snapshot()
+    events  = ev.get("events", []) if isinstance(ev, dict) else []
+    posture = _rates_posture(rates)
+    esc_by_market = {"US": _region_event_escalation(events, "US"),
+                     "JP": _region_event_escalation(events, "JP")}
+
+    quotes = {}
+    for snap in (jp, us):
+        for s in (snap.get("stocks", []) if isinstance(snap, dict) else []):
+            quotes[s["symbol"]] = s
+
+    labels, changes = [], []
+    for meta in _ACTION_SYMBOLS:
+        q   = quotes.get(meta["symbol"])
+        esc = esc_by_market[meta["market"]]
+        if not q or q.get("status") != "live":
+            labels.append({
+                "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
+                "action": "HOLD", "confidence": 0.2, "risk": "low",
+                "reasonJa": "ライブ価格が未取得のため中立で保留。",
+                "supportingData": {"changePct": (q or {}).get("changePct", 0), "volume": (q or {}).get("volume", 0),
+                                   "eventEscalation": esc or "normal", "ratesPosture": posture},
+                "nextConditionJa": "ライブデータ復帰後に再評価する。",
+                "status": "mock",
+            })
+            continue
+        chg = float(q.get("changePct", 0))
+        changes.append(chg)
+        action, risk, conf, reason, nxt = _classify_symbol(meta, chg, esc, posture)
+        labels.append({
+            "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
+            "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
+            "supportingData": {"changePct": chg, "volume": q.get("volume", 0),
+                               "eventEscalation": esc or "normal", "ratesPosture": posture},
+            "nextConditionJa": nxt, "status": "live",
+        })
+
+    imminent_any = esc_by_market["US"] in ("D", "D-1") or esc_by_market["JP"] in ("D", "D-1")
+    avg = sum(changes) / len(changes) if changes else 0.0
+    if imminent_any:
+        mp, mp_ja = "EVENT_WAIT", "重要イベントが目前のため、新規ポジションを抑えイベント通過後に判断する。"
+    elif avg <= -2.0:
+        mp, mp_ja = "RISK_OFF", "ウォッチリスト全体が軟調で、リスク回避寄りの地合い。"
+    elif avg >= 1.5:
+        mp, mp_ja = "RISK_ON", "ウォッチリスト全体が堅調で、リスク選好寄りの地合い。"
+    else:
+        mp, mp_ja = "CAUTIOUS", "方向感は限定的で、慎重なスタンスを継続する。"
+
+    rates_live = isinstance(rates, dict) and rates.get("status") == "live"
+    jp_live    = isinstance(jp, dict) and jp.get("status") == "live"
+    us_live    = isinstance(us, dict) and us.get("status") == "live"
+    ev_ok      = isinstance(ev, dict) and ev.get("status") in ("live", "partial")
+    if rates_live and jp_live and us_live and ev_ok:
+        status = "live"
+    elif jp_live or us_live:
+        status = "partial"   # some live prices → conservative labels still produced
+    else:
+        status = "mock"
+
+    return {
+        "status": status,
+        "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "engineVersion": "action-v0",
+        "marketPosture": {"label": mp, "rationaleJa": mp_ja},
+        "labels": labels,
+    }
+
+@app.route("/api/argus/action-labels")
+def api_argus_action_labels():
+    return jsonify(get_action_labels())
+
+
 # ━━━ Scheduler ━━━
 def is_us_trading_day():
     return datetime.now(TZ_ET).weekday() < 5

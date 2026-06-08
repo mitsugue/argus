@@ -147,6 +147,13 @@ export const WatchRow: React.FC<Props> = ({ entry }) => {
       {entry.newsHeadline && (
         <div className="watch-row__news">{entry.newsHeadline}</div>
       )}
+      {(entry.signalRisk || entry.confidence != null) && (
+        <div className="watch-row__signal">
+          {entry.signalRisk && <span>risk {entry.signalRisk}</span>}
+          {entry.signalRisk && entry.confidence != null && <span className="watch-row__dot">·</span>}
+          {entry.confidence != null && <span>conf {Math.round(entry.confidence * 100)}%</span>}
+        </div>
+      )}
       {entry.reason && (
         <div className="watch-row__reason">{entry.reason}</div>
       )}

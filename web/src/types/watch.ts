@@ -16,6 +16,10 @@ interface WatchBase {
   action: ActionKey;
   reason?: string;         // short scanner note backing the action
   updatedAt: number;
+  // Action Label Engine v0 (optional — present when /api/argus/action-labels is wired):
+  confidence?: number;     // 0..1
+  signalRisk?: 'low' | 'medium' | 'high';
+  nextConditionJa?: string; // kept in data; not always rendered in the compact row
 }
 
 export interface WatchJP extends WatchBase {

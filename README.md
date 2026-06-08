@@ -86,10 +86,16 @@ list and Render deploy steps.
 | Japan watchlist (price / change / volume / date, 7 names) | J-Quants V2 | **live** |
 | US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
-| Alerts, Market Regime, earnings, deeper scanners | mock | pending real wiring |
+| Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
+| Market Regime, Alerts, earnings, flow/news scanners | mock | pending real wiring |
 
-The Japan watchlist's per-row **action** label is still a placeholder
-(`HOLD`); wiring it to the AI scanner is a separate step.
+Watchlist **action** labels come from the **Action Label Engine v0** — a
+transparent, rule-based classifier over existing live data (price move + event
+escalation + rates posture), served at `/api/argus/action-labels`. It is
+deliberately conservative: it only emits `HOLD` / `WAIT` / `WAIT FOR PULLBACK`
+in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
+arrives), and degrades to neutral `HOLD` when a source is missing. No external
+LLM and no invented VWAP/flow/news.
 
 Event Radar (Phase 1) covers FOMC, BOJ, CPI, PPI, Employment Situation, JOLTS,
 PCE / Personal Income and Outlays, GDP, and Treasury auctions. It is
