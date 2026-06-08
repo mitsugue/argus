@@ -862,6 +862,14 @@
 .modal__kinds { display: flex; flex-wrap: wrap; gap: 4px; }
 .modal__input { width: 100%; box-sizing: border-box; font-size: 13px; color: var(--text-main); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 .modal__hint { margin-top: 8px; font-size: 10px; color: var(--text-faint); }
+.search-results { margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; max-height: 220px; overflow: auto; background: var(--surface-soft); }
+.search-results__hint { padding: 8px 10px; font-size: 11px; color: var(--text-faint); }
+.search-result { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; background: transparent; border: none; border-bottom: 1px solid var(--line); padding: 8px 10px; cursor: pointer; }
+.search-result:last-child { border-bottom: none; }
+.search-result:hover { background: var(--surface); }
+.search-result__sym { font-family: var(--font-mono); font-size: 12px; color: var(--text-main); min-width: 56px; }
+.search-result__name { font-size: 12px; color: var(--text-sub); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-result__ex { font-family: var(--font-mono); font-size: 9px; color: var(--text-faint); }
 .modal__err { margin-top: 8px; font-size: 11px; color: var(--red); }
 .modal__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 

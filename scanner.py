@@ -2971,6 +2971,112 @@ def api_argus_catalysts():
     return jsonify(get_catalysts_snapshot())
 
 
+# ━━━ Symbol search (Add Asset candidates) ━━━
+# Backend proxy so the Add-Asset UI can search by name/code instead of requiring
+# an exact symbol. Keys stay server-side. JP = J-Quants listed-issue master
+# (cached 24h), US = Twelve Data symbol_search, Crypto = CoinGecko search (no
+# key). Read-only, frontend-safe; degrades to empty results on failure.
+_JQ_MASTER_CACHE = {"data": None, "expires": 0.0}   # full JP master, 24h
+_SEARCH_Q_CACHE = {}                                # (market,q) -> {data, expires}, 10m
+_SEARCH_MAX = 12
+
+def _jq_master():
+    """All listed JP issues (cached 24h): list of {code4, ja, en, mkt}."""
+    if _JQ_MASTER_CACHE["data"] is not None and time.time() < _JQ_MASTER_CACHE["expires"]:
+        return _JQ_MASTER_CACHE["data"]
+    if not _JQUANTS_API_KEY:
+        return []
+    rows, headers, params = [], {"x-api-key": _JQUANTS_API_KEY}, {}
+    try:
+        for _ in range(40):  # paginate the full master
+            r = requests.get(f"{_JQUANTS_BASE}/equities/master", headers=headers, params=params, timeout=12)
+            r.raise_for_status()
+            body = r.json()
+            for x in body.get("data", []):
+                code = str(x.get("Code", ""))
+                if not code:
+                    continue
+                rows.append({"code4": code[:4], "ja": x.get("CoName", "") or "",
+                             "en": x.get("CoNameEn", "") or "", "mkt": x.get("MktNm", "") or ""})
+            pk = body.get("pagination_key")
+            if not pk:
+                break
+            params["pagination_key"] = pk
+        _JQ_MASTER_CACHE["data"] = rows
+        _JQ_MASTER_CACHE["expires"] = time.time() + 24 * 3600
+        return rows
+    except Exception:
+        return _JQ_MASTER_CACHE["data"] or []
+
+def _search_jp(q):
+    ql = q.lower()
+    digits = q.isdigit()
+    out = []
+    for r in _jq_master():
+        hit = (r["code4"].startswith(q) or r["code4"][:len(q)] == q) if digits \
+            else (ql in r["ja"].lower() or ql in r["en"].lower())
+        if hit:
+            out.append({"symbol": r["code4"], "name": r["en"] or r["ja"], "nameJa": r["ja"],
+                        "exchange": r["mkt"], "type": "jp_equity"})
+        if len(out) >= _SEARCH_MAX:
+            break
+    return out, ("live" if _jq_master() else "unavailable")
+
+def _search_us(q):
+    if not _TWELVEDATA_API_KEY:
+        return [], "unavailable"
+    try:
+        r = requests.get("https://api.twelvedata.com/symbol_search",
+                         params={"symbol": q, "outputsize": 20, "apikey": _TWELVEDATA_API_KEY}, timeout=10)
+        r.raise_for_status()
+        data = r.json().get("data", []) if isinstance(r.json(), dict) else []
+        out = []
+        for x in data:
+            t = (x.get("instrument_type") or "").lower()
+            if "stock" not in t and "etf" not in t and t:   # prefer equities/ETFs
+                continue
+            out.append({"symbol": x.get("symbol", ""), "name": x.get("instrument_name", ""),
+                        "nameJa": "", "exchange": x.get("exchange", ""), "type": "us_equity"})
+            if len(out) >= _SEARCH_MAX:
+                break
+        return out, "live"
+    except Exception:
+        return [], "error"
+
+def _search_crypto(q):
+    try:
+        r = requests.get("https://api.coingecko.com/api/v3/search", params={"query": q}, timeout=10)
+        r.raise_for_status()
+        coins = r.json().get("coins", []) if isinstance(r.json(), dict) else []
+        out = []
+        for c in coins[:_SEARCH_MAX]:
+            out.append({"symbol": (c.get("symbol", "") or "").upper(), "name": c.get("name", ""),
+                        "nameJa": "", "exchange": "", "type": "crypto", "coingeckoId": c.get("id", "")})
+        return out, "live"
+    except Exception:
+        return [], "error"
+
+@app.route("/api/argus/symbol-search")
+def api_argus_symbol_search():
+    q = (request.args.get("q", "") or "").strip()[:40]
+    market = (request.args.get("market", "") or "").strip().upper()
+    if len(q) < 1 or market not in ("JP", "US", "CRYPTO"):
+        return jsonify({"status": "mock", "query": q, "market": market, "results": []})
+    ck = (market, q.lower())
+    cached = _SEARCH_Q_CACHE.get(ck)
+    if cached and time.time() < cached["expires"]:
+        return jsonify(cached["data"])
+    if market == "JP":
+        results, st = _search_jp(q)
+    elif market == "US":
+        results, st = _search_us(q)
+    else:
+        results, st = _search_crypto(q)
+    payload = {"status": st, "query": q, "market": market, "results": results}
+    _SEARCH_Q_CACHE[ck] = {"data": payload, "expires": time.time() + 600}
+    return jsonify(payload)
+
+
 # ━━━ Scheduler ━━━
 def is_us_trading_day():
     return datetime.now(TZ_ET).weekday() < 5

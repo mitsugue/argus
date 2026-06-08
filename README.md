@@ -183,6 +183,15 @@ asset model.
   AI calls). Still pending: automated AI judgment run (admin/keys), live crypto,
   non-listed fund NAV, moomoo flow/order book, cross-device sync.
 
+**v9.3.0 — Add-Asset symbol search.** The Add-Asset dialog now searches by name
+or code and shows clickable candidates instead of requiring an exact symbol, via
+a backend proxy (`GET /api/argus/symbol-search?market=JP|US|CRYPTO&q=…`, keys
+server-side, read-only, 10-min per-query cache): JP = J-Quants listed-issue
+master (`/v2/equities/master`, cached 24h, search by コード/社名 incl. CoNameEn);
+US = Twelve Data `symbol_search`; Crypto = CoinGecko `search` (no key, returns
+the coingecko id stored in the asset memo for future live quotes). Core/manual
+funds stay manual entry. Degrades to empty results on failure.
+
 **v9.0.0 — Corporate Catalyst Layer.** `GET /api/argus/catalysts` surfaces the
 company-specific events behind watchlist moves (earnings, filings, news,
 disclosures) for the 11 watched names, and is folded into the Pro Handoff

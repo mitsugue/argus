@@ -1,15 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { AssetMarket, AssetType, AssetSource } from '../../types/assetItem';
 
 type Kind = 'Japan Stock' | 'US Stock' | 'Crypto' | 'Core / Fund';
 
-const KIND_MAP: Record<Kind, { market: AssetMarket; assetType: AssetType; source: AssetSource; symbolHint: string }> = {
-  'Japan Stock': { market: 'JP', assetType: 'jp_equity', source: 'jquants', symbolHint: 'e.g. 8058 / 285A' },
-  'US Stock': { market: 'US', assetType: 'us_equity', source: 'twelvedata', symbolHint: 'e.g. NVDA' },
-  'Crypto': { market: 'CRYPTO', assetType: 'crypto', source: 'manual', symbolHint: 'e.g. BTC (coingecko id optional)' },
+const KIND_MAP: Record<Kind, {
+  market: AssetMarket; assetType: AssetType; source: AssetSource;
+  symbolHint: string; searchMarket?: 'JP' | 'US' | 'CRYPTO';
+}> = {
+  'Japan Stock': { market: 'JP', assetType: 'jp_equity', source: 'jquants', symbolHint: '社名 or コード (例: 三菱 / 8058)', searchMarket: 'JP' },
+  'US Stock': { market: 'US', assetType: 'us_equity', source: 'twelvedata', symbolHint: 'name or ticker (e.g. apple / NVDA)', searchMarket: 'US' },
+  'Crypto': { market: 'CRYPTO', assetType: 'crypto', source: 'manual', symbolHint: 'name or symbol (e.g. solana / SOL)', searchMarket: 'CRYPTO' },
   'Core / Fund': { market: 'CORE', assetType: 'manual_fund', source: 'manual', symbolHint: 'e.g. EMAXIS-ACWI' },
 };
 const KINDS = Object.keys(KIND_MAP) as Kind[];
+
+interface Candidate { symbol: string; name: string; nameJa: string; exchange: string; type: string; coingeckoId?: string; }
 
 interface Props {
   onClose: () => void;
@@ -21,16 +26,55 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
   const [symbol, setSymbol] = useState('');
   const [name, setName] = useState('');
   const [nameJa, setNameJa] = useState('');
+  const [cgId, setCgId] = useState('');
   const [err, setErr] = useState('');
+  const [results, setResults] = useState<Candidate[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [picked, setPicked] = useState(false);
   const cfg = KIND_MAP[kind];
+  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+  const debounce = useRef<number | undefined>(undefined);
+
+  // Reset candidates when switching asset type.
+  useEffect(() => { setResults([]); setPicked(false); }, [kind]);
+
+  // Debounced symbol/name search → candidate list (skips Core/Fund and after a pick).
+  useEffect(() => {
+    if (!cfg.searchMarket || !backend || picked) { setResults([]); return; }
+    const q = symbol.trim();
+    if (q.length < 1) { setResults([]); setSearching(false); return; }
+    setSearching(true);
+    window.clearTimeout(debounce.current);
+    const ctrl = new AbortController();
+    debounce.current = window.setTimeout(async () => {
+      try {
+        const url = backend.replace(/\/$/, '') + `/api/argus/symbol-search?market=${cfg.searchMarket}&q=${encodeURIComponent(q)}`;
+        const r = await fetch(url, { signal: ctrl.signal });
+        const d = await r.json();
+        setResults(Array.isArray(d.results) ? d.results.slice(0, 12) : []);
+      } catch { /* ignore (abort / network) */ }
+      finally { setSearching(false); }
+    }, 300);
+    return () => { ctrl.abort(); window.clearTimeout(debounce.current); };
+  }, [symbol, cfg.searchMarket, backend, picked]);
+
+  function pick(c: Candidate) {
+    setPicked(true);
+    setSymbol(c.symbol);
+    setName(c.name || c.symbol);
+    setNameJa(c.nameJa || '');
+    setCgId(c.coingeckoId || '');
+    setResults([]);
+  }
 
   function submit() {
     const sym = kind === 'US Stock' ? symbol.trim().toUpperCase() : symbol.trim();
     const dn = name.trim();
-    if (!sym || !dn) { setErr('シンボルと表示名は必須です。'); return; }
+    if (!sym || !dn) { setErr('シンボルと表示名は必須です(候補をクリックすると自動入力)。'); return; }
+    const memo = kind === 'Crypto' && cgId ? `coingecko:${cgId}` : undefined;
     const id = onAdd({
       market: cfg.market, assetType: cfg.assetType, source: cfg.source,
-      symbol: sym, displayName: dn, displayNameJa: nameJa.trim() || undefined,
+      symbol: sym, displayName: dn, displayNameJa: nameJa.trim() || undefined, memo,
     });
     if (!id) { setErr('追加できませんでした(重複、または上限50件)。'); return; }
     onClose();
@@ -51,9 +95,26 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
           ))}
         </div>
 
-        <label className="modal__label" htmlFor="add-symbol">Symbol / code</label>
+        <label className="modal__label" htmlFor="add-symbol">
+          {cfg.searchMarket ? 'Search (name or symbol)' : 'Symbol / code'}
+        </label>
         <input id="add-symbol" className="modal__input" value={symbol} placeholder={cfg.symbolHint}
-               onChange={(e) => setSymbol(e.target.value)} />
+               autoComplete="off"
+               onChange={(e) => { setSymbol(e.target.value); setPicked(false); }} />
+
+        {cfg.searchMarket && !picked && (
+          <div className="search-results">
+            {searching && <div className="search-results__hint">検索中…</div>}
+            {!searching && symbol.trim() && results.length === 0 && <div className="search-results__hint">候補なし</div>}
+            {results.map((c) => (
+              <button key={`${c.symbol}-${c.exchange}-${c.coingeckoId ?? ''}`} className="search-result" onClick={() => pick(c)}>
+                <span className="search-result__sym">{c.symbol}</span>
+                <span className="search-result__name">{c.nameJa || c.name}</span>
+                {c.exchange && <span className="search-result__ex">{c.exchange}</span>}
+              </button>
+            ))}
+          </div>
+        )}
 
         <label className="modal__label" htmlFor="add-name">Display name</label>
         <input id="add-name" className="modal__input" value={name} placeholder="表示名"
@@ -68,9 +129,10 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
         )}
 
         <div className="modal__hint">
-          {cfg.market === 'CRYPTO' && 'v9.2.0では暗号資産はライブ価格未接続(手動)。'}
-          {cfg.market === 'CORE' && '長期コア/投信は手動管理(ライブ基準価額なし)。'}
-          {cfg.market === 'JP' && 'シンボルと社名は推測せず正確に入力してください(例: 8058=三菱商事)。'}
+          {cfg.market === 'CRYPTO' && 'v9.x では暗号資産はライブ価格未接続(手動)。候補は CoinGecko 検索。'}
+          {cfg.market === 'CORE' && '長期コア/投信は手動管理(検索なし・ライブ基準価額なし)。'}
+          {cfg.market === 'JP' && '候補は J-Quants 上場銘柄マスタから検索。社名やコードを入力してください。'}
+          {cfg.market === 'US' && '候補は Twelve Data から検索。社名やティッカーを入力してください。'}
         </div>
 
         {err && <div className="modal__err">{err}</div>}
