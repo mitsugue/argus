@@ -2,9 +2,9 @@ import React, { useMemo } from 'react';
 import { PageShell } from './PageShell';
 import { WatchRow } from '../components/dashboard/WatchRow';
 import { ActionPill } from '../components/action/ActionBadge';
-import { watchlist } from '../mock/watchlist';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
-import type { WatchEntry, WatchJP, JapanStockQuote } from '../types/watch';
+import { useUSWatchlist } from '../hooks/useUSWatchlist';
+import type { WatchEntry, WatchJP, WatchUS, JapanStockQuote, USStockQuote } from '../types/watch';
 import type { ActionKey } from '../types/action';
 import '../components/dashboard/Dashboard.css';
 
@@ -19,9 +19,6 @@ const URGENCY: Record<ActionKey, number> = {
   HOLD: 6,
 };
 
-const sortByUrgency = (a: WatchEntry, b: WatchEntry) =>
-  URGENCY[a.action as ActionKey] - URGENCY[b.action as ActionKey];
-
 // Distinct actions that appear in scope — used for the summary chip strip.
 function tally(entries: WatchEntry[]): { action: ActionKey; count: number }[] {
   const counts = new Map<ActionKey, number>();
@@ -33,10 +30,9 @@ function tally(entries: WatchEntry[]): { action: ActionKey; count: number }[] {
     .sort((a, b) => URGENCY[a.action] - URGENCY[b.action]);
 }
 
-// Live J-Quants rows carry price/change/volume only — there is no AI action
-// label yet, so show a neutral placeholder. Wiring the scanner's action is a
-// separate step. (VWAP / margin / news are also absent from daily bars.)
-const JP_PLACEHOLDER_ACTION: ActionKey = 'HOLD';
+// Live rows carry price/change/volume only — there is no AI action label yet,
+// so show a neutral placeholder. Wiring the scanner's action is a later step.
+const PLACEHOLDER_ACTION: ActionKey = 'HOLD';
 
 function toWatchJP(q: JapanStockQuote): WatchJP {
   return {
@@ -47,30 +43,38 @@ function toWatchJP(q: JapanStockQuote): WatchJP {
     changePct: q.changePct,
     changeAbs: q.changeAbs,
     volume: q.volume,
-    action: JP_PLACEHOLDER_ACTION,
+    action: PLACEHOLDER_ACTION,
     updatedAt: Date.now(),
   };
 }
 
+function toWatchUS(q: USStockQuote): WatchUS {
+  return {
+    market: 'US',
+    symbol: q.symbol,
+    name: q.name,
+    price: q.price,
+    changePct: q.changePct,
+    changeAbs: q.changeAbs,
+    volume: q.volume,
+    action: PLACEHOLDER_ACTION,
+    updatedAt: Date.now(),
+  };
+}
+
+function statusLabel(phase: 'connecting' | 'live' | 'mock', attempt: number): string {
+  if (phase === 'connecting') return attempt > 1 ? `waking backend · try ${attempt}` : 'connecting';
+  return phase; // 'live' | 'mock'
+}
+
 export const Watchlist: React.FC = () => {
-  // Japan rows are live from J-Quants (backend), with connecting/mock states.
-  const { data: jp, phase, attempt } = useJapanWatchlist();
+  // Both watchlists are live from the backend, each with connecting/mock states.
+  const { data: jp, phase: jpPhase, attempt: jpAttempt } = useJapanWatchlist();
+  const { data: us, phase: usPhase, attempt: usAttempt } = useUSWatchlist();
 
-  const jpRows = useMemo<WatchJP[]>(
-    () => (jp ? jp.stocks.map(toWatchJP) : []),
-    [jp],
-  );
-  // United States stays on seed data until wired to a real source.
-  const usRows = useMemo(
-    () => watchlist.filter((e) => e.market === 'US').sort(sortByUrgency),
-    [],
-  );
+  const jpRows = useMemo<WatchJP[]>(() => (jp ? jp.stocks.map(toWatchJP) : []), [jp]);
+  const usRows = useMemo<WatchUS[]>(() => (us ? us.stocks.map(toWatchUS) : []), [us]);
   const summary = useMemo(() => tally([...jpRows, ...usRows]), [jpRows, usRows]);
-
-  const jpStatusLabel =
-    phase === 'connecting'
-      ? attempt > 1 ? `waking backend · try ${attempt}` : 'connecting'
-      : phase; // 'live' | 'mock'
 
   return (
     <PageShell
@@ -89,8 +93,8 @@ export const Watchlist: React.FC = () => {
       <section>
         <div className="section-head">
           <span className="section-head__title">Japan</span>
-          <span className={`watch-status watch-status--${phase}`}>{jpStatusLabel}</span>
-          {phase === 'live' && jp?.asOf ? (
+          <span className={`watch-status watch-status--${jpPhase}`}>{statusLabel(jpPhase, jpAttempt)}</span>
+          {jpPhase === 'live' && jp?.asOf ? (
             <span className="section-head__count">live · as of {jp.asOf}</span>
           ) : (
             <span className="section-head__count">{jpRows.length} names</span>
@@ -106,7 +110,12 @@ export const Watchlist: React.FC = () => {
       <section>
         <div className="section-head">
           <span className="section-head__title">United States</span>
-          <span className="section-head__count">{usRows.length} names</span>
+          <span className={`watch-status watch-status--${usPhase}`}>{statusLabel(usPhase, usAttempt)}</span>
+          {usPhase === 'live' && us?.asOf ? (
+            <span className="section-head__count">live · as of {us.asOf}</span>
+          ) : (
+            <span className="section-head__count">{usRows.length} names</span>
+          )}
         </div>
         <div className="card watch-list">
           {usRows.map((row) => (

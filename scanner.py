@@ -1629,6 +1629,111 @@ def api_argus_japan_watchlist():
     return jsonify(get_japan_watchlist_snapshot())
 
 
+# ━━━ Twelve Data (live US watchlist) ━━━
+# A single dashboard API key, sent as the `apikey` query param. The key lives
+# ONLY in Render env — never exposed to the frontend, never a VITE_ var.
+# Twelve Data's /quote accepts comma-separated symbols, so all four names are
+# fetched in ONE request (4 credits) per cache refresh — free-tier-safe.
+_TWELVEDATA_API_KEY = os.environ.get("TWELVEDATA_API_KEY")
+_TWELVEDATA_QUOTE   = "https://api.twelvedata.com/quote"
+
+# `mock` holds plausible fallback values (NOT real quotes) for the mock state.
+_US_WATCHLIST = [
+    {"symbol": "NVDA", "name": "NVIDIA",         "mock": {"price": 142.30, "changeAbs": -1.32, "changePct": -0.92, "volume": 240_000_000}},
+    {"symbol": "AAPL", "name": "Apple",          "mock": {"price": 218.40, "changeAbs": -0.74, "changePct": -0.34, "volume": 52_000_000}},
+    {"symbol": "TSLA", "name": "Tesla",          "mock": {"price": 178.20, "changeAbs": -5.74, "changePct": -3.12, "volume": 98_000_000}},
+    {"symbol": "META", "name": "Meta Platforms", "mock": {"price": 487.10, "changeAbs": 3.78,  "changePct": 0.78,  "volume": 14_000_000}},
+]
+
+_US_CACHE     = {"data": None, "expires": 0.0}
+_US_CACHE_TTL = 600
+
+def _us_mock_quote(s):
+    m = s["mock"]
+    return {
+        "symbol": s["symbol"], "name": s["name"],
+        "price": m["price"], "changeAbs": m["changeAbs"], "changePct": m["changePct"],
+        "volume": m["volume"], "date": None, "status": "mock",
+    }
+
+def _us_mock_snapshot():
+    return {"status": "mock", "asOf": None, "provider": "twelvedata",
+            "stocks": [_us_mock_quote(s) for s in _US_WATCHLIST]}
+
+def _td_parse_row(s, q):
+    """Normalize one Twelve Data quote object → live row, or None if invalid.
+
+    A per-symbol error from Twelve Data is a dict with status=='error' (and no
+    price fields), so anything missing the core fields returns None.
+    """
+    try:
+        if not isinstance(q, dict):
+            return None
+        if str(q.get("status", "")).lower() == "error":
+            return None
+        close = q.get("close")
+        chg   = q.get("change")
+        pct   = q.get("percent_change")
+        if close is None or chg is None or pct is None:
+            return None
+        vol = q.get("volume")
+        dt  = q.get("datetime")
+        return {
+            "symbol": s["symbol"], "name": s["name"],
+            "price": round(float(close), 2),
+            "changeAbs": round(float(chg), 2),
+            "changePct": round(float(pct), 2),
+            "volume": int(float(vol)) if vol not in (None, "") else 0,
+            "date": (str(dt)[:10] if dt else None),
+            "status": "live",
+        }
+    except Exception:
+        return None
+
+def get_us_watchlist_snapshot():
+    """Live snapshot of the watched US names (price/change/volume/date).
+
+    Mirrors the Japan/FRED pattern: one batched request, 10-min cache (live
+    only), mock fallback. Per the spec, top-level status is "live" only when
+    ALL target symbols parse to valid live rows — otherwise the whole snapshot
+    falls back to mock rather than presenting partial fake-live data.
+    """
+    now = time.time()
+    if _US_CACHE["data"] is not None and now < _US_CACHE["expires"]:
+        return _US_CACHE["data"]
+    if not _TWELVEDATA_API_KEY:
+        return _us_mock_snapshot()
+    try:
+        symbols = ",".join(s["symbol"] for s in _US_WATCHLIST)
+        r = requests.get(_TWELVEDATA_QUOTE,
+                         params={"symbol": symbols, "apikey": _TWELVEDATA_API_KEY},
+                         timeout=10)
+        r.raise_for_status()
+        body = r.json()
+        # A top-level error (bad key / quota) is a flat dict with status=error.
+        if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
+            return _us_mock_snapshot()
+        rows = []
+        for s in _US_WATCHLIST:
+            # Multi-symbol responses are keyed by symbol; single is flat.
+            q = body.get(s["symbol"]) if (isinstance(body, dict) and s["symbol"] in body) else body
+            row = _td_parse_row(s, q)
+            if row is None:
+                return _us_mock_snapshot()  # any miss → full mock, never partial fake-live
+            rows.append(row)
+        as_of = max((row["date"] for row in rows if row.get("date")), default=None)
+        snapshot = {"status": "live", "asOf": as_of, "provider": "twelvedata", "stocks": rows}
+        _US_CACHE["data"]    = snapshot
+        _US_CACHE["expires"] = now + _US_CACHE_TTL
+        return snapshot
+    except Exception:
+        return _us_mock_snapshot()
+
+@app.route("/api/argus/us-watchlist")
+def api_argus_us_watchlist():
+    return jsonify(get_us_watchlist_snapshot())
+
+
 # ━━━ Scheduler ━━━
 def is_us_trading_day():
     return datetime.now(TZ_ET).weekday() < 5

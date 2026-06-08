@@ -84,7 +84,8 @@ list and Render deploy steps.
 | --- | --- | --- |
 | US rates + VIX (10Y / 2Y / Real 10Y / VIX) | FRED (St. Louis Fed) | **live** |
 | Japan watchlist (price / change / volume / date, 7 names) | J-Quants V2 | **live** |
-| US watchlist, alerts, regime, event radar | mock | pending real wiring |
+| US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
+| Alerts, regime, event radar | mock | pending real wiring |
 
 The Japan watchlist's per-row **action** label is still a placeholder
 (`HOLD`); wiring it to the AI scanner is a separate step.

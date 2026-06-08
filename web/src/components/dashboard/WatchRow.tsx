@@ -85,6 +85,14 @@ const UsMeta: React.FC<{ row: WatchUS }> = ({ row }) => {
       : null;
   return (
     <div className="watch-row__meta">
+      {row.volume != null && (
+        <>
+          <span>Vol {formatVolume(row.volume)}</span>
+          {(sessionChange || row.guidance || row.sectorTrend || row.rateSensitivity || row.earningsDate) && (
+            <span className="watch-row__dot">·</span>
+          )}
+        </>
+      )}
       {sessionChange && (
         <>
           <span>{sessionChange.label} {sessionChange.value > 0 ? '+' : ''}{sessionChange.value.toFixed(2)}%</span>

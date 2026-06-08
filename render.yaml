@@ -27,6 +27,10 @@ services:
       # FRED (live rates snapshot) — also dashboard-only.
       - key: FRED_API_KEY
         sync: false
+      # Twelve Data (live US watchlist) — single dashboard API key, sent as the
+      # apikey query param server-side.
+      - key: TWELVEDATA_API_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY

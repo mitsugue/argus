@@ -30,6 +30,7 @@ export interface WatchJP extends WatchBase {
 
 export interface WatchUS extends WatchBase {
   market: 'US';
+  volume?: number;                 // shares traded (live Twelve Data rows)
   premarketPct?: number;           // pre-market % change
   afterHoursPct?: number;          // after-hours % change
   guidance?: 'beat' | 'inline' | 'miss';
@@ -60,4 +61,26 @@ export interface JapanWatchlistSnapshot {
   status: JpQuoteStatus;       // 'live' if any stock is live, else 'mock'
   asOf: string | null;         // latest data date across stocks (freshness)
   stocks: JapanStockQuote[];
+}
+
+// ── Live US watchlist (Twelve Data) ──────────────────────────────────
+// Mirrors the backend /api/argus/us-watchlist shape. Same per-stock shape as
+// Japan; top-level status is 'live' only when ALL target symbols are live.
+
+export interface USStockQuote {
+  symbol: string;
+  name: string;
+  price: number;
+  changeAbs: number;
+  changePct: number;
+  volume: number;
+  date: string | null;
+  status: JpQuoteStatus;
+}
+
+export interface USWatchlistSnapshot {
+  status: JpQuoteStatus;
+  asOf: string | null;
+  provider?: string;
+  stocks: USStockQuote[];
 }
