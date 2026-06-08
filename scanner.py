@@ -1843,7 +1843,10 @@ def _fetch_treasury_raw():
                 continue
             if a.get("securityType") not in ("Note", "Bond"):
                 continue
-            term = a.get("securityTerm")
+            # Reopenings carry a fractional securityTerm (e.g. "9-Year 11-Month")
+            # but originalSecurityTerm is the clean tenor ("10-Year") — match on
+            # that so monthly 10Y/20Y/30Y/5Y reopenings aren't dropped.
+            term = a.get("originalSecurityTerm") or a.get("securityTerm")
             auc  = a.get("auctionDate")
             if term not in tenors or not auc:
                 continue
