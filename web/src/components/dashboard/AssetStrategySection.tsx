@@ -1,21 +1,27 @@
 import React, { useMemo } from 'react';
+import {
+  DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import { useActionLabels } from '../../hooks/useActionLabels';
 import { useCatalysts } from '../../hooks/useCatalysts';
 import { deriveStrategy, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
-import type { AssetItem } from '../../types/assetItem';
+import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
 import type { CatalystItem } from '../../types/catalysts';
 
 interface Props {
   assets: AssetItem[];
-  reorderable: boolean;
+  onReorder: (orderedIds: string[]) => void;
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
-  onMove: (id: string, dir: -1 | 1) => void;
   onRemove: (id: string) => void;
-  onToggleEnabled: (id: string) => void;
 }
 
 const ACTION_COLOR: Record<string, string> = {
@@ -49,35 +55,37 @@ function ageMin(ts: number): string {
   return m < 1 ? 'just now' : `${m}m ago`;
 }
 
-const AssetRow: React.FC<{
-  asset: AssetItem; strat: AssetStrategy; expanded: boolean; index: number; total: number;
-  reorderable: boolean; onToggleExpand: (id: string) => void; onMove: (id: string, dir: -1 | 1) => void;
-  onRemove: (id: string) => void;
-}> = ({ asset, strat, expanded, index, total, reorderable, onToggleExpand, onMove, onRemove }) => {
+const SortableAssetRow: React.FC<{
+  asset: AssetItem; strat: AssetStrategy; expanded: boolean;
+  onToggleExpand: (id: string) => void; onRemove: (id: string) => void;
+}> = ({ asset, strat, expanded, onToggleExpand, onRemove }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
+  const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   const name = asset.displayNameJa || asset.displayName;
+
   return (
-    <div className={`asset-row${expanded ? ' asset-row--open' : ''}`}>
-      <div
-        className="asset-row__head"
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onClick={() => onToggleExpand(asset.id)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand(asset.id); } }}
-      >
-        <span className="asset-row__caret">{expanded ? '▾' : '▸'}</span>
-        <span className="asset-row__id">
-          <span className="asset-row__sym">{asset.symbol}</span>
-          <span className="asset-row__name">{name}</span>
-        </span>
-        <span className="asset-row__price">{fmtPrice(asset.market, strat.price)}</span>
-        <span className={pctClass(strat.changePct)}>{fmtPct(strat.changePct)}</span>
-        <span className="asset-row__action" style={{ color: ACTION_COLOR[strat.action] ?? 'var(--text-sub)' }}>{strat.action}</span>
-        <span className="asset-row__meta">
-          {strat.risk !== '—' && <span>risk {strat.risk}</span>}
-          {strat.confidence != null && <span>· {Math.round(strat.confidence * 100)}%</span>}
-        </span>
-        <span className="asset-row__status" style={{ color: STATUS_COLOR[strat.status] }}>{strat.status}</span>
+    <div ref={setNodeRef} style={style} className={`asset-row${expanded ? ' asset-row--open' : ''}${isDragging ? ' asset-row--drag' : ''}`}>
+      <div className="asset-row__head">
+        <button className="asset-row__handle" aria-label={`Reorder ${asset.symbol}`} {...attributes} {...listeners}>⋮⋮</button>
+        <button
+          className="asset-row__main"
+          aria-expanded={expanded}
+          onClick={() => onToggleExpand(asset.id)}
+        >
+          <span className="asset-row__caret">{expanded ? '▾' : '▸'}</span>
+          <span className="asset-row__id">
+            <span className="asset-row__sym">{asset.symbol}</span>
+            <span className="asset-row__name">{name}</span>
+          </span>
+          <span className="asset-row__price">{fmtPrice(asset.market, strat.price)}</span>
+          <span className={pctClass(strat.changePct)}>{fmtPct(strat.changePct)}</span>
+          <span className="asset-row__action" style={{ color: ACTION_COLOR[strat.action] ?? 'var(--text-sub)' }}>{strat.action}</span>
+          <span className="asset-row__meta">
+            {strat.risk !== '—' && <span>risk {strat.risk}</span>}
+            {strat.confidence != null && <span>· {Math.round(strat.confidence * 100)}%</span>}
+          </span>
+          <span className="asset-row__status" style={{ color: STATUS_COLOR[strat.status] }}>{strat.status}</span>
+        </button>
       </div>
 
       {expanded && (
@@ -89,7 +97,6 @@ const AssetRow: React.FC<{
             <div><span className="asset-detail__k">What changes it</span><span className="asset-detail__v">{strat.whatChangesJa}</span></div>
             {strat.catalystNoteJa && <div><span className="asset-detail__k">Catalyst</span><span className="asset-detail__v">{strat.catalystNoteJa}</span></div>}
           </div>
-
           {strat.scenarios.length > 0 && (
             <div className="asset-scen">
               <div className="asset-scen__head">Scenario probabilities · {strat.scenarioHorizonJa}</div>
@@ -104,23 +111,15 @@ const AssetRow: React.FC<{
               <div className="asset-scen__disc">{strat.scenarioDisclaimerJa}</div>
             </div>
           )}
-
           {strat.dataLimitations.length > 0 && (
             <div className="asset-detail__limits">
               <span className="asset-detail__k">Data limitations</span>
               <ul>{strat.dataLimitations.map((d, i) => <li key={i}>{d}</li>)}</ul>
             </div>
           )}
-
           <div className="asset-detail__foot">
             <span>updated {ageMin(strat.lastUpdated)}</span>
             <span className="asset-detail__actions">
-              {reorderable && (
-                <>
-                  <button className="asset-mini" aria-label={`Move ${asset.symbol} up`} disabled={index === 0} onClick={() => onMove(asset.id, -1)}>↑</button>
-                  <button className="asset-mini" aria-label={`Move ${asset.symbol} down`} disabled={index === total - 1} onClick={() => onMove(asset.id, 1)}>↓</button>
-                </>
-              )}
               <button className="asset-mini asset-mini--danger" aria-label={`Remove ${asset.symbol}`} onClick={() => onRemove(asset.id)}>Remove</button>
             </span>
           </div>
@@ -130,13 +129,16 @@ const AssetRow: React.FC<{
   );
 };
 
-export const AssetStrategySection: React.FC<Props> = ({
-  assets, reorderable, expandedId, onToggleExpand, onMove, onRemove,
-}) => {
+export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expandedId, onToggleExpand, onRemove }) => {
   const jp = useJapanWatchlist();
   const us = useUSWatchlist();
   const al = useActionLabels();
   const cat = useCatalysts();
+  const mountTs = useMemo(() => Date.now(), []);  // stable per mount/rescan
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const maps = useMemo(() => {
     const quotes = new Map<string, QuoteLite>();
@@ -149,24 +151,55 @@ export const AssetStrategySection: React.FC<Props> = ({
     return { quotes, labels, cats };
   }, [jp.data, us.data, al.data, cat.data]);
 
-  const nowTs = Date.now();
+  // Group by genre (GENRES order), each sorted by sortOrder ascending.
+  const groups = useMemo(() => {
+    return GENRES.map((g) => ({
+      ...g,
+      items: assets.filter((a) => genreOf(a) === g.key).slice().sort((a, b) => a.sortOrder - b.sortOrder),
+    })).filter((g) => g.items.length > 0);
+  }, [assets]);
+
   const connecting = jp.phase === 'connecting' && us.phase === 'connecting';
 
+  function onDragEnd(groupIds: string[]) {
+    return (e: DragEndEvent) => {
+      const { active, over } = e;
+      if (!over || active.id === over.id) return;
+      const from = groupIds.indexOf(String(active.id));
+      const to = groupIds.indexOf(String(over.id));
+      if (from < 0 || to < 0) return;
+      onReorder(arrayMove(groupIds, from, to));
+    };
+  }
+
   if (assets.length === 0) {
-    return <div className="card asset-list"><div className="asset-empty">この絞り込みに該当する資産はありません。「+ Add Asset」で追加できます。</div></div>;
+    return <div className="card asset-list"><div className="asset-empty">資産がありません。「+ Add Asset」で追加できます。</div></div>;
   }
 
   return (
-    <div className="card asset-list">
-      {connecting && <div className="asset-empty">connecting… 最新の戦略を取得中</div>}
-      {assets.map((a, i) => {
-        const strat = deriveStrategy(a, maps.labels.get(a.symbol), maps.quotes.get(a.symbol), maps.cats.get(a.symbol), nowTs);
+    <div className="asset-groups">
+      {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の戦略を取得中</div>}
+      {groups.map((g) => {
+        const ids = g.items.map((a) => a.id);
         return (
-          <AssetRow
-            key={a.id} asset={a} strat={strat} index={i} total={assets.length}
-            reorderable={reorderable} expanded={expandedId === a.id}
-            onToggleExpand={onToggleExpand} onMove={onMove} onRemove={onRemove}
-          />
+          <section className="asset-group" key={g.key}>
+            <div className="asset-group__title">{g.title}<span className="asset-group__count">{g.items.length}</span></div>
+            <div className="card asset-list">
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd(ids)}>
+                <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+                  {g.items.map((a) => {
+                    const strat = deriveStrategy(a, maps.labels.get(a.symbol), maps.quotes.get(a.symbol), maps.cats.get(a.symbol), mountTs);
+                    return (
+                      <SortableAssetRow
+                        key={a.id} asset={a} strat={strat} expanded={expandedId === a.id}
+                        onToggleExpand={onToggleExpand} onRemove={onRemove}
+                      />
+                    );
+                  })}
+                </SortableContext>
+              </DndContext>
+            </div>
+          </section>
         );
       })}
     </div>

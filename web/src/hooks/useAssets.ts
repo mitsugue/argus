@@ -67,7 +67,7 @@ export interface UseAssets {
   assets: AssetItem[];
   add: (a: { market: AssetMarket; assetType: AssetType; source: AssetSource; symbol: string; displayName: string; displayNameJa?: string; memo?: string }) => string | null;
   remove: (id: string) => void;
-  move: (id: string, dir: -1 | 1) => void;
+  reorderGenre: (orderedIds: string[]) => void;
   toggle: (id: string) => void;
   reset: () => void;
 }
@@ -86,21 +86,26 @@ export function useAssets(): UseAssets {
     setAssets((cur) => {
       if (cur.length >= MAX_ASSETS) { created = null; return cur; }     // cap
       if (cur.some((x) => x.id === id)) { created = null; return cur; } // dedupe
-      return [...cur, mk(a.market, a.assetType, a.source, symbol, displayName, a.displayNameJa, { memo: a.memo })];
+      const item = mk(a.market, a.assetType, a.source, symbol, displayName, a.displayNameJa, { memo: a.memo });
+      // New items float to the TOP of their genre: give the smallest sortOrder
+      // (groups are sorted by sortOrder ascending).
+      item.sortOrder = (cur.length ? Math.min(...cur.map((x) => x.sortOrder)) : 0) - 1;
+      return [...cur, item];
     });
     return created;
   }, []);
 
   const remove = useCallback((id: string) => setAssets((cur) => cur.filter((x) => x.id !== id)), []);
 
-  const move = useCallback((id: string, dir: -1 | 1) => {
+  // Reassign sortOrder for a genre's items in the given new order, reusing that
+  // genre's existing sortOrder slots so other genres stay put.
+  const reorderGenre = useCallback((orderedIds: string[]) => {
     setAssets((cur) => {
-      const i = cur.findIndex((x) => x.id === id);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= cur.length) return cur;
-      const next = cur.slice();
-      [next[i], next[j]] = [next[j], next[i]];
-      return next.map((x, k) => ({ ...x, sortOrder: k }));
+      const idset = new Set(orderedIds);
+      const slots = cur.filter((a) => idset.has(a.id)).map((a) => a.sortOrder).sort((x, y) => x - y);
+      const pos = new Map<string, number>();
+      orderedIds.forEach((id, i) => pos.set(id, slots[i] ?? i));
+      return cur.map((a) => (idset.has(a.id) ? { ...a, sortOrder: pos.get(a.id)!, updatedAt: now() } : a));
     });
   }, []);
 
@@ -109,5 +114,5 @@ export function useAssets(): UseAssets {
 
   const reset = useCallback(() => setAssets(defaults()), []);
 
-  return { assets, add, remove, move, toggle, reset };
+  return { assets, add, remove, reorderGenre, toggle, reset };
 }

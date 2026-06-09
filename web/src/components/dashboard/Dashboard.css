@@ -809,14 +809,39 @@
 
 .asset-list { padding: 4px 0; }
 .asset-empty { padding: 16px 14px; font-size: 12px; color: var(--text-faint); }
+.asset-empty--card { padding: 12px 14px; }
+.asset-toolbar--end { justify-content: flex-end; }
+
+/* Genre groups (Japanese Stocks / US Stocks / Investment Trusts / Crypto). */
+.asset-groups { display: flex; flex-direction: column; }
+.asset-group { margin-bottom: 22px; }
+.asset-group:last-child { margin-bottom: 8px; }
+.asset-group__title {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-main);
+  text-transform: none; margin: 0 0 8px 2px;
+}
+.asset-group__count { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); }
+
 .asset-row { border-bottom: 1px solid var(--line); }
 .asset-row:last-child { border-bottom: none; }
-.asset-row__head {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1.7fr) auto auto auto auto auto;
-  align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer;
+.asset-row--drag { background: var(--surface-soft); border-radius: 6px; }
+.asset-row__head { display: flex; align-items: stretch; }
+.asset-row__handle {
+  display: flex; align-items: center; padding: 0 6px 0 12px;
+  color: var(--text-faint); background: transparent; border: none; cursor: grab;
+  touch-action: none; font-size: 12px; line-height: 1; letter-spacing: -2px;
 }
-.asset-row__head:hover { background: var(--surface-soft); }
+.asset-row__handle:active { cursor: grabbing; }
+.asset-row__handle:hover { color: var(--text-sub); }
+.asset-row__main {
+  flex: 1; min-width: 0; width: 100%;
+  display: grid; grid-template-columns: 16px minmax(0, 1.7fr) auto auto auto auto auto;
+  align-items: center; gap: 10px; padding: 11px 14px 11px 0;
+  cursor: pointer; background: transparent; border: none; text-align: left;
+  color: inherit; font: inherit;
+}
+.asset-row__main:hover { background: var(--surface-soft); }
 .asset-row__caret { color: var(--text-faint); font-size: 10px; }
 .asset-row__id { display: flex; flex-direction: column; min-width: 0; }
 .asset-row__sym { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
@@ -874,7 +899,7 @@
 .modal__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 @media (max-width: 560px) {
-  .asset-row__head { grid-template-columns: 14px minmax(0,1fr) auto auto; row-gap: 2px; }
+  .asset-row__main { grid-template-columns: 14px minmax(0,1fr) auto auto; row-gap: 2px; }
   .asset-row__action { grid-column: 2; text-align: left; }
   .asset-row__meta, .asset-row__status { grid-column: 3 / 5; }
   .asset-scen__row { grid-template-columns: 90px 1fr 34px; }

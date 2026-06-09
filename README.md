@@ -183,6 +183,15 @@ asset model.
   AI calls). Still pending: automated AI judgment run (admin/keys), live crypto,
   non-listed fund NAV, moomoo flow/order book, cross-device sync.
 
+**v9.4.0 — Watchlist genre groups + drag reorder.** The Watchlist is now grouped
+into labelled sections — **Japanese Stocks / US Stocks / Investment Trusts /
+Crypto** (in that order, with spacing between groups; empty groups are hidden).
+Reordering is drag-and-drop: each row has a ⋮⋮ handle (pointer + keyboard via
+[@dnd-kit](https://dndkit.com/)) and reorder is scoped to within a genre, so a
+drag never moves an asset across sections. Newly added assets float to the **top
+of their genre** (smallest `sortOrder`). Order persists per device in
+`localStorage` (`argus.assets.v1`). The old up/down buttons and tab bar are gone.
+
 **v9.3.0 — Add-Asset symbol search.** The Add-Asset dialog now searches by name
 or code and shows clickable candidates instead of requiring an exact symbol, via
 a backend proxy (`GET /api/argus/symbol-search?market=JP|US|CRYPTO&q=…`, keys

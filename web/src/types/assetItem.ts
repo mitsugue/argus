@@ -32,15 +32,21 @@ export interface AssetItem {
   updatedAt: number;
 }
 
-export const ASSET_TAB = ['All', 'Japan', 'US', 'Core', 'Crypto'] as const;
-export type AssetTab = (typeof ASSET_TAB)[number];
+// Genre groups (English section titles), displayed in this order with spacing.
+export type GenreKey = 'jp' | 'us' | 'funds' | 'crypto';
 
-export function tabMatches(tab: AssetTab, a: AssetItem): boolean {
-  switch (tab) {
-    case 'All': return true;
-    case 'Japan': return a.market === 'JP';
-    case 'US': return a.market === 'US';
-    case 'Core': return a.market === 'CORE' || a.market === 'FUND' || a.assetType === 'core_fund' || a.assetType === 'manual_fund';
-    case 'Crypto': return a.market === 'CRYPTO';
-  }
+export interface Genre { key: GenreKey; title: string; }
+
+export const GENRES: Genre[] = [
+  { key: 'jp', title: 'Japanese Stocks' },
+  { key: 'us', title: 'US Stocks' },
+  { key: 'funds', title: 'Investment Trusts' },
+  { key: 'crypto', title: 'Crypto' },
+];
+
+export function genreOf(a: AssetItem): GenreKey {
+  if (a.market === 'JP') return 'jp';
+  if (a.market === 'US') return 'us';
+  if (a.market === 'CRYPTO') return 'crypto';
+  return 'funds'; // CORE / FUND / MANUAL / core_fund / manual_fund
 }
