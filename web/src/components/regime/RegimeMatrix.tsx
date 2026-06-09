@@ -2,12 +2,26 @@ import React from 'react';
 import type { RegimeMatrixState } from '../../types/regime';
 import './RegimeMatrix.css';
 
+interface AxisLabels {
+  xNeg: string;
+  xPos: string;
+  yNeg: string;
+  yPos: string;
+}
+
 interface Props {
   state: RegimeMatrixState;
   /** Render the smaller, quieter variant used as a supporting view
       beneath the Capital Rotation Board. */
   compact?: boolean;
+  /** Override the four axis-end labels (defaults to the legacy
+      Risk Off/On × Rates Relief/Pressure framing). */
+  axisLabels?: AxisLabels;
 }
+
+const DEFAULT_AXIS_LABELS: AxisLabels = {
+  xNeg: 'Risk Off', xPos: 'Risk On', yNeg: 'Rates Relief', yPos: 'Rates Pressure',
+};
 
 // 2-axis classification of the current cross-asset environment.
 //   X axis: Risk Off ←→ Risk On
@@ -30,7 +44,7 @@ function plotY(y: number): number {
   return PAD_T + ((1 - y) / 2) * (H - PAD_T - PAD_B);
 }
 
-export const RegimeMatrix: React.FC<Props> = ({ state, compact = false }) => {
+export const RegimeMatrix: React.FC<Props> = ({ state, compact = false, axisLabels = DEFAULT_AXIS_LABELS }) => {
   const cx = plotX(state.x);
   const cy = plotY(state.y);
   // Highlight the active quadrant with a faint tint.
@@ -78,13 +92,13 @@ export const RegimeMatrix: React.FC<Props> = ({ state, compact = false }) => {
               labels INSIDE the plot tucked against the Y axis at top
               and bottom so they never collide with the X labels. */}
           <text className="matrix__axis-label"
-            x={PAD_L} y={H - 4} textAnchor="start">Risk Off</text>
+            x={PAD_L} y={H - 4} textAnchor="start">{axisLabels.xNeg}</text>
           <text className="matrix__axis-label"
-            x={W - PAD_R} y={H - 4} textAnchor="end">Risk On</text>
+            x={W - PAD_R} y={H - 4} textAnchor="end">{axisLabels.xPos}</text>
           <text className="matrix__axis-label"
-            x={plotX(0) + 6} y={PAD_T + 12} textAnchor="start">Rates Pressure</text>
+            x={plotX(0) + 6} y={PAD_T + 12} textAnchor="start">{axisLabels.yPos}</text>
           <text className="matrix__axis-label"
-            x={plotX(0) + 6} y={H - PAD_B - 6} textAnchor="start">Rates Relief</text>
+            x={plotX(0) + 6} y={H - PAD_B - 6} textAnchor="start">{axisLabels.yNeg}</text>
 
           {/* Asset class context dots */}
           {state.assets.map((a) => (

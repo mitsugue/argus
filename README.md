@@ -82,15 +82,28 @@ list and Render deploy steps.
 
 | Signal | Source | Status |
 | --- | --- | --- |
-| US rates + VIX (10Y / 2Y / Real 10Y / VIX) | FRED (St. Louis Fed) | **live** |
+| US rates + VIX + HY OAS (10Y / 2Y / Real 10Y / VIX / HY OAS) | FRED (St. Louis Fed) | **live** |
 | Japan watchlist (price / change / volume / date, 7 names) | J-Quants V2 | **live** |
 | US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
+| Market Regime / Capital Rotation v1 (regime label / axes / rotation board / top rotations) | FRED macro + Twelve Data ETF proxies + JP breadth (rule-based, `regime-v1`) | **live / partial** |
 | GPT-5.5 Pro Handoff (manual high-stakes second opinion) | manual copy-paste (no API call) | **live** |
 | Corporate Catalyst Layer (earnings / filings / news / disclosures) | SEC EDGAR + Finnhub + J-Quants (TDnet pending) | **live / partial** |
 | AI Judgment Layer v1 (automated second opinion) | GPT-5.5 primary + Gemini double-check (admin-triggered, cached) | **live (admin-run)** |
-| Market Regime, Alerts, earnings, flow/news scanners | mock | pending real wiring |
+| Alerts scanner, earnings *interpretation*, order-book / flow / tape | mock | pending real wiring |
+
+**Market Regime / Capital Rotation v1** (`/api/argus/market-regime`, `regime-v1`)
+is a transparent rule-based engine — **no OpenAI/Gemini, no prediction**. It reads
+FRED macro (10Y/2Y/real/VIX + ICE BofA US HY OAS `BAMLH0A0HYM2`) and a focused
+8-symbol Twelve Data ETF proxy universe (SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG, ONE
+batched `time_series` request, **6h cache** to stay credit-safe) plus JP watchlist
+breadth, and emits a regime label (RISK_ON / RISK_OFF / CAUTIOUS / EVENT_WAIT /
+MIXED), a Growth↔Defensive × Risk↔Duration matrix, a capital-rotation board, top
+rotations, a rates backdrop, confidence, and honest data limitations. **ETF
+rotation is a proxy for capital flow, not direct flow** — it is supporting
+evidence, not a trading signal by itself. The regime feeds the Action Label Engine
+(high-beta names lean WAIT under RISK_OFF / EVENT_WAIT) and the Pro Handoff.
 
 Watchlist **action** labels come from the **Action Label Engine v0** — a
 transparent, rule-based classifier over existing live data (price move + event
@@ -99,6 +112,21 @@ deliberately conservative: it only emits `HOLD` / `WAIT` / `WAIT FOR PULLBACK`
 in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
+
+**v9.5.0 — Live Market Regime + Capital Rotation scoring.** `GET
+/api/argus/market-regime` (`regime-v1`) replaces the mock Market Regime / Capital
+Rotation source with a transparent **rule-based** engine (no OpenAI/Gemini, no
+prediction). It scores a focused 8-symbol Twelve Data ETF proxy universe
+(SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG, one batched `time_series` request, **6h cache**,
+credit-safe) by capped 1d/5d/20d momentum, reads FRED macro (10Y/2Y/real/VIX +
+ICE BofA US HY OAS), and uses JP watchlist breadth as a temporary Japan proxy. It
+emits a regime label (RISK_ON / RISK_OFF / CAUTIOUS / EVENT_WAIT / MIXED), a
+Growth↔Defensive × Risk↔Duration matrix, a capital-rotation board, top rotations,
+a rates backdrop, confidence, source statuses, and honest data limitations. The
+Market Regime page, Today's Top Rotations preview, Action Label Engine (high-beta
+names lean WAIT under RISK_OFF / EVENT_WAIT), and the Pro Handoff all consume it.
+**ETF rotation is a proxy for capital flow, not direct flow.** Stale v9.2 "not
+built yet" / "Capital Rotation is mock" review text was removed.
 
 **v8.10.0 — AI Security Gate v1 + GPT-5.5 Pro Handoff.** This version adds the
 *safety/cost infrastructure* for future expensive AI runs plus a manual Pro
@@ -222,7 +250,8 @@ Catalyst risk is conservative (earnings ≤3d → high/wait_for_event; ≤7d →
 recent 8-K ≤3d or news spike → caution; recent JP disclosure → post_event_review).
 Env vars: `SEC_USER_AGENT` (recommended), `FINNHUB_API_KEY` (optional),
 `JQUANTS_API_KEY` (existing), `JQUANTS_TDNET_ENABLED` (default false). Still
-pending: Market Regime, Alerts, order-book/flow, earnings *interpretation*.
+pending: Alerts scanner, order-book/flow/tape, earnings *interpretation*
+(Market Regime / Capital Rotation v1 is now live/partial — see v9.5.0).
 
 Event Radar (Phase 1) covers FOMC, BOJ, CPI, PPI, Employment Situation, JOLTS,
 PCE / Personal Income and Outlays, GDP, and Treasury auctions. It is

@@ -10,9 +10,11 @@ import {
   todayJudgment,
   upcomingEvents,
 } from '../mock/dashboard';
-import { topRotations } from '../mock/regime';
+import { topRotations as mockRotations } from '../mock/regime';
 import { watchlist } from '../mock/watchlist';
+import { useMarketRegime } from '../hooks/useMarketRegime';
 import type { ActionKey } from '../types/action';
+import type { TopRotation } from '../types/regime';
 import type { RouteKey } from '../components/NavRail';
 import '../components/dashboard/Dashboard.css';
 
@@ -53,6 +55,18 @@ const formatDate = (iso: string) => {
 };
 
 export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
+  // Live Top Rotations from the Market Regime engine (falls back to mock when
+  // the backend is unavailable). Split the "A -> B" label into from/to.
+  const { data: regime } = useMarketRegime();
+  const topRotations: TopRotation[] = (() => {
+    const live = regime?.topRotations ?? [];
+    if (live.length === 0) return mockRotations;
+    return live.map((t) => {
+      const [from, to] = t.label.split(' -> ');
+      return { from: from ?? t.label, to: to ?? '' };
+    });
+  })();
+
   const priority = watchlist
     .slice()
     .sort((a, b) => URGENCY[a.action as ActionKey] - URGENCY[b.action as ActionKey])

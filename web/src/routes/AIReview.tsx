@@ -27,7 +27,7 @@ const PALETTE = [
 const ROUTES = [
   ['Today',         'Daily Command Center — hero judgment + Top Rotations + compact priority watchlist + compact event preview + compact core preview'],
   ['Action Alerts', 'Core and satellite asset-class cards with full reasoning, supporting data, and next condition'],
-  ['Market Regime', 'Capital Rotation Board (primary) + Regime Matrix (supporting view, compact) + Regime Summary + 10-tag glossary. The old bubble visualization is retired from the main experience'],
+  ['Market Regime', 'Capital Rotation Board (primary, live rule-based scoring) + Regime Matrix (Growth↔Defensive × Risk↔Duration) + Regime Summary + glossary, wired to live /api/argus/market-regime (regime-v1). The old bubble visualization is retired from the main experience'],
   ['Event Radar',   'Upcoming events list + D-7 → D+1 escalation policy'],
   ['Watchlist',     'Dense JP / US watchlist rows with action label, news, scanner rationale, and urgency sorting'],
   ['Core Portfolio','Long-term index status with calm vocabulary (Continue / Gradual Add / Defer Lump Sum / No Sell Action)'],
@@ -36,7 +36,7 @@ const ROUTES = [
 const KEPT = [
   'AppShell — slim header, persistent sidebar (Today\'s call pill stable across pages)',
   'Theme token structure (palette swapped, shape preserved)',
-  'Backend scanner.py + argus_ledger.py — now wired live (FRED rates, J-Quants JP + Twelve Data US watchlists, Event Radar, Action Labels, Corporate Catalysts, Pro Handoff)',
+  'Backend scanner.py + argus_ledger.py — now wired live (FRED rates, J-Quants JP + Twelve Data US watchlists, Event Radar, Action Labels, Corporate Catalysts, Market Regime / Capital Rotation v1, Pro Handoff)',
   'English chrome + Japanese market commentary balance',
 ];
 
@@ -70,18 +70,17 @@ const OPEN_QUESTIONS = [
 ];
 
 const GAPS = [
-  'Watchlist add/remove UI — not built yet (the watchlist symbol set is fixed/curated)',
-  'No detail panel when clicking an alert or watchlist row',
-  'No filter chips on Watchlist (e.g., "show EXIT only")',
+  'Filter chips on Watchlist (e.g., "show EXIT only") — not built yet',
   'Automated OpenAI/Gemini AI judgment not live yet — action labels are rule-based (Action Label Engine v0); GPT-5.5 Pro review is manual via Pro Handoff',
-  'No real capital rotation data source yet (Capital Rotation Board is mock)',
-  'No scoring formula for the Regime Matrix position (x, y are hand-set in mock)',
+  'Market Regime ETF universe is a focused 8-symbol proxy subset (SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG) — financials/energy/semis and the LQD credit pair are pending; ETF rotation is a proxy for capital flow, not direct flow',
+  'Japan regime uses watchlist breadth as a temporary proxy, not index/sector rotation',
+  'No moomoo order flow / order book / tape yet; no VWAP',
   'No regime-shift audit trail explaining why Market Regime changed',
   'No historical judgment log for past daily calls and action labels',
   'No history of past Top Rotations',
   'No user-specific exposure weighting across asset classes',
-  'No tooltip explanations on hover for action labels',
   'No portfolio P&L / dollar exposure rendering',
+  'Watchlist config is localStorage-only (per device; no cross-device sync)',
 ];
 
 function buildMarkdown(version: string): string {
@@ -159,7 +158,7 @@ ${ROUTES.map(([name, desc]) => `- **${name}** — ${desc}`).join('\n')}
 
 ## Current data state
 
-LIVE: FRED rates/VIX, J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar (official calendars + Treasury auctions), Action Label Engine v0 (rule-based), Corporate Catalysts (SEC EDGAR + Finnhub + J-Quants), and the manual GPT-5.5 Pro Handoff export. Still mock/pending: Market Regime scoring, Alerts scanner, Capital Rotation source, automated OpenAI/Gemini judgment, and some Today/CommandCenter compact previews. NOT trading advice — decision support only.
+LIVE: FRED rates/VIX (+ HY OAS), J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar (official calendars + Treasury auctions), Action Label Engine v0 (rule-based), Corporate Catalysts (SEC EDGAR + Finnhub + J-Quants), Market Regime / Capital Rotation v1 (rule-based ETF/HY-OAS proxy scoring, regime-v1), and the manual GPT-5.5 Pro Handoff export. Still mock/pending: Alerts scanner, automated OpenAI/Gemini judgment, and some Today/CommandCenter compact previews. Market Regime uses ETF/index proxies, not direct capital flow. NOT trading advice — decision support only.
 
 ## Decisions log
 
@@ -378,13 +377,13 @@ export const AIReview: React.FC = () => {
       <h2>Market Regime structure (v8.1)</h2>
       <ol>
         <li><strong>Capital Rotation Board (primary).</strong> Three signals per asset class — flow direction (meter + label), strength (Low / Medium / High), role (Risk / Defensive / Hedge / Duration / Liquidity). No action labels — those live on Action Alerts / Watchlist so this view stays a pure flow diagnostic.</li>
-        <li><strong>Regime Matrix (supporting).</strong> Compact 2-axis chart: Risk Off ↔ Risk On × Rates Relief ↔ Rates Pressure. Current location dot + asset class context dots. Smaller than v8.0.</li>
+        <li><strong>Regime Matrix (supporting).</strong> Compact 2-axis chart: Growth ↔ Defensive (x) × Risk ↔ Duration (y), driven by live regime-v1 axes. Current location dot + rotation-group context dots. Smaller than v8.0.</li>
         <li><strong>Regime Summary.</strong> Short bilingual paragraph — English headline + JP commentary.</li>
         <li><strong>Regime Glossary.</strong> Ten regime tags with Japanese definitions.</li>
       </ol>
 
       <h2>Current data state</h2>
-      <p>LIVE: FRED rates/VIX, J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar, Action Label Engine v0 (rule-based), Corporate Catalysts, and the manual GPT-5.5 Pro Handoff. Still mock/pending: Market Regime scoring, Alerts scanner, Capital Rotation source, automated OpenAI/Gemini judgment, some Today previews. NOT trading advice — decision support only.</p>
+      <p>LIVE: FRED rates/VIX (+ HY OAS), J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar, Action Label Engine v0 (rule-based), Corporate Catalysts, Market Regime / Capital Rotation v1 (rule-based ETF/HY-OAS proxy scoring), and the manual GPT-5.5 Pro Handoff. Still mock/pending: Alerts scanner, automated OpenAI/Gemini judgment, some Today previews. Market Regime uses ETF/index proxies, not direct capital flow. NOT trading advice — decision support only.</p>
 
       <h2>Decisions log</h2>
       <div className="review__columns">

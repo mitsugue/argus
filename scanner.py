@@ -1380,6 +1380,10 @@ _FRED_SERIES  = {
     "DGS2":   "US 2Y Treasury yield",
     "DFII10": "US 10Y real yield",
     "VIXCLS": "VIX",
+    # ICE BofA US High Yield OAS (credit-spread stress gauge). Used ONLY by the
+    # Market Regime engine — get_rates_snapshot() ignores it, so the /rates
+    # response shape is unchanged; it just rides the same free FRED fetch path.
+    "BAMLH0A0HYM2": "ICE BofA US High Yield OAS",
 }
 # Plausible "Tuesday before US CPI" mock state — used when FRED_API_KEY
 # is absent or any per-series fetch fails. Each tuple is (latest, prev).
@@ -1388,6 +1392,7 @@ _FRED_MOCK = {
     "DGS2":   (4.65, 4.60),
     "DFII10": (1.85, 1.82),
     "VIXCLS": (17.4, 17.0),
+    "BAMLH0A0HYM2": (3.10, 3.05),  # ~310bp HY OAS — benign/neutral mock
 }
 
 def _fred_normalize(series_id, latest, prev, latest_date, status):
@@ -1949,6 +1954,362 @@ def api_argus_events():
     return jsonify(get_events_snapshot())
 
 
+# ━━━ Market Regime + Capital Rotation Engine v1 (rule-based, NO LLM) ━━━
+# Classifies the CURRENT cross-asset environment from FRED macro (rates / VIX /
+# HY OAS) + a small Twelve Data ETF proxy universe + JP watchlist breadth.
+# Transparent rule scoring only — NO OpenAI/Gemini, NO prediction. ETF rotation
+# is a PROXY for capital flow, not direct flow. Credit-safe: ONE batched
+# 8-symbol Twelve Data time_series request per refresh, cached 6h.
+_TWELVEDATA_TS = "https://api.twelvedata.com/time_series"
+
+# 8-symbol universe → 8 credits in one batched request (within the free
+# 8-credit/min cap). Deliberately small; XLF/XLE/SMH/LQD/DIA/EWJ are future
+# additions once a higher-credit plan or per-minute pacing is in place.
+_REGIME_ETFS = ["SPY", "QQQ", "IWM", "XLK", "XLU", "GLD", "TLT", "HYG"]
+
+_ROTATION_GROUPS = [
+    {"id": "us-growth",  "label": "US Growth",        "assets": ["QQQ", "XLK"], "role": "Risk"},
+    {"id": "us-broad",   "label": "US Broad Risk",    "assets": ["SPY"],        "role": "Risk"},
+    {"id": "small-caps", "label": "Small Caps",       "assets": ["IWM"],        "role": "Risk"},
+    {"id": "defensive",  "label": "Defensive / Gold", "assets": ["XLU", "GLD"], "role": "Defensive"},
+    {"id": "duration",   "label": "Duration / Bonds", "assets": ["TLT"],        "role": "Duration"},
+    {"id": "credit",     "label": "Credit Risk",      "assets": ["HYG"],        "role": "Risk"},
+]
+
+# Matrix orientation priors by role (the score nudges around these anchors).
+_ROLE_GROWTH = {"Risk": 0.5, "Defensive": -0.5, "Hedge": -0.4, "Duration": -0.6, "Liquidity": -0.2}
+_ROLE_RISK   = {"Risk": 0.6, "Defensive": -0.2, "Hedge": -0.1, "Duration": -0.7, "Liquidity": -0.3}
+
+_REGIME_SUMMARY_JA = {
+    "RISK_ON":   "リスク資産が広く優位で、クレジットも安定。リスク選好寄りの地合い。",
+    "RISK_OFF":  "ディフェンシブ・債券・金が優位で、株式とクレジットが弱含み。リスク回避寄り。",
+    "CAUTIOUS":  "方向感は限定的で、金利・VIX・イベントのリスクがくすぶる。慎重なスタンス。",
+    "EVENT_WAIT": "重要イベントが目前で、新規エントリーを抑えイベント通過後に再評価する局面。",
+    "MIXED":     "明確な主導役がなく、資金の方向感は限定的。",
+}
+
+_REGIME_CACHE     = {"data": None, "expires": 0.0}
+_REGIME_CACHE_TTL = 6 * 3600  # 6h — non-intraday regime scoring, credit-safe
+
+def _clip(v, lo, hi):
+    return lo if v < lo else hi if v > hi else v
+
+def _scale_ret(r):
+    """Decimal return → [-1, 1] via a ±10% cap (transparent, no z-score)."""
+    return _clip(r, -0.10, 0.10) / 0.10
+
+def _td_timeseries(symbols):
+    """Batched daily closes for the ETF universe.
+
+    Returns {symbol: [latest_close, ..., older]} (newest-first) for each symbol
+    that parsed, or {} on no key / error / rate limit. Never raises. ONE
+    request, len(symbols) credits — keep len(symbols) <= 8 for the free cap.
+    """
+    if not _TWELVEDATA_API_KEY:
+        return {}
+    try:
+        r = requests.get(_TWELVEDATA_TS, params={
+            "symbol": ",".join(symbols), "interval": "1day",
+            "outputsize": 22, "apikey": _TWELVEDATA_API_KEY,
+        }, timeout=15)
+        r.raise_for_status()
+        body = r.json()
+        # Top-level error (bad key / quota / rate limit) → flat dict status=error.
+        if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
+            return {}
+        out = {}
+        for sym in symbols:
+            # Multi-symbol responses are keyed by symbol; single is flat.
+            if isinstance(body, dict) and sym in body:
+                node = body.get(sym)
+            elif len(symbols) == 1:
+                node = body
+            else:
+                node = None
+            if not isinstance(node, dict) or str(node.get("status", "ok")).lower() == "error":
+                continue
+            closes = []
+            for v in (node.get("values") or []):
+                c = v.get("close")
+                if c not in (None, ""):
+                    try:
+                        closes.append(float(c))
+                    except (TypeError, ValueError):
+                        pass
+            if len(closes) >= 2:
+                out[sym] = closes  # Twelve Data returns newest-first
+        return out
+    except Exception:
+        return {}
+
+def _etf_momentum(closes):
+    """1d/5d/20d returns + composite score from a newest-first close list."""
+    c0 = closes[0]
+    def ret(n):
+        if len(closes) > n and closes[n]:
+            return c0 / closes[n] - 1.0
+        return None
+    m1, m5, m20 = ret(1), ret(5), ret(20)
+    if m5 is not None and m20 is not None:
+        score = 0.45 * _scale_ret(m5) + 0.35 * _scale_ret(m20) + 0.20 * _scale_ret(m1 or 0.0)
+    elif m5 is not None:
+        score = 0.60 * _scale_ret(m5) + 0.40 * _scale_ret(m1 or 0.0)
+    else:
+        score = _scale_ret(m1 or 0.0)
+    return {
+        "momentum1d":  round((m1 or 0.0) * 100, 2),
+        "momentum5d":  round(m5 * 100, 2) if m5 is not None else None,
+        "momentum20d": round(m20 * 100, 2) if m20 is not None else None,
+        "score":       round(_clip(score, -1.0, 1.0), 3),
+        "limited":     (m20 is None or m5 is None),
+    }
+
+def _group_rationale_ja(label, score, status, available):
+    if not available:
+        return f"{label} はデータ取得待ちのため評価を保留。"
+    if status == "inflow":
+        return f"{label} に資金流入の傾向（スコア {score:+.2f}）。"
+    if status == "outflow":
+        return f"{label} から資金流出の傾向（スコア {score:+.2f}）。"
+    return f"{label} は中立（スコア {score:+.2f}）。"
+
+def _regime_rates_backdrop(rates, hy):
+    us10y = (rates.get("us10y") if isinstance(rates, dict) else None) or {}
+    us2y  = (rates.get("us2y") if isinstance(rates, dict) else None) or {}
+    real  = (rates.get("usReal10y") if isinstance(rates, dict) else None) or {}
+    vix   = (rates.get("vix") if isinstance(rates, dict) else None) or {}
+    hy    = hy or {}
+    vix_lvl   = float(vix.get("latestValue") or 0)
+    dgs10_chg = float(us10y.get("change") or 0)
+    real_lvl  = float(real.get("latestValue") or 0)
+    hy_lvl    = float(hy.get("latestValue") or 0)
+    hy_chg    = float(hy.get("change") or 0)
+    if vix_lvl >= 26 or hy_lvl >= 5.0 or hy_chg >= 0.5:
+        posture, ja = "stress", "VIX上昇または信用スプレッド拡大で、ストレスの兆候。"
+    elif dgs10_chg >= 0.08 or real_lvl >= 2.3:
+        posture, ja = "tightening", "長期・実質金利の上昇が、リスク資産の上値を抑えやすい地合い。"
+    elif 0 < vix_lvl < 16 and 0 < hy_lvl < 3.5 and dgs10_chg <= 0.03:
+        posture, ja = "supportive", "低VIX・タイトな信用スプレッド・落ち着いた金利で、リスク選好を支えやすい。"
+    else:
+        posture, ja = "neutral", "金利・VIX・信用スプレッドはおおむね中立圏。"
+    return {
+        "us10y":   round(float(us10y.get("latestValue") or 0), 2),
+        "us2y":    round(float(us2y.get("latestValue") or 0), 2),
+        "real10y": round(real_lvl, 2),
+        "vix":     round(vix_lvl, 1),
+        "hyOas":   round(hy_lvl, 2),
+        "posture": posture,
+        "rationaleJa": ja,
+    }
+
+def get_market_regime_snapshot():
+    """Live/partial rule-based market-regime + capital-rotation scoring."""
+    now = time.time()
+    if _REGIME_CACHE["data"] is not None and now < _REGIME_CACHE["expires"]:
+        return _REGIME_CACHE["data"]
+
+    rates = get_rates_snapshot()
+    ev    = get_events_snapshot()
+    jp    = get_japan_watchlist_snapshot()
+    hy    = fetch_fred_series("BAMLH0A0HYM2")  # live or per-series mock
+
+    etf = {sym: _etf_momentum(cl) for sym, cl in _td_timeseries(_REGIME_ETFS).items()}
+    etf_full = len(etf) == len(_REGIME_ETFS)
+    etf_live = len(etf) >= max(1, len(_REGIME_ETFS) // 2)
+
+    def sym_score(sym):
+        return etf.get(sym, {}).get("score")
+
+    groups = []
+    for g in _ROTATION_GROUPS:
+        scores = [sym_score(s) for s in g["assets"] if sym_score(s) is not None]
+        if scores:
+            gscore = sum(scores) / len(scores)
+            status = "inflow" if gscore > 0.15 else "outflow" if gscore < -0.15 else "neutral"
+            avail = True
+        else:
+            gscore, status, avail = 0.0, "neutral", False
+        def agg(key):
+            vs = [etf[s][key] for s in g["assets"] if s in etf and etf[s].get(key) is not None]
+            return round(sum(vs) / len(vs), 2) if vs else None
+        groups.append({
+            "id": g["id"], "label": g["label"], "assets": g["assets"], "role": g["role"],
+            "score": round(gscore, 3),
+            "momentum1d": agg("momentum1d"), "momentum5d": agg("momentum5d"), "momentum20d": agg("momentum20d"),
+            "status": status, "available": avail,
+            "rationaleJa": _group_rationale_ja(g["label"], gscore, status, avail),
+        })
+    gmap = {g["id"]: g for g in groups}
+    def gsc(gid):
+        g = gmap.get(gid)
+        return g["score"] if g and g["available"] else 0.0
+
+    growth_lead    = (gsc("us-growth") + gsc("us-broad") + gsc("small-caps")) / 3.0
+    defensive_lead = (gsc("defensive") + gsc("duration")) / 2.0
+    credit_lead    = gsc("credit")
+    risk_lead      = (gsc("us-broad") + gsc("small-caps") + gsc("us-growth") + credit_lead) / 4.0
+    growth_value_axis  = _clip(growth_lead - defensive_lead, -1.0, 1.0)
+    risk_duration_axis = _clip(risk_lead - gsc("duration"), -1.0, 1.0)
+
+    events = ev.get("events", []) if isinstance(ev, dict) else []
+    esc_us = _region_event_escalation(events, "US")
+    esc_jp = _region_event_escalation(events, "JP")
+    imminent = esc_us in ("D", "D-1") or esc_jp in ("D", "D-1")
+
+    backdrop     = _regime_rates_backdrop(rates, hy)
+    vix_elevated = backdrop["vix"] >= 20
+    hy_stress    = backdrop["posture"] == "stress"
+
+    # ── Regime classification (transparent precedence) ──
+    if imminent and abs(risk_lead) < 0.30:
+        label = "EVENT_WAIT"
+    elif risk_lead >= 0.20 and credit_lead >= -0.05 and not vix_elevated and not hy_stress:
+        label = "RISK_ON"
+    elif risk_lead <= -0.20 and defensive_lead >= risk_lead and (vix_elevated or hy_stress or defensive_lead > 0.10):
+        label = "RISK_OFF"
+    elif vix_elevated or hy_stress or backdrop["posture"] == "tightening" or imminent:
+        label = "CAUTIOUS"
+    elif abs(risk_lead) < 0.10 and abs(growth_value_axis) < 0.10:
+        label = "MIXED"
+    elif risk_lead > 0:
+        label = "RISK_ON"
+    else:
+        label = "CAUTIOUS"
+
+    # ── Confidence: source availability + signal agreement ──
+    signs = [1 if risk_lead > 0.1 else -1 if risk_lead < -0.1 else 0,
+             1 if credit_lead > 0.1 else -1 if credit_lead < -0.1 else 0,
+             -1 if defensive_lead > 0.1 else 1 if defensive_lead < -0.1 else 0]
+    nz = [s for s in signs if s != 0]
+    agree = abs(sum(nz)) / len(nz) if nz else 0.0
+    conf = 0.35
+    conf += 0.20 if etf_full else 0.10 if etf_live else 0.0
+    if isinstance(rates, dict) and rates.get("status") == "live": conf += 0.10
+    if hy and hy.get("status") == "live": conf += 0.07
+    if isinstance(jp, dict) and jp.get("status") == "live": conf += 0.05
+    conf += 0.15 * agree
+    if label == "MIXED": conf = min(conf, 0.5)
+    confidence = round(_clip(conf, 0.1, 0.9), 2)
+
+    # ── Status / sources ──
+    rates_live = isinstance(rates, dict) and rates.get("status") == "live"
+    jp_has     = isinstance(jp, dict) and any(s.get("status") == "live" for s in jp.get("stocks", []))
+    if etf_full and rates_live:
+        status = "live"
+    elif etf_live or rates_live:
+        status = "partial"
+    else:
+        status = "mock"
+    source_statuses = {
+        "fred":           "live" if rates_live else "mock",
+        "twelveData":     "live" if etf_full else "partial" if etf_live else "unavailable",
+        "jquants":        "partial" if jp_has else "unavailable",  # breadth proxy, not sector rotation
+        "manualFallback": "unused" if etf_live else "mock",
+    }
+
+    # ── Capital rotation: top rotations ──
+    def rot(a_id, b_id, label_txt, direction):
+        a, b = gmap.get(a_id), gmap.get(b_id)
+        if not (a and b and a["available"] and b["available"]):
+            return None
+        spread = b["score"] - a["score"]
+        if spread <= 0.15:
+            return None
+        return {"label": label_txt, "direction": direction, "score": round(spread, 3),
+                "evidenceJa": f"{a['label']}（{a['score']:+.2f}）から {b['label']}（{b['score']:+.2f}）へ資金がシフト。"}
+    cand = [
+        rot("us-growth",  "defensive",  "Growth -> Defensive",   "outflow"),
+        rot("small-caps", "duration",   "Small Caps -> Duration", "outflow"),
+        rot("credit",     "defensive",  "Credit -> Defensive",   "outflow"),
+        rot("defensive",  "us-growth",  "Defensive -> Growth",   "inflow"),
+        rot("duration",   "us-broad",   "Bonds -> Equities",     "inflow"),
+    ]
+    top_rotations = [c for c in cand if c][:3]
+    avail_groups = [g for g in groups if g["available"]]
+    if not top_rotations and avail_groups:
+        srt = sorted(avail_groups, key=lambda g: g["score"])
+        lo, hi = srt[0], srt[-1]
+        if hi["score"] - lo["score"] > 0.1:
+            top_rotations.append({
+                "label": f"{lo['label']} -> {hi['label']}",
+                "direction": "inflow" if hi["role"] == "Risk" else "outflow",
+                "score": round(hi["score"] - lo["score"], 3),
+                "evidenceJa": f"{lo['label']} が相対的に弱く、{hi['label']} が優位。",
+            })
+
+    # ── Matrix context points ──
+    points = []
+    for g in groups:
+        if not g["available"]:
+            continue
+        px = _clip(_ROLE_GROWTH.get(g["role"], 0.0) * 0.6 + g["score"] * 0.5, -1.0, 1.0)
+        py = _clip(_ROLE_RISK.get(g["role"], 0.0) * 0.6 + g["score"] * 0.5, -1.0, 1.0)
+        points.append({"label": g["label"], "x": round(px, 2), "y": round(py, 2)})
+
+    # ── Supporting evidence (only what we actually have) ──
+    evidence = []
+    if gmap["us-broad"]["available"] or gmap["small-caps"]["available"]:
+        evidence.append(f"米国広範リスク(SPY) {gsc('us-broad'):+.2f}、小型株(IWM) {gsc('small-caps'):+.2f}、グロース {gsc('us-growth'):+.2f}。")
+    if gmap["credit"]["available"]:
+        evidence.append(f"ハイイールド(HYG) {credit_lead:+.2f}、HY OAS {backdrop['hyOas']}%（{'live' if hy and hy.get('status') == 'live' else 'mock'}）。")
+    evidence.append(f"VIX {backdrop['vix']}、金利地合いは {backdrop['posture']}。")
+    jp_live_stocks = [s for s in (jp.get("stocks", []) if isinstance(jp, dict) else []) if s.get("status") == "live"]
+    if jp_live_stocks:
+        jp_breadth = round(sum(float(s.get("changePct", 0)) for s in jp_live_stocks) / len(jp_live_stocks), 2)
+        evidence.append(f"日本株ウォッチリストの騰落率平均 {jp_breadth:+.2f}%（暫定プロキシ）。")
+    if imminent:
+        evidence.append(f"重要イベントが接近（US={esc_us or '—'}, JP={esc_jp or '—'}）。")
+
+    # ── Data limitations (honest) ──
+    limitations = [
+        "ETF rotation is a proxy for capital flow, not direct capital flow.",
+        "ETF universe is a focused 8-symbol subset (SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG); financials/energy/semis and the LQD credit pair are pending.",
+        "No order book / tape / moomoo flow yet.",
+        "Japan regime uses watchlist breadth as a temporary proxy, not index/sector rotation.",
+    ]
+    if not etf_full:
+        limitations.append("Some ETF history was unavailable this refresh — scoring is partial.")
+    limitations.append("Crypto risk appetite (BTC/ETH) not yet folded into regime scoring.")
+
+    matrix_ja = (f"横軸グロース対ディフェンシブ {growth_value_axis:+.2f}、縦軸リスク対デュレーション "
+                 f"{risk_duration_axis:+.2f}。{_REGIME_SUMMARY_JA.get(label, '')}")
+
+    payload = {
+        "status": status,
+        "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "engineVersion": "regime-v1",
+        "regime": {
+            "label": label,
+            "growthValueAxis": round(growth_value_axis, 3),
+            "riskDurationAxis": round(risk_duration_axis, 3),
+            "summaryJa": _REGIME_SUMMARY_JA.get(label, ""),
+            "confidence": confidence,
+        },
+        "ratesBackdrop": backdrop,
+        "rotationGroups": groups,
+        "topRotations": top_rotations,
+        "matrix": {
+            "x": round(growth_value_axis, 3),
+            "y": round(risk_duration_axis, 3),
+            "xLabel": "Growth vs Defensive",
+            "yLabel": "Risk vs Duration",
+            "points": points,
+            "rationaleJa": matrix_ja,
+        },
+        "supportingEvidence": evidence,
+        "sourceStatuses": source_statuses,
+        "dataLimitations": limitations,
+    }
+    if status != "mock":
+        _REGIME_CACHE["data"]    = payload
+        _REGIME_CACHE["expires"] = now + _REGIME_CACHE_TTL
+    return payload
+
+@app.route("/api/argus/market-regime")
+def api_argus_market_regime():
+    return jsonify(get_market_regime_snapshot())
+
+
 # ━━━ Action Label Engine v0 (rule-based, internal) ━━━
 # Classifies the watched names into ARGUS action categories using EXISTING live
 # data only (rates + watchlists + events). No external LLM, no new APIs, no
@@ -2051,6 +2412,11 @@ def get_action_labels():
     jp    = get_japan_watchlist_snapshot()
     us    = get_us_watchlist_snapshot()
     ev    = get_events_snapshot()
+    reg   = get_market_regime_snapshot()  # 6h-cached; no extra cost when warm
+    reg_status = reg.get("status") if isinstance(reg, dict) else "mock"
+    reg_block  = reg.get("regime", {}) if isinstance(reg, dict) else {}
+    reg_label  = reg_block.get("label")
+    reg_ready  = reg_status in ("live", "partial") and reg_label
     events  = ev.get("events", []) if isinstance(ev, dict) else []
     posture = _rates_posture(rates)
     esc_by_market = {"US": _region_event_escalation(events, "US"),
@@ -2079,17 +2445,32 @@ def get_action_labels():
         chg = float(q.get("changePct", 0))
         changes.append(chg)
         action, risk, conf, reason, nxt = _classify_symbol(meta, chg, esc, posture)
+        high_beta = meta["cls"] in ("us_growth", "jp_momentum")
+        # Broad-market regime nudge (conservative, one-directional): under
+        # RISK_OFF / EVENT_WAIT, high-beta names that the per-symbol rule left
+        # at HOLD are lifted to WAIT. Never loosens caution (RISK_ON does not
+        # auto-ADD); it only defers entries when the market backdrop disagrees.
+        if reg_ready and high_beta and reg_label in ("RISK_OFF", "EVENT_WAIT") and action == "HOLD":
+            action = "WAIT"
+            conf = round(min(0.6, conf + 0.05), 2)
+            reason += f" 市場レジームが{reg_label}のため、高ベータは様子見に引き上げ。"
         labels.append({
             "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
             "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
             "supportingData": {"changePct": chg, "volume": q.get("volume", 0),
-                               "eventEscalation": esc or "normal", "ratesPosture": posture},
+                               "eventEscalation": esc or "normal", "ratesPosture": posture,
+                               "marketRegime": reg_label or "n/a"},
             "nextConditionJa": nxt, "status": "live",
         })
 
     imminent_any = esc_by_market["US"] in ("D", "D-1") or esc_by_market["JP"] in ("D", "D-1")
     avg = sum(changes) / len(changes) if changes else 0.0
-    if imminent_any:
+    if reg_ready:
+        # The Market Regime engine reads the broad cross-asset backdrop, so when
+        # it is live/partial it sets the headline posture; the watchlist-average
+        # rule below is the fallback for when regime is unavailable.
+        mp, mp_ja = reg_label, reg_block.get("summaryJa", "") + "（Market Regime エンジン）"
+    elif imminent_any:
         mp, mp_ja = "EVENT_WAIT", "重要イベントが目前のため、新規ポジションを抑えイベント通過後に判断する。"
     elif avg <= -2.0:
         mp, mp_ja = "RISK_OFF", "ウォッチリスト全体が軟調で、リスク回避寄りの地合い。"
@@ -2114,6 +2495,13 @@ def get_action_labels():
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "engineVersion": "action-v0",
         "marketPosture": {"label": mp, "rationaleJa": mp_ja},
+        "marketRegime": {
+            "label": reg_label or "n/a",
+            "confidence": reg_block.get("confidence"),
+            "status": reg_status,
+            "growthValueAxis": reg_block.get("growthValueAxis"),
+            "riskDurationAxis": reg_block.get("riskDurationAxis"),
+        },
         "labels": labels,
     }
 
@@ -2536,7 +2924,7 @@ def api_argus_security_unlock():
 _PRO_HANDOFF_CACHE = {"data": None, "expires": 0.0}
 _PRO_HANDOFF_TTL   = 180  # 3 min
 
-def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled"):
+def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", reg=None):
     now_jst = datetime.now(TZ_JST)
     L = []
     L.append("# A.R.G.U.S. — GPT-5.5 Pro Handoff")
@@ -2568,6 +2956,7 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled"):
     L.append("- Source statuses: "
              f"rates={_st(rates)}, japanWatchlist={_st(jp)}, usWatchlist={_st(us)}, events={_st(ev)}, "
              f"actionLabels={_st(al)}, catalysts={_st(cat) if isinstance(cat, dict) else 'unavailable'}, "
+             f"marketRegime={_st(reg) if isinstance(reg, dict) else 'unavailable'}, "
              f"proHandoff=live, aiJudgment={aij_status}")
     if isinstance(rates, dict):
         def _rv(k):
@@ -2603,6 +2992,25 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled"):
             L.append(f"- {l.get('symbol')} [{l.get('market')}]: ruleAction={l.get('action')} risk={l.get('risk')} "
                      f"conf={l.get('confidence')} | chg={sd.get('changePct')}% ev={sd.get('eventEscalation')} "
                      f"rates={sd.get('ratesPosture')} | {l.get('reasonJa', '')} | next: {l.get('nextConditionJa', '')}")
+    if isinstance(reg, dict):
+        rg = reg.get("regime", {}) or {}
+        rb = reg.get("ratesBackdrop", {}) or {}
+        L.append(f"### Market Regime ({reg.get('engineVersion', 'regime-v1')}, status={reg.get('status')})")
+        L.append(f"- regime={rg.get('label')} conf={rg.get('confidence')} | "
+                 f"growthValueAxis={rg.get('growthValueAxis')} riskDurationAxis={rg.get('riskDurationAxis')} | {rg.get('summaryJa', '')}")
+        L.append(f"- ratesBackdrop: posture={rb.get('posture')} | US10Y={rb.get('us10y')} US2Y={rb.get('us2y')} "
+                 f"real10Y={rb.get('real10y')} VIX={rb.get('vix')} HY_OAS={rb.get('hyOas')}% | {rb.get('rationaleJa', '')}")
+        mx = reg.get("matrix", {}) or {}
+        L.append(f"- matrix: x({mx.get('xLabel')})={mx.get('x')} y({mx.get('yLabel')})={mx.get('y')}")
+        for g in reg.get("rotationGroups", []):
+            L.append(f"    rotation {g.get('label')} [{g.get('role')}]: score={g.get('score')} status={g.get('status')} "
+                     f"(1d={g.get('momentum1d')} 5d={g.get('momentum5d')} 20d={g.get('momentum20d')}) {g.get('rationaleJa', '')}")
+        for t in reg.get("topRotations", []):
+            L.append(f"    topRotation {t.get('label')} [{t.get('direction')}] spread={t.get('score')} | {t.get('evidenceJa', '')}")
+        for s in reg.get("supportingEvidence", []):
+            L.append(f"    evidence: {s}")
+        L.append("- Source statuses: " + ", ".join(f"{k}={v}" for k, v in (reg.get("sourceStatuses", {}) or {}).items()))
+        L.append("- NOTE: ETF rotation is a PROXY for capital flow, not direct flow; regime is rule-based (no LLM).")
     if isinstance(cat, dict):
         L.append(f"### Corporate Catalysts ({cat.get('engineVersion', 'catalyst-v1')}, status={cat.get('status')})")
         L.append("- Sources: " + ", ".join(f"{s.get('name')}={s.get('status')}" for s in cat.get("sources", [])))
@@ -2643,7 +3051,10 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled"):
         L.append("- No earnings interpretation (actual vs consensus) yet.")
     else:
         L.append("- No corporate catalyst layer / earnings interpretation yet.")
-    L.append("- Market Regime is not live-scored yet (mock). Alerts scanner is not live yet (mock).")
+    if isinstance(reg, dict) and reg.get("status") in ("live", "partial"):
+        L.append(f"- Market Regime is rule-based live-scored (regime-v1, status={reg.get('status')}): ETF/index/HY-OAS proxies, NOT direct capital flow. Alerts scanner is not live yet (mock).")
+    else:
+        L.append("- Market Regime scoring is unavailable this refresh (mock). Alerts scanner is not live yet (mock).")
     L.append("- No historical judgment log and no user-specific exposure weighting yet.")
     L.append("- Today/CommandCenter compact previews may still use seed data.")
     L.append("- Action Label Engine v0 is conservative and does NOT output EXIT/TRIM/ADD/BUY DIP (only HOLD/WAIT/WAIT FOR PULLBACK) until later upgraded.")
@@ -2672,15 +3083,16 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled"):
 def _build_pro_handoff():
     rates = get_rates_snapshot(); jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
-    cat = get_catalysts_snapshot()
+    cat = get_catalysts_snapshot(); reg = get_market_regime_snapshot()
     def _st(x): return x.get("status", "mock") if isinstance(x, dict) else "mock"
     # Automated AI judgment is pending/disabled (the /api/argus/ai-judgment GET
     # returns disabled); reflect that truthfully without affecting data status.
     aij_status = "live" if _AI_JUDGE_ENABLED else "disabled"
     src = {"rates": _st(rates), "japanWatchlist": _st(jp), "usWatchlist": _st(us),
-           "events": _st(ev), "actionLabels": _st(al), "catalysts": _st(cat)}
+           "events": _st(ev), "actionLabels": _st(al), "catalysts": _st(cat),
+           "marketRegime": _st(reg)}
     warnings = [f"{k} is {v}" for k, v in src.items() if v != "live"]
-    prompt = _compose_pro_prompt(rates, jp, us, ev, al, cat, aij_status)
+    prompt = _compose_pro_prompt(rates, jp, us, ev, al, cat, aij_status, reg)
     live_n = sum(1 for v in src.values() if v == "live")
     status = "live" if live_n == len(src) else ("partial" if live_n > 0 else "mock")
     source_statuses = {**src, "proHandoff": "live", "aiJudgment": aij_status}
