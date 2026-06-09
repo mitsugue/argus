@@ -1,5 +1,6 @@
 import React from 'react';
 import { PageShell } from './PageShell';
+import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
 import '../components/dashboard/Dashboard.css';
 
 // 用語一覧 — English chrome term → Japanese meaning.
@@ -60,6 +61,14 @@ export const Guide: React.FC = () => {
             ))}
           </div>
         </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">API / Integration status</span>
+          <span className="section-head__count">設定・稼働状況</span>
+        </div>
+        <IntegrationsPanel />
       </section>
 
       <section>

@@ -88,10 +88,22 @@ list and Render deploy steps.
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
 | Market Regime / Capital Rotation v1 (regime label / axes / rotation board / top rotations) | FRED macro + Twelve Data ETF proxies + JP breadth (rule-based, `regime-v1`) | **live / partial** |
-| GPT-5.5 Pro Handoff (manual high-stakes second opinion) | manual copy-paste (no API call) | **live** |
+| GPT-5.5 Pro Handoff (manual high-stakes second opinion) | manual copy-paste (no API call, no cost) | **live (manual)** |
+| Integration health (provider configured/live/partial/missing) | `/api/argus/integrations` (`integrations-v1`, secret-free) | **live** |
 | Corporate Catalyst Layer (earnings / filings / news / disclosures) | SEC EDGAR + Finnhub + J-Quants (TDnet pending) | **live / partial** |
-| AI Judgment Layer v1 (automated second opinion) | GPT-5.5 primary + Gemini double-check (admin-triggered, cached) | **live (admin-run)** |
+| AI Judgment Layer v1 (automated second opinion) | GPT-5.5 primary + Gemini double-check (code path; needs Render keys + `AI_JUDGE_ENABLED` + admin run) | **disabled / missing_keys until configured** |
 | Alerts scanner, earnings *interpretation*, order-book / flow / tape | mock | pending real wiring |
+
+> **AI status is truthful, not flag-driven.** `aiJudgment` is **never** reported
+> `live` merely because `AI_JUDGE_ENABLED=true`. Its status comes from real key +
+> cache state: `disabled` (flag off) · `missing_keys` (enabled, no OpenAI/Gemini
+> key) · `partial` (only one provider configured) · `no_cached_result` (keys
+> present, no successful admin run yet) · `live` (a fresh cached admin-run result).
+> The **GPT-5.5 Pro Handoff is manual copy-paste and makes no API call** — it is
+> separate from ChatGPT Pro billing and from the OpenAI/Gemini API. The public
+> frontend **never** triggers an expensive AI call (it reads cache only). See
+> **Guide → API / Integration status** and the admin-only
+> `/api/argus/ai-provider-status` (requires `X-ARGUS-ADMIN-TOKEN`).
 
 **Market Regime / Capital Rotation v1** (`/api/argus/market-regime`, `regime-v1`)
 is a transparent rule-based engine — **no OpenAI/Gemini, no prediction**. It reads
@@ -112,6 +124,28 @@ deliberately conservative: it only emits `HOLD` / `WAIT` / `WAIT FOR PULLBACK`
 in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
+
+**v9.6.0 — Integration Health + AI provider truth status.** Adds a secret-free
+public **`GET /api/argus/integrations`** (`integrations-v1`) summarizing every
+provider's `configured` / `runtimeStatus` (live / partial / missing / disabled /
+pending) for FRED, J-Quants, Twelve Data, Finnhub, OpenAI, Gemini, CoinGecko, and
+moomoo — plus an admin-only **`GET /api/argus/ai-provider-status`**
+(`X-ARGUS-ADMIN-TOKEN`; 401/503 if missing) returning safe booleans only (no key
+values, no model call). **Fixes the AI-status truth bug:** `aiJudgment` is no
+longer marked `live` from `AI_JUDGE_ENABLED` alone — a single source of truth
+(`_ai_judgment_truth`) reports `disabled` / `missing_keys` / `partial` /
+`no_cached_result` / `live` from real key + cache state, and the Pro Handoff, the
+public `/api/argus/ai-judgment` GET, the AI Review sheet, and the new **Guide →
+API / Integration status** panel all use it. No OpenAI/Gemini call is made on any
+public page load.
+
+**Next API roadmap:** (1) v9.7.0 CoinGecko crypto live (BTC/ETH); (2) v9.8.0
+Alerts Scanner live (events + regime + catalysts + action labels); (3) v9.9.0
+moomoo / VWAP / order-flow validation (local OpenD feasibility, JP/US coverage,
+no cloud secret leakage); (4) v10.0 Portfolio Exposure Layer (holdings, quantity,
+average cost, valuation, unrealized P/L, allocation); (5) v10.1 What-if Simulator
+(*scenario analysis* — "if I add ¥X to asset Y, how do exposure/risk/scenario P/L
+shift?" — framed as scenarios, NOT deterministic prediction).
 
 **v9.5.0 — Live Market Regime + Capital Rotation scoring.** `GET
 /api/argus/market-regime` (`regime-v1`) replaces the mock Market Regime / Capital
@@ -154,14 +188,18 @@ OpenAI/Gemini judge code is kept dormant for a future version).
   GPT-5.5 Pro" button on the Watchlist copies it to the clipboard. This makes
   **no** API call, costs nothing, and exposes no secrets. (ChatGPT Pro
   subscription is separate from OpenAI API billing.)
-**v9.1.0 — Automated AI Judgment Layer v1 is live (admin-run).** `GPT-5.5`
-(OpenAI, primary reviewer) + `gemini-2.5-flash` (independent double-check, with
-Google Search grounding when the client supports it) review the rule-based
-labels behind the Security Gate. The conservative arbiter always preserves the
-rule label, blocks `ADD`/`BUY DIP`/`EXIT`/`TRIM` unless both models support it,
-and defers to Gemini on high-severity disagreement; malformed/failed model
-output degrades to partial / rule-only. **GPT-5.5 Pro is NOT used automatically**
-— it stays the manual Copy-for-GPT-5.5-Pro Handoff path (and a future Deep Scan).
+**v9.1.0 — Automated AI Judgment Layer v1 (code path; disabled until keys are
+configured).** The `GPT-5.5` (OpenAI, primary reviewer) + `gemini-2.5-flash`
+(independent double-check, with Google Search grounding when the client supports
+it) judge code reviews the rule-based labels behind the Security Gate. The
+conservative arbiter always preserves the rule label, blocks
+`ADD`/`BUY DIP`/`EXIT`/`TRIM` unless both models support it, and defers to Gemini
+on high-severity disagreement; malformed/failed model output degrades to partial
+/ rule-only. **This path is NOT live unless** `OPENAI_API_KEY` + `GEMINI_API_KEY`
+are set in Render, `AI_JUDGE_ENABLED=true`, and an admin run has succeeded — until
+then its status is `disabled` / `missing_keys` / `no_cached_result` (see v9.6.0).
+**GPT-5.5 Pro is NOT used automatically** — it stays the manual
+Copy-for-GPT-5.5-Pro Handoff path (and a future Deep Scan).
 - The public frontend reads the **cached** judgment only via
   `GET /api/argus/ai-judgment` (never triggers a model call; returns `disabled`
   or `no_cached_result` when there's nothing cached).

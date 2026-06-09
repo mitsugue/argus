@@ -2552,6 +2552,10 @@ _FAILED_ATTEMPTS_LOCK_THRESHOLD = 5
 _AI_CACHE_TTL = _int_env("AI_JUDGE_CACHE_TTL_MINUTES", 30) * 60
 _AI_RESULT_CACHE = {"data": None, "expires": 0.0}
 
+# Last-run per-model diagnostics (admin-only surface). No secrets, no payloads —
+# just the status of the most recent admin-triggered run, if any.
+_AI_LAST_RUN = {"oai": None, "gem": None, "groundingEnabled": None, "at": None}
+
 _AI_CONSERVATIVE = {"WAIT", "HOLD", "WAIT FOR PULLBACK"}
 _AI_RANK = {"EXIT": 0, "TRIM": 1, "WAIT FOR PULLBACK": 2, "WAIT": 3, "BUY DIP": 4, "ADD": 5, "HOLD": 6}
 
@@ -2738,6 +2742,59 @@ def _arbitrate_ai(al, openai_out, gemini_out):
 def _ai_now_iso():
     return datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+def _ai_judgment_truth():
+    """Single source of truth for the automated-AI-judgment status.
+
+    Truthful, key-aware status (NEVER 'live' merely because AI_JUDGE_ENABLED is
+    true). Reads cache + env presence only — no model call, no secret exposed.
+      disabled         — AI_JUDGE_ENABLED is false
+      missing_keys     — enabled, but neither OpenAI nor Gemini key configured
+      partial          — enabled, exactly one provider key configured, no live cache
+      no_cached_result — enabled + keys present, but no successful run cached
+      live/partial/mock— a fresh non-expired cached run exists (its real status)
+    """
+    enabled = _AI_JUDGE_ENABLED
+    oai = bool(_OPENAI_API_KEY)
+    gem = bool(GEMINI_API_KEY)
+    admin = bool(_ARGUS_ADMIN_TOKEN)
+    cached = _AI_RESULT_CACHE["data"]
+    has_cache = bool(cached) and time.time() < _AI_RESULT_CACHE["expires"]
+    cached_status = (cached.get("status") if has_cache else ("expired" if cached else "none"))
+    last_run_at = (cached.get("asOf") if cached else None) or _AI_LAST_RUN.get("at")
+
+    if not enabled:
+        status = "disabled"
+    elif not oai and not gem:
+        status = "missing_keys"
+    elif has_cache:
+        status = cached.get("status", "no_cached_result")  # real run result
+    elif not (oai and gem):
+        status = "partial"        # only one provider configured; cannot be fully live
+    else:
+        status = "no_cached_result"
+
+    # publicGetStatus mirrors exactly what GET /api/argus/ai-judgment returns.
+    if not enabled:
+        public_get = "disabled"
+    elif not oai and not gem:
+        public_get = "missing_keys"
+    elif has_cache:
+        public_get = cached.get("status", "no_cached_result")
+    else:
+        public_get = "no_cached_result"
+
+    return {
+        "status": status,
+        "enabled": enabled,
+        "openaiConfigured": oai,
+        "geminiConfigured": gem,
+        "adminTokenConfigured": admin,
+        "hasCachedResult": has_cache,
+        "cachedStatus": cached_status,
+        "lastRunAt": last_run_at,
+        "publicGetStatus": public_get,
+    }
+
 def _ai_disabled_payload(status="disabled", reason="AI judgment is not enabled yet."):
     return {"status": status, "reason": reason,
             "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": "cached",
@@ -2781,6 +2838,8 @@ def _execute_ai_judgment(run_mode="manual"):
     if status != "mock":
         _AI_RESULT_CACHE["data"] = payload
         _AI_RESULT_CACHE["expires"] = time.time() + _AI_CACHE_TTL
+    _AI_LAST_RUN.update({"oai": oai_status, "gem": gem_status,
+                         "groundingEnabled": grounding_enabled, "at": _ai_now_iso()})
     add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_GEMINI_JUDGE_MODEL} symbols={len(labels)} "
             f"oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
     return payload
@@ -2873,6 +2932,9 @@ def api_argus_ai_judgment():
     # Public + frontend-safe. Reads the cached judgment ONLY — never calls a model.
     if not _AI_JUDGE_ENABLED:
         return jsonify(_ai_disabled_payload("disabled", "AI judgment is not enabled yet."))
+    if not _OPENAI_API_KEY and not GEMINI_API_KEY:
+        return jsonify(_ai_disabled_payload(
+            "missing_keys", "AI judgment is enabled but no OpenAI/Gemini API key is configured on the server."))
     cached = _AI_RESULT_CACHE["data"]
     if cached and time.time() < _AI_RESULT_CACHE["expires"]:
         return jsonify({**cached, "runMode": "cached"})
@@ -2918,6 +2980,162 @@ def api_argus_security_unlock():
     send_security_alert({"type": "security_unlocked", "meta": _client_meta()})
     return jsonify({"status": "unlocked", "softLocked": False, "failedAttempts": 0,
                     "lockedByEnv": _AI_JUDGE_LOCKED_ENV, "locked": _is_locked(), "asOf": _ai_now_iso()})
+
+@app.route("/api/argus/ai-provider-status")
+def api_argus_ai_provider_status():
+    # Admin-gated AI provider diagnostics. Returns SAFE booleans/status only —
+    # never the key values, never a model call. 503 if admin token unconfigured,
+    # 401 if missing/wrong.
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    t = _ai_judgment_truth()
+    with _AI_LOCK:
+        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        count = _AI_GATE_STATE["count"] if _AI_GATE_STATE["date"] == today else 0
+    expires_at = (datetime.fromtimestamp(_AI_RESULT_CACHE["expires"], pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                  if _AI_RESULT_CACHE["data"] and _AI_RESULT_CACHE["expires"] else None)
+    return jsonify({
+        "asOf": _ai_now_iso(),
+        "adminTokenConfigured": bool(_ARGUS_ADMIN_TOKEN),
+        "aiJudgeEnabled": _AI_JUDGE_ENABLED,
+        "openai": {
+            "apiKeyConfigured": bool(_OPENAI_API_KEY),
+            "model": _OPENAI_MODEL,
+            "lastRunStatus": _AI_LAST_RUN.get("oai"),
+            "lastErrorType": None,
+        },
+        "gemini": {
+            "apiKeyConfigured": bool(GEMINI_API_KEY),
+            "model": _GEMINI_JUDGE_MODEL,
+            "lastRunStatus": _AI_LAST_RUN.get("gem"),
+            "groundingAvailable": (bool(google_genai) if GEMINI_API_KEY else None),
+            "lastErrorType": None,
+        },
+        "cache": {
+            "hasCachedResult": t["hasCachedResult"],
+            "expiresAt": expires_at,
+            "status": t["cachedStatus"],
+        },
+        "runGate": {
+            "runCountToday": count,
+            "dailyLimit": _AI_JUDGE_MAX_RUNS,
+            "minIntervalMinutes": _AI_JUDGE_MIN_INTERVAL,
+            "locked": _is_locked(),
+            "allowedCountries": _AI_JUDGE_ALLOW_COUNTRIES,
+        },
+    })
+
+
+# ━━━ Integration Health (public, secret-free) ━━━
+# Summarizes provider configuration + runtime status for the frontend. Reads
+# env presence (booleans only) and existing cached snapshots — NEVER exposes a
+# key, NEVER calls OpenAI/Gemini, and avoids forcing expensive refetches.
+_INTEGRATIONS_CACHE = {"data": None, "expires": 0.0}
+_INTEGRATIONS_TTL   = 120  # 2 min — cheap, but coalesce bursts
+
+_NEXT_RECOMMENDED_APIS = [
+    "coingecko-crypto-watchlist",
+    "alerts-scanner-live",
+    "moomoo-flow-vwap-orderbook",
+    "portfolio-exposure-layer",
+    "what-if-simulator",
+]
+
+def get_integrations_snapshot():
+    now = time.time()
+    if _INTEGRATIONS_CACHE["data"] is not None and now < _INTEGRATIONS_CACHE["expires"]:
+        return _INTEGRATIONS_CACHE["data"]
+
+    # Market-data runtime status comes from the same cached getters the pages use
+    # (cheap when warm). AI status comes from the key-aware truth helper (no call).
+    rates = get_rates_snapshot()
+    jp    = get_japan_watchlist_snapshot()
+    us    = get_us_watchlist_snapshot()
+    def _st(x):
+        return x.get("status", "unknown") if isinstance(x, dict) else "unknown"
+    fred_rt = _st(rates)
+    jq_rt   = _st(jp)
+    td_rt   = _st(us)
+
+    ai = _ai_judgment_truth()
+    # OpenAI / Gemini runtime status, key-aware and honest.
+    if not ai["enabled"]:
+        oai_rt = "disabled" if bool(_OPENAI_API_KEY) else "missing"
+        gem_rt = "disabled" if bool(GEMINI_API_KEY) else "missing"
+    else:
+        oai_rt = ("missing" if not _OPENAI_API_KEY else
+                  ("live" if ai["status"] == "live" else
+                   ("partial" if ai["status"] == "partial" else "no_cached_result")))
+        gem_rt = ("missing" if not GEMINI_API_KEY else
+                  ("live" if ai["status"] == "live" else
+                   ("partial" if ai["status"] == "partial" else "no_cached_result")))
+
+    providers = [
+        {"id": "fred", "label": "FRED", "category": "market_data",
+         "configured": bool(_FRED_API_KEY), "runtimeStatus": fred_rt if _FRED_API_KEY else "missing",
+         "usedFor": ["rates", "market-regime"], "lastKnownStatus": fred_rt,
+         "notesJa": "金利・VIX・HY OASに使用。"},
+        {"id": "jquants", "label": "J-Quants", "category": "market_data",
+         "configured": bool(_JQUANTS_API_KEY), "runtimeStatus": jq_rt if _JQUANTS_API_KEY else "missing",
+         "usedFor": ["japan-watchlist", "catalysts", "market-regime"], "lastKnownStatus": jq_rt,
+         "notesJa": "日本株価格・決算/開示メタデータ・日本レジームproxyに使用。"},
+        {"id": "twelvedata", "label": "Twelve Data", "category": "market_data",
+         "configured": bool(_TWELVEDATA_API_KEY), "runtimeStatus": td_rt if _TWELVEDATA_API_KEY else "missing",
+         "usedFor": ["us-watchlist", "market-regime"], "lastKnownStatus": td_rt,
+         "notesJa": "米国株価格・ETFレジームproxyに使用。"},
+        {"id": "finnhub", "label": "Finnhub", "category": "news_catalyst",
+         "configured": bool(FINNHUB_API_KEY), "runtimeStatus": ("live" if FINNHUB_API_KEY else "missing"),
+         "usedFor": ["corporate-catalysts"], "lastKnownStatus": ("live" if FINNHUB_API_KEY else "missing"),
+         "notesJa": "未設定なら米国ニュース/決算カレンダーはpartial。"},
+        {"id": "openai", "label": "OpenAI GPT-5.5", "category": "ai",
+         "configured": bool(_OPENAI_API_KEY), "runtimeStatus": oai_rt,
+         "usedFor": ["ai-judgment"], "lastKnownStatus": _AI_LAST_RUN.get("oai"),
+         "notesJa": "APIキーとAI_JUDGE_ENABLEDが必要。ChatGPT Proとは別請求。"},
+        {"id": "gemini", "label": "Gemini", "category": "ai",
+         "configured": bool(GEMINI_API_KEY), "runtimeStatus": gem_rt,
+         "usedFor": ["ai-judgment-double-check"], "lastKnownStatus": _AI_LAST_RUN.get("gem"),
+         "notesJa": "OpenAI判断の二重チェック用。"},
+        {"id": "coingecko", "label": "CoinGecko", "category": "market_data",
+         "configured": False, "runtimeStatus": "pending",
+         "usedFor": ["crypto-watchlist"], "lastKnownStatus": None,
+         "notesJa": "次候補。BTC/ETHのlive化に使う。"},
+        {"id": "moomoo", "label": "moomoo OpenAPI", "category": "flow_orderbook",
+         "configured": False, "runtimeStatus": "pending_local_validation",
+         "usedFor": ["flow", "orderbook", "vwap", "tape"], "lastKnownStatus": None,
+         "notesJa": "短期精度向上の有力候補。ただし実機検証が必要。"},
+    ]
+
+    # Overall: live only if the 3 core market-data providers are live.
+    core = [fred_rt, jq_rt, td_rt]
+    live_n = sum(1 for s in core if s == "live")
+    overall = "live" if live_n == 3 else ("partial" if live_n >= 1 else "degraded")
+
+    payload = {
+        "status": overall,
+        "asOf": _ai_now_iso(),
+        "engineVersion": "integrations-v1",
+        "providers": providers,
+        "aiJudgment": {
+            "enabled": ai["enabled"],
+            "openaiConfigured": ai["openaiConfigured"],
+            "geminiConfigured": ai["geminiConfigured"],
+            "adminTokenConfigured": ai["adminTokenConfigured"],
+            "hasCachedResult": ai["hasCachedResult"],
+            "cachedStatus": ai["cachedStatus"],
+            "lastRunAt": ai["lastRunAt"],
+            "publicGetStatus": ai["publicGetStatus"],
+            "truthStatus": ai["status"],
+        },
+        "nextRecommendedApis": list(_NEXT_RECOMMENDED_APIS),
+    }
+    _INTEGRATIONS_CACHE["data"] = payload
+    _INTEGRATIONS_CACHE["expires"] = now + _INTEGRATIONS_TTL
+    return payload
+
+@app.route("/api/argus/integrations")
+def api_argus_integrations():
+    return jsonify(get_integrations_snapshot())
 
 
 # ━━━ GPT-5.5 Pro Handoff Export (manual review — NO API call, NO cost) ━━━
@@ -3036,7 +3254,16 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
     # ── 4. Current AI State (explicit) ──
     L.append("## 4. Current AI State")
     L.append("- The action labels above are RULE-BASED (Action Label Engine v0). They are NOT generated by GPT or Gemini.")
-    L.append(f"- Automated OpenAI/Gemini judgment is {'LIVE' if aij_status == 'live' else 'PENDING / DISABLED'} (/api/argus/ai-judgment status={aij_status}).")
+    _aij_human = {
+        "live": "LIVE (cached admin-run result)",
+        "partial": "PARTIAL (only one provider succeeded / configured)",
+        "no_cached_result": "NOT RUN YET (keys present, no cached result — needs an admin run)",
+        "missing_keys": "DISABLED (enabled but OpenAI/Gemini API keys are NOT configured on the server)",
+        "disabled": "DISABLED (AI_JUDGE_ENABLED is off)",
+        "mock": "MOCK",
+    }.get(aij_status, aij_status.upper())
+    L.append(f"- Automated OpenAI/Gemini judgment status: {_aij_human} (/api/argus/ai-judgment status={aij_status}). "
+             "Note: this is NOT marked live merely because a feature flag is on — it reflects real key/cache state.")
     L.append("- This Pro Handoff does NOT call OpenAI or Gemini and costs nothing.")
     L.append("- The user manually pastes this prompt into ChatGPT GPT-5.5 Pro for a high-stakes second opinion.")
     L.append("")
@@ -3085,9 +3312,10 @@ def _build_pro_handoff():
     us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
     cat = get_catalysts_snapshot(); reg = get_market_regime_snapshot()
     def _st(x): return x.get("status", "mock") if isinstance(x, dict) else "mock"
-    # Automated AI judgment is pending/disabled (the /api/argus/ai-judgment GET
-    # returns disabled); reflect that truthfully without affecting data status.
-    aij_status = "live" if _AI_JUDGE_ENABLED else "disabled"
+    # Truthful automated-AI-judgment status (key-aware): disabled / missing_keys /
+    # partial / no_cached_result / live — NEVER 'live' merely because the feature
+    # flag is on. Single source of truth shared with /integrations.
+    aij_status = _ai_judgment_truth()["status"]
     src = {"rates": _st(rates), "japanWatchlist": _st(jp), "usWatchlist": _st(us),
            "events": _st(ev), "actionLabels": _st(al), "catalysts": _st(cat),
            "marketRegime": _st(reg)}
