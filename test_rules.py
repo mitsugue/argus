@@ -272,3 +272,23 @@ def test_vault_push_validation():
     assert r.status_code == 200 and r.get_json()["ok"] is True
     # pull requires admin (503 locally: token unconfigured)
     assert c.post("/api/argus/vault-pull").status_code in (401, 503)
+
+
+# ── Action Alerts class rules (v10.4) ────────────────────────────────
+def test_alert_etf_strong_momentum_is_pullback_wait():
+    m = {"score": 0.5, "momentum1d": 1.0, "momentum5d": 4.0, "momentum20d": 8.0}
+    action, *_ = scanner._alert_action_for_etf(m, cautious=False)
+    assert action == "WAIT FOR PULLBACK"
+
+
+def test_alert_etf_neutral_goes_wait_when_cautious():
+    m = {"score": 0.0, "momentum1d": 0.0, "momentum5d": 0.1, "momentum20d": 0.2}
+    a1, *_ = scanner._alert_action_for_etf(m, cautious=True)
+    a2, *_ = scanner._alert_action_for_etf(m, cautious=False)
+    assert a1 == "WAIT" and a2 == "HOLD"
+
+
+def test_alert_etf_deep_selloff_is_high_risk_wait():
+    m = {"score": -0.6, "momentum1d": -3.0, "momentum5d": -7.0, "momentum20d": -12.0}
+    action, conf, risk, *_ = scanner._alert_action_for_etf(m, cautious=True)
+    assert action == "WAIT" and risk == "high"

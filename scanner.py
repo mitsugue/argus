@@ -3506,6 +3506,178 @@ def api_argus_ai_provider_ping():
     return jsonify(out)
 
 
+# ━━━ Action Alerts (alerts-v1, v10.4) — one judgment per asset class ━━━
+# The user's priority-② layer: gold / REIT / bonds / crypto / FX / cash beside
+# the JP/US stock aggregates. Rule-based composition over EXISTING data plus a
+# tiny dedicated ETF batch (GLD/TLT/XLRE = 3 Twelve Data credits, 6h cache).
+_ALERT_ETF_SYMS  = ["GLD", "TLT", "XLRE"]
+_ALERT_ETF_CACHE = {"data": None, "expires": 0.0}
+_ALERT_ETF_TTL   = 6 * 3600
+_ALERTS_CACHE    = {"data": None, "expires": 0.0}
+_ALERTS_TTL      = 600
+
+def _alert_etf_momentum():
+    now = time.time()
+    if _ALERT_ETF_CACHE["data"] is not None and now < _ALERT_ETF_CACHE["expires"]:
+        return _ALERT_ETF_CACHE["data"]
+    out = {sym: _etf_momentum(cl) for sym, cl in _td_timeseries(_ALERT_ETF_SYMS).items()}
+    if out:
+        _ALERT_ETF_CACHE["data"] = out
+        _ALERT_ETF_CACHE["expires"] = now + _ALERT_ETF_TTL
+    return out
+
+def _alert_action_for_etf(m, cautious):
+    """Class action from ETF momentum (pure). m = _etf_momentum dict.
+    Conservative vocabulary only — never EXIT/TRIM at the class level in v1."""
+    s = m["score"]
+    if s >= 0.4:
+        return ("WAIT FOR PULLBACK", "med", "med",
+                f"直近モメンタムが強く(スコア{s:+.2f})、追いかけ買いは避ける。",
+                "押し目の形成を待ち、分割で検討する。")
+    if s >= 0.15:
+        return ("HOLD", "med", "med" if cautious else "low",
+                f"緩やかな上昇トレンド(スコア{s:+.2f})。",
+                "トレンドの継続と地合いの変化を確認する。")
+    if s > -0.15:
+        return (("WAIT" if cautious else "HOLD"), "low", "low",
+                f"方向感は限定的(スコア{s:+.2f})。",
+                "明確なトレンド発生か地合いの改善を待つ。")
+    if s > -0.4:
+        return ("WAIT", "med", "med",
+                f"軟調(スコア{s:+.2f})。新規は様子見。",
+                "下げ止まりと出来高の安定を確認する。")
+    return ("WAIT", "med", "high",
+            f"下落モメンタムが強い(スコア{s:+.2f})。",
+            "売られすぎの反転サインを待つ。")
+
+def get_action_alerts():
+    now = time.time()
+    if _ALERTS_CACHE["data"] is not None and now < _ALERTS_CACHE["expires"]:
+        return _ALERTS_CACHE["data"]
+
+    al     = get_action_labels()
+    reg    = get_market_regime_snapshot()
+    rates  = get_rates_snapshot()
+    crypto = get_crypto_watchlist_snapshot(list(_CRYPTO_DEFAULT_IDS))
+    etfs   = _alert_etf_momentum()
+    posture  = (al.get("marketPosture", {}) or {}).get("label") or "CAUTIOUS"
+    cautious = posture in ("EVENT_WAIT", "RISK_OFF")
+    rb = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
+    cards = []
+
+    def add(asset_class, name, action, conf, risk, reason, points, nxt, status):
+        cards.append({"assetClass": asset_class, "displayName": name, "action": action,
+                      "confidence": conf, "risk": risk, "reasonJa": reason,
+                      "dataPoints": points, "nextConditionJa": nxt, "status": status})
+
+    # ── JP / US stock aggregates (from the live label engine) ──
+    for mkt, name in (("JP", "Japan Individual Stocks"), ("US", "US Individual Stocks")):
+        ls = [l for l in al.get("labels", []) if l["market"] == mkt and l.get("status") == "live"]
+        if ls:
+            from collections import Counter
+            dominant, votes = Counter(l["action"] for l in ls).most_common(1)[0]
+            chgs = [l["supportingData"]["changePct"] for l in ls]
+            avg = sum(chgs) / len(chgs)
+            flows = [l["supportingData"].get("bigFlowRatio") for l in ls
+                     if l["supportingData"].get("bigFlowRatio") is not None]
+            conf = "high" if votes / len(ls) >= 0.7 else "med"
+            risk = "high" if avg <= -2 or cautious else ("low" if abs(avg) < 1 else "med")
+            pts = [f"監視{len(ls)}銘柄 平均{avg:+.2f}%", f"多数派ラベル: {dominant} ({votes}/{len(ls)})"]
+            if flows:
+                pts.append(f"大口フロー平均 {sum(flows)/len(flows):+.1%} ({len(flows)}銘柄)")
+            add(f"{mkt}_STOCK", name, dominant, conf, risk,
+                f"ウォッチ銘柄の多数派は{dominant}。姿勢は{posture}。",
+                pts, "個別はWatchlistの戦略カードで確認。", "live")
+        else:
+            add(f"{mkt}_STOCK", name, "WAIT", "low", "med",
+                "ライブ価格が未取得のため中立。", [], "データ復帰後に再評価。", "partial")
+
+    # ── Gold / Bonds / REIT (dedicated ETF momentum) ──
+    for sym, cls, name, extra in (
+            ("GLD", "GOLD", "Gold (GLD)", "stress" ),
+            ("TLT", "BOND", "Bonds (TLT)", "rates"),
+            ("XLRE", "REIT", "REITs (XLRE)", "rates")):
+        m = etfs.get(sym)
+        if m:
+            action, conf, risk, reason, nxt = _alert_action_for_etf(m, cautious)
+            if extra == "rates" and rb.get("posture") == "tightening":
+                reason += " 金利上昇がデュレーション資産の逆風。"
+                if action == "HOLD":
+                    action = "WAIT"
+            if extra == "stress" and (cautious or rb.get("posture") == "stress"):
+                reason += " リスク回避局面ではヘッジ需要が支え。"
+            pts = [f"5d {m['momentum5d']}% / 20d {m['momentum20d']}%" if m.get("momentum20d") is not None
+                   else f"1d {m['momentum1d']}%"]
+            add(cls, name, action, conf, risk, reason, pts, nxt, "live")
+        else:
+            add(cls, name, "WAIT", "low", "med", "ETFデータ未取得のため中立。", [],
+                "データ取得後に再評価。", "partial")
+
+    # ── Crypto (CoinGecko 24h) ──
+    q = {x["id"]: x for x in (crypto.get("quotes") or []) if x.get("status") == "live"}
+    if q:
+        btc, eth = q.get("bitcoin"), q.get("ethereum")
+        chg = btc["changePct"] if btc else (eth["changePct"] if eth else 0.0)
+        if chg <= -5:   act, cf, rk, rs = "WAIT", "med", "high", f"BTC 24hで{chg:+.1f}%と急落。落ちるナイフは拾わない。"
+        elif chg >= 5:  act, cf, rk, rs = "WAIT FOR PULLBACK", "med", "high", f"BTC 24hで{chg:+.1f}%と急伸。追いかけは避ける。"
+        elif cautious:  act, cf, rk, rs = "WAIT", "med", "high", f"値動きは限定的({chg:+.1f}%)だが、{posture}局面の高ベータ資産は様子見。"
+        else:           act, cf, rk, rs = "HOLD", "low", "high", f"24h {chg:+.1f}%。明確な方向感なし。"
+        pts = []
+        if btc: pts.append(f"BTC ${btc['priceUsd']:,.0f} ({btc['changePct']:+.1f}%/24h)")
+        if eth: pts.append(f"ETH ${eth['priceUsd']:,.0f} ({eth['changePct']:+.1f}%/24h)")
+        add("CRYPTO", "Crypto (BTC/ETH)", act, cf, rk, rs, pts,
+            "BTCの方向確定とレジームの変化を確認。", "live")
+    else:
+        add("CRYPTO", "Crypto (BTC/ETH)", "WAIT", "low", "high",
+            "ライブ価格未取得のため中立。", [], "データ復帰後に再評価。", "partial")
+
+    # ── USD/JPY (FRED daily) ──
+    uj = rates.get("usdJpy") if isinstance(rates, dict) else None
+    if uj and uj.get("status") == "live":
+        lvl, chg = uj["latestValue"], uj["change"]
+        if abs(chg) >= 1.5:
+            add("USDJPY", "USD/JPY", "WAIT", "med", "high",
+                f"前日比{chg:+.2f}円と値幅が大きい。急変・介入警戒。",
+                [f"USD/JPY {lvl} ({chg:+.2f}/日次)"], "値動きの沈静化を確認。", "live")
+        else:
+            add("USDJPY", "USD/JPY", "HOLD", "low", "med",
+                f"USD/JPY {lvl}。日次の値幅は通常圏({chg:+.2f}円)。",
+                [f"USD/JPY {lvl} ({chg:+.2f}/日次)"], "急変時(±1.5円/日)に再評価。", "live")
+    else:
+        add("USDJPY", "USD/JPY", "HOLD", "low", "med", "為替データ未取得。", [], "—", "partial")
+
+    # ── Cash (posture inverse) ──
+    if cautious:
+        add("CASH", "Cash (待機資金)", "ADD", "med", "low",
+            f"{posture}局面では待機資金を厚めに保ち、押し目に備える。",
+            [f"姿勢: {posture}"], "イベント通過/レジーム改善で再配分を検討。", "live")
+    elif posture == "RISK_ON":
+        add("CASH", "Cash (待機資金)", "HOLD", "low", "low",
+            "リスク選好局面。過剰な現金は機会損失にも注意(無理な投入はしない)。",
+            [f"姿勢: {posture}"], "レジーム悪化で現金比率を引き上げ。", "live")
+    else:
+        add("CASH", "Cash (待機資金)", "HOLD", "low", "low",
+            "中立。現金比率は計画通りを維持。", [f"姿勢: {posture}"],
+            "姿勢の変化に応じて調整。", "live")
+
+    live_n = sum(1 for c in cards if c["status"] == "live")
+    payload = {
+        "status": "live" if live_n == len(cards) else ("partial" if live_n else "mock"),
+        "asOf": _ai_now_iso(),
+        "engineVersion": "alerts-v1",
+        "posture": posture,
+        "cards": cards,
+    }
+    if live_n:
+        _ALERTS_CACHE["data"] = payload
+        _ALERTS_CACHE["expires"] = now + _ALERTS_TTL
+    return payload
+
+@app.route("/api/argus/action-alerts")
+def api_argus_action_alerts():
+    return jsonify(get_action_alerts())
+
+
 # ━━━ Backup vault relay (v10.3.4) ━━━
 # The browser pushes a CLIENT-SIDE-ENCRYPTED backup envelope here; the daily
 # prediction-ledger workflow pulls it (admin token) and commits the ciphertext
