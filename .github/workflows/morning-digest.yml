@@ -14,8 +14,10 @@ name: morning-digest
 
 on:
   schedule:
-    # 22:15 UTC Sun–Thu = 07:15 JST Mon–Fri (Japan trading mornings)
-    - cron: '15 22 * * 0-4'
+    # 23:30 UTC Sun–Thu = 08:30 JST Mon–Fri — before the TSE open (09:00 JST)
+    - cron: '30 23 * * 0-4'
+    # 13:00 UTC Mon–Fri = 22:00 JST Mon–Fri — before the NYSE open (22:30/23:30 JST)
+    - cron: '0 13 * * 1-5'
   workflow_dispatch: {}
 
 permissions: {}
@@ -53,9 +55,14 @@ jobs:
             echo "NTFY_TOPIC not configured — skipping push (digest fetched OK)."
             exit 0
           fi
+          # Session-aware title: the 23:xx UTC run is the JP pre-open brief,
+          # the 13:xx UTC run is the US pre-open brief.
+          H=$(date -u +%H)
+          if [ "$H" -ge 20 ]; then TITLE="ARGUS Digest - JP open"; else TITLE="ARGUS Digest - US open"; fi
           curl -sf --max-time 30 \
-            -H "Title: ARGUS Morning Digest" \
+            -H "Title: $TITLE" \
             -H "Tags: chart_with_upwards_trend" \
+            -H "Click: https://mitsugue.github.io/argus/" \
             --data-binary @digest.txt \
             "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
-          echo "digest pushed."
+          echo "digest pushed ($TITLE)."

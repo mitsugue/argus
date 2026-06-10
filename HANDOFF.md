@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v9.10.1 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v9.11.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.10.1。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.11.0。
 
 ---
 
@@ -22,7 +22,7 @@ grep '"version"' web/package.json
 curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3 -m json.tool
 ```
 
-次の実装は **v9.11 moomoo ブリッジ（ローカルOpenD→quote-push→リアルタイム価格）**（下の「ロードマップ」参照）。
+次の実装は **v9.12 ニュース/ブラックスワン検知（原因の特定: 会見・地政学ヘッドライン）or v10.0 Portfolio Exposure**（下の「ロードマップ」参照）。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v9.10.1**
+- **現在バージョン: v9.11.0**
 
 ---
 
@@ -186,12 +186,24 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - `.github/workflows/morning-digest.yml`: JST平日7:15に digest を ntfy.sh へ push
     （repo secret `NTFY_TOPIC` 設定時のみ。未設定なら安全にスキップ。workflow_dispatchで手動テスト可）
   - 注: サーバ側の永続DB(Postgres)はまだ。日次差分は端末ログが担当（クロスデバイス同期なし）
-- **v9.10.0 変化検知アラート + ルールテスト + レート制限 + AI ping（最新）**
+- v9.10.0 変化検知アラート + ルールテスト + レート制限 + AI ping
   - `market-alerts.yml`: JST平日7〜24時に毎時digestをポーリングし、**変化時のみ** ntfy push
     （姿勢フリップ / 重要イベントのD-1・D入り。状態はActions cacheで持ち回り。初回はseedのみ）
   - `test_rules.py`(pytest 17件)が判断コアを保護 + `ci.yml`(push毎にbackendテスト+frontend build+secret-grep)
   - per-IPレート制限: `/api/argus/*` 120/min、cache-busting系(symbols/jp/us/ids/q付き)30/min、429 JSON
   - `POST /api/argus/ai-provider-status/ping`(admin): OpenAI/Geminiへ最小"pong"呼び出しでキー疎通確認
+  - v9.10.1 Guideに「できること/最近のアップデート」(📖説明書ルールの開始)
+- **v9.11.0 moomooブリッジ = リアルタイム価格（最新）**
+  - `POST /api/argus/quote-push`(admin token): ブリッジからのJP/USリアルタイム価格を受領
+    (sanitize/上限50/価格検証)。`_overlay_pushed` が watchlist 系の全経路で
+    「10分以内のpush > J-Quants(T-1)/Twelve Data」の優先で上書き(キャッシュ非破壊・自動フォールバック)
+  - `bridge/` ディレクトリ: moomoo_push.py(OpenD横で常駐) + systemd unit + README(セットアップ手順)。
+    ユーザーのAWS(52.195.168.61)でOpenD 24h稼働中。**ポート11111は公開しない**(ブリッジは127.0.0.1接続)
+  - /integrations の moomoo: push鮮度で live(≤15min)/stale/pending を表示
+  - 通知改善: digest文面を通知向け再設計(絵文字セクション・短い行)。morning-digestは
+    JP寄り前8:30 + US寄り前22:00 の2本。market-alertsに市場ストレス急変検知
+    (backdrop→stress遷移、VIX 26上抜け)。全通知にClickヘッダ(タップでアプリ起動)
+  - ブラックスワンの「原因」(会見/戦争等のヘッドライン)検知は未実装 → v9.12候補(GDELT/ニュースAPI)
 
 ---
 
@@ -213,11 +225,12 @@ GPT-5.5 Pro Handoff は手動コピペで無料・API呼び出しなし（ChatGP
 
 ## 12. ロードマップ（2026-06-10 のレビューで改訂。README / Guide の旧版と差異あり — こちらが最新）
 
-1. **v9.11 moomoo ブリッジ** ← 次の実装。ユーザーのLinuxでOpenD稼働確認済み。
-   設計: admin-token付き `POST /api/argus/quote-push` をバックエンドに追加し、ローカルの小スクリプトが
-   OpenDからJP/USリアルタイム価格を読んで定期push。watchlist系は「pushされた新鮮なquote(<10分)を優先、
-   なければJ-Quants(T-1)/Twelve Dataにフォールバック」。口座認証情報はローカルから出さない。
-   （将来: 判断ログのサーバ永続化=無料Postgres。outcome tracking=「あの判断は当たったか」の照合）
+1. **v9.12 ニュース/ブラックスワン原因検知** ← 候補。市場反応(ストレス急変)はv9.11で検知済み。
+   原因側: GDELT(無料)等のヘッドライン+キーワードルール(戦争/介入/緊急会見)で「何が起きたか」を通知。
+2. v10.0 Portfolio Exposure Layer(保有・数量・平均取得・評価・含み損益・配分、端末内計算)
+3. v10.1 What-if Simulator(シナリオ分析)
+   （将来: 判断ログのサーバ永続化=無料Postgres。outcome tracking=「あの判断は当たったか」の照合。
+     ブリッジのPUSH_SYMBOLSとアプリWatchlistの自動同期）
 4. v10.0 Portfolio Exposure Layer（保有・数量・平均取得単価・評価・含み損益・配分。
    保有額は機微情報なので localStorage + クライアント側計算を基本に）
 5. v10.1 What-if Simulator（**シナリオ分析であって決定論的予測ではない** — シナリオ帯×配分変化で表現）

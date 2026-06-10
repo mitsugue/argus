@@ -1677,7 +1677,7 @@ def _jq_name_for(code4):
             return r["ja"] or r["en"] or ""
     return ""
 
-def get_japan_watchlist_snapshot(symbols=None):
+def _get_japan_watchlist_core(symbols=None):
     """Live snapshot of watched Japan names (price/change/volume/date).
 
     With `symbols=None` → the curated list with mock fallback (cached 10 min,
@@ -1723,6 +1723,14 @@ def get_japan_watchlist_snapshot(symbols=None):
         _JP_CACHE["data"]    = snapshot
         _JP_CACHE["expires"] = now + _JP_CACHE_TTL
     return snapshot
+
+def get_japan_watchlist_snapshot(symbols=None):
+    """Core snapshot + real-time overlay: quotes pushed from the local moomoo
+    bridge (fresh ≤ 10 min) override the J-Quants T-1 rows (v9.11)."""
+    snap = _get_japan_watchlist_core(symbols)
+    requested = (_sanitize_symbols(symbols, _JP_SYM_RE, _JP_DYN_MAX) if symbols
+                 else [s["symbol"] for s in _JP_WATCHLIST])
+    return _overlay_pushed(snap, "JP", requested)
 
 @app.route("/api/argus/japan-watchlist")
 def api_argus_japan_watchlist():
@@ -1792,7 +1800,7 @@ def _td_parse_row(s, q):
     except Exception:
         return None
 
-def get_us_watchlist_snapshot(symbols=None):
+def _get_us_watchlist_core(symbols=None):
     """Live snapshot of the watched US names (price/change/volume/date).
 
     With `symbols=None` → the curated list (one batched request, 10-min cache,
@@ -1867,11 +1875,104 @@ def get_us_watchlist_snapshot(symbols=None):
     except Exception:
         return _us_mock_snapshot()
 
+def get_us_watchlist_snapshot(symbols=None):
+    """Core snapshot + real-time overlay from the local moomoo bridge (v9.11)."""
+    snap = _get_us_watchlist_core(symbols)
+    requested = (_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX) if symbols
+                 else [s["symbol"] for s in _US_WATCHLIST])
+    return _overlay_pushed(snap, "US", requested)
+
 @app.route("/api/argus/us-watchlist")
 def api_argus_us_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
     return jsonify(get_us_watchlist_snapshot(symbols))
+
+
+# ━━━ moomoo real-time quote push (v9.11) ━━━
+# A small bridge script (bridge/moomoo_push.py) runs NEXT TO the user's OpenD
+# (AWS, 24h) and POSTs real-time JP/US quotes here. Admin-token gated — the
+# public frontend cannot push. Pushed quotes OVERRIDE the slower providers
+# (J-Quants T-1 / Twelve Data) while fresh, then everything falls back
+# automatically. Account credentials never leave the user's machine.
+_PUSHED_QUOTES = {"JP": {}, "US": {}}   # market -> {symbol: {"row":…, "ts":…}}
+_PUSH_TTL  = 600                        # use pushed quotes for ≤ 10 min
+_PUSH_MAX  = 50                         # symbols per push request
+
+def _overlay_pushed(snapshot, market, requested):
+    """Copy of a watchlist snapshot with fresh pushed quotes overlaid (and
+    holes filled for requested symbols the provider missed). Cache-safe —
+    never mutates the cached object. No fresh pushes → snapshot unchanged."""
+    try:
+        if not isinstance(snapshot, dict):
+            return snapshot
+        now = time.time()
+        fresh = {sym: p["row"] for sym, p in (_PUSHED_QUOTES.get(market) or {}).items()
+                 if now - p["ts"] <= _PUSH_TTL}
+        if not fresh:
+            return snapshot
+        stocks, seen, overlaid = [], set(), 0
+        for q in snapshot.get("stocks", []):
+            sym = q.get("symbol")
+            seen.add(sym)
+            if sym in fresh:
+                stocks.append({**q, **fresh[sym]})
+                overlaid += 1
+            else:
+                stocks.append(q)
+        for sym in requested or []:
+            if sym in fresh and sym not in seen:
+                name = (_jq_name_for(sym) or sym) if market == "JP" else sym
+                stocks.append({**fresh[sym], "name": name, "nameJa": name})
+                overlaid += 1
+        if overlaid == 0:
+            return snapshot
+        out = {**snapshot, "stocks": stocks, "realtimeCount": overlaid}
+        if out.get("status") == "mock":
+            out["status"] = "partial"   # real pushed data beats an all-mock claim
+        return out
+    except Exception:
+        return snapshot
+
+def _push_last_age_sec():
+    """Seconds since the most recent pushed quote (None if never)."""
+    ts = [p["ts"] for m in _PUSHED_QUOTES.values() for p in m.values()]
+    return (time.time() - max(ts)) if ts else None
+
+@app.route("/api/argus/quote-push", methods=["POST"])
+def api_argus_quote_push():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    stocks = body.get("stocks")
+    if not isinstance(stocks, list):
+        return jsonify({"error": "bad_payload", "message": "expected {stocks: [...]}"}), 400
+    now, accepted = time.time(), 0
+    for s in stocks[:_PUSH_MAX]:
+        try:
+            market = str(s.get("market", "")).upper()
+            sym    = str(s.get("symbol", "")).strip().upper()
+            if market not in ("JP", "US"):
+                continue
+            if not (_JP_SYM_RE if market == "JP" else _US_SYM_RE).match(sym):
+                continue
+            price = float(s["price"])
+            if not (price > 0 and math.isfinite(price)):
+                continue
+            row = {"symbol": sym,
+                   "price": round(price, 4),
+                   "changeAbs": round(float(s.get("changeAbs") or 0.0), 4),
+                   "changePct": round(float(s.get("changePct") or 0.0), 4),
+                   "volume": int(float(s.get("volume") or 0)),
+                   "date": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
+                   "status": "live", "source": "moomoo-rt"}
+            _PUSHED_QUOTES[market][sym] = {"row": row, "ts": now}
+            accepted += 1
+        except Exception:
+            continue
+    return jsonify({"accepted": accepted, "asOf": _ai_now_iso(),
+                    "held": {m: len(v) for m, v in _PUSHED_QUOTES.items()}})
 
 
 # ━━━ CoinGecko crypto watchlist (keyless, free) ━━━
@@ -3404,10 +3505,15 @@ def get_integrations_snapshot():
          "runtimeStatus": _crypto_last_status(),
          "usedFor": ["crypto-watchlist"], "lastKnownStatus": _crypto_last_status(),
          "notesJa": "BTC/ETH等のライブUSD価格(キー不要・無料、10分キャッシュ)。"},
-        {"id": "moomoo", "label": "moomoo OpenAPI", "category": "flow_orderbook",
-         "configured": False, "runtimeStatus": "pending_local_validation",
-         "usedFor": ["flow", "orderbook", "vwap", "tape"], "lastKnownStatus": None,
-         "notesJa": "短期精度向上の有力候補。ただし実機検証が必要。"},
+        {"id": "moomoo", "label": "moomoo OpenAPI (bridge)", "category": "flow_orderbook",
+         "configured": _push_last_age_sec() is not None,
+         "runtimeStatus": ("live" if (_push_last_age_sec() or 1e9) <= 900 else
+                           "stale" if _push_last_age_sec() is not None else
+                           "pending_local_validation"),
+         "usedFor": ["realtime-quotes", "flow", "orderbook", "vwap"],
+         "lastKnownStatus": (f"last push {int(_push_last_age_sec())}s ago"
+                             if _push_last_age_sec() is not None else None),
+         "notesJa": "ローカルOpenD→quote-pushブリッジ経由のリアルタイム価格。push途絶時はJ-Quants/Twelve Dataへ自動フォールバック。"},
     ]
 
     # Overall: live only if the 3 core market-data providers are live.
@@ -3501,24 +3607,30 @@ def get_daily_digest():
         else:
             changes.append(f"姿勢は {posture} を継続。")
 
-    # ── Notification-ready text (calm, no spectacle) ──
-    L = [f"【ARGUS朝ダイジェスト {date_jst}({dow})】"]
-    L.append(f"今日の姿勢: {call}({posture} / {call_ja}・確信度{int(round((rg.get('confidence') or 0) * 100))}%)")
+    # ── Notification-ready text (calm, scannable on a phone) ──
+    # Short lines, emoji section markers, blank lines between blocks — designed
+    # for the ntfy notification view (no markdown dependence).
+    conf_pct = int(round((rg.get("confidence") or 0) * 100))
+    L = [f"今日の姿勢: {call}", f"{posture}・{call_ja}・確信度{conf_pct}%"]
     if posture_ja:
-        L.append(posture_ja[:90])
+        L += ["", posture_ja[:100]]
     if rb:
-        L.append(f"金利: US10Y {rb.get('us10y')}% / VIX {rb.get('vix')} / HY OAS {rb.get('hyOas')}%（{rb.get('posture')}）")
+        L += ["", "📊 金利",
+              f"US10Y {rb.get('us10y')}% ｜ VIX {rb.get('vix')} ｜ HY OAS {rb.get('hyOas')}%（{rb.get('posture')}）"]
     if top_events:
-        evs = " / ".join(f"{e['title']}({'本日' if e['daysUntil'] == 0 else 'あと' + str(e['daysUntil']) + '日'})" for e in top_events[:3])
-        L.append(f"イベント: {evs}")
+        L += ["", "📅 イベント"]
+        for e in top_events[:3]:
+            when = "本日" if e["daysUntil"] == 0 else f"あと{e['daysUntil']}日"
+            L.append(f"・{e['title']} — {when}")
     if highlights:
-        hl = " / ".join(f"{h['symbol']} {h['action']}" for h in highlights[:4])
-        L.append(f"注目: {hl}")
+        L += ["", "👀 注目銘柄"]
+        L.append(" ／ ".join(f"{h['symbol']} {h['action']}" for h in highlights[:4]))
     if rotations:
-        L.append("資金: " + " / ".join(r.get("label", "") for r in rotations))
-    for c in changes:
-        L.append(c)
-    L.append("※ルールベースの状況整理であり、売買指示・予測ではありません。")
+        L += ["", "🔄 資金の流れ", " ／ ".join(r.get("label", "") for r in rotations)]
+    if changes:
+        L += ["", "🔁 " + " ".join(changes)]
+    L += ["", "— ルールベースの状況整理。売買指示・予測ではありません —",
+          f"({date_jst} {dow}曜)"]
     text_ja = "\n".join(L)
 
     status = al.get("status", "mock")

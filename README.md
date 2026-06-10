@@ -127,6 +127,20 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v9.11.0 — moomoo bridge: real-time quotes + smarter notifications.** A small
+bridge (`bridge/moomoo_push.py`, systemd-ready) runs NEXT TO the user's OpenD
+(AWS, 24h) and POSTs real-time JP/US quotes to the admin-gated
+`POST /api/argus/quote-push` (sanitized, capped, price-validated). Fresh pushes
+(≤10 min) overlay J-Quants(T-1)/Twelve Data across ALL watchlist paths
+(cache-safe `_overlay_pushed`; automatic fallback when the bridge stops; OpenD
+port stays closed to the internet — the bridge talks to 127.0.0.1).
+`/integrations` shows the bridge as live/stale by push freshness. Notifications:
+digest text redesigned for the phone (emoji sections, short lines); morning
+digest now runs twice (08:30 JST JP pre-open + 22:00 JST US pre-open); market
+alerts add a stress-spike detector (backdrop→stress transition, VIX crossing
+26 — catches black-swan REACTIONS within the hour; cause/headline detection is
+the v9.12 candidate); all pushes carry a Click header that opens the app.
+
 **v9.10.0 — Change-detection alerts + rule tests + rate limit + AI ping.**
 **Alerts:** `market-alerts.yml` polls the digest hourly through JP+US sessions
 (JST 7–24, weekdays) and pushes a ntfy notification ONLY on real change —

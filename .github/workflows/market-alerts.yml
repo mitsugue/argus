@@ -44,6 +44,9 @@ jobs:
           import json, os
           d = json.load(open('digest.json'))
           posture = (d.get('posture') or {}).get('label') or '?'
+          rb = d.get('ratesBackdrop') or {}
+          backdrop = rb.get('posture') or '?'
+          vix = float(rb.get('vix') or 0)
           # High-impact events currently inside the D-1 / D window.
           urgent = sorted({f"{e.get('title')}@{e.get('escalation')}"
                            for e in (d.get('topEvents') or [])
@@ -55,11 +58,20 @@ jobs:
           alerts = []
           if prev.get('posture') and prev['posture'] != posture:
               alerts.append(f"姿勢が変化: {prev['posture']} → {posture}")
+          # Market-stress spike (black-swan REACTION detector): the credit/vol
+          # backdrop entering "stress", or VIX crossing 26 upward within the
+          # hour. Catches the market response even before the cause is known.
+          if prev and backdrop == 'stress' and prev.get('backdrop') not in (None, 'stress'):
+              alerts.append(f"市場ストレス検知: VIX {vix} / HY OAS {rb.get('hyOas')}%（金利地合いがstressに）")
+          prev_vix = float(prev.get('vix') or 0)
+          if prev and vix >= 26 and prev_vix and prev_vix < 26:
+              alerts.append(f"VIX急上昇: {prev_vix} → {vix}")
           new_urgent = [u for u in urgent if u not in set(prev.get('urgent') or [])]
           for u in new_urgent:
               t, esc = u.rsplit('@', 1)
               alerts.append(f"イベント接近: {t}（{esc}）")
-          json.dump({'posture': posture, 'urgent': urgent}, open('state.json', 'w'))
+          json.dump({'posture': posture, 'urgent': urgent,
+                     'backdrop': backdrop, 'vix': vix}, open('state.json', 'w'))
           if alerts and prev:  # first-ever run only seeds state, no alert spam
               text = "【ARGUS変化検知】\n" + "\n".join(alerts) + \
                      "\n※ルールベースの状況整理であり、売買指示ではありません。"
@@ -85,6 +97,7 @@ jobs:
             -H "Title: ARGUS Market Alert" \
             -H "Priority: high" \
             -H "Tags: rotating_light" \
+            -H "Click: https://mitsugue.github.io/argus/" \
             --data-binary @alert.txt \
             "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
           echo "alert pushed."

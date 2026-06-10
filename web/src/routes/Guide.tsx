@@ -12,7 +12,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
   { area: 'Watchlist',
     descJa: '銘柄を検索して追加(日本株/米国株/投信/暗号資産)・ドラッグ並べ替え。追加した銘柄には自動でライブ価格+ルールベースの行動ラベル+戦略カード(理由/次の条件/シナリオ確率)が付く。' },
   { area: '価格データ',
-    descJa: '日本株=J-Quants(前日終値)、米国株=Twelve Data、暗号資産=CoinGecko。古いデータは「delayed」表示+確信度を自動で下げる(偽のliveを見せない)。' },
+    descJa: '日本株=J-Quants(前日終値)、米国株=Twelve Data、暗号資産=CoinGecko。moomooブリッジ稼働中は日米株がリアルタイムに自動アップグレード(途絶時は自動フォールバック)。古いデータは「delayed」表示+確信度を自動で下げる。' },
   { area: 'Market Regime',
     descJa: '資金がどこへ回転しているか(ETF proxy)とレジーム(RISK_ON〜EVENT_WAIT)をルールベースで判定。行動ラベルにも反映。' },
   { area: 'Event Radar',
@@ -22,7 +22,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
   { area: '判断ログ (記憶)',
     descJa: '毎日の判断を端末内に記録し「昨日からの変化」と直近7日の判断を表示(この端末のみ)。' },
   { area: '通知 (エージェント)',
-    descJa: '平日朝7:15に朝ダイジェスト、市場時間中は「姿勢の変化・イベント接近」の時だけ変化検知アラートをスマホへpush(ntfy設定時)。' },
+    descJa: '日本株の寄り前8:30と米国株の寄り前22:00にダイジェスト、市場時間中(7〜24時)は「姿勢の変化・イベント接近・市場ストレス急変(VIX/信用スプレッド)」の時だけアラートをスマホへpush(ntfy設定時)。通知タップでアプリが開く。' },
   { area: 'AI',
     descJa: 'GPT-5.5 Pro Handoff=手動コピペで無料の深掘り相談。自動AI判断(GPT-5.5+Gemini二重チェック)=管理者実行・キャッシュ閲覧のみ公開。下のAPI statusに現在の状態が常に出る。' },
   { area: '正直さの原則',
@@ -30,12 +30,12 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v9.11.0', 'moomooブリッジ=日米株リアルタイム価格(quote-push)・通知をJP寄り前8:30/US寄り前22:00の2本に・市場ストレス急変アラート・通知文面の読みやすさ改善'],
   ['v9.10.0', '変化検知アラート(変化時のみ通知)・判断コアのユニットテスト+CI・APIレート制限・AIキー疎通ping'],
   ['v9.9.0',  '判断ログ(昨日からの変化+7日履歴)・朝ダイジェスト通知(ntfy)'],
   ['v9.8.0',  '追加した銘柄に自動でライブ価格+行動ラベル(エンジン接続)・データ鮮度の正直表示'],
   ['v9.7.0',  'Todayの判断をライブ合成化(モック廃止)・暗号資産ライブ価格(CoinGecko)'],
   ['v9.6.0',  'API接続状況パネル(この下)・AIステータスの真実化(キー未設定をliveと言わない)'],
-  ['v9.5.0',  'Market Regime/資金ローテーションのライブ化(ETF proxyスコアリング)'],
 ];
 
 // 用語一覧 — English chrome term → Japanese meaning.

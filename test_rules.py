@@ -134,3 +134,43 @@ def test_crypto_id_regex():
     assert scanner._CRYPTO_ID_RE.match("usd-coin")
     assert not scanner._CRYPTO_ID_RE.match("UPPER")
     assert not scanner._CRYPTO_ID_RE.match("bad;id")
+
+
+# ── moomoo real-time overlay (v9.11) ─────────────────────────────────
+def _snap(*rows):
+    return {"status": "live", "asOf": "2026-06-10", "stocks": list(rows)}
+
+
+def test_overlay_replaces_and_fills(monkeypatch):
+    import time as _t
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "JP", {
+        "8058": {"row": {"symbol": "8058", "price": 5000.0, "changeAbs": 10.0,
+                         "changePct": 0.2, "volume": 1, "date": "2026-06-10",
+                         "status": "live", "source": "moomoo-rt"}, "ts": _t.time()},
+        "7203": {"row": {"symbol": "7203", "price": 2900.0, "changeAbs": 5.0,
+                         "changePct": 0.17, "volume": 2, "date": "2026-06-10",
+                         "status": "live", "source": "moomoo-rt"}, "ts": _t.time()},
+    })
+    base = _snap({"symbol": "8058", "name": "三菱商事", "price": 4805.0,
+                  "changePct": -0.58, "volume": 9, "date": "2026-06-09", "status": "live"})
+    out = scanner._overlay_pushed(base, "JP", ["8058", "7203"])
+    by = {s["symbol"]: s for s in out["stocks"]}
+    assert by["8058"]["price"] == 5000.0          # overlaid
+    assert by["8058"]["name"] == "三菱商事"        # name preserved
+    assert "7203" in by                            # hole filled
+    assert out["realtimeCount"] == 2
+    assert base["stocks"][0]["price"] == 4805.0    # cached object untouched
+
+
+def test_overlay_ignores_stale_pushes(monkeypatch):
+    import time as _t
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "JP", {
+        "8058": {"row": {"symbol": "8058", "price": 5000.0, "status": "live",
+                         "changeAbs": 0, "changePct": 0, "volume": 0,
+                         "date": "2026-06-10", "source": "moomoo-rt"},
+                 "ts": _t.time() - scanner._PUSH_TTL - 1},
+    })
+    base = _snap({"symbol": "8058", "name": "三菱商事", "price": 4805.0, "status": "live"})
+    out = scanner._overlay_pushed(base, "JP", ["8058"])
+    assert out["stocks"][0]["price"] == 4805.0     # stale push not applied
+    assert "realtimeCount" not in out
