@@ -2646,7 +2646,10 @@ def get_market_regime_snapshot():
     }
     if status != "mock":
         _REGIME_CACHE["data"]    = payload
-        _REGIME_CACHE["expires"] = now + _REGIME_CACHE_TTL
+        # A partial WITHOUT ETF data (cold start hitting the Twelve Data
+        # per-minute credit cap) must not stick for 6h — retry in 5 min so the
+        # rotation board / class predictions self-heal quickly.
+        _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if etf_live else 300)
     return payload
 
 @app.route("/api/argus/market-regime")
