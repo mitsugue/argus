@@ -34,16 +34,25 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
+          BE="https://argus-backend-3j2m.onrender.com"
           if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
-            echo "no admin token secret — recording rule-only predictions"
+            echo "::warning::ARGUS_ADMIN_TOKEN secret is EMPTY in this run — AI skipped"
+            echo "🤖 AI: **secret missing** — rule-only predictions recorded" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # Warm the dyno first, then run (the run gate enforces daily limits).
-          curl -s --max-time 90 "https://argus-backend-3j2m.onrender.com/api/argus/rates" > /dev/null || true
-          curl -s --max-time 240 -X POST \
+          echo "token present (length ${#ARGUS_ADMIN_TOKEN})"
+          # Warm the dyno, then surface the gate state on the run page (the
+          # security-status payload is booleans/limits only — no secrets).
+          curl -s --max-time 90 "$BE/api/argus/rates" > /dev/null || true
+          GATE=$(curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/security-status" || echo '{"error":"unreachable"}')
+          echo "gate: $GATE"
+          echo "🔐 gate: \`${GATE}\`" >> "$GITHUB_STEP_SUMMARY"
+          RESP=$(curl -s --max-time 240 -X POST \
             -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "https://argus-backend-3j2m.onrender.com/api/argus/ai-judgment/run" \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); print('ai run:', d.get('status'), d.get('reason',''))" || true
+            "$BE/api/argus/ai-judgment/run" || echo '{"error":"unreachable"}')
+          SHORT=$(echo "$RESP" | head -c 300)
+          echo "ai run: $SHORT"
+          echo "🤖 ai run: \`${SHORT}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout ledger branch
         uses: actions/checkout@v5
