@@ -46,7 +46,7 @@ jobs:
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('ai run:', d.get('status'), d.get('reason',''))" || true
 
       - name: Checkout ledger branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
       - name: Switch to ledger branch (create if missing)
