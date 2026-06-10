@@ -1,0 +1,178 @@
+# ARGUS Prediction Ledger — the self-scoring loop (v10.3).
+#
+# Every JP trading day at 16:05 JST:
+#   1. (optional) trigger a fresh AI judgment run so AI views are recorded
+#      (needs the ARGUS_ADMIN_TOKEN repo secret; skipped gracefully without it)
+#   2. record today's falsifiable predictions  -> ledger/days/YYYY-MM-DD.json
+#   3. score past unscored snapshots against realized moves
+#                                              -> ledger/scores/YYYY-MM-DD.json
+#   4. rebuild the running accuracy summary    -> ledger/summary.json
+#
+# Data lives on the `ledger` BRANCH (not main) so daily commits never trigger
+# the Pages/Render deploys. The ledger covers the curated engine symbols and
+# market context only — NO personal holdings ever.
+# Scoring: realized next-session move vs the predicted scenario distribution
+# (argmax hit + Brier score), recorded separately for the RULE engine and the
+# AI views so their accuracy can be compared per market context over time.
+
+name: prediction-ledger
+
+on:
+  schedule:
+    - cron: '5 7 * * 1-5'   # 07:05 UTC = 16:05 JST Mon-Fri (after TSE close)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  record-and-score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Trigger AI judgment run (skipped without ARGUS_ADMIN_TOKEN secret)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "no admin token secret — recording rule-only predictions"
+            exit 0
+          fi
+          # Warm the dyno first, then run (the run gate enforces daily limits).
+          curl -s --max-time 90 "https://argus-backend-3j2m.onrender.com/api/argus/rates" > /dev/null || true
+          curl -s --max-time 240 -X POST \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "https://argus-backend-3j2m.onrender.com/api/argus/ai-judgment/run" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print('ai run:', d.get('status'), d.get('reason',''))" || true
+
+      - name: Checkout ledger branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Switch to ledger branch (create if missing)
+        run: |
+          git fetch origin ledger:ledger 2>/dev/null && git checkout ledger || git checkout --orphan ledger
+          if [ ! -d ledger ]; then mkdir -p ledger/days ledger/scores; fi
+          # Orphan branch starts with main's tree staged — keep only ledger/.
+          git rm -rq --cached . 2>/dev/null || true
+          find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Record today's predictions + score the past
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4 5 6; do
+            curl -sf --max-time 60 "$BE/api/argus/prediction-snapshot" -o snap.json && break
+            echo "retry $i"; sleep 20
+          done
+          test -s snap.json
+          curl -sf --max-time 60 "$BE/api/argus/japan-watchlist" -o jp.json || echo '{}' > jp.json
+          curl -sf --max-time 60 "$BE/api/argus/us-watchlist"   -o us.json || echo '{}' > us.json
+          python3 - <<'PY'
+          import json, os, glob, datetime
+
+          snap = json.load(open('snap.json'))
+          today = snap['dateJst']
+          os.makedirs('ledger/days', exist_ok=True)
+          os.makedirs('ledger/scores', exist_ok=True)
+
+          # 1. Record today's snapshot (idempotent — last run of the day wins).
+          json.dump(snap, open(f'ledger/days/{today}.json', 'w'),
+                    ensure_ascii=False, indent=1)
+          print('recorded', today, len(snap['predictions']), 'predictions')
+
+          # 2. Current live prices for scoring.
+          now_price = {}
+          for f in ('jp.json', 'us.json'):
+              for s in (json.load(open(f)).get('stocks') or []):
+                  if s.get('status') == 'live':
+                      now_price[s['symbol']] = float(s['price'])
+
+          def bucket(pct):
+              if pct < -2: return 'downside_continuation'
+              if pct > 2:  return 'rebound_attempt'
+              return 'sideways_stabilization'
+
+          DIRECTIONAL = {'BUY DIP': 'up', 'ADD': 'up', 'TRIM': 'down', 'EXIT': 'down'}
+
+          # 3. Score unscored snapshots that are 1..7 days old.
+          for path in sorted(glob.glob('ledger/days/*.json')):
+              d = os.path.basename(path)[:-5]
+              if d >= today: continue
+              spath = f'ledger/scores/{d}.json'
+              if os.path.exists(spath): continue
+              age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(d)).days
+              if age > 7: continue
+              day = json.load(open(path))
+              rows, hits, briers = [], 0, []
+              ai_hits, ai_total = 0, 0
+              for p in day.get('predictions', []):
+                  cur = now_price.get(p['symbol'])
+                  if cur is None or not p.get('price'): continue
+                  realized = (cur / p['price'] - 1) * 100
+                  b = bucket(realized)
+                  probs = {s['label']: s['p'] / 100 for s in p['scenarios']}
+                  argmax = max(probs, key=lambda k: probs[k])
+                  hit = (argmax == b)
+                  brier = sum((probs.get(k, 0) - (1.0 if k == b else 0.0)) ** 2
+                              for k in ('downside_continuation', 'sideways_stabilization', 'rebound_attempt'))
+                  hits += hit; briers.append(brier)
+                  ai = p.get('ai') or {}
+                  ai_dir = DIRECTIONAL.get(ai.get('action') or '')
+                  ai_hit = None
+                  if ai_dir:
+                      ai_total += 1
+                      ai_hit = (ai_dir == 'up' and realized > 0) or (ai_dir == 'down' and realized < 0)
+                      ai_hits += bool(ai_hit)
+                  rows.append({'symbol': p['symbol'], 'predPrice': p['price'], 'curPrice': cur,
+                               'realizedPct': round(realized, 2), 'bucket': b,
+                               'argmax': argmax, 'hit': hit, 'brier': round(brier, 4),
+                               'action': p['action'], 'aiAction': ai.get('action'),
+                               'aiDirectionalHit': ai_hit})
+              if not rows: continue
+              score = {'date': d, 'scoredOn': today, 'ageDays': age,
+                       'context': day.get('context', {}),
+                       'n': len(rows), 'argmaxHits': hits,
+                       'hitRate': round(hits / len(rows), 3),
+                       'brierMean': round(sum(briers) / len(briers), 4),
+                       'aiDirectional': {'n': ai_total, 'hits': ai_hits},
+                       'rows': rows}
+              json.dump(score, open(spath, 'w'), ensure_ascii=False, indent=1)
+              print('scored', d, f"hit {hits}/{len(rows)} brier {score['brierMean']}")
+
+          # 4. Rebuild the running summary (overall + by posture + by VIX zone).
+          allscores = [json.load(open(p)) for p in sorted(glob.glob('ledger/scores/*.json'))]
+          def agg(items):
+              n = sum(s['n'] for s in items); h = sum(s['argmaxHits'] for s in items)
+              bm = sum(s['brierMean'] * s['n'] for s in items) / n if n else None
+              return {'days': len(items), 'n': n, 'hitRate': round(h / n, 3) if n else None,
+                      'brierMean': round(bm, 4) if bm is not None else None}
+          by_posture, by_vix = {}, {}
+          for s in allscores:
+              by_posture.setdefault(s['context'].get('posture') or '?', []).append(s)
+              by_vix.setdefault(s['context'].get('vixZone') or '?', []).append(s)
+          ai_n = sum(s['aiDirectional']['n'] for s in allscores)
+          ai_h = sum(s['aiDirectional']['hits'] for s in allscores)
+          summary = {
+              'updated': today, 'engineVersion': 'ledger-v1',
+              'overall': agg(allscores) if allscores else None,
+              'byPosture': {k: agg(v) for k, v in by_posture.items()},
+              'byVixZone': {k: agg(v) for k, v in by_vix.items()},
+              'aiDirectional': {'n': ai_n, 'hits': ai_h,
+                                'hitRate': round(ai_h / ai_n, 3) if ai_n else None},
+              'noteJa': 'シナリオ分布のargmax的中率とBrierスコア(低いほど良い)。1日ホライズン・終値ベース。成績は分類の校正度であり、将来の利益を保証しない。',
+          }
+          json.dump(summary, open('ledger/summary.json', 'w'), ensure_ascii=False, indent=1)
+          print('summary:', summary.get('overall'))
+          PY
+
+      - name: Commit to ledger branch
+        run: |
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "ledger: $(date -u +%F) record + score"
+            git push origin HEAD:ledger
+          fi

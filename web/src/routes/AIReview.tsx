@@ -71,7 +71,7 @@ const OPEN_QUESTIONS = [
 
 const GAPS = [
   'Filter chips on Watchlist (e.g., "show EXIT only") — not built yet',
-  'Automated OpenAI/Gemini AI judgment is NOT live — it requires Render env keys (OPENAI_API_KEY + GEMINI_API_KEY) + AI_JUDGE_ENABLED=true + an admin-triggered run; until then its status is disabled / missing_keys / no_cached_result (see Guide → API status). It is never marked live merely because a feature flag is on. Action labels are rule-based (Action Label Engine v0); the GPT-5.5 Pro Handoff is manual copy-paste and makes no API call (separate from ChatGPT Pro billing)',
+  'Automated AI judgment (GPT-5.5 + gemini-2.5-pro) runs daily via the prediction-ledger cron when the ARGUS_ADMIN_TOKEN repo secret is set; per-symbol AI views appear in strategy cards while the cache is fresh (30-min TTL after each run — between runs the public GET honestly reports no_cached_result). Action labels remain rule-based with AI as a recorded second opinion; the GPT-5.5 Pro Handoff stays manual copy-paste (no API call)',
   'Market Regime ETF universe is a focused 8-symbol proxy subset (SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG) — financials/energy/semis and the LQD credit pair are pending; ETF rotation is a proxy for capital flow, not direct flow',
   'Japan regime uses watchlist breadth as a temporary proxy, not index/sector rotation',
   'No moomoo order flow / order book / tape yet; no VWAP',

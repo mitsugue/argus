@@ -3680,6 +3680,92 @@ def _vix_assess(closes):
     }
 
 
+# ━━━ Prediction Ledger snapshot (ledger-v1) — the self-scoring loop ━━━
+# Composes TODAY's falsifiable per-symbol predictions in a scoreable format.
+# A GitHub Actions cron records this daily to the repo's `ledger` branch and
+# scores past snapshots against realized moves — accumulating, per context
+# (posture / VIX zone / flow), how often the rule engine and the AI were right.
+# ARGUS still does not "predict" — it states scenario DISTRIBUTIONS and gets
+# graded on them (Brier score + argmax hit), which is the honest way to learn.
+
+def _scenarios_for(chg):
+    """Server-side port of the frontend scenario distribution (same thresholds).
+    Returns [(label, probability)] summing to 100, from the daily change %."""
+    if chg is None:
+        return [("downside_continuation", 33), ("sideways_stabilization", 34), ("rebound_attempt", 33)]
+    if chg <= -7: return [("downside_continuation", 45), ("sideways_stabilization", 40), ("rebound_attempt", 15)]
+    if chg <= -3: return [("downside_continuation", 40), ("sideways_stabilization", 40), ("rebound_attempt", 20)]
+    if chg < 2:   return [("downside_continuation", 30), ("sideways_stabilization", 50), ("rebound_attempt", 20)]
+    if chg < 5:   return [("downside_continuation", 25), ("sideways_stabilization", 50), ("rebound_attempt", 25)]
+    return [("downside_continuation", 30), ("sideways_stabilization", 45), ("rebound_attempt", 25)]
+
+def get_prediction_snapshot():
+    al  = get_action_labels()
+    jp  = get_japan_watchlist_snapshot()
+    us  = get_us_watchlist_snapshot()
+    reg = get_market_regime_snapshot()
+    vol = _vix_assess(_fred_vix_history())
+    rg  = reg.get("regime", {}) if isinstance(reg, dict) else {}
+    rb  = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
+
+    prices = {}
+    for snap in (jp, us):
+        for s in (snap.get("stocks", []) if isinstance(snap, dict) else []):
+            if s.get("status") == "live":
+                prices[s["symbol"]] = s
+
+    # Cached AI views (if an admin/cron run happened recently) — recorded so the
+    # ledger can grade RULE vs AI over time.
+    ai_by_sym, ai_status = {}, "none"
+    cached = _AI_RESULT_CACHE["data"]
+    if cached and time.time() < _AI_RESULT_CACHE["expires"]:
+        ai_status = cached.get("status", "none")
+        for l in cached.get("labels", []):
+            ai_by_sym[l.get("symbol")] = {
+                "view": l.get("aiView"), "action": l.get("aiFinalAction"),
+                "confidence": l.get("confidence"),
+            }
+
+    predictions = []
+    for l in al.get("labels", []):
+        q = prices.get(l["symbol"])
+        if not q:
+            continue  # no live price = nothing falsifiable to record
+        sd = l.get("supportingData", {}) or {}
+        predictions.append({
+            "symbol": l["symbol"], "market": l["market"], "name": l["name"],
+            "price": q["price"], "changePct": sd.get("changePct"),
+            "action": l["action"], "confidence": l["confidence"],
+            "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(sd.get("changePct"))],
+            "flowRatio": sd.get("bigFlowRatio"),
+            "ai": ai_by_sym.get(l["symbol"]),
+        })
+
+    return {
+        "dateJst": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
+        "asOf": _ai_now_iso(),
+        "engineVersion": "ledger-v1",
+        "context": {
+            "posture": (al.get("marketPosture", {}) or {}).get("label"),
+            "regimeConfidence": rg.get("confidence"),
+            "vixZone": (vol or {}).get("zone"),
+            "vixLevel": (vol or {}).get("level"),
+            "backdrop": rb.get("posture"),
+            "aiStatus": ai_status,
+        },
+        "predictions": predictions,
+        "scoringRule": {
+            "horizonDays": 1,
+            "buckets": {"downside_continuation": "< -2%", "sideways_stabilization": "-2%..+2%", "rebound_attempt": "> +2%"},
+            "metrics": ["argmaxHit", "brier"],
+        },
+    }
+
+@app.route("/api/argus/prediction-snapshot")
+def api_argus_prediction_snapshot():
+    return jsonify(get_prediction_snapshot())
+
+
 # ━━━ Daily Digest (digest-v1) — the agent's morning brief ━━━
 # Rule-based composition of the existing snapshots into a notification-ready
 # Japanese brief. NO LLM. Consumed by the morning GitHub Actions cron (→ ntfy
@@ -3747,6 +3833,12 @@ def get_daily_digest():
     L = [f"今日の姿勢: {call}", f"{posture}・{call_ja}・確信度{conf_pct}%"]
     if posture_ja:
         L += ["", posture_ja[:100]]
+    # AI second opinion (when a fresh admin/cron run is cached — never run here).
+    ai_cached = _AI_RESULT_CACHE["data"]
+    ai_summary = None
+    if ai_cached and time.time() < _AI_RESULT_CACHE["expires"] and ai_cached.get("summaryJa"):
+        ai_summary = ai_cached["summaryJa"]
+        L += ["", f"🤖 AI見解: {ai_summary[:100]}"]
     if rb:
         L += ["", "📊 金利・ボラティリティ",
               f"US10Y {rb.get('us10y')}% ｜ HY OAS {rb.get('hyOas')}%（{rb.get('posture')}）"]
@@ -3784,6 +3876,7 @@ def get_daily_digest():
         "topRotations": rotations,
         "labelHighlights": highlights,
         "changesSinceLastJa": changes,
+        "aiSummaryJa": ai_summary,
         "textJa": text_ja,
         "dataLimitations": [
             "ルールベース合成(LLM不使用)。day-over-dayの厳密な差分は端末側ログが担当。",

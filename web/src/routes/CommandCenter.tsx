@@ -7,6 +7,7 @@ import { CompactEventRow } from '../components/dashboard/CompactEventRow';
 import { CompactCoreRow } from '../components/dashboard/CompactCoreRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
+import { useLedgerSummary } from '../hooks/useLedgerSummary';
 import { useActionLabels } from '../hooks/useActionLabels';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
@@ -64,6 +65,7 @@ const formatDate = (iso: string) => {
 
 export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const { assets } = useAssets();
+  const ledger = useLedgerSummary();
   // The engine follows the USER's actual watchlist (dynamic symbols, v9.8).
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
   const usSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
@@ -195,6 +197,17 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         </div>
         <div className="card jlog">
           <p className="jlog__diff">{diffLineJa}</p>
+          {ledger.data?.overall && (
+            <div className="jlog__acc">
+              📊 自己採点(予測台帳・{ledger.data.overall.days}営業日 / {ledger.data.overall.n}件):
+              シナリオ的中率 <b>{Math.round((ledger.data.overall.hitRate ?? 0) * 100)}%</b>
+              ・Brier <b>{ledger.data.overall.brierMean?.toFixed(3) ?? '—'}</b>
+              {ledger.data.aiDirectional.hitRate != null && (
+                <> ・AI方向的中 <b>{Math.round(ledger.data.aiDirectional.hitRate * 100)}%</b>({ledger.data.aiDirectional.n}件)</>
+              )}
+              <div className="jlog__acc-note">{ledger.data.noteJa}</div>
+            </div>
+          )}
           {recent.length > 0 && (
             <div className="jlog__strip">
               {recent.map((e) => (

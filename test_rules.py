@@ -245,3 +245,17 @@ def test_flow_outflow_tightens_hold_to_wait():
 def test_flow_annotation_only_when_no_rule_change():
     a, c, r, n = scanner._flow_adjust("WAIT FOR PULLBACK", 0.65, "r", "n", 6.0, 0.4, None, "neutral", "RISK_ON")
     assert a == "WAIT FOR PULLBACK" and "純流入" in r
+
+
+# ── Prediction ledger scenario port (v10.3) ──────────────────────────
+def test_scenarios_for_sums_to_100():
+    for chg in (None, -8.0, -4.0, 0.0, 3.0, 6.0):
+        dist = scanner._scenarios_for(chg)
+        assert sum(p for _, p in dist) == 100
+        assert {s for s, _ in dist} == {"downside_continuation", "sideways_stabilization", "rebound_attempt"}
+
+
+def test_scenarios_for_matches_frontend_thresholds():
+    assert dict(scanner._scenarios_for(-8))["downside_continuation"] == 45
+    assert dict(scanner._scenarios_for(0))["sideways_stabilization"] == 50
+    assert dict(scanner._scenarios_for(6))["rebound_attempt"] == 25

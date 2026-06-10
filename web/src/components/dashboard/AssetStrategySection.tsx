@@ -13,11 +13,13 @@ import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
 import { useActionLabels } from '../../hooks/useActionLabels';
 import { useCatalysts } from '../../hooks/useCatalysts';
 import { useRatesSnapshot } from '../../hooks/useRatesSnapshot';
+import { useAIJudgment } from '../../hooks/useAIJudgment';
 import { deriveStrategy, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
 import { buildExposure, valueHolding, fmtMoney, fmtSigned, currencyOf, type ExposureSummary } from '../../lib/portfolio';
 import { simulateAdd } from '../../lib/whatif';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
+import type { AIJudgmentLabel } from '../../types/aiJudgment';
 import type { CatalystItem } from '../../types/catalysts';
 
 interface Props {
@@ -263,11 +265,19 @@ const WhatIfPanel: React.FC<{
   );
 };
 
+const AI_VIEW_JA: Record<string, string> = {
+  confirm: '同意', caution: '注意', disagree: '不同意', unavailable: '—',
+};
+const AI_VIEW_COLOR: Record<string, string> = {
+  confirm: 'var(--green)', caution: 'var(--amber)', disagree: 'var(--red)', unavailable: 'var(--text-muted)',
+};
+
 const SortableAssetRow: React.FC<{
   asset: AssetItem; strat: AssetStrategy; expanded: boolean;
   onToggleExpand: (id: string) => void; onRemove: (id: string) => void;
   onUpdateHolding: Props['onUpdateHolding'];
-}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding }) => {
+  aiLabel?: AIJudgmentLabel;
+}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   const name = asset.displayNameJa || asset.displayName;
@@ -317,6 +327,23 @@ const SortableAssetRow: React.FC<{
               </div>
             )}
           </div>
+
+          {/* AI second opinion (cached GPT-5.5 + Gemini run — read-only, v10.3). */}
+          {aiLabel && (
+            <div className="asset-ai">
+              <div className="asset-ai__head">
+                <span className="asset-ai__tag">AI予想</span>
+                <span style={{ color: AI_VIEW_COLOR[aiLabel.aiView] ?? 'var(--text-sub)' }}>
+                  ルール判定に{AI_VIEW_JA[aiLabel.aiView] ?? aiLabel.aiView}
+                </span>
+                <span className="asset-ai__action">AI提案: <b>{aiLabel.aiFinalAction}</b>（確信度{Math.round((aiLabel.confidence ?? 0) * 100)}%）</span>
+              </div>
+              {aiLabel.reasonJa && <p className="asset-ai__reason">{aiLabel.reasonJa}</p>}
+              {aiLabel.redFlags?.length > 0 && (
+                <p className="asset-ai__flags">⚑ {aiLabel.redFlags.join(' / ')}</p>
+              )}
+            </div>
+          )}
 
           {/* Holdings (v10.0) — device-local; drives the Portfolio Exposure card. */}
           {(() => {
@@ -387,6 +414,16 @@ const SortableAssetRow: React.FC<{
 export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expandedId, onToggleExpand, onRemove, onUpdateHolding }) => {
   const rates = useRatesSnapshot();
   const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
+  // Cached AI judgment (read-only — never triggers a run). Per-symbol views
+  // appear in the cards while the cache is fresh (daily cron / admin run).
+  const aiJ = useAIJudgment();
+  const aiBySym = useMemo(() => {
+    const m = new Map<string, AIJudgmentLabel>();
+    if (aiJ.data && (aiJ.data.status === 'live' || aiJ.data.status === 'partial')) {
+      for (const l of aiJ.data.labels) m.set(l.symbol, l);
+    }
+    return m;
+  }, [aiJ.data]);
   // Dynamic mode: the engine follows the USER's actual assets — symbols added
   // via the UI get live quotes AND rule labels (no longer the fixed 11).
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
@@ -483,6 +520,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
                         key={a.id} asset={a} strat={strat} expanded={expandedId === a.id}
                         onToggleExpand={onToggleExpand} onRemove={onRemove}
                         onUpdateHolding={onUpdateHolding}
+                        aiLabel={aiBySym.get(a.symbol)}
                       />
                     );
                   })}
