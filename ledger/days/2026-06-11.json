@@ -1,5 +1,5 @@
 {
- "asOf": "2026-06-10T21:28:02Z",
+ "asOf": "2026-06-10T21:34:20Z",
  "context": {
   "aiStatus": "none",
   "backdrop": "neutral",
@@ -14,7 +14,7 @@
   {
    "action": "HOLD",
    "ai": null,
-   "changePct": -3.9542,
+   "changePct": -3.95,
    "confidence": 0.45,
    "flowRatio": null,
    "market": "JP",
@@ -39,7 +39,7 @@
   {
    "action": "WAIT",
    "ai": null,
-   "changePct": -8.3286,
+   "changePct": -8.33,
    "confidence": 0.82,
    "flowRatio": null,
    "market": "JP",
@@ -64,7 +64,7 @@
   {
    "action": "WAIT",
    "ai": null,
-   "changePct": -11.7419,
+   "changePct": -11.74,
    "confidence": 0.82,
    "flowRatio": null,
    "market": "JP",
@@ -89,7 +89,7 @@
   {
    "action": "WAIT",
    "ai": null,
-   "changePct": -6.7793,
+   "changePct": -6.78,
    "confidence": 0.7,
    "flowRatio": null,
    "market": "JP",
@@ -114,7 +114,7 @@
   {
    "action": "WAIT",
    "ai": null,
-   "changePct": -5.9266,
+   "changePct": -5.93,
    "confidence": 0.7,
    "flowRatio": null,
    "market": "JP",
@@ -139,7 +139,7 @@
   {
    "action": "WAIT",
    "ai": null,
-   "changePct": -7.7829,
+   "changePct": -7.78,
    "confidence": 0.82,
    "flowRatio": null,
    "market": "JP",
@@ -164,7 +164,7 @@
   {
    "action": "HOLD",
    "ai": null,
-   "changePct": -1.3482,
+   "changePct": -1.35,
    "confidence": 0.45,
    "flowRatio": null,
    "market": "JP",
@@ -189,12 +189,12 @@
   {
    "action": "HOLD",
    "ai": null,
-   "changePct": -3.7322,
+   "changePct": -3.77,
    "confidence": 0.45,
    "flowRatio": null,
    "market": "US",
    "name": "NVIDIA",
-   "price": 200.42,
+   "price": 200.34,
    "scenarios": [
     {
      "label": "downside_continuation",
@@ -214,12 +214,12 @@
   {
    "action": "HOLD",
    "ai": null,
-   "changePct": 0.3545,
+   "changePct": 0.33,
    "confidence": 0.45,
    "flowRatio": null,
    "market": "US",
    "name": "Apple",
-   "price": 291.58,
+   "price": 291.5,
    "scenarios": [
     {
      "label": "downside_continuation",
@@ -239,12 +239,12 @@
   {
    "action": "HOLD",
    "ai": null,
-   "changePct": -3.8041,
+   "changePct": -3.8,
    "confidence": 0.45,
    "flowRatio": null,
    "market": "US",
    "name": "Tesla",
-   "price": 381.59,
+   "price": 381.62,
    "scenarios": [
     {
      "label": "downside_continuation",
@@ -264,12 +264,12 @@
   {
    "action": "HOLD",
    "ai": null,
-   "changePct": -2.3281,
+   "changePct": -2.36,
    "confidence": 0.45,
    "flowRatio": null,
    "market": "US",
    "name": "Meta Platforms",
-   "price": 570.98,
+   "price": 570.79,
    "scenarios": [
     {
      "label": "downside_continuation",
