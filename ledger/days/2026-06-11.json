@@ -1,0 +1,302 @@
+{
+ "asOf": "2026-06-10T21:28:02Z",
+ "context": {
+  "aiStatus": "none",
+  "backdrop": "neutral",
+  "posture": "MIXED",
+  "regimeConfidence": 0.5,
+  "vixLevel": 19.9,
+  "vixZone": "normal"
+ },
+ "dateJst": "2026-06-11",
+ "engineVersion": "ledger-v1",
+ "predictions": [
+  {
+   "action": "HOLD",
+   "ai": null,
+   "changePct": -3.9542,
+   "confidence": 0.45,
+   "flowRatio": null,
+   "market": "JP",
+   "name": "三菱商事",
+   "price": 4615.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 40
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "8058"
+  },
+  {
+   "action": "WAIT",
+   "ai": null,
+   "changePct": -8.3286,
+   "confidence": 0.82,
+   "flowRatio": null,
+   "market": "JP",
+   "name": "ソフトバンクグループ",
+   "price": 6461.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 45
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 15
+    }
+   ],
+   "symbol": "9984"
+  },
+  {
+   "action": "WAIT",
+   "ai": null,
+   "changePct": -11.7419,
+   "confidence": 0.82,
+   "flowRatio": null,
+   "market": "JP",
+   "name": "古河電気工業",
+   "price": 41040.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 45
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 15
+    }
+   ],
+   "symbol": "5801"
+  },
+  {
+   "action": "WAIT",
+   "ai": null,
+   "changePct": -6.7793,
+   "confidence": 0.7,
+   "flowRatio": null,
+   "market": "JP",
+   "name": "フジクラ",
+   "price": 4194.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 40
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "5803"
+  },
+  {
+   "action": "WAIT",
+   "ai": null,
+   "changePct": -5.9266,
+   "confidence": 0.7,
+   "flowRatio": null,
+   "market": "JP",
+   "name": "三櫻工業",
+   "price": 1000.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 40
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "6584"
+  },
+  {
+   "action": "WAIT",
+   "ai": null,
+   "changePct": -7.7829,
+   "confidence": 0.82,
+   "flowRatio": null,
+   "market": "JP",
+   "name": "キオクシアホールディングス",
+   "price": 70500.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 45
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 15
+    }
+   ],
+   "symbol": "285A"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "changePct": -1.3482,
+   "confidence": 0.45,
+   "flowRatio": null,
+   "market": "JP",
+   "name": "東京電力ホールディングス",
+   "price": 512.2,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "9501"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "changePct": -3.7322,
+   "confidence": 0.45,
+   "flowRatio": null,
+   "market": "US",
+   "name": "NVIDIA",
+   "price": 200.42,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 40
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "NVDA"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "changePct": 0.3545,
+   "confidence": 0.45,
+   "flowRatio": null,
+   "market": "US",
+   "name": "Apple",
+   "price": 291.58,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "AAPL"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "changePct": -3.8041,
+   "confidence": 0.45,
+   "flowRatio": null,
+   "market": "US",
+   "name": "Tesla",
+   "price": 381.59,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 40
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "TSLA"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "changePct": -2.3281,
+   "confidence": 0.45,
+   "flowRatio": null,
+   "market": "US",
+   "name": "Meta Platforms",
+   "price": 570.98,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "META"
+  }
+ ],
+ "scoringRule": {
+  "buckets": {
+   "downside_continuation": "< -2%",
+   "rebound_attempt": "> +2%",
+   "sideways_stabilization": "-2%..+2%"
+  },
+  "horizonDays": 1,
+  "metrics": [
+   "argmaxHit",
+   "brier"
+  ]
+ }
+}

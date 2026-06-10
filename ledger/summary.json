@@ -1,0 +1,13 @@
+{
+ "updated": "2026-06-11",
+ "engineVersion": "ledger-v1",
+ "overall": null,
+ "byPosture": {},
+ "byVixZone": {},
+ "aiDirectional": {
+  "n": 0,
+  "hits": 0,
+  "hitRate": null
+ },
+ "noteJa": "シナリオ分布のargmax的中率とBrierスコア(低いほど良い)。1日ホライズン・終値ベース。成績は分類の校正度であり、将来の利益を保証しない。"
+}
