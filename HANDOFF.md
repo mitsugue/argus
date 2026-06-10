@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.0.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.1.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.0.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.1.0。
 
 ---
 
@@ -22,7 +22,7 @@ grep '"version"' web/package.json
 curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3 -m json.tool
 ```
 
-次の実装は **v10.1 What-if Simulator（シナリオ分析）or ニュース/ブラックスワン原因検知**（下の「ロードマップ」参照）。
+次の実装は **v10.2 moomoo深化（資金フロー/板=大口の動き→ラベル確証シグナル）or ニュース/ブラックスワン原因検知**（下の「ロードマップ」参照）。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.0.0**
+- **現在バージョン: v10.1.0**
 
 ---
 
@@ -210,12 +210,22 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
     → zone = calm/normal/elevated/shock。**アラートは圏域の上方遷移とスパイクで発火**(数字の上抜けでは発火しない)
   - `_fred_vix_history()`(FRED VIXCLS 70日・1hキャッシュ)。digestに `volatility` ブロック+文脈付きVIX行
   - market-alerts.yml は zone遷移+spike(日付dedup)ベースに書き換え。固定26ルール撤廃
-- **v10.0.0 Portfolio Exposure（最新）**
+- v10.0.0 Portfolio Exposure
   - AssetItem に quantity/avgCost(端末localStorageのみ・送信しない)。useAssets.updateHolding
   - `web/src/lib/portfolio.ts`(純関数): valueHolding/buildExposure — ¥/$別合計+USD/JPY円換算
     (FRED DEXJPUS を /rates に `usdJpy` として追加=additive)・ジャンル配分・mock価格では評価しない
   - 戦略カード展開部に保有入力、Watchlist上部に ExposureCard(評価額/含み損益/配分バー)
   - moomooブリッジ稼働確認済み(AWS・systemd・1分毎push・全11銘柄 moomoo-rt live)。GEMINI_JUDGE_MODEL=gemini-2.5-pro
+- **v10.1.0 What-if + 検索修正（最新）**
+  - What-if: `lib/whatif.ts`(SCENARIO_BANDS=下値-10〜-4%/横ばい±2%/反発+3〜+8%の仮定幅×シナリオ確率)。
+    Watchlist上のWhatIfPanelで追加投資の配分変化/集中警告(>30%)/損益帯/確率加重中央値。予測ではない表記必須
+  - 検索修正: `_jp_query_is_code()` — `isdigit()`が「314A/285A」等の英字入りTSEコードを名前検索に
+    回していたバグを修正(コードprefix照合+名前照合の併用)。pytest追加
+  - 投信: J-Quantsは上場銘柄のみで投信は構造的に不在 → `lib/fundCatalog.ts`(主要26本・正式名称)の
+    ローカル検索をAdd-AssetのCore/Fundタブに追加。基準価額(NAV)は未取得=将来のデータソース課題
+  - 次候補: moomoo深化 — ブリッジを拡張し get_capital_distribution(大口/中口/小口フロー)や板情報を
+    push→ラベルエンジンの「フロー確証」シグナルへ(v0が欠くtrend/flow confirmationを充足)。
+    JP市場での提供範囲はmoomoo口座の気配権限に依存(要実機確認)
 
 ---
 

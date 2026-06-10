@@ -4257,13 +4257,20 @@ def _jq_master():
     except Exception:
         return _JQ_MASTER_CACHE["data"] or []
 
+def _jp_query_is_code(q):
+    """True when the query looks like a TSE code prefix. TSE codes are 4 chars,
+    DIGIT-LED and may END IN A LETTER (285A, 314A, 133A) — `isdigit()` missed
+    those, which silently broke code search for every alphanumeric ETF/stock."""
+    return bool(re.match(r"^[0-9][0-9A-Za-z]{0,3}$", q))
+
 def _search_jp(q):
     ql = q.lower()
-    digits = q.isdigit()
+    qu = q.upper()
+    code_like = _jp_query_is_code(q)
     out = []
     for r in _jq_master():
-        hit = (r["code4"].startswith(q) or r["code4"][:len(q)] == q) if digits \
-            else (ql in r["ja"].lower() or ql in r["en"].lower())
+        hit = (code_like and r["code4"].upper().startswith(qu)) \
+            or (ql in r["ja"].lower() or ql in r["en"].lower())
         if hit:
             out.append({"symbol": r["code4"], "name": r["en"] or r["ja"], "nameJa": r["ja"],
                         "exchange": r["mkt"], "type": "jp_equity"})

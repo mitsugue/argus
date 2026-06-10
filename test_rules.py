@@ -207,3 +207,15 @@ def test_overlay_ignores_stale_pushes(monkeypatch):
     out = scanner._overlay_pushed(base, "JP", ["8058"])
     assert out["stocks"][0]["price"] == 4805.0     # stale push not applied
     assert "realtimeCount" not in out
+
+
+# ── JP symbol-search code detection (v10.1 fix) ──────────────────────
+def test_jp_query_is_code_alphanumeric():
+    # TSE codes are digit-led and may END IN A LETTER — isdigit() broke these.
+    assert scanner._jp_query_is_code("8058")
+    assert scanner._jp_query_is_code("314A")
+    assert scanner._jp_query_is_code("285a")
+    assert scanner._jp_query_is_code("13")        # prefix search
+    assert not scanner._jp_query_is_code("NVDA")  # letter-led = name search
+    assert not scanner._jp_query_is_code("三菱")
+    assert not scanner._jp_query_is_code("12345")

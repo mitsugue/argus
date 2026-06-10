@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -14,7 +14,8 @@ import { useActionLabels } from '../../hooks/useActionLabels';
 import { useCatalysts } from '../../hooks/useCatalysts';
 import { useRatesSnapshot } from '../../hooks/useRatesSnapshot';
 import { deriveStrategy, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
-import { buildExposure, valueHolding, fmtMoney, fmtSigned } from '../../lib/portfolio';
+import { buildExposure, valueHolding, fmtMoney, fmtSigned, currencyOf, type ExposureSummary } from '../../lib/portfolio';
+import { simulateAdd } from '../../lib/whatif';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
 import type { CatalystItem } from '../../types/catalysts';
@@ -93,16 +94,8 @@ const GENRE_COLOR: Record<string, string> = {
 // the device. Shown only once at least one holding is entered.
 const ExposureCard: React.FC<{
   assets: AssetItem[];
-  quotes: Map<string, QuoteLite>;
-  usdJpy: number | null;
-}> = ({ assets, quotes, usdJpy }) => {
-  const exp = useMemo(
-    () => buildExposure(assets, (a) => {
-      const q = quotes.get(a.symbol);
-      return q && q.status === 'live' ? q.price : undefined;   // never value on mock prices
-    }, usdJpy),
-    [assets, quotes, usdJpy],
-  );
+  exp: ExposureSummary;
+}> = ({ assets, exp }) => {
   const anyHolding = assets.some((a) => (a.quantity ?? 0) > 0 && a.avgCost != null);
   if (!anyHolding) {
     return (
@@ -156,6 +149,115 @@ const ExposureCard: React.FC<{
       )}
       {exp.unpriced.length > 0 && (
         <p className="exp__unpriced">ライブ価格未取得のため対象外: {exp.unpriced.join(', ')}（投信の基準価額は未対応）</p>
+      )}
+    </div>
+  );
+};
+
+// What-if simulator (v10.1): "¥X を銘柄Y に追加したら配分とシナリオ別損益は
+// どう動くか" — SCENARIO ANALYSIS over assumed bands, never a forecast.
+// Client-side only; uses the same live quotes + rule scenarios as the cards.
+const WhatIfPanel: React.FC<{
+  assets: AssetItem[];
+  quotes: Map<string, QuoteLite>;
+  labels: Map<string, ActionLabel>;
+  cats: Map<string, CatalystItem>;
+  exp: ExposureSummary;
+  usdJpy: number | null;
+  mountTs: number;
+}> = ({ assets, quotes, labels, cats, exp, usdJpy, mountTs }) => {
+  const [open, setOpen] = useState(false);
+  const [sel, setSel] = useState('');
+  const [amt, setAmt] = useState('');
+
+  const candidates = useMemo(
+    () => assets.filter((a) => {
+      const q = quotes.get(a.symbol);
+      return q && q.status === 'live';
+    }),
+    [assets, quotes],
+  );
+  const selAsset = candidates.find((a) => a.symbol === sel) ?? null;
+  const ccy = selAsset ? currencyOf(selAsset.market) : 'JPY';
+
+  const result = useMemo(() => {
+    const amount = Number(amt);
+    if (!selAsset || !(amount > 0)) return null;
+    const q = quotes.get(selAsset.symbol)!;
+    const strat = deriveStrategy(selAsset, labels.get(selAsset.symbol), q, cats.get(selAsset.symbol), mountTs);
+    return simulateAdd({
+      symbol: selAsset.symbol, currency: currencyOf(selAsset.market),
+      price: q.price, amount, scenarios: strat.scenarios,
+      exposure: exp, usdJpy,
+    });
+  }, [selAsset, amt, quotes, labels, cats, exp, usdJpy, mountTs]);
+
+  if (candidates.length === 0) return null;
+  return (
+    <div className="card whatif">
+      <button className="whatif__toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="whatif__caret">{open ? '▾' : '▸'}</span>
+        What-if シミュレーション
+        <span className="whatif__sub">追加投資の配分・シナリオ別損益(予測ではなくシナリオ整理)</span>
+      </button>
+      {open && (
+        <div className="whatif__body">
+          <div className="whatif__form">
+            <label>銘柄
+              <select value={sel} onChange={(e) => setSel(e.target.value)}>
+                <option value="">選択…</option>
+                {candidates.map((a) => (
+                  <option key={a.id} value={a.symbol}>
+                    {a.symbol} {a.displayNameJa || a.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>追加投資額({ccy === 'JPY' ? '¥' : '$'})
+              <input type="number" inputMode="decimal" min="0" step="any" value={amt}
+                     placeholder={ccy === 'JPY' ? '300000' : '2000'}
+                     onChange={(e) => setAmt(e.target.value)} />
+            </label>
+          </div>
+          {result && (
+            <div className="whatif__result">
+              <p className="whatif__line">
+                追加: <b>{result.addQuantity.toFixed(result.addQuantity >= 10 ? 0 : 4)}</b> 単位 @ {fmtMoney(result.currency, result.price)}
+                （投資額 {fmtMoney(result.currency, result.amount)}）
+              </p>
+              {result.assetShareAfterPct != null && (
+                <p className="whatif__line">
+                  配分: {sel} が {result.assetShareBeforePct?.toFixed(1) ?? '0.0'}% → <b>{result.assetShareAfterPct.toFixed(1)}%</b>
+                  {result.portfolioAfterJpy != null && <>（追加後ポートフォリオ ≈ {fmtMoney('JPY', result.portfolioAfterJpy)}）</>}
+                </p>
+              )}
+              {result.warnings.map((w, i) => (
+                <p className="whatif__warn" key={i}>⚠ {w}</p>
+              ))}
+              <div className="whatif__bands">
+                <span className="whatif__bands-head">シナリオ別損益帯(1〜3営業日・仮定幅)</span>
+                {result.bands.map((b) => (
+                  <div className="whatif__band" key={b.label}>
+                    <span className="whatif__band-label">{b.labelJa}</span>
+                    <span className="whatif__band-prob">{b.probability}%</span>
+                    <span className="whatif__band-range">
+                      {fmtSigned(result.currency, b.plLow)} 〜 {fmtSigned(result.currency, b.plHigh)}
+                    </span>
+                  </div>
+                ))}
+                <p className="whatif__expected">
+                  確率加重の中央値(参考): <b style={{ color: result.expectedMid >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {fmtSigned(result.currency, result.expectedMid)}
+                  </b>
+                </p>
+              </div>
+              <p className="whatif__disc">
+                仮定幅(下値継続 −10〜−4% / 横ばい ±2% / 反発 +3〜+8%)にルールエンジンのシナリオ確率を掛けた整理です。
+                予測・推奨ではありません。
+              </p>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -318,6 +420,16 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
     return { quotes, labels, cats };
   }, [jp.data, us.data, al.data, cat.data, crypto.byId, cryptoPairs]);
 
+  // Portfolio exposure over LIVE prices only — shared by the Exposure card and
+  // the What-if panel. Kept ABOVE the empty-list early return (rules of hooks).
+  const exp = useMemo(
+    () => buildExposure(assets, (a) => {
+      const q = maps.quotes.get(a.symbol);
+      return q && q.status === 'live' ? q.price : undefined;
+    }, usdJpy),
+    [assets, maps.quotes, usdJpy],
+  );
+
   // Group by genre (GENRES order), each sorted by sortOrder ascending.
   const groups = useMemo(() => {
     return GENRES.map((g) => ({
@@ -345,7 +457,9 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
 
   return (
     <div className="asset-groups">
-      <ExposureCard assets={assets} quotes={maps.quotes} usdJpy={usdJpy} />
+      <ExposureCard assets={assets} exp={exp} />
+      <WhatIfPanel assets={assets} quotes={maps.quotes} labels={maps.labels} cats={maps.cats}
+                   exp={exp} usdJpy={usdJpy} mountTs={mountTs} />
       {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の戦略を取得中</div>}
       {groups.map((g) => {
         const ids = g.items.map((a) => a.id);

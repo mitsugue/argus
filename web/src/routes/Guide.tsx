@@ -19,6 +19,8 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
     descJa: 'FOMC/CPI/雇用/日銀/国債入札などの公式カレンダーをD-7→D+1でエスカレーション表示。' },
   { area: 'Corporate Catalysts',
     descJa: '決算日・開示・ニュースのメタデータ(SEC EDGAR/Finnhub/J-Quants)。' },
+  { area: 'What-if シミュレーション',
+    descJa: '「¥Xを銘柄Yに追加したら?」— 追加後の配分変化・集中リスク警告・シナリオ別損益帯(仮定幅×ルールエンジンの確率)をWatchlist上で試算。予測ではなくシナリオ整理。端末内計算のみ。' },
   { area: '保有と評価 (Portfolio)',
     descJa: '銘柄ごとに保有数量・平均取得単価を入力すると、評価額・含み損益(¥/$別+円換算合計)・ジャンル配分をWatchlist上部に表示。保有データはこの端末のlocalStorageのみで、どこにも送信されない。' },
   { area: '判断ログ (記憶)',
@@ -32,12 +34,12 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.1.0', 'What-ifシミュレーション(追加投資の配分・シナリオ別損益帯)・銘柄検索の修正(314A等の英字入りコード)・投信カタログ検索(eMAXIS/SBI/楽天など26本)'],
   ['v10.0.0', 'Portfolio Exposure — 保有数量・平均取得単価の入力(端末内のみ)で評価額・含み損益・ジャンル配分を表示。USD/JPY換算(FRED)対応'],
   ['v9.12.0', 'VIX通知の本質化 — 固定閾値を廃止し「急騰速度×自身の60日分布での位置×圏域遷移(calm/normal/elevated/shock)」で文脈判定。ダイジェストにもVIX文脈を表示'],
   ['v9.11.0', 'moomooブリッジ=日米株リアルタイム価格(quote-push)・通知をJP寄り前8:30/US寄り前22:00の2本に・市場ストレス急変アラート・通知文面の読みやすさ改善'],
   ['v9.10.0', '変化検知アラート(変化時のみ通知)・判断コアのユニットテスト+CI・APIレート制限・AIキー疎通ping'],
   ['v9.9.0',  '判断ログ(昨日からの変化+7日履歴)・朝ダイジェスト通知(ntfy)'],
-  ['v9.8.0',  '追加した銘柄に自動でライブ価格+行動ラベル(エンジン接続)・データ鮮度の正直表示'],
 ];
 
 // 用語一覧 — English chrome term → Japanese meaning.

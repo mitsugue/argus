@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { searchFunds } from '../../lib/fundCatalog';
 import type { AssetMarket, AssetType, AssetSource } from '../../types/assetItem';
 
 type Kind = 'Japan Stock' | 'US Stock' | 'Crypto' | 'Core / Fund';
@@ -10,7 +11,7 @@ const KIND_MAP: Record<Kind, {
   'Japan Stock': { market: 'JP', assetType: 'jp_equity', source: 'jquants', symbolHint: '社名 or コード (例: 三菱 / 8058)', searchMarket: 'JP' },
   'US Stock': { market: 'US', assetType: 'us_equity', source: 'twelvedata', symbolHint: 'name or ticker (e.g. apple / NVDA)', searchMarket: 'US' },
   'Crypto': { market: 'CRYPTO', assetType: 'crypto', source: 'manual', symbolHint: 'name or symbol (e.g. solana / SOL)', searchMarket: 'CRYPTO' },
-  'Core / Fund': { market: 'CORE', assetType: 'manual_fund', source: 'manual', symbolHint: 'e.g. EMAXIS-ACWI' },
+  'Core / Fund': { market: 'CORE', assetType: 'manual_fund', source: 'manual', symbolHint: '例: emaxis / オルカン / S&P500' },
 };
 const KINDS = Object.keys(KIND_MAP) as Kind[];
 
@@ -67,6 +68,19 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
     setResults([]);
   }
 
+  // Local fund-catalog search (投信 are NOT in J-Quants — listed only), v10.1.
+  const fundResults = useMemo(
+    () => (kind === 'Core / Fund' && !picked ? searchFunds(symbol.trim()) : []),
+    [kind, symbol, picked],
+  );
+
+  function pickFund(slug: string, nameJaF: string) {
+    setPicked(true);
+    setSymbol(slug);
+    setName(nameJaF);
+    setNameJa(nameJaF);
+  }
+
   function submit() {
     const sym = kind === 'US Stock' ? symbol.trim().toUpperCase() : symbol.trim();
     const dn = name.trim();
@@ -96,7 +110,7 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
         </div>
 
         <label className="modal__label" htmlFor="add-symbol">
-          {cfg.searchMarket ? 'Search (name or symbol)' : 'Symbol / code'}
+          {cfg.searchMarket || kind === 'Core / Fund' ? 'Search (name or symbol)' : 'Symbol / code'}
         </label>
         <input id="add-symbol" className="modal__input" value={symbol} placeholder={cfg.symbolHint}
                autoComplete="off"
@@ -116,6 +130,19 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
           </div>
         )}
 
+        {kind === 'Core / Fund' && !picked && symbol.trim() && (
+          <div className="search-results">
+            {fundResults.length === 0 && <div className="search-results__hint">カタログに候補なし(手動入力も可能)</div>}
+            {fundResults.map((f) => (
+              <button key={f.slug} className="search-result" onClick={() => pickFund(f.slug, f.nameJa)}>
+                <span className="search-result__sym">{f.slug}</span>
+                <span className="search-result__name">{f.nameJa}</span>
+                <span className="search-result__ex">投信</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <label className="modal__label" htmlFor="add-name">Display name</label>
         <input id="add-name" className="modal__input" value={name} placeholder="表示名"
                onChange={(e) => setName(e.target.value)} />
@@ -129,8 +156,8 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
         )}
 
         <div className="modal__hint">
-          {cfg.market === 'CRYPTO' && 'v9.x では暗号資産はライブ価格未接続(手動)。候補は CoinGecko 検索。'}
-          {cfg.market === 'CORE' && '長期コア/投信は手動管理(検索なし・ライブ基準価額なし)。'}
+          {cfg.market === 'CRYPTO' && '候補は CoinGecko 検索。選ぶとライブUSD価格に自動接続されます。'}
+          {cfg.market === 'CORE' && '主要投信カタログからローカル検索(ライブ基準価額は未取得)。一覧にない投信は手動入力も可能。'}
           {cfg.market === 'JP' && '候補は J-Quants 上場銘柄マスタから検索。社名やコードを入力してください。'}
           {cfg.market === 'US' && '候補は Twelve Data から検索。社名やティッカーを入力してください。'}
         </div>

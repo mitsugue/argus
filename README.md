@@ -127,6 +127,17 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v10.1.0 — What-if simulator + search fixes.** What-if ("add ¥X to asset Y"):
+allocation shift, concentration warning (>30%), and a per-scenario P/L band
+(assumed bands × the rule engine's scenario probabilities, probability-weighted
+midpoint as reference) — explicitly scenario analysis, never a forecast;
+client-side only. Fixes: JP symbol search treated alphanumeric TSE codes
+(314A/285A/133A…) as NAME queries (`isdigit()` bug) — code-prefix matching now
+handles letter-suffixed codes (pytest-guarded). Mutual funds are structurally
+absent from J-Quants (listed securities only), so the Add-Asset Core/Fund tab
+now searches a curated 26-fund local catalog (eMAXIS Slim / SBI / 楽天 / iFree /
+ニッセイ…, official names; no NAV claim — live 基準価額 is a future source).
+
 **v10.0.0 — Portfolio Exposure (device-local).** Each asset's strategy card now
 takes a holding (quantity + average cost — stored ONLY in localStorage, never
 uploaded), and the Watchlist gains a Portfolio Exposure card: per-currency
