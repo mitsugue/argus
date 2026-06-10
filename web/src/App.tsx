@@ -12,6 +12,7 @@ import { AIReview } from './routes/AIReview';
 import { useActionLabels } from './hooks/useActionLabels';
 import { useEventRadar } from './hooks/useEventRadar';
 import { postureToCall, shortKind } from './lib/todayCall';
+import { maybeAutoBackup } from './lib/backup';
 
 interface RouteProps {
   onNavigate: (key: RouteKey) => void;
@@ -39,6 +40,12 @@ const App: React.FC = () => {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  // Weekly device-data auto-backup (v10.3.3): on app open, if 7+ days since
+  // the last one, silently download argus-backup-<date>-auto.json. The only
+  // device-local state is the watchlist/holdings + judgment log — this makes
+  // an SSD failure or a Mac replacement cost at most a week of edits.
+  useEffect(() => { maybeAutoBackup(); }, []);
 
   const exitReview = () => {
     if (window.location.hash === '#review') {
