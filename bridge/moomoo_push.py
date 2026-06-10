@@ -65,6 +65,37 @@ def rows_from_snapshot(df):
     return stocks
 
 
+# ── Capital distribution (大口/中口/小口の売買フロー) — v10.2 ──
+# get_capital_distribution returns today's cumulative in/out amounts split by
+# order size. "Big money" = super + big. Availability varies by market and by
+# the account's quote rights — failures are skipped per symbol, never fatal.
+_FLOW_FAIL_UNTIL = {}   # code -> epoch; back off codes that keep failing
+
+def fetch_flow(qc, code):
+    now = time.time()
+    if _FLOW_FAIL_UNTIL.get(code, 0) > now:
+        return None
+    try:
+        ret, df = qc.get_capital_distribution(code)
+        if ret != RET_OK or df is None or len(df) == 0:
+            _FLOW_FAIL_UNTIL[code] = now + 1800  # 30-min back-off
+            return None
+        r = df.iloc[0]
+        def f(k):
+            try:
+                return float(r.get(k) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+        big_in  = f("capital_in_super") + f("capital_in_big")
+        big_out = f("capital_out_super") + f("capital_out_big")
+        all_in  = big_in + f("capital_in_mid") + f("capital_in_small")
+        all_out = big_out + f("capital_out_mid") + f("capital_out_small")
+        return {"bigIn": big_in, "bigOut": big_out, "allIn": all_in, "allOut": all_out}
+    except Exception:
+        _FLOW_FAIL_UNTIL[code] = now + 1800
+        return None
+
+
 def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
@@ -77,6 +108,17 @@ def main():
                 ret, df = qc.get_market_snapshot(CODES)
                 if ret == RET_OK:
                     stocks = rows_from_snapshot(df)
+                    # Attach big-money flow where available (paced to stay well
+                    # inside the OpenAPI request quota: ~30 requests / 30s).
+                    by_sym = {s["market"] + "." + s["symbol"]: s for s in stocks}
+                    for code in CODES:
+                        s = by_sym.get(code.upper())
+                        if s is None:
+                            continue
+                        flow = fetch_flow(qc, code)
+                        if flow:
+                            s["flow"] = flow
+                        time.sleep(0.25)
                     if stocks:
                         resp = requests.post(
                             f"{BACKEND}/api/argus/quote-push",

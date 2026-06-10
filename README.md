@@ -127,6 +127,18 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v10.2.0 — Big-money flow confirmation (moomoo).** The bridge now also pushes
+each symbol's capital distribution (super+big order in/out, daily cumulative);
+the backend normalizes it to `bigNetRatio = (bigIn−bigOut)/(allIn+allOut)` and
+`_flow_adjust()` (pure, 5 pytest cases) finally provides the trend/flow
+confirmation v0 lacked: a MILD dip (−5<chg≤−2) with strong big-money inflow
+(≥+0.20) and no imminent event / elevated rates / risk-off regime unlocks
+**BUY DIP** (conf ≤0.6); sustained big outflow (≤−0.25) tightens HOLD→WAIT;
+otherwise the ratio is annotated as evidence only. Strategy cards show 大口純流入率
+when available. Per-symbol availability depends on the account's quote rights —
+missing data degrades silently (no flow, no nudge). Bridge update required on
+the OpenD machine (git pull + restart).
+
 **v10.1.0 — What-if simulator + search fixes.** What-if ("add ¥X to asset Y"):
 allocation shift, concentration warning (>30%), and a per-scenario P/L band
 (assumed bands × the rule engine's scenario probabilities, probability-weighted

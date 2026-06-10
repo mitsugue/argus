@@ -30,6 +30,8 @@ export interface AssetStrategy {
   scenarioHorizonJa: string;
   scenarioDisclaimerJa: string;
   catalystNoteJa: string;
+  /** 大口純流入率 (-1..+1, moomoo bridge) — null/undefined when unavailable. */
+  bigFlowRatio?: number | null;
   dataLimitations: string[];
   lastUpdated: number;
   status: 'live' | 'partial' | 'mock' | 'manual';
@@ -41,6 +43,7 @@ export interface QuoteLite {
   volume: number;
   date: string | null;
   status: string;
+  flow?: { bigNetRatio: number } | null;
 }
 
 const SCEN_JA: Record<string, string> = {
@@ -142,6 +145,7 @@ export function deriveStrategy(
   }
 
   const changePct = quote?.changePct;
+  const flowRatio = label?.supportingData?.bigFlowRatio ?? quote?.flow?.bigNetRatio ?? null;
   const sc = scenariosFor(changePct);
   const action = label ? (RULE_ACTION_KEY[label.action] ?? label.action) : (quote ? 'HOLD' : 'WAIT');
   const risk = (label?.risk ?? (quote ? 'medium' : '—')) as AssetStrategy['risk'];
@@ -149,7 +153,9 @@ export function deriveStrategy(
 
   let catalystNote = '';
   const dataLimitations: string[] = [
-    'VWAP・資金フロー・板情報は未取得。',
+    flowRatio != null
+      ? 'VWAP・板情報は未取得(大口フローはmoomooブリッジから取得)。'
+      : 'VWAP・資金フロー・板情報は未取得。',
     '行動ラベルはルールベース(GPT/Geminiは未使用)。',
   ];
   if (asset.market === 'CRYPTO') {
@@ -171,6 +177,7 @@ export function deriveStrategy(
   return {
     action, risk, confidence,
     price: quote?.price, changePct: quote?.changePct, volume: quote?.volume, date: quote?.date,
+    bigFlowRatio: flowRatio,
     strategyJa: ACTION_STRATEGY_JA[action] ?? '判断整理中',
     reasonJa: label?.reasonJa ?? (quote ? '相場全体の地合いに沿って判断。' : 'ライブ価格が未取得のため中立。'),
     nextConditionJa: label?.nextConditionJa ?? '次の値動きとイベント日程を確認する。',

@@ -219,3 +219,29 @@ def test_jp_query_is_code_alphanumeric():
     assert not scanner._jp_query_is_code("NVDA")  # letter-led = name search
     assert not scanner._jp_query_is_code("三菱")
     assert not scanner._jp_query_is_code("12345")
+
+
+# ── Big-money flow confirmation (v10.2) ──────────────────────────────
+def test_flow_buy_dip_on_mild_dip_with_inflow():
+    a, c, r, n = scanner._flow_adjust("HOLD", 0.45, "r", "n", -3.0, 0.3, None, "neutral", "CAUTIOUS")
+    assert a == "BUY DIP" and c <= 0.6 and "大口" in r
+
+
+def test_flow_buy_dip_blocked_by_imminent_event():
+    a, *_ = scanner._flow_adjust("HOLD", 0.45, "r", "n", -3.0, 0.3, "D", "neutral", "CAUTIOUS")
+    assert a != "BUY DIP"
+
+
+def test_flow_buy_dip_blocked_by_risk_off_regime():
+    a, *_ = scanner._flow_adjust("HOLD", 0.45, "r", "n", -3.0, 0.3, None, "neutral", "RISK_OFF")
+    assert a != "BUY DIP"
+
+
+def test_flow_outflow_tightens_hold_to_wait():
+    a, c, r, n = scanner._flow_adjust("HOLD", 0.45, "r", "n", 0.5, -0.3, None, "neutral", "CAUTIOUS")
+    assert a == "WAIT" and "流出" in r
+
+
+def test_flow_annotation_only_when_no_rule_change():
+    a, c, r, n = scanner._flow_adjust("WAIT FOR PULLBACK", 0.65, "r", "n", 6.0, 0.4, None, "neutral", "RISK_ON")
+    assert a == "WAIT FOR PULLBACK" and "純流入" in r

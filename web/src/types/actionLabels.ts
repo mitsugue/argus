@@ -20,6 +20,7 @@ export interface ActionLabel {
     marketRegime?: string;      // regime label (v9.5+)
     quoteDate?: string | null;  // data date behind the label (v9.8+)
     quoteLagDays?: number | null; // calendar-day lag; >7 = stale-damped
+    bigFlowRatio?: number | null; // 大口純流入率 (moomoo bridge, v10.2)
   };
   nextConditionJa: string;
   status: 'live' | 'mock';

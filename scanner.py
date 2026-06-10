@@ -1972,6 +1972,23 @@ def api_argus_quote_push():
                    "volume": int(float(s.get("volume") or 0)),
                    "date": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
                    "status": "live", "source": "moomoo-rt"}
+            # Optional big-money flow (v10.2): today's cumulative in/out split
+            # by order size from the bridge. Normalized here so the ratio
+            # formula stays transparent and server-side.
+            fl = s.get("flow")
+            if isinstance(fl, dict):
+                try:
+                    big_in, big_out = float(fl["bigIn"]), float(fl["bigOut"])
+                    all_in  = float(fl.get("allIn") or 0.0)
+                    all_out = float(fl.get("allOut") or 0.0)
+                    denom = all_in + all_out
+                    if denom > 0 and all(math.isfinite(x) for x in (big_in, big_out, denom)):
+                        row["flow"] = {
+                            "bigNetRatio": round((big_in - big_out) / denom, 4),
+                            "bigIn": round(big_in, 2), "bigOut": round(big_out, 2),
+                        }
+                except (KeyError, TypeError, ValueError):
+                    pass
             _PUSHED_QUOTES[market][sym] = {"row": row, "ts": now}
             accepted += 1
         except Exception:
@@ -2752,6 +2769,34 @@ def _action_metas(jp, us, jp_symbols, us_symbols):
                      {"symbol": sym, "market": "US", "name": names.get(sym, sym), "cls": "us_growth"})
     return metas
 
+def _flow_adjust(action, conf, reason, nxt, chg, ratio, esc, posture, reg_label):
+    """v0.5 — REAL large-order flow confirmation (moomoo bridge, v10.2).
+
+    The v0 engine deliberately never emitted BUY DIP/ADD because it had no
+    flow/trend confirmation. Big-money net-flow ratio (大口純流入/全売買代金,
+    -1..+1) now provides exactly that — used conservatively and symmetrically:
+      - BUY DIP only on a MILD dip (-5 < chg <= -2) with strong big inflow
+        (>= +0.20), no imminent event, no elevated rates, no risk-off regime.
+      - Strong big OUTFLOW (<= -0.25) tightens a complacent HOLD to WAIT.
+      - Otherwise the ratio is annotated as evidence, never overriding rules.
+    Returns (action, conf, reasonJa, nextJa)."""
+    imminent = esc in ("D", "D-1")
+    if (action in ("HOLD", "WAIT") and -5 < chg <= -2 and ratio >= 0.20
+            and not imminent and posture != "elevated"
+            and reg_label not in ("RISK_OFF", "EVENT_WAIT")):
+        return ("BUY DIP", round(min(0.6, conf + 0.10), 2),
+                reason + f" 大口資金の純流入({ratio:+.0%})が下値を支えており、押し目買い候補。",
+                "下げ止まりと大口流入の継続を確認しながら段階的に。")
+    if action == "HOLD" and ratio <= -0.25:
+        return ("WAIT", conf,
+                reason + f" 大口資金の純流出({ratio:+.0%})が続いており、新規は様子見。",
+                "大口フローの反転(流出の縮小)を確認する。")
+    if ratio >= 0.20:
+        return (action, conf, reason + f" 大口は純流入({ratio:+.0%})。", nxt)
+    if ratio <= -0.20:
+        return (action, conf, reason + f" 大口は純流出({ratio:+.0%})。", nxt)
+    return (action, conf, reason, nxt)
+
 def get_action_labels(jp_symbols=None, us_symbols=None):
     """Rule-based action labels, aggregated server-side. Accepts the user's
     actual watchlist symbols (dynamic) — default is the curated list."""
@@ -2801,6 +2846,15 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             action = "WAIT"
             conf = round(min(0.6, conf + 0.05), 2)
             reason += f" 市場レジームが{reg_label}のため、高ベータは様子見に引き上げ。"
+        # Big-money flow confirmation (v10.2) — only present while the moomoo
+        # bridge is pushing fresh quotes with capital-distribution data.
+        flow_ratio = None
+        fl = q.get("flow")
+        if isinstance(fl, dict) and isinstance(fl.get("bigNetRatio"), (int, float)):
+            flow_ratio = float(fl["bigNetRatio"])
+            action, conf, reason, nxt = _flow_adjust(
+                action, conf, reason, nxt, chg, flow_ratio, esc, posture,
+                reg_label if reg_ready else None)
         # Data-freshness honesty: J-Quants free plan lags ~12 weeks. A label
         # computed from an old price must say so and carry LESS confidence —
         # never present a stale-data judgment as a fresh one.
@@ -2814,7 +2868,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             "supportingData": {"changePct": chg, "volume": q.get("volume", 0),
                                "eventEscalation": esc or "normal", "ratesPosture": posture,
                                "marketRegime": reg_label or "n/a",
-                               "quoteDate": q.get("date"), "quoteLagDays": lag},
+                               "quoteDate": q.get("date"), "quoteLagDays": lag,
+                               "bigFlowRatio": flow_ratio},
             "nextConditionJa": nxt, "status": "live",
         })
 

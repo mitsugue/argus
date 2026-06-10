@@ -59,6 +59,8 @@ export interface JapanStockQuote {
   volume: number;
   date: string | null;
   status: JpQuoteStatus;
+  /** Big-money flow (moomoo bridge, v10.2): 大口純流入/全売買代金 (-1..+1). */
+  flow?: { bigNetRatio: number } | null;
 }
 
 export interface JapanWatchlistSnapshot {
@@ -81,6 +83,7 @@ export interface USStockQuote {
   volume: number;
   date: string | null;
   status: JpQuoteStatus;
+  flow?: { bigNetRatio: number } | null;
 }
 
 export interface USWatchlistSnapshot {

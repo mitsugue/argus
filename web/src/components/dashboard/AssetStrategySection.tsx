@@ -309,6 +309,13 @@ const SortableAssetRow: React.FC<{
             <div><span className="asset-detail__k">What to wait for</span><span className="asset-detail__v">{strat.nextConditionJa}</span></div>
             <div><span className="asset-detail__k">What changes it</span><span className="asset-detail__v">{strat.whatChangesJa}</span></div>
             {strat.catalystNoteJa && <div><span className="asset-detail__k">Catalyst</span><span className="asset-detail__v">{strat.catalystNoteJa}</span></div>}
+            {strat.bigFlowRatio != null && (
+              <div><span className="asset-detail__k">Big-money flow</span>
+                <span className="asset-detail__v" style={{ color: strat.bigFlowRatio >= 0.2 ? 'var(--green)' : strat.bigFlowRatio <= -0.2 ? 'var(--red)' : 'var(--text-sub)' }}>
+                  大口純流入率 {(strat.bigFlowRatio * 100).toFixed(1)}%（本日累計・moomoo）
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Holdings (v10.0) — device-local; drives the Portfolio Exposure card. */}
@@ -407,8 +414,8 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
 
   const maps = useMemo(() => {
     const quotes = new Map<string, QuoteLite>();
-    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status });
-    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status });
+    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null });
+    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null });
     for (const p of cryptoPairs) {
       const q = crypto.byId[p.id];
       if (q) quotes.set(p.symbol, { price: q.priceUsd, changePct: q.changePct, volume: q.volume, date: q.date, status: q.status });
