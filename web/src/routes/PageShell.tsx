@@ -4,7 +4,7 @@ import './PageShell.css';
 interface Props {
   crumb?: string;
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   children: React.ReactNode;
 }
 

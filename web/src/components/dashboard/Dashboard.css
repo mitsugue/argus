@@ -1050,6 +1050,10 @@
   }
 }
 
+/* ── Today (v9.7.0 live-composed hero) ── */
+.today-phase { font-family: var(--font-mono); font-size: 11px; }
+.today-connecting { font-size: 12.5px; color: var(--text-muted); padding: 14px 18px; margin: 0; }
+
 /* ── Market Regime header / backdrop (v9.5.0 live regime engine) ── */
 .regime-head { padding: 14px 18px; margin-bottom: 14px; }
 .regime-head__main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }

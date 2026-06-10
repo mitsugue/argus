@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v9.6.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v9.7.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.6.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.7.0。
 
 ---
 
@@ -22,7 +22,7 @@ grep '"version"' web/package.json
 curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3 -m json.tool
 ```
 
-次の実装は **v9.7.0 CoinGecko crypto live**（下の「ロードマップ」参照）。
+次の実装は **v9.8.0 ユーザーWatchlist⇔バックエンド接続 + データ鮮度の正直表示**（下の「ロードマップ」参照）。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v9.6.0**
+- **現在バージョン: v9.7.0**
 
 ---
 
@@ -162,7 +162,12 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
 - v9.3.0 Add-Asset 銘柄検索（名前/コードで候補表示）
 - v9.4.0 Watchlist ジャンル分け + ドラッグ並べ替え（@dnd-kit）
 - v9.5.0 Live Market Regime + Capital Rotation スコアリング（`regime-v1`）
-- **v9.6.0 Integration Health + AI provider 真実ステータス（最新）**
+- v9.6.0 Integration Health + AI provider 真実ステータス
+- **v9.7.0 Today実データ化 + CoinGecko crypto live（最新）**
+  - Todayのヒーロー判断/ピル/優先リスト/イベント/コアは `web/src/lib/todayCall.ts` が
+    `/action-labels` + `/market-regime` + `/events` + 価格から**ルールベース合成**（手書き判断ゼロ、LLMなし）
+  - `GET /api/argus/crypto-watchlist?ids=…`（CoinGecko、キー不要、10分キャッシュ、ids sanitize済み）。
+    crypto資産は memo の `coingecko:<id>` で対応付け
 
 ---
 
@@ -182,14 +187,22 @@ GPT-5.5 Pro Handoff は手動コピペで無料・API呼び出しなし（ChatGP
 
 ---
 
-## 12. ロードマップ（README / Guide にも明記済）
+## 12. ロードマップ（2026-06-10 のレビューで改訂。README / Guide の旧版と差異あり — こちらが最新）
 
-1. **v9.7.0 CoinGecko crypto live** ← 次の実装。BTC/ETH を実価格化（`/crypto-watchlist`）。
-   CoinGecko は無料・鍵不要だが、レート制限に注意してキャッシュする。memo の `coingecko:<id>` を活用。
-2. v9.8.0 Alerts Scanner live（events + market-regime + catalysts + action-labels を統合した行動アラート）
-3. v9.9.0 moomoo / VWAP / 板・テープ検証（ローカル OpenD 実機検証、クラウドに鍵を出さない）
-4. v10.0 Portfolio Exposure Layer（保有・数量・平均取得単価・評価・含み損益・配分）
-5. v10.1 What-if Simulator（**シナリオ分析であって決定論的予測ではない**）
+1. **v9.8.0 ユーザーWatchlist⇔バックエンド接続 + データ鮮度の正直表示** ← 次の実装
+   - 現状の盲点: 判断エンジン(`_ACTION_SYMBOLS`)はハードコード11銘柄固定。UIで追加した銘柄には
+     価格も行動ラベルも付かない。フロントの銘柄リストを `?symbols=` 等でバックエンドに渡し動的化する
+     （public endpointなので sanitize + 上限 + キャッシュ必須）
+   - J-Quants 無料プランは**約12週遅れ**なのに「live」表示 → 古いデータは「delayed」表示+confidence低下。
+     mock時は数字をグレーアウト（もっともらしい偽価格で判断させない）
+2. v9.9.0 判断ログ永続化（無料Postgres: Supabase/Neon等）+ 朝のデイリーダイジェスト通知
+   （PWA Push or メール。GitHub Actions cron で叩く。「精度」はログ→照合→改善のループからしか生まれない）
+3. v9.10 変化検知アラート（レジーム反転/イベントD-1/保有銘柄の新カタリスト時のみ通知）+
+   ルールエンジンのユニットテスト + public endpoint の per-IP レート制限
+4. v10.0 Portfolio Exposure Layer（保有・数量・平均取得単価・評価・含み損益・配分。
+   保有額は機微情報なので localStorage + クライアント側計算を基本に）
+5. v10.1 What-if Simulator（**シナリオ分析であって決定論的予測ではない** — シナリオ帯×配分変化で表現）
+6. 随時: Alerts Scanner ページのlive化、moomoo/VWAP/板・テープ検証、AI自動判断（キー設定後）
 
 ---
 

@@ -158,7 +158,7 @@ ${ROUTES.map(([name, desc]) => `- **${name}** — ${desc}`).join('\n')}
 
 ## Current data state
 
-LIVE: FRED rates/VIX (+ HY OAS), J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar (official calendars + Treasury auctions), Action Label Engine v0 (rule-based), Corporate Catalysts (SEC EDGAR + Finnhub + J-Quants), Market Regime / Capital Rotation v1 (rule-based ETF/HY-OAS proxy scoring, regime-v1), and the manual GPT-5.5 Pro Handoff export. Still mock/pending: Alerts scanner, automated OpenAI/Gemini judgment, and some Today/CommandCenter compact previews. Market Regime uses ETF/index proxies, not direct capital flow. NOT trading advice — decision support only.
+LIVE: FRED rates/VIX (+ HY OAS), J-Quants Japan watchlist, Twelve Data US watchlist, CoinGecko crypto watchlist (keyless), Event Radar (official calendars + Treasury auctions), Action Label Engine v0 (rule-based), Corporate Catalysts (SEC EDGAR + Finnhub + J-Quants), Market Regime / Capital Rotation v1 (rule-based ETF/HY-OAS proxy scoring, regime-v1), the live-composed Today hero (action-labels + market-regime + events; no hand-written judgment), and the manual GPT-5.5 Pro Handoff export. Still mock/pending: Alerts scanner page, automated OpenAI/Gemini judgment. Market Regime uses ETF/index proxies, not direct capital flow. NOT trading advice — decision support only.
 
 ## Decisions log
 
@@ -383,7 +383,7 @@ export const AIReview: React.FC = () => {
       </ol>
 
       <h2>Current data state</h2>
-      <p>LIVE: FRED rates/VIX (+ HY OAS), J-Quants Japan watchlist, Twelve Data US watchlist, Event Radar, Action Label Engine v0 (rule-based), Corporate Catalysts, Market Regime / Capital Rotation v1 (rule-based ETF/HY-OAS proxy scoring), and the manual GPT-5.5 Pro Handoff. Still mock/pending: Alerts scanner, automated OpenAI/Gemini judgment, some Today previews. Market Regime uses ETF/index proxies, not direct capital flow. NOT trading advice — decision support only.</p>
+      <p>LIVE: FRED rates/VIX (+ HY OAS), J-Quants Japan watchlist, Twelve Data US watchlist, CoinGecko crypto watchlist (keyless), Event Radar, Action Label Engine v0 (rule-based), Corporate Catalysts, Market Regime / Capital Rotation v1 (rule-based ETF/HY-OAS proxy scoring), the live-composed Today hero (action-labels + market-regime + events), and the manual GPT-5.5 Pro Handoff. Still mock/pending: Alerts scanner page, automated OpenAI/Gemini judgment. Market Regime uses ETF/index proxies, not direct capital flow. NOT trading advice — decision support only.</p>
 
       <h2>Decisions log</h2>
       <div className="review__columns">

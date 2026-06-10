@@ -9,6 +9,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
+import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
 import { useActionLabels } from '../../hooks/useActionLabels';
 import { useCatalysts } from '../../hooks/useCatalysts';
 import { deriveStrategy, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
@@ -37,6 +38,9 @@ function fmtPrice(market: string, v?: number): string {
   if (v == null) return '—';
   if (market === 'JP') return `¥${Math.round(v).toLocaleString('en-US')}`;
   if (market === 'US') return `$${v.toFixed(2)}`;
+  if (market === 'CRYPTO') {
+    return v >= 1000 ? `$${Math.round(v).toLocaleString('en-US')}` : `$${v.toFixed(2)}`;
+  }
   return String(v);
 }
 function fmtPct(p?: number): string {
@@ -134,6 +138,17 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
   const us = useUSWatchlist();
   const al = useActionLabels();
   const cat = useCatalysts();
+  // Crypto quotes via CoinGecko: each crypto asset stores its id in the memo
+  // as "coingecko:<id>" (the seed assets and symbol-search both do this).
+  const cryptoPairs = useMemo(
+    () => assets
+      .filter((a) => a.market === 'CRYPTO')
+      .map((a) => ({ symbol: a.symbol, id: (a.memo ?? '').startsWith('coingecko:') ? (a.memo as string).slice('coingecko:'.length) : '' }))
+      .filter((p) => p.id),
+    [assets],
+  );
+  const cryptoIds = useMemo(() => cryptoPairs.map((p) => p.id), [cryptoPairs]);
+  const crypto = useCryptoWatchlist(cryptoIds);
   const mountTs = useMemo(() => Date.now(), []);  // stable per mount/rescan
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -144,12 +159,16 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
     const quotes = new Map<string, QuoteLite>();
     for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status });
     for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status });
+    for (const p of cryptoPairs) {
+      const q = crypto.byId[p.id];
+      if (q) quotes.set(p.symbol, { price: q.priceUsd, changePct: q.changePct, volume: q.volume, date: q.date, status: q.status });
+    }
     const labels = new Map<string, ActionLabel>();
     for (const l of al.data?.labels ?? []) labels.set(l.symbol, l);
     const cats = new Map<string, CatalystItem>();
     for (const c of cat.data?.items ?? []) cats.set(c.symbol, c);
     return { quotes, labels, cats };
-  }, [jp.data, us.data, al.data, cat.data]);
+  }, [jp.data, us.data, al.data, cat.data, crypto.byId, cryptoPairs]);
 
   // Group by genre (GENRES order), each sorted by sortOrder ascending.
   const groups = useMemo(() => {

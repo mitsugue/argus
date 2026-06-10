@@ -9,7 +9,9 @@ import { Watchlist } from './routes/Watchlist';
 import { CorePortfolio } from './routes/CorePortfolio';
 import { Guide } from './routes/Guide';
 import { AIReview } from './routes/AIReview';
-import { todayJudgment, upcomingEvents } from './mock/dashboard';
+import { useActionLabels } from './hooks/useActionLabels';
+import { useEventRadar } from './hooks/useEventRadar';
+import { postureToCall, shortKind } from './lib/todayCall';
 
 interface RouteProps {
   onNavigate: (key: RouteKey) => void;
@@ -53,27 +55,37 @@ const App: React.FC = () => {
   };
 
   const Active = ROUTES[route];
-  const lastUpdated = new Date(todayJudgment.updatedAt);
+
+  // Live "Today's call" pill + header chip + freshness — composed from the
+  // action-labels posture and the live event calendar (mock-safe defaults
+  // while connecting; never a hand-written judgment).
+  const al = useActionLabels();
+  const ev = useEventRadar();
+  const todayCall = useMemo(
+    () => postureToCall(al.data?.marketPosture?.label),
+    [al.data],
+  );
+  const lastUpdated = useMemo(() => new Date(), [al.data]);
 
   const nextEvent = useMemo(() => {
-    const upcoming = upcomingEvents
+    const next = (ev.data?.events ?? [])
+      .filter((e) => e.impact === 'high' && e.daysUntil >= 0)
       .slice()
-      .filter((e) => e.at >= Date.now())
-      .sort((a, b) => a.at - b.at);
-    const ev = upcoming[0];
-    if (!ev) return undefined;
-    const daysAway = Math.max(0, Math.round((ev.at - Date.now()) / 86_400_000));
+      .sort((a, b) => a.daysUntil - b.daysUntil)[0];
+    if (!next) return undefined;
     return {
-      title: ev.title,
-      kind: ev.kind,
-      daysAway,
-      impact: ev.impact,
+      title: next.title,
+      kind: shortKind(next.title),
+      daysAway: next.daysUntil,
+      impact: 'high' as const,
       onClick: () => {
         exitReview();
         setRoute('events');
       },
     };
-  }, []);
+    // exitReview is stable in practice (defined per render but only mutates state)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ev.data]);
 
   const handleNavSelect = (key: RouteKey) => {
     exitReview();
@@ -86,7 +98,7 @@ const App: React.FC = () => {
         <NavRail
           active={isReview ? null : route}
           onSelect={handleNavSelect}
-          todayCall={{ action: todayJudgment.overall, risk: todayJudgment.risk }}
+          todayCall={todayCall}
           onReviewLink={enterReview}
           isReview={isReview}
         />

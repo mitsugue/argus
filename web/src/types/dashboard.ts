@@ -10,6 +10,8 @@ export type RegimeTag =
   | 'Risk On'
   | 'Risk Off'
   | 'Event Risk'
+  | 'Cautious'
+  | 'Mixed'
   | 'Rates Pressure'
   | 'Liquidity Tightening'
   | 'JPY Shock'

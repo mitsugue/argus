@@ -1742,6 +1742,84 @@ def api_argus_us_watchlist():
     return jsonify(get_us_watchlist_snapshot())
 
 
+# ━━━ CoinGecko crypto watchlist (keyless, free) ━━━
+# Live USD quotes for the crypto assets the user watches. CoinGecko's
+# /simple/price needs NO API key; we stay polite with a 10-min cache per
+# ids-set and a hard cap on accepted ids (public endpoint — sanitize input).
+_COINGECKO_PRICE   = "https://api.coingecko.com/api/v3/simple/price"
+_CRYPTO_DEFAULT_IDS = ["bitcoin", "ethereum"]
+_CRYPTO_ID_RE      = re.compile(r"^[a-z0-9-]{1,50}$")
+_CRYPTO_MAX_IDS    = 15
+_CRYPTO_CACHE      = {}          # ids-tuple -> {"data":..., "expires":...}
+_CRYPTO_CACHE_MAX  = 16          # bound memory on a public endpoint
+_CRYPTO_CACHE_TTL  = 600         # 10 min
+# Plausible fallback values (NOT real quotes) so the UI renders in mock state.
+_CRYPTO_MOCK = {
+    "bitcoin":  {"price": 68_200.0, "changePct": 1.2, "volume": 28_000_000_000},
+    "ethereum": {"price": 3_820.0,  "changePct": 0.8, "volume": 14_000_000_000},
+}
+
+def get_crypto_watchlist_snapshot(ids):
+    ids = tuple(sorted(set(i for i in ids if _CRYPTO_ID_RE.match(i)))[:_CRYPTO_MAX_IDS]) \
+          or tuple(_CRYPTO_DEFAULT_IDS)
+    now = time.time()
+    hit = _CRYPTO_CACHE.get(ids)
+    if hit and now < hit["expires"]:
+        return hit["data"]
+
+    def _mock_rows():
+        return [{"id": i, "priceUsd": m["price"], "changePct": m["changePct"],
+                 "volume": int(m["volume"]), "date": None, "status": "mock"}
+                for i, m in ((i, _CRYPTO_MOCK[i]) for i in ids if i in _CRYPTO_MOCK)]
+    try:
+        r = requests.get(_COINGECKO_PRICE, params={
+            "ids": ",".join(ids), "vs_currencies": "usd",
+            "include_24hr_change": "true", "include_24hr_vol": "true",
+            "include_last_updated_at": "true",
+        }, timeout=10)
+        r.raise_for_status()
+        body = r.json() if isinstance(r.json(), dict) else {}
+        rows = []
+        for i in ids:
+            q = body.get(i)
+            if not isinstance(q, dict) or q.get("usd") is None:
+                continue
+            ts = q.get("last_updated_at")
+            rows.append({
+                "id": i,
+                "priceUsd": round(float(q["usd"]), 2),
+                "changePct": round(float(q.get("usd_24h_change") or 0.0), 2),
+                "volume": int(float(q.get("usd_24h_vol") or 0)),
+                "date": (datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%d") if ts else None),
+                "status": "live",
+            })
+        if not rows:
+            return {"status": "mock", "asOf": None, "provider": "coingecko", "quotes": _mock_rows()}
+        status = "live" if len(rows) == len(ids) else "partial"
+        as_of  = max((x["date"] for x in rows if x["date"]), default=None)
+        snapshot = {"status": status, "asOf": as_of, "provider": "coingecko", "quotes": rows}
+        if len(_CRYPTO_CACHE) >= _CRYPTO_CACHE_MAX:
+            _CRYPTO_CACHE.clear()
+        _CRYPTO_CACHE[ids] = {"data": snapshot, "expires": now + _CRYPTO_CACHE_TTL}
+        return snapshot
+    except Exception:
+        return {"status": "mock", "asOf": None, "provider": "coingecko", "quotes": _mock_rows()}
+
+def _crypto_last_status():
+    """Last fetched crypto snapshot status for /integrations ('unknown' if none yet)."""
+    now = time.time()
+    for hit in _CRYPTO_CACHE.values():
+        if now < hit["expires"]:
+            return hit["data"].get("status", "unknown")
+    return "unknown"
+
+@app.route("/api/argus/crypto-watchlist")
+def api_argus_crypto_watchlist():
+    raw = (request.args.get("ids") or "").lower()
+    ids = [s.strip() for s in raw.split(",") if s.strip()]
+    return jsonify(get_crypto_watchlist_snapshot(ids))
+
+
 # ━━━ Event Radar (live official calendar) ━━━
 # Phase 1 = schedule/risk timing only (no forecast/actual/consensus). Sources:
 #   - TreasuryDirect: fetched LIVE at runtime (machine-readable JSON API).
@@ -3097,9 +3175,10 @@ def get_integrations_snapshot():
          "usedFor": ["ai-judgment-double-check"], "lastKnownStatus": _AI_LAST_RUN.get("gem"),
          "notesJa": "OpenAI判断の二重チェック用。"},
         {"id": "coingecko", "label": "CoinGecko", "category": "market_data",
-         "configured": False, "runtimeStatus": "pending",
-         "usedFor": ["crypto-watchlist"], "lastKnownStatus": None,
-         "notesJa": "次候補。BTC/ETHのlive化に使う。"},
+         "configured": True,  # keyless — no API key required
+         "runtimeStatus": _crypto_last_status(),
+         "usedFor": ["crypto-watchlist"], "lastKnownStatus": _crypto_last_status(),
+         "notesJa": "BTC/ETH等のライブUSD価格(キー不要・無料、10分キャッシュ)。"},
         {"id": "moomoo", "label": "moomoo OpenAPI", "category": "flow_orderbook",
          "configured": False, "runtimeStatus": "pending_local_validation",
          "usedFor": ["flow", "orderbook", "vwap", "tape"], "lastKnownStatus": None,
@@ -3283,7 +3362,7 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
     else:
         L.append("- Market Regime scoring is unavailable this refresh (mock). Alerts scanner is not live yet (mock).")
     L.append("- No historical judgment log and no user-specific exposure weighting yet.")
-    L.append("- Today/CommandCenter compact previews may still use seed data.")
+    L.append("- Today/CommandCenter hero + previews are live-composed (action-labels + market-regime + events). The Action Alerts page still uses seed data.")
     L.append("- Action Label Engine v0 is conservative and does NOT output EXIT/TRIM/ADD/BUY DIP (only HOLD/WAIT/WAIT FOR PULLBACK) until later upgraded.")
     L.append("")
 

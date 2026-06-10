@@ -105,7 +105,9 @@ export function deriveStrategy(
   nowTs: number,
 ): AssetStrategy {
   const isCore = asset.market === 'CORE' || asset.assetType === 'core_fund' || asset.assetType === 'manual_fund';
-  const isCryptoManual = asset.market === 'CRYPTO' && asset.source !== 'coingecko';
+  // Crypto WITH a live CoinGecko quote flows through the normal path below;
+  // only quote-less crypto (no coingecko id / fetch failed) stays manual.
+  const isCryptoManual = asset.market === 'CRYPTO' && !quote;
 
   // Core / manual funds: calm core label, no live short-term scenarios.
   if (isCore) {
@@ -123,17 +125,18 @@ export function deriveStrategy(
     };
   }
 
-  // Crypto without a live source (v9.2.0): manual placeholder.
+  // Crypto whose live quote is unavailable (no coingecko id, or the fetch
+  // failed this session): honest manual placeholder, no fake price.
   if (isCryptoManual) {
     const sc = scenariosFor(undefined);
     return {
       action: 'WAIT', risk: '—', confidence: null,
-      strategyJa: '監視のみ(ライブ価格の接続待ち)',
-      reasonJa: '暗号資産のライブ価格はこのバージョンでは未接続(手動)。',
-      nextConditionJa: 'CoinGecko 接続後にライブ価格と戦略を表示。',
-      whatChangesJa: 'ライブ価格ソースが有効化されれば再評価。',
+      strategyJa: '監視のみ(ライブ価格の取得待ち)',
+      reasonJa: 'CoinGeckoのライブ価格を取得できていません(接続待ち/一時的な失敗)。',
+      nextConditionJa: 'ライブ価格の取得後に価格とシナリオを表示。',
+      whatChangesJa: 'ライブ価格が取得できれば再評価。',
       scenarios: sc.scenarios, scenarioHorizonJa: '1〜3営業日', scenarioDisclaimerJa: sc.disclaimer,
-      catalystNoteJa: '', dataLimitations: ['暗号資産ライブ価格は未接続(v9.2.0は手動/pending)。'],
+      catalystNoteJa: '', dataLimitations: ['暗号資産のライブ価格が未取得(CoinGecko接続待ち)。'],
       lastUpdated: nowTs, status: 'manual',
     };
   }
@@ -149,6 +152,9 @@ export function deriveStrategy(
     'VWAP・資金フロー・板情報は未取得。',
     '行動ラベルはルールベース(GPT/Geminiは未使用)。',
   ];
+  if (asset.market === 'CRYPTO') {
+    dataLimitations.push('暗号資産は行動ラベルエンジン未対応(価格は24h変化基準、CoinGecko)。');
+  }
   if (catalyst) {
     const bits: string[] = [];
     if (catalyst.earnings?.date) bits.push(`決算 ${catalyst.earnings.date}(D-${catalyst.earnings.daysUntil})`);

@@ -85,6 +85,8 @@ list and Render deploy steps.
 | US rates + VIX + HY OAS (10Y / 2Y / Real 10Y / VIX / HY OAS) | FRED (St. Louis Fed) | **live** |
 | Japan watchlist (price / change / volume / date, 7 names) | J-Quants V2 | **live** |
 | US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
+| Crypto watchlist (BTC/ETH + any added coin, USD, 24h change) | CoinGecko `simple/price` (keyless, 10-min cache) | **live** |
+| Today hero / "Today's call" pill (composed judgment) | action-labels + market-regime + events (rule-based composition) | **live** |
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
 | Market Regime / Capital Rotation v1 (regime label / axes / rotation board / top rotations) | FRED macro + Twelve Data ETF proxies + JP breadth (rule-based, `regime-v1`) | **live / partial** |
@@ -124,6 +126,21 @@ deliberately conservative: it only emits `HOLD` / `WAIT` / `WAIT FOR PULLBACK`
 in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
+
+**v9.7.0 — Live Today hero + CoinGecko crypto.** The Daily Command Center is no
+longer seeded: the hero judgment ("today's call" / risk / regime tags / summary /
+reasons / touch-avoid / next condition), the sidebar "Today's call" pill, the
+header Next-event chip, the priority watchlist (real prices + rule labels,
+urgency-sorted), the event preview, and the core-fund preview are all **composed
+live** from `/action-labels` + `/market-regime` + `/events` + watchlist quotes
+(`lib/todayCall.ts`, rule-based, no hand-written judgment, no LLM; the page shows
+its live/partial/mock phase honestly and degrades to a neutral cautious call).
+Core funds flip CONTINUE → DEFER_LUMP_SUM under EVENT_WAIT/RISK_OFF (accumulation
+itself never stops on market mood). New keyless **`GET
+/api/argus/crypto-watchlist?ids=…`** (CoinGecko `simple/price`, sanitized ids,
+10-min per-ids cache) gives BTC/ETH and any added coin live USD prices + 24h
+change in the Watchlist strategy cards; quote-less crypto stays an honest manual
+placeholder. `/integrations` now reports CoinGecko configured/live.
 
 **v9.6.0 — Integration Health + AI provider truth status.** Adds a secret-free
 public **`GET /api/argus/integrations`** (`integrations-v1`) summarizing every
