@@ -185,3 +185,17 @@ jobs:
             git commit -m "ledger: $(date -u +%F) record + score"
             git push origin HEAD:ledger
           fi
+
+      # The ledger is ARGUS's memory — a silent failure would quietly stop the
+      # learning loop. Push a phone alert if ANY step above failed (v10.3.1).
+      - name: Notify on failure (skipped without NTFY_TOPIC)
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          [ -z "$NTFY_TOPIC" ] && exit 0
+          curl -s --max-time 30 \
+            -H "Title: ARGUS ledger FAILED" -H "Priority: high" -H "Tags: warning" \
+            -H "Click: https://github.com/mitsugue/argus/actions/workflows/prediction-ledger.yml" \
+            -d "予測台帳の記録/採点ワークフローが失敗しました。Actionsを確認してください。" \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true

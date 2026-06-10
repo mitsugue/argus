@@ -74,12 +74,12 @@ const GAPS = [
   'Automated AI judgment (GPT-5.5 + gemini-2.5-pro) runs daily via the prediction-ledger cron when the ARGUS_ADMIN_TOKEN repo secret is set; per-symbol AI views appear in strategy cards while the cache is fresh (30-min TTL after each run — between runs the public GET honestly reports no_cached_result). Action labels remain rule-based with AI as a recorded second opinion; the GPT-5.5 Pro Handoff stays manual copy-paste (no API call)',
   'Market Regime ETF universe is a focused 8-symbol proxy subset (SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG) — financials/energy/semis and the LQD credit pair are pending; ETF rotation is a proxy for capital flow, not direct flow',
   'Japan regime uses watchlist breadth as a temporary proxy, not index/sector rotation',
-  'No moomoo order flow / order book / tape yet; no VWAP',
+  'moomoo big-money capital flow is shipped (v10.2, bridge update required on the OpenD box); order book / tape / VWAP still pending',
   'No regime-shift audit trail explaining why Market Regime changed',
   'Judgment log is device-local (localStorage) — no server-side durable history, no outcome tracking (was the call right?) yet',
   'No history of past Top Rotations',
   'No user-specific exposure weighting across asset classes',
-  'Portfolio P&L is device-local (localStorage) — no cross-device sync, no fund NAV valuation, no What-if simulator yet (v10.1)',
+  'Portfolio Exposure + What-if simulator are SHIPPED (v10.0/v10.1, device-local by design) — remaining: cross-device sync, fund NAV valuation',
   'Watchlist config is localStorage-only (per device; no cross-device sync)',
 ];
 

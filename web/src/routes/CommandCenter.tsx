@@ -8,6 +8,7 @@ import { CompactCoreRow } from '../components/dashboard/CompactCoreRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
 import { useLedgerSummary } from '../hooks/useLedgerSummary';
+import { useAIJudgment } from '../hooks/useAIJudgment';
 import { useActionLabels } from '../hooks/useActionLabels';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
@@ -66,6 +67,17 @@ const formatDate = (iso: string) => {
 export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const { assets } = useAssets();
   const ledger = useLedgerSummary();
+  const aiJ = useAIJudgment();
+  const aiStateJa = useMemo(() => {
+    if (aiJ.phase === 'connecting') return null;
+    if (aiJ.data && (aiJ.data.status === 'live' || aiJ.data.status === 'partial')) {
+      const t = Date.parse(aiJ.data.asOf);
+      const m = Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : null;
+      const age = m == null ? '' : m < 60 ? `${m}分前` : `${Math.round(m / 60)}時間前`;
+      return `🤖 AI見解: ${age}の実行(${aiJ.data.status})。次回は平日16:05に自動実行。`;
+    }
+    return '🤖 AI見解: 直近の実行なし(平日16:05に自動実行。それまではルール判定のみ)。';
+  }, [aiJ.data, aiJ.phase]);
   // The engine follows the USER's actual watchlist (dynamic symbols, v9.8).
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
   const usSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
@@ -197,6 +209,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         </div>
         <div className="card jlog">
           <p className="jlog__diff">{diffLineJa}</p>
+          {aiStateJa && <p className="jlog__diff" style={{ marginTop: 6 }}>{aiStateJa}</p>}
+          {!ledger.loading && !ledger.data?.overall && (
+            <div className="jlog__acc">📊 自己採点: 採点データはまだありません(次の平日16:05に初回の答え合わせが走ります)。</div>
+          )}
           {ledger.data?.overall && (
             <div className="jlog__acc">
               📊 自己採点(予測台帳・{ledger.data.overall.days}営業日 / {ledger.data.overall.n}件):

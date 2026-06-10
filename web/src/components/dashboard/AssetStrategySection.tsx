@@ -277,7 +277,8 @@ const SortableAssetRow: React.FC<{
   onToggleExpand: (id: string) => void; onRemove: (id: string) => void;
   onUpdateHolding: Props['onUpdateHolding'];
   aiLabel?: AIJudgmentLabel;
-}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel }) => {
+  aiAgeMin?: number | null;
+}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel, aiAgeMin }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   const name = asset.displayNameJa || asset.displayName;
@@ -332,7 +333,7 @@ const SortableAssetRow: React.FC<{
           {aiLabel && (
             <div className="asset-ai">
               <div className="asset-ai__head">
-                <span className="asset-ai__tag">AI予想</span>
+                <span className="asset-ai__tag">AI予想{aiAgeMin != null ? `・${aiAgeMin < 60 ? `${aiAgeMin}分前` : `${Math.round(aiAgeMin / 60)}時間前`}の実行` : ''}</span>
                 <span style={{ color: AI_VIEW_COLOR[aiLabel.aiView] ?? 'var(--text-sub)' }}>
                   ルール判定に{AI_VIEW_JA[aiLabel.aiView] ?? aiLabel.aiView}
                 </span>
@@ -423,6 +424,12 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
       for (const l of aiJ.data.labels) m.set(l.symbol, l);
     }
     return m;
+  }, [aiJ.data]);
+  // Honest freshness: the AI view is a snapshot of the last admin/cron run,
+  // not a continuously-thinking model. Show its age on every block.
+  const aiAgeMin = useMemo(() => {
+    const t = aiJ.data?.asOf ? Date.parse(aiJ.data.asOf) : NaN;
+    return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : null;
   }, [aiJ.data]);
   // Dynamic mode: the engine follows the USER's actual assets — symbols added
   // via the UI get live quotes AND rule labels (no longer the fixed 11).
@@ -521,6 +528,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
                         onToggleExpand={onToggleExpand} onRemove={onRemove}
                         onUpdateHolding={onUpdateHolding}
                         aiLabel={aiBySym.get(a.symbol)}
+                        aiAgeMin={aiAgeMin}
                       />
                     );
                   })}

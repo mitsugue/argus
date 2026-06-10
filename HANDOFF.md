@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.2.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.3.1 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.2.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.3.1。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.2.0**
+- **現在バージョン: v10.3.1**
 
 ---
 
@@ -223,7 +223,7 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
     回していたバグを修正(コードprefix照合+名前照合の併用)。pytest追加
   - 投信: J-Quantsは上場銘柄のみで投信は構造的に不在 → `lib/fundCatalog.ts`(主要26本・正式名称)の
     ローカル検索をAdd-AssetのCore/Fundタブに追加。基準価額(NAV)は未取得=将来のデータソース課題
-- **v10.2.0 大口フロー確証（最新）**
+- v10.2.0 大口フロー確証
   - ブリッジ: get_capital_distribution で大口(super+big)の流入/流出を毎サイクル取得し
     quote-push payload に flow={bigIn,bigOut,allIn,allOut} を添付(銘柄毎try・30分back-off・0.25sペーシング)
   - バックエンド: bigNetRatio=(bigIn-bigOut)/(allIn+allOut) を正規化して行に保持。

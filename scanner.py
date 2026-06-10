@@ -3072,7 +3072,21 @@ def _gemini_check(snapshot, openai_out):
                 if cfg else client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt))
         out = safe_json(getattr(resp, "text", "") or "")
         if not isinstance(out, dict) or "disagreements" not in out:
+            # Grounding-tool responses often aren't pure JSON. Retry ONCE in
+            # strict JSON mode (tools and response_mime_type can't combine).
+            try:
+                from google.genai import types as _gt
+                cfg2 = _gt.GenerateContentConfig(response_mime_type="application/json")
+                resp = client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt, config=cfg2)
+                out = safe_json(getattr(resp, "text", "") or "")
+                grounding_enabled = False
+            except Exception as e2:
+                _AI_LAST_RUN["gemError"] = f"json-retry {type(e2).__name__}: {str(e2)[:140]}"
+        if not isinstance(out, dict) or "disagreements" not in out:
+            _AI_LAST_RUN["gemError"] = ("parse: no 'disagreements' key; head=" +
+                                        (getattr(resp, "text", "") or "")[:100])
             return None, "partial", grounding_enabled
+        _AI_LAST_RUN["gemError"] = None
         # Best-effort: pull real grounding citations from response metadata.
         try:
             srcs = []
@@ -3089,6 +3103,7 @@ def _gemini_check(snapshot, openai_out):
         return out, "live", grounding_enabled
     except Exception as e:
         add_log(f"[AI] gemini check failed: {type(e).__name__}")
+        _AI_LAST_RUN["gemError"] = f"{type(e).__name__}: {str(e)[:140]}"
         return None, "unavailable", grounding_enabled
 
 def _arbitrate_ai(al, openai_out, gemini_out):
@@ -3425,7 +3440,7 @@ def api_argus_ai_provider_status():
             "model": _GEMINI_JUDGE_MODEL,
             "lastRunStatus": _AI_LAST_RUN.get("gem"),
             "groundingAvailable": (bool(google_genai) if GEMINI_API_KEY else None),
-            "lastErrorType": None,
+            "lastErrorType": _AI_LAST_RUN.get("gemError"),
         },
         "cache": {
             "hasCachedResult": t["hasCachedResult"],
