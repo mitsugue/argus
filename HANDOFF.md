@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v9.10.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v9.10.1 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.10.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.10.1。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v9.10.0**
+- **現在バージョン: v9.10.1**
 
 ---
 
@@ -62,6 +62,10 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
 - フロントのビルド: `web/` 内で `DEPLOY_BASE=/argus/ npm run build`
 - バージョンは Vite の transformIndexHtml プラグインが `globalThis.__ARGUS_VERSION__` を index.html に注入。
   **`web/package.json` の `version` が唯一の真実。**新機能ごとに必ず上げる。
+- **📖 説明書ルール（ユーザー指示・恒久）: バージョンアップのたびに、Guide ページの
+  「ARGUS でできること」(`CAPABILITIES`) と「最近のアップデート」(`RECENT_UPDATES`)
+  （`web/src/routes/Guide.tsx` 冒頭）を必ず同時に更新する。**
+  アプリ内の説明書は常に現在の実力を正確に語ること（直近6リリース程度を保持）。
 - コミットメッセージ末尾は `Co-Authored-By: Claude ...` を付ける運用。
 
 ---
