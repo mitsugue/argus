@@ -1,7 +1,7 @@
 {
- "asOf": "2026-06-10T21:38:55Z",
+ "asOf": "2026-06-10T21:48:02Z",
  "context": {
-  "aiStatus": "none",
+  "aiStatus": "partial",
   "backdrop": "neutral",
   "posture": "MIXED",
   "regimeConfidence": 0.5,
@@ -13,7 +13,11 @@
  "predictions": [
   {
    "action": "HOLD",
-   "ai": null,
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.52,
+    "view": "caution"
+   },
    "changePct": -3.9542,
    "confidence": 0.45,
    "flowRatio": null,
@@ -38,7 +42,11 @@
   },
   {
    "action": "WAIT",
-   "ai": null,
+   "ai": {
+    "action": "WAIT",
+    "confidence": 0.84,
+    "view": "confirm"
+   },
    "changePct": -8.3286,
    "confidence": 0.82,
    "flowRatio": null,
@@ -63,7 +71,11 @@
   },
   {
    "action": "WAIT",
-   "ai": null,
+   "ai": {
+    "action": "WAIT",
+    "confidence": 0.86,
+    "view": "confirm"
+   },
    "changePct": -11.7419,
    "confidence": 0.82,
    "flowRatio": null,
@@ -88,7 +100,11 @@
   },
   {
    "action": "WAIT",
-   "ai": null,
+   "ai": {
+    "action": "WAIT",
+    "confidence": 0.78,
+    "view": "confirm"
+   },
    "changePct": -6.7793,
    "confidence": 0.7,
    "flowRatio": null,
@@ -113,7 +129,11 @@
   },
   {
    "action": "WAIT",
-   "ai": null,
+   "ai": {
+    "action": "WAIT",
+    "confidence": 0.74,
+    "view": "confirm"
+   },
    "changePct": -5.9266,
    "confidence": 0.7,
    "flowRatio": null,
@@ -138,7 +158,11 @@
   },
   {
    "action": "WAIT",
-   "ai": null,
+   "ai": {
+    "action": "WAIT",
+    "confidence": 0.83,
+    "view": "confirm"
+   },
    "changePct": -7.7829,
    "confidence": 0.82,
    "flowRatio": null,
@@ -163,7 +187,11 @@
   },
   {
    "action": "HOLD",
-   "ai": null,
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.58,
+    "view": "confirm"
+   },
    "changePct": -1.3482,
    "confidence": 0.45,
    "flowRatio": null,
@@ -188,7 +216,11 @@
   },
   {
    "action": "HOLD",
-   "ai": null,
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.53,
+    "view": "caution"
+   },
    "changePct": -3.7322,
    "confidence": 0.45,
    "flowRatio": null,
@@ -213,7 +245,11 @@
   },
   {
    "action": "HOLD",
-   "ai": null,
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.6,
+    "view": "confirm"
+   },
    "changePct": 0.3545,
    "confidence": 0.45,
    "flowRatio": null,
@@ -238,7 +274,11 @@
   },
   {
    "action": "HOLD",
-   "ai": null,
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.52,
+    "view": "caution"
+   },
    "changePct": -3.8041,
    "confidence": 0.45,
    "flowRatio": null,
@@ -263,7 +303,11 @@
   },
   {
    "action": "HOLD",
-   "ai": null,
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.56,
+    "view": "confirm"
+   },
    "changePct": -2.3281,
    "confidence": 0.45,
    "flowRatio": null,
