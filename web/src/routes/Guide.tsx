@@ -1,6 +1,7 @@
 import React from 'react';
 import { PageShell } from './PageShell';
 import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
+import { BackupCard } from '../components/guide/BackupCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -25,6 +26,8 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
     descJa: '「¥Xを銘柄Yに追加したら?」— 追加後の配分変化・集中リスク警告・シナリオ別損益帯(仮定幅×ルールエンジンの確率)をWatchlist上で試算。予測ではなくシナリオ整理。端末内計算のみ。' },
   { area: '保有と評価 (Portfolio)',
     descJa: '銘柄ごとに保有数量・平均取得単価を入力すると、評価額・含み損益(¥/$別+円換算合計)・ジャンル配分をWatchlist上部に表示。保有データはこの端末のlocalStorageのみで、どこにも送信されない。' },
+  { area: 'バックアップ',
+    descJa: '端末に保存されるのは「ウォッチリスト+保有」と「判断ログ」の2つだけ。Guideのバックアップカードからワンクリックでエクスポート/復元でき、端末の買い替え・故障に備えられる(サーバーには送信しない)。' },
   { area: '判断ログ (記憶)',
     descJa: '毎日の判断を端末内に記録し「昨日からの変化」と直近7日の判断を表示(この端末のみ)。' },
   { area: '予測台帳と自己採点',
@@ -40,12 +43,12 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.3.2', '端末データのバックアップ機能(エクスポート/インポート) — 買い替え・故障に備えてウォッチリスト/保有/判断ログを1ファイルで退避・復元'],
   ['v10.3.1', '監視と正直さの強化 — AI見解に実行時刻を表示(常時最新ではないことを明示)・台帳ワークフロー失敗時のスマホ通知・的中率/Brierの用語解説・Gemini二重チェックの自己修復(JSONモード再試行)と診断可視化'],
   ['v10.3.0', '予測台帳+自己採点ループ(毎日GitHubに記録→翌日自動採点→的中率/Brier蓄積)・戦略カードにAI予想表示・朝ダイジェストにAI見解・AI判断の毎日自動実行'],
   ['v10.2.0', '大口フロー確証(moomoo資金分布) — v0が封印していたBUY DIPを「実際の大口流入確認時のみ」解禁。大口流出でHOLD→WAIT引き締め。戦略カードに大口純流入率を表示'],
   ['v10.1.0', 'What-ifシミュレーション(追加投資の配分・シナリオ別損益帯)・銘柄検索の修正(314A等の英字入りコード)・投信カタログ検索(eMAXIS/SBI/楽天など26本)'],
   ['v10.0.0', 'Portfolio Exposure — 保有数量・平均取得単価の入力(端末内のみ)で評価額・含み損益・ジャンル配分を表示。USD/JPY換算(FRED)対応'],
-  ['v9.12.0', 'VIX通知の本質化 — 固定閾値を廃止し「急騰速度×自身の60日分布での位置×圏域遷移(calm/normal/elevated/shock)」で文脈判定。ダイジェストにもVIX文脈を表示'],
 ];
 
 // 用語一覧 — English chrome term → Japanese meaning.
@@ -144,6 +147,14 @@ export const Guide: React.FC = () => {
             ))}
           </div>
         </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">バックアップ (端末データ)</span>
+          <span className="section-head__count">エクスポート / 復元</span>
+        </div>
+        <BackupCard />
       </section>
 
       <section>
