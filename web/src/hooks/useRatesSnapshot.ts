@@ -25,6 +25,9 @@ export interface RatesSnapshot {
   us2y:           FredSeriesPoint;
   usReal10y:      FredSeriesPoint;
   vix:            FredSeriesPoint;
+  /** USD/JPY (FRED DEXJPUS, daily). Additive v10.0 — Portfolio Exposure's
+      JPY conversion. Optional so older cached payloads still typecheck. */
+  usdJpy?:        FredSeriesPoint;
   ratesPressure:  RatesPressureLabel;
   riskVolatility: RiskVolatilityLabel;
   summary:        string;

@@ -1422,6 +1422,9 @@ _FRED_SERIES  = {
     # Market Regime engine — get_rates_snapshot() ignores it, so the /rates
     # response shape is unchanged; it just rides the same free FRED fetch path.
     "BAMLH0A0HYM2": "ICE BofA US High Yield OAS",
+    # USD/JPY (daily) — for the Portfolio Exposure JPY conversion (v10.0).
+    # Exposed additively as `usdJpy` in the rates snapshot.
+    "DEXJPUS": "USD/JPY",
 }
 # Plausible "Tuesday before US CPI" mock state — used when FRED_API_KEY
 # is absent or any per-series fetch fails. Each tuple is (latest, prev).
@@ -1431,6 +1434,7 @@ _FRED_MOCK = {
     "DFII10": (1.85, 1.82),
     "VIXCLS": (17.4, 17.0),
     "BAMLH0A0HYM2": (3.10, 3.05),  # ~310bp HY OAS — benign/neutral mock
+    "DEXJPUS": (157.2, 156.8),     # USD/JPY mock
 }
 
 def _fred_normalize(series_id, latest, prev, latest_date, status):
@@ -1547,6 +1551,7 @@ def get_rates_snapshot():
         "us2y":           series["DGS2"],
         "usReal10y":      series["DFII10"],
         "vix":            series["VIXCLS"],
+        "usdJpy":         series["DEXJPUS"],  # additive (v10.0 — JPY conversion)
         "ratesPressure":  rates_pressure,
         "riskVolatility": risk_volatility,
         "summary":        summary,

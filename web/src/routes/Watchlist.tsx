@@ -14,7 +14,7 @@ function ageLabel(ts: number, nowMs: number): string {
 }
 
 export const Watchlist: React.FC = () => {
-  const { assets, add, remove, reorderGenre } = useAssets();
+  const { assets, add, remove, reorderGenre, updateHolding } = useAssets();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [nonce, setNonce] = useState(0);            // rescan → remounts the data section
@@ -54,6 +54,7 @@ export const Watchlist: React.FC = () => {
         onToggleExpand={(id) => setExpandedId((cur) => (cur === id ? null : id))}
         onReorder={reorderGenre}
         onRemove={(id) => { setExpandedId((cur) => (cur === id ? null : cur)); remove(id); }}
+        onUpdateHolding={updateHolding}
       />
 
       <CorporateCatalysts />

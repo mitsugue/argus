@@ -69,6 +69,9 @@ export interface UseAssets {
   remove: (id: string) => void;
   reorderGenre: (orderedIds: string[]) => void;
   toggle: (id: string) => void;
+  /** Set/clear one asset's holding (quantity & average cost). Pass
+      null/undefined to clear a field. Device-local only — never uploaded. */
+  updateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
   reset: () => void;
 }
 
@@ -112,7 +115,20 @@ export function useAssets(): UseAssets {
   const toggle = useCallback((id: string) =>
     setAssets((cur) => cur.map((x) => (x.id === id ? { ...x, enabled: !x.enabled, updatedAt: now() } : x))), []);
 
+  const updateHolding: UseAssets['updateHolding'] = useCallback((id, h) =>
+    setAssets((cur) => cur.map((x) => {
+      if (x.id !== id) return x;
+      const next = { ...x, updatedAt: now() };
+      const setNum = (key: 'quantity' | 'avgCost', v: number | null | undefined) => {
+        if (v == null || !Number.isFinite(v) || v < 0) delete next[key];
+        else next[key] = v;
+      };
+      if ('quantity' in h) setNum('quantity', h.quantity);
+      if ('avgCost' in h) setNum('avgCost', h.avgCost);
+      return next;
+    })), []);
+
   const reset = useCallback(() => setAssets(defaults()), []);
 
-  return { assets, add, remove, reorderGenre, toggle, reset };
+  return { assets, add, remove, reorderGenre, toggle, updateHolding, reset };
 }

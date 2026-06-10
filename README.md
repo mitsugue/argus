@@ -127,6 +127,14 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v10.0.0 — Portfolio Exposure (device-local).** Each asset's strategy card now
+takes a holding (quantity + average cost — stored ONLY in localStorage, never
+uploaded), and the Watchlist gains a Portfolio Exposure card: per-currency
+totals, unrealized P/L, a JPY-combined total via USD/JPY (FRED `DEXJPUS`, added
+additively to `/rates` as `usdJpy`), and a genre allocation bar. Valuation only
+uses LIVE prices (never mock); unpriced assets (e.g. fund NAVs) are listed
+honestly. Pure math in `web/src/lib/portfolio.ts`. What-if simulation is v10.1.
+
 **v9.12.0 — Essential VIX (no magic numbers).** Volatility alerts no longer
 hinge on a hardcoded "VIX crossed 26": `_vix_assess` (pure, unit-tested) reads
 **velocity** (day-over-day +15% & +2pt, or +5pt = spike), **position vs its own

@@ -79,7 +79,7 @@ const GAPS = [
   'Judgment log is device-local (localStorage) — no server-side durable history, no outcome tracking (was the call right?) yet',
   'No history of past Top Rotations',
   'No user-specific exposure weighting across asset classes',
-  'No portfolio P&L / dollar exposure rendering',
+  'Portfolio P&L is device-local (localStorage) — no cross-device sync, no fund NAV valuation, no What-if simulator yet (v10.1)',
   'Watchlist config is localStorage-only (per device; no cross-device sync)',
 ];
 

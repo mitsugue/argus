@@ -12,7 +12,9 @@ import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
 import { useActionLabels } from '../../hooks/useActionLabels';
 import { useCatalysts } from '../../hooks/useCatalysts';
+import { useRatesSnapshot } from '../../hooks/useRatesSnapshot';
 import { deriveStrategy, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
+import { buildExposure, valueHolding, fmtMoney, fmtSigned } from '../../lib/portfolio';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
 import type { CatalystItem } from '../../types/catalysts';
@@ -23,6 +25,7 @@ interface Props {
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onRemove: (id: string) => void;
+  onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
 }
 
 const ACTION_COLOR: Record<string, string> = {
@@ -81,10 +84,88 @@ function freshnessOf(strat: AssetStrategy): { text: string; color: string } {
   return { text: strat.status, color: STATUS_COLOR[strat.status] ?? 'var(--text-muted)' };
 }
 
+const GENRE_COLOR: Record<string, string> = {
+  jp: 'var(--blue)', us: 'var(--green)', funds: 'var(--amber)', crypto: 'var(--cyan)',
+};
+
+// Compact portfolio header: per-currency totals + unrealized P/L + JPY-combined
+// allocation. All math is client-side (lib/portfolio.ts); holdings never leave
+// the device. Shown only once at least one holding is entered.
+const ExposureCard: React.FC<{
+  assets: AssetItem[];
+  quotes: Map<string, QuoteLite>;
+  usdJpy: number | null;
+}> = ({ assets, quotes, usdJpy }) => {
+  const exp = useMemo(
+    () => buildExposure(assets, (a) => {
+      const q = quotes.get(a.symbol);
+      return q && q.status === 'live' ? q.price : undefined;   // never value on mock prices
+    }, usdJpy),
+    [assets, quotes, usdJpy],
+  );
+  const anyHolding = assets.some((a) => (a.quantity ?? 0) > 0 && a.avgCost != null);
+  if (!anyHolding) {
+    return (
+      <div className="card exp exp--hint">
+        <span className="exp__title">Portfolio Exposure</span>
+        <p className="exp__hint">銘柄の行を開いて「保有数量・平均取得単価」を入力すると、ここに評価額・含み損益・配分が表示されます(データはこの端末内のみ)。</p>
+      </div>
+    );
+  }
+  const plColor = (v: number) => (v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-sub)');
+  return (
+    <div className="card exp">
+      <div className="exp__head">
+        <span className="exp__title">Portfolio Exposure</span>
+        <span className="exp__note">端末内のみ・未実現損益</span>
+      </div>
+      <div className="exp__totals">
+        {(['JPY', 'USD'] as const).filter((c) => exp.totals[c].value > 0).map((c) => (
+          <span key={c} className="exp__total">
+            <b>{fmtMoney(c, exp.totals[c].value)}</b>
+            <span style={{ color: plColor(exp.totals[c].pl) }}>
+              {' '}{fmtSigned(c, exp.totals[c].pl)}
+              （{exp.totals[c].cost > 0 ? `${exp.totals[c].pl >= 0 ? '+' : ''}${((exp.totals[c].pl / exp.totals[c].cost) * 100).toFixed(1)}%` : '—'}）
+            </span>
+          </span>
+        ))}
+        {exp.combinedJpy != null && exp.totals.USD.value > 0 && exp.totals.JPY.value > 0 && (
+          <span className="exp__combined">
+            合計 ≈ {fmtMoney('JPY', exp.combinedJpy)}
+            <span style={{ color: plColor(exp.combinedPlJpy ?? 0) }}>{' '}{fmtSigned('JPY', exp.combinedPlJpy ?? 0)}</span>
+            {exp.usdJpy != null && <span className="exp__fx">（USD/JPY {exp.usdJpy}）</span>}
+          </span>
+        )}
+      </div>
+      {exp.byGenre.length > 0 && (
+        <>
+          <div className="exp__bar" aria-hidden>
+            {exp.byGenre.map((g) => (
+              <span key={g.key} style={{ width: `${g.pct}%`, background: GENRE_COLOR[g.key] }} />
+            ))}
+          </div>
+          <div className="exp__legend">
+            {exp.byGenre.map((g) => (
+              <span key={g.key}>
+                <span className="exp__dot" style={{ background: GENRE_COLOR[g.key] }} />
+                {g.title} {g.pct.toFixed(1)}%
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+      {exp.unpriced.length > 0 && (
+        <p className="exp__unpriced">ライブ価格未取得のため対象外: {exp.unpriced.join(', ')}（投信の基準価額は未対応）</p>
+      )}
+    </div>
+  );
+};
+
 const SortableAssetRow: React.FC<{
   asset: AssetItem; strat: AssetStrategy; expanded: boolean;
   onToggleExpand: (id: string) => void; onRemove: (id: string) => void;
-}> = ({ asset, strat, expanded, onToggleExpand, onRemove }) => {
+  onUpdateHolding: Props['onUpdateHolding'];
+}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   const name = asset.displayNameJa || asset.displayName;
@@ -127,6 +208,41 @@ const SortableAssetRow: React.FC<{
             <div><span className="asset-detail__k">What changes it</span><span className="asset-detail__v">{strat.whatChangesJa}</span></div>
             {strat.catalystNoteJa && <div><span className="asset-detail__k">Catalyst</span><span className="asset-detail__v">{strat.catalystNoteJa}</span></div>}
           </div>
+
+          {/* Holdings (v10.0) — device-local; drives the Portfolio Exposure card. */}
+          {(() => {
+            const livePrice = (strat.status === 'live' || strat.status === 'partial') ? strat.price : undefined;
+            const hv = valueHolding(asset, livePrice);
+            const num = (v: string) => (v.trim() === '' ? null : Number(v));
+            return (
+              <div className="asset-hold">
+                <span className="asset-detail__k">Holding（端末内のみ）</span>
+                <div className="asset-hold__body">
+                  <label className="asset-hold__field">数量
+                    <input type="number" inputMode="decimal" min="0" step="any"
+                      defaultValue={asset.quantity ?? ''}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={(e) => onUpdateHolding(asset.id, { quantity: num(e.currentTarget.value) })} />
+                  </label>
+                  <label className="asset-hold__field">平均取得単価
+                    <input type="number" inputMode="decimal" min="0" step="any"
+                      defaultValue={asset.avgCost ?? ''}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={(e) => onUpdateHolding(asset.id, { avgCost: num(e.currentTarget.value) })} />
+                  </label>
+                  {hv && (
+                    <span className="asset-hold__val">
+                      評価 <b>{fmtMoney(hv.currency, hv.value)}</b>
+                      {' ／ 損益 '}
+                      <b style={{ color: hv.pl > 0 ? 'var(--green)' : hv.pl < 0 ? 'var(--red)' : 'var(--text-sub)' }}>
+                        {fmtSigned(hv.currency, hv.pl)}（{hv.plPct >= 0 ? '+' : ''}{hv.plPct.toFixed(1)}%）
+                      </b>
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
           {strat.scenarios.length > 0 && (
             <div className="asset-scen">
               <div className="asset-scen__head">Scenario probabilities · {strat.scenarioHorizonJa}</div>
@@ -159,7 +275,9 @@ const SortableAssetRow: React.FC<{
   );
 };
 
-export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expandedId, onToggleExpand, onRemove }) => {
+export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expandedId, onToggleExpand, onRemove, onUpdateHolding }) => {
+  const rates = useRatesSnapshot();
+  const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
   // Dynamic mode: the engine follows the USER's actual assets — symbols added
   // via the UI get live quotes AND rule labels (no longer the fixed 11).
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
@@ -227,6 +345,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
 
   return (
     <div className="asset-groups">
+      <ExposureCard assets={assets} quotes={maps.quotes} usdJpy={usdJpy} />
       {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の戦略を取得中</div>}
       {groups.map((g) => {
         const ids = g.items.map((a) => a.id);
@@ -242,6 +361,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
                       <SortableAssetRow
                         key={a.id} asset={a} strat={strat} expanded={expandedId === a.id}
                         onToggleExpand={onToggleExpand} onRemove={onRemove}
+                        onUpdateHolding={onUpdateHolding}
                       />
                     );
                   })}
