@@ -127,6 +127,15 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v9.12.0 — Essential VIX (no magic numbers).** Volatility alerts no longer
+hinge on a hardcoded "VIX crossed 26": `_vix_assess` (pure, unit-tested) reads
+**velocity** (day-over-day +15% & +2pt, or +5pt = spike), **position vs its own
+60-day distribution** (percentile), and broad absolute sanity bands into a zone
+(calm / normal / elevated / shock). Alerts fire on upward ZONE TRANSITIONS and
+SPIKE days (deduped per date) — a VIX of 19 after months at 13 alerts, a VIX of
+26 inside a 28-vol regime doesn't shock. The digest now carries a `volatility`
+block and a context-rich VIX line (level — zone, Δ1d, percentile).
+
 **v9.11.0 — moomoo bridge: real-time quotes + smarter notifications.** A small
 bridge (`bridge/moomoo_push.py`, systemd-ready) runs NEXT TO the user's OpenD
 (AWS, 24h) and POSTs real-time JP/US quotes to the admin-gated

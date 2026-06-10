@@ -136,6 +136,39 @@ def test_crypto_id_regex():
     assert not scanner._CRYPTO_ID_RE.match("bad;id")
 
 
+# ── Context-aware VIX assessment (v9.12) ─────────────────────────────
+def test_vix_calm_regime():
+    v = scanner._vix_assess([12.0] * 60)
+    assert v["zone"] == "calm" and v["spike"] is False
+
+
+def test_vix_spike_into_shock():
+    # 18 → 30 overnight: velocity + level → shock, spike True
+    v = scanner._vix_assess([30.0, 18.0] + [15.0] * 58)
+    assert v["zone"] == "shock" and v["spike"] is True
+
+
+def test_vix_relative_elevation_without_big_absolute():
+    # 19 after months of 13s: top of ITS OWN range → elevated (no magic 26)
+    v = scanner._vix_assess([19.0] + [13.0] * 59)
+    assert v["zone"] == "elevated"
+    assert v["percentile60d"] == 100
+
+
+def test_vix_high_level_in_high_regime_not_shock():
+    # 26 inside a 28-vol regime: relatively LOW for its regime — elevated by
+    # absolute band, but NOT shock and NOT a spike.
+    v = scanner._vix_assess([26.0, 27.0] + [28.0] * 58)
+    assert v["zone"] == "elevated" and v["spike"] is False
+    assert v["percentile60d"] <= 10
+
+
+def test_vix_short_history_no_crash():
+    v = scanner._vix_assess([20.0])
+    assert v is not None and v["zone"] in ("calm", "normal", "elevated", "shock")
+    assert scanner._vix_assess([]) is None
+
+
 # ── moomoo real-time overlay (v9.11) ─────────────────────────────────
 def _snap(*rows):
     return {"status": "live", "asOf": "2026-06-10", "stocks": list(rows)}

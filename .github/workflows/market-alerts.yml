@@ -46,7 +46,9 @@ jobs:
           posture = (d.get('posture') or {}).get('label') or '?'
           rb = d.get('ratesBackdrop') or {}
           backdrop = rb.get('posture') or '?'
-          vix = float(rb.get('vix') or 0)
+          vol = d.get('volatility') or {}
+          zone = vol.get('zone') or '?'
+          date_jst = d.get('dateJst') or ''
           # High-impact events currently inside the D-1 / D window.
           urgent = sorted({f"{e.get('title')}@{e.get('escalation')}"
                            for e in (d.get('topEvents') or [])
@@ -58,20 +60,29 @@ jobs:
           alerts = []
           if prev.get('posture') and prev['posture'] != posture:
               alerts.append(f"姿勢が変化: {prev['posture']} → {posture}")
-          # Market-stress spike (black-swan REACTION detector): the credit/vol
-          # backdrop entering "stress", or VIX crossing 26 upward within the
-          # hour. Catches the market response even before the cause is known.
+          # Volatility alerts — context-aware, NOT a magic number (v9.12):
+          # alert on the VIX zone ESCALATING (normal→elevated, →shock: level vs
+          # its own 60-day distribution + velocity), and on a SPIKE day
+          # (deduped per date). Catches black-swan REACTIONS before the cause
+          # is known.
+          ZONES = {'calm': 0, 'normal': 1, 'elevated': 2, 'shock': 3}
+          prev_zone = prev.get('vixZone')
+          if (prev and zone in ZONES and prev_zone in ZONES
+                  and ZONES[zone] > ZONES[prev_zone] and ZONES[zone] >= 2):
+              alerts.append(f"ボラティリティ{zone}入り: {vol.get('rationaleJa', '')}")
+          if (prev and vol.get('spike') and prev.get('spikeDate') != date_jst):
+              alerts.append(f"VIX急騰: {vol.get('rationaleJa', '')}")
+          # Credit/rates backdrop entering stress (HY OAS / VIX composite).
           if prev and backdrop == 'stress' and prev.get('backdrop') not in (None, 'stress'):
-              alerts.append(f"市場ストレス検知: VIX {vix} / HY OAS {rb.get('hyOas')}%（金利地合いがstressに）")
-          prev_vix = float(prev.get('vix') or 0)
-          if prev and vix >= 26 and prev_vix and prev_vix < 26:
-              alerts.append(f"VIX急上昇: {prev_vix} → {vix}")
+              alerts.append(f"市場ストレス検知: HY OAS {rb.get('hyOas')}%・金利地合いがstressに")
           new_urgent = [u for u in urgent if u not in set(prev.get('urgent') or [])]
           for u in new_urgent:
               t, esc = u.rsplit('@', 1)
               alerts.append(f"イベント接近: {t}（{esc}）")
-          json.dump({'posture': posture, 'urgent': urgent,
-                     'backdrop': backdrop, 'vix': vix}, open('state.json', 'w'))
+          spike_date = date_jst if (vol.get('spike') and prev.get('spikeDate') != date_jst and prev) else prev.get('spikeDate')
+          json.dump({'posture': posture, 'urgent': urgent, 'backdrop': backdrop,
+                     'vixZone': zone if zone in ZONES else prev.get('vixZone'),
+                     'spikeDate': spike_date}, open('state.json', 'w'))
           if alerts and prev:  # first-ever run only seeds state, no alert spam
               text = "【ARGUS変化検知】\n" + "\n".join(alerts) + \
                      "\n※ルールベースの状況整理であり、売買指示ではありません。"

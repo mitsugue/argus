@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v9.11.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v9.12.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.11.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.12.0。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v9.11.0**
+- **現在バージョン: v9.12.0**
 
 ---
 
@@ -193,7 +193,7 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - per-IPレート制限: `/api/argus/*` 120/min、cache-busting系(symbols/jp/us/ids/q付き)30/min、429 JSON
   - `POST /api/argus/ai-provider-status/ping`(admin): OpenAI/Geminiへ最小"pong"呼び出しでキー疎通確認
   - v9.10.1 Guideに「できること/最近のアップデート」(📖説明書ルールの開始)
-- **v9.11.0 moomooブリッジ = リアルタイム価格（最新）**
+- v9.11.0 moomooブリッジ = リアルタイム価格
   - `POST /api/argus/quote-push`(admin token): ブリッジからのJP/USリアルタイム価格を受領
     (sanitize/上限50/価格検証)。`_overlay_pushed` が watchlist 系の全経路で
     「10分以内のpush > J-Quants(T-1)/Twelve Data」の優先で上書き(キャッシュ非破壊・自動フォールバック)
@@ -203,7 +203,13 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - 通知改善: digest文面を通知向け再設計(絵文字セクション・短い行)。morning-digestは
     JP寄り前8:30 + US寄り前22:00 の2本。market-alertsに市場ストレス急変検知
     (backdrop→stress遷移、VIX 26上抜け)。全通知にClickヘッダ(タップでアプリ起動)
-  - ブラックスワンの「原因」(会見/戦争等のヘッドライン)検知は未実装 → v9.12候補(GDELT/ニュースAPI)
+  - ブラックスワンの「原因」(会見/戦争等のヘッドライン)検知は未実装 → 次候補(GDELT/ニュースAPI)
+- **v9.12.0 VIX通知の本質化（最新）**
+  - ユーザー指摘「固定の26はダメ。本質的に判断して」→ `_vix_assess(closes)`(純関数・テスト済):
+    急騰速度(前日比+15%かつ+2pt、or +5pt) × 自身の直近60日分布のパーセンタイル × 広い絶対バンド
+    → zone = calm/normal/elevated/shock。**アラートは圏域の上方遷移とスパイクで発火**(数字の上抜けでは発火しない)
+  - `_fred_vix_history()`(FRED VIXCLS 70日・1hキャッシュ)。digestに `volatility` ブロック+文脈付きVIX行
+  - market-alerts.yml は zone遷移+spike(日付dedup)ベースに書き換え。固定26ルール撤廃
 
 ---
 

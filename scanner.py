@@ -3548,6 +3548,78 @@ def api_argus_integrations():
     return jsonify(get_integrations_snapshot())
 
 
+# ━━━ Context-aware VIX signal (v9.12) ━━━
+# A fixed "VIX crossed N" alert is a magic number. The essential read is:
+#   velocity (how fast fear is rising) × position vs ITS OWN recent regime
+#   (60-day percentile) × broad absolute sanity bands.
+# Alerts fire on ZONE TRANSITIONS and SPIKES, never on one hardcoded level.
+_VIX_HIST_CACHE = {"data": None, "expires": 0.0}
+_VIX_HIST_TTL   = 3600  # 1h — daily series, no need to hammer FRED
+
+def _fred_vix_history(n=70):
+    """Newest-first VIX closes (~n obs) from FRED. [] on no key / failure."""
+    now = time.time()
+    if _VIX_HIST_CACHE["data"] is not None and now < _VIX_HIST_CACHE["expires"]:
+        return _VIX_HIST_CACHE["data"]
+    if not _FRED_API_KEY:
+        return []
+    try:
+        r = requests.get(_FRED_BASE, params={
+            "series_id": "VIXCLS", "api_key": _FRED_API_KEY, "file_type": "json",
+            "sort_order": "desc", "limit": n + 10,
+        }, timeout=8)
+        r.raise_for_status()
+        closes = [float(o["value"]) for o in r.json().get("observations", [])
+                  if o.get("value") not in (None, ".", "")][:n]
+        if len(closes) >= 10:
+            _VIX_HIST_CACHE["data"] = closes
+            _VIX_HIST_CACHE["expires"] = now + _VIX_HIST_TTL
+        return closes
+    except Exception:
+        return _VIX_HIST_CACHE["data"] or []
+
+def _vix_assess(closes):
+    """Context-aware VIX read from a newest-first close list (pure, testable).
+
+    zone: calm / normal / elevated / shock —
+      - spike   = day-over-day velocity (+15% AND +2pt, or +5pt) — fear is
+                  accelerating regardless of the absolute level
+      - elevated= top quintile of ITS OWN trailing 60 days (and not trivially
+                  low), or an absolute 25+ where index option pricing implies
+                  outsized daily swings
+      - shock   = 30+, or a spike landing at an already-elevated 24+
+    Broad bands are sanity floors, not triggers — alerts react to TRANSITIONS.
+    """
+    if not closes:
+        return None
+    level = float(closes[0])
+    prev  = float(closes[1]) if len(closes) > 1 else level
+    chg     = round(level - prev, 2)
+    chg_pct = round((chg / prev) * 100, 1) if prev else 0.0
+    window = [float(v) for v in closes[:60]]
+    med  = round(statistics.median(window), 1)
+    rank = int(round(100.0 * sum(1 for v in window if v <= level) / len(window)))
+    spike = (chg_pct >= 15 and chg >= 2) or chg >= 5
+    if level >= 30 or (spike and level >= 24):
+        zone, zone_ja = "shock", "ショック圏(恐怖の急拡大)"
+    elif (rank >= 80 and level >= 18) or level >= 25:
+        zone, zone_ja = "elevated", "警戒圏(直近レンジの上限域)"
+    elif level < 14 and not spike:
+        # A flat low-vol regime is calm by absolute level — every day of a
+        # flat series sits at its own 100th percentile, so rank can't be used.
+        zone, zone_ja = "calm", "凪(低ボラティリティ)"
+    else:
+        zone, zone_ja = "normal", "通常圏"
+    note = "急騰・" + zone_ja if spike else zone_ja
+    return {
+        "level": round(level, 1), "changeAbs": chg, "changePct1d": chg_pct,
+        "median60d": med, "percentile60d": rank, "spike": spike, "zone": zone,
+        "zoneJa": zone_ja, "historyDays": len(window),
+        "rationaleJa": (f"VIX {round(level, 1)} — {note}。"
+                        f"前日比{chg:+.1f}({chg_pct:+.1f}%)・直近{len(window)}日分布の{rank}パーセンタイル(中央値{med})。"),
+    }
+
+
 # ━━━ Daily Digest (digest-v1) — the agent's morning brief ━━━
 # Rule-based composition of the existing snapshots into a notification-ready
 # Japanese brief. NO LLM. Consumed by the morning GitHub Actions cron (→ ntfy
@@ -3575,6 +3647,7 @@ def get_daily_digest():
     al    = get_action_labels()
     reg   = get_market_regime_snapshot()
     ev    = get_events_snapshot()
+    vol   = _vix_assess(_fred_vix_history())  # context-aware VIX (None if no data)
     posture = (al.get("marketPosture", {}) or {}).get("label") or "CAUTIOUS"
     posture_ja = (al.get("marketPosture", {}) or {}).get("rationaleJa", "")
     rg = reg.get("regime", {}) if isinstance(reg, dict) else {}
@@ -3615,8 +3688,12 @@ def get_daily_digest():
     if posture_ja:
         L += ["", posture_ja[:100]]
     if rb:
-        L += ["", "📊 金利",
-              f"US10Y {rb.get('us10y')}% ｜ VIX {rb.get('vix')} ｜ HY OAS {rb.get('hyOas')}%（{rb.get('posture')}）"]
+        L += ["", "📊 金利・ボラティリティ",
+              f"US10Y {rb.get('us10y')}% ｜ HY OAS {rb.get('hyOas')}%（{rb.get('posture')}）"]
+        if vol:
+            L.append(f"VIX {vol['level']} — {vol['zoneJa']}（前日比{vol['changeAbs']:+.1f}・60日分布{vol['percentile60d']}%）")
+        else:
+            L.append(f"VIX {rb.get('vix')}")
     if top_events:
         L += ["", "📅 イベント"]
         for e in top_events[:3]:
@@ -3642,6 +3719,7 @@ def get_daily_digest():
         "posture": {"label": posture, "call": call, "rationaleJa": posture_ja,
                     "confidence": rg.get("confidence")},
         "ratesBackdrop": {k: rb.get(k) for k in ("us10y", "vix", "hyOas", "posture")} if rb else {},
+        "volatility": vol,
         "topEvents": top_events,
         "topRotations": rotations,
         "labelHighlights": highlights,
