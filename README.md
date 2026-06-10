@@ -127,6 +127,22 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v9.10.0 — Change-detection alerts + rule tests + rate limit + AI ping.**
+**Alerts:** `market-alerts.yml` polls the digest hourly through JP+US sessions
+(JST 7–24, weekdays) and pushes a ntfy notification ONLY on real change —
+posture flip or a high-impact event entering its D-1/D window (state carried via
+the Actions cache; first run seeds silently; same `NTFY_TOPIC` secret; bonus:
+keeps the Render free dyno warm through market hours). **Tests:** `test_rules.py`
+(17 pytest cases) locks the judgment core — rates/VIX thresholds, regime
+momentum scaling + backdrop, action-label rules, symbol sanitization, freshness
+lag, and the AI-truth state machine — and a new `ci.yml` runs backend tests +
+frontend typecheck/build + a bundle secret-grep on every push. **Abuse guard:**
+per-IP sliding-window rate limit on `/api/argus/*` (120/min default, 30/min for
+cache-busting query requests; OPTIONS exempt; 429 JSON). **AI ping:** admin-only
+`POST /api/argus/ai-provider-status/ping` makes a minimal "pong" call to OpenAI
+and Gemini so a renewed key can be verified in one command without burning a
+full judgment run (returns ok/error per provider; never key values).
+
 **v9.9.0 — Judgment log + morning digest (the agent's first push).** ARGUS now
 has memory and a voice. **Judgment log:** every LIVE/PARTIAL Today composition
 is recorded device-locally (`argus.judgmentLog.v1`, one entry per JST date,

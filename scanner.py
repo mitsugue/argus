@@ -333,6 +333,44 @@ def add_no_cache(response):
     response.headers["Expires"] = "0"
     return response
 
+# ── Per-IP rate limit (v9.10) ────────────────────────────────────────
+# The /api/argus/* endpoints are public; a hostile loop could drain the
+# Twelve Data daily credits (dynamic ?symbols= sets) or hammer J-Quants.
+# Simple in-memory sliding window per IP: generous for the SPA (~10 calls
+# per page load), stricter for "heavy" requests that can bust caches via
+# query params. OPTIONS (CORS preflight) is never limited.
+_RL_LOCK    = threading.Lock()
+_RL_BUCKETS = {}          # ip -> deque[timestamps]
+_RL_WINDOW  = 60.0        # seconds
+_RL_MAX     = 120         # default requests / IP / minute
+_RL_MAX_HEAVY = 30        # cache-busting requests (symbol-search, dynamic sets)
+_RL_MAX_IPS = 5000        # memory bound on a public endpoint
+
+def _rl_client_ip():
+    fwd = (request.headers.get("X-Forwarded-For", "").split(",")[0] or "").strip()
+    return request.headers.get("CF-Connecting-IP") or fwd or (request.remote_addr or "?")
+
+@app.before_request
+def _rate_limit():
+    p = request.path
+    if not p.startswith("/api/argus/") or request.method == "OPTIONS":
+        return None
+    heavy = ("symbol-search" in p) or any(k in request.args for k in ("symbols", "jp", "us", "ids", "q"))
+    limit = _RL_MAX_HEAVY if heavy else _RL_MAX
+    now = time.time()
+    ip = _rl_client_ip()
+    with _RL_LOCK:
+        if len(_RL_BUCKETS) > _RL_MAX_IPS:
+            _RL_BUCKETS.clear()
+        dq = _RL_BUCKETS.setdefault(ip, deque())
+        while dq and now - dq[0] > _RL_WINDOW:
+            dq.popleft()
+        if len(dq) >= limit:
+            return jsonify({"error": "rate_limited",
+                            "message": "Too many requests — wait a minute and retry."}), 429
+        dq.append(now)
+    return None
+
 def safe_json(text):
     text = re.sub(r"```json\s*", "", text)
     text = re.sub(r"```\s*", "", text).strip()
@@ -3241,6 +3279,55 @@ def api_argus_ai_provider_status():
             "allowedCountries": _AI_JUDGE_ALLOW_COUNTRIES,
         },
     })
+
+
+@app.route("/api/argus/ai-provider-status/ping", methods=["POST"])
+def api_argus_ai_provider_ping():
+    """Admin-only MINIMAL test call to each AI provider ("reply: pong") so a
+    renewed key can be verified in one command without burning a full judgment
+    run. Costs a few tokens. Never returns key values; error type + a short
+    provider message only."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    out = {"asOf": _ai_now_iso()}
+
+    if not _OPENAI_API_KEY:
+        out["openai"] = {"ok": False, "error": "missing_key"}
+    else:
+        try:
+            import openai
+            client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+            try:
+                r = client.responses.create(model=_OPENAI_MODEL,
+                                            input="Reply with the single word: pong", timeout=30)
+                reply = (getattr(r, "output_text", "") or "")[:40]
+            except Exception:
+                r = client.chat.completions.create(
+                    model=_OPENAI_MODEL,
+                    messages=[{"role": "user", "content": "Reply with the single word: pong"}],
+                    timeout=30)
+                reply = (r.choices[0].message.content or "")[:40]
+            out["openai"] = {"ok": True, "model": _OPENAI_MODEL, "reply": reply}
+        except Exception as e:
+            out["openai"] = {"ok": False, "model": _OPENAI_MODEL,
+                             "error": type(e).__name__, "message": str(e)[:140]}
+
+    if not GEMINI_API_KEY:
+        out["gemini"] = {"ok": False, "error": "missing_key"}
+    elif not google_genai:
+        out["gemini"] = {"ok": False, "error": "sdk_unavailable"}
+    else:
+        try:
+            client = google_genai.Client(api_key=GEMINI_API_KEY)
+            r = client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
+                                               contents="Reply with the single word: pong")
+            out["gemini"] = {"ok": True, "model": _GEMINI_JUDGE_MODEL,
+                             "reply": (getattr(r, "text", "") or "")[:40]}
+        except Exception as e:
+            out["gemini"] = {"ok": False, "model": _GEMINI_JUDGE_MODEL,
+                             "error": type(e).__name__, "message": str(e)[:140]}
+    return jsonify(out)
 
 
 # ━━━ Integration Health (public, secret-free) ━━━

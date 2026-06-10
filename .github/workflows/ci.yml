@@ -1,0 +1,51 @@
+# ARGUS CI (v9.10) — guards the judgment core on every push.
+# Backend: syntax + the pure rule-function unit tests (no network, no keys).
+# Frontend: typecheck + production build + a secret-VALUE grep on the bundle.
+
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  backend-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install minimal deps (only what `import scanner` needs)
+        run: pip install --quiet anthropic flask flask-cors requests pytz python-dotenv json-repair pytest
+      - name: Syntax check
+        run: python -m py_compile scanner.py
+      - name: Rule-engine unit tests
+        run: python -m pytest test_rules.py -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci --prefix web
+      - name: Typecheck
+        run: npm run lint --prefix web
+      - name: Build
+        run: DEPLOY_BASE=/argus/ npm run build --prefix web
+      - name: Secret-value grep (no sk-/AIza values in the bundle)
+        run: |
+          if grep -roE "sk-[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}" web/dist/; then
+            echo "::error::secret-looking value found in bundle"; exit 1
+          fi
+          echo "bundle clean"

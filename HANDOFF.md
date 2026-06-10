@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v9.9.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v9.10.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.9.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v9.10.0。
 
 ---
 
@@ -22,7 +22,7 @@ grep '"version"' web/package.json
 curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3 -m json.tool
 ```
 
-次の実装は **v9.10 変化検知アラート + ルールエンジンのユニットテスト + per-IPレート制限**（下の「ロードマップ」参照）。
+次の実装は **v9.11 moomoo ブリッジ（ローカルOpenD→quote-push→リアルタイム価格）**（下の「ロードマップ」参照）。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v9.9.0**
+- **現在バージョン: v9.10.0**
 
 ---
 
@@ -175,13 +175,19 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - 鮮度: quote が7日超古い → ラベル confidence×0.5 + 【価格データn日遅れ】prefix +
     supportingData.quoteDate/quoteLagDays。UIは amber の `delayed Xw` ピル、mock行は数字を「—」表示
     （実測: 現プランのJ-Quantsは T-1。12週遅れは現在発生していない）
-- **v9.9.0 判断ログ + 朝ダイジェスト（最新）**
+- v9.9.0 判断ログ + 朝ダイジェスト
   - 判断ログ: `web/src/lib/judgmentLog.ts`、localStorage `argus.judgmentLog.v1`（JST日付ごと1件、
     live/partialのみ記録・mockは記録しない）。Todayに「昨日からの変化」+直近7日ストリップ表示
   - `GET /api/argus/daily-digest`（digest-v1、ルールベース合成・LLMなし、textJa=通知用日本語）
   - `.github/workflows/morning-digest.yml`: JST平日7:15に digest を ntfy.sh へ push
     （repo secret `NTFY_TOPIC` 設定時のみ。未設定なら安全にスキップ。workflow_dispatchで手動テスト可）
   - 注: サーバ側の永続DB(Postgres)はまだ。日次差分は端末ログが担当（クロスデバイス同期なし）
+- **v9.10.0 変化検知アラート + ルールテスト + レート制限 + AI ping（最新）**
+  - `market-alerts.yml`: JST平日7〜24時に毎時digestをポーリングし、**変化時のみ** ntfy push
+    （姿勢フリップ / 重要イベントのD-1・D入り。状態はActions cacheで持ち回り。初回はseedのみ）
+  - `test_rules.py`(pytest 17件)が判断コアを保護 + `ci.yml`(push毎にbackendテスト+frontend build+secret-grep)
+  - per-IPレート制限: `/api/argus/*` 120/min、cache-busting系(symbols/jp/us/ids/q付き)30/min、429 JSON
+  - `POST /api/argus/ai-provider-status/ping`(admin): OpenAI/Geminiへ最小"pong"呼び出しでキー疎通確認
 
 ---
 
@@ -203,8 +209,10 @@ GPT-5.5 Pro Handoff は手動コピペで無料・API呼び出しなし（ChatGP
 
 ## 12. ロードマップ（2026-06-10 のレビューで改訂。README / Guide の旧版と差異あり — こちらが最新）
 
-1. **v9.10 変化検知アラート（レジーム反転/イベントD-1/保有銘柄の新カタリスト時のみ ntfy push）+
-   ルールエンジンのユニットテスト + public endpoint の per-IP レート制限** ← 次の実装
+1. **v9.11 moomoo ブリッジ** ← 次の実装。ユーザーのLinuxでOpenD稼働確認済み。
+   設計: admin-token付き `POST /api/argus/quote-push` をバックエンドに追加し、ローカルの小スクリプトが
+   OpenDからJP/USリアルタイム価格を読んで定期push。watchlist系は「pushされた新鮮なquote(<10分)を優先、
+   なければJ-Quants(T-1)/Twelve Dataにフォールバック」。口座認証情報はローカルから出さない。
    （将来: 判断ログのサーバ永続化=無料Postgres。outcome tracking=「あの判断は当たったか」の照合）
 4. v10.0 Portfolio Exposure Layer（保有・数量・平均取得単価・評価・含み損益・配分。
    保有額は機微情報なので localStorage + クライアント側計算を基本に）

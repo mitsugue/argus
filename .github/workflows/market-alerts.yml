@@ -1,0 +1,97 @@
+# ARGUS Market Alerts — change-detection push (v9.10).
+# Polls /api/argus/daily-digest hourly through the JP+US sessions and pushes a
+# ntfy notification ONLY when something actually changed:
+#   - posture flip (e.g. CAUTIOUS → RISK_OFF)
+#   - a high-impact event entering its D-1 / D window
+# Quiet by design: no change → no notification. State is carried between runs
+# via the Actions cache. Uses the same NTFY_TOPIC secret as morning-digest
+# (no-ops gracefully when unset). Side bonus: the hourly poll keeps the Render
+# free dyno warm through market hours.
+
+name: market-alerts
+
+on:
+  schedule:
+    # JST 7:00–24:00 hourly on JP weekdays.
+    - cron: '0 22,23 * * 0-4'   # 22–23 UTC Sun–Thu = 07–08 JST Mon–Fri
+    - cron: '0 0-15 * * 1-5'    # 00–15 UTC Mon–Fri = 09–24 JST Mon–Fri
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  detect-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Restore previous state
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: argus-alert-state-${{ github.run_id }}
+          restore-keys: argus-alert-state-
+
+      - name: Fetch digest and diff
+        id: diff
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4 5 6; do
+            curl -sf --max-time 60 "$BE/api/argus/daily-digest" -o digest.json && break
+            echo "attempt $i failed — retrying in 20s"; sleep 20
+          done
+          test -s digest.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          d = json.load(open('digest.json'))
+          posture = (d.get('posture') or {}).get('label') or '?'
+          # High-impact events currently inside the D-1 / D window.
+          urgent = sorted({f"{e.get('title')}@{e.get('escalation')}"
+                           for e in (d.get('topEvents') or [])
+                           if e.get('escalation') in ('D', 'D-1')})
+          prev = {}
+          if os.path.exists('state.json'):
+              try: prev = json.load(open('state.json'))
+              except Exception: prev = {}
+          alerts = []
+          if prev.get('posture') and prev['posture'] != posture:
+              alerts.append(f"姿勢が変化: {prev['posture']} → {posture}")
+          new_urgent = [u for u in urgent if u not in set(prev.get('urgent') or [])]
+          for u in new_urgent:
+              t, esc = u.rsplit('@', 1)
+              alerts.append(f"イベント接近: {t}（{esc}）")
+          json.dump({'posture': posture, 'urgent': urgent}, open('state.json', 'w'))
+          if alerts and prev:  # first-ever run only seeds state, no alert spam
+              text = "【ARGUS変化検知】\n" + "\n".join(alerts) + \
+                     "\n※ルールベースの状況整理であり、売買指示ではありません。"
+              open('alert.txt', 'w').write(text)
+              print("changed=true")
+              print("summary=" + " / ".join(alerts)[:200])
+          else:
+              print("changed=false")
+              print(f"summary=no change (posture={posture})")
+          PY
+          echo "diff done"
+
+      - name: Push alert (only on change; skipped without NTFY_TOPIC)
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "NTFY_TOPIC not configured — change detected but push skipped."
+            exit 0
+          fi
+          curl -sf --max-time 30 \
+            -H "Title: ARGUS Market Alert" \
+            -H "Priority: high" \
+            -H "Tags: rotating_light" \
+            --data-binary @alert.txt \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
+          echo "alert pushed."
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: argus-alert-state-${{ github.run_id }}
