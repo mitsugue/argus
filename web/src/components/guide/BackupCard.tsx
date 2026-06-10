@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
+import { cloudBackupNow, cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt } from '../../lib/vault';
 
 // Device-data backup UI (v10.3.2; auto-weekly added in v10.3.3 — see
 // lib/backup.ts). Export/restore the only two device-local keys.
@@ -7,6 +8,42 @@ import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup
 export const BackupCard: React.FC = () => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState('');
+  const [pass, setPass] = useState('');
+  const [cloudMsg, setCloudMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const enabled = !!getVaultPass();
+
+  async function enableCloud() {
+    const p = pass.trim();
+    if (p.length < 8) { setCloudMsg('パスフレーズは8文字以上にしてください(長いほど安全)。'); return; }
+    setBusy(true);
+    try {
+      setVaultPass(p);
+      const note = await cloudBackupNow(p);
+      setCloudMsg(`✅ 有効化し、初回バックアップを送信しました。${note} ※このパスフレーズを忘れると復元できません。`);
+      setPass('');
+    } catch (e) {
+      setCloudMsg(`送信に失敗しました(${e instanceof Error ? e.message : e})。後で自動再試行されます。`);
+    } finally { setBusy(false); }
+  }
+
+  async function restoreCloud() {
+    const p = pass.trim();
+    if (!p) { setCloudMsg('復元にはパスフレーズを入力してください。'); return; }
+    setBusy(true);
+    try {
+      const n = await cloudRestore(p);
+      if (n > 0) {
+        setVaultPass(p);
+        setCloudMsg(`✅ ${n}項目をクラウドから復元しました。再読み込みします…`);
+        window.setTimeout(() => location.reload(), 1200);
+      } else {
+        setCloudMsg('復元できるデータがありませんでした。');
+      }
+    } catch (e) {
+      setCloudMsg(String(e instanceof Error ? e.message : e));
+    } finally { setBusy(false); }
+  }
 
   function doExport() {
     const n = downloadBackup(false);
@@ -50,10 +87,34 @@ export const BackupCard: React.FC = () => {
       </div>
       {msg && <p className="backup__msg">{msg}</p>}
       <p className="backup__note">
-        ※復元はこの端末の現在のデータを上書きします。保有数量などの機微データを含むため
-        ファイルの保管場所には注意(ARGUSのサーバーには送信されません)。自動バックアップは
-        週1回・ファイル名 argus-backup-日付-auto.json です。
+        ※復元はこの端末の現在のデータを上書きします。ファイル自動バックアップは週1回
+        (argus-backup-日付-auto.json)。
       </p>
+
+      <div className="backup__cloud">
+        <p className="backup__lead">
+          <b>☁️ クラウド自動バックアップ</b> — パスフレーズを決めて有効化すると、
+          以後は<b>毎日自動で暗号化バックアップがクラウド(GitHub)に保存</b>されます(完全に手放しでOK)。
+          新しい端末では同じパスフレーズを入れて「クラウドから復元」を押すだけです。
+        </p>
+        <div className="backup__actions">
+          <input className="modal__input backup__pass" type="password" value={pass}
+                 placeholder={enabled ? '復元 / パスフレーズ変更用に入力' : 'パスフレーズ(8文字以上・忘れない物)'}
+                 onChange={(e) => setPass(e.target.value)} autoComplete="off" />
+          <button className="asset-btn asset-btn--primary" disabled={busy} onClick={enableCloud}>
+            {enabled ? '今すぐ送信 / 変更' : '有効化して初回送信'}
+          </button>
+          <button className="asset-btn" disabled={busy} onClick={restoreCloud}>クラウドから復元</button>
+        </div>
+        <p className="backup__note">
+          状態: {enabled
+            ? `有効(最終送信 ${lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '—'})。サーバー反映は平日16:05の台帳ラン時。`
+            : '未設定(上でパスフレーズを決めて有効化)。'}
+          データは端末上で暗号化され、サーバーとGitHubには<b>暗号文しか</b>渡りません。
+          パスフレーズを忘れると誰にも復元できません(本人含む)。古い世代は自動削除(直近8世代保持)。
+        </p>
+        {cloudMsg && <p className="backup__msg">{cloudMsg}</p>}
+      </div>
     </div>
   );
 };

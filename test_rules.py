@@ -259,3 +259,16 @@ def test_scenarios_for_matches_frontend_thresholds():
     assert dict(scanner._scenarios_for(-8))["downside_continuation"] == 45
     assert dict(scanner._scenarios_for(0))["sideways_stabilization"] == 50
     assert dict(scanner._scenarios_for(6))["rebound_attempt"] == 25
+
+
+# ── Backup vault relay (v10.3.4) ─────────────────────────────────────
+def test_vault_push_validation():
+    c = scanner.app.test_client()
+    assert c.post("/api/argus/vault-push", json={"vaultId": "short", "blob": "x"}).status_code == 400
+    assert c.post("/api/argus/vault-push", json={"vaultId": "g" * 64, "blob": "x"}).status_code == 400
+    vid = "ab" * 32
+    assert c.post("/api/argus/vault-push", json={"vaultId": vid, "blob": "x" * (300 * 1024)}).status_code == 413
+    r = c.post("/api/argus/vault-push", json={"vaultId": vid, "blob": "ciphertext"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    # pull requires admin (503 locally: token unconfigured)
+    assert c.post("/api/argus/vault-pull").status_code in (401, 503)

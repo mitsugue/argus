@@ -13,6 +13,7 @@ import { useActionLabels } from './hooks/useActionLabels';
 import { useEventRadar } from './hooks/useEventRadar';
 import { postureToCall, shortKind } from './lib/todayCall';
 import { maybeAutoBackup } from './lib/backup';
+import { maybeCloudBackup } from './lib/vault';
 
 interface RouteProps {
   onNavigate: (key: RouteKey) => void;
@@ -45,7 +46,7 @@ const App: React.FC = () => {
   // the last one, silently download argus-backup-<date>-auto.json. The only
   // device-local state is the watchlist/holdings + judgment log — this makes
   // an SSD failure or a Mac replacement cost at most a week of edits.
-  useEffect(() => { maybeAutoBackup(); }, []);
+  useEffect(() => { maybeAutoBackup(); void maybeCloudBackup(); }, []);
 
   const exitReview = () => {
     if (window.location.hash === '#review') {

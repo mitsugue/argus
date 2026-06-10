@@ -3506,6 +3506,45 @@ def api_argus_ai_provider_ping():
     return jsonify(out)
 
 
+# ━━━ Backup vault relay (v10.3.4) ━━━
+# The browser pushes a CLIENT-SIDE-ENCRYPTED backup envelope here; the daily
+# prediction-ledger workflow pulls it (admin token) and commits the ciphertext
+# to the public `ledger` branch (vault/<id>/latest.json). The backend never
+# sees plaintext, holds blobs only in bounded memory, and the vault id is a
+# hash of the user's passphrase — unguessable, and useless without it.
+_VAULT_SLOTS     = {}                 # vaultId -> {"blob": str, "ts": epoch}
+_VAULT_MAX_SLOTS = 10                 # bounded memory on a public endpoint
+_VAULT_MAX_BYTES = 256 * 1024
+_VAULT_ID_RE     = re.compile(r"^[0-9a-f]{64}$")
+
+@app.route("/api/argus/vault-push", methods=["POST"])
+def api_argus_vault_push():
+    body = request.get_json(silent=True) or {}
+    vid  = str(body.get("vaultId") or "")
+    blob = body.get("blob")
+    if not _VAULT_ID_RE.match(vid) or not isinstance(blob, str) or not blob:
+        return jsonify({"error": "bad_payload"}), 400
+    if len(blob) > _VAULT_MAX_BYTES:
+        return jsonify({"error": "too_large"}), 413
+    if vid not in _VAULT_SLOTS and len(_VAULT_SLOTS) >= _VAULT_MAX_SLOTS:
+        oldest = min(_VAULT_SLOTS, key=lambda k: _VAULT_SLOTS[k]["ts"])
+        del _VAULT_SLOTS[oldest]
+    _VAULT_SLOTS[vid] = {"blob": blob, "ts": time.time()}
+    return jsonify({"ok": True, "queued": len(_VAULT_SLOTS),
+                    "noteJa": "受領。次回の台帳ラン(平日16:05)でクラウド(GitHub)に保存されます。"})
+
+@app.route("/api/argus/vault-pull", methods=["POST"])
+def api_argus_vault_pull():
+    # Admin-only drain: the ledger workflow collects pending envelopes and
+    # persists them to git. Ciphertext in, ciphertext out.
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    out = {vid: {"blob": s["blob"], "ts": s["ts"]} for vid, s in _VAULT_SLOTS.items()}
+    _VAULT_SLOTS.clear()
+    return jsonify({"slots": out, "asOf": _ai_now_iso()})
+
+
 # ━━━ Integration Health (public, secret-free) ━━━
 # Summarizes provider configuration + runtime status for the frontend. Reads
 # env presence (booleans only) and existing cached snapshots — NEVER exposes a
