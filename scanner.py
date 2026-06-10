@@ -2331,6 +2331,10 @@ def _scale_ret(r):
     """Decimal return → [-1, 1] via a ±10% cap (transparent, no z-score)."""
     return _clip(r, -0.10, 0.10) / 0.10
 
+# Latest ETF closes stashed by _td_timeseries — consumed by the prediction
+# ledger's class predictions and the /class-quotes scoring endpoint (v10.5).
+_ETF_LAST_PRICE = {}   # sym -> {"price": float, "m1d": float, "ts": epoch}
+
 def _td_timeseries(symbols):
     """Batched daily closes for the ETF universe.
 
@@ -2371,6 +2375,13 @@ def _td_timeseries(symbols):
                         pass
             if len(closes) >= 2:
                 out[sym] = closes  # Twelve Data returns newest-first
+                # Side stash for the prediction ledger (v10.5): latest close +
+                # 1d move per ETF, refreshed whenever ANY caller fetches.
+                _ETF_LAST_PRICE[sym] = {
+                    "price": closes[0],
+                    "m1d": round((closes[0] / closes[1] - 1) * 100, 2),
+                    "ts": time.time(),
+                }
         return out
     except Exception:
         return {}
@@ -3967,12 +3978,62 @@ def get_prediction_snapshot():
             "ai": ai_by_sym.get(l["symbol"]),
         })
 
+    # ── Asset-class predictions (ledger-v2, v10.5) ──
+    # The agreed learning axis: not individual-stock memorization but the
+    # calibration of CONTEXT × ASSET CLASS. Proxies: the regime/alerts ETF
+    # universe + BTC/ETH. _alert_etf_momentum() ensures GLD/TLT/XLRE are
+    # stashed; the regime call above covers SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG.
+    _alert_etf_momentum()
+    CLASS_PROXIES = [
+        ("US_BROAD", "SPY"), ("US_GROWTH", "QQQ"), ("SMALL_CAPS", "IWM"),
+        ("TECH", "XLK"), ("DEFENSIVE", "XLU"), ("GOLD", "GLD"),
+        ("BOND", "TLT"), ("CREDIT", "HYG"), ("REIT", "XLRE"),
+    ]
+    class_predictions = []
+    now_ts = time.time()
+    for cls, sym in CLASS_PROXIES:
+        st = _ETF_LAST_PRICE.get(sym)
+        if not st or now_ts - st["ts"] > 12 * 3600:
+            continue
+        class_predictions.append({
+            "assetClass": cls, "symbol": sym, "price": st["price"],
+            "changePct": st["m1d"],
+            "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(st["m1d"])],
+        })
+    cw = get_crypto_watchlist_snapshot(list(_CRYPTO_DEFAULT_IDS))
+    for q in (cw.get("quotes") or []):
+        if q.get("status") == "live":
+            ccls = ("CRYPTO_BTC" if q["id"] == "bitcoin" else
+                    "CRYPTO_ETH" if q["id"] == "ethereum" else None)
+            if ccls:
+                class_predictions.append({
+                    "assetClass": ccls, "symbol": q["id"], "price": q["priceUsd"],
+                    "changePct": q["changePct"],
+                    "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(q["changePct"])],
+                })
+
+    # ── Posture prediction (the call that everything depends on) ──
+    # Self-describing scoring rule so the scorer never hardcodes thresholds:
+    #   RISK_ON → SPY next move > 0; RISK_OFF → < 0;
+    #   EVENT_WAIT → |SPY move| >= 1.0% (the elevated-risk claim validated by
+    #   an actual move). CAUTIOUS/MIXED make no strong claim → recorded, not scored.
+    posture_label = (al.get("marketPosture", {}) or {}).get("label")
+    spy = _ETF_LAST_PRICE.get("SPY")
+    posture_prediction = None
+    if posture_label and spy and now_ts - spy["ts"] <= 12 * 3600:
+        rule = ({"type": "direction", "sign": 1} if posture_label == "RISK_ON" else
+                {"type": "direction", "sign": -1} if posture_label == "RISK_OFF" else
+                {"type": "absmove", "minPct": 1.0} if posture_label == "EVENT_WAIT" else
+                None)
+        posture_prediction = {"posture": posture_label, "proxy": "SPY",
+                              "price": spy["price"], "rule": rule}
+
     return {
         "dateJst": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
         "asOf": _ai_now_iso(),
-        "engineVersion": "ledger-v1",
+        "engineVersion": "ledger-v2",
         "context": {
-            "posture": (al.get("marketPosture", {}) or {}).get("label"),
+            "posture": posture_label,
             "regimeConfidence": rg.get("confidence"),
             "vixZone": (vol or {}).get("zone"),
             "vixLevel": (vol or {}).get("level"),
@@ -3980,6 +4041,8 @@ def get_prediction_snapshot():
             "aiStatus": ai_status,
         },
         "predictions": predictions,
+        "classPredictions": class_predictions,
+        "posturePrediction": posture_prediction,
         "scoringRule": {
             "horizonDays": 1,
             "buckets": {"downside_continuation": "< -2%", "sideways_stabilization": "-2%..+2%", "rebound_attempt": "> +2%"},
@@ -3990,6 +4053,18 @@ def get_prediction_snapshot():
 @app.route("/api/argus/prediction-snapshot")
 def api_argus_prediction_snapshot():
     return jsonify(get_prediction_snapshot())
+
+@app.route("/api/argus/class-quotes")
+def api_argus_class_quotes():
+    """Latest asset-class proxy prices for the ledger scorer. Warms the
+    regime/alerts caches first so the stash is fresh; crypto is scored via
+    /crypto-watchlist directly."""
+    get_market_regime_snapshot()
+    _alert_etf_momentum()
+    now_ts = time.time()
+    out = {sym: {"price": st["price"], "ageSec": int(now_ts - st["ts"])}
+           for sym, st in _ETF_LAST_PRICE.items() if now_ts - st["ts"] <= 24 * 3600}
+    return jsonify({"asOf": _ai_now_iso(), "quotes": out})
 
 
 # ━━━ Daily Digest (digest-v1) — the agent's morning brief ━━━

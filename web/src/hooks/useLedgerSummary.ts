@@ -18,6 +18,11 @@ export interface LedgerSummary {
   byPosture: Record<string, LedgerAgg>;
   byVixZone: Record<string, LedgerAgg>;
   aiDirectional: { n: number; hits: number; hitRate: number | null };
+  /** ledger-v2 (v10.5): asset-class calibration + the posture call's record. */
+  classes?: { n: number; hits: number; hitRate: number | null; brierMean: number | null;
+              byClass: Record<string, { n: number; hits: number; hitRate: number | null }> };
+  posture?: { n: number; hits: number; hitRate: number | null;
+              byPosture: Record<string, { n: number; hits: number; hitRate: number | null }> };
   noteJa: string;
 }
 

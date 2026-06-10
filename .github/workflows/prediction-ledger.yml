@@ -105,6 +105,8 @@ jobs:
           test -s snap.json
           curl -sf --max-time 60 "$BE/api/argus/japan-watchlist" -o jp.json || echo '{}' > jp.json
           curl -sf --max-time 60 "$BE/api/argus/us-watchlist"   -o us.json || echo '{}' > us.json
+          curl -sf --max-time 90 "$BE/api/argus/class-quotes"    -o cls.json || echo '{}' > cls.json
+          curl -sf --max-time 60 "$BE/api/argus/crypto-watchlist" -o cw.json || echo '{}' > cw.json
           python3 - <<'PY'
           import json, os, glob, datetime
 
@@ -118,12 +120,17 @@ jobs:
                     ensure_ascii=False, indent=1)
           print('recorded', today, len(snap['predictions']), 'predictions')
 
-          # 2. Current live prices for scoring.
+          # 2. Current live prices for scoring (stocks + class proxies + crypto).
           now_price = {}
           for f in ('jp.json', 'us.json'):
               for s in (json.load(open(f)).get('stocks') or []):
                   if s.get('status') == 'live':
                       now_price[s['symbol']] = float(s['price'])
+          cls_price = {sym: q['price'] for sym, q in
+                       ((json.load(open('cls.json')).get('quotes')) or {}).items()}
+          for q in (json.load(open('cw.json')).get('quotes') or []):
+              if q.get('status') == 'live':
+                  cls_price[q['id']] = float(q['priceUsd'])
 
           def bucket(pct):
               if pct < -2: return 'downside_continuation'
@@ -166,13 +173,44 @@ jobs:
                                'argmax': argmax, 'hit': hit, 'brier': round(brier, 4),
                                'action': p['action'], 'aiAction': ai.get('action'),
                                'aiDirectionalHit': ai_hit})
-              if not rows: continue
+              # Asset-class predictions (ledger-v2): same buckets/metrics.
+              crows, chits, cbriers = [], 0, []
+              for p in day.get('classPredictions', []):
+                  cur = cls_price.get(p['symbol'])
+                  if cur is None or not p.get('price'): continue
+                  realized = (cur / p['price'] - 1) * 100
+                  b = bucket(realized)
+                  probs = {s['label']: s['p'] / 100 for s in p['scenarios']}
+                  argmax = max(probs, key=lambda k: probs[k])
+                  hit = (argmax == b)
+                  brier = sum((probs.get(k, 0) - (1.0 if k == b else 0.0)) ** 2
+                              for k in ('downside_continuation', 'sideways_stabilization', 'rebound_attempt'))
+                  chits += hit; cbriers.append(brier)
+                  crows.append({'assetClass': p['assetClass'], 'symbol': p['symbol'],
+                                'realizedPct': round(realized, 2), 'bucket': b,
+                                'argmax': argmax, 'hit': hit, 'brier': round(brier, 4)})
+              # Posture call: graded by its own self-describing rule vs SPY.
+              posture_row = None
+              pp = day.get('posturePrediction')
+              if pp and pp.get('rule') and cls_price.get(pp.get('proxy', 'SPY')):
+                  move = (cls_price[pp['proxy']] / pp['price'] - 1) * 100
+                  r = pp['rule']
+                  ok = ((move > 0) if (r['type'] == 'direction' and r['sign'] > 0) else
+                        (move < 0) if (r['type'] == 'direction') else
+                        (abs(move) >= r.get('minPct', 1.0)))
+                  posture_row = {'posture': pp['posture'], 'movePct': round(move, 2), 'hit': bool(ok)}
+              if not rows and not crows and not posture_row: continue
               score = {'date': d, 'scoredOn': today, 'ageDays': age,
                        'context': day.get('context', {}),
                        'n': len(rows), 'argmaxHits': hits,
-                       'hitRate': round(hits / len(rows), 3),
-                       'brierMean': round(sum(briers) / len(briers), 4),
+                       'hitRate': round(hits / len(rows), 3) if rows else None,
+                       'brierMean': round(sum(briers) / len(briers), 4) if briers else None,
                        'aiDirectional': {'n': ai_total, 'hits': ai_hits},
+                       'classes': {'n': len(crows), 'hits': chits,
+                                   'hitRate': round(chits / len(crows), 3) if crows else None,
+                                   'brierMean': round(sum(cbriers) / len(cbriers), 4) if cbriers else None,
+                                   'rows': crows},
+                       'postureRow': posture_row,
                        'rows': rows}
               json.dump(score, open(spath, 'w'), ensure_ascii=False, indent=1)
               print('scored', d, f"hit {hits}/{len(rows)} brier {score['brierMean']}")
@@ -181,9 +219,35 @@ jobs:
           allscores = [json.load(open(p)) for p in sorted(glob.glob('ledger/scores/*.json'))]
           def agg(items):
               n = sum(s['n'] for s in items); h = sum(s['argmaxHits'] for s in items)
-              bm = sum(s['brierMean'] * s['n'] for s in items) / n if n else None
+              wb = [(s['brierMean'], s['n']) for s in items if s.get('brierMean') is not None]
+              bm = sum(b * w for b, w in wb) / sum(w for _, w in wb) if wb else None
               return {'days': len(items), 'n': n, 'hitRate': round(h / n, 3) if n else None,
                       'brierMean': round(bm, 4) if bm is not None else None}
+          def agg_classes(items):
+              cs = [s.get('classes') or {} for s in items]
+              n = sum(c.get('n', 0) for c in cs); h = sum(c.get('hits', 0) for c in cs)
+              wb = [(c['brierMean'], c['n']) for c in cs if c.get('brierMean') is not None and c.get('n')]
+              bm = sum(b * w for b, w in wb) / sum(w for _, w in wb) if wb else None
+              # Per-class accumulation — the actual learning table.
+              per = {}
+              for c in cs:
+                  for r in c.get('rows', []):
+                      e = per.setdefault(r['assetClass'], {'n': 0, 'hits': 0})
+                      e['n'] += 1; e['hits'] += bool(r['hit'])
+              for k, e in per.items():
+                  e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
+              return {'n': n, 'hits': h, 'hitRate': round(h / n, 3) if n else None,
+                      'brierMean': round(bm, 4) if bm is not None else None, 'byClass': per}
+          def agg_posture(items):
+              ps = [s.get('postureRow') for s in items if s.get('postureRow')]
+              by = {}
+              for r in ps:
+                  e = by.setdefault(r['posture'], {'n': 0, 'hits': 0})
+                  e['n'] += 1; e['hits'] += bool(r['hit'])
+              for k, e in by.items():
+                  e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
+              n = len(ps); h = sum(bool(r['hit']) for r in ps)
+              return {'n': n, 'hits': h, 'hitRate': round(h / n, 3) if n else None, 'byPosture': by}
           by_posture, by_vix = {}, {}
           for s in allscores:
               by_posture.setdefault(s['context'].get('posture') or '?', []).append(s)
@@ -197,6 +261,8 @@ jobs:
               'byVixZone': {k: agg(v) for k, v in by_vix.items()},
               'aiDirectional': {'n': ai_n, 'hits': ai_h,
                                 'hitRate': round(ai_h / ai_n, 3) if ai_n else None},
+              'classes': agg_classes(allscores),
+              'posture': agg_posture(allscores),
               'noteJa': 'シナリオ分布のargmax的中率とBrierスコア(低いほど良い)。1日ホライズン・終値ベース。成績は分類の校正度であり、将来の利益を保証しない。',
           }
           json.dump(summary, open('ledger/summary.json', 'w'), ensure_ascii=False, indent=1)

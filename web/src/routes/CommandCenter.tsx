@@ -221,6 +221,12 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               {ledger.data.aiDirectional.hitRate != null && (
                 <> ・AI方向的中 <b>{Math.round(ledger.data.aiDirectional.hitRate * 100)}%</b>({ledger.data.aiDirectional.n}件)</>
               )}
+              {ledger.data.classes?.hitRate != null && (
+                <> ・資産クラス <b>{Math.round(ledger.data.classes.hitRate * 100)}%</b>({ledger.data.classes.n}件)</>
+              )}
+              {ledger.data.posture?.hitRate != null && (
+                <> ・姿勢の的中 <b>{Math.round(ledger.data.posture.hitRate * 100)}%</b>({ledger.data.posture.n}回)</>
+              )}
               <div className="jlog__acc-note">{ledger.data.noteJa}</div>
             </div>
           )}
