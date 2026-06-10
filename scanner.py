@@ -3355,6 +3355,116 @@ def api_argus_integrations():
     return jsonify(get_integrations_snapshot())
 
 
+# ━━━ Daily Digest (digest-v1) — the agent's morning brief ━━━
+# Rule-based composition of the existing snapshots into a notification-ready
+# Japanese brief. NO LLM. Consumed by the morning GitHub Actions cron (→ ntfy
+# push) and available to anyone via GET. ARGUS classifies, it does not predict.
+_DIGEST_CACHE = {"data": None, "expires": 0.0}
+_DIGEST_TTL   = 900  # 15 min
+# Best-effort previous-digest memory for the "changes" line. In-memory only —
+# resets on dyno restart/sleep, so day-over-day diffs are the FRONTEND log's
+# job (localStorage); this is just a bonus when the dyno stays warm.
+_DIGEST_PREV  = {"dateJst": None, "posture": None}
+
+_POSTURE_CALL_JA = {
+    "EVENT_WAIT": ("WAIT", "イベント通過待ち"),
+    "RISK_OFF":   ("WAIT", "リスク回避"),
+    "CAUTIOUS":   ("HOLD", "慎重維持"),
+    "MIXED":      ("HOLD", "方向感なし"),
+    "RISK_ON":    ("HOLD", "リスク選好(追いかけ買いはしない)"),
+}
+
+def get_daily_digest():
+    now = time.time()
+    if _DIGEST_CACHE["data"] is not None and now < _DIGEST_CACHE["expires"]:
+        return _DIGEST_CACHE["data"]
+
+    al    = get_action_labels()
+    reg   = get_market_regime_snapshot()
+    ev    = get_events_snapshot()
+    posture = (al.get("marketPosture", {}) or {}).get("label") or "CAUTIOUS"
+    posture_ja = (al.get("marketPosture", {}) or {}).get("rationaleJa", "")
+    rg = reg.get("regime", {}) if isinstance(reg, dict) else {}
+    rb = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
+    call, call_ja = _POSTURE_CALL_JA.get(posture, ("WAIT", "中立"))
+    date_jst = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    dow = "月火水木金土日"[datetime.now(TZ_JST).weekday()]
+
+    order = {"D": 0, "D-1": 1, "D-3": 2, "D-7": 3, "D+1": 4, "normal": 5}
+    events = sorted([e for e in (ev.get("events", []) if isinstance(ev, dict) else [])
+                     if e.get("impact") == "high" and (e.get("daysUntil") or 0) >= 0],
+                    key=lambda e: ((e.get("daysUntil") or 0), order.get(e.get("escalation"), 9)))[:5]
+    top_events = [{"title": e.get("title"), "escalation": e.get("escalation"),
+                   "daysUntil": e.get("daysUntil"), "localTimeJst": e.get("localTimeJst")}
+                  for e in events]
+
+    # Notable labels: anything that is not a plain HOLD, or carries high risk.
+    highlights = [{"symbol": l["symbol"], "name": l["name"], "action": l["action"],
+                   "changePct": (l.get("supportingData", {}) or {}).get("changePct"),
+                   "reasonJa": l.get("reasonJa", "")[:80]}
+                  for l in al.get("labels", [])
+                  if l.get("action") != "HOLD" or l.get("risk") == "high"][:5]
+
+    rotations = (reg.get("topRotations", []) if isinstance(reg, dict) else [])[:3]
+
+    changes = []
+    if _DIGEST_PREV["dateJst"] and _DIGEST_PREV["dateJst"] != date_jst and _DIGEST_PREV["posture"]:
+        if _DIGEST_PREV["posture"] != posture:
+            changes.append(f"姿勢が {_DIGEST_PREV['posture']} → {posture} に変化。")
+        else:
+            changes.append(f"姿勢は {posture} を継続。")
+
+    # ── Notification-ready text (calm, no spectacle) ──
+    L = [f"【ARGUS朝ダイジェスト {date_jst}({dow})】"]
+    L.append(f"今日の姿勢: {call}({posture} / {call_ja}・確信度{int(round((rg.get('confidence') or 0) * 100))}%)")
+    if posture_ja:
+        L.append(posture_ja[:90])
+    if rb:
+        L.append(f"金利: US10Y {rb.get('us10y')}% / VIX {rb.get('vix')} / HY OAS {rb.get('hyOas')}%（{rb.get('posture')}）")
+    if top_events:
+        evs = " / ".join(f"{e['title']}({'本日' if e['daysUntil'] == 0 else 'あと' + str(e['daysUntil']) + '日'})" for e in top_events[:3])
+        L.append(f"イベント: {evs}")
+    if highlights:
+        hl = " / ".join(f"{h['symbol']} {h['action']}" for h in highlights[:4])
+        L.append(f"注目: {hl}")
+    if rotations:
+        L.append("資金: " + " / ".join(r.get("label", "") for r in rotations))
+    for c in changes:
+        L.append(c)
+    L.append("※ルールベースの状況整理であり、売買指示・予測ではありません。")
+    text_ja = "\n".join(L)
+
+    status = al.get("status", "mock")
+    payload = {
+        "status": status,
+        "asOf": _ai_now_iso(),
+        "dateJst": date_jst,
+        "engineVersion": "digest-v1",
+        "posture": {"label": posture, "call": call, "rationaleJa": posture_ja,
+                    "confidence": rg.get("confidence")},
+        "ratesBackdrop": {k: rb.get(k) for k in ("us10y", "vix", "hyOas", "posture")} if rb else {},
+        "topEvents": top_events,
+        "topRotations": rotations,
+        "labelHighlights": highlights,
+        "changesSinceLastJa": changes,
+        "textJa": text_ja,
+        "dataLimitations": [
+            "ルールベース合成(LLM不使用)。day-over-dayの厳密な差分は端末側ログが担当。",
+            "サーバ側の前日比較はin-memoryのベストエフォート(再起動で消える)。",
+        ],
+    }
+    _DIGEST_PREV["dateJst"] = date_jst
+    _DIGEST_PREV["posture"] = posture
+    if status != "mock":
+        _DIGEST_CACHE["data"] = payload
+        _DIGEST_CACHE["expires"] = now + _DIGEST_TTL
+    return payload
+
+@app.route("/api/argus/daily-digest")
+def api_argus_daily_digest():
+    return jsonify(get_daily_digest())
+
+
 # ━━━ GPT-5.5 Pro Handoff Export (manual review — NO API call, NO cost) ━━━
 _PRO_HANDOFF_CACHE = {"data": None, "expires": 0.0}
 _PRO_HANDOFF_TTL   = 180  # 3 min

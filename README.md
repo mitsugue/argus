@@ -127,6 +127,19 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v9.9.0 — Judgment log + morning digest (the agent's first push).** ARGUS now
+has memory and a voice. **Judgment log:** every LIVE/PARTIAL Today composition
+is recorded device-locally (`argus.judgmentLog.v1`, one entry per JST date,
+~180 entries; mock is never logged) and the Today page shows "what changed since
+yesterday" plus a 7-day call strip — the foundation for future outcome tracking.
+**Morning digest:** new `GET /api/argus/daily-digest` (`digest-v1`) composes a
+notification-ready Japanese brief (posture/call/confidence, rates backdrop,
+today's high-impact events, label highlights, top rotations — rule-based, no
+LLM), and a GitHub Actions cron (`morning-digest.yml`, 07:15 JST Mon–Fri,
+manual-run capable) pushes it via **ntfy.sh** (zero-signup push relay) when the
+`NTFY_TOPIC` repo secret is set; without the secret it no-ops gracefully. The
+digest contains market commentary only — no holdings, no personal data.
+
 **v9.8.0 — User watchlist ⇔ engine + data-freshness honesty.** The engine no
 longer watches a fixed 11-symbol list: `/japan-watchlist`, `/us-watchlist`, and
 `/action-labels` accept the user's ACTUAL assets (`?symbols=` / `?jp=&us=`,

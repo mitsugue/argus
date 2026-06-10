@@ -76,7 +76,7 @@ const GAPS = [
   'Japan regime uses watchlist breadth as a temporary proxy, not index/sector rotation',
   'No moomoo order flow / order book / tape yet; no VWAP',
   'No regime-shift audit trail explaining why Market Regime changed',
-  'No historical judgment log for past daily calls and action labels',
+  'Judgment log is device-local (localStorage) — no server-side durable history, no outcome tracking (was the call right?) yet',
   'No history of past Top Rotations',
   'No user-specific exposure weighting across asset classes',
   'No portfolio P&L / dollar exposure rendering',

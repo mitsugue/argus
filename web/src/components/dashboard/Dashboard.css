@@ -1054,6 +1054,18 @@
 .today-phase { font-family: var(--font-mono); font-size: 11px; }
 .today-connecting { font-size: 12.5px; color: var(--text-muted); padding: 14px 18px; margin: 0; }
 
+/* ── Judgment log (v9.9.0 device-local memory) ── */
+.jlog { padding: 12px 18px; }
+.jlog__diff { margin: 0; font-size: 12.5px; color: var(--text-sub); line-height: 1.7; }
+.jlog__strip { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+.jlog__row {
+  display: grid; grid-template-columns: 44px auto minmax(0, 1fr) auto;
+  align-items: center; gap: 10px; padding: 4px 0;
+}
+.jlog__date { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+.jlog__posture { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); letter-spacing: 0.03em; }
+.jlog__conf { font-family: var(--font-mono); font-size: 11px; color: var(--text-sub); }
+
 /* ── Market Regime header / backdrop (v9.5.0 live regime engine) ── */
 .regime-head { padding: 14px 18px; margin-bottom: 14px; }
 .regime-head__main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }

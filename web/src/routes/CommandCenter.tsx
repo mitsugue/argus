@@ -1,10 +1,12 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
 import { TopRotations } from '../components/regime/TopRotations';
 import { CompactWatchRow } from '../components/dashboard/CompactWatchRow';
 import { CompactEventRow } from '../components/dashboard/CompactEventRow';
 import { CompactCoreRow } from '../components/dashboard/CompactCoreRow';
+import { ActionPill } from '../components/action/ActionBadge';
+import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
 import { useActionLabels } from '../hooks/useActionLabels';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
@@ -76,6 +78,41 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     () => deriveTodayJudgment(al.data, regime.data, ev.data, Date.now()),
     [al.data, regime.data, ev.data],
   );
+
+  // ── Judgment log (device-local memory) ──
+  // Record today's LIVE/PARTIAL call (mock is never logged — no fake history),
+  // then re-read so the diff/strip below reflect the fresh entry.
+  const [logTick, setLogTick] = useState(0);
+  useEffect(() => {
+    if (phase !== 'live' && phase !== 'partial') return;
+    recordJudgment({
+      date: judgment.date,
+      overall: judgment.overall,
+      risk: judgment.risk,
+      posture: al.data?.marketPosture?.label ?? '—',
+      confidence: regime.data?.regime?.confidence ?? null,
+      summary: judgment.summary,
+      phase,
+      updatedAt: judgment.updatedAt,
+    });
+    setLogTick((t) => t + 1);
+  }, [phase, judgment, al.data, regime.data]);
+
+  const { diffLineJa, recent } = useMemo(() => {
+    void logTick; // re-read after each record
+    const prev = previousJudgment(judgment.date);
+    const posture = al.data?.marketPosture?.label ?? '—';
+    let line: string;
+    if (phase !== 'live' && phase !== 'partial') {
+      line = '接続中 — ライブ判断が確定したら記録します。';
+    } else if (!prev) {
+      line = '本日から判断の記録を開始しました。明日以降「昨日からの変化」をここに表示します。';
+    } else {
+      const changed = prev.overall !== judgment.overall || prev.posture !== posture;
+      line = `昨日(${prev.date.slice(5)}): ${prev.overall}(${prev.posture}) → 今日: ${judgment.overall}(${posture}) — ${changed ? '変化あり' : '変化なし'}`;
+    }
+    return { diffLineJa: line, recent: recentJudgments(7) };
+  }, [logTick, judgment, phase, al.data]);
 
   // Live Top Rotations (mock fallback only when the regime engine is unreachable).
   const rotations: TopRotation[] = useMemo(() => {
@@ -150,6 +187,28 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       }
     >
       <HeroCard judgment={judgment} />
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Judgment Log</span>
+          <span className="section-head__count">device-local memory</span>
+        </div>
+        <div className="card jlog">
+          <p className="jlog__diff">{diffLineJa}</p>
+          {recent.length > 0 && (
+            <div className="jlog__strip">
+              {recent.map((e) => (
+                <div className="jlog__row" key={e.date}>
+                  <span className="jlog__date">{e.date.slice(5)}</span>
+                  <ActionPill action={e.overall} size="sm" />
+                  <span className="jlog__posture">{e.posture}</span>
+                  <span className="jlog__conf">{e.confidence != null ? `${Math.round(e.confidence * 100)}%` : '—'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
 
       <section>
         <div className="section-head">

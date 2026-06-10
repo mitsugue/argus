@@ -1,0 +1,61 @@
+# ARGUS Morning Digest — the agent's daily push.
+# Fetches /api/argus/daily-digest (rule-based, no LLM) every JP weekday morning
+# and pushes the Japanese brief to ntfy.sh (zero-signup push relay).
+#
+# Setup (one-time, optional — the workflow no-ops gracefully without it):
+#   1. Install the ntfy app (iOS/Android) and subscribe to a topic with a long
+#      random name you invent, e.g. "argus-mitsugu-x7k2p9q4w1".
+#   2. Repo → Settings → Secrets and variables → Actions → New repository secret
+#      Name: NTFY_TOPIC / Value: that topic name.
+# The topic name acts as the delivery address+password — keep it private.
+# Digest content is market commentary only (no holdings, no personal data).
+
+name: morning-digest
+
+on:
+  schedule:
+    # 22:15 UTC Sun–Thu = 07:15 JST Mon–Fri (Japan trading mornings)
+    - cron: '15 22 * * 0-4'
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  push-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch digest (retry through Render cold start)
+        id: digest
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4 5 6; do
+            if curl -sf --max-time 60 "$BE/api/argus/daily-digest" -o digest.json; then
+              break
+            fi
+            echo "attempt $i failed (cold start?) — retrying in 20s"
+            sleep 20
+          done
+          test -s digest.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('digest.json'))
+          text = d.get('textJa') or 'ARGUS digest unavailable'
+          open('digest.txt', 'w').write(text)
+          print(f"status={d.get('status')} date={d.get('dateJst')}")
+          PY
+
+      - name: Push to ntfy (skipped when NTFY_TOPIC secret is not set)
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "NTFY_TOPIC not configured — skipping push (digest fetched OK)."
+            exit 0
+          fi
+          curl -sf --max-time 30 \
+            -H "Title: ARGUS Morning Digest" \
+            -H "Tags: chart_with_upwards_trend" \
+            --data-binary @digest.txt \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
+          echo "digest pushed."
