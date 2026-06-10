@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { USWatchlistSnapshot, USStockQuote } from '../types/watch';
 
-// connecting | live | mock — same model as useJapanWatchlist / useRatesSnapshot.
-export type ConnPhase = 'connecting' | 'live' | 'mock';
+// connecting | live | partial | mock — same model as useJapanWatchlist.
+export type ConnPhase = 'connecting' | 'live' | 'partial' | 'mock';
 
 interface State {
   data: USWatchlistSnapshot | null;
@@ -46,7 +46,10 @@ function sleep(ms: number): Promise<void> {
  * MOCK_SNAPSHOT (`phase === "mock"`) when the backend is unset or every attempt
  * fails. Mirrors useJapanWatchlist's connecting/live/mock model.
  */
-export function useUSWatchlist(): State {
+export function useUSWatchlist(symbols?: string[]): State {
+  // Dynamic mode: pass the user's actual US assets (capped at 8 server-side to
+  // stay within Twelve Data's free 8-credits/min). Empty/absent → curated.
+  const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
   const [state, setState] = useState<State>({
     data: null,
     error: null,
@@ -56,12 +59,17 @@ export function useUSWatchlist(): State {
   });
 
   useEffect(() => {
+    const dynamic = symKey.length > 0;
+    const fallback: USWatchlistSnapshot = dynamic
+      ? { status: 'mock', asOf: null, provider: 'twelvedata', stocks: [] }
+      : MOCK_SNAPSHOT;
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock', attempt: 0 });
+      setState({ data: fallback, error: null, loading: false, phase: 'mock', attempt: 0 });
       return;
     }
-    const url = backend.replace(/\/$/, '') + '/api/argus/us-watchlist';
+    const url = backend.replace(/\/$/, '') + '/api/argus/us-watchlist'
+      + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
     let cancelled = false;
 
     async function run() {
@@ -88,7 +96,7 @@ export function useUSWatchlist(): State {
             await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
             continue;
           }
-          setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock', attempt });
+          setState({ data: fallback, error: msg, loading: false, phase: 'mock', attempt });
           return;
         }
       }
@@ -98,7 +106,7 @@ export function useUSWatchlist(): State {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [symKey]);
 
   return state;
 }

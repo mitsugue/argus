@@ -1565,14 +1565,14 @@ def _q_close(q):
     v = q.get("C")
     return v if v is not None else q.get("AdjC")
 
-def _jquants_fetch_quote(s, headers):
-    """Latest + previous daily bar for one symbol → normalized dict or mock."""
+def _jq_fetch_bar_row(code, name, headers):
+    """Latest + previous daily bar for one code → normalized dict, or None."""
     try:
         # Window the query (~150d) so we get the two most recent rows without
         # pulling full history; covers the free plan's ~12-week lag plus buffer.
         frm = (datetime.now(TZ_JST) - timedelta(days=150)).strftime("%Y-%m-%d")
         rows = []
-        params = {"code": s["symbol"], "from": frm}
+        params = {"code": code, "from": frm}
         for _ in range(6):  # follow pagination defensively (usually one page)
             r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
                              headers=headers, params=params, timeout=10)
@@ -1586,14 +1586,14 @@ def _jquants_fetch_quote(s, headers):
         rows = [q for q in rows if _q_close(q) is not None]
         rows.sort(key=lambda q: q.get("Date", ""))
         if len(rows) < 2:
-            return _jp_mock_quote(s)
+            return None
         latest, prev = rows[-1], rows[-2]
         close  = float(_q_close(latest))
         pclose = float(_q_close(prev))
         change = round(close - pclose, 2)
         vol    = latest.get("Vo")
         return {
-            "symbol": s["symbol"], "name": s["name"], "nameJa": s["name"],
+            "symbol": code, "name": name, "nameJa": name,
             "price": close,
             "changeAbs": change,
             "changePct": round((change / pclose) * 100, 2) if pclose else 0.0,
@@ -1602,21 +1602,75 @@ def _jquants_fetch_quote(s, headers):
             "status": "live",
         }
     except Exception:
-        return _jp_mock_quote(s)
+        return None
+
+def _jquants_fetch_quote(s, headers):
+    """Curated-list fetch: live bar row, or the per-symbol mock fallback."""
+    row = _jq_fetch_bar_row(s["symbol"], s["name"], headers)
+    return row if row is not None else _jp_mock_quote(s)
 
 def _jp_mock_snapshot():
     return {"status": "mock", "asOf": None,
             "stocks": [_jp_mock_quote(s) for s in _JP_WATCHLIST]}
 
-def get_japan_watchlist_snapshot():
-    """Live snapshot of the watched Japan names (price/change/volume/date).
+# Dynamic (user-watchlist) symbol support. The engine list is no longer fixed:
+# the frontend passes its actual assets via ?symbols=. Public endpoint →
+# sanitize hard, cap the count, and bound the per-set cache.
+_JP_SYM_RE      = re.compile(r"^[0-9A-Z]{4}$")   # TSE 4-char codes incl. 285A
+_US_SYM_RE      = re.compile(r"^[A-Z][A-Z.\-]{0,9}$")
+_JP_DYN_MAX     = 20
+_US_DYN_MAX     = 8     # Twelve Data free tier: 8 credits/min — one batch stays safe
+_DYN_CACHE_MAX  = 16
+_JP_DYN_CACHE   = {}    # symbols-tuple -> {"data":..., "expires":...}
+_US_DYN_CACHE   = {}
 
-    Mirrors the rates snapshot: parallel fetch, 10-min cache (live only), and
-    a mock fallback so the UI always renders. `asOf` is the latest data date
-    actually returned, so freshness (free plan ~12wk lag vs paid T-1) is
-    surfaced honestly rather than assumed.
+def _sanitize_symbols(raw, pattern, cap):
+    out = []
+    for s in (raw or []):
+        s = s.strip().upper()
+        if s and pattern.match(s) and s not in out:
+            out.append(s)
+    return out[:cap]
+
+def _jq_name_for(code4):
+    """Japanese company name from the cached J-Quants master ('' if unknown)."""
+    for r in _jq_master():
+        if r["code4"] == code4:
+            return r["ja"] or r["en"] or ""
+    return ""
+
+def get_japan_watchlist_snapshot(symbols=None):
+    """Live snapshot of watched Japan names (price/change/volume/date).
+
+    With `symbols=None` → the curated list with mock fallback (cached 10 min,
+    live only). With a user symbol list → dynamic fetch with names from the
+    J-Quants master; rows that fail are OMITTED (no fake prices), cached per
+    symbol-set. `asOf` surfaces the real data date (free plan lags ~12wk).
     """
     now = time.time()
+    if symbols:
+        syms = tuple(_sanitize_symbols(symbols, _JP_SYM_RE, _JP_DYN_MAX))
+        if not syms:
+            return {"status": "mock", "asOf": None, "stocks": []}
+        hit = _JP_DYN_CACHE.get(syms)
+        if hit and now < hit["expires"]:
+            return hit["data"]
+        if not _JQUANTS_API_KEY:
+            return {"status": "mock", "asOf": None, "stocks": []}
+        headers = {"x-api-key": _JQUANTS_API_KEY}
+        def fetch(code):
+            return _jq_fetch_bar_row(code, _jq_name_for(code) or code, headers)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(syms))) as ex:
+            stocks = [q for q in ex.map(fetch, syms) if q is not None]
+        overall = "live" if len(stocks) == len(syms) else ("partial" if stocks else "mock")
+        as_of   = max((q["date"] for q in stocks if q.get("date")), default=None)
+        snapshot = {"status": overall, "asOf": as_of, "stocks": stocks}
+        if stocks:
+            if len(_JP_DYN_CACHE) >= _DYN_CACHE_MAX:
+                _JP_DYN_CACHE.clear()
+            _JP_DYN_CACHE[syms] = {"data": snapshot, "expires": now + _JP_CACHE_TTL}
+        return snapshot
+
     if _JP_CACHE["data"] is not None and now < _JP_CACHE["expires"]:
         return _JP_CACHE["data"]
     if not _JQUANTS_API_KEY:
@@ -1634,7 +1688,9 @@ def get_japan_watchlist_snapshot():
 
 @app.route("/api/argus/japan-watchlist")
 def api_argus_japan_watchlist():
-    return jsonify(get_japan_watchlist_snapshot())
+    raw = (request.args.get("symbols") or "")
+    symbols = [s for s in raw.split(",") if s.strip()] or None
+    return jsonify(get_japan_watchlist_snapshot(symbols))
 
 
 # ━━━ Twelve Data (live US watchlist) ━━━
@@ -1698,23 +1754,59 @@ def _td_parse_row(s, q):
     except Exception:
         return None
 
-def get_us_watchlist_snapshot():
+def get_us_watchlist_snapshot(symbols=None):
     """Live snapshot of the watched US names (price/change/volume/date).
 
-    Mirrors the Japan/FRED pattern: one batched request, 10-min cache (live
-    only), mock fallback. Per the spec, top-level status is "live" only when
-    ALL target symbols parse to valid live rows — otherwise the whole snapshot
-    falls back to mock rather than presenting partial fake-live data.
+    With `symbols=None` → the curated list (one batched request, 10-min cache,
+    full-mock on any miss). With a user symbol list → dynamic batch capped at
+    8 symbols (Twelve Data free tier = 8 credits/min); failed rows are OMITTED
+    (no fake prices) and the per-set cache is bounded.
     """
     now = time.time()
+    if symbols:
+        syms = tuple(_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX))
+        if not syms:
+            return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
+        hit = _US_DYN_CACHE.get(syms)
+        if hit and now < hit["expires"]:
+            return hit["data"]
+        if not _TWELVEDATA_API_KEY:
+            return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
+        try:
+            r = requests.get(_TWELVEDATA_QUOTE,
+                             params={"symbol": ",".join(syms), "apikey": _TWELVEDATA_API_KEY},
+                             timeout=10)
+            r.raise_for_status()
+            body = r.json()
+            if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
+                return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
+            rows = []
+            for sym in syms:
+                q = body.get(sym) if (isinstance(body, dict) and sym in body) else (body if len(syms) == 1 else None)
+                # Dynamic rows take the name from the quote itself.
+                meta = {"symbol": sym, "name": (q or {}).get("name") or sym}
+                row = _td_parse_row(meta, q)
+                if row is not None:
+                    rows.append(row)
+            overall = "live" if len(rows) == len(syms) else ("partial" if rows else "mock")
+            as_of = max((row["date"] for row in rows if row.get("date")), default=None)
+            snapshot = {"status": overall, "asOf": as_of, "provider": "twelvedata", "stocks": rows}
+            if rows:
+                if len(_US_DYN_CACHE) >= _DYN_CACHE_MAX:
+                    _US_DYN_CACHE.clear()
+                _US_DYN_CACHE[syms] = {"data": snapshot, "expires": now + _US_CACHE_TTL}
+            return snapshot
+        except Exception:
+            return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
+
     if _US_CACHE["data"] is not None and now < _US_CACHE["expires"]:
         return _US_CACHE["data"]
     if not _TWELVEDATA_API_KEY:
         return _us_mock_snapshot()
     try:
-        symbols = ",".join(s["symbol"] for s in _US_WATCHLIST)
+        symbols_q = ",".join(s["symbol"] for s in _US_WATCHLIST)
         r = requests.get(_TWELVEDATA_QUOTE,
-                         params={"symbol": symbols, "apikey": _TWELVEDATA_API_KEY},
+                         params={"symbol": symbols_q, "apikey": _TWELVEDATA_API_KEY},
                          timeout=10)
         r.raise_for_status()
         body = r.json()
@@ -1739,7 +1831,9 @@ def get_us_watchlist_snapshot():
 
 @app.route("/api/argus/us-watchlist")
 def api_argus_us_watchlist():
-    return jsonify(get_us_watchlist_snapshot())
+    raw = (request.args.get("symbols") or "")
+    symbols = [s for s in raw.split(",") if s.strip()] or None
+    return jsonify(get_us_watchlist_snapshot(symbols))
 
 
 # ━━━ CoinGecko crypto watchlist (keyless, free) ━━━
@@ -2484,11 +2578,42 @@ def _classify_symbol(meta, chg, esc, posture):
         reason += " 金利水準がグロース株の上値を抑えやすい点も考慮。"
     return action, risk, round(conf, 2), reason, nxt
 
-def get_action_labels():
-    """Rule-based action labels for the watched names, aggregated server-side."""
+def _quote_lag_days(date_str):
+    """Calendar days between a quote's data date and today (JST), or None."""
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        return (datetime.now(TZ_JST).date() - d).days
+    except Exception:
+        return None
+
+_QUOTE_STALE_DAYS = 7  # older than this → label confidence is damped + flagged
+
+def _action_metas(jp, us, jp_symbols, us_symbols):
+    """Engine symbol list. Default = curated _ACTION_SYMBOLS; with user symbol
+    lists → dynamic metas (names from the snapshots / J-Quants master; unknown
+    symbols default to the HIGH-BETA class so the engine stays conservative)."""
+    if jp_symbols is None and us_symbols is None:
+        return _ACTION_SYMBOLS
+    known = {m["symbol"]: m for m in _ACTION_SYMBOLS}
+    names = {}
+    for snap in (jp, us):
+        for s in (snap.get("stocks", []) if isinstance(snap, dict) else []):
+            names[s["symbol"]] = s.get("name") or s["symbol"]
+    metas = []
+    for sym in _sanitize_symbols(jp_symbols or [], _JP_SYM_RE, _JP_DYN_MAX):
+        metas.append(known.get(sym) or
+                     {"symbol": sym, "market": "JP", "name": names.get(sym, sym), "cls": "jp_momentum"})
+    for sym in _sanitize_symbols(us_symbols or [], _US_SYM_RE, _US_DYN_MAX):
+        metas.append(known.get(sym) or
+                     {"symbol": sym, "market": "US", "name": names.get(sym, sym), "cls": "us_growth"})
+    return metas
+
+def get_action_labels(jp_symbols=None, us_symbols=None):
+    """Rule-based action labels, aggregated server-side. Accepts the user's
+    actual watchlist symbols (dynamic) — default is the curated list."""
     rates = get_rates_snapshot()
-    jp    = get_japan_watchlist_snapshot()
-    us    = get_us_watchlist_snapshot()
+    jp    = get_japan_watchlist_snapshot(jp_symbols)
+    us    = get_us_watchlist_snapshot(us_symbols)
     ev    = get_events_snapshot()
     reg   = get_market_regime_snapshot()  # 6h-cached; no extra cost when warm
     reg_status = reg.get("status") if isinstance(reg, dict) else "mock"
@@ -2506,7 +2631,7 @@ def get_action_labels():
             quotes[s["symbol"]] = s
 
     labels, changes = [], []
-    for meta in _ACTION_SYMBOLS:
+    for meta in _action_metas(jp, us, jp_symbols, us_symbols):
         q   = quotes.get(meta["symbol"])
         esc = esc_by_market[meta["market"]]
         if not q or q.get("status") != "live":
@@ -2532,12 +2657,20 @@ def get_action_labels():
             action = "WAIT"
             conf = round(min(0.6, conf + 0.05), 2)
             reason += f" 市場レジームが{reg_label}のため、高ベータは様子見に引き上げ。"
+        # Data-freshness honesty: J-Quants free plan lags ~12 weeks. A label
+        # computed from an old price must say so and carry LESS confidence —
+        # never present a stale-data judgment as a fresh one.
+        lag = _quote_lag_days(q.get("date") or "")
+        if lag is not None and lag > _QUOTE_STALE_DAYS:
+            conf = round(conf * 0.5, 2)
+            reason = f"【価格データ{lag}日遅れ】" + reason
         labels.append({
             "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
             "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
             "supportingData": {"changePct": chg, "volume": q.get("volume", 0),
                                "eventEscalation": esc or "normal", "ratesPosture": posture,
-                               "marketRegime": reg_label or "n/a"},
+                               "marketRegime": reg_label or "n/a",
+                               "quoteDate": q.get("date"), "quoteLagDays": lag},
             "nextConditionJa": nxt, "status": "live",
         })
 
@@ -2585,7 +2718,12 @@ def get_action_labels():
 
 @app.route("/api/argus/action-labels")
 def api_argus_action_labels():
-    return jsonify(get_action_labels())
+    def _parse(name):
+        raw = (request.args.get(name) or "")
+        vals = [s for s in raw.split(",") if s.strip()]
+        return vals or None
+    jp_syms, us_syms = _parse("jp"), _parse("us")
+    return jsonify(get_action_labels(jp_syms, us_syms))
 
 
 # ━━━ AI Judgment Layer (OpenAI primary + Gemini double-check) — DORMANT ━━━

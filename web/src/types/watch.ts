@@ -62,7 +62,8 @@ export interface JapanStockQuote {
 }
 
 export interface JapanWatchlistSnapshot {
-  status: JpQuoteStatus;       // 'live' if any stock is live, else 'mock'
+  // 'live' if all rows live; dynamic (user-symbol) fetches may be 'partial'.
+  status: JpQuoteStatus | 'partial';
   asOf: string | null;         // latest data date across stocks (freshness)
   stocks: JapanStockQuote[];
 }
@@ -83,7 +84,7 @@ export interface USStockQuote {
 }
 
 export interface USWatchlistSnapshot {
-  status: JpQuoteStatus;
+  status: JpQuoteStatus | 'partial';
   asOf: string | null;
   provider?: string;
   stocks: USStockQuote[];

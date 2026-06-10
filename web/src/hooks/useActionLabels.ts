@@ -35,8 +35,14 @@ function sleep(ms: number): Promise<void> {
  * v0). Falls back to MOCK_SNAPSHOT (`phase === "mock"`) when the backend is
  * unset or every attempt fails. The backend may report `partial` when some
  * source is missing but conservative labels can still be produced.
+ *
+ * Pass `params` with the user's actual JP/US symbols for DYNAMIC labels —
+ * unknown symbols are classified conservatively (high-beta) server-side.
+ * Without params (or with both lists empty) the curated default is used.
  */
-export function useActionLabels(): State {
+export function useActionLabels(params?: { jp?: string[]; us?: string[] }): State {
+  const jpKey = params?.jp?.length ? params.jp.slice().sort().join(',') : '';
+  const usKey = params?.us?.length ? params.us.slice().sort().join(',') : '';
   const [state, setState] = useState<State>({
     data: null,
     error: null,
@@ -51,7 +57,11 @@ export function useActionLabels(): State {
       setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock', attempt: 0 });
       return;
     }
-    const url = backend.replace(/\/$/, '') + '/api/argus/action-labels';
+    const qs: string[] = [];
+    if (jpKey) qs.push(`jp=${encodeURIComponent(jpKey)}`);
+    if (usKey) qs.push(`us=${encodeURIComponent(usKey)}`);
+    const url = backend.replace(/\/$/, '') + '/api/argus/action-labels'
+      + (qs.length ? `?${qs.join('&')}` : '');
     let cancelled = false;
 
     async function run() {
@@ -88,7 +98,7 @@ export function useActionLabels(): State {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [jpKey, usKey]);
 
   return state;
 }

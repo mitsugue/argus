@@ -127,6 +127,19 @@ in v0 (no `EXIT`/`TRIM`/`ADD`/`BUY DIP` until trend/flow/news confirmation
 arrives), and degrades to neutral `HOLD` when a source is missing. No external
 LLM and no invented VWAP/flow/news.
 
+**v9.8.0 — User watchlist ⇔ engine + data-freshness honesty.** The engine no
+longer watches a fixed 11-symbol list: `/japan-watchlist`, `/us-watchlist`, and
+`/action-labels` accept the user's ACTUAL assets (`?symbols=` / `?jp=&us=`,
+sanitized + capped — JP ≤ 20, US ≤ 8 to respect Twelve Data's 8-credits/min —
+with bounded per-set caches). Symbols added in the UI now get live quotes AND
+rule labels (names resolved from the J-Quants master; unknown symbols default to
+the conservative high-beta class). Failed rows are OMITTED, never faked.
+Freshness honesty: a label computed from a quote older than 7 days is damped
+(confidence × 0.5) and prefixed 【価格データn日遅れ】 with
+`supportingData.quoteDate/quoteLagDays`; the Watchlist shows an amber
+`delayed Xw` pill instead of a green `live`, and mock rows render "—" instead of
+plausible fake prices (Today's priority list uses live quotes only).
+
 **v9.7.0 — Live Today hero + CoinGecko crypto.** The Daily Command Center is no
 longer seeded: the hero judgment ("today's call" / risk / regime tags / summary /
 reasons / touch-avoid / next condition), the sidebar "Today's call" pill, the

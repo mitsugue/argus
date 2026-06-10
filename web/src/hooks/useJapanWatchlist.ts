@@ -4,7 +4,7 @@ import type { JapanWatchlistSnapshot, JapanStockQuote } from '../types/watch';
 // Connection phase, surfaced to the UI so a cold-starting backend reads as
 // "connecting" rather than snapping straight to "mock" — same model as
 // useRatesSnapshot.
-export type ConnPhase = 'connecting' | 'live' | 'mock';
+export type ConnPhase = 'connecting' | 'live' | 'partial' | 'mock';
 
 interface State {
   data: JapanWatchlistSnapshot | null;
@@ -24,7 +24,8 @@ const MOCK_SNAPSHOT: JapanWatchlistSnapshot = {
   status: 'mock',
   asOf: null,
   stocks: [
-    mk('8058', 'Mitsubishi Heavy Industries', 2900, 26, 0.90, 9_800_000),
+    // 8058 = 三菱商事 (Mitsubishi Corporation) — NOT Mitsubishi Heavy (7011).
+    mk('8058', 'Mitsubishi Corporation', 2900, 26, 0.90, 9_800_000),
     mk('9984', 'SoftBank Group', 9800, -180, -1.80, 8_100_000),
     mk('5801', 'Furukawa Electric', 6400, 120, 1.91, 3_200_000),
     mk('5803', 'Fujikura', 7200, 210, 3.01, 11_500_000),
@@ -47,11 +48,16 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Live snapshot of the watched Japan names (price / change / volume / date),
- * sourced from the backend `/api/argus/japan-watchlist` (J-Quants). Falls back
- * to MOCK_SNAPSHOT (`phase === "mock"`) when the backend is unset or every
- * attempt fails. Mirrors useRatesSnapshot's connecting/live/mock model.
+ * sourced from the backend `/api/argus/japan-watchlist` (J-Quants).
+ *
+ * Pass `symbols` (the user's actual JP assets) for a DYNAMIC fetch — the
+ * backend resolves names from the J-Quants master and omits failed rows.
+ * Without `symbols` (or with an empty list) the curated default is fetched.
+ * Dynamic mode falls back to an EMPTY mock (no fake prices); the curated mode
+ * keeps the legacy plausible-mock so the shell still renders offline.
  */
-export function useJapanWatchlist(): State {
+export function useJapanWatchlist(symbols?: string[]): State {
+  const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
   const [state, setState] = useState<State>({
     data: null,
     error: null,
@@ -61,12 +67,17 @@ export function useJapanWatchlist(): State {
   });
 
   useEffect(() => {
+    const dynamic = symKey.length > 0;
+    const fallback: JapanWatchlistSnapshot = dynamic
+      ? { status: 'mock', asOf: null, stocks: [] }
+      : MOCK_SNAPSHOT;
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock', attempt: 0 });
+      setState({ data: fallback, error: null, loading: false, phase: 'mock', attempt: 0 });
       return;
     }
-    const url = backend.replace(/\/$/, '') + '/api/argus/japan-watchlist';
+    const url = backend.replace(/\/$/, '') + '/api/argus/japan-watchlist'
+      + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
     let cancelled = false;
 
     async function run() {
@@ -94,7 +105,7 @@ export function useJapanWatchlist(): State {
             await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
             continue;
           }
-          setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock', attempt });
+          setState({ data: fallback, error: msg, loading: false, phase: 'mock', attempt });
           return;
         }
       }
@@ -104,7 +115,7 @@ export function useJapanWatchlist(): State {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [symKey]);
 
   return state;
 }

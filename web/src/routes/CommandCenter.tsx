@@ -61,12 +61,15 @@ const formatDate = (iso: string) => {
 };
 
 export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
-  const al = useActionLabels();
+  const { assets } = useAssets();
+  // The engine follows the USER's actual watchlist (dynamic symbols, v9.8).
+  const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
+  const usSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
+  const al = useActionLabels({ jp: jpSyms, us: usSyms });
   const regime = useMarketRegime();
   const ev = useEventRadar();
-  const jp = useJapanWatchlist();
-  const us = useUSWatchlist();
-  const { assets } = useAssets();
+  const jp = useJapanWatchlist(jpSyms);
+  const us = useUSWatchlist(usSyms);
 
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
@@ -87,9 +90,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   // Priority watchlist: real action labels + live quotes, most urgent first.
   // Rows without a quote are skipped — no fake prices on the home page.
   const { priority, totalNamed } = useMemo(() => {
+    // LIVE quotes only — a mock fallback price must never appear on Today.
     const quotes = new Map<string, { price: number; changePct: number; changeAbs: number; volume: number }>();
-    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, s);
-    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, s);
+    for (const s of jp.data?.stocks ?? []) if (s.status === 'live') quotes.set(s.symbol, s);
+    for (const s of us.data?.stocks ?? []) if (s.status === 'live') quotes.set(s.symbol, s);
     const entries: (WatchEntry & { __conf: number })[] = [];
     for (const l of al.data?.labels ?? []) {
       const q = quotes.get(l.symbol);

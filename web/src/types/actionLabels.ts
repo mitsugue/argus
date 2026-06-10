@@ -2,7 +2,7 @@
 
 export type SnapshotStatus = 'live' | 'partial' | 'mock';
 export type LabelRisk = 'low' | 'medium' | 'high';
-export type PostureLabel = 'RISK_ON' | 'CAUTIOUS' | 'RISK_OFF' | 'EVENT_WAIT';
+export type PostureLabel = 'RISK_ON' | 'CAUTIOUS' | 'RISK_OFF' | 'EVENT_WAIT' | 'MIXED';
 
 export interface ActionLabel {
   symbol: string;
@@ -17,6 +17,9 @@ export interface ActionLabel {
     volume: number;
     eventEscalation: string;    // "D-3" | "normal" | ...
     ratesPosture: string;       // "elevated" | "neutral" | "easing"
+    marketRegime?: string;      // regime label (v9.5+)
+    quoteDate?: string | null;  // data date behind the label (v9.8+)
+    quoteLagDays?: number | null; // calendar-day lag; >7 = stale-damped
   };
   nextConditionJa: string;
   status: 'live' | 'mock';
