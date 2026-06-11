@@ -95,6 +95,28 @@ jobs:
               print('no pending vault envelopes')
           PY
 
+      # ai-persist-v1: the public GET payload (no secrets) is committed to the
+      # ledger branch so a restarted Render dyno can restore the latest real AI
+      # view instead of showing "not run yet" all day.
+      - name: Persist AI judgment for dyno-restart restore
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          curl -s --max-time 60 "$BE/api/argus/ai-judgment" -o ai.json || echo '{}' > ai.json
+          python3 - <<'PY'
+          import json, os
+          try:
+              d = json.load(open('ai.json'))
+          except Exception:
+              d = {}
+          if isinstance(d, dict) and d.get('status') in ('live', 'partial') and d.get('labels'):
+              os.makedirs('ledger/ai', exist_ok=True)
+              json.dump(d, open('ledger/ai/latest.json', 'w'), ensure_ascii=False)
+              print('AI judgment persisted:', d.get('status'), d.get('asOf'))
+          else:
+              s = d.get('status') if isinstance(d, dict) else '?'
+              print(f'no live AI judgment to persist (status={s}) — previous file kept')
+          PY
+
       - name: Record today's predictions + score the past
         run: |
           BE="https://argus-backend-3j2m.onrender.com"

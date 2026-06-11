@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.6.1 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.7.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.6.1。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.7.0。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.6.1**
+- **現在バージョン: v10.7.0**
 
 ---
 
@@ -238,6 +238,14 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - ledgerブランチに vercel.json {"git":{"deploymentEnabled":false}} を配置 — 旧 "stock-scanner"
     Vercelプロジェクトが日次ledgerコミットでビルド失敗("No Flask entrypoint")していた件の恒久止血。
     プロジェクト自体の削除はユーザー操作(Vercel→Settings→Delete Project)
+- v10.7.0 AI永続化(ai-persist-v1) + 通知の定時配信
+  - AI判断のキャッシュは30分TTL+メモリのみ → 16:35以降と再起動後は「not run yet」になっていた。
+    prediction-ledger.yml が実行後の public GET payload を ledger/ai/latest.json に永続化し、
+    scanner.py の `_ai_cached_result()` が「メモリ→ledger復元(`_ai_try_restore`)」の順で解決。
+    復元は10分back-off・6秒timeout・最大120h(週末耐性)・runMode="restored"。検証は `_ai_restore_validate`(pure・pytest4件)
+  - morning-digest.yml: GitHub無料cronの2〜3.5h遅延対策 — 06:49/19:49 JSTに早発火し、
+    ntfyのDelayヘッダで08:30/22:00 JSTちょうどにサーバー側配信(目標時刻超過時は即時送信)
+  - 通知のClickヘッダ削除(digest+alerts) — タップでntfy内で全文表示、アプリへ飛ばない(ユーザー要望)
 
 ---
 

@@ -300,3 +300,40 @@ def test_news_theme_level_bands():
     assert scanner._news_theme_level(7) == "calm"
     assert scanner._news_theme_level(8) == "elevated"
     assert scanner._news_theme_level(20) == "high"
+
+
+# ── AI judgment ledger restore (ai-persist-v1, v10.7) ────────────────
+def _ai_payload(status="live", as_of=None, labels=None):
+    as_of = as_of or datetime.datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    labels = [{"symbol": "8058"}] if labels is None else labels
+    return {"status": status, "asOf": as_of, "labels": labels}
+
+
+def test_ai_restore_accepts_fresh_live_run():
+    assert scanner._ai_restore_validate(_ai_payload()) is not None
+    assert scanner._ai_restore_validate(_ai_payload(status="partial")) is not None
+
+
+def test_ai_restore_rejects_mock_and_garbage():
+    assert scanner._ai_restore_validate(_ai_payload(status="mock")) is None
+    assert scanner._ai_restore_validate(_ai_payload(status="no_cached_result")) is None
+    assert scanner._ai_restore_validate(None) is None
+    assert scanner._ai_restore_validate("not a dict") is None
+    assert scanner._ai_restore_validate({}) is None
+
+
+def test_ai_restore_rejects_empty_labels_or_missing_asof():
+    assert scanner._ai_restore_validate(_ai_payload(labels=[])) is None
+    p = _ai_payload(); del p["asOf"]
+    assert scanner._ai_restore_validate(p) is None
+    assert scanner._ai_restore_validate(_ai_payload(as_of="not-a-date")) is None
+
+
+def test_ai_restore_rejects_runs_older_than_max_age():
+    now = datetime.datetime(2026, 6, 11, 12, 0, tzinfo=pytz.utc)
+    ok = (now - datetime.timedelta(hours=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    old = (now - datetime.timedelta(hours=121)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    future = (now + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert scanner._ai_restore_validate(_ai_payload(as_of=ok), now_utc=now) is not None
+    assert scanner._ai_restore_validate(_ai_payload(as_of=old), now_utc=now) is None
+    assert scanner._ai_restore_validate(_ai_payload(as_of=future), now_utc=now) is None

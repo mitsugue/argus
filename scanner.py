@@ -2985,6 +2985,67 @@ _AI_RESULT_CACHE = {"data": None, "expires": 0.0}
 # just the status of the most recent admin-triggered run, if any.
 _AI_LAST_RUN = {"oai": None, "gem": None, "groundingEnabled": None, "at": None}
 
+# ── AI judgment persistence (ai-persist-v1) ──────────────────────────────────
+# The in-memory cache dies on every free-dyno sleep/restart and its 30-min TTL
+# expires long before the next daily 16:05 JST run — so the app said "not run
+# yet" for most of the day even though a real run existed. The daily workflow
+# now persists each run to the ledger branch (ledger/ai/latest.json) and a
+# fresh/expired dyno silently restores it from GitHub raw. The persisted JSON
+# is exactly what the public GET already serves — no secrets involved.
+_LEDGER_RAW_BASE = os.environ.get(
+    "LEDGER_RAW_BASE", "https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger")
+_AI_RESTORE_MAX_AGE_H = 120          # weekend/holiday tolerance; UI stamps run age
+_AI_RESTORE_BACKOFF_S = 600
+_AI_RESTORE_STATE = {"lastTry": 0.0}
+
+def _ai_restore_validate(d, now_utc=None):
+    """Pure validation of a persisted AI payload (unit-tested). Accepts only a
+    real run (live/partial, non-empty labels, parseable asOf) no older than
+    _AI_RESTORE_MAX_AGE_H. Returns the dict or None — never raises."""
+    if not isinstance(d, dict) or d.get("status") not in ("live", "partial"):
+        return None
+    if not isinstance(d.get("labels"), list) or not d["labels"] or not d.get("asOf"):
+        return None
+    try:
+        run_at = datetime.strptime(d["asOf"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+    except Exception:
+        return None
+    now = now_utc or datetime.now(pytz.utc)
+    age_h = (now - run_at).total_seconds() / 3600
+    if age_h > _AI_RESTORE_MAX_AGE_H or age_h < -1:
+        return None
+    return d
+
+def _ai_try_restore():
+    """Fetch the last persisted run from the ledger branch. Bounded (10-min
+    back-off, 6s timeout), never raises."""
+    now = time.time()
+    if now - _AI_RESTORE_STATE["lastTry"] < _AI_RESTORE_BACKOFF_S:
+        return None
+    _AI_RESTORE_STATE["lastTry"] = now
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/ai/latest.json", timeout=6)
+        if r.status_code != 200:
+            return None
+        d = _ai_restore_validate(r.json())
+        if not d:
+            return None
+        d["runMode"] = "restored"
+        _AI_RESULT_CACHE["data"] = d
+        _AI_RESULT_CACHE["expires"] = time.time() + _AI_CACHE_TTL
+        add_log(f"[AI] restored persisted judgment from ledger (asOf={d.get('asOf')}, status={d.get('status')})")
+        return d
+    except Exception as e:
+        add_log(f"[AI] ledger restore failed: {type(e).__name__}")
+        return None
+
+def _ai_cached_result():
+    """The valid in-memory AI run, else a ledger-restored one, else None."""
+    cached = _AI_RESULT_CACHE["data"]
+    if cached and time.time() < _AI_RESULT_CACHE["expires"]:
+        return cached
+    return _ai_try_restore()
+
 _AI_CONSERVATIVE = {"WAIT", "HOLD", "WAIT FOR PULLBACK"}
 _AI_RANK = {"EXIT": 0, "TRIM": 1, "WAIT FOR PULLBACK": 2, "WAIT": 3, "BUY DIP": 4, "ADD": 5, "HOLD": 6}
 
@@ -3201,7 +3262,9 @@ def _ai_judgment_truth():
     oai = bool(_OPENAI_API_KEY)
     gem = bool(GEMINI_API_KEY)
     admin = bool(_ARGUS_ADMIN_TOKEN)
-    cached = _AI_RESULT_CACHE["data"]
+    # In-memory cache, falling back to the run persisted on the ledger branch
+    # (survives dyno restarts and the 30-min TTL — ai-persist-v1).
+    cached = _ai_cached_result() if (enabled and (oai or gem)) else _AI_RESULT_CACHE["data"]
     has_cache = bool(cached) and time.time() < _AI_RESULT_CACHE["expires"]
     cached_status = (cached.get("status") if has_cache else ("expired" if cached else "none"))
     last_run_at = (cached.get("asOf") if cached else None) or _AI_LAST_RUN.get("at")
@@ -3379,9 +3442,10 @@ def api_argus_ai_judgment():
     if not _OPENAI_API_KEY and not GEMINI_API_KEY:
         return jsonify(_ai_disabled_payload(
             "missing_keys", "AI judgment is enabled but no OpenAI/Gemini API key is configured on the server."))
-    cached = _AI_RESULT_CACHE["data"]
-    if cached and time.time() < _AI_RESULT_CACHE["expires"]:
-        return jsonify({**cached, "runMode": "cached"})
+    cached = _ai_cached_result()
+    if cached:
+        run_mode = "restored" if cached.get("runMode") == "restored" else "cached"
+        return jsonify({**cached, "runMode": run_mode})
     return jsonify(_ai_disabled_payload("no_cached_result",
                                         "No cached AI judgment yet — an admin-triggered run is required."))
 
