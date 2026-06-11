@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.6.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.6.1 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.6.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.6.1。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.6.0**
+- **現在バージョン: v10.6.1**
 
 ---
 
@@ -232,6 +232,12 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - フロント: 戦略カード詳細に「大口純流入率 X%(本日累計・moomoo)」行(±20%で緑/赤)
   - **注意: ブリッジ側の反映には AWS で git pull + systemctl restart argus-bridge が必要**。
     JP市場のcapital_distribution提供可否は口座の気配権限依存 — 未提供銘柄はflowなし(自動スキップ)で安全
+- v10.6.1 株価の自動更新 + Vercel遺物対応
+  - useJapanWatchlist / useUSWatchlist: 60秒毎のサイレント自動更新(タブ非表示中はスキップ、
+    visibilitychange で復帰時に即時更新)。失敗時は最後の正常データを保持(connecting/mockへ落とさない)
+  - ledgerブランチに vercel.json {"git":{"deploymentEnabled":false}} を配置 — 旧 "stock-scanner"
+    Vercelプロジェクトが日次ledgerコミットでビルド失敗("No Flask entrypoint")していた件の恒久止血。
+    プロジェクト自体の削除はユーザー操作(Vercel→Settings→Delete Project)
 
 ---
 

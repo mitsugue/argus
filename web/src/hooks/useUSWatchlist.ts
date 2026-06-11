@@ -36,6 +36,11 @@ const MAX_ATTEMPTS = 3;
 const ATTEMPT_TIMEOUT_MS = 8_000;
 const RETRY_DELAYS_MS = [3_000, 6_000];
 
+// Auto-refresh: the moomoo bridge pushes quotes every ~60s, so re-fetch on the
+// same cadence while the tab is visible. Silent — keeps showing the last good
+// data on a failed refresh instead of flashing back to "connecting"/mock.
+const REFRESH_INTERVAL_MS = 60_000;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
 }
@@ -102,9 +107,36 @@ export function useUSWatchlist(symbols?: string[]): State {
       }
     }
 
+    // Silent background refresh — only swaps in fresh data, never degrades the
+    // visible state on failure.
+    async function refresh() {
+      if (cancelled || document.hidden) return;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
+      try {
+        const r = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!r.ok || cancelled) return;
+        const data = (await r.json()) as USWatchlistSnapshot;
+        if (cancelled) return;
+        setState((s) => ({ ...s, data, error: null, phase: data.status }));
+      } catch {
+        clearTimeout(timer);
+      }
+    }
+    const refreshTimer = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    // Returning to the tab after a while → refresh immediately, don't wait out
+    // the remainder of the interval.
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     void run();
     return () => {
       cancelled = true;
+      clearInterval(refreshTimer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [symKey]);
 
