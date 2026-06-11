@@ -4258,6 +4258,94 @@ def _scenarios_for(chg):
     if chg < 5:   return [("downside_continuation", 25), ("sideways_stabilization", 50), ("rebound_attempt", 25)]
     return [("downside_continuation", 30), ("sideways_stabilization", 45), ("rebound_attempt", 25)]
 
+# ── Close Pin Intraday Ledger (closepin-v1, v10.11) ──────────────────────────
+# The second ledger system of the user-approved architecture: at ~14:30 JST a
+# REALTIME price pin + a scenario distribution for "where does today's 15:30
+# close land vs this pin" is recorded; the 16:05 daily run scores it the SAME
+# day. Same-day feedback = the fastest calibration loop in the system.
+# Realtime-only by honesty: a T-1 J-Quants close cannot pin an intraday
+# prediction, so rows without a fresh moomoo push are excluded.
+_CLOSEPIN_BANDS = (0.25, 0.8)   # % vs pin: |x|<0.25 flat / 0.25–0.8 up·down / >0.8 strong.
+                                # ≈ a one-hour sigma for JP large caps: the daily ±2% band
+                                # scaled by √(1h/6.5h) ≈ 0.39 → ~0.8%, half of it = 0.25%.
+_CLOSEPIN_ACTIVES_JP = ["8058", "9984", "5801", "5803", "6584", "285A", "9501"]
+
+def _closepin_scenarios(chg_so_far, flow_ratio, posture):
+    """Pure (unit-tested): scenario distribution for the close-vs-pin move.
+    Calm baseline 10/20/40/20/10 with two small, capped tilts:
+      - momentum continuation (intraday trends mildly persist into the close;
+        ±0.04 per 1% of day change, capped ±0.12 so it never dominates)
+      - big-money flow confirmation (same signal family as _flow_adjust)
+    Elevated-rates posture damps only the strong-up tail. Sums to 1."""
+    p = [0.10, 0.20, 0.40, 0.20, 0.10]  # strongDown, down, flat, up, strongUp
+    tilt = max(-0.12, min(0.12, (chg_so_far or 0.0) * 0.04))
+    if isinstance(flow_ratio, (int, float)):
+        tilt += max(-0.06, min(0.06, flow_ratio * 0.15))
+    tilt = max(-0.15, min(0.15, tilt))
+    if tilt >= 0:
+        p = [p[0] - tilt * 0.3, p[1] - tilt * 0.7, p[2], p[3] + tilt * 0.7, p[4] + tilt * 0.3]
+    else:
+        t = -tilt
+        p = [p[0] + t * 0.3, p[1] + t * 0.7, p[2], p[3] - t * 0.7, p[4] - t * 0.3]
+    if posture == "elevated":
+        d = min(0.03, p[4] * 0.3)
+        p[4] -= d
+        p[2] += d
+    p = [max(0.02, x) for x in p]
+    s = sum(p)
+    p = [round(x / s, 3) for x in p]
+    p[2] = round(p[2] + (1.0 - sum(p)), 3)  # rounding drift lands on flat
+    return {"strongDown": p[0], "down": p[1], "flat": p[2], "up": p[3], "strongUp": p[4]}
+
+_CLOSEPIN_CACHE = {"data": None, "expires": 0.0}
+
+def get_closepin_snapshot():
+    rates = get_rates_snapshot()
+    posture = _rates_posture(rates)
+    sensor_syms = [s for s, _ in _L1_SENSORS_JP]
+    syms = sensor_syms + [s for s in _CLOSEPIN_ACTIVES_JP if s not in sensor_syms]
+    jp = get_japan_watchlist_snapshot(syms)
+    rows = []
+    for q in (jp.get("stocks", []) if isinstance(jp, dict) else []):
+        # Realtime pins only — see module comment above.
+        if q.get("status") != "live" or q.get("source") != "moomoo-rt":
+            continue
+        chg = q.get("changePct")
+        fl = q.get("flow") or {}
+        flow_ratio = fl.get("bigNetRatio") if isinstance(fl, dict) else None
+        sym = q["symbol"]
+        rows.append({
+            "symbol": sym, "name": q.get("name"),
+            "layer": 1 if sym in sensor_syms else _layer_of(sym),
+            "pinPrice": q.get("price"), "changePct": chg, "flowRatio": flow_ratio,
+            "bandPct": list(_CLOSEPIN_BANDS),
+            "scenarios": _closepin_scenarios(chg, flow_ratio, posture),
+        })
+    return {
+        "engineVersion": "closepin-v1",
+        "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "dateJst": datetime.now(pytz.timezone("Asia/Tokyo")).strftime("%Y-%m-%d"),
+        "status": "live" if rows else "no_realtime",
+        "marketPosture": posture,
+        "rows": rows,
+        "scoringRule": {
+            "targetJa": "同日15:30の終値がピン価格に対してどのバケットに着地するか",
+            "buckets": {"flatWithinPct": _CLOSEPIN_BANDS[0], "strongBeyondPct": _CLOSEPIN_BANDS[1]},
+            "noteJa": "リアルタイム価格(moomooブリッジ)が取れた銘柄のみピン。T-1価格では当日予測にならないため除外。",
+        },
+    }
+
+@app.route("/api/argus/closepin-snapshot")
+def api_argus_closepin_snapshot():
+    # Public read for the pin workflow; 2-min cache coalesces bursts.
+    now = time.time()
+    if _CLOSEPIN_CACHE["data"] and now < _CLOSEPIN_CACHE["expires"]:
+        return jsonify(_CLOSEPIN_CACHE["data"])
+    snap = get_closepin_snapshot()
+    _CLOSEPIN_CACHE["data"] = snap
+    _CLOSEPIN_CACHE["expires"] = now + 120
+    return jsonify(snap)
+
 def get_prediction_snapshot():
     al  = get_action_labels()
     jp  = get_japan_watchlist_snapshot()

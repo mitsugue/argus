@@ -1,0 +1,99 @@
+# ARGUS Close Pin Intraday Ledger — the PIN half (closepin-v1, v10.11).
+# At ~14:30 JST a realtime price pin + close-scenario distribution is recorded
+# to ledger/closepin/days/YYYY-MM-DD.json. The 16:05 prediction-ledger run
+# scores it the SAME day against the actual 15:30 close.
+#
+# Punctual trigger = the user's EC2 cron (bridge/trigger_closepin.sh at 05:30
+# UTC). The GitHub schedule below is only a fallback — it runs HOURS late, so
+# a strict time window guard rejects pins outside 14:20–15:20 JST (a pin taken
+# after the close is meaningless). One pin per day, no force-overwrite: the
+# pin's whole value is that it CANNOT be revised in hindsight.
+
+name: closepin-pin
+
+on:
+  schedule:
+    - cron: '30 5 * * 1-5'   # 05:30 UTC = 14:30 JST Mon-Fri (fallback, often late)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Window + dedupe guard
+        id: guard
+        run: |
+          NOW_JST=$(TZ=Asia/Tokyo date +%H%M)
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          if [ "$NOW_JST" -lt 1420 ] || [ "$NOW_JST" -gt 1520 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "outside pin window (JST $NOW_JST, need 14:20-15:20) — a late pin is not a prediction"
+            exit 0
+          fi
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/closepin/days/$TODAY.json?cb=$RANDOM")
+          if [ "$CODE" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "today ($TODAY) already pinned — pins are immutable"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch pin snapshot (retry through Render cold start)
+        if: steps.guard.outputs.skip != 'true'
+        id: snap
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          # RUNNER_TEMP survives the later checkout (which cleans the workspace).
+          for i in 1 2 3 4 5 6; do
+            curl -sf --max-time 60 "$BE/api/argus/closepin-snapshot" -o "$RUNNER_TEMP/pin.json" && break
+            echo "attempt $i failed — retrying in 20s"; sleep 20
+          done
+          test -s "$RUNNER_TEMP/pin.json"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          d = json.load(open(os.environ['RUNNER_TEMP'] + '/pin.json'))
+          rows = d.get('rows') or []
+          # Holiday / bridge-down honesty: fewer than 3 realtime rows means
+          # there is no meaningful session to pin — record nothing.
+          ok = d.get('status') == 'live' and len(rows) >= 3
+          print(f"ok={'true' if ok else 'false'}")
+          print(f"summary=status={d.get('status')} rows={len(rows)} posture={d.get('marketPosture')}")
+          PY
+
+      - name: Checkout ledger branch
+        if: steps.guard.outputs.skip != 'true' && steps.snap.outputs.ok == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Commit pin to ledger branch
+        if: steps.guard.outputs.skip != 'true' && steps.snap.outputs.ok == 'true'
+        run: |
+          git fetch origin ledger:ledger 2>/dev/null && git checkout ledger || git checkout --orphan ledger
+          git rm -rq --cached . 2>/dev/null || true
+          find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          mkdir -p ledger/closepin/days ledger/closepin/scores
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          test -s "$RUNNER_TEMP/pin.json"
+          cp "$RUNNER_TEMP/pin.json" "ledger/closepin/days/$TODAY.json"
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/closepin/
+          git commit -m "closepin: $TODAY pin"
+          git push origin HEAD:ledger
+          echo "pinned $TODAY (${{ steps.snap.outputs.summary }})"
+
+      - name: Notify on failure (skipped without NTFY_TOPIC)
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          [ -z "$NTFY_TOPIC" ] && exit 0
+          curl -s --max-time 30 \
+            -H "Title: ARGUS closepin FAILED" -H "Priority: high" -H "Tags: warning" \
+            -d "引けピン記録ワークフローが失敗しました。Actionsを確認してください。" \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true

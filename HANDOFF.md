@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.10.2 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.11.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.10.2。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.11.0。
 
 ---
 
@@ -15,13 +15,26 @@
 - **22:30 JST〜**: USセッションで15秒価格更新の実地検証(ブリッジ15秒化はAWS反映済み・サーバー側計測で確認済み)
 - **翌朝08:30**: 朝ダイジェスト定時テスト
 - ユーザー操作待ち: Finnhubキー(任意)・Vercel旧プロジェクト削除確認・端末統合(スマホ→Mac→プレビューの復元手順)
-- 次の開発フェーズ: **Close Pin Intraday Ledger**(15:30引けピン台帳。3層構造の残り半分)
+- ~~次の開発フェーズ: Close Pin Intraday Ledger~~ → **v10.11.0で実装済み**(下記)
 - **cron-reliability-v1 導入済み**: GitHub cronは時間単位で遅延するため、台帳ランの正トリガーは
   EC2のcron(07:05 UTC)→workflow_dispatch(bridge/trigger_ledger.sh、fine-grained PAT使用)。
   workflowに二重実行ガード(gateジョブ: 当日記録済み+schedule起動なら即終了)。
   **ユーザー操作待ち: PAT発行+EC2セットアップ(スクリプト冒頭の手順3行)**。
   morning-digestはDelayヘッダで2h11mの遅延まで吸収(超過時は即時送信=遅着)。digestの外部トリガー化は
   二重通知防止の設計が必要なため見送り中(やるならGH scheduleの削除とセット)
+
+- v10.11.0 Close Pin Intraday Ledger(closepin-v1) — 3層アーキテクチャの第二台帳
+  - 毎営業日14:30 JST: `/api/argus/closepin-snapshot`(2分キャッシュ)が JPセンサー6+実戦7(計12ユニーク)の
+    リアルタイム価格をピン+`_closepin_scenarios`(pure・pytest4件)で終値シナリオ分布(バンド±0.25/±0.8%
+    ≈1時間σ、モメンタム継続+大口フローの微傾斜、capped)。**source=moomoo-rt の行のみ**(T-1除外・正直設計)
+  - closepin-pin.yml: 時刻窓ガード(JST14:20-15:20以外は拒否=遅延cronの後出しピン防止)+1日1ピン不可変。
+    正トリガー=EC2 cron 05:30 UTC(bridge/trigger_closepin.sh、**ユーザーのcrontab追加待ち**)
+  - 採点: prediction-ledger.yml(16:05)内のステップで同日採点 — 終値はブリッジの引け後push
+    (source=moomoo-rt & date=today の行のみ採点)。closepin/scores/ + closepin/summary.json
+    (overall/byPosture/byLayer/byMember)。日次台帳とは完全に独立した系統
+  - ブリッジのデフォルト銘柄にJPセンサー5本(1306/1321/8306/7203/9432)追加 → 計16コード。
+    **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
+  - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
 ## 0. 最初にやること（現状確認）
 
@@ -65,7 +78,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.10.2**
+- **現在バージョン: v10.11.0**
 
 ---
 

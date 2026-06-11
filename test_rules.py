@@ -430,3 +430,44 @@ def test_vault_relay_roundtrip_and_validation():
     assert d["blob"] == "ciphertext-xyz" and isinstance(d["ts"], float)
     # relay reads are non-destructive
     assert c.get(f"/api/argus/vault-relay?vaultId={vid}").status_code == 200
+
+
+# ── Close Pin Intraday Ledger (closepin-v1, v10.11) ──────────────────
+def test_closepin_scenarios_sum_to_one_and_baseline_flat():
+    sc = scanner._closepin_scenarios(0.0, None, "neutral")
+    assert abs(sum(sc.values()) - 1.0) < 1e-6
+    assert max(sc, key=sc.get) == "flat"          # calm day → flat is argmax
+
+
+def test_closepin_scenarios_momentum_and_flow_tilt():
+    up = scanner._closepin_scenarios(2.5, 0.4, "neutral")
+    down = scanner._closepin_scenarios(-2.5, -0.4, "neutral")
+    assert up["up"] > up["down"] and down["down"] > down["up"]
+    assert abs(sum(up.values()) - 1.0) < 1e-6
+    # tilts are capped — flat must stay a serious contender even on a big day
+    assert up["flat"] >= 0.3
+
+
+def test_closepin_scenarios_elevated_damps_strong_up():
+    neu = scanner._closepin_scenarios(1.0, None, "neutral")
+    ele = scanner._closepin_scenarios(1.0, None, "elevated")
+    assert ele["strongUp"] < neu["strongUp"]
+
+
+def test_closepin_snapshot_realtime_only(monkeypatch):
+    # T-1 J-Quants rows (source != moomoo-rt) must NOT be pinned.
+    fake = {"status": "live", "asOf": None, "stocks": [
+        {"symbol": "8058", "name": "Mitsubishi Corporation", "price": 4600.0,
+         "changePct": 1.2, "volume": 1, "date": "2026-06-11", "status": "live",
+         "source": "moomoo-rt", "flow": {"bigNetRatio": 0.3}},
+        {"symbol": "9432", "name": "NTT", "price": 150.0, "changePct": 0.1,
+         "volume": 1, "date": "2026-06-10", "status": "live", "source": "jquants"},
+    ]}
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot", lambda syms=None: fake)
+    monkeypatch.setattr(scanner, "get_rates_snapshot", lambda: {"status": "mock"})
+    monkeypatch.setattr(scanner, "_rates_posture", lambda r: "neutral")
+    snap = scanner.get_closepin_snapshot()
+    assert snap["status"] == "live" and len(snap["rows"]) == 1
+    r = snap["rows"][0]
+    assert r["symbol"] == "8058" and r["layer"] == 1 and r["pinPrice"] == 4600.0
+    assert abs(sum(r["scenarios"].values()) - 1.0) < 1e-6

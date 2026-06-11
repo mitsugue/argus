@@ -528,6 +528,93 @@ jobs:
           print('summary:', summary.get('overall'))
           PY
 
+      # closepin-v1: score today's 14:30 pin against the actual 15:30 close
+      # (same-day feedback). Close prices come from the moomoo bridge, which
+      # keeps pushing the final price after the cash close — rows whose quote
+      # is not a fresh same-day moomoo price are left unscored (honesty over
+      # coverage: a T-1 J-Quants value is NOT today's close at 16:05).
+      - name: Score today's close pin
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          PIN="ledger/closepin/days/$TODAY.json"
+          SCORE="ledger/closepin/scores/$TODAY.json"
+          if [ ! -s "$PIN" ]; then echo "no pin today — nothing to score"; exit 0; fi
+          if [ -s "$SCORE" ]; then echo "already scored today"; exit 0; fi
+          SYMS=$(python3 -c "import json;print(','.join(r['symbol'] for r in json.load(open('$PIN'))['rows']))")
+          curl -sf --max-time 90 "$BE/api/argus/japan-watchlist?symbols=$SYMS" -o close.json || echo '{}' > close.json
+          python3 - <<'PY'
+          import json, os, glob
+          today = os.popen("TZ=Asia/Tokyo date +%F").read().strip()
+          pin = json.load(open(f'ledger/closepin/days/{today}.json'))
+          closes = {}
+          try:
+              for q in (json.load(open('close.json')).get('stocks') or []):
+                  if q.get('source') == 'moomoo-rt' and q.get('date') == today:
+                      closes[q['symbol']] = q.get('price')
+          except Exception:
+              pass
+          flat_b, strong_b = (pin.get('scoringRule', {}).get('buckets', {}).get('flatWithinPct', 0.25),
+                              pin.get('scoringRule', {}).get('buckets', {}).get('strongBeyondPct', 0.8))
+          LABELS = ['strongDown', 'down', 'flat', 'up', 'strongUp']
+          def bucket(pct):
+              if pct <= -strong_b: return 'strongDown'
+              if pct <= -flat_b:   return 'down'
+              if pct <  flat_b:    return 'flat'
+              if pct <  strong_b:  return 'up'
+              return 'strongUp'
+          rows, hits, briers = [], 0, []
+          for r in pin.get('rows') or []:
+              close = closes.get(r['symbol'])
+              if not close or not r.get('pinPrice'):
+                  rows.append({'symbol': r['symbol'], 'layer': r.get('layer'), 'scored': False})
+                  continue
+              pct = (close - r['pinPrice']) / r['pinPrice'] * 100.0
+              b = bucket(pct)
+              sc = r.get('scenarios') or {}
+              pred = max(sc, key=sc.get) if sc else None
+              hit = (pred == b)
+              brier = sum((sc.get(l, 0) - (1.0 if l == b else 0.0)) ** 2 for l in LABELS)
+              rows.append({'symbol': r['symbol'], 'layer': r.get('layer'), 'scored': True,
+                           'closePct': round(pct, 3), 'bucket': b, 'predicted': pred,
+                           'hit': hit, 'brier': round(brier, 4)})
+              hits += hit; briers.append(brier)
+          n = sum(1 for r in rows if r.get('scored'))
+          out = {'date': today, 'engineVersion': 'closepin-v1',
+                 'posture': pin.get('marketPosture'), 'n': n, 'hits': hits,
+                 'hitRate': round(hits / n, 3) if n else None,
+                 'brierMean': round(sum(briers) / n, 4) if n else None, 'rows': rows}
+          json.dump(out, open(f'ledger/closepin/scores/{today}.json', 'w'), ensure_ascii=False, indent=1)
+          # Running summary: overall + byPosture + byLayer + byMember.
+          allsc = [json.load(open(p)) for p in sorted(glob.glob('ledger/closepin/scores/*.json'))]
+          def agg(items):
+              n = sum(s['n'] for s in items); h = sum(s['hits'] for s in items)
+              wb = [(s['brierMean'], s['n']) for s in items if s.get('brierMean') is not None]
+              bm = sum(b * w for b, w in wb) / sum(w for _, w in wb) if wb else None
+              return {'days': len(items), 'n': n, 'hitRate': round(h / n, 3) if n else None,
+                      'brierMean': round(bm, 4) if bm is not None else None}
+          by_p, by_l, by_m = {}, {}, {}
+          for s in allsc:
+              by_p.setdefault(s.get('posture') or '?', []).append(s)
+              for r in s.get('rows') or []:
+                  if not r.get('scored'): continue
+                  e = by_l.setdefault(str(r.get('layer')), {'n': 0, 'hits': 0})
+                  e['n'] += 1; e['hits'] += bool(r['hit'])
+                  m = by_m.setdefault(r['symbol'], {'n': 0, 'hits': 0})
+                  m['n'] += 1; m['hits'] += bool(r['hit'])
+          for d in (by_l, by_m):
+              for e in d.values():
+                  e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
+          summary = {'updated': today, 'engineVersion': 'closepin-v1',
+                     'overall': agg(allsc) if allsc else None,
+                     'byPosture': {k: agg(v) for k, v in by_p.items()},
+                     'byLayer': by_l, 'byMember': by_m,
+                     'noteJa': '14:30ピン vs 同日15:30終値のバケット採点。リアルタイム価格が取れた行のみ。日次台帳とは独立の系統。'}
+          json.dump(summary, open('ledger/closepin/summary.json', 'w'), ensure_ascii=False, indent=1)
+          print(f"closepin scored: n={n} hits={hits}")
+          PY
+
       - name: Commit to ledger branch
         if: github.event.inputs.mode != 'ai-only'
         run: |

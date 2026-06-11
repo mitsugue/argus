@@ -39,9 +39,13 @@ INTERVAL = max(10, int(os.environ.get("PUSH_INTERVAL_SEC", "15")))
 FLOW_INTERVAL = max(INTERVAL, int(os.environ.get("FLOW_INTERVAL_SEC", "60")))
 # moomoo codes: "<MARKET>.<SYMBOL>", e.g. JP.7203 / US.NVDA. Edit to match the
 # assets you watch in ARGUS (and your account's quote permissions).
+# v10.11: the JP Layer-1 sensors (1306/1321/8306/7203/9432) ride along so the
+# Close Pin ledger can pin them with realtime prices (16 codes, still 1
+# snapshot request per cycle).
 CODES = [c.strip() for c in os.environ.get(
     "PUSH_SYMBOLS",
     "JP.8058,JP.9984,JP.5801,JP.5803,JP.6584,JP.285A,JP.9501,"
+    "JP.1306,JP.1321,JP.8306,JP.7203,JP.9432,"
     "US.NVDA,US.AAPL,US.TSLA,US.META").split(",") if c.strip()]
 
 
