@@ -14,6 +14,7 @@ import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
+import { useMarketNews } from '../hooks/useMarketNews';
 import { useAssets } from '../hooks/useAssets';
 import {
   deriveTodayJudgment, toMarketEvents, mapRuleAction, coreActionFor, combinePhase,
@@ -67,6 +68,7 @@ const formatDate = (iso: string) => {
 export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const { assets } = useAssets();
   const ledger = useLedgerSummary();
+  const news = useMarketNews();
   const aiJ = useAIJudgment();
   const aiStateJa = useMemo(() => {
     if (aiJ.phase === 'connecting') return null;
@@ -257,6 +259,28 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           )}
         </div>
       </section>
+
+      {news.data && news.data.items.length > 0 && (
+        <section>
+          <div className="section-head">
+            <span className="section-head__title">Market News</span>
+            <span className="section-head__count">速報・参考(英語)</span>
+          </div>
+          <div className="card mnews">
+            {news.data.items.slice(0, 6).map((n) => (
+              <a className={`mnews__row${n.major ? ' mnews__row--major' : ''}`}
+                 key={n.url || n.headline} href={n.url} target="_blank" rel="noreferrer">
+                <span className="mnews__flag">{n.major ? '⚡' : '・'}</span>
+                <span className="mnews__head">{n.headline}</span>
+                <span className="mnews__meta">
+                  {n.source}{n.datetime ? ` · ${Math.max(0, Math.round((Date.now() / 1000 - n.datetime) / 60))}分前` : ''}
+                </span>
+              </a>
+            ))}
+            <div className="mnews__note">{news.data.noteJa}</div>
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="section-head">

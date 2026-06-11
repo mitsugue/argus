@@ -3698,6 +3698,62 @@ def _news_theme_level(count):
     if count >= 8:  return "elevated"
     return "calm"
 
+# ── Market News feed (news-v2, v10.12) ───────────────────────────────────────
+# GDELT's News Radar counts CRISIS headlines only — a scheduled ECB hike never
+# shows up (user caught this gap on 2026-06-11: ECB +0.25% was invisible).
+# This feed pulls Finnhub's general market news (free tier) and flags
+# market-moving topics so the Top screen surfaces them within minutes.
+# Honest limits: headlines are English, unverified, and informational — the
+# judgment engine does NOT consume them (reaction-based signals stay primary).
+_MARKET_NEWS_CACHE = {"data": None, "expires": 0.0}
+_MARKET_NEWS_TTL = 600        # 10 min — Finnhub free tier is generous but finite
+_MARKET_NEWS_FAIL_TTL = 300
+_NEWS_MAJOR_RE = re.compile(
+    r"\b(fed|fomc|ecb|boe|boj|bank of japan|rate (hike|cut|decision)|raises? rates?|"
+    r"cuts? rates?|interest rate|intervention|yen|emergency|default|bankruptc|crash|"
+    r"tariff|sanction|war|missile|inflation|cpi|jobs report|payrolls)\b", re.I)
+
+def get_market_news():
+    if not FINNHUB_API_KEY:
+        return {"status": "missing_key", "asOf": _ai_now_iso(), "items": [],
+                "noteJa": "FINNHUB_API_KEY未設定のため市場速報は停止中。"}
+    now = time.time()
+    if _MARKET_NEWS_CACHE["data"] and now < _MARKET_NEWS_CACHE["expires"]:
+        return _MARKET_NEWS_CACHE["data"]
+    try:
+        r = requests.get("https://finnhub.io/api/v1/news",
+                         params={"category": "general", "token": FINNHUB_API_KEY}, timeout=8)
+        r.raise_for_status()
+        items = []
+        for n in (r.json() or [])[:40]:
+            h = str(n.get("headline") or "")[:200]
+            if not h:
+                continue
+            items.append({
+                "headline": h,
+                "source": str(n.get("source") or "")[:40],
+                "url": str(n.get("url") or "")[:300],
+                "datetime": n.get("datetime"),   # unix seconds
+                "major": bool(_NEWS_MAJOR_RE.search(h)),
+            })
+            if len(items) >= 14:
+                break
+        out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
+               "noteJa": "Finnhub市場ニュース(英語・参考情報)。⚡=金融政策/介入/危機などの重要キーワード検出。判断エンジンには入力されない。"}
+        _MARKET_NEWS_CACHE["data"] = out
+        _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_TTL
+        return out
+    except Exception as e:
+        add_log(f"[news] finnhub market news failed: {type(e).__name__}")
+        _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_FAIL_TTL
+        return _MARKET_NEWS_CACHE["data"] or {
+            "status": "unavailable", "asOf": _ai_now_iso(), "items": [],
+            "noteJa": "市場速報を一時取得できません(自動リトライ)。"}
+
+@app.route("/api/argus/market-news")
+def api_argus_market_news():
+    return jsonify(get_market_news())
+
 def get_news_radar():
     now = time.time()
     if _NEWS_CACHE["data"] is not None and now < _NEWS_CACHE["expires"]:

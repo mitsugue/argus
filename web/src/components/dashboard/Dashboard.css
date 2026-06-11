@@ -814,6 +814,21 @@
 /* calibration-v1: ledger track record → confidence, one quiet line. */
 .asset-calibration { padding: 4px 2px 10px; font-size: 11px; color: var(--text-faint); }
 
+/* news-v2: Market News feed on Today (Finnhub headlines, ⚡ = market-moving). */
+.mnews { padding: 6px 0; }
+.mnews__row {
+  display: flex; align-items: baseline; gap: 8px; padding: 7px 14px;
+  text-decoration: none; color: var(--text-main); font-size: 12.5px;
+  border-bottom: 1px solid var(--line-faint, rgba(255,255,255,0.05));
+}
+.mnews__row:last-of-type { border-bottom: none; }
+.mnews__row:hover { background: rgba(255,255,255,0.03); }
+.mnews__flag { flex: none; width: 16px; }
+.mnews__row--major .mnews__head { color: var(--warn, #e8b04b); font-weight: 600; }
+.mnews__head { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mnews__meta { flex: none; font-size: 10.5px; color: var(--text-faint); }
+.mnews__note { padding: 6px 14px 8px; font-size: 10.5px; color: var(--text-faint); }
+
 /* Genre groups (Japanese Stocks / US Stocks / Investment Trusts / Crypto). */
 .asset-groups { display: flex; flex-direction: column; }
 .asset-group { margin-bottom: 22px; }

@@ -471,3 +471,11 @@ def test_closepin_snapshot_realtime_only(monkeypatch):
     r = snap["rows"][0]
     assert r["symbol"] == "8058" and r["layer"] == 1 and r["pinPrice"] == 4600.0
     assert abs(sum(r["scenarios"].values()) - 1.0) < 1e-6
+
+
+# ── Market News feed (news-v2, v10.12) ───────────────────────────────
+def test_news_major_keyword_detection():
+    assert scanner._NEWS_MAJOR_RE.search("ECB raises rates by 25 basis points")
+    assert scanner._NEWS_MAJOR_RE.search("Fed signals rate cut in September")
+    assert scanner._NEWS_MAJOR_RE.search("Japan intervenes to support yen")
+    assert not scanner._NEWS_MAJOR_RE.search("Apple unveils new MacBook lineup")
