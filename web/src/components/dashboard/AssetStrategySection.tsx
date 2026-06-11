@@ -280,6 +280,39 @@ const SortableAssetRow: React.FC<{
   aiAgeMin?: number | null;
 }> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel, aiAgeMin }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
+  // Per-symbol Pro Handoff (v10.12.2, user request): a SMALL copy button that
+  // builds a prompt about THIS symbol only — the global handoff stays for the
+  // whole-market consult. Client-side from data already on the card; no API.
+  const [proCopied, setProCopied] = useState(false);
+  async function copyProPrompt() {
+    const name0 = asset.displayNameJa || asset.displayName;
+    const L: string[] = [];
+    L.push(`あなたは経験豊富な投資アドバイザーです。以下は私の判断支援アプリARGUS(ルールベース+AI二重チェック)が出力した「${asset.symbol} ${name0}」の現在の判断です。これを踏まえて相談に乗ってください。`);
+    L.push('');
+    L.push(`■ 銘柄: ${asset.symbol} ${name0}(市場: ${asset.market})`);
+    if (strat.status !== 'mock' && strat.price != null) {
+      L.push(`■ 現在値: ${strat.price}(前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}・データ日 ${strat.date ?? '—'})`);
+    }
+    L.push(`■ ARGUSの判断: ${strat.action}(リスク ${strat.risk}・確信度 ${strat.confidence != null ? Math.round(strat.confidence * 100) + '%' : '—'})`);
+    L.push(`■ 戦略: ${strat.strategyJa}`);
+    L.push(`■ 理由: ${strat.reasonJa}`);
+    L.push(`■ 次に待つ条件: ${strat.nextConditionJa}`);
+    L.push(`■ 判断が変わる条件: ${strat.whatChangesJa}`);
+    if (strat.bigFlowRatio != null) L.push(`■ 大口資金フロー(本日累計・純流入率): ${(strat.bigFlowRatio * 100).toFixed(0)}%`);
+    if (aiLabel) L.push(`■ AI予想(GPT-5.5+Gemini): ${aiLabel.aiView} / 提案 ${aiLabel.aiFinalAction}${aiLabel.openaiReasonJa ? ` — ${aiLabel.openaiReasonJa}` : ''}`);
+    if (strat.catalystNoteJa) L.push(`■ 直近の材料: ${strat.catalystNoteJa}`);
+    if (strat.dataLimitations.length) L.push(`■ データの限界: ${strat.dataLimitations.join(' / ')}`);
+    L.push('');
+    L.push('質問: (1) この判断の妥当性と見落としているリスクは? (2) あなたならこの銘柄をどう扱う?(エントリー/イグジットの具体的条件) (3) 今後1週間で監視すべき指標やイベントは? 売買指示ではなく判断材料の整理としてお願いします。');
+    const text = L.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setProCopied(true);
+      window.setTimeout(() => setProCopied(false), 2500);
+    } catch {
+      window.prompt('コピーできませんでした。手動で選択してください:', text);
+    }
+  }
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   const name = asset.displayNameJa || asset.displayName;
   const fresh = freshnessOf(strat);
@@ -403,6 +436,11 @@ const SortableAssetRow: React.FC<{
           <div className="asset-detail__foot">
             <span>updated {ageMin(strat.lastUpdated)}</span>
             <span className="asset-detail__actions">
+              <button className="asset-mini" aria-label={`Copy ${asset.symbol} prompt for GPT Pro`}
+                      title="この銘柄についてGPT-5.5 Proに相談するプロンプトをコピー"
+                      onClick={copyProPrompt}>
+                {proCopied ? '✓ Copied' : '🤖 Pro相談'}
+              </button>
               <button className="asset-mini asset-mini--danger" aria-label={`Remove ${asset.symbol}`} onClick={() => onRemove(asset.id)}>Remove</button>
             </span>
           </div>

@@ -120,9 +120,11 @@ jobs:
             exit 0
           fi
           # No Click header: tapping a notification should show the text in
-          # ntfy, not jump to the app (user request 2026-06-11).
+          # ntfy, not jump to the app (user request 2026-06-11). JST send time
+          # in the title — iOS collapses timestamps to "yesterday" (2026-06-12).
+          SENTAT=$(TZ=Asia/Tokyo date "+%m/%d %H:%M")
           curl -sf --max-time 30 \
-            -H "Title: ARGUS Market Alert" \
+            -H "Title: ARGUS Market Alert ($SENTAT)" \
             -H "Priority: high" \
             -H "Tags: rotating_light" \
             --data-binary @alert.txt \

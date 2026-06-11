@@ -81,16 +81,22 @@ jobs:
               target = now.replace(hour=13, minute=0, second=0, microsecond=0)
           margin = datetime.timedelta(seconds=120)
           delay = int(target.timestamp()) if target > now + margin else 0
+          # Delivery time shown IN the title — iOS notification lists collapse
+          # timestamps to "yesterday", so the JST send time must be explicit
+          # (user request 2026-06-12).
+          jst = datetime.timezone(datetime.timedelta(hours=9))
+          shown = (target if delay else now).astimezone(jst)
           print(f'SESSION="{session}"')
           print(f"DELAY={delay}")
+          print(f'SENTAT="{shown.strftime("%m/%d %H:%M")}"')
           PY
           . ./sched.env
           DELAY_HDR=()
           if [ "$DELAY" != "0" ]; then DELAY_HDR=(-H "Delay: $DELAY"); fi
           curl -sf --max-time 30 \
-            -H "Title: ARGUS Digest - $SESSION" \
+            -H "Title: ARGUS Digest - $SESSION ($SENTAT)" \
             -H "Tags: chart_with_upwards_trend" \
             "${DELAY_HDR[@]}" \
             --data-binary @digest.txt \
             "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
-          echo "digest pushed (session=$SESSION delay=$DELAY)."
+          echo "digest pushed (session=$SESSION delay=$DELAY sentAt=$SENTAT)."
