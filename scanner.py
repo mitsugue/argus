@@ -3520,6 +3520,100 @@ def api_argus_ai_provider_ping():
     return jsonify(out)
 
 
+# ━━━ News Radar (news-v1, v10.6) — black-swan CAUSE detection ━━━
+# The market-REACTION detectors (VIX zones, stress backdrop) catch that
+# something happened; this catches WHAT: crisis-grade headlines via GDELT
+# (free, keyless, strictly 1 request / 5s → ONE combined query, 30-min cache,
+# never refetched on failure within a cool-down). Headline COUNTS are a crude
+# proxy — surfaced as 参考(見出しベース), never as verified fact.
+_GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
+_NEWS_THEMES = [
+    {"key": "geopolitics", "labelJa": "地政学(侵攻・攻撃)",
+     "phrases": ["invasion", "military strike", "missile attack", "declares war"]},
+    {"key": "fx_policy", "labelJa": "為替・金融政策の急変",
+     "phrases": ["currency intervention", "yen intervention", "emergency rate cut"]},
+    {"key": "financial_stress", "labelJa": "金融システム不安",
+     "phrases": ["bank collapse", "bank failure", "trading halted", "circuit breaker", "debt default"]},
+    {"key": "policy_shock", "labelJa": "緊急会見・政変",
+     "phrases": ["emergency press conference", "emergency meeting", "prime minister resigns"]},
+    {"key": "disaster", "labelJa": "災害・非常事態",
+     "phrases": ["state of emergency", "major earthquake"]},
+]
+_NEWS_CACHE     = {"data": None, "expires": 0.0}
+_NEWS_TTL       = 1800   # 30 min — GDELT politeness
+_NEWS_FAIL_TTL  = 600    # back off 10 min after a failure (429 etc.)
+
+def _news_theme_level(count):
+    """Headline-count band per theme over the 6h window (transparent)."""
+    if count >= 20: return "high"
+    if count >= 8:  return "elevated"
+    return "calm"
+
+def get_news_radar():
+    now = time.time()
+    if _NEWS_CACHE["data"] is not None and now < _NEWS_CACHE["expires"]:
+        return _NEWS_CACHE["data"]
+
+    all_phrases = [p for t in _NEWS_THEMES for p in t["phrases"]]
+    q = "(" + " OR ".join(f'"{p}"' if " " in p else p for p in all_phrases) + ") sourcelang:eng"
+    themes_out, status = [], "live"
+    try:
+        r = requests.get(_GDELT_DOC, params={
+            "query": q, "mode": "artlist", "maxrecords": 150,
+            "timespan": "6h", "format": "json", "sort": "datedesc",
+        }, headers={"User-Agent": "argus-news-radar/1.0"}, timeout=25)
+        r.raise_for_status()
+        body = r.json() if r.text.strip().startswith("{") else {}
+        articles = body.get("articles", []) or []
+        for t in _NEWS_THEMES:
+            hits, seen_domains = [], set()
+            for a in articles:
+                title = (a.get("title") or "")
+                tl = title.lower()
+                if any(p.lower() in tl for p in t["phrases"]):
+                    dom = a.get("domain") or ""
+                    if dom in seen_domains:
+                        continue          # one headline per outlet per theme
+                    seen_domains.add(dom)
+                    hits.append({"title": title[:140], "url": a.get("url", ""),
+                                 "source": dom, "seen": a.get("seendate", "")})
+            themes_out.append({
+                "key": t["key"], "labelJa": t["labelJa"],
+                "count": len(hits), "level": _news_theme_level(len(hits)),
+                "headlines": hits[:3],
+            })
+    except Exception:
+        status = "unavailable"
+        themes_out = [{"key": t["key"], "labelJa": t["labelJa"],
+                       "count": 0, "level": "calm", "headlines": []}
+                      for t in _NEWS_THEMES]
+
+    levels = [t["level"] for t in themes_out]
+    overall = "high" if "high" in levels else "elevated" if "elevated" in levels else "calm"
+    top = max(themes_out, key=lambda t: t["count"]) if themes_out else None
+    payload = {
+        "status": status,
+        "asOf": _ai_now_iso(),
+        "engineVersion": "news-v1",
+        "level": overall if status == "live" else "unknown",
+        "topThemeKey": top["key"] if top and top["count"] > 0 else None,
+        "themes": themes_out,
+        "noteJa": "GDELTの英語ヘッドライン件数(直近6時間・媒体重複除外)による参考指標。事実検証はしていない。",
+        "dataLimitations": [
+            "見出しの件数ベース(内容の真偽・重要度は未検証)。",
+            "英語ソースのみ(日本語ヘッドラインは未対応)。",
+            "30分キャッシュ(GDELTのレート制限尊重)。",
+        ],
+    }
+    _NEWS_CACHE["data"] = payload
+    _NEWS_CACHE["expires"] = now + (_NEWS_TTL if status == "live" else _NEWS_FAIL_TTL)
+    return payload
+
+@app.route("/api/argus/news-radar")
+def api_argus_news_radar():
+    return jsonify(get_news_radar())
+
+
 # ━━━ Action Alerts (alerts-v1, v10.4) — one judgment per asset class ━━━
 # The user's priority-② layer: gold / REIT / bonds / crypto / FX / cash beside
 # the JP/US stock aggregates. Rule-based composition over EXISTING data plus a
@@ -4098,6 +4192,7 @@ def get_daily_digest():
     reg   = get_market_regime_snapshot()
     ev    = get_events_snapshot()
     vol   = _vix_assess(_fred_vix_history())  # context-aware VIX (None if no data)
+    news  = get_news_radar()                   # cause-side radar (30-min cached)
     posture = (al.get("marketPosture", {}) or {}).get("label") or "CAUTIOUS"
     posture_ja = (al.get("marketPosture", {}) or {}).get("rationaleJa", "")
     rg = reg.get("regime", {}) if isinstance(reg, dict) else {}
@@ -4160,6 +4255,14 @@ def get_daily_digest():
         L.append(" ／ ".join(f"{h['symbol']} {h['action']}" for h in highlights[:4]))
     if rotations:
         L += ["", "🔄 資金の流れ", " ／ ".join(r.get("label", "") for r in rotations)]
+    if news.get("status") == "live" and news.get("level") in ("elevated", "high"):
+        hot = [t for t in news["themes"] if t["level"] != "calm"]
+        if hot:
+            t0 = max(hot, key=lambda t: t["count"])
+            L += ["", f"⚡ ニュース検知({'重大' if news['level'] == 'high' else '増加'})",
+                  f"{t0['labelJa']}: {t0['count']}件/6h"]
+            if t0["headlines"]:
+                L.append(f"「{t0['headlines'][0]['title'][:60]}」")
     if changes:
         L += ["", "🔁 " + " ".join(changes)]
     L += ["", "— ルールベースの状況整理。売買指示・予測ではありません —",
@@ -4181,6 +4284,11 @@ def get_daily_digest():
         "labelHighlights": highlights,
         "changesSinceLastJa": changes,
         "aiSummaryJa": ai_summary,
+        "news": {"level": news.get("level"), "status": news.get("status"),
+                 "themes": [{"key": t["key"], "labelJa": t["labelJa"], "count": t["count"],
+                             "level": t["level"],
+                             "headline": (t["headlines"][0]["title"] if t["headlines"] else None)}
+                            for t in news.get("themes", [])]},
         "textJa": text_ja,
         "dataLimitations": [
             "ルールベース合成(LLM不使用)。day-over-dayの厳密な差分は端末側ログが担当。",

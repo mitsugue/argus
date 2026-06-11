@@ -292,3 +292,11 @@ def test_alert_etf_deep_selloff_is_high_risk_wait():
     m = {"score": -0.6, "momentum1d": -3.0, "momentum5d": -7.0, "momentum20d": -12.0}
     action, conf, risk, *_ = scanner._alert_action_for_etf(m, cautious=True)
     assert action == "WAIT" and risk == "high"
+
+
+# ── News Radar (v10.6) ───────────────────────────────────────────────
+def test_news_theme_level_bands():
+    assert scanner._news_theme_level(0) == "calm"
+    assert scanner._news_theme_level(7) == "calm"
+    assert scanner._news_theme_level(8) == "elevated"
+    assert scanner._news_theme_level(20) == "high"

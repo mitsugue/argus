@@ -2,8 +2,59 @@ import React, { useMemo } from 'react';
 import { PageShell } from './PageShell';
 import { LiveEventRow } from '../components/dashboard/LiveEventRow';
 import { useEventRadar } from '../hooks/useEventRadar';
+import { useNewsRadar } from '../hooks/useNewsRadar';
 import type { CalendarEvent, Escalation, EventSource } from '../types/events';
 import '../components/dashboard/Dashboard.css';
+
+const NEWS_LEVEL_COLOR: Record<string, string> = {
+  calm: 'var(--text-muted)', elevated: 'var(--amber)', high: 'var(--red)', unknown: 'var(--text-muted)',
+};
+
+// Black-swan CAUSE radar (v10.6): crisis-headline counts per theme. Calm and
+// honest — counts are a reference signal (見出しベース), not verified facts.
+const NewsRadarSection: React.FC = () => {
+  const { data, loading } = useNewsRadar();
+  if (loading) return null;
+  if (!data || data.status !== 'live') {
+    return (
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">News Radar</span>
+          <span className="section-head__count">unavailable</span>
+        </div>
+        <div className="card"><p className="today-connecting">ニュースレーダーは現在取得できません(自動で再試行)。</p></div>
+      </section>
+    );
+  }
+  return (
+    <section>
+      <div className="section-head">
+        <span className="section-head__title">News Radar</span>
+        <span className="section-head__count" style={{ color: NEWS_LEVEL_COLOR[data.level] }}>
+          {data.level}・直近6時間
+        </span>
+      </div>
+      <div className="card newsradar">
+        {data.themes.map((t) => (
+          <div className="newsradar__row" key={t.key}>
+            <span className="newsradar__label">{t.labelJa}</span>
+            <span className="newsradar__count" style={{ color: NEWS_LEVEL_COLOR[t.level] }}>
+              {t.count}件 {t.level !== 'calm' ? `(${t.level})` : ''}
+            </span>
+            <span className="newsradar__heads">
+              {t.headlines.slice(0, 2).map((h) => (
+                <a key={h.url} href={h.url} target="_blank" rel="noreferrer" className="newsradar__link">
+                  {h.title.slice(0, 60)}<span className="newsradar__src">（{h.source}）</span>
+                </a>
+              ))}
+            </span>
+          </div>
+        ))}
+        <p className="newsradar__note">{data.noteJa}</p>
+      </div>
+    </section>
+  );
+};
 
 // Window labels stay short English (D-7..D+1) — they're structural. Stage label
 // + note in JP — market commentary stays Japanese while window codes stay English.
@@ -91,6 +142,8 @@ export const EventRadar: React.FC = () => {
           ))}
         </div>
       </section>
+
+      <NewsRadarSection />
     </PageShell>
   );
 };

@@ -80,10 +80,24 @@ jobs:
           for u in new_urgent:
               t, esc = u.rsplit('@', 1)
               alerts.append(f"イベント接近: {t}（{esc}）")
+          # News Radar (v10.6): alert when a CAUSE theme escalates (calm→
+          # elevated/high). Headline-count based — labelled as 参考.
+          NLV = {'calm': 0, 'elevated': 1, 'high': 2}
+          news = d.get('news') or {}
+          news_state = {}
+          prev_news = prev.get('news') or {}
+          for t in (news.get('themes') or []):
+              lv = t.get('level') or 'calm'
+              news_state[t['key']] = lv
+              plv = prev_news.get(t['key'], 'calm')
+              if prev and NLV.get(lv, 0) > NLV.get(plv, 0) and NLV.get(lv, 0) >= 1:
+                  head = f"「{t['headline'][:60]}」" if t.get('headline') else ''
+                  alerts.append(f"ニュース検知: {t['labelJa']}の報道が増加({t['count']}件/6h・参考){head}")
           spike_date = date_jst if (vol.get('spike') and prev.get('spikeDate') != date_jst and prev) else prev.get('spikeDate')
           json.dump({'posture': posture, 'urgent': urgent, 'backdrop': backdrop,
                      'vixZone': zone if zone in ZONES else prev.get('vixZone'),
-                     'spikeDate': spike_date}, open('state.json', 'w'))
+                     'spikeDate': spike_date,
+                     'news': news_state or prev_news}, open('state.json', 'w'))
           if alerts and prev:  # first-ever run only seeds state, no alert spam
               text = "【ARGUS変化検知】\n" + "\n".join(alerts) + \
                      "\n※ルールベースの状況整理であり、売買指示ではありません。"
