@@ -6,6 +6,17 @@
 
 ---
 
+## 0-b. 2026-06-11の検証待ち（スマホ/クラウドセッション向け引き継ぎ）
+
+- **16:05 JSTの台帳ラン**(GitHub cron遅延で数時間ずれる可能性): 初のledger-v3記録+AI永続化初回。
+  検証: ① Actions prediction-ledger が success ② raw `ledger/days/2026-06-11.json` の engineVersion=ledger-v3
+  ③ raw `ledger/ai/latest.json` が存在 ④ GET /api/argus/ai-judgment が live(これで「not run yet」恒久解消)
+- **22:00 JST**: 夜ダイジェストの「定時配信」初回テスト(ntfy Delayヘッダ方式。06:49/19:49発火→定時配信)
+- **22:30 JST〜**: USセッションで15秒価格更新の実地検証(ブリッジ15秒化はAWS反映済み・サーバー側計測で確認済み)
+- **翌朝08:30**: 朝ダイジェスト定時テスト
+- ユーザー操作待ち: Finnhubキー(任意)・Vercel旧プロジェクト削除確認・端末統合(スマホ→Mac→プレビューの復元手順)
+- 次の開発フェーズ: **Close Pin Intraday Ledger**(15:30引けピン台帳。3層構造の残り半分)
+
 ## 0. 最初にやること（現状確認）
 
 新セッションを始めたら、まずこの3つで現状を把握する:
