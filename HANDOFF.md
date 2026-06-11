@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.8.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.9.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.8.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.9.0。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.8.0**
+- **現在バージョン: v10.9.0**
 
 ---
 
@@ -254,6 +254,22 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - /action-labels レスポンスに `calibration: {factor, basisJa, n, hitRate}` を追加。
     資産戦略ページ先頭に「🎯 校正: …」の1行(常時表示・正直設計)
   - 採点データが貯まると自動で効き始める(コード変更不要)。これが「予測→採点→確信度への還元」ループの配管
+- v10.9.0 学習対象の3層構造化(ledger-v3) — ChatGPT/Gemini協議でユーザー確定(2026-06-11)
+  - **Layer 1 = 固定16センサー**(変更禁止の校正背骨): JP 1306/1321/8306/7203/8058/9432 +
+    US ETF SPY/QQQ/SMH/IWM/TLT/HYG/GLD + BTC + USDJPY + VIX。
+    特異リスクの9984/7011は意図的にL2へ。`_L1_SENSORS_JP/_L1_SENSORS_US`(scanner.py)
+  - Layer 2 = 実戦銘柄(入替自由・action-labelsの銘柄が自動でL2扱い)、Layer 3 = 高ノイズ実験枠(6584、
+    `_LAYER3_SYMBOLS`)。**L3はL1/L2の校正集計に混ざらない**(byPosture等から除外)
+  - バンドはσ単位: equity/ETF 2%・BTC 3%・FX 0.5%・VIX 8%(`_SENSOR_BAND_PCT`、固定値でなく資産種別の日次σ近似)。
+    `_scenarios_scaled()`が±2%調整済み分布をバンド比でスケール
+  - 採点は1/3/5営業日ホライズン(土日除外のtdays)。scores/{d}.jsonはv3形式
+    {horizons:{1,3,5}:{layer1:{sensors,stocks},layer2,layer3,(h1のみ)classes/posture/aiDirectional}}で
+    ラン毎に漸進的に埋まる。v2スコアファイルとの併存OK(旧ループはv3日をスキップ)
+  - `/sensor-quotes`(public): 16センサーの現在値(JP=J-Quants/moomoo、ETF=TD stash+SMH 6hキャッシュ、
+    BTC=CoinGecko、USDJPY/VIX=FRED)。summary.layers.{layer1,2,3}.byHorizon.{1,3,5}にbyMember学習表
+  - 校正(calibration-v1)へはv3のh1のL1+L2が合成されて継続供給(legacy_item)。
+    スコアラーは合成フィクスチャでローカル実行検証済み
+  - 残タスク: Close Pin Intraday Ledger(15:30引けピン)の分離実装は未着手(次フェーズ)
 
 ---
 

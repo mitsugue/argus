@@ -4147,6 +4147,66 @@ def _vix_assess(closes):
 # ARGUS still does not "predict" — it states scenario DISTRIBUTIONS and gets
 # graded on them (Brier score + argmax hit), which is the honest way to learn.
 
+# ── ledger-v3: 3-layer learning universe ─────────────────────────────────────
+# Finalized 2026-06-11 after the user's ChatGPT/Gemini consultation.
+#   Layer 1 — FIXED 16 regime sensors: the calibration backbone, never churned.
+#             Idiosyncratic names (9984, 7011) were deliberately moved OUT and
+#             USD/JPY + VIX added for macro judgment.
+#   Layer 2 — active tactical watchlist (the battlefield names, free to swap).
+#   Layer 3 — experimental / high-noise names, aggregated separately so they
+#             never pollute Layer-1 statistics.
+_L1_SENSORS_JP = [
+    ("1306", "TOPIX ETF"), ("1321", "Nikkei 225 ETF"),
+    ("8306", "Mitsubishi UFJ"), ("7203", "Toyota Motor"),
+    ("8058", "Mitsubishi Corporation"), ("9432", "NTT"),
+]
+_L1_SENSORS_US = ["SPY", "QQQ", "SMH", "IWM", "TLT", "HYG", "GLD"]
+# + BTC (crypto), USDJPY (fx), VIX (vol) = 16 sensors total.
+# Scenario band per sensor kind ≈ one rough daily sigma, so "sideways" means
+# the same thing for an FX pair (σ≈0.5%) as for an equity ETF (σ≈2%), BTC
+# (σ≈3%) or the VIX itself (σ≈8%). Band units, not fixed magic levels.
+_SENSOR_BAND_PCT = {"equity_jp": 2.0, "etf_us": 2.0, "crypto": 3.0, "fx": 0.5, "vol": 8.0}
+_LAYER3_SYMBOLS = {"6584"}
+
+def _layer_of(symbol):
+    """Tactical-prediction layer attribution (pure). 8058 doubles as a Layer-1
+    sensor, so its stock row counts toward Layer 1; explicit high-noise names
+    go to Layer 3; everything else is the active tactical Layer 2."""
+    if symbol in _LAYER3_SYMBOLS:
+        return 3
+    if symbol == "8058":
+        return 1
+    return 2
+
+def _scenarios_scaled(chg, band_pct):
+    """Scenario distribution in BAND units: the ±2%-tuned thresholds of
+    _scenarios_for are reused by rescaling the move into each sensor's own
+    daily-sigma band (e.g. a 0.5% USDJPY move ≙ a 2% equity move)."""
+    if chg is None:
+        return _scenarios_for(None)
+    return _scenarios_for(chg * (2.0 / band_pct))
+
+def _sensor_row(sensor_id, name, kind, price, chg):
+    band = _SENSOR_BAND_PCT[kind]
+    return {"sensor": sensor_id, "name": name, "kind": kind,
+            "price": price, "changePct": chg, "bandPct": band,
+            "scenarios": [{"label": s, "p": p} for s, p in _scenarios_scaled(chg, band)]}
+
+# Layer-1 sensor ETFs not covered by the regime/alerts Twelve Data universes
+# (currently just SMH). 6h cache = 1 extra TD credit per 6 hours.
+_SENSOR_ETF_EXTRA = ["SMH"]
+_SENSOR_ETF_CACHE = {"expires": 0.0}
+
+def _ensure_sensor_etfs():
+    now = time.time()
+    if now < _SENSOR_ETF_CACHE["expires"]:
+        return
+    missing = [s for s in _SENSOR_ETF_EXTRA
+               if not (_ETF_LAST_PRICE.get(s) and now - _ETF_LAST_PRICE[s]["ts"] <= 6 * 3600)]
+    if missing:
+        _td_timeseries(missing)  # stashes into _ETF_LAST_PRICE as a side effect
+    _SENSOR_ETF_CACHE["expires"] = now + 6 * 3600
+
 def _scenarios_for(chg):
     """Server-side port of the frontend scenario distribution (same thresholds).
     Returns [(label, probability)] summing to 100, from the daily change %."""
@@ -4193,6 +4253,7 @@ def get_prediction_snapshot():
         sd = l.get("supportingData", {}) or {}
         predictions.append({
             "symbol": l["symbol"], "market": l["market"], "name": l["name"],
+            "layer": _layer_of(l["symbol"]),
             "price": q["price"], "changePct": sd.get("changePct"),
             "action": l["action"], "confidence": l["confidence"],
             "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(sd.get("changePct"))],
@@ -4234,6 +4295,34 @@ def get_prediction_snapshot():
                     "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(q["changePct"])],
                 })
 
+    # ── Layer-1 sensors (ledger-v3): the FIXED 16-asset regime universe ──
+    sensors = []
+    jp_sens = get_japan_watchlist_snapshot([s for s, _ in _L1_SENSORS_JP])
+    jp_sens_live = {s["symbol"]: s for s in (jp_sens.get("stocks") or [])
+                    if s.get("status") == "live"}
+    for sym, name in _L1_SENSORS_JP:
+        q = jp_sens_live.get(sym)
+        if q:
+            sensors.append(_sensor_row(sym, name, "equity_jp", q["price"], q.get("changePct")))
+    _ensure_sensor_etfs()
+    for sym in _L1_SENSORS_US:
+        st = _ETF_LAST_PRICE.get(sym)
+        if st and now_ts - st["ts"] <= 12 * 3600:
+            sensors.append(_sensor_row(sym, sym, "etf_us", st["price"], st["m1d"]))
+    for q in (cw.get("quotes") or []):
+        if q.get("id") == "bitcoin" and q.get("status") == "live":
+            sensors.append(_sensor_row("BTC", "Bitcoin", "crypto", q["priceUsd"], q.get("changePct")))
+    rates = get_rates_snapshot()
+    for key, sid, sname, kind in (("usdJpy", "USDJPY", "USD/JPY", "fx"),
+                                  ("vix", "VIX", "VIX", "vol")):
+        s = rates.get(key) if isinstance(rates, dict) else None
+        if s and s.get("status") == "live" and s.get("latestValue") is not None:
+            lvl = float(s["latestValue"])
+            ch = s.get("change")
+            chg_pct = (round(ch / (lvl - ch) * 100, 2)
+                       if isinstance(ch, (int, float)) and (lvl - ch) else None)
+            sensors.append(_sensor_row(sid, sname, kind, lvl, chg_pct))
+
     # ── Posture prediction (the call that everything depends on) ──
     # Self-describing scoring rule so the scorer never hardcodes thresholds:
     #   RISK_ON → SPY next move > 0; RISK_OFF → < 0;
@@ -4253,7 +4342,7 @@ def get_prediction_snapshot():
     return {
         "dateJst": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
         "asOf": _ai_now_iso(),
-        "engineVersion": "ledger-v2",
+        "engineVersion": "ledger-v3",
         "context": {
             "posture": posture_label,
             "regimeConfidence": rg.get("confidence"),
@@ -4262,12 +4351,13 @@ def get_prediction_snapshot():
             "backdrop": rb.get("posture"),
             "aiStatus": ai_status,
         },
-        "predictions": predictions,
-        "classPredictions": class_predictions,
+        "sensors": sensors,                    # Layer 1 — fixed 16 regime sensors
+        "predictions": predictions,            # Layers 1-3 stock rows (see .layer)
+        "classPredictions": class_predictions, # legacy continuity (v10.5 axis)
         "posturePrediction": posture_prediction,
         "scoringRule": {
-            "horizonDays": 1,
-            "buckets": {"downside_continuation": "< -2%", "sideways_stabilization": "-2%..+2%", "rebound_attempt": "> +2%"},
+            "horizonsTradingDays": [1, 3, 5],
+            "bucketsNote": "per-row bandPct (≈daily sigma): downside < -band, sideways within ±band, rebound > +band; legacy rows band=2%",
             "metrics": ["argmaxHit", "brier"],
         },
     }
@@ -4275,6 +4365,35 @@ def get_prediction_snapshot():
 @app.route("/api/argus/prediction-snapshot")
 def api_argus_prediction_snapshot():
     return jsonify(get_prediction_snapshot())
+
+@app.route("/api/argus/sensor-quotes")
+def api_argus_sensor_quotes():
+    """Latest values for the 16 Layer-1 sensors — the ledger-v3 scorer's price
+    source (JP via J-Quants/moomoo overlay, US ETFs via the Twelve Data stash,
+    BTC via CoinGecko, USDJPY/VIX via FRED)."""
+    out = {}
+    jp = get_japan_watchlist_snapshot([s for s, _ in _L1_SENSORS_JP])
+    for s in (jp.get("stocks") or []):
+        if s.get("status") == "live":
+            out[s["symbol"]] = float(s["price"])
+    get_market_regime_snapshot()
+    _alert_etf_momentum()
+    _ensure_sensor_etfs()
+    now_ts = time.time()
+    for sym in _L1_SENSORS_US:
+        st = _ETF_LAST_PRICE.get(sym)
+        if st and now_ts - st["ts"] <= 24 * 3600:
+            out[sym] = st["price"]
+    cw = get_crypto_watchlist_snapshot(["bitcoin"])
+    for q in (cw.get("quotes") or []):
+        if q.get("id") == "bitcoin" and q.get("status") == "live":
+            out["BTC"] = float(q["priceUsd"])
+    rates = get_rates_snapshot()
+    for key, sid in (("usdJpy", "USDJPY"), ("vix", "VIX")):
+        s = rates.get(key) if isinstance(rates, dict) else None
+        if s and s.get("status") == "live" and s.get("latestValue") is not None:
+            out[sid] = float(s["latestValue"])
+    return jsonify({"asOf": _ai_now_iso(), "engineVersion": "ledger-v3", "quotes": out})
 
 @app.route("/api/argus/class-quotes")
 def api_argus_class_quotes():

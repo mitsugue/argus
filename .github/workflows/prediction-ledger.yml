@@ -128,6 +128,7 @@ jobs:
           curl -sf --max-time 60 "$BE/api/argus/japan-watchlist" -o jp.json || echo '{}' > jp.json
           curl -sf --max-time 60 "$BE/api/argus/us-watchlist"   -o us.json || echo '{}' > us.json
           curl -sf --max-time 90 "$BE/api/argus/class-quotes"    -o cls.json || echo '{}' > cls.json
+          curl -sf --max-time 90 "$BE/api/argus/sensor-quotes"   -o sens.json || echo '{}' > sens.json
           curl -sf --max-time 60 "$BE/api/argus/crypto-watchlist" -o cw.json || echo '{}' > cw.json
           python3 - <<'PY'
           import json, os, glob, datetime
@@ -170,6 +171,7 @@ jobs:
               age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(d)).days
               if age > 7: continue
               day = json.load(open(path))
+              if day.get('engineVersion') == 'ledger-v3': continue  # scored by the v3 loop below
               rows, hits, briers = [], 0, []
               ai_hits, ai_total = 0, 0
               for p in day.get('predictions', []):
@@ -237,8 +239,147 @@ jobs:
               json.dump(score, open(spath, 'w'), ensure_ascii=False, indent=1)
               print('scored', d, f"hit {hits}/{len(rows)} brier {score['brierMean']}")
 
+          # 3b. ledger-v3 (decided 2026-06-11): layer-separated scoring at
+          # 1/3/5 TRADING-day horizons. Layer 1 = the fixed 16 sensors
+          # (scored vs /sensor-quotes, per-row bandPct buckets); tactical
+          # stock rows split by their .layer field; Layer 3 never mixes into
+          # Layer-1 stats. A day's score file fills horizon slots
+          # progressively across runs (re-opened until all horizons done).
+          sens_now = (json.load(open('sens.json')).get('quotes') or {})
+
+          def tdays(d0, d1):
+              n = 0
+              c = datetime.date.fromisoformat(d0)
+              end = datetime.date.fromisoformat(d1)
+              while c < end:
+                  c += datetime.timedelta(days=1)
+                  if c.weekday() < 5:
+                      n += 1
+              return n
+
+          def score_rows(pred_rows, price_of, key_field):
+              rows, hits, briers = [], 0, []
+              for p in pred_rows:
+                  cur = price_of(p)
+                  if cur is None or not p.get('price'):
+                      continue
+                  realized = (cur / p['price'] - 1) * 100
+                  band = float(p.get('bandPct') or 2.0)
+                  b = ('downside_continuation' if realized < -band else
+                       'rebound_attempt' if realized > band else 'sideways_stabilization')
+                  probs = {s['label']: s['p'] / 100 for s in p['scenarios']}
+                  argmax = max(probs, key=lambda k: probs[k])
+                  hit = (argmax == b)
+                  brier = sum((probs.get(k, 0) - (1.0 if k == b else 0.0)) ** 2 for k in probs)
+                  hits += hit
+                  briers.append(brier)
+                  rows.append({key_field: p.get(key_field) or p.get('symbol'),
+                               'realizedPct': round(realized, 2), 'bucket': b,
+                               'argmax': argmax, 'hit': hit, 'brier': round(brier, 4)})
+              return {'n': len(rows), 'hits': hits,
+                      'hitRate': round(hits / len(rows), 3) if rows else None,
+                      'brierMean': round(sum(briers) / len(briers), 4) if briers else None,
+                      'rows': rows}
+
+          HORIZONS = (1, 3, 5)
+          for path in sorted(glob.glob('ledger/days/*.json')):
+              d = os.path.basename(path)[:-5]
+              if d >= today:
+                  continue
+              day = json.load(open(path))
+              if day.get('engineVersion') != 'ledger-v3':
+                  continue
+              cal_age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(d)).days
+              if cal_age > 14:
+                  continue
+              ta = tdays(d, today)
+              spath = f'ledger/scores/{d}.json'
+              sc = {'date': d, 'engine': 'ledger-v3',
+                    'context': day.get('context', {}), 'horizons': {}}
+              if os.path.exists(spath):
+                  prev = json.load(open(spath))
+                  if prev.get('engine') == 'ledger-v3':
+                      sc = prev
+              if all(str(h) in sc['horizons'] for h in HORIZONS):
+                  continue
+              stock_price = lambda p: now_price.get(p['symbol'])
+              preds = day.get('predictions') or []
+              changed = False
+              for h in HORIZONS:
+                  hk = str(h)
+                  if hk in sc['horizons'] or ta < h:
+                      continue
+                  block = {
+                      'scoredOn': today, 'tradingAge': ta,
+                      'layer1': {
+                          'sensors': score_rows(day.get('sensors') or [],
+                                                lambda p: sens_now.get(p.get('sensor')), 'sensor'),
+                          'stocks': score_rows([p for p in preds if p.get('layer') == 1],
+                                               stock_price, 'symbol'),
+                      },
+                      'layer2': score_rows([p for p in preds if p.get('layer', 2) == 2],
+                                           stock_price, 'symbol'),
+                      'layer3': score_rows([p for p in preds if p.get('layer') == 3],
+                                           stock_price, 'symbol'),
+                  }
+                  if h == 1:
+                      # Legacy-continuity sections live on the 1D horizon: the
+                      # class proxies, AI directional grading and the posture call.
+                      block['classes'] = score_rows(day.get('classPredictions') or [],
+                                                    lambda p: cls_price.get(p['symbol']), 'assetClass')
+                      ai_total = ai_hits = 0
+                      for p in preds:
+                          cur = now_price.get(p['symbol'])
+                          ai_dir = DIRECTIONAL.get(((p.get('ai') or {}).get('action')) or '')
+                          if cur is None or not p.get('price') or not ai_dir:
+                              continue
+                          realized = (cur / p['price'] - 1) * 100
+                          ai_total += 1
+                          ai_hits += bool((ai_dir == 'up' and realized > 0) or
+                                          (ai_dir == 'down' and realized < 0))
+                      block['aiDirectional'] = {'n': ai_total, 'hits': ai_hits}
+                      pp = day.get('posturePrediction')
+                      spy_now = sens_now.get('SPY') or cls_price.get('SPY')
+                      if pp and pp.get('rule') and spy_now and pp.get('price'):
+                          move = (spy_now / pp['price'] - 1) * 100
+                          r = pp['rule']
+                          ok = ((move > 0) if (r['type'] == 'direction' and r['sign'] > 0) else
+                                (move < 0) if (r['type'] == 'direction') else
+                                (abs(move) >= r.get('minPct', 1.0)))
+                          block['posture'] = {'posture': pp['posture'],
+                                              'movePct': round(move, 2), 'hit': bool(ok)}
+                  sc['horizons'][hk] = block
+                  changed = True
+              if changed:
+                  json.dump(sc, open(spath, 'w'), ensure_ascii=False, indent=1)
+                  print('scored-v3', d, 'horizons', sorted(sc['horizons'].keys()),
+                        f'(tradingAge {ta})')
+
           # 4. Rebuild the running summary (overall + by posture + by VIX zone).
-          allscores = [json.load(open(p)) for p in sorted(glob.glob('ledger/scores/*.json'))]
+          # v3 score files contribute their 1D-horizon Layer1+Layer2 results to
+          # the legacy aggregates so posture calibration keeps feeding; Layer 3
+          # is EXCLUDED from those by design (high-noise, separate bucket).
+          rawscores = [json.load(open(p)) for p in sorted(glob.glob('ledger/scores/*.json'))]
+          v3scores = [s for s in rawscores if s.get('engine') == 'ledger-v3']
+
+          def legacy_item(sc):
+              h1 = (sc.get('horizons') or {}).get('1')
+              if not h1:
+                  return None
+              parts = [h1['layer1']['sensors'], h1['layer1']['stocks'], h1['layer2']]
+              n = sum(p['n'] for p in parts)
+              hh = sum(p['hits'] for p in parts)
+              wb = [(p['brierMean'], p['n']) for p in parts
+                    if p.get('brierMean') is not None and p['n']]
+              bm = sum(b * w for b, w in wb) / sum(w for _, w in wb) if wb else None
+              return {'n': n, 'argmaxHits': hh, 'brierMean': bm,
+                      'context': sc.get('context', {}),
+                      'classes': h1.get('classes'),
+                      'postureRow': h1.get('posture'),
+                      'aiDirectional': h1.get('aiDirectional') or {'n': 0, 'hits': 0}}
+
+          allscores = ([s for s in rawscores if s.get('engine') != 'ledger-v3'] +
+                       [x for x in (legacy_item(s) for s in v3scores) if x])
           def agg(items):
               n = sum(s['n'] for s in items); h = sum(s['argmaxHits'] for s in items)
               wb = [(s['brierMean'], s['n']) for s in items if s.get('brierMean') is not None]
@@ -276,8 +417,49 @@ jobs:
               by_vix.setdefault(s['context'].get('vixZone') or '?', []).append(s)
           ai_n = sum(s['aiDirectional']['n'] for s in allscores)
           ai_h = sum(s['aiDirectional']['hits'] for s in allscores)
+          # ledger-v3: layer × horizon learning table (the new primary axis).
+          def agg_block(blocks):
+              blocks = [b for b in blocks if b]
+              n = sum(b['n'] for b in blocks)
+              hh = sum(b['hits'] for b in blocks)
+              wb = [(b['brierMean'], b['n']) for b in blocks
+                    if b.get('brierMean') is not None and b['n']]
+              bm = sum(x * w for x, w in wb) / sum(w for _, w in wb) if wb else None
+              per = {}
+              for b in blocks:
+                  for r in b.get('rows', []):
+                      key = r.get('sensor') or r.get('symbol') or r.get('assetClass')
+                      e = per.setdefault(key, {'n': 0, 'hits': 0})
+                      e['n'] += 1
+                      e['hits'] += bool(r['hit'])
+              for k, e in per.items():
+                  e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
+              return {'n': n, 'hits': hh,
+                      'hitRate': round(hh / n, 3) if n else None,
+                      'brierMean': round(bm, 4) if bm is not None else None,
+                      'byMember': per}
+
+          layers = {}
+          for lname in ('layer1', 'layer2', 'layer3'):
+              byh = {}
+              for hk in ('1', '3', '5'):
+                  blocks, hdays = [], 0
+                  for s in v3scores:
+                      hb = (s.get('horizons') or {}).get(hk)
+                      if not hb:
+                          continue
+                      hdays += 1
+                      if lname == 'layer1':
+                          blocks += [hb['layer1']['sensors'], hb['layer1']['stocks']]
+                      else:
+                          blocks.append(hb[lname])
+                  a = agg_block(blocks)
+                  a['days'] = hdays
+                  byh[hk] = a
+              layers[lname] = {'byHorizon': byh}
+
           summary = {
-              'updated': today, 'engineVersion': 'ledger-v1',
+              'updated': today, 'engineVersion': 'ledger-v3',
               'overall': agg(allscores) if allscores else None,
               'byPosture': {k: agg(v) for k, v in by_posture.items()},
               'byVixZone': {k: agg(v) for k, v in by_vix.items()},
@@ -285,7 +467,8 @@ jobs:
                                 'hitRate': round(ai_h / ai_n, 3) if ai_n else None},
               'classes': agg_classes(allscores),
               'posture': agg_posture(allscores),
-              'noteJa': 'シナリオ分布のargmax的中率とBrierスコア(低いほど良い)。1日ホライズン・終値ベース。成績は分類の校正度であり、将来の利益を保証しない。',
+              'layers': layers,
+              'noteJa': 'シナリオ分布のargmax的中率とBrierスコア(低いほど良い)。v3: 3層×1/3/5営業日ホライズン(Layer1=固定16センサー・bandPct=資産種別の日次σ単位)。成績は分類の校正度であり、将来の利益を保証しない。',
           }
           json.dump(summary, open('ledger/summary.json', 'w'), ensure_ascii=False, indent=1)
           print('summary:', summary.get('overall'))

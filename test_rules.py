@@ -373,3 +373,37 @@ def test_calibration_survives_malformed_summary():
 def test_action_labels_response_carries_calibration():
     out = scanner.get_action_labels()
     assert "calibration" in out and out["calibration"]["factor"] >= 0.8
+
+
+# ── ledger-v3: 3-layer learning universe (v10.9) ─────────────────────
+def test_layer1_sensor_universe_is_fixed_16():
+    n = len(scanner._L1_SENSORS_JP) + len(scanner._L1_SENSORS_US) + 3  # +BTC/USDJPY/VIX
+    assert n == 16
+    syms = [s for s, _ in scanner._L1_SENSORS_JP] + scanner._L1_SENSORS_US
+    assert len(set(syms)) == len(syms)
+    # 9984/7011 were deliberately moved OUT of Layer 1 (idiosyncratic risk)
+    assert "9984" not in syms and "7011" not in syms
+    assert "8058" in syms and "SMH" in syms
+
+
+def test_layer_attribution():
+    assert scanner._layer_of("6584") == 3       # experimental / high noise
+    assert scanner._layer_of("8058") == 1       # doubles as a Layer-1 sensor
+    assert scanner._layer_of("9984") == 2
+    assert scanner._layer_of("7011") == 2
+    assert scanner._layer_of("NVDA") == 2
+
+
+def test_scenarios_scaled_band_units():
+    # a 0.5% FX move ≙ a 2% equity move → identical distributions
+    assert scanner._scenarios_scaled(0.5, 0.5) == scanner._scenarios_for(2.0)
+    assert scanner._scenarios_scaled(-2.0, 8.0) == scanner._scenarios_for(-0.5)
+    assert scanner._scenarios_scaled(None, 0.5) == scanner._scenarios_for(None)
+
+
+def test_sensor_row_carries_band_and_valid_distribution():
+    r = scanner._sensor_row("USDJPY", "USD/JPY", "fx", 155.0, 0.3)
+    assert r["bandPct"] == 0.5 and r["kind"] == "fx"
+    assert abs(sum(s["p"] for s in r["scenarios"]) - 100) < 1e-6
+    v = scanner._sensor_row("VIX", "VIX", "vol", 18.0, -4.0)
+    assert v["bandPct"] == 8.0
