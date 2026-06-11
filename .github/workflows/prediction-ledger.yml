@@ -20,7 +20,12 @@ name: prediction-ledger
 on:
   schedule:
     - cron: '5 7 * * 1-5'   # 07:05 UTC = 16:05 JST Mon-Fri (after TSE close)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full = 記録+採点(通常) / ai-only = AI実行+診断のみ(台帳に一切触らない)'
+        required: false
+        default: 'full'
 
 permissions:
   contents: write
@@ -79,12 +84,27 @@ jobs:
           SHORT=$(echo "$RESP" | head -c 300)
           echo "ai run: $SHORT"
           echo "🤖 ai run: \`${SHORT}\`" >> "$GITHUB_STEP_SUMMARY"
+          # Per-provider diagnostics (esp. WHY Gemini failed — lastErrorType is
+          # an exception type + message head, never a key). Admin-gated source,
+          # surfaced here so a failing checker is debuggable from the run page.
+          DIAG=$(curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/ai-provider-status" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          g = d.get('gemini') or {}; o = d.get('openai') or {}
+          print(json.dumps({'openai': o.get('lastRunStatus'),
+                            'gemini': g.get('lastRunStatus'),
+                            'geminiError': g.get('lastErrorType')}, ensure_ascii=False))" \
+            2>/dev/null || echo '{}')
+          echo "🔬 provider diag: \`${DIAG}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout ledger branch
+        if: github.event.inputs.mode != 'ai-only'
         uses: actions/checkout@v5
         with:
           ref: main
       - name: Switch to ledger branch (create if missing)
+        if: github.event.inputs.mode != 'ai-only'
         run: |
           git fetch origin ledger:ledger 2>/dev/null && git checkout ledger || git checkout --orphan ledger
           if [ ! -d ledger ]; then mkdir -p ledger/days ledger/scores; fi
@@ -93,6 +113,7 @@ jobs:
           find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
 
       - name: Persist backup vault (client-side-encrypted envelopes)
+        if: github.event.inputs.mode != 'ai-only'
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -125,6 +146,7 @@ jobs:
       # ledger branch so a restarted Render dyno can restore the latest real AI
       # view instead of showing "not run yet" all day.
       - name: Persist AI judgment for dyno-restart restore
+        if: github.event.inputs.mode != 'ai-only'
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           curl -s --max-time 60 "$BE/api/argus/ai-judgment" -o ai.json || echo '{}' > ai.json
@@ -144,6 +166,7 @@ jobs:
           PY
 
       - name: Record today's predictions + score the past
+        if: github.event.inputs.mode != 'ai-only'
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           for i in 1 2 3 4 5 6; do
@@ -501,6 +524,7 @@ jobs:
           PY
 
       - name: Commit to ledger branch
+        if: github.event.inputs.mode != 'ai-only'
         run: |
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
