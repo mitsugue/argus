@@ -178,7 +178,15 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
     try { payload = await decryptBackup(pass, env); } catch { payload = null; }
     if (payload?.exportedAt && payload.exportedAt !== st.appliedExportedAt) {
       const remoteTs = Date.parse(payload.exportedAt) || 0;
-      if (remoteTs > localEdit) {
+      // Safety gate: a device that HAS data but has never synced nor edited
+      // since sync-v1 (e.g. the phone right after this release) must not be
+      // silently overwritten by another device's push — its data's age is
+      // unknown to us. Such a device joins the sync group via an explicit
+      // 復元 (or by its own next edit, whose push then wins as newest).
+      let hasLocalData = false;
+      try { hasLocalData = !!localStorage.getItem('argus.assets.v1'); } catch { /* ignore */ }
+      const everSynced = st.appliedExportedAt !== '' || localEdit > 0;
+      if (remoteTs > localEdit && (everSynced || !hasLocalData)) {
         suppressEditsUntil = Date.now() + 3_000;
         restoreBackup(payload);
         setSyncState({ appliedExportedAt: payload.exportedAt });
@@ -211,14 +219,21 @@ export function startCloudSync(): void {
   });
 }
 
-/** Restore from the cloud vault using only the passphrase. */
+/** Restore from the cloud vault using only the passphrase. Tries the live
+    relay first (sync-v1: works minutes after the other device pushed, no
+    need to wait for the 16:05 ledger commit), then the durable GitHub copy. */
 export async function cloudRestore(pass: string): Promise<number> {
   const vaultId = await vaultIdFrom(pass);
-  const r = await fetch(`${RAW_BASE}/${vaultId}/latest.json?cb=${Date.now()}`);
-  if (!r.ok) throw new Error(r.status === 404
-    ? 'クラウド上にバックアップが見つかりません(パスフレーズ違い、または初回保存が16:05の台帳ランを未通過)。'
-    : `HTTP ${r.status}`);
-  const envelopeStr = await r.text();
+  const envelopeStr = await fetchRemoteEnvelope(vaultId, true);
+  if (!envelopeStr) {
+    throw new Error('クラウド上にバックアップが見つかりません(パスフレーズ違い、または他端末がまだ一度も送信していません)。');
+  }
   const payload = await decryptBackup(pass, envelopeStr);
-  return restoreBackup(payload);
+  const n = restoreBackup(payload);
+  // Joining the sync group: record what we applied so the loop doesn't
+  // re-apply it, and let mounted hooks reload without a manual refresh.
+  setSyncState({ appliedExportedAt: payload.exportedAt });
+  suppressEditsUntil = Date.now() + 3_000;
+  window.dispatchEvent(new CustomEvent('argus:data-synced'));
+  return n;
 }

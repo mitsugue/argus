@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.10.1 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.10.2 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.10.1。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.10.2。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.10.1**
+- **現在バージョン: v10.10.2**
 
 ---
 
@@ -289,6 +289,10 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - **要ユーザー操作: AWSで git pull && sudo systemctl restart argus-bridge**(未実施だとブリッジは60秒のまま。
     画面側15秒化だけでも反映遅延は最大60+15→60秒に短縮)
   - 1秒ティックは未対応(WebSocket/SSE化が必要 — 将来課題としてロードマップ記載)
+- v10.10.2 sync安全装置 — ①cloudSyncNow: ローカルにデータがあり一度も同期/編集していない端末へは
+  自動適用しない(復元かローカル編集で初参加 — 「Macで先に有効化→スマホが上書きされる」事故を防止)。
+  ②cloudRestoreがrelay優先(16:05の台帳コミットを待たず他端末の直近pushから復元可能)+復元後に
+  appliedExportedAt記録&data-syncedイベント(リロード不要で画面反映)
 
 ---
 
