@@ -26,7 +26,33 @@ permissions:
   contents: write
 
 jobs:
+  # Dedupe gate (cron-reliability-v1): GitHub's free cron runs HOURS late, so
+  # the punctual trigger is an external workflow_dispatch (user's EC2 at 16:05
+  # JST). When the delayed schedule run finally fires after today was already
+  # recorded, it must NOT re-run the AI / overwrite the close-pin record with
+  # evening prices. Manual/external dispatch always proceeds.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Skip delayed schedule run if today is already recorded
+        id: check
+        run: |
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/days/$TODAY.json?cb=$RANDOM")
+          if [ "$CODE" = "200" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "today ($TODAY) already recorded — delayed schedule run exits"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   record-and-score:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

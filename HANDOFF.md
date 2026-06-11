@@ -16,6 +16,12 @@
 - **翌朝08:30**: 朝ダイジェスト定時テスト
 - ユーザー操作待ち: Finnhubキー(任意)・Vercel旧プロジェクト削除確認・端末統合(スマホ→Mac→プレビューの復元手順)
 - 次の開発フェーズ: **Close Pin Intraday Ledger**(15:30引けピン台帳。3層構造の残り半分)
+- **cron-reliability-v1 導入済み**: GitHub cronは時間単位で遅延するため、台帳ランの正トリガーは
+  EC2のcron(07:05 UTC)→workflow_dispatch(bridge/trigger_ledger.sh、fine-grained PAT使用)。
+  workflowに二重実行ガード(gateジョブ: 当日記録済み+schedule起動なら即終了)。
+  **ユーザー操作待ち: PAT発行+EC2セットアップ(スクリプト冒頭の手順3行)**。
+  morning-digestはDelayヘッダで2h11mの遅延まで吸収(超過時は即時送信=遅着)。digestの外部トリガー化は
+  二重通知防止の設計が必要なため見送り中(やるならGH scheduleの削除とセット)
 
 ## 0. 最初にやること（現状確認）
 
