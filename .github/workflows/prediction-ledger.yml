@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'full = 記録+採点(通常) / ai-only = AI実行+診断のみ(台帳に一切触らない)'
+        description: 'full = 記録+採点(当日未記録のときのみ) / ai-only = AI実行+診断のみ(台帳に触らない) / force = 当日記録を強制上書き'
         required: false
         default: 'full'
 
@@ -42,15 +42,20 @@ jobs:
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
-      - name: Skip delayed schedule run if today is already recorded
+      - name: Skip if today is already recorded (unless ai-only/force)
         id: check
         run: |
+          MODE="${{ github.event.inputs.mode }}"
+          if [ "$MODE" = "ai-only" ] || [ "$MODE" = "force" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"   # ai-only never touches the
+            exit 0                                  # ledger; force is explicit
+          fi
           TODAY=$(TZ=Asia/Tokyo date +%F)
           CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             "https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/days/$TODAY.json?cb=$RANDOM")
-          if [ "$CODE" = "200" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "$CODE" = "200" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "today ($TODAY) already recorded — delayed schedule run exits"
+            echo "today ($TODAY) already recorded — run exits (use mode=force to overwrite)"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
