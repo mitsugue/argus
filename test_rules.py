@@ -479,3 +479,22 @@ def test_news_major_keyword_detection():
     assert scanner._NEWS_MAJOR_RE.search("Fed signals rate cut in September")
     assert scanner._NEWS_MAJOR_RE.search("Japan intervenes to support yen")
     assert not scanner._NEWS_MAJOR_RE.search("Apple unveils new MacBook lineup")
+
+
+# ── Finnhub US quote fallback (v10.12.1) ─────────────────────────────
+def test_us_watchlist_finnhub_backfill(monkeypatch):
+    monkeypatch.setattr(scanner, "_get_us_watchlist_core",
+        lambda syms=None: {"status": "partial", "asOf": None, "provider": "twelvedata",
+                           "stocks": [{"symbol": "NVDA", "name": "NVIDIA", "price": 200.0,
+                                       "changeAbs": 1.0, "changePct": 0.5, "volume": 1,
+                                       "date": "2026-06-11", "status": "live"}]})
+    monkeypatch.setattr(scanner, "_overlay_pushed", lambda snap, m, req: snap)
+    monkeypatch.setattr(scanner, "FINNHUB_API_KEY", "x")
+    monkeypatch.setattr(scanner, "_finnhub_quote_row",
+        lambda s: {"symbol": s, "name": s, "price": 40.0, "changeAbs": 0.5,
+                   "changePct": 1.2, "volume": 0, "date": "2026-06-11",
+                   "status": "live", "source": "finnhub"})
+    out = scanner.get_us_watchlist_snapshot(["NVDA", "IONQ"])
+    syms = {s["symbol"]: s for s in out["stocks"]}
+    assert "IONQ" in syms and syms["IONQ"]["source"] == "finnhub"
+    assert syms["NVDA"]["price"] == 200.0  # TD row untouched

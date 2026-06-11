@@ -1880,12 +1880,56 @@ def _get_us_watchlist_core(symbols=None):
     except Exception:
         return _us_mock_snapshot()
 
+# Finnhub fallback for US symbols Twelve Data's free plan omits entirely
+# (user hit this with IONQ on 2026-06-11: NVDA returned, IONQ silently absent).
+# 1 quote call per missing symbol, bounded by the dynamic cap; 10-min cache.
+_FINNHUB_QUOTE_CACHE = {}   # symbol -> {"row": dict|None, "ts": epoch}
+_FINNHUB_QUOTE_TTL = 600
+
+def _finnhub_quote_row(sym):
+    if not FINNHUB_API_KEY:
+        return None
+    now = time.time()
+    c = _FINNHUB_QUOTE_CACHE.get(sym)
+    if c and now - c["ts"] <= _FINNHUB_QUOTE_TTL:
+        return c["row"]
+    row = None
+    try:
+        r = requests.get("https://finnhub.io/api/v1/quote",
+                         params={"symbol": sym, "token": FINNHUB_API_KEY}, timeout=6)
+        d = r.json() if r.ok else {}
+        price = d.get("c")
+        if isinstance(price, (int, float)) and price > 0:
+            ts = d.get("t") or 0
+            row = {"symbol": sym, "name": sym, "price": float(price),
+                   "changeAbs": float(d.get("d") or 0), "changePct": float(d.get("dp") or 0),
+                   "volume": 0,
+                   "date": datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%d") if ts else None,
+                   "status": "live", "source": "finnhub"}
+    except Exception:
+        row = None
+    _FINNHUB_QUOTE_CACHE[sym] = {"row": row, "ts": now}
+    return row
+
 def get_us_watchlist_snapshot(symbols=None):
-    """Core snapshot + real-time overlay from the local moomoo bridge (v9.11)."""
+    """Core snapshot + real-time overlay from the local moomoo bridge (v9.11).
+    Symbols Twelve Data's free plan omits are back-filled via Finnhub (v10.12.1)."""
     snap = _get_us_watchlist_core(symbols)
     requested = (_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX) if symbols
                  else [s["symbol"] for s in _US_WATCHLIST])
-    return _overlay_pushed(snap, "US", requested)
+    snap = _overlay_pushed(snap, "US", requested)
+    try:
+        have = {s.get("symbol") for s in (snap.get("stocks") or [])}
+        missing = [s for s in requested if s not in have]
+        if missing and FINNHUB_API_KEY:
+            filled = [r for r in (_finnhub_quote_row(s) for s in missing) if r]
+            if filled:
+                snap = {**snap, "stocks": list(snap.get("stocks") or []) + filled}
+                if snap.get("status") == "mock":
+                    snap = {**snap, "status": "partial"}
+    except Exception:
+        pass
+    return snap
 
 @app.route("/api/argus/us-watchlist")
 def api_argus_us_watchlist():
