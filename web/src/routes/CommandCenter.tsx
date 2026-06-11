@@ -227,9 +227,22 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               {ledger.data.posture?.hitRate != null && (
                 <> ・姿勢の的中 <b>{Math.round(ledger.data.posture.hitRate * 100)}%</b>({ledger.data.posture.n}回)</>
               )}
+              {ledger.data.layers?.layer1?.byHorizon?.['1']?.hitRate != null && (
+                <> ・センサー1日 <b>{Math.round((ledger.data.layers.layer1.byHorizon['1'].hitRate ?? 0) * 100)}%</b>({ledger.data.layers.layer1.byHorizon['1'].n}件)</>
+              )}
               <div className="jlog__acc-note">{ledger.data.noteJa}</div>
             </div>
           )}
+          {/* closepin-v1: same-day 14:30-pin → close scoring,独立した第二台帳 */}
+          {ledger.closepin?.overall?.hitRate != null ? (
+            <div className="jlog__acc">
+              🎯 引けピン(14:30→同日終値・{ledger.closepin.overall.days}日 / {ledger.closepin.overall.n}件):
+              的中率 <b>{Math.round((ledger.closepin.overall.hitRate ?? 0) * 100)}%</b>
+              ・Brier <b>{ledger.closepin.overall.brierMean?.toFixed(3) ?? '—'}</b>
+            </div>
+          ) : (!ledger.loading && ledger.data && (
+            <div className="jlog__acc">🎯 引けピン台帳: 蓄積開始前(毎営業日14:30にピン → 16:05に同日採点)。</div>
+          ))}
           {recent.length > 0 && (
             <div className="jlog__strip">
               {recent.map((e) => (
