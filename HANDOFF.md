@@ -46,6 +46,23 @@
     英語・参考情報・**判断エンジンには非入力**(reaction-based主義は維持)と明記
   - v10.11.1: Todayに台帳成績常設(センサー1日的中率+引けピン行、蓄積前は「蓄積開始前」表示)
 
+## 0-c. ユーザーレビュー(2026-06-11夜)からの改善バックログ — 次セッションはここから
+
+P1(高・すぐやる):
+1. Market News見出しの日本語化 — Gemini flashで10分毎のキャッシュ充填時に一括翻訳(headlineJa追加)。リンク先翻訳は不可(ブラウザ翻訳を案内済み)
+2. 金利/ボラカード統合 — Rates backdrop と FRED rate snapshot は重複(ユーザー指摘)。1枚に統合し、**全指標に前日比±%**と「VIXの60日レンジ内位置」を表示(高い/低いが一目で分かるように)
+3. ニュース統合 — News Radar(危機カウンター)と Market News(速報)を1セクションに。0件=平穏の正常表示である旨も明記
+4. Event Radar を Today の上部へ移動(売買判断の主要材料とのこと)。「イベント=方向ではなくリスク窓」の説明行も追加
+P2(中):
+5. fund-nav-v1 — 投信の基準価額。MUFG AMの公開API(fund_cd要検証・推測絶対禁止)。Watchlist投信行+Exposureに反映
+6. Data limitations 等の英語文字列の和訳総点検
+7. Regime glossary に「投資にどう使うか」1行を各用語へ
+8. Corporate Catalysts の日本株開示の充実(J-Quants)
+P3(要議論/ユーザー判断):
+9. Core Portfolio 再設計 — Watchlist投信との役割が不明瞭(ユーザー)。金/BTC/債券/ドル円のベーシック資産はAction Alertsと重複するため、統合 or 明確な役割分担を設計から
+10. Render Starter($7/月)課金 — コールドスタート(15分スリープ→30-60秒)の根治。ユーザー判断待ち
+11. _NEWS_MAJOR_RE に地政学語彙追加(iran/strike/attack等 — Trump/Iran見出しが⚡にならなかった)
+
 ## 0. 最初にやること（現状確認）
 
 新セッションを始めたら、まずこの3つで現状を把握する:
