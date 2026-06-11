@@ -119,11 +119,12 @@ jobs:
             echo "NTFY_TOPIC not configured — change detected but push skipped."
             exit 0
           fi
+          # No Click header: tapping a notification should show the text in
+          # ntfy, not jump to the app (user request 2026-06-11).
           curl -sf --max-time 30 \
             -H "Title: ARGUS Market Alert" \
             -H "Priority: high" \
             -H "Tags: rotating_light" \
-            -H "Click: https://mitsugue.github.io/argus/" \
             --data-binary @alert.txt \
             "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
           echo "alert pushed."

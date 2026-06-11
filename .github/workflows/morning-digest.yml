@@ -14,10 +14,15 @@ name: morning-digest
 
 on:
   schedule:
-    # 23:30 UTC Sun–Thu = 08:30 JST Mon–Fri — before the TSE open (09:00 JST)
-    - cron: '30 23 * * 0-4'
-    # 13:00 UTC Mon–Fri = 22:00 JST Mon–Fri — before the NYSE open (22:30/23:30 JST)
-    - cron: '0 13 * * 1-5'
+    # GitHub's free cron is best-effort and has been observed running 2–3.5h
+    # late. Strategy: fire EARLY at an odd minute (less queue contention), then
+    # let ntfy's server-side "Delay" scheduling deliver at the exact target
+    # time (08:30 / 22:00 JST). Market data doesn't change in the gap (US
+    # close 05:00 JST, TSE close 15:30 JST).
+    # 21:49 UTC Sun–Thu = 06:49 JST Mon–Fri → delivered 08:30 JST (TSE pre-open)
+    - cron: '49 21 * * 0-4'
+    # 10:49 UTC Mon–Fri = 19:49 JST → delivered 22:00 JST (NYSE pre-open)
+    - cron: '49 10 * * 1-5'
   workflow_dispatch: {}
 
 permissions: {}
@@ -55,14 +60,37 @@ jobs:
             echo "NTFY_TOPIC not configured — skipping push (digest fetched OK)."
             exit 0
           fi
-          # Session-aware title: the 23:xx UTC run is the JP pre-open brief,
-          # the 13:xx UTC run is the US pre-open brief.
-          H=$(date -u +%H)
-          if [ "$H" -ge 20 ]; then TITLE="ARGUS Digest - JP open"; else TITLE="ARGUS Digest - US open"; fi
+          # Session detection + exact-time delivery. The 21:49 UTC run (even
+          # delayed past midnight UTC) is the JP brief targeting 23:30 UTC
+          # (=08:30 JST); the 10:49 UTC run is the US brief targeting 13:00 UTC
+          # (=22:00 JST). If we're already past the target (heavy cron delay),
+          # send immediately; otherwise ntfy holds the message server-side and
+          # delivers it at the exact time. No Click header: tapping should show
+          # the text, not jump to the app (user request 2026-06-11).
+          python3 - <<'PY' > sched.env
+          import datetime
+          now = datetime.datetime.now(datetime.timezone.utc)
+          h = now.hour
+          if h >= 18 or h < 6:  # JP run window (21:49 UTC + up to ~6h delay)
+              session = "JP open"
+              target = now.replace(hour=23, minute=30, second=0, microsecond=0)
+              if h < 6:  # delayed past midnight UTC — target was "yesterday 23:30"
+                  target -= datetime.timedelta(days=1)
+          else:
+              session = "US open"
+              target = now.replace(hour=13, minute=0, second=0, microsecond=0)
+          margin = datetime.timedelta(seconds=120)
+          delay = int(target.timestamp()) if target > now + margin else 0
+          print(f'SESSION="{session}"')
+          print(f"DELAY={delay}")
+          PY
+          . ./sched.env
+          DELAY_HDR=()
+          if [ "$DELAY" != "0" ]; then DELAY_HDR=(-H "Delay: $DELAY"); fi
           curl -sf --max-time 30 \
-            -H "Title: $TITLE" \
+            -H "Title: ARGUS Digest - $SESSION" \
             -H "Tags: chart_with_upwards_trend" \
-            -H "Click: https://mitsugue.github.io/argus/" \
+            "${DELAY_HDR[@]}" \
             --data-binary @digest.txt \
             "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
-          echo "digest pushed ($TITLE)."
+          echo "digest pushed (session=$SESSION delay=$DELAY)."
