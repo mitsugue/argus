@@ -337,3 +337,39 @@ def test_ai_restore_rejects_runs_older_than_max_age():
     assert scanner._ai_restore_validate(_ai_payload(as_of=ok), now_utc=now) is not None
     assert scanner._ai_restore_validate(_ai_payload(as_of=old), now_utc=now) is None
     assert scanner._ai_restore_validate(_ai_payload(as_of=future), now_utc=now) is None
+
+
+# ── Calibration plumbing (calibration-v1, v10.8) ─────────────────────
+def test_calibration_neutral_while_accumulating():
+    cal = scanner._calibration_for({"byPosture": {}}, "CAUTIOUS")
+    assert cal["factor"] == 1.0 and "蓄積中" in cal["basisJa"]
+    cal = scanner._calibration_for(None, "CAUTIOUS")
+    assert cal["factor"] == 1.0
+    # below the 33-row evidence floor → still neutral even with a strong rate
+    s = {"byPosture": {"CAUTIOUS": {"n": 22, "hitRate": 0.9}}}
+    assert scanner._calibration_for(s, "CAUTIOUS")["factor"] == 1.0
+
+
+def test_calibration_trust_and_doubt_bands():
+    up = {"byPosture": {"CAUTIOUS": {"n": 44, "hitRate": 0.65}}}
+    mid = {"byPosture": {"CAUTIOUS": {"n": 44, "hitRate": 0.50}}}
+    down = {"byPosture": {"CAUTIOUS": {"n": 44, "hitRate": 0.30}}}
+    assert scanner._calibration_for(up, "CAUTIOUS")["factor"] == scanner._CAL_UP
+    assert scanner._calibration_for(mid, "CAUTIOUS")["factor"] == 1.0
+    assert scanner._calibration_for(down, "CAUTIOUS")["factor"] == scanner._CAL_DOWN
+
+
+def test_calibration_only_reads_matching_posture_bucket():
+    s = {"byPosture": {"RISK_OFF": {"n": 99, "hitRate": 0.2}}}
+    cal = scanner._calibration_for(s, "CAUTIOUS")  # different context day
+    assert cal["factor"] == 1.0 and cal["n"] == 0
+
+
+def test_calibration_survives_malformed_summary():
+    assert scanner._calibration_for({"byPosture": {"CAUTIOUS": {"n": "x"}}}, "CAUTIOUS")["factor"] == 1.0
+    assert scanner._calibration_for("garbage", "CAUTIOUS")["factor"] == 1.0
+
+
+def test_action_labels_response_carries_calibration():
+    out = scanner.get_action_labels()
+    assert "calibration" in out and out["calibration"]["factor"] >= 0.8

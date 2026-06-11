@@ -31,10 +31,21 @@ export interface MarketPosture {
   rationaleJa: string;
 }
 
+// calibration-v1 (v10.8+): the ledger's scored track record for today's
+// posture, fed back into label confidence server-side. factor 1.0 = neutral
+// (insufficient evidence or noise-band hit rate).
+export interface Calibration {
+  factor: number;
+  basisJa: string;
+  n: number;
+  hitRate: number | null;
+}
+
 export interface ActionLabelsSnapshot {
   status: SnapshotStatus;
   asOf: string;
   engineVersion: string;
   marketPosture: MarketPosture;
+  calibration?: Calibration;
   labels: ActionLabel[];
 }

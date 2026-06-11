@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.7.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.8.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.7.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.8.0。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.7.0**
+- **現在バージョン: v10.8.0**
 
 ---
 
@@ -246,6 +246,14 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - morning-digest.yml: GitHub無料cronの2〜3.5h遅延対策 — 06:49/19:49 JSTに早発火し、
     ntfyのDelayヘッダで08:30/22:00 JSTちょうどにサーバー側配信(目標時刻超過時は即時送信)
   - 通知のClickヘッダ削除(digest+alerts) — タップでntfy内で全文表示、アプリへ飛ばない(ユーザー要望)
+- v10.8.0 校正ループ(calibration-v1)
+  - 台帳の summary.json(byPosture別の的中率)を `_ledger_summary()`(30分キャッシュ・10分back-off)で取得し、
+    `_calibration_for(summary, posture)`(pure・pytest5件)が確信度係数を返す:
+    bucket n≥33(≈3日分)が必要、hitRate≥60%→×1.05 / <40%→×0.85 / それ以外×1.0(ノイズ域)。
+    係数適用後の確信度は0.05〜0.9にクランプ。蓄積不足の間は中立×1.0+「蓄積中」表示
+  - /action-labels レスポンスに `calibration: {factor, basisJa, n, hitRate}` を追加。
+    資産戦略ページ先頭に「🎯 校正: …」の1行(常時表示・正直設計)
+  - 採点データが貯まると自動で効き始める(コード変更不要)。これが「予測→採点→確信度への還元」ループの配管
 
 ---
 

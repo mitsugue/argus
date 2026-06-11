@@ -506,11 +506,18 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
     return <div className="card asset-list"><div className="asset-empty">資産がありません。「+ Add Asset」で追加できます。</div></div>;
   }
 
+  const cal = al.data?.calibration;
+
   return (
     <div className="asset-groups">
       <ExposureCard assets={assets} exp={exp} />
       <WhatIfPanel assets={assets} quotes={maps.quotes} labels={maps.labels} cats={maps.cats}
                    exp={exp} usdJpy={usdJpy} mountTs={mountTs} />
+      {cal && (
+        <div className="asset-calibration" title="予測台帳の採点成績が確信度に反映されます(calibration-v1)">
+          🎯 校正: {cal.basisJa}
+        </div>
+      )}
       {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の戦略を取得中</div>}
       {groups.map((g) => {
         const ids = g.items.map((a) => a.id);

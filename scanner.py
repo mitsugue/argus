@@ -2811,6 +2811,61 @@ def _flow_adjust(action, conf, reason, nxt, chg, ratio, esc, posture, reg_label)
         return (action, conf, reason + f" 大口は純流出({ratio:+.0%})。", nxt)
     return (action, conf, reason, nxt)
 
+# ── Calibration plumbing (calibration-v1, v10.8) ─────────────────────────────
+# Closes the learning loop: the daily ledger scores (summary.json on the ledger
+# branch) feed back into label confidence. Context bucket = the day's rates
+# posture — the scorer groups scenario rows the same way, so the comparison is
+# apples-to-apples. Sample guards keep this honest: ~11 scenario rows are
+# scored per day, so a bucket needs ≥3 days of evidence (33 rows) before it may
+# move confidence at all; until then the factor is exactly 1.0 and the UI says
+# 蓄積中. The bands are deliberately wide — argmax hit rate on ±2% buckets is
+# noisy, so only a clear pattern (≥60% / <40%) earns an adjustment.
+_CAL_MIN_N = 33
+_CAL_TRUST_HIT = 0.60
+_CAL_DOUBT_HIT = 0.40
+_CAL_UP, _CAL_DOWN = 1.05, 0.85
+_LEDGER_SUMMARY_CACHE = {"data": None, "expires": 0.0}
+
+def _ledger_summary():
+    """summary.json from the ledger branch via GitHub raw. 30-min cache,
+    10-min fail back-off, never raises."""
+    now = time.time()
+    if now < _LEDGER_SUMMARY_CACHE["expires"]:
+        return _LEDGER_SUMMARY_CACHE["data"]
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/summary.json", timeout=6)
+        d = r.json() if r.status_code == 200 else None
+        _LEDGER_SUMMARY_CACHE["data"] = d if isinstance(d, dict) else None
+        _LEDGER_SUMMARY_CACHE["expires"] = now + (1800 if isinstance(d, dict) else 600)
+    except Exception:
+        _LEDGER_SUMMARY_CACHE["data"] = None
+        _LEDGER_SUMMARY_CACHE["expires"] = now + 600
+    return _LEDGER_SUMMARY_CACHE["data"]
+
+def _calibration_for(summary, posture):
+    """Pure (unit-tested): ledger summary + today's posture →
+    {factor, basisJa, n, hitRate}. Malformed input → neutral factor."""
+    try:
+        b = ((summary or {}).get("byPosture") or {}).get(posture) or {}
+        n = int(b.get("n") or 0)
+        hr = b.get("hitRate")
+        if n >= _CAL_MIN_N and isinstance(hr, (int, float)):
+            if hr >= _CAL_TRUST_HIT:
+                f, verdict = _CAL_UP, "確信度を僅かに引き上げ"
+            elif hr < _CAL_DOUBT_HIT:
+                f, verdict = _CAL_DOWN, "確信度を引き下げ"
+            else:
+                f, verdict = 1.0, "調整なし(ノイズ域)"
+            return {"factor": f, "n": n, "hitRate": hr,
+                    "basisJa": f"姿勢{posture}での過去的中率{hr:.0%}(n={n}) → {verdict}"}
+        total = int(((summary or {}).get("overall") or {}).get("n") or 0)
+        return {"factor": 1.0, "n": n,
+                "hitRate": hr if isinstance(hr, (int, float)) else None,
+                "basisJa": f"校正データ蓄積中(この姿勢n={n}/必要{_CAL_MIN_N}・全体n={total}) — 確信度は未調整"}
+    except Exception:
+        return {"factor": 1.0, "n": 0, "hitRate": None,
+                "basisJa": "校正不可(summary形式不明) — 確信度は未調整"}
+
 def get_action_labels(jp_symbols=None, us_symbols=None):
     """Rule-based action labels, aggregated server-side. Accepts the user's
     actual watchlist symbols (dynamic) — default is the curated list."""
@@ -2827,6 +2882,9 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     posture = _rates_posture(rates)
     esc_by_market = {"US": _region_event_escalation(events, "US"),
                      "JP": _region_event_escalation(events, "JP")}
+    # calibration-v1: the ledger's scored track record for today's posture
+    # adjusts label confidence (neutral 1.0 until enough evidence accumulates).
+    cal = _calibration_for(_ledger_summary(), posture)
 
     quotes = {}
     for snap in (jp, us):
@@ -2876,6 +2934,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         if lag is not None and lag > _QUOTE_STALE_DAYS:
             conf = round(conf * 0.5, 2)
             reason = f"【価格データ{lag}日遅れ】" + reason
+        if cal["factor"] != 1.0:
+            conf = round(min(0.9, max(0.05, conf * cal["factor"])), 2)
         labels.append({
             "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
             "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
@@ -2926,6 +2986,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             "growthValueAxis": reg_block.get("growthValueAxis"),
             "riskDurationAxis": reg_block.get("riskDurationAxis"),
         },
+        "calibration": cal,
         "labels": labels,
     }
 
