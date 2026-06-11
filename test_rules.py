@@ -117,6 +117,10 @@ def test_ai_truth_no_cached_result(monkeypatch):
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "x")
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "y")
     monkeypatch.setitem(scanner._AI_RESULT_CACHE, "data", None)
+    # ai-persist-v1: with keys present the truth source would now try to
+    # RESTORE from the real ledger branch over the network — tests must stay
+    # hermetic, so pin the restore to a no-op here.
+    monkeypatch.setattr(scanner, "_ai_try_restore", lambda: None)
     assert scanner._ai_judgment_truth()["status"] == "no_cached_result"
 
 
@@ -125,6 +129,7 @@ def test_ai_truth_one_key_is_partial(monkeypatch):
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "x")
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "")
     monkeypatch.setitem(scanner._AI_RESULT_CACHE, "data", None)
+    monkeypatch.setattr(scanner, "_ai_try_restore", lambda: None)
     assert scanner._ai_judgment_truth()["status"] == "partial"
 
 
@@ -370,7 +375,9 @@ def test_calibration_survives_malformed_summary():
     assert scanner._calibration_for("garbage", "CAUTIOUS")["factor"] == 1.0
 
 
-def test_action_labels_response_carries_calibration():
+def test_action_labels_response_carries_calibration(monkeypatch):
+    # Hermetic: don't let the test reach the real ledger summary on GitHub.
+    monkeypatch.setattr(scanner, "_ledger_summary", lambda: None)
     out = scanner.get_action_labels()
     assert "calibration" in out and out["calibration"]["factor"] >= 0.8
 
