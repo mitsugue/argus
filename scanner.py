@@ -3755,7 +3755,31 @@ _MARKET_NEWS_FAIL_TTL = 300
 _NEWS_MAJOR_RE = re.compile(
     r"\b(fed|fomc|ecb|boe|boj|bank of japan|rate (hike|cut|decision)|raises? rates?|"
     r"cuts? rates?|interest rate|intervention|yen|emergency|default|bankruptc|crash|"
-    r"tariff|sanction|war|missile|inflation|cpi|jobs report|payrolls)\b", re.I)
+    r"tariff|sanction|war|missile|inflation|cpi|jobs report|payrolls|"
+    # Geopolitics vocab (2026-06-12: "US will hit Iran" was not flagged):
+    r"iran|israel|taiwan|north korea|nuclear|strikes?|attacks?|invasion|opec)\b", re.I)
+
+def _translate_headlines_ja(headlines):
+    """Batch-translate headlines via the cheap Gemini flash model. Best-effort:
+    any failure returns {} and the UI falls back to English. Called at most
+    once per news-cache refill (10 min), so cost is negligible."""
+    if not google_genai or not GEMINI_API_KEY or not headlines:
+        return {}
+    try:
+        client = google_genai.Client(api_key=GEMINI_API_KEY)
+        prompt = ("以下の英語ニュース見出しを自然な日本語に翻訳してください。固有名詞は一般的な日本語表記、"
+                  "誇張や意訳はしない。STRICT JSONのみで返す: {\"translations\": [\"...\"]} 順序は入力どおり、件数も同じ。\n"
+                  + json.dumps(headlines, ensure_ascii=False))
+        from google.genai import types as _gt
+        cfg = _gt.GenerateContentConfig(response_mime_type="application/json")
+        resp = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg)
+        out = safe_json(getattr(resp, "text", "") or "")
+        tr = out.get("translations") if isinstance(out, dict) else None
+        if isinstance(tr, list):
+            return {i: str(t)[:200] for i, t in enumerate(tr) if t}
+    except Exception as e:
+        add_log(f"[news] headline translate failed: {type(e).__name__}")
+    return {}
 
 def get_market_news():
     if not FINNHUB_API_KEY:
@@ -3782,8 +3806,13 @@ def get_market_news():
             })
             if len(items) >= 14:
                 break
+        # Japanese headlines (news-v2.1): one flash call per 10-min refill.
+        tr = _translate_headlines_ja([i["headline"] for i in items])
+        for idx, item in enumerate(items):
+            if idx in tr:
+                item["headlineJa"] = tr[idx]
         out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
-               "noteJa": "Finnhub市場ニュース(英語・参考情報)。⚡=金融政策/介入/危機などの重要キーワード検出。判断エンジンには入力されない。"}
+               "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=金融政策/介入/地政学などの重要キーワード検出。判断エンジンには入力されない。"}
         _MARKET_NEWS_CACHE["data"] = out
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_TTL
         return out

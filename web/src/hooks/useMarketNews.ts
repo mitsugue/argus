@@ -6,6 +6,8 @@ import { useEffect, useState } from 'react';
 
 export interface MarketNewsItem {
   headline: string;
+  /** Auto-translated headline (Gemini flash, v10.14) — absent on failure. */
+  headlineJa?: string;
   source: string;
   url: string;
   datetime: number | null;   // unix seconds

@@ -478,6 +478,8 @@ def test_news_major_keyword_detection():
     assert scanner._NEWS_MAJOR_RE.search("ECB raises rates by 25 basis points")
     assert scanner._NEWS_MAJOR_RE.search("Fed signals rate cut in September")
     assert scanner._NEWS_MAJOR_RE.search("Japan intervenes to support yen")
+    assert scanner._NEWS_MAJOR_RE.search("US will hit Iran very hard tonight")
+    assert scanner._NEWS_MAJOR_RE.search("Missile strikes reported near Taiwan")
     assert not scanner._NEWS_MAJOR_RE.search("Apple unveils new MacBook lineup")
 
 

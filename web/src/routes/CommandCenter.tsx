@@ -260,6 +260,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         </div>
       </section>
 
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Event Radar</span>
+          <button className="section-head__link" onClick={() => onNavigate('events')}>
+            next {events.length}
+          </button>
+        </div>
+        <div className="card event-list">
+          {events.length > 0
+            ? events.map((e) => <CompactEventRow key={e.id} event={e} />)
+            : <p className="today-connecting">connecting… イベントカレンダーを取得中</p>}
+        </div>
+      </section>
+
       {news.data && news.data.items.length > 0 && (
         <section>
           <div className="section-head">
@@ -271,7 +285,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               <a className={`mnews__row${n.major ? ' mnews__row--major' : ''}`}
                  key={n.url || n.headline} href={n.url} target="_blank" rel="noreferrer">
                 <span className="mnews__flag">{n.major ? '⚡' : '・'}</span>
-                <span className="mnews__head">{n.headline}</span>
+                <span className="mnews__head" title={n.headlineJa ? n.headline : undefined}>{n.headlineJa ?? n.headline}</span>
                 <span className="mnews__meta">
                   {n.source}{n.datetime ? ` · ${Math.max(0, Math.round((Date.now() / 1000 - n.datetime) / 60))}分前` : ''}
                 </span>
@@ -318,20 +332,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           {priority.length > 0
             ? priority.map((row) => <CompactWatchRow key={row.symbol} entry={row} />)
             : <p className="today-connecting">connecting… ライブ価格と行動ラベルを取得中</p>}
-        </div>
-      </section>
-
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">Event Radar</span>
-          <button className="section-head__link" onClick={() => onNavigate('events')}>
-            next {events.length}
-          </button>
-        </div>
-        <div className="card event-list">
-          {events.length > 0
-            ? events.map((e) => <CompactEventRow key={e.id} event={e} />)
-            : <p className="today-connecting">connecting… イベントカレンダーを取得中</p>}
         </div>
       </section>
 

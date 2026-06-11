@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.13.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.14.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.13.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.14.0。
 
 ---
 
@@ -36,6 +36,10 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.14.0 ニュース日本語化(news-v2.1) — `_translate_headlines_ja`(Gemini flash・10分毎の
+  キャッシュ充填時に1回・失敗時は英語フォールバック)。⚡語彙に地政学(iran/israel/taiwan/strike等)追加。
+  Event RadarセクションをTodayの判断ログ直下へ移動(ユーザー要望)。
+  残P1: 金利/ボラカード統合+前日比、News Radar+Market News統合
 - v10.13.0 資産クラス司令室(command-center-v1、ユーザー承認の案A)
   - CorePortfolio.tsx 全面刷新(旧mock indexFundStatus廃止): ①buildExposureによる実配分(円換算合計・
     含み損益・ジャンル別バー・unpriced正直表示) ②useActionAlertsの8クラス判断(AlertCard再利用)
@@ -111,7 +115,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.13.0**
+- **現在バージョン: v10.14.0**
 
 ---
 
