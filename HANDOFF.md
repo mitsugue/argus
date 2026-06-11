@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.12.1 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.13.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.12.1。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.13.0。
 
 ---
 
@@ -36,6 +36,12 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.13.0 資産クラス司令室(command-center-v1、ユーザー承認の案A)
+  - CorePortfolio.tsx 全面刷新(旧mock indexFundStatus廃止): ①buildExposureによる実配分(円換算合計・
+    含み損益・ジャンル別バー・unpriced正直表示) ②useActionAlertsの8クラス判断(AlertCard再利用)
+    ③coreActionForの姿勢連動積立方針。Action Alertsページは当面併存(ユーザーの使用感を見て統廃合判断)
+- v10.12.2 銘柄ごとPro相談ボタン(戦略カードのフッター・クライアント側でプロンプト生成)+
+  通知タイトルにJST配信時刻(iOSの「昨日」問題対応。今夜22:00便から有効)
 - v10.12.1 Finnhub USフォールバック — TD無料プラン対象外銘柄(IONQで発覚)を /quote で補完
   (_finnhub_quote_row: 10分キャッシュ・銘柄毎・name=symbol)。投信の基準価額は依然データ源なし
   (fund-nav-v1候補: MUFG AMの公開API — fund_cdの正確な特定が必要、推測禁止)
@@ -105,7 +111,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.12.1**
+- **現在バージョン: v10.13.0**
 
 ---
 

@@ -814,6 +814,18 @@
 /* calibration-v1: ledger track record → confidence, one quiet line. */
 .asset-calibration { padding: 4px 2px 10px; font-size: 11px; color: var(--text-faint); }
 
+/* command-center-v1: 資産クラス司令室 — allocation bars on Core Portfolio. */
+.cmd-alloc { padding: 10px 14px; }
+.cmd-alloc__row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12.5px; }
+.cmd-alloc__name { flex: none; width: 110px; color: var(--text-sub); }
+.cmd-alloc__bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
+.cmd-alloc__bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent, #5b8def); }
+.cmd-alloc__pct { flex: none; width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.cmd-alloc__val { flex: none; width: 110px; text-align: right; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+.cmd-alloc__pl { padding: 8px 0 2px; font-size: 12px; font-weight: 600; }
+.cmd-alloc__note { padding-top: 6px; font-size: 10.5px; color: var(--text-faint); }
+.cmd-alloc__empty { padding: 8px 0; font-size: 12px; color: var(--text-faint); }
+
 /* news-v2: Market News feed on Today (Finnhub headlines, ⚡ = market-moving). */
 .mnews { padding: 6px 0; }
 .mnews__row {
