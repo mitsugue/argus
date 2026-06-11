@@ -3009,6 +3009,10 @@ def api_argus_action_labels():
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
 _OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.5"
 _GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-2.5-flash"
+# Free-tier quota for the pro model is tiny (observed 429 RESOURCE_EXHAUSTED on
+# 2026-06-11) — on quota errors the checker falls back to this model once so
+# the double-check DEGRADES instead of disappearing.
+_GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "") or "gemini-2.5-flash"
 _ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
 
 # ── AI safety / Security Gate v1 config ──────────────────────────────
@@ -3204,8 +3208,25 @@ def _gemini_check(snapshot, openai_out):
             grounding_enabled = True
         except Exception:
             cfg, grounding_enabled = None, False
-        resp = (client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt, config=cfg)
-                if cfg else client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt))
+
+        def _gen(model, config):
+            return (client.models.generate_content(model=model, contents=prompt, config=config)
+                    if config else client.models.generate_content(model=model, contents=prompt))
+
+        model_used = _GEMINI_JUDGE_MODEL
+        try:
+            resp = _gen(model_used, cfg)
+        except Exception as e:
+            msg = str(e)
+            # Quota exhausted on the configured (pro) model → degrade to the
+            # fallback model rather than losing the double-check entirely.
+            if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) and _GEMINI_FALLBACK_MODEL != model_used:
+                model_used = _GEMINI_FALLBACK_MODEL
+                add_log(f"[AI] gemini quota hit — falling back to {model_used}")
+                resp = _gen(model_used, cfg)
+            else:
+                raise
+        _AI_LAST_RUN["gemModel"] = model_used
         out = safe_json(getattr(resp, "text", "") or "")
         if not isinstance(out, dict) or "disagreements" not in out:
             # Grounding-tool responses often aren't pure JSON. Retry ONCE in
@@ -3213,7 +3234,7 @@ def _gemini_check(snapshot, openai_out):
             try:
                 from google.genai import types as _gt
                 cfg2 = _gt.GenerateContentConfig(response_mime_type="application/json")
-                resp = client.models.generate_content(model=_GEMINI_JUDGE_MODEL, contents=prompt, config=cfg2)
+                resp = _gen(model_used, cfg2)
                 out = safe_json(getattr(resp, "text", "") or "")
                 grounding_enabled = False
             except Exception as e2:
@@ -3399,7 +3420,10 @@ def _execute_ai_judgment(run_mode="manual"):
     payload = {
         "status": status, "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": run_mode,
         "models": {"primary": (_OPENAI_MODEL if oai_status == "live" else None),
-                   "checker": (_GEMINI_JUDGE_MODEL if gem_status == "live" else None)},
+                   # The checker may have quota-degraded to the fallback model —
+                   # report what actually ran, not what was configured.
+                   "checker": ((_AI_LAST_RUN.get("gemModel") or _GEMINI_JUDGE_MODEL)
+                               if gem_status == "live" else None)},
         "summaryJa": summary[:400], "marketRiskJa": market_risk[:400], "labels": labels,
         "globalRedFlags": global_flags, "groundingSources": grounding,
     }
