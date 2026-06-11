@@ -3938,15 +3938,31 @@ def api_argus_vault_push():
     return jsonify({"ok": True, "queued": len(_VAULT_SLOTS),
                     "noteJa": "受領。次回の台帳ラン(平日16:05)でクラウド(GitHub)に保存されます。"})
 
+@app.route("/api/argus/vault-relay")
+def api_argus_vault_relay():
+    """Non-destructive read of the latest pushed envelope for a vault id —
+    the near-realtime half of cross-device sync (sync-v1, v10.10). The durable
+    half remains the daily ledger commit. Ciphertext only; the vault id is
+    unguessable (SHA-256 derived from the passphrase on-device)."""
+    vid = str(request.args.get("vaultId") or "")
+    if not _VAULT_ID_RE.match(vid):
+        return jsonify({"error": "bad_vault_id"}), 400
+    s = _VAULT_SLOTS.get(vid)
+    if not s:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"ts": s["ts"], "blob": s["blob"]})
+
 @app.route("/api/argus/vault-pull", methods=["POST"])
 def api_argus_vault_pull():
     # Admin-only drain: the ledger workflow collects pending envelopes and
-    # persists them to git. Ciphertext in, ciphertext out.
+    # persists them to git. Ciphertext in, ciphertext out. Slots are KEPT
+    # (sync-v1: /vault-relay reads them between daily commits) — re-draining
+    # the same envelope is a no-op for git, and memory stays bounded at
+    # _VAULT_MAX_SLOTS either way.
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     out = {vid: {"blob": s["blob"], "ts": s["ts"]} for vid, s in _VAULT_SLOTS.items()}
-    _VAULT_SLOTS.clear()
     return jsonify({"slots": out, "asOf": _ai_now_iso()})
 
 

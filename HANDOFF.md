@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.9.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.10.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.9.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.10.0。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.9.0**
+- **現在バージョン: v10.10.0**
 
 ---
 
@@ -270,6 +270,17 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - 校正(calibration-v1)へはv3のh1のL1+L2が合成されて継続供給(legacy_item)。
     スコアラーは合成フィクスチャでローカル実行検証済み
   - 残タスク: Close Pin Intraday Ledger(15:30引けピン)の分離実装は未着手(次フェーズ)
+- v10.10.0 端末間の自動同期(sync-v1)
+  - 同一パスフレーズの端末同士でウォッチリスト/保有/判断ログを自動同期。暗号文のみ送受信(従来どおり)
+  - バックエンド: GET `/vault-relay?vaultId=`(非破壊・public・正規表現検証) + vault-pullがスロットを
+    クリアしない化(relayが日次コミットの間も読めるように。再ドレインはgit的に無害)
+  - フロント: `markLocalEdit()`(useAssetsの実変更時のみ・マウント時persistは除外)→45秒デバウンスpush。
+    `cloudSyncNow()`=relay優先+セッション初回のみGitHub rawフォールバック→exportedAtのLWW比較→
+    リモートが新しければ`restoreBackup`+`argus:data-synced`イベント(useAssetsが再読込)。
+    `startCloudSync()`(App起動時): 初回sync+90秒ポーリング(タブ可視時)+visibilitychange即時
+  - 自分のpushの再適用防止: cloudBackupNowがappliedExportedAtを記録。sync適用直後の3秒は
+    markLocalEditを抑制(エコーpush防止)
+  - **制限(v1)**: 全体LWW — 2端末で同時編集すると新しいpushが勝つ(per-itemマージは将来課題)
 
 ---
 

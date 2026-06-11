@@ -88,6 +88,8 @@ export async function cloudBackupNow(pass: string): Promise<string> {
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   try { localStorage.setItem(LAST_KEY, String(Date.now())); } catch { /* ignore */ }
+  // Own push = already applied locally — the sync loop must not re-apply it.
+  setSyncState({ appliedExportedAt: payload.exportedAt });
   const d = await r.json();
   return d.noteJa || 'OK';
 }
@@ -98,6 +100,115 @@ export async function maybeCloudBackup(): Promise<void> {
   if (!pass) return;
   if (Date.now() - lastCloudBackupAt() < INTERVAL_MS) return;
   try { await cloudBackupNow(pass); } catch { /* retried next open */ }
+}
+
+// ── Cross-device sync (sync-v1, v10.10) ─────────────────────────────────────
+// Both devices encrypt with the same passphrase → same vault id. Edits are
+// debounce-pushed to the backend relay; other devices poll the relay (with a
+// one-time GitHub-raw fallback per session) and apply when the remote payload
+// is NEWER than their own last local edit. Whole-payload last-writer-wins —
+// simultaneous edits on two devices keep the most recent push (v1 limitation,
+// per-item merge is a later refinement). Ciphertext-only on the wire, as ever.
+const SYNC_KEY = 'argus.vaultSync.v1';        // {appliedExportedAt, pushedEditAt}
+const EDIT_KEY = 'argus.lastLocalEditAt.v1';
+const PUSH_DEBOUNCE_MS = 45_000;
+const SYNC_POLL_MS = 90_000;
+let pushTimer: number | null = null;
+let suppressEditsUntil = 0;
+let syncLoopStarted = false;
+
+interface SyncState { appliedExportedAt: string; pushedEditAt: number; }
+function syncState(): SyncState {
+  try {
+    return { appliedExportedAt: '', pushedEditAt: 0,
+             ...JSON.parse(localStorage.getItem(SYNC_KEY) || '{}') };
+  } catch { return { appliedExportedAt: '', pushedEditAt: 0 }; }
+}
+function setSyncState(patch: Partial<SyncState>): void {
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify({ ...syncState(), ...patch })); }
+  catch { /* ignore */ }
+}
+export function lastLocalEditAt(): number {
+  try { return Number(localStorage.getItem(EDIT_KEY) || 0); } catch { return 0; }
+}
+
+/** Called by data hooks whenever device data actually changes: stamps the
+    edit time and debounce-pushes the encrypted backup so other devices can
+    pick it up within ~1 minute. No-op until cloud backup is enabled. */
+export function markLocalEdit(): void {
+  if (Date.now() < suppressEditsUntil) return;  // change came FROM a sync apply
+  try { localStorage.setItem(EDIT_KEY, String(Date.now())); } catch { /* ignore */ }
+  const pass = getVaultPass();
+  if (!pass) return;
+  if (pushTimer != null) window.clearTimeout(pushTimer);
+  pushTimer = window.setTimeout(() => {
+    pushTimer = null;
+    void cloudBackupNow(pass)
+      .then(() => setSyncState({ pushedEditAt: lastLocalEditAt() }))
+      .catch(() => { /* re-pushed by the next sync tick */ });
+  }, PUSH_DEBOUNCE_MS);
+}
+
+async function fetchRemoteEnvelope(vaultId: string, rawFallback: boolean): Promise<string | null> {
+  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+  if (backend) {
+    try {
+      const r = await fetch(`${backend.replace(/\/$/, '')}/api/argus/vault-relay?vaultId=${vaultId}`);
+      if (r.ok) return ((await r.json()) as { blob: string }).blob;
+    } catch { /* relay unreachable — maybe raw below */ }
+  }
+  if (!rawFallback) return null;
+  try {
+    const r = await fetch(`${RAW_BASE}/${vaultId}/latest.json?cb=${Date.now()}`);
+    if (r.ok) return await r.text();
+  } catch { /* offline */ }
+  return null;
+}
+
+/** One sync cycle: pull-and-apply if the cloud is newer, push if we are. */
+export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promise<'applied' | 'pushed' | 'noop'> {
+  const pass = getVaultPass();
+  if (!pass) return 'noop';
+  const vaultId = await vaultIdFrom(pass);
+  const env = await fetchRemoteEnvelope(vaultId, opts.rawFallback ?? false);
+  const st = syncState();
+  const localEdit = lastLocalEditAt();
+  if (env) {
+    let payload: BackupFile | null = null;
+    try { payload = await decryptBackup(pass, env); } catch { payload = null; }
+    if (payload?.exportedAt && payload.exportedAt !== st.appliedExportedAt) {
+      const remoteTs = Date.parse(payload.exportedAt) || 0;
+      if (remoteTs > localEdit) {
+        suppressEditsUntil = Date.now() + 3_000;
+        restoreBackup(payload);
+        setSyncState({ appliedExportedAt: payload.exportedAt });
+        window.dispatchEvent(new CustomEvent('argus:data-synced'));
+        return 'applied';
+      }
+      // Both sides changed and local is newer → fall through to push (LWW).
+    }
+  }
+  if (localEdit > st.pushedEditAt) {
+    try {
+      await cloudBackupNow(pass);
+      setSyncState({ pushedEditAt: localEdit });
+      return 'pushed';
+    } catch { /* next tick */ }
+  }
+  return 'noop';
+}
+
+/** App-start hook: initial sync (with one GitHub-raw fallback), then a gentle
+    poll while the tab is visible + an immediate check on tab return. */
+export function startCloudSync(): void {
+  if (syncLoopStarted) return;
+  syncLoopStarted = true;
+  void maybeCloudBackup();   // legacy ~20h heartbeat (also covers judgment log)
+  void cloudSyncNow({ rawFallback: true });
+  window.setInterval(() => { if (!document.hidden) void cloudSyncNow(); }, SYNC_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void cloudSyncNow();
+  });
 }
 
 /** Restore from the cloud vault using only the passphrase. */

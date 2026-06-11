@@ -407,3 +407,19 @@ def test_sensor_row_carries_band_and_valid_distribution():
     assert abs(sum(s["p"] for s in r["scenarios"]) - 100) < 1e-6
     v = scanner._sensor_row("VIX", "VIX", "vol", 18.0, -4.0)
     assert v["bandPct"] == 8.0
+
+
+# ── Vault relay (sync-v1, v10.10) ────────────────────────────────────
+def test_vault_relay_roundtrip_and_validation():
+    c = scanner.app.test_client()
+    assert c.get("/api/argus/vault-relay?vaultId=bogus").status_code == 400
+    vid = "cd" * 32
+    assert c.get(f"/api/argus/vault-relay?vaultId={vid}").status_code == 404
+    r = c.post("/api/argus/vault-push", json={"vaultId": vid, "blob": "ciphertext-xyz"})
+    assert r.status_code == 200
+    r = c.get(f"/api/argus/vault-relay?vaultId={vid}")
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["blob"] == "ciphertext-xyz" and isinstance(d["ts"], float)
+    # relay reads are non-destructive
+    assert c.get(f"/api/argus/vault-relay?vaultId={vid}").status_code == 200

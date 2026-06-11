@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AssetItem, AssetMarket, AssetType, AssetSource } from '../types/assetItem';
+import { markLocalEdit } from '../lib/vault';
 
 const STORAGE_KEY = 'argus.assets.v1';
 const MAX_ASSETS = 50;
@@ -78,7 +79,22 @@ export interface UseAssets {
 export function useAssets(): UseAssets {
   const [assets, setAssets] = useState<AssetItem[]>(() => (typeof window === 'undefined' ? [] : load()));
 
-  useEffect(() => { persist(assets); }, [assets]);
+  const firstPersist = useRef(true);
+  useEffect(() => {
+    persist(assets);
+    // The mount-time persist is not a user edit — only real changes should
+    // stamp the edit time / trigger the debounced cloud-sync push (sync-v1).
+    if (firstPersist.current) { firstPersist.current = false; return; }
+    markLocalEdit();
+  }, [assets]);
+
+  // Another device pushed newer data and the sync loop applied it to
+  // localStorage → reload our in-memory copy.
+  useEffect(() => {
+    const onSynced = () => { firstPersist.current = true; setAssets(load()); };
+    window.addEventListener('argus:data-synced', onSynced);
+    return () => window.removeEventListener('argus:data-synced', onSynced);
+  }, []);
 
   const add: UseAssets['add'] = useCallback((a) => {
     const symbol = a.symbol.trim();
