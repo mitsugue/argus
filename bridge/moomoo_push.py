@@ -32,7 +32,11 @@ BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
 HOST     = os.environ.get("OPEND_HOST", "127.0.0.1")
 PORT     = int(os.environ.get("OPEND_PORT", "11111"))
-INTERVAL = max(20, int(os.environ.get("PUSH_INTERVAL_SEC", "60")))
+# v10.10.1: 15s quote cadence (get_market_snapshot is 1 request per cycle —
+# 2/30s, far inside moomoo's ~10/30s quota). Big-money flow stays on its own
+# slower cadence below (up to 1 request per code per flow cycle).
+INTERVAL = max(10, int(os.environ.get("PUSH_INTERVAL_SEC", "15")))
+FLOW_INTERVAL = max(INTERVAL, int(os.environ.get("FLOW_INTERVAL_SEC", "60")))
 # moomoo codes: "<MARKET>.<SYMBOL>", e.g. JP.7203 / US.NVDA. Edit to match the
 # assets you watch in ARGUS (and your account's quote permissions).
 CODES = [c.strip() for c in os.environ.get(
@@ -100,25 +104,36 @@ def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
-    print(f"argus-bridge: OpenD {HOST}:{PORT} -> {BACKEND} every {INTERVAL}s, {len(CODES)} codes")
+    print(f"argus-bridge: OpenD {HOST}:{PORT} -> {BACKEND} every {INTERVAL}s "
+          f"(flow every {FLOW_INTERVAL}s), {len(CODES)} codes")
     qc = OpenQuoteContext(host=HOST, port=PORT)
+    flow_cache = {}   # code -> last known flow dict (carried between flow cycles)
+    last_flow_at = 0.0
     try:
         while True:
             try:
                 ret, df = qc.get_market_snapshot(CODES)
                 if ret == RET_OK:
                     stocks = rows_from_snapshot(df)
-                    # Attach big-money flow where available (paced to stay well
-                    # inside the OpenAPI request quota: ~30 requests / 30s).
+                    # Big-money flow on its own slower cadence (quota: the
+                    # capital-distribution calls are 1/code). Between flow
+                    # cycles the LAST KNOWN value rides along so the backend
+                    # row never flickers flow-less.
+                    do_flow = time.time() - last_flow_at >= FLOW_INTERVAL
+                    if do_flow:
+                        last_flow_at = time.time()
                     by_sym = {s["market"] + "." + s["symbol"]: s for s in stocks}
                     for code in CODES:
                         s = by_sym.get(code.upper())
                         if s is None:
                             continue
-                        flow = fetch_flow(qc, code)
-                        if flow:
-                            s["flow"] = flow
-                        time.sleep(0.25)
+                        if do_flow:
+                            flow = fetch_flow(qc, code)
+                            if flow:
+                                flow_cache[code] = flow
+                            time.sleep(0.25)
+                        if flow_cache.get(code):
+                            s["flow"] = flow_cache[code]
                     if stocks:
                         resp = requests.post(
                             f"{BACKEND}/api/argus/quote-push",

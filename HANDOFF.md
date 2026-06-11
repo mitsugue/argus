@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.10.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.10.1 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.10.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.10.1。
 
 ---
 
@@ -48,7 +48,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.10.0**
+- **現在バージョン: v10.10.1**
 
 ---
 
@@ -281,6 +281,14 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - 自分のpushの再適用防止: cloudBackupNowがappliedExportedAtを記録。sync適用直後の3秒は
     markLocalEditを抑制(エコーpush防止)
   - **制限(v1)**: 全体LWW — 2端末で同時編集すると新しいpushが勝つ(per-itemマージは将来課題)
+- v10.10.1 価格更新の15秒化
+  - bridge/moomoo_push.py: PUSH_INTERVAL_SEC デフォルト60→15(下限10)。FLOW_INTERVAL_SEC=60を新設し
+    大口フローは従来周期のまま(flow_cacheで前回値を毎push添付→バックエンド行がflow欠落でチラつかない)。
+    moomooクォータ: snapshotは1リクエスト/サイクル=2/30秒で余裕
+  - useJapanWatchlist/useUSWatchlist: REFRESH_INTERVAL_MS 60秒→15秒(2エンドポイント≈8req/分、heavy上限30/分内)
+  - **要ユーザー操作: AWSで git pull && sudo systemctl restart argus-bridge**(未実施だとブリッジは60秒のまま。
+    画面側15秒化だけでも反映遅延は最大60+15→60秒に短縮)
+  - 1秒ティックは未対応(WebSocket/SSE化が必要 — 将来課題としてロードマップ記載)
 
 ---
 
