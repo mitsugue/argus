@@ -1,0 +1,726 @@
+{
+ "asOf": "2026-06-12T07:09:24Z",
+ "classPredictions": [
+  {
+   "assetClass": "GOLD",
+   "changePct": 3.13,
+   "price": 386.32001,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "GLD"
+  },
+  {
+   "assetClass": "BOND",
+   "changePct": 1.3,
+   "price": 85.98,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "TLT"
+  },
+  {
+   "assetClass": "REIT",
+   "changePct": -0.16,
+   "price": 44.92,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "XLRE"
+  },
+  {
+   "assetClass": "CRYPTO_BTC",
+   "changePct": 0.67,
+   "price": 62996.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "bitcoin"
+  },
+  {
+   "assetClass": "CRYPTO_ETH",
+   "changePct": 0.39,
+   "price": 1658.18,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "ethereum"
+  }
+ ],
+ "context": {
+  "aiStatus": "partial",
+  "backdrop": "neutral",
+  "posture": "CAUTIOUS",
+  "regimeConfidence": 0.57,
+  "vixLevel": 22.2,
+  "vixZone": "normal"
+ },
+ "dateJst": "2026-06-12",
+ "engineVersion": "ledger-v3",
+ "posturePrediction": null,
+ "predictions": [
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.55,
+    "view": "confirm"
+   },
+   "changePct": 1.6938,
+   "confidence": 0.45,
+   "flowRatio": 0.0161,
+   "layer": 1,
+   "market": "JP",
+   "name": "三菱商事",
+   "price": 4683.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "8058"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.5,
+    "view": "caution"
+   },
+   "changePct": 1.5375,
+   "confidence": 0.45,
+   "flowRatio": 0.1944,
+   "layer": 2,
+   "market": "JP",
+   "name": "ソフトバンクグループ",
+   "price": 6472.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "9984"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.54,
+    "view": "confirm"
+   },
+   "changePct": 3.2124,
+   "confidence": 0.5,
+   "flowRatio": 0.0053,
+   "layer": 2,
+   "market": "JP",
+   "name": "古河電気工業",
+   "price": 42090.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "5801"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.5,
+    "view": "caution"
+   },
+   "changePct": 2.7523,
+   "confidence": 0.5,
+   "flowRatio": -0.0157,
+   "layer": 2,
+   "market": "JP",
+   "name": "フジクラ",
+   "price": 4256.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "5803"
+  },
+  {
+   "action": "WAIT",
+   "ai": {
+    "action": "WAIT",
+    "confidence": 0.62,
+    "view": "confirm"
+   },
+   "changePct": -4.5738,
+   "confidence": 0.45,
+   "flowRatio": -0.2879,
+   "layer": 3,
+   "market": "JP",
+   "name": "三櫻工業",
+   "price": 918.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 40
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 40
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "6584"
+  },
+  {
+   "action": "WAIT FOR PULLBACK",
+   "ai": {
+    "action": "WAIT FOR PULLBACK",
+    "confidence": 0.78,
+    "view": "confirm"
+   },
+   "changePct": 7.6352,
+   "confidence": 0.65,
+   "flowRatio": 0.1281,
+   "layer": 2,
+   "market": "JP",
+   "name": "キオクシアホールディングス",
+   "price": 81200.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 45
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "285A"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.49,
+    "view": "caution"
+   },
+   "changePct": 2.9305,
+   "confidence": 0.5,
+   "flowRatio": 0.0496,
+   "layer": 2,
+   "market": "JP",
+   "name": "東京電力ホールディングス",
+   "price": 509.3,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "9501"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.48,
+    "view": "caution"
+   },
+   "changePct": 2.2203,
+   "confidence": 0.5,
+   "flowRatio": 0.0055,
+   "layer": 2,
+   "market": "US",
+   "name": "NVIDIA",
+   "price": 204.87,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "NVDA"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.58,
+    "view": "confirm"
+   },
+   "changePct": 1.389,
+   "confidence": 0.45,
+   "flowRatio": 0.0001,
+   "layer": 2,
+   "market": "US",
+   "name": "Apple",
+   "price": 295.63,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "AAPL"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.47,
+    "view": "caution"
+   },
+   "changePct": 4.6018,
+   "confidence": 0.5,
+   "flowRatio": 0.0278,
+   "layer": 2,
+   "market": "US",
+   "name": "Tesla",
+   "price": 399.15,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "TSLA"
+  },
+  {
+   "action": "HOLD",
+   "ai": {
+    "action": "HOLD",
+    "confidence": 0.5,
+    "view": "caution"
+   },
+   "changePct": -0.4466,
+   "confidence": 0.45,
+   "flowRatio": -0.019,
+   "layer": 2,
+   "market": "US",
+   "name": "Meta Platforms",
+   "price": 568.43,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "META"
+  }
+ ],
+ "scoringRule": {
+  "bucketsNote": "per-row bandPct (≈daily sigma): downside < -band, sideways within ±band, rebound > +band; legacy rows band=2%",
+  "horizonsTradingDays": [
+   1,
+   3,
+   5
+  ],
+  "metrics": [
+   "argmaxHit",
+   "brier"
+  ]
+ },
+ "sensors": [
+  {
+   "bandPct": 2.0,
+   "changePct": 1.4521,
+   "kind": "equity_jp",
+   "name": "TOPIX ETF",
+   "price": 412.2,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "1306"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": 2.7972,
+   "kind": "equity_jp",
+   "name": "Nikkei 225 ETF",
+   "price": 69090.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "sensor": "1321"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": 0.6686,
+   "kind": "equity_jp",
+   "name": "Mitsubishi UFJ",
+   "price": 3162.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "8306"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": 1.0191,
+   "kind": "equity_jp",
+   "name": "Toyota Motor",
+   "price": 2775.5,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "7203"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": 1.6938,
+   "kind": "equity_jp",
+   "name": "Mitsubishi Corporation",
+   "price": 4683.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "8058"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": -1.7916,
+   "kind": "equity_jp",
+   "name": "NTT",
+   "price": 148.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "9432"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": 6.75,
+   "kind": "etf_us",
+   "name": "SMH",
+   "price": 609.45001,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 45
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "sensor": "SMH"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": 1.3,
+   "kind": "etf_us",
+   "name": "TLT",
+   "price": 85.98,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "TLT"
+  },
+  {
+   "bandPct": 2.0,
+   "changePct": 3.13,
+   "kind": "etf_us",
+   "name": "GLD",
+   "price": 386.32001,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "sensor": "GLD"
+  },
+  {
+   "bandPct": 3.0,
+   "changePct": 0.67,
+   "kind": "crypto",
+   "name": "Bitcoin",
+   "price": 62996.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "BTC"
+  },
+  {
+   "bandPct": 0.5,
+   "changePct": 0.18,
+   "kind": "fx",
+   "name": "USD/JPY",
+   "price": 160.26,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "USDJPY"
+  },
+  {
+   "bandPct": 8.0,
+   "changePct": 11.83,
+   "kind": "vol",
+   "name": "VIX",
+   "price": 22.22,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "sensor": "VIX"
+  }
+ ]
+}
