@@ -17,12 +17,15 @@ interface NavItem {
   label: string;
 }
 
+// Order = the user's decision flow (2026-06-13): 1) Today = whole-market
+// grasp, 2) Watchlist = individual entries (⚡ entry scout lives here),
+// 3+) everything else is supporting information.
 const NAV: NavItem[] = [
   { key: 'command',   label: 'Today' },
+  { key: 'watchlist', label: 'Watchlist' },
   { key: 'alerts',    label: 'Action Alerts' },
   { key: 'regime',    label: 'Market Regime' },
   { key: 'events',    label: 'Event Radar' },
-  { key: 'watchlist', label: 'Watchlist' },
   { key: 'core',      label: 'Core Portfolio' },
 ];
 

@@ -104,7 +104,8 @@ const App: React.FC = () => {
   };
 
   // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
-  const NAV_ORDER: RouteKey[] = ['command', 'alerts', 'regime', 'events', 'watchlist', 'core', 'guide'];
+  // Keep in sync with NavRail's NAV order (1=全体把握 2=個別 3+=その他情報).
+  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'alerts', 'regime', 'events', 'core', 'guide'];
   const NAV_LABEL: Record<RouteKey, string> = {
     command: 'Today', alerts: 'Action Alerts', regime: 'Market Regime',
     events: 'Event Radar', watchlist: 'Watchlist', core: 'Core Portfolio', guide: 'Guide',
