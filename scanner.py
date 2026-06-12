@@ -4464,6 +4464,54 @@ def _entry_metrics(closes, volumes=None):
         v5 = sum(volumes[:5]) / 5
         v20 = sum(volumes[5:25]) / 20
         vol_ratio = round(v5 / v20, 2) if v20 else None
+    # v2.1 (2026-06-13 「RSIやMACDも統合できているのか」): MACD(12,26,9)、
+    # 移動平均クロス、ボリンジャー%b — all computed chronologically.
+    chron = closes[::-1]                      # oldest-first
+
+    def _ema(vals, n):
+        k = 2.0 / (n + 1)
+        e = vals[0]
+        out = [e]
+        for v in vals[1:]:
+            e = v * k + e * (1 - k)
+            out.append(e)
+        return out
+
+    macd_hist, macd_cross = None, None
+    if len(chron) >= 35:
+        e12, e26 = _ema(chron, 12), _ema(chron, 26)
+        macd_line = [a - b for a, b in zip(e12, e26)]
+        signal = _ema(macd_line, 9)
+        hist = [a - b for a, b in zip(macd_line, signal)]
+        macd_hist = round(hist[-1], 3)
+        recent, before = hist[-1], hist[-4:-1]
+        if recent > 0 and any(h <= 0 for h in before):
+            macd_cross = "golden"
+        elif recent < 0 and any(h >= 0 for h in before):
+            macd_cross = "dead"
+
+    def _sma_at(idx_from_end, n):
+        seg = chron[max(0, len(chron) - idx_from_end - n):len(chron) - idx_from_end]
+        return sum(seg) / len(seg) if len(seg) == n else None
+
+    ma_cross = None
+    ma5_now, ma25_now = _sma_at(0, 5), _sma_at(0, 25)
+    ma5_prev, ma25_prev = _sma_at(5, 5), _sma_at(5, 25)
+    if None not in (ma5_now, ma25_now, ma5_prev, ma25_prev):
+        if ma5_now > ma25_now and ma5_prev <= ma25_prev:
+            ma_cross = "golden"
+        elif ma5_now < ma25_now and ma5_prev >= ma25_prev:
+            ma_cross = "dead"
+
+    boll_pct_b = None
+    if len(closes) >= 25:
+        seg = closes[:25]
+        mean = sum(seg) / 25
+        var = sum((x - mean) ** 2 for x in seg) / 25
+        sd = var ** 0.5
+        if sd > 0:
+            boll_pct_b = round((c0 - (mean - 2 * sd)) / (4 * sd), 2)
+
     return {
         "ret1": ret(1), "ret5": ret(5), "ret20": ret(20),
         "ret60": ret(60) if len(closes) > 60 else None,
@@ -4473,6 +4521,8 @@ def _entry_metrics(closes, volumes=None):
         "offHigh60Pct": round((c0 - hi60) / hi60 * 100, 2) if hi60 else None,
         "offLow60Pct": round((c0 - lo60) / lo60 * 100, 2) if lo60 else None,
         "volRatio5v20": vol_ratio, "sessions": len(closes),
+        "macdHist": macd_hist, "macdCross": macd_cross,
+        "maCross": ma_cross, "bollPctB": boll_pct_b,
     }
 
 def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
@@ -4500,6 +4550,21 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
         score += 0.5; reasons.append("中期(20日)上昇トレンド+短期(5日)押し目の形")
     if (m["volRatio5v20"] or 0) >= 1.5:
         reasons.append(f"出来高が平常の{m['volRatio5v20']}倍(注目度上昇 — 方向はフローで判断)")
+    # v2.1: classic technicals — each ±0.5, all visible.
+    if m.get("macdCross") == "golden":
+        score += 0.5; reasons.append("MACDが直近で好転(シグナル線を上抜け)")
+    elif m.get("macdCross") == "dead":
+        score -= 0.5; reasons.append("MACDが直近で悪化(シグナル線を下抜け)")
+    if m.get("maCross") == "golden":
+        score += 0.5; reasons.append("5日線が25日線を上抜け(ゴールデンクロス)")
+    elif m.get("maCross") == "dead":
+        score -= 0.5; reasons.append("5日線が25日線を下抜け(デッドクロス)")
+    b = m.get("bollPctB")
+    if isinstance(b, (int, float)):
+        if b <= 0:
+            score += 0.5; reasons.append(f"ボリンジャー-2σ圏(%b={b}) — 統計的売られすぎ")
+        elif b >= 1:
+            score -= 0.5; reasons.append(f"ボリンジャー+2σ圏(%b={b}) — 統計的過熱")
     if isinstance(flow_ratio, (int, float)):
         if flow_ratio >= 0.15:
             score += 1; reasons.append(f"大口資金が純流入+{round(flow_ratio * 100)}%(確証シグナル)")
@@ -4628,7 +4693,7 @@ def get_entry_scout(sym):
         "assessment": assess,
         "dataGapsJa": [
             "日証金・信用残(買い戻しか新規買いかの区別)は未対応 — Phase 2",
-            "チャートパターンの形状認識(ダブルボトム等)は未対応 — 数値指標で近似",
+            "本格的なパターン形状(ダブルボトム等)の認識は未対応 — RSI/MACD/ボリンジャー/移動平均クロスで近似(v2.1)",
             "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
         ],
         "noteJa": "売買指示ではなく、入る前の論点整理。最終判断と数量はあなたのルールで。",

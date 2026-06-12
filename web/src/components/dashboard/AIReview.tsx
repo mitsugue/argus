@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useAIJudgment } from '../../hooks/useAIJudgment';
+import { useAssets } from '../../hooks/useAssets';
 import type { AIJudgmentLabel } from '../../types/aiJudgment';
 
 // Second-opinion layer (OpenAI primary + Gemini double-check). Calm panel — it
@@ -27,6 +28,14 @@ function noteworthy(l: AIJudgmentLabel): boolean {
 
 export const AIReview: React.FC = () => {
   const { data, phase } = useAIJudgment();
+  // Japanese company names (user request 2026-06-13): resolved from the
+  // user's own watchlist entries — the most reliable ja-name source on device.
+  const { assets } = useAssets();
+  const nameOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of assets) m.set(a.symbol, a.displayNameJa || a.displayName);
+    return m;
+  }, [assets]);
 
   // Disabled / mock / connecting → render nothing (keep the page calm).
   if (!data || phase === 'disabled' || phase === 'mock' || phase === 'connecting') return null;
@@ -66,7 +75,10 @@ export const AIReview: React.FC = () => {
         <div className="ai-review__notes">
           {notes.map((l) => (
             <div className="ai-review__note" key={l.symbol}>
-              <span className="ai-review__sym">{l.symbol}</span>
+              <span className="ai-review__sym">
+                {l.symbol}
+                {nameOf.get(l.symbol) && <span className="ai-review__name"> {nameOf.get(l.symbol)}</span>}
+              </span>
               <span className="ai-review__flow">
                 {l.ruleAction}{l.aiFinalAction !== l.ruleAction ? ` → ${l.aiFinalAction}` : ''}
               </span>

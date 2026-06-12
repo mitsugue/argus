@@ -550,3 +550,25 @@ def test_entry_scout_v2_factors():
     assert any("決算" in r for r in v2["reasonsJa"])
     assert any("相対力" in r for r in v2["reasonsJa"])
     assert any("不同意" in r for r in v2["reasonsJa"])
+
+
+def test_entry_metrics_macd_and_cross_detection():
+    # 25 flat sessions, then a 30-session downtrend, then a sharp 5-day
+    # rebound (newest-first): MA5 crosses above MA25 and MACD turns up.
+    newest_first = [106.0, 105.0, 104.0, 103.0, 102.0] + [90.0] * 30 + [100.0] * 25
+    m = scanner._entry_metrics(newest_first, [100] * 60)
+    assert m["maCross"] == "golden"
+    assert m["macdHist"] is not None and m["macdHist"] > 0
+    assert m["bollPctB"] is not None and m["bollPctB"] > 1  # spike above the band
+
+
+def test_entry_scout_technicals_scored_and_visible():
+    m = {"ret1": 1.0, "ret5": 2.0, "ret20": 1.0, "ret60": None,
+         "ma5DiffPct": 1.0, "ma25DiffPct": 1.0, "rsi14": 50.0, "consecDown": 0,
+         "offHigh60Pct": -5.0, "offLow60Pct": 5.0, "volRatio5v20": 1.0, "sessions": 60,
+         "macdCross": "golden", "maCross": "golden", "bollPctB": -0.1, "macdHist": 0.5}
+    a = scanner._entry_scout_assess(m, None, None, "neutral", "normal", 2)
+    assert a["score"] >= 1.5
+    assert any("MACD" in r for r in a["reasonsJa"])
+    assert any("ゴールデンクロス" in r for r in a["reasonsJa"])
+    assert any("ボリンジャー" in r for r in a["reasonsJa"])
