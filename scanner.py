@@ -343,7 +343,12 @@ _RL_LOCK    = threading.Lock()
 _RL_BUCKETS = {}          # ip -> deque[timestamps]
 _RL_WINDOW  = 60.0        # seconds
 _RL_MAX     = 120         # default requests / IP / minute
-_RL_MAX_HEAVY = 30        # cache-busting requests (symbol-search, dynamic sets)
+# Heavy (cache-busting) budget: was 30/min pre-15s-polling. Legit usage is now
+# ~10-12/min PER DEVICE (jp+us watchlist every 15s + action-labels) and one
+# home IP often runs phone+Mac+preview simultaneously — 30 made the app
+# rate-limit ITSELF (observed 2026-06-13). 90 keeps 3 devices + scout taps
+# comfortable while still bounding abuse (all heavy endpoints are cached).
+_RL_MAX_HEAVY = 90
 _RL_MAX_IPS = 5000        # memory bound on a public endpoint
 
 def _rl_client_ip():
