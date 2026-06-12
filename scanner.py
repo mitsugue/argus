@@ -4475,11 +4475,15 @@ def _entry_metrics(closes, volumes=None):
         "volRatio5v20": vol_ratio, "sessions": len(closes),
     }
 
-def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday):
+def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
+                        regime_label=None, vix_spike=False, rel_strength=None,
+                        earnings_days=None, ai_view=None):
     """Pure (unit-tested): metrics + context → stance/score/reasons. Every
     contribution is ±0.5〜1 AND stated in reasonsJa — no hidden weights. The
     Friday-bounce anomaly is NOTED but not scored (経験則 — the ledger will
-    verify it with data before it earns score weight)."""
+    verify it with data before it earns score weight).
+    v2 (2026-06-13 user: 「全能力をここに集約しろ」): regime, VIX spike,
+    index-relative strength, earnings proximity, AI double-check view."""
     reasons, score = [], 0.0
     if m["ma25DiffPct"] is not None:
         if m["ma25DiffPct"] <= -8:
@@ -4507,6 +4511,29 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday):
         score -= 0.5; reasons.append("金利地合いが逆風(elevated)")
     if vix_zone in ("elevated", "shock"):
         score -= 1; reasons.append(f"ボラティリティ圏域が{vix_zone}")
+    # ── v2 factors ──
+    if regime_label in ("RISK_OFF", "EVENT_WAIT"):
+        score -= 1; reasons.append(f"市場レジームが{regime_label}(逆風の地合い)")
+    elif regime_label == "RISK_ON":
+        score += 0.5; reasons.append("市場レジームがRISK_ON(追い風)")
+    if vix_spike:
+        score -= 1; reasons.append("VIXが急騰中(パニック局面 — 入るならサイズを落とす)")
+    if isinstance(rel_strength, (int, float)):
+        if rel_strength >= 1.0:
+            score += 0.5; reasons.append(f"指数(TOPIX)より{rel_strength:+.1f}pt強い(相対力あり)")
+        elif rel_strength <= -1.0:
+            score -= 0.5; reasons.append(f"指数(TOPIX)より{rel_strength:+.1f}pt弱い(相対的に売られている)")
+    if isinstance(earnings_days, (int, float)):
+        if 0 <= earnings_days <= 3:
+            score -= 1; reasons.append(f"決算が{int(earnings_days)}日以内 — 結果は読めない(ギャンブル領域)")
+        elif earnings_days <= 7:
+            reasons.append(f"決算まで{int(earnings_days)}日(イベント前の建玉は軽めが原則)")
+    if ai_view == "confirm":
+        score += 0.5; reasons.append("AI二重チェック(GPT-5.5+Gemini)がルール判定に同意")
+    elif ai_view == "disagree":
+        score -= 1; reasons.append("AI二重チェックがルール判定に不同意(慎重化)")
+    elif ai_view == "caution":
+        score -= 0.5; reasons.append("AI二重チェックが注意を表明")
     if weekday == 4:
         reasons.append("金曜: 週末リスクで売られやすい日(翌営業日反発は経験則 — 台帳で検証中のため点数化はしない)")
     if score >= 1.5:
@@ -4546,8 +4573,46 @@ def get_entry_scout(sym):
     posture = _rates_posture(get_rates_snapshot())
     vol = _vix_assess(_fred_vix_history())
     vix_zone = vol.get("zone") if isinstance(vol, dict) else None
+    vix_spike = bool(vol.get("spike")) if isinstance(vol, dict) else False
     weekday = datetime.now(TZ_JST).weekday()
-    assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday)
+    # v2: market regime (6h-cached — no extra cost when warm).
+    reg = get_market_regime_snapshot()
+    reg_label = (reg.get("regime", {}) or {}).get("label") if isinstance(reg, dict) else None
+    reg_ok = isinstance(reg, dict) and reg.get("status") in ("live", "partial")
+    # v2: index-relative strength — the stock's day move vs TOPIX ETF (1306),
+    # both from the bridge so the comparison is same-timestamp realtime.
+    rel_strength = None
+    idx_pushed = (_PUSHED_QUOTES.get("JP") or {}).get("1306")
+    if pushed and idx_pushed:
+        s_chg = (pushed.get("row") or {}).get("changePct")
+        i_chg = (idx_pushed.get("row") or {}).get("changePct")
+        if isinstance(s_chg, (int, float)) and isinstance(i_chg, (int, float)):
+            rel_strength = round(s_chg - i_chg, 2)
+    # v2: earnings proximity from the catalysts metadata (best effort — the
+    # date must be present because daysUntil defaults to 0 when unknown).
+    earnings_days = None
+    try:
+        cat = get_catalysts_snapshot()
+        for it in (cat.get("items", []) if isinstance(cat, dict) else []):
+            if it.get("symbol") == sym:
+                e = it.get("earnings") or {}
+                if e.get("date") and isinstance(e.get("daysUntil"), (int, float)):
+                    earnings_days = e["daysUntil"]
+                break
+    except Exception:
+        pass
+    # v2: cached AI double-check view for this symbol (if the daily run saw it).
+    ai_view = None
+    cached_ai = _ai_cached_result()
+    if isinstance(cached_ai, dict):
+        for l in cached_ai.get("labels", []):
+            if l.get("symbol") == sym:
+                ai_view = l.get("aiView")
+                break
+    assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
+                                 regime_label=reg_label if reg_ok else None,
+                                 vix_spike=vix_spike, rel_strength=rel_strength,
+                                 earnings_days=earnings_days, ai_view=ai_view)
     out = {
         "engineVersion": "entry-scout-v1", "symbol": sym,
         "name": _jq_name_for(sym) or sym,
@@ -4555,7 +4620,10 @@ def get_entry_scout(sym):
         "lastClose": hist["closes"][0], "lastDate": hist["dates"][0],
         "metrics": m,
         "flow": {"bigNetRatio": flow_ratio, "ageMin": flow_age_min},
-        "context": {"posture": posture, "vixZone": vix_zone, "eventEscalation": esc or "normal",
+        "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
+                    "regime": reg_label if reg_ok else None,
+                    "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,
+                    "aiView": ai_view, "eventEscalation": esc or "normal",
                     "weekdayJa": "月火水木金土日"[weekday]},
         "assessment": assess,
         "dataGapsJa": [

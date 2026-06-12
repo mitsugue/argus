@@ -533,3 +533,20 @@ def test_entry_scout_overheat_plus_event_is_avoid():
          "offHigh60Pct": 0.0, "offLow60Pct": 25.0, "volRatio5v20": 1.0, "sessions": 60}
     a = scanner._entry_scout_assess(m, -0.2, "D-1", "elevated", "elevated", 1)
     assert a["stance"] == "見送り" and a["score"] <= -1
+
+
+def test_entry_scout_v2_factors():
+    m = {"ret1": -1.0, "ret5": -4.0, "ret20": 2.0, "ret60": 5.0,
+         "ma5DiffPct": -3.0, "ma25DiffPct": -9.0, "rsi14": 28.0, "consecDown": 4,
+         "offHigh60Pct": -12.0, "offLow60Pct": 1.0, "volRatio5v20": 1.2, "sessions": 60}
+    base = scanner._entry_scout_assess(m, 0.20, None, "neutral", "normal", 2)
+    # RISK_OFF regime + imminent earnings + AI disagree drags an aggressive
+    # setup down hard; relative strength adds back a little.
+    v2 = scanner._entry_scout_assess(m, 0.20, None, "neutral", "normal", 2,
+                                     regime_label="RISK_OFF", vix_spike=True,
+                                     rel_strength=1.5, earnings_days=2, ai_view="disagree")
+    assert v2["score"] < base["score"] - 2
+    assert any("レジーム" in r for r in v2["reasonsJa"])
+    assert any("決算" in r for r in v2["reasonsJa"])
+    assert any("相対力" in r for r in v2["reasonsJa"])
+    assert any("不同意" in r for r in v2["reasonsJa"])
