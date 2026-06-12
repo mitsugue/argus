@@ -500,3 +500,36 @@ def test_us_watchlist_finnhub_backfill(monkeypatch):
     syms = {s["symbol"]: s for s in out["stocks"]}
     assert "IONQ" in syms and syms["IONQ"]["source"] == "finnhub"
     assert syms["NVDA"]["price"] == 200.0  # TD row untouched
+
+
+# ── Entry Scout (entry-scout-v1, v10.15) ─────────────────────────────
+def test_entry_metrics_oversold_series():
+    # 8 straight down days into a 60-session window → oversold signals fire.
+    closes = [100.0 - 0 + i * 1.5 for i in range(8)] + [112.0] * 52  # newest-first: 100,101.5,...
+    m = scanner._entry_metrics(closes, [100] * 60)
+    assert m is not None and m["sessions"] == 60
+    assert m["consecDown"] >= 3
+    assert m["ma25DiffPct"] is not None and m["ma25DiffPct"] < 0
+    assert m["rsi14"] < 50
+
+
+def test_entry_metrics_requires_history():
+    assert scanner._entry_metrics([100.0] * 10) is None
+    assert scanner._entry_metrics([]) is None
+
+
+def test_entry_scout_oversold_plus_inflow_is_aggressive():
+    m = {"ret1": -1.0, "ret5": -4.0, "ret20": 2.0, "ret60": 5.0,
+         "ma5DiffPct": -3.0, "ma25DiffPct": -9.0, "rsi14": 28.0, "consecDown": 4,
+         "offHigh60Pct": -12.0, "offLow60Pct": 1.0, "volRatio5v20": 1.2, "sessions": 60}
+    a = scanner._entry_scout_assess(m, 0.20, None, "neutral", "normal", 4)
+    assert a["stance"] == "攻め好機(候補)" and a["score"] >= 1.5
+    assert any("金曜" in r for r in a["reasonsJa"])  # noted, not scored
+
+
+def test_entry_scout_overheat_plus_event_is_avoid():
+    m = {"ret1": 2.0, "ret5": 6.0, "ret20": 15.0, "ret60": 30.0,
+         "ma5DiffPct": 5.0, "ma25DiffPct": 12.0, "rsi14": 78.0, "consecDown": 0,
+         "offHigh60Pct": 0.0, "offLow60Pct": 25.0, "volRatio5v20": 1.0, "sessions": 60}
+    a = scanner._entry_scout_assess(m, -0.2, "D-1", "elevated", "elevated", 1)
+    assert a["stance"] == "見送り" and a["score"] <= -1

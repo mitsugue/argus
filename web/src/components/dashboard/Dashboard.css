@@ -814,6 +814,17 @@
 /* calibration-v1: ledger track record → confidence, one quiet line. */
 .asset-calibration { padding: 4px 2px 10px; font-size: 11px; color: var(--text-faint); }
 
+/* entry-scout-v1: 瞬間エントリー診断 block inside the strategy card. */
+.scout { margin: 10px 14px; padding: 10px 12px; border: 1px solid rgba(91,141,239,0.35); border-radius: 8px; background: rgba(91,141,239,0.06); }
+.scout--note { border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.03); font-size: 12px; color: var(--text-faint); }
+.scout__stance { font-size: 13px; font-weight: 700; }
+.scout__score { font-weight: 400; font-size: 11px; color: var(--text-faint); margin-left: 6px; }
+.scout__reasons { margin: 6px 0 4px; padding-left: 18px; font-size: 12px; color: var(--text-sub); }
+.scout__reasons li { margin: 2px 0; }
+.scout__metrics { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.scout__gaps { margin-top: 6px; font-size: 10.5px; color: var(--text-faint); }
+.scout__note { margin-top: 2px; font-size: 10.5px; color: var(--text-faint); }
+
 /* command-center-v1: 資産クラス司令室 — allocation bars on Core Portfolio. */
 .cmd-alloc { padding: 10px 14px; }
 .cmd-alloc__row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12.5px; }

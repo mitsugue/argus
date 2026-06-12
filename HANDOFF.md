@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.14.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.15.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.14.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.15.0。
 
 ---
 
@@ -36,6 +36,12 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.15.0 ⚡エントリー診断(entry-scout-v1) — ユーザーの9984エントリー振り返り(2026-06-13)から。
+  `_jq_price_history`(60-90営業日・6hキャッシュ)→`_entry_metrics`(pure: RSI14/MA乖離/続落/出来高比)→
+  `_entry_scout_assess`(pure: 寄与±0.5〜1を全て理由に明示・金曜アノマリーはノートのみで点数化しない)→
+  GET /entry-scout?symbol=(JP 4桁のみ・30分キャッシュ・heavyレート枠)。戦略カードに⚡ボタン+診断ブロック。
+  **Phase 2 バックログ: 日証金・信用残(買い戻しvs新規の区別)、チャートパターン形状、米国株対応、
+  診断結果の台帳記録(診断自体を採点して信頼を育てる)、マイトレード記録(ユーザー自身の判断を採点)**
 - v10.14.0 ニュース日本語化(news-v2.1) — `_translate_headlines_ja`(Gemini flash・10分毎の
   キャッシュ充填時に1回・失敗時は英語フォールバック)。⚡語彙に地政学(iran/israel/taiwan/strike等)追加。
   Event RadarセクションをTodayの判断ログ直下へ移動(ユーザー要望)。
@@ -115,7 +121,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.14.0**
+- **現在バージョン: v10.15.0**
 
 ---
 

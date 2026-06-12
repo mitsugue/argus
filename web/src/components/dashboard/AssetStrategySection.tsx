@@ -280,6 +280,29 @@ const SortableAssetRow: React.FC<{
   aiAgeMin?: number | null;
 }> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel, aiAgeMin }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
+  // Entry Scout (v10.15, user request 2026-06-13): on-demand 瞬間診断 for the
+  // buy-entry moment — trend/overheat from 60d history + big-money flow +
+  // event/posture context, with honest data-gap disclosure. JP only (Phase 1).
+  interface ScoutData {
+    status: string;
+    lastClose?: number; lastDate?: string;
+    metrics?: { rsi14: number; ma25DiffPct: number | null; ret5: number | null; ret20: number | null; consecDown: number; volRatio5v20: number | null };
+    flow?: { bigNetRatio: number | null; ageMin: number | null };
+    assessment?: { stance: string; score: number; reasonsJa: string[] };
+    dataGapsJa?: string[]; noteJa?: string;
+  }
+  const [scout, setScout] = useState<null | 'loading' | 'error' | ScoutData>(null);
+  async function runScout() {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+    if (!backend) { setScout('error'); return; }
+    setScout('loading');
+    try {
+      const r = await fetch(`${backend.replace(/\/$/, '')}/api/argus/entry-scout?symbol=${encodeURIComponent(asset.symbol)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setScout((await r.json()) as ScoutData);
+    } catch { setScout('error'); }
+  }
+
   // Per-symbol Pro Handoff (v10.12.2, user request): a SMALL copy button that
   // builds a prompt about THIS symbol only — the global handoff stays for the
   // whole-market consult. Client-side from data already on the card; no API.
@@ -433,9 +456,39 @@ const SortableAssetRow: React.FC<{
               <ul>{strat.dataLimitations.map((d, i) => <li key={i}>{d}</li>)}</ul>
             </div>
           )}
+          {scout === 'error' && (
+            <div className="scout scout--note">⚡ 診断を取得できませんでした(時間をおいて再試行)。</div>
+          )}
+          {scout && scout !== 'loading' && scout !== 'error' && scout.status !== 'live' && (
+            <div className="scout scout--note">⚡ {(scout as ScoutData & { noteJa?: string }).noteJa ?? '診断対象外です。'}</div>
+          )}
+          {scout && scout !== 'loading' && scout !== 'error' && scout.status === 'live' && scout.assessment && (
+            <div className="scout">
+              <div className="scout__stance">⚡ {scout.assessment.stance} <span className="scout__score">score {scout.assessment.score >= 0 ? '+' : ''}{scout.assessment.score}</span></div>
+              <ul className="scout__reasons">
+                {scout.assessment.reasonsJa.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+              {scout.metrics && (
+                <div className="scout__metrics">
+                  RSI14 {scout.metrics.rsi14}・25日線乖離 {scout.metrics.ma25DiffPct ?? '—'}%・5日 {scout.metrics.ret5 ?? '—'}%・20日 {scout.metrics.ret20 ?? '—'}%
+                  {scout.flow?.bigNetRatio != null && <>・大口 {(scout.flow.bigNetRatio * 100).toFixed(0)}%{scout.flow.ageMin != null && scout.flow.ageMin > 30 ? `(${Math.round(scout.flow.ageMin / 60)}h前)` : ''}</>}
+                </div>
+              )}
+              <div className="scout__gaps">
+                未対応(正直表示): {(scout.dataGapsJa ?? []).join(' / ')}
+              </div>
+              <div className="scout__note">{scout.noteJa}</div>
+            </div>
+          )}
           <div className="asset-detail__foot">
             <span>updated {ageMin(strat.lastUpdated)}</span>
             <span className="asset-detail__actions">
+              {asset.market === 'JP' && (
+                <button className="asset-mini" onClick={runScout} disabled={scout === 'loading'}
+                        title="60日トレンド・過熱度・大口フロー・イベント接近を束ねた入りの瞬間診断">
+                  {scout === 'loading' ? '診断中…' : '⚡ エントリー診断'}
+                </button>
+              )}
               <button className="asset-mini" aria-label={`Copy ${asset.symbol} prompt for GPT Pro`}
                       title="この銘柄についてGPT-5.5 Proに相談するプロンプトをコピー"
                       onClick={copyProPrompt}>

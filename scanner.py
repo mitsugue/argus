@@ -355,7 +355,7 @@ def _rate_limit():
     p = request.path
     if not p.startswith("/api/argus/") or request.method == "OPTIONS":
         return None
-    heavy = ("symbol-search" in p) or any(k in request.args for k in ("symbols", "jp", "us", "ids", "q"))
+    heavy = ("symbol-search" in p) or any(k in request.args for k in ("symbols", "jp", "us", "ids", "q", "symbol"))
     limit = _RL_MAX_HEAVY if heavy else _RL_MAX
     now = time.time()
     ip = _rl_client_ip()
@@ -4386,6 +4386,195 @@ def _scenarios_for(chg):
     if chg < 2:   return [("downside_continuation", 30), ("sideways_stabilization", 50), ("rebound_attempt", 20)]
     if chg < 5:   return [("downside_continuation", 25), ("sideways_stabilization", 50), ("rebound_attempt", 25)]
     return [("downside_continuation", 30), ("sideways_stabilization", 45), ("rebound_attempt", 25)]
+
+# ── Entry Scout (entry-scout-v1, v10.15) ─────────────────────────────────────
+# 「個別株の買いの入りは瞬間的な情報収集が要る」(ユーザー、2026-06-13 — 9984を
+# 6450で取った日の振り返りから)。1銘柄を1タップで診断する: トレンド/過熱
+# (J-Quants日次履歴)+大口フロー(moomoo)+イベント接近+地合い+曜日を束ねて
+# 「攻め好機/押し目待ち/中立/見送り」+理由+正直な未対応リストを即答する。
+# Phase 2 予定: 日証金・信用残、チャートパターン形状、米国株対応。
+_JQ_HISTORY_CACHE = {}          # code -> {"data": {...}|None, "expires": epoch}
+_JQ_HISTORY_TTL = 6 * 3600
+_SCOUT_CACHE = {}               # code -> {"data": ..., "expires": epoch}
+_SCOUT_TTL = 1800
+
+def _jq_price_history(code):
+    """~60-90 trading days of closes/volumes (newest-first) for one TSE code.
+    Same daily-bars endpoint the watchlist uses; 6h cache, 10-min fail back-off."""
+    now = time.time()
+    c = _JQ_HISTORY_CACHE.get(code)
+    if c and now < c["expires"]:
+        return c["data"]
+    data = None
+    if _JQUANTS_API_KEY:
+        try:
+            headers = {"x-api-key": _JQUANTS_API_KEY}
+            frm = (datetime.now(TZ_JST) - timedelta(days=130)).strftime("%Y-%m-%d")
+            rows, params = [], {"code": code, "from": frm}
+            for _ in range(6):
+                r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
+                                 headers=headers, params=params, timeout=10)
+                r.raise_for_status()
+                body = r.json()
+                rows.extend(body.get("data", []))
+                pk = body.get("pagination_key")
+                if not pk:
+                    break
+                params["pagination_key"] = pk
+            rows = [q for q in rows if _q_close(q) is not None]
+            rows.sort(key=lambda q: q.get("Date", ""), reverse=True)   # newest first
+            if len(rows) >= 20:
+                data = {"closes": [float(_q_close(q)) for q in rows],
+                        "volumes": [int(q.get("Vo") or 0) for q in rows],
+                        "dates": [q.get("Date") for q in rows]}
+        except Exception as e:
+            add_log(f"[scout] history fetch failed {code}: {type(e).__name__}")
+    _JQ_HISTORY_CACHE[code] = {"data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600)}
+    return data
+
+def _entry_metrics(closes, volumes=None):
+    """Pure (unit-tested): trend/overheat metrics from NEWEST-FIRST closes.
+    <20 sessions → None (too little history to say anything honest)."""
+    if not closes or len(closes) < 20:
+        return None
+    c0 = closes[0]
+    def ret(n):
+        return round((c0 - closes[n]) / closes[n] * 100, 2) if len(closes) > n and closes[n] else None
+    def ma(n):
+        return sum(closes[:n]) / n if len(closes) >= n else None
+    ma5, ma25 = ma(5), ma(25)
+    gains = losses = 0.0
+    for i in range(min(14, len(closes) - 1)):
+        d = closes[i] - closes[i + 1]
+        if d >= 0:
+            gains += d
+        else:
+            losses -= d
+    rsi = round(100 * gains / (gains + losses), 1) if (gains + losses) > 0 else 50.0
+    consec_down = 0
+    for i in range(len(closes) - 1):
+        if closes[i] < closes[i + 1]:
+            consec_down += 1
+        else:
+            break
+    window = closes[:60]
+    hi60, lo60 = max(window), min(window)
+    vol_ratio = None
+    if volumes and len(volumes) >= 25:
+        v5 = sum(volumes[:5]) / 5
+        v20 = sum(volumes[5:25]) / 20
+        vol_ratio = round(v5 / v20, 2) if v20 else None
+    return {
+        "ret1": ret(1), "ret5": ret(5), "ret20": ret(20),
+        "ret60": ret(60) if len(closes) > 60 else None,
+        "ma5DiffPct": round((c0 - ma5) / ma5 * 100, 2) if ma5 else None,
+        "ma25DiffPct": round((c0 - ma25) / ma25 * 100, 2) if ma25 else None,
+        "rsi14": rsi, "consecDown": consec_down,
+        "offHigh60Pct": round((c0 - hi60) / hi60 * 100, 2) if hi60 else None,
+        "offLow60Pct": round((c0 - lo60) / lo60 * 100, 2) if lo60 else None,
+        "volRatio5v20": vol_ratio, "sessions": len(closes),
+    }
+
+def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday):
+    """Pure (unit-tested): metrics + context → stance/score/reasons. Every
+    contribution is ±0.5〜1 AND stated in reasonsJa — no hidden weights. The
+    Friday-bounce anomaly is NOTED but not scored (経験則 — the ledger will
+    verify it with data before it earns score weight)."""
+    reasons, score = [], 0.0
+    if m["ma25DiffPct"] is not None:
+        if m["ma25DiffPct"] <= -8:
+            score += 1; reasons.append(f"25日線から{m['ma25DiffPct']}%の下方乖離(売られすぎ圏)")
+        elif m["ma25DiffPct"] >= 8:
+            score -= 1; reasons.append(f"25日線から+{m['ma25DiffPct']}%の上方乖離(過熱圏)")
+    if m["rsi14"] <= 30:
+        score += 1; reasons.append(f"RSI14={m['rsi14']}(売られすぎ)")
+    elif m["rsi14"] >= 70:
+        score -= 1; reasons.append(f"RSI14={m['rsi14']}(買われすぎ)")
+    if m["consecDown"] >= 3:
+        score += 0.5; reasons.append(f"{m['consecDown']}日続落(自律反発の余地)")
+    if (m["ret20"] or 0) > 0 and (m["ret5"] or 0) < 0:
+        score += 0.5; reasons.append("中期(20日)上昇トレンド+短期(5日)押し目の形")
+    if (m["volRatio5v20"] or 0) >= 1.5:
+        reasons.append(f"出来高が平常の{m['volRatio5v20']}倍(注目度上昇 — 方向はフローで判断)")
+    if isinstance(flow_ratio, (int, float)):
+        if flow_ratio >= 0.15:
+            score += 1; reasons.append(f"大口資金が純流入+{round(flow_ratio * 100)}%(確証シグナル)")
+        elif flow_ratio <= -0.15:
+            score -= 1; reasons.append(f"大口資金が純流出{round(flow_ratio * 100)}%")
+    if esc in ("D", "D-1"):
+        score -= 1; reasons.append(f"重要イベント接近({esc}) — 結果待ちが原則")
+    if posture == "elevated":
+        score -= 0.5; reasons.append("金利地合いが逆風(elevated)")
+    if vix_zone in ("elevated", "shock"):
+        score -= 1; reasons.append(f"ボラティリティ圏域が{vix_zone}")
+    if weekday == 4:
+        reasons.append("金曜: 週末リスクで売られやすい日(翌営業日反発は経験則 — 台帳で検証中のため点数化はしない)")
+    if score >= 1.5:
+        stance = "攻め好機(候補)"
+    elif score >= 0.5:
+        stance = "押し目買い検討圏"
+    elif score > -1:
+        stance = "中立(急がない)"
+    else:
+        stance = "見送り"
+    return {"stance": stance, "score": round(score, 2), "reasonsJa": reasons}
+
+def get_entry_scout(sym):
+    now = time.time()
+    c = _SCOUT_CACHE.get(sym)
+    if c and now < c["expires"]:
+        return c["data"]
+    hist = _jq_price_history(sym)
+    if not hist:
+        return {"engineVersion": "entry-scout-v1", "symbol": sym, "status": "unavailable",
+                "noteJa": "価格履歴を取得できませんでした(コード違いか一時的な障害)。"}
+    m = _entry_metrics(hist["closes"], hist["volumes"])
+    if not m:
+        return {"engineVersion": "entry-scout-v1", "symbol": sym, "status": "unavailable",
+                "noteJa": "履歴が20営業日未満のため診断できません(上場直後など)。"}
+    # Realtime flow from the bridge (last push regardless of freshness — the
+    # asOf below tells the user how stale it is, e.g. on a weekend).
+    pushed = (_PUSHED_QUOTES.get("JP") or {}).get(sym)
+    flow_ratio, flow_age_min = None, None
+    if pushed:
+        fl = (pushed.get("row") or {}).get("flow") or {}
+        if isinstance(fl.get("bigNetRatio"), (int, float)):
+            flow_ratio = float(fl["bigNetRatio"])
+            flow_age_min = int((now - pushed["ts"]) / 60)
+    ev = get_events_snapshot()
+    esc = _region_event_escalation(ev.get("events", []) if isinstance(ev, dict) else [], "JP")
+    posture = _rates_posture(get_rates_snapshot())
+    vol = _vix_assess(_fred_vix_history())
+    vix_zone = vol.get("zone") if isinstance(vol, dict) else None
+    weekday = datetime.now(TZ_JST).weekday()
+    assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday)
+    out = {
+        "engineVersion": "entry-scout-v1", "symbol": sym,
+        "name": _jq_name_for(sym) or sym,
+        "asOf": _ai_now_iso(), "status": "live",
+        "lastClose": hist["closes"][0], "lastDate": hist["dates"][0],
+        "metrics": m,
+        "flow": {"bigNetRatio": flow_ratio, "ageMin": flow_age_min},
+        "context": {"posture": posture, "vixZone": vix_zone, "eventEscalation": esc or "normal",
+                    "weekdayJa": "月火水木金土日"[weekday]},
+        "assessment": assess,
+        "dataGapsJa": [
+            "日証金・信用残(買い戻しか新規買いかの区別)は未対応 — Phase 2",
+            "チャートパターンの形状認識(ダブルボトム等)は未対応 — 数値指標で近似",
+            "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
+        ],
+        "noteJa": "売買指示ではなく、入る前の論点整理。最終判断と数量はあなたのルールで。",
+    }
+    _SCOUT_CACHE[sym] = {"data": out, "expires": now + _SCOUT_TTL}
+    return out
+
+@app.route("/api/argus/entry-scout")
+def api_argus_entry_scout():
+    sym = (request.args.get("symbol") or "").strip().upper()
+    if not _JP_SYM_RE.match(sym):
+        return jsonify({"error": "bad_symbol",
+                        "noteJa": "現在は日本株の4桁コードのみ対応(米国株はPhase 2)。"}), 400
+    return jsonify(get_entry_scout(sym))
 
 # ── Close Pin Intraday Ledger (closepin-v1, v10.11) ──────────────────────────
 # The second ledger system of the user-approved architecture: at ~14:30 JST a
