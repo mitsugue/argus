@@ -1,6 +1,12 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { RiskLevel } from '../types/action';
 import './AppShell.css';
+
+// Overscroll-to-next (v10.15.1, user request): at the page bottom, one strong
+// extra pull (touch) or wheel burst advances to the next nav page. Deliberate
+// thresholds + a visible indicator prevent accidental jumps.
+const PULL_THRESHOLD_PX = 90;     // touch: extra upward drag past the bottom
+const WHEEL_THRESHOLD = 350;      // desktop: accumulated deltaY while pinned at bottom
 
 interface NextEvent {
   title: string;       // short event title
@@ -15,6 +21,8 @@ interface Props {
   children: React.ReactNode;
   lastUpdated: Date;
   nextEvent?: NextEvent;
+  /** When set, a strong overscroll at the page bottom advances to this page. */
+  overscrollNext?: { label: string; go: () => void };
 }
 
 const IMPACT_COLOR: Record<RiskLevel, string> = {
@@ -44,7 +52,69 @@ function formatDaysAway(days: number): string {
 
 // Slim header (brand + next event + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
-export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent }) => {
+export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext }) => {
+  const mainRef = useRef<HTMLElement>(null);
+  const [pull, setPull] = useState(0);          // 0..1 progress toward the jump
+  const pullRef = useRef(0);
+  const setPullBoth = (v: number) => { pullRef.current = v; setPull(v); };
+
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el || !overscrollNext) return;
+    const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+    // Cooldown: right after a jump the next page may still be SHORT (data
+    // loading → already "at bottom"), and a continuing gesture would chain
+    // through multiple pages. One deliberate gesture = one page.
+    let lastGo = 0;
+    const coolingDown = () => Date.now() - lastGo < 800;
+    const go = () => {
+      lastGo = Date.now();
+      setPullBoth(0);
+      overscrollNext.go();
+      el.scrollTop = 0;   // land at the top of the next page
+    };
+
+    // Touch: extra upward drag while already pinned at the bottom.
+    let startY: number | null = null;
+    let pulling = false;
+    const onTouchStart = (e: TouchEvent) => { startY = e.touches[0].clientY; pulling = false; };
+    const onTouchMove = (e: TouchEvent) => {
+      if (startY == null || coolingDown()) return;
+      const dy = startY - e.touches[0].clientY;
+      if (dy > 0 && atBottom()) { pulling = true; setPullBoth(Math.min(dy / PULL_THRESHOLD_PX, 1)); }
+      else if (pulling) { pulling = false; setPullBoth(0); }
+    };
+    const onTouchEnd = () => {
+      if (pulling && pullRef.current >= 1) go();
+      else setPullBoth(0);
+      startY = null; pulling = false;
+    };
+
+    // Wheel: accumulated downward delta while pinned at the bottom.
+    let acc = 0;
+    let idleTimer: number | undefined;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY <= 0 || !atBottom() || coolingDown()) { acc = 0; if (pullRef.current) setPullBoth(0); return; }
+      acc += e.deltaY;
+      setPullBoth(Math.min(acc / WHEEL_THRESHOLD, 1));
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => { acc = 0; setPullBoth(0); }, 600);
+      if (acc >= WHEEL_THRESHOLD) { acc = 0; go(); }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('wheel', onWheel, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('wheel', onWheel);
+      window.clearTimeout(idleTimer);
+    };
+  }, [overscrollNext]);
+
   return (
     <div className="shell">
       <header className="shell__header">
@@ -78,7 +148,15 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       </header>
       <div className="shell__body">
         {sidebar}
-        <main className="shell__main">{children}</main>
+        <main className="shell__main" ref={mainRef}>
+          {children}
+          {overscrollNext && pull > 0.05 && (
+            <div className={`shell__pullnext${pull >= 1 ? ' shell__pullnext--armed' : ''}`}
+                 style={{ opacity: 0.35 + pull * 0.65 }}>
+              {pull >= 1 ? `↓ 離すと移動: ${overscrollNext.label}` : `↓ さらに引っ張って ${overscrollNext.label} へ`}
+            </div>
+          )}
+        </main>
       </div>
     </div>
   );

@@ -103,6 +103,17 @@ const App: React.FC = () => {
     setRoute(key);
   };
 
+  // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
+  const NAV_ORDER: RouteKey[] = ['command', 'alerts', 'regime', 'events', 'watchlist', 'core', 'guide'];
+  const NAV_LABEL: Record<RouteKey, string> = {
+    command: 'Today', alerts: 'Action Alerts', regime: 'Market Regime',
+    events: 'Event Radar', watchlist: 'Watchlist', core: 'Core Portfolio', guide: 'Guide',
+  };
+  const nextIdx = NAV_ORDER.indexOf(route) + 1;
+  const overscrollNext = (!isReview && nextIdx > 0 && nextIdx < NAV_ORDER.length)
+    ? { label: NAV_LABEL[NAV_ORDER[nextIdx]], go: () => handleNavSelect(NAV_ORDER[nextIdx]) }
+    : undefined;
+
   return (
     <AppShell
       sidebar={
@@ -116,6 +127,7 @@ const App: React.FC = () => {
       }
       lastUpdated={lastUpdated}
       nextEvent={nextEvent}
+      overscrollNext={overscrollNext}
     >
       {isReview ? <AIReview /> : <Active onNavigate={handleNavSelect} />}
     </AppShell>

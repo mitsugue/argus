@@ -178,3 +178,25 @@
     padding: 3px 7px;
   }
 }
+
+/* Overscroll-to-next (v10.15.1): bottom-pull indicator. Sticky inside the
+   scroll container so it rides just above the home indicator. */
+.shell__pullnext {
+  position: sticky;
+  bottom: calc(env(safe-area-inset-bottom) + 10px);
+  margin: 0 auto;
+  width: fit-content;
+  padding: 6px 14px;
+  border-radius: 14px;
+  background: rgba(20, 28, 44, 0.92);
+  border: 1px solid rgba(91, 141, 239, 0.4);
+  font-size: 12px;
+  color: var(--text-sub);
+  pointer-events: none;
+  z-index: 5;
+}
+.shell__pullnext--armed {
+  color: var(--text-main);
+  border-color: rgba(91, 141, 239, 0.9);
+  font-weight: 600;
+}

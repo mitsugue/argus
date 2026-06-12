@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.15.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.15.1 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.15.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.15.1。
 
 ---
 
@@ -36,6 +36,8 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.15.1 オーバースクロール・ページ送り — .shell__mainの底で追加プル(タッチ90px/ホイール累積350)
+  →次のnavページへ。インジケータ表示・800msクールダウン(短いページの連鎖ジャンプ防止)・Guide(最終ページ)では無効
 - v10.15.0 ⚡エントリー診断(entry-scout-v1) — ユーザーの9984エントリー振り返り(2026-06-13)から。
   `_jq_price_history`(60-90営業日・6hキャッシュ)→`_entry_metrics`(pure: RSI14/MA乖離/続落/出来高比)→
   `_entry_scout_assess`(pure: 寄与±0.5〜1を全て理由に明示・金曜アノマリーはノートのみで点数化しない)→
@@ -121,7 +123,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.15.0**
+- **現在バージョン: v10.15.1**
 
 ---
 
