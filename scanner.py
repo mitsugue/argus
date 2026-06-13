@@ -4538,7 +4538,9 @@ def _jsf_balance_table():
         return _JSF_CACHE["table"], _JSF_CACHE["date"]
     table, dt = None, None
     try:
-        r = requests.get(_JSF_URL, timeout=20)
+        # Browser-ish UA + 30s: the 858KB file is fetched US→JP from Render.
+        r = requests.get(_JSF_URL, timeout=30,
+                         headers={"User-Agent": "Mozilla/5.0 (ARGUS bridge)"})
         if r.status_code == 200 and r.content:
             text = r.content.decode("cp932", errors="replace")
             import csv as _csv
@@ -4863,8 +4865,15 @@ def get_entry_scout(sym):
     # v2.2: weekly margin (信用残) — plan-dependent, None when unavailable.
     margin_sig = _margin_signal(_jq_weekly_margin(sym))
     # v2.3: 日証金(JSF) daily 貸借残 — free, no plan needed (the primary 信用
-    # signal for this user's plan). None when the stock is not a 貸借銘柄.
-    jsf_sig = _jsf_for(sym)
+    # signal for this user's plan). Distinguish "source down" from "not a
+    # 貸借銘柄" so null is never ambiguous (使い物になる検証, 2026-06-13).
+    jsf_table, jsf_date = _jsf_balance_table()
+    if jsf_table is None:
+        jsf_sig, jsf_status = None, "source_unavailable"
+    elif sym in jsf_table and jsf_table[sym].get("loan") is not None and jsf_table[sym].get("short") is not None:
+        jsf_sig, jsf_status = _jsf_for(sym), "ok"
+    else:
+        jsf_sig, jsf_status = None, "not_loanable"
     assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                                  regime_label=reg_label if reg_ok else None,
                                  vix_spike=vix_spike, rel_strength=rel_strength,
@@ -4879,6 +4888,7 @@ def get_entry_scout(sym):
         "flow": {"bigNetRatio": flow_ratio, "ageMin": flow_age_min},
         "margin": margin_sig,    # None when the J-Quants plan omits weekly margin
         "nisshokin": jsf_sig,    # 日証金(JSF) daily 貸借残; None if not a 貸借銘柄
+        "nisshokinStatus": jsf_status,   # ok / not_loanable / source_unavailable
         "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
                     "regime": reg_label if reg_ok else None,
                     "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,
@@ -4886,14 +4896,19 @@ def get_entry_scout(sym):
                     "weekdayJa": "月火水木金土日"[weekday]},
         "assessment": assess,
         "dataGapsJa": [
-            ("信用残: 日証金(JSF)貸借残で取得済み(日証金倍率 = 融資残/貸株残)" if jsf_sig
-             else "信用残: この銘柄は貸借銘柄でない可能性(日証金データに非掲載) — 取得不可"),
+            {"ok": "信用残: 日証金(JSF)貸借残で取得済み(日証金倍率 = 融資残/貸株残)",
+             "not_loanable": "信用残: この銘柄は貸借銘柄ではないため日証金データに非掲載 — 取得不可(正常)",
+             "source_unavailable": "信用残: 日証金データ源を一時取得できません(自動リトライ。数分後に再診断で復帰)",
+             }[jsf_status],
             "本格的なパターン形状(ダブルボトム等)の認識は未対応 — RSI/MACD/ボリンジャー/移動平均クロスで近似(v2.1)",
             "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
         ],
         "noteJa": "売買指示ではなく、入る前の論点整理。最終判断と数量はあなたのルールで。",
     }
-    _SCOUT_CACHE[sym] = {"data": out, "expires": now + _SCOUT_TTL}
+    # If the JSF source was momentarily down, cache only briefly so the next
+    # diagnosis self-heals instead of showing a 30-min gap (使い物になる検証).
+    ttl = 180 if jsf_status == "source_unavailable" else _SCOUT_TTL
+    _SCOUT_CACHE[sym] = {"data": out, "expires": now + ttl}
     return out
 
 @app.route("/api/argus/entry-scout")
