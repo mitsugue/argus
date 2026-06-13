@@ -634,3 +634,20 @@ def test_jsf_assess_loan_heavy_is_overhang():
 def test_jsf_assess_none_is_neutral():
     sc, reasons = scanner._jsf_assess_lines(None)
     assert sc == 0.0 and reasons == []
+
+
+# ── JPX disclosed institutional short (entry-scout v2.4, v10.20) ────
+def test_short_disclosed_heavy_is_squeeze_fuel():
+    sc, reasons = scanner._short_disclosed_assess({"ratio": 0.08, "reporters": 4})
+    assert sc == 0.5
+    assert any("踏み上げ" in r and "8.0%" in r for r in reasons)
+
+
+def test_short_disclosed_moderate():
+    sc, reasons = scanner._short_disclosed_assess({"ratio": 0.03, "reporters": 2})
+    assert sc == 0.3 and any("買い戻し余地" in r for r in reasons)
+
+
+def test_short_disclosed_none_or_empty():
+    assert scanner._short_disclosed_assess(None) == (0.0, [])
+    assert scanner._short_disclosed_assess({"ratio": 0.0, "reporters": 0}) == (0.0, [])

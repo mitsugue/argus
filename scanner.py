@@ -4595,6 +4595,78 @@ def _jsf_for(code):
             "ratio": ratio, "loanNew": e.get("loanNew"), "loanRepay": e.get("loanRepay"),
             "shortNew": e.get("shortNew"), "shortRepay": e.get("shortRepay")}
 
+# JPX 空売り残高 (institutional disclosed short positions ≥0.5%) — the
+# "are institutions seriously shorting this?" signal the user asked for
+# (2026-06-13). The daily .xls URL carries a per-day token, so we scrape the
+# index for the latest *_Short_Positions.xls, parse it (legacy OLE2/BIFF via
+# xlrd), and aggregate the disclosed short ratio (col10) per stock code
+# (col2). Column layout VERIFIED against the live file. Only ~700 heavily
+# shorted names appear; absence is itself meaningful (no big institutional
+# short on record) and reported honestly — never faked.
+_JPX_SHORT_INDEX = "https://www.jpx.co.jp/markets/public/short-selling/index.html"
+_JPX_HOST = "https://www.jpx.co.jp"
+_JPX_SHORT_CACHE = {"table": None, "date": None, "expires": 0.0}
+_JPX_SHORT_TTL = 6 * 3600
+
+def _jpx_short_table():
+    """{code: {ratio: summed disclosed short fraction, reporters: int}} from the
+    latest JPX short-position .xls. 6h cache; never raises. xlrd imported lazily
+    so the test/CI path (which never calls this) needs no extra dependency."""
+    now = time.time()
+    if _JPX_SHORT_CACHE["table"] is not None and now < _JPX_SHORT_CACHE["expires"]:
+        return _JPX_SHORT_CACHE["table"], _JPX_SHORT_CACHE["date"]
+    table, dt = None, None
+    try:
+        import xlrd  # lazy: only the production fetch path needs it
+        hdr = {"User-Agent": "Mozilla/5.0 (ARGUS bridge)"}
+        idx = requests.get(_JPX_SHORT_INDEX, headers=hdr, timeout=20)
+        m = re.search(r'href="(/markets/public/short-selling/[^"]+?_Short_Positions\.xls)"', idx.text)
+        if idx.status_code == 200 and m:
+            url = _JPX_HOST + m.group(1)
+            fn = m.group(1).rsplit("/", 1)[-1]      # 20260611_Short_Positions.xls
+            dm = re.match(r"(\d{4})(\d{2})(\d{2})_", fn)
+            dt = f"{dm.group(1)}/{dm.group(2)}/{dm.group(3)}" if dm else None
+            r = requests.get(url, headers=hdr, timeout=30)
+            if r.status_code == 200 and r.content:
+                wb = xlrd.open_workbook(file_contents=r.content)
+                sh = wb.sheet_by_index(0)
+                agg = {}
+                for row in range(8, sh.nrows):       # data starts at row 8 (verified)
+                    code = str(sh.cell_value(row, 2)).replace(".0", "").strip()
+                    try:
+                        ratio = float(sh.cell_value(row, 10))
+                    except Exception:
+                        ratio = None
+                    if not code or not ratio:
+                        continue
+                    e = agg.setdefault(code, {"ratio": 0.0, "reporters": 0})
+                    e["ratio"] += ratio
+                    e["reporters"] += 1
+                if agg:
+                    for e in agg.values():
+                        e["ratio"] = round(e["ratio"], 4)
+                    table = agg
+    except Exception as e:
+        add_log(f"[scout] JPX short fetch failed: {type(e).__name__}")
+    _JPX_SHORT_CACHE.update({"table": table, "date": dt,
+                             "expires": now + (_JPX_SHORT_TTL if table else 1800)})
+    return table, dt
+
+def _short_disclosed_assess(sd):
+    """Pure (unit-tested): disclosed institutional short → (score_delta,
+    reasonsJa[]). Heavy disclosed short is squeeze FUEL if price turns — but
+    also reflects strong bearish conviction, so the wording says both and the
+    score nudge is modest."""
+    if not sd or not sd.get("ratio"):
+        return 0.0, []
+    pct = round(sd["ratio"] * 100, 1)
+    n = sd.get("reporters", 0)
+    if sd["ratio"] >= 0.05:
+        return 0.5, [f"機関の大口空売り残 {pct}%({n}者) — 反転すれば強い踏み上げ燃料(弱気確信の裏返しでもある)"]
+    if sd["ratio"] >= 0.02:
+        return 0.3, [f"機関の大口空売り残 {pct}%({n}者) — 買い戻し余地あり(両面解釈)"]
+    return 0.0, [f"機関の大口空売り残 {pct}%({n}者・小規模)"]
+
 def _jsf_assess_lines(j):
     """Pure (unit-tested): JSF daily balance → (score_delta, reasonsJa[]).
     日証金倍率(融資残/貸株残): <1 売り長=踏み上げ燃料(+), 高倍率=買い長で戻り売り(-).
@@ -4715,7 +4787,8 @@ def _entry_metrics(closes, volumes=None):
 
 def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                         regime_label=None, vix_spike=False, rel_strength=None,
-                        earnings_days=None, ai_view=None, margin_sig=None, jsf_sig=None):
+                        earnings_days=None, ai_view=None, margin_sig=None, jsf_sig=None,
+                        short_disclosed=None):
     """Pure (unit-tested): metrics + context → stance/score/reasons. Every
     contribution is ±0.5〜1 AND stated in reasonsJa — no hidden weights. The
     Friday-bounce anomaly is NOTED but not scored (経験則 — the ledger will
@@ -4793,6 +4866,9 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
     # ── v2.3: 日証金(JSF)daily 貸借残 — free alternative, works without plan ──
     js_score, js_reasons = _jsf_assess_lines(jsf_sig)
     score += js_score; reasons.extend(js_reasons)
+    # ── v2.4: JPX disclosed institutional short (≥0.5%) — squeeze intel ──
+    sd_score, sd_reasons = _short_disclosed_assess(short_disclosed)
+    score += sd_score; reasons.extend(sd_reasons)
     if weekday == 4:
         reasons.append("金曜: 週末リスクで売られやすい日(翌営業日反発は経験則 — 台帳で検証中のため点数化はしない)")
     if score >= 1.5:
@@ -4880,11 +4956,21 @@ def get_entry_scout(sym):
         jsf_sig, jsf_status = _jsf_for(sym), "ok"
     else:
         jsf_sig, jsf_status = None, "not_loanable"
+    # v2.4: JPX disclosed institutional short (≥0.5%). Distinguish source-down
+    # from genuinely-no-disclosed-short (most stocks → none, which is meaningful).
+    jpx_short_table, jpx_short_date = _jpx_short_table()
+    if jpx_short_table is None:
+        short_disclosed, short_status = None, "source_unavailable"
+    elif sym in jpx_short_table:
+        short_disclosed, short_status = jpx_short_table[sym], "ok"
+    else:
+        short_disclosed, short_status = None, "none_disclosed"
     assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                                  regime_label=reg_label if reg_ok else None,
                                  vix_spike=vix_spike, rel_strength=rel_strength,
                                  earnings_days=earnings_days, ai_view=ai_view,
-                                 margin_sig=margin_sig, jsf_sig=jsf_sig)
+                                 margin_sig=margin_sig, jsf_sig=jsf_sig,
+                                 short_disclosed=short_disclosed)
     out = {
         "engineVersion": "entry-scout-v1", "symbol": sym,
         "name": _jq_name_for(sym) or sym,
@@ -4895,6 +4981,9 @@ def get_entry_scout(sym):
         "margin": margin_sig,    # None when the J-Quants plan omits weekly margin
         "nisshokin": jsf_sig,    # 日証金(JSF) daily 貸借残; None if not a 貸借銘柄
         "nisshokinStatus": jsf_status,   # ok / not_loanable / source_unavailable
+        "shortDisclosed": (short_disclosed and {"ratioPct": round(short_disclosed["ratio"] * 100, 1),
+                                                "reporters": short_disclosed["reporters"], "date": jpx_short_date}),
+        "shortDisclosedStatus": short_status,   # ok / none_disclosed / source_unavailable
         "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
                     "regime": reg_label if reg_ok else None,
                     "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,
@@ -4906,15 +4995,19 @@ def get_entry_scout(sym):
              "not_loanable": "信用残: この銘柄は貸借銘柄ではないため日証金データに非掲載 — 取得不可(正常)",
              "source_unavailable": "信用残: 日証金データ源を一時取得できません(自動リトライ。数分後に再診断で復帰)",
              }[jsf_status],
+            {"ok": "機関の大口空売り: JPX開示データで取得済み",
+             "none_disclosed": "機関の大口空売り: 0.5%超の開示報告なし(=機関の大口空売りは記録上なし)",
+             "source_unavailable": "機関の大口空売り: JPXデータ源を一時取得できません(自動リトライ)",
+             }[short_status],
             "本格的なパターン形状(ダブルボトム等)の認識は未対応 — RSI/MACD/ボリンジャー/移動平均クロスで近似(v2.1)",
             "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
         ],
         "noteJa": "売買指示ではなく、入る前の論点整理。最終判断と数量はあなたのルールで。",
     }
-    # If the JSF source was momentarily down, cache only briefly so the next
-    # diagnosis self-heals instead of showing a 30-min gap (使い物になる検証).
-    ttl = 180 if jsf_status == "source_unavailable" else _SCOUT_TTL
-    _SCOUT_CACHE[sym] = {"data": out, "expires": now + ttl}
+    # If a credit/short source was momentarily down, cache only briefly so the
+    # next diagnosis self-heals instead of showing a 30-min gap (検証で確認).
+    src_down = jsf_status == "source_unavailable" or short_status == "source_unavailable"
+    _SCOUT_CACHE[sym] = {"data": out, "expires": now + (180 if src_down else _SCOUT_TTL)}
     return out
 
 @app.route("/api/argus/entry-scout")

@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.19.2 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.20.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.19.2。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.20.0。
 
 ---
 
@@ -36,6 +36,12 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.20.0 entry-scout v2.4 機関空売り統合(JPX) — `_jpx_short_table`(index.htmlから最新
+  *_Short_Positions.xls をスクレイプ→xlrdでBIFF解析・6hキャッシュ・xlrd遅延import)。列構成を実ファイル検証
+  (col2銘柄コード/col10残高割合・データは8行目から・ヘッダ7行)。`_short_disclosed_assess`(pure・pytest3件):
+  銘柄ごとに報告者の残高割合を合算、≥5%→踏み上げ燃料+0.5、≥2%→+0.3(両面解釈明示)。
+  shortDisclosedStatus(ok/none_disclosed/source_unavailable)。requirements.txtにxlrd追加(CIは遅延importで不要)。
+  736銘柄が掲載・9984/8058/7203は開示なし(=機関大口空売りなし、有意)。75テスト
 - v10.19.2 日証金の重複行バグ修正 — 複数取引所上場銘柄(7203トヨタ=東証+名証)で名証のゼロ行が
   東証実残高をdict上書きで潰していた。残高(loan+short)最大の行を採用するdedupに修正。本番検証で発覚
   (9984倍率19.14/8058倍率22.05は正常、7203が0/0→修正後1708000/0)。ユーザーの「使い物になるように検証」が捕捉
@@ -149,7 +155,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.19.2**
+- **現在バージョン: v10.20.0**
 
 ---
 
