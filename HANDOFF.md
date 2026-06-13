@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.19.1 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.19.2 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.19.1。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.19.2。
 
 ---
 
@@ -36,6 +36,9 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.19.2 日証金の重複行バグ修正 — 複数取引所上場銘柄(7203トヨタ=東証+名証)で名証のゼロ行が
+  東証実残高をdict上書きで潰していた。残高(loan+short)最大の行を採用するdedupに修正。本番検証で発覚
+  (9984倍率19.14/8058倍率22.05は正常、7203が0/0→修正後1708000/0)。ユーザーの「使い物になるように検証」が捕捉
 - v10.19.1 日証金の堅牢化+診断化 — JSF取得にUA付与+timeout30s(米国RenderからのUS→JP 858KB取得対策)。
   nisshokinStatus を追加(ok/not_loanable/source_unavailable)でnullの曖昧さを解消。source down時は
   scout結果を180sだけキャッシュ→自己回復。本番でパーサーは実ファイル検証済み(9984倍率19.14)、初回nullは
@@ -146,7 +149,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.19.1**
+- **現在バージョン: v10.19.2**
 
 ---
 

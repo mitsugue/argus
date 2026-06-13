@@ -4560,11 +4560,17 @@ def _jsf_balance_table():
                     except Exception:
                         return None
                 loan, short = _i(9), _i(12)
-                table[code] = {
+                rec = {
                     "loan": loan, "short": short, "net": _i(13),
                     "loanNew": _i(7), "loanRepay": _i(8),
                     "shortNew": _i(10), "shortRepay": _i(11),
                 }
+                # A code can appear once per exchange (e.g. 7203 東証 + 名証 with
+                # the 名証 row all-zero). Keep the row with the most balance so a
+                # secondary-venue zero row never clobbers the real 東証 figures.
+                prev = table.get(code)
+                if prev is None or (loan or 0) + (short or 0) > (prev["loan"] or 0) + (prev["short"] or 0):
+                    table[code] = rec
                 if dt is None:
                     dt = (row[0] or "").strip()
             if not table:
