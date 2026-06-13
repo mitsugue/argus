@@ -4408,6 +4408,15 @@ _SCOUT_TTL = 1800
 # returns None and the scout honestly lists it as unavailable (NEVER guesses).
 _JQ_MARGIN_CACHE = {}           # code -> {"data": [...]|None, "expires": epoch}
 _JQ_MARGIN_TTL = 12 * 3600      # weekly data — refreshed twice a day is plenty
+# 日証金(JSF)貸借取引残高 — the FREE daily alternative when the J-Quants plan
+# omits weekly margin (user-approved 2026-06-13). One public CSV holds every
+# 貸借銘柄's loan balance (融資残=margin-buy side) and stock-lending balance
+# (貸株残=margin-sell/short side); 貸借倍率=融資残/貸株残 is the classic
+# short-covering gauge. Column layout VERIFIED against the live file header,
+# Shift_JIS. Non-loanable stocks are simply absent (honest gap, never faked).
+_JSF_URL = "https://www.taisyaku.jp/data/zandaka.csv"
+_JSF_CACHE = {"table": None, "date": None, "expires": 0.0}
+_JSF_TTL = 6 * 3600
 
 def _jq_price_history(code):
     """~60-90 trading days of closes/volumes (newest-first) for one TSE code.
@@ -4520,6 +4529,89 @@ def _margin_assess_lines(sig):
         reasons.append(f"信用買い残が前週比+{sig['longWoWPct']}% — 新規買いの過熱(戻り売り予備軍)")
     return score, reasons
 
+def _jsf_balance_table():
+    """{code: {loan, short, net, loanNew, loanRepay, shortNew, shortRepay}} from
+    the JSF daily 貸借取引残高 CSV. 6h cache; never raises. Column indices are
+    fixed against the verified Shift_JIS header (申込日,決済日,銘柄コード,…)."""
+    now = time.time()
+    if _JSF_CACHE["table"] is not None and now < _JSF_CACHE["expires"]:
+        return _JSF_CACHE["table"], _JSF_CACHE["date"]
+    table, dt = None, None
+    try:
+        r = requests.get(_JSF_URL, timeout=20)
+        if r.status_code == 200 and r.content:
+            text = r.content.decode("cp932", errors="replace")
+            import csv as _csv
+            import io as _io
+            rows = list(_csv.reader(_io.StringIO(text)))
+            table = {}
+            for row in rows[1:]:
+                if len(row) < 14:
+                    continue
+                code = (row[2] or "").strip()
+                if not code:
+                    continue
+                def _i(idx):
+                    v = (row[idx] or "").strip().replace(",", "")
+                    try:
+                        return int(float(v)) if v else None
+                    except Exception:
+                        return None
+                loan, short = _i(9), _i(12)
+                table[code] = {
+                    "loan": loan, "short": short, "net": _i(13),
+                    "loanNew": _i(7), "loanRepay": _i(8),
+                    "shortNew": _i(10), "shortRepay": _i(11),
+                }
+                if dt is None:
+                    dt = (row[0] or "").strip()
+            if not table:
+                table = None
+    except Exception as e:
+        add_log(f"[scout] JSF fetch failed: {type(e).__name__}")
+    _JSF_CACHE.update({"table": table, "date": dt,
+                       "expires": now + (_JSF_TTL if table else 1800)})
+    return table, dt
+
+def _jsf_for(code):
+    """One stock's JSF balance signal, or None if it is not a 貸借銘柄."""
+    table, dt = _jsf_balance_table()
+    if not table or code not in table:
+        return None
+    e = table[code]
+    loan, short = e.get("loan"), e.get("short")
+    if loan is None or short is None:
+        return None
+    ratio = round(loan / short, 2) if short else None
+    return {"date": dt, "loan": loan, "short": short, "net": e.get("net"),
+            "ratio": ratio, "loanNew": e.get("loanNew"), "loanRepay": e.get("loanRepay"),
+            "shortNew": e.get("shortNew"), "shortRepay": e.get("shortRepay")}
+
+def _jsf_assess_lines(j):
+    """Pure (unit-tested): JSF daily balance → (score_delta, reasonsJa[]).
+    日証金倍率(融資残/貸株残): <1 売り長=踏み上げ燃料(+), 高倍率=買い長で戻り売り(-).
+    Plus today's new-vs-repayment direction. All contributions visible."""
+    if not j:
+        return 0.0, []
+    score, reasons = 0.0, []
+    r = j.get("ratio")
+    if isinstance(r, (int, float)):
+        if r < 1.0:
+            score += 0.5
+            reasons.append(f"日証金倍率{r}倍(貸株超=売り長) — 買い戻し(踏み上げ)の燃料")
+        elif r >= 3.0:
+            score -= 0.5
+            reasons.append(f"日証金倍率{r}倍(融資超=買い長) — 上値に戻り売り圧力")
+    sn, sr = j.get("shortNew"), j.get("shortRepay")
+    if isinstance(sn, int) and isinstance(sr, int) and sn > sr * 1.3 and sn > 0:
+        score += 0.3
+        reasons.append("本日の新規売り>返済 — 売り建てが増加(将来の買い戻し余地)")
+    ln, lr = j.get("loanNew"), j.get("loanRepay")
+    if isinstance(ln, int) and isinstance(lr, int) and ln > lr * 1.3 and ln > 0:
+        score -= 0.3
+        reasons.append("本日の新規買い建てが増加 — 短期の買い疲れに注意")
+    return score, reasons
+
 def _entry_metrics(closes, volumes=None):
     """Pure (unit-tested): trend/overheat metrics from NEWEST-FIRST closes.
     <20 sessions → None (too little history to say anything honest)."""
@@ -4615,7 +4707,7 @@ def _entry_metrics(closes, volumes=None):
 
 def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                         regime_label=None, vix_spike=False, rel_strength=None,
-                        earnings_days=None, ai_view=None, margin_sig=None):
+                        earnings_days=None, ai_view=None, margin_sig=None, jsf_sig=None):
     """Pure (unit-tested): metrics + context → stance/score/reasons. Every
     contribution is ±0.5〜1 AND stated in reasonsJa — no hidden weights. The
     Friday-bounce anomaly is NOTED but not scored (経験則 — the ledger will
@@ -4690,6 +4782,9 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
     # ── v2.2: weekly margin (信用残) — short-covering vs fresh-buying read ──
     ms_score, ms_reasons = _margin_assess_lines(margin_sig)
     score += ms_score; reasons.extend(ms_reasons)
+    # ── v2.3: 日証金(JSF)daily 貸借残 — free alternative, works without plan ──
+    js_score, js_reasons = _jsf_assess_lines(jsf_sig)
+    score += js_score; reasons.extend(js_reasons)
     if weekday == 4:
         reasons.append("金曜: 週末リスクで売られやすい日(翌営業日反発は経験則 — 台帳で検証中のため点数化はしない)")
     if score >= 1.5:
@@ -4767,11 +4862,14 @@ def get_entry_scout(sym):
                 break
     # v2.2: weekly margin (信用残) — plan-dependent, None when unavailable.
     margin_sig = _margin_signal(_jq_weekly_margin(sym))
+    # v2.3: 日証金(JSF) daily 貸借残 — free, no plan needed (the primary 信用
+    # signal for this user's plan). None when the stock is not a 貸借銘柄.
+    jsf_sig = _jsf_for(sym)
     assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                                  regime_label=reg_label if reg_ok else None,
                                  vix_spike=vix_spike, rel_strength=rel_strength,
                                  earnings_days=earnings_days, ai_view=ai_view,
-                                 margin_sig=margin_sig)
+                                 margin_sig=margin_sig, jsf_sig=jsf_sig)
     out = {
         "engineVersion": "entry-scout-v1", "symbol": sym,
         "name": _jq_name_for(sym) or sym,
@@ -4780,6 +4878,7 @@ def get_entry_scout(sym):
         "metrics": m,
         "flow": {"bigNetRatio": flow_ratio, "ageMin": flow_age_min},
         "margin": margin_sig,    # None when the J-Quants plan omits weekly margin
+        "nisshokin": jsf_sig,    # 日証金(JSF) daily 貸借残; None if not a 貸借銘柄
         "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
                     "regime": reg_label if reg_ok else None,
                     "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,
@@ -4787,8 +4886,8 @@ def get_entry_scout(sym):
                     "weekdayJa": "月火水木金土日"[weekday]},
         "assessment": assess,
         "dataGapsJa": [
-            ("信用週末残高(買い戻しvs新規買い)は取得済み" if margin_sig
-             else "信用週末残高は現在のJ-Quantsプランで未提供 — 日証金の公開データ統合を検討(Phase 2)"),
+            ("信用残: 日証金(JSF)貸借残で取得済み(日証金倍率 = 融資残/貸株残)" if jsf_sig
+             else "信用残: この銘柄は貸借銘柄でない可能性(日証金データに非掲載) — 取得不可"),
             "本格的なパターン形状(ダブルボトム等)の認識は未対応 — RSI/MACD/ボリンジャー/移動平均クロスで近似(v2.1)",
             "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
         ],

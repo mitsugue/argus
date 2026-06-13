@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.18.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.19.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.18.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.19.0。
 
 ---
 
@@ -36,6 +36,11 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.19.0 entry-scout v2.3 日証金(JSF)統合 — **本番検証: ユーザーのJ-Quantsプランはweekly_margin未提供(margin=null確認)** →
+  無料の日証金CSV(taisyaku.jp/data/zandaka.csv・Shift_JIS・列構成を実ファイルで検証済み)で代替。
+  `_jsf_balance_table`(6hキャッシュ・cp932)+`_jsf_for`+`_jsf_assess_lines`(pure・pytest3件):
+  日証金倍率=融資残(9列)/貸株残(12列)、<1売り長→踏み上げ燃料(+0.5)、≥3買い長→戻り売り(-0.5)、
+  本日新規vs返済の方向(±0.3)。貸借銘柄のみ(非掲載は正直に未取得)。72テスト
 - v10.18.0 entry-scout v2.2 信用残統合(Phase 2着手) — `_jq_weekly_margin`(J-Quants v2
   /markets/weekly_margin_interest・12hキャッシュ・**プラン非対応なら403/404→None で正直に未提供表示**)、
   `_margin_signal`+`_margin_assess_lines`(pure・pytest5件): 信用倍率<1=売り長→踏み上げ余地(+0.5)、
@@ -137,7 +142,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.18.0**
+- **現在バージョン: v10.19.0**
 
 ---
 

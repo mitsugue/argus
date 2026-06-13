@@ -609,3 +609,28 @@ def test_margin_assess_overhang_is_headwind():
 def test_margin_assess_none_is_neutral():
     sc, reasons = scanner._margin_assess_lines(None)
     assert sc == 0.0 and reasons == []
+
+
+# ── 日証金 JSF daily balance (entry-scout v2.3, v10.19) ─────────────
+def test_jsf_assess_short_heavy_is_covering_fuel():
+    j = {"ratio": 0.6, "loan": 60000, "short": 100000, "net": -40000,
+         "loanNew": 100, "loanRepay": 100, "shortNew": 5000, "shortRepay": 1000,
+         "date": "2026/06/11"}
+    sc, reasons = scanner._jsf_assess_lines(j)
+    assert sc >= 0.5
+    assert any("踏み上げ" in r or "買い戻し" in r for r in reasons)
+    assert any("新規売り" in r for r in reasons)   # shortNew >> shortRepay
+
+
+def test_jsf_assess_loan_heavy_is_overhang():
+    j = {"ratio": 4.0, "loan": 400000, "short": 100000, "net": 300000,
+         "loanNew": 100, "loanRepay": 100, "shortNew": 0, "shortRepay": 0,
+         "date": "2026/06/11"}
+    sc, reasons = scanner._jsf_assess_lines(j)
+    assert sc <= -0.5
+    assert any("戻り売り" in r for r in reasons)
+
+
+def test_jsf_assess_none_is_neutral():
+    sc, reasons = scanner._jsf_assess_lines(None)
+    assert sc == 0.0 and reasons == []
