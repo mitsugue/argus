@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.17.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.18.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.17.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.18.0。
 
 ---
 
@@ -36,6 +36,12 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.18.0 entry-scout v2.2 信用残統合(Phase 2着手) — `_jq_weekly_margin`(J-Quants v2
+  /markets/weekly_margin_interest・12hキャッシュ・**プラン非対応なら403/404→None で正直に未提供表示**)、
+  `_margin_signal`+`_margin_assess_lines`(pure・pytest5件): 信用倍率<1=売り長→踏み上げ余地(+0.5)、
+  ≥5=買い長→戻り売り圧力(-0.5)、売り残前週比+15%→買い戻し圧力蓄積(+0.5)、買い残前週比+15%→過熱(-0.5)。
+  全件reasonsJa明示。本番でプラン可否を要確認(取れなければ日証金公開データ統合が次の代替)。
+  **Phase 3バックログ継続: 診断の台帳記録→校正された確率表示(ユーザーの「全情報を一つの答え%」)**
 - v10.17.0 entry-scout v2.1 テクニカル統合 — _entry_metricsにMACD(12,26,9)ヒスト+直近クロス、
   MA5/25クロス、ボリンジャー%b(25日±2σ)。assessで各±0.5・全件理由表示。AIReviewに日本語社名
   (useAssetsのdisplayNameJaから解決)。本格的なパターン形状認識(ダブルボトム等)は引き続き未対応(正直表示)
@@ -131,7 +137,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.17.0**
+- **現在バージョン: v10.18.0**
 
 ---
 

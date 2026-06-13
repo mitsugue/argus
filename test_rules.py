@@ -572,3 +572,40 @@ def test_entry_scout_technicals_scored_and_visible():
     assert any("MACD" in r for r in a["reasonsJa"])
     assert any("ゴールデンクロス" in r for r in a["reasonsJa"])
     assert any("ボリンジャー" in r for r in a["reasonsJa"])
+
+
+# ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────
+def test_margin_signal_requires_two_weeks():
+    assert scanner._margin_signal(None) is None
+    assert scanner._margin_signal([{"date": "2026-06-05", "longVol": 100, "shortVol": 50}]) is None
+
+
+def test_margin_signal_computes_ratio_and_deltas():
+    rows = [{"date": "2026-06-12", "longVol": 120.0, "shortVol": 200.0},
+            {"date": "2026-06-05", "longVol": 100.0, "shortVol": 150.0}]
+    s = scanner._margin_signal(rows)
+    assert s["creditRatio"] == 0.6
+    assert s["shortWoWPct"] == round((200-150)/150*100, 1)
+    assert s["longWoWPct"] == 20.0
+
+
+def test_margin_assess_short_covering_is_tailwind():
+    sig = {"creditRatio": 0.6, "shortWoWPct": 20.0, "longWoWPct": 2.0,
+           "longVol": 120, "shortVol": 200, "date": "2026-06-12"}
+    sc, reasons = scanner._margin_assess_lines(sig)
+    assert sc >= 1.0
+    assert any("買い戻し" in r or "踏み上げ" in r for r in reasons)
+    assert any("売り残" in r for r in reasons)
+
+
+def test_margin_assess_overhang_is_headwind():
+    sig = {"creditRatio": 6.0, "shortWoWPct": 1.0, "longWoWPct": 25.0,
+           "longVol": 600, "shortVol": 100, "date": "2026-06-12"}
+    sc, reasons = scanner._margin_assess_lines(sig)
+    assert sc <= -1.0
+    assert any("戻り売り" in r for r in reasons)
+
+
+def test_margin_assess_none_is_neutral():
+    sc, reasons = scanner._margin_assess_lines(None)
+    assert sc == 0.0 and reasons == []

@@ -4402,6 +4402,12 @@ _JQ_HISTORY_CACHE = {}          # code -> {"data": {...}|None, "expires": epoch}
 _JQ_HISTORY_TTL = 6 * 3600
 _SCOUT_CACHE = {}               # code -> {"data": ..., "expires": epoch}
 _SCOUT_TTL = 1800
+# Weekly margin interest (信用取引週末残高) — answers the user's question
+# "is the big-money move a short-covering bounce or fresh buying?" (2026-06-13).
+# PLAN-DEPENDENT on J-Quants: if the key's plan does not include it, the fetch
+# returns None and the scout honestly lists it as unavailable (NEVER guesses).
+_JQ_MARGIN_CACHE = {}           # code -> {"data": [...]|None, "expires": epoch}
+_JQ_MARGIN_TTL = 12 * 3600      # weekly data — refreshed twice a day is plenty
 
 def _jq_price_history(code):
     """~60-90 trading days of closes/volumes (newest-first) for one TSE code.
@@ -4436,6 +4442,83 @@ def _jq_price_history(code):
             add_log(f"[scout] history fetch failed {code}: {type(e).__name__}")
     _JQ_HISTORY_CACHE[code] = {"data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600)}
     return data
+
+def _jq_weekly_margin(code):
+    """Latest two weekly margin-interest rows for one TSE code, newest-first.
+    Returns a list of normalized dicts {date, longVol, shortVol} or None if the
+    J-Quants plan does not include this endpoint (403/404) or it is empty. The
+    documented v2 fields are LongMarginTradeVolume (信用買い残) and
+    ShortMarginTradeVolume (信用売り残); missing fields → row skipped, never faked."""
+    now = time.time()
+    c = _JQ_MARGIN_CACHE.get(code)
+    if c and now < c["expires"]:
+        return c["data"]
+    data = None
+    if _JQUANTS_API_KEY:
+        try:
+            headers = {"x-api-key": _JQUANTS_API_KEY}
+            frm = (datetime.now(TZ_JST) - timedelta(days=90)).strftime("%Y-%m-%d")
+            r = requests.get(f"{_JQUANTS_BASE}/markets/weekly_margin_interest",
+                             headers=headers, params={"code": code, "from": frm}, timeout=10)
+            if r.status_code == 200:
+                rows = (r.json() or {}).get("data", []) or []
+                norm = []
+                for q in rows:
+                    lv = q.get("LongMarginTradeVolume")
+                    sv = q.get("ShortMarginTradeVolume")
+                    if lv is None or sv is None:
+                        continue
+                    norm.append({"date": q.get("Date"), "longVol": float(lv), "shortVol": float(sv)})
+                norm.sort(key=lambda x: x["date"] or "", reverse=True)
+                if norm:
+                    data = norm[:4]
+            # 403/404 → plan does not include it → leave data None (honest gap)
+        except Exception as e:
+            add_log(f"[scout] margin fetch failed {code}: {type(e).__name__}")
+    # On failure cache a short empty window so we retry, but a real None (plan
+    # gap) is cached for the full TTL — no point hammering an endpoint the plan
+    # will keep refusing.
+    _JQ_MARGIN_CACHE[code] = {"data": data, "expires": now + (_JQ_MARGIN_TTL if data is not None else 1800)}
+    return data
+
+def _margin_signal(rows):
+    """Pure (unit-tested): newest-first weekly margin rows → a short-covering /
+    fresh-buying read. None when <2 weeks. Credit ratio = long/short (>1 買い長,
+    <1 売り長). Week-over-week deltas reveal which side is building."""
+    if not rows or len(rows) < 2:
+        return None
+    cur, prev = rows[0], rows[1]
+    long_v, short_v = cur["longVol"], cur["shortVol"]
+    ratio = round(long_v / short_v, 2) if short_v else None
+    d_long = (long_v - prev["longVol"]) / prev["longVol"] * 100 if prev["longVol"] else 0.0
+    d_short = (short_v - prev["shortVol"]) / prev["shortVol"] * 100 if prev["shortVol"] else 0.0
+    return {
+        "date": cur["date"], "creditRatio": ratio,
+        "longVol": long_v, "shortVol": short_v,
+        "longWoWPct": round(d_long, 1), "shortWoWPct": round(d_short, 1),
+    }
+
+def _margin_assess_lines(sig):
+    """Pure: margin signal → (score_delta, reasonsJa[]). Short-covering fuel is
+    a tailwind; ballooning long balance is overhang. All contributions visible."""
+    if not sig:
+        return 0.0, []
+    score, reasons = 0.0, []
+    r = sig.get("creditRatio")
+    if isinstance(r, (int, float)):
+        if r < 1.0:
+            score += 0.5
+            reasons.append(f"信用倍率{r}倍(売り長) — 買い戻し(踏み上げ)の余地")
+        elif r >= 5.0:
+            score -= 0.5
+            reasons.append(f"信用倍率{r}倍(買い長) — 上値に戻り売り圧力")
+    if sig.get("shortWoWPct", 0) >= 15:
+        score += 0.5
+        reasons.append(f"信用売り残が前週比+{sig['shortWoWPct']}% — 将来の買い戻し圧力が蓄積")
+    if sig.get("longWoWPct", 0) >= 15:
+        score -= 0.5
+        reasons.append(f"信用買い残が前週比+{sig['longWoWPct']}% — 新規買いの過熱(戻り売り予備軍)")
+    return score, reasons
 
 def _entry_metrics(closes, volumes=None):
     """Pure (unit-tested): trend/overheat metrics from NEWEST-FIRST closes.
@@ -4532,7 +4615,7 @@ def _entry_metrics(closes, volumes=None):
 
 def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                         regime_label=None, vix_spike=False, rel_strength=None,
-                        earnings_days=None, ai_view=None):
+                        earnings_days=None, ai_view=None, margin_sig=None):
     """Pure (unit-tested): metrics + context → stance/score/reasons. Every
     contribution is ±0.5〜1 AND stated in reasonsJa — no hidden weights. The
     Friday-bounce anomaly is NOTED but not scored (経験則 — the ledger will
@@ -4604,6 +4687,9 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
         score -= 1; reasons.append("AI二重チェックがルール判定に不同意(慎重化)")
     elif ai_view == "caution":
         score -= 0.5; reasons.append("AI二重チェックが注意を表明")
+    # ── v2.2: weekly margin (信用残) — short-covering vs fresh-buying read ──
+    ms_score, ms_reasons = _margin_assess_lines(margin_sig)
+    score += ms_score; reasons.extend(ms_reasons)
     if weekday == 4:
         reasons.append("金曜: 週末リスクで売られやすい日(翌営業日反発は経験則 — 台帳で検証中のため点数化はしない)")
     if score >= 1.5:
@@ -4679,10 +4765,13 @@ def get_entry_scout(sym):
             if l.get("symbol") == sym:
                 ai_view = l.get("aiView")
                 break
+    # v2.2: weekly margin (信用残) — plan-dependent, None when unavailable.
+    margin_sig = _margin_signal(_jq_weekly_margin(sym))
     assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                                  regime_label=reg_label if reg_ok else None,
                                  vix_spike=vix_spike, rel_strength=rel_strength,
-                                 earnings_days=earnings_days, ai_view=ai_view)
+                                 earnings_days=earnings_days, ai_view=ai_view,
+                                 margin_sig=margin_sig)
     out = {
         "engineVersion": "entry-scout-v1", "symbol": sym,
         "name": _jq_name_for(sym) or sym,
@@ -4690,6 +4779,7 @@ def get_entry_scout(sym):
         "lastClose": hist["closes"][0], "lastDate": hist["dates"][0],
         "metrics": m,
         "flow": {"bigNetRatio": flow_ratio, "ageMin": flow_age_min},
+        "margin": margin_sig,    # None when the J-Quants plan omits weekly margin
         "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
                     "regime": reg_label if reg_ok else None,
                     "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,
@@ -4697,7 +4787,8 @@ def get_entry_scout(sym):
                     "weekdayJa": "月火水木金土日"[weekday]},
         "assessment": assess,
         "dataGapsJa": [
-            "日証金・信用残(買い戻しか新規買いかの区別)は未対応 — Phase 2",
+            ("信用週末残高(買い戻しvs新規買い)は取得済み" if margin_sig
+             else "信用週末残高は現在のJ-Quantsプランで未提供 — 日証金の公開データ統合を検討(Phase 2)"),
             "本格的なパターン形状(ダブルボトム等)の認識は未対応 — RSI/MACD/ボリンジャー/移動平均クロスで近似(v2.1)",
             "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
         ],
