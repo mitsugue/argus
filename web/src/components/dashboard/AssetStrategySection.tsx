@@ -297,6 +297,7 @@ const SortableAssetRow: React.FC<{
     };
     assessment?: { stance: string; score: number; reasonsJa: string[] };
     catalystContext?: { items: { kind: string; level?: string; labelJa?: string; count?: number; headline?: string | null; noteJa?: string }[]; noteJa: string };
+    scoreTrackRecord?: { n: number; upRate: number | null; avgRetPct: number | null } | null;
     dataGapsJa?: string[]; noteJa?: string;
   }
   const FLOW_LABEL: Record<string, string> = {
@@ -477,6 +478,13 @@ const SortableAssetRow: React.FC<{
           {scout && scout !== 'loading' && scout !== 'error' && scout.status === 'live' && scout.assessment && (
             <div className="scout">
               <div className="scout__stance">⚡ {scout.assessment.stance} <span className="scout__score">score {scout.assessment.score >= 0 ? '+' : ''}{scout.assessment.score}</span></div>
+              {scout.scoreTrackRecord && scout.scoreTrackRecord.n >= 5 && (
+                <div className="scout__track">
+                  📊 この水準の実績: 過去{scout.scoreTrackRecord.n}件中
+                  {scout.scoreTrackRecord.upRate != null && ` ${Math.round(scout.scoreTrackRecord.upRate * 100)}%が上昇`}
+                  {scout.scoreTrackRecord.avgRetPct != null && `(平均${scout.scoreTrackRecord.avgRetPct >= 0 ? '+' : ''}${scout.scoreTrackRecord.avgRetPct}%)`}
+                </div>
+              )}
               <ul className="scout__reasons">
                 {scout.assessment.reasonsJa.map((r, i) => <li key={i}>{r}</li>)}
               </ul>

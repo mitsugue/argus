@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.23.1 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.24.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.23.1。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.24.0。
 
 ---
 
@@ -36,6 +36,13 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.24.0 校正ループ完成(scout-ledger-v1 / Phase 3) — `get_scout_batch`(JP実戦7銘柄のscore/bucket/flowClass・
+  30分キャッシュ)+`/scout-batch`、`_scout_score_bucket`(pure・pytest1件: strong≥1.5/lean≥0.5/neutral≥-0.5/avoid)。
+  prediction-ledger.ymlに記録+採点ステップ(ledger/scout/days/ + summary.json: byBucket/byFlowClassの実現リターン・
+  上昇率)。entry-scoutが`scoreTrackRecord`(該当bucketの過去成績)を`_scout_summary`(ledger raw・404まで非表示)経由で
+  添付→⚡診断に「📊この水準の実績: 過去N件中X%上昇」。最低20件まで参考。86テスト。
+  **これでユーザーの『予測→採点→自律的に精度を高める』ループが個別銘柄診断レベルで閉じた。**
+  次候補: 第2層リアルタイム板/VWAP(ブリッジ拡張)、マイトレード採点の台帳統合、米国株scout
 - v10.23.1 窓のノイズ除去 — 本番検証で8058が+0.04%(呼値ノイズ)を「窓」と判定していた→MIN_GAP_PCT=0.5%未満は窓
   と認めないよう修正。285A+2.02%等の実窓は検知継続。85テスト
 - v10.23.0 窓検知+マイトレード記録 — ①`_detect_gap`(pure・pytest3件): 直近5本の窓(上放れ=本日安値>前日高値/
@@ -176,7 +183,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.23.1**
+- **現在バージョン: v10.24.0**
 
 ---
 

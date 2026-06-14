@@ -1277,3 +1277,4 @@
 .tj__date { font-size: 10.5px; color: var(--text-faint); margin-left: auto; }
 .tj__why-text { margin: 3px 0; font-size: 11.5px; color: var(--text-sub); }
 .tj__actions { display: flex; gap: 6px; }
+.scout__track { margin: 4px 0; font-size: 11.5px; color: var(--accent, #5b8def); font-weight: 600; }

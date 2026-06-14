@@ -740,3 +740,14 @@ def test_detect_gap_ignores_noise():
     highs  = [100.05, 100.0, 99.95, 99.85]
     lows   = [100.005, 99.96, 99.85, 99.75]
     assert scanner._detect_gap(closes, highs, lows) is None
+
+
+# ── Scout calibration buckets (scout-ledger-v1, v10.24/Phase3) ───────
+def test_scout_score_bucket():
+    assert scanner._scout_score_bucket(2.0) == "strong"
+    assert scanner._scout_score_bucket(1.5) == "strong"
+    assert scanner._scout_score_bucket(1.0) == "lean"
+    assert scanner._scout_score_bucket(0.0) == "neutral"
+    assert scanner._scout_score_bucket(-0.5) == "neutral"
+    assert scanner._scout_score_bucket(-1.0) == "avoid"
+    assert scanner._scout_score_bucket(None) == "neutral"

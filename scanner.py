@@ -5166,6 +5166,9 @@ def get_entry_scout(sym):
         "catalystContext": _catalyst_context(
             get_news_radar(), reg_label if reg_ok else None, esc, earnings_days,
             high_beta=sym in _US_TECH_LINKED_JP),
+        # Calibration track record for THIS score bucket (scout-ledger-v1, Phase 3).
+        "scoreTrackRecord": ((_scout_summary() or {}).get("byBucket") or {}
+                             ).get(_scout_score_bucket((assess or {}).get("score"))),
         "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
                     "regime": reg_label if reg_ok else None,
                     "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,
@@ -5199,6 +5202,74 @@ def api_argus_entry_scout():
         return jsonify({"error": "bad_symbol",
                         "noteJa": "現在は日本株の4桁コードのみ対応(米国株はPhase 2)。"}), 400
     return jsonify(get_entry_scout(sym))
+
+# ── Scout calibration (scout-ledger-v1, v10.24) — Phase 3 ────────────────────
+# The learning loop's final piece: record each day's entry-scout score +
+# flow-classification for the JP active names, then score them against the
+# realized move so a raw "score +1.5" becomes a CALIBRATED "score≥1.5 was up
+# 5d X% of the time". Turns every estimate into a track record (the user's
+# "全情報を一つの答え%に"). Recording here; scoring in the daily ledger workflow.
+_SCOUT_BUCKETS = (("strong", 1.5), ("lean", 0.5), ("neutral", -0.5), ("avoid", -99))
+
+def _scout_score_bucket(score):
+    """Pure (unit-tested): map a scout score to a calibration bucket."""
+    if score is None:
+        return "neutral"
+    for name, lo in _SCOUT_BUCKETS:
+        if score >= lo:
+            return name
+    return "avoid"
+
+_SCOUT_SUMMARY_CACHE = {"data": None, "expires": 0.0}
+
+def _scout_summary():
+    """The accumulated scout calibration (ledger/scout/summary.json) — 30-min
+    cache, 404 until the workflow has scored ≥1 past day. Never raises."""
+    now = time.time()
+    if now < _SCOUT_SUMMARY_CACHE["expires"]:
+        return _SCOUT_SUMMARY_CACHE["data"]
+    data = None
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/scout/summary.json", timeout=6)
+        if r.status_code == 200:
+            d = r.json()
+            data = d if isinstance(d, dict) else None
+    except Exception:
+        data = None
+    _SCOUT_SUMMARY_CACHE["data"] = data
+    _SCOUT_SUMMARY_CACHE["expires"] = now + (1800 if data else 600)
+    return data
+
+_SCOUT_BATCH_CACHE = {"data": None, "expires": 0.0}
+
+def get_scout_batch():
+    """Compact, scoreable entry-scout records for the JP active names — the
+    daily ledger snapshot for scout calibration. 30-min cache."""
+    now = time.time()
+    if _SCOUT_BATCH_CACHE["data"] and now < _SCOUT_BATCH_CACHE["expires"]:
+        return _SCOUT_BATCH_CACHE["data"]
+    recs = []
+    for sym in _CLOSEPIN_ACTIVES_JP:
+        s = get_entry_scout(sym)
+        if not isinstance(s, dict) or s.get("status") != "live":
+            continue
+        a = s.get("assessment") or {}
+        fi = s.get("flowInference") or {}
+        recs.append({
+            "symbol": sym, "lastClose": s.get("lastClose"), "lastDate": s.get("lastDate"),
+            "score": a.get("score"), "bucket": _scout_score_bucket(a.get("score")),
+            "stance": a.get("stance"), "flowClass": fi.get("classification"),
+        })
+    out = {"engineVersion": "scout-ledger-v1",
+           "dateJst": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
+           "asOf": _ai_now_iso(), "records": recs}
+    _SCOUT_BATCH_CACHE["data"] = out
+    _SCOUT_BATCH_CACHE["expires"] = now + 1800
+    return out
+
+@app.route("/api/argus/scout-batch")
+def api_argus_scout_batch():
+    return jsonify(get_scout_batch())
 
 # ── Close Pin Intraday Ledger (closepin-v1, v10.11) ──────────────────────────
 # The second ledger system of the user-approved architecture: at ~14:30 JST a

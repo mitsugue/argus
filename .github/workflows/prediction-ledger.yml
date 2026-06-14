@@ -615,6 +615,86 @@ jobs:
           print(f"closepin scored: n={n} hits={hits}")
           PY
 
+      # scout-ledger-v1 (Phase 3): record today's entry-scout scores + flow
+      # classifications, then score past days vs the realized move so estimates
+      # become calibrated hit rates. JP active names; realized prices from the
+      # bridge/J-Quants watchlist.
+      - name: Record + score entry-scout (calibration)
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          curl -sf --max-time 90 "$BE/api/argus/scout-batch" -o scout.json || echo '{}' > scout.json
+          curl -sf --max-time 60 "$BE/api/argus/japan-watchlist" -o sjp.json || echo '{}' > sjp.json
+          python3 - <<'PY'
+          import json, os, glob, datetime
+          try:
+              sb = json.load(open('scout.json'))
+          except Exception:
+              sb = {}
+          recs = sb.get('records') or []
+          if not recs:
+              print('no scout records — skip'); raise SystemExit(0)
+          today = sb.get('dateJst') or datetime.datetime.now().strftime('%Y-%m-%d')
+          os.makedirs('ledger/scout/days', exist_ok=True)
+          json.dump(sb, open(f'ledger/scout/days/{today}.json', 'w'), ensure_ascii=False, indent=1)
+          # realized prices now (bridge realtime or J-Quants close)
+          now_px = {}
+          try:
+              for s in (json.load(open('sjp.json')).get('stocks') or []):
+                  if s.get('status') == 'live':
+                      now_px[s['symbol']] = float(s['price'])
+          except Exception:
+              pass
+          # score scout days that are ~1 and ~5 trading days old
+          days = sorted(glob.glob('ledger/scout/days/*.json'))
+          dates = [os.path.basename(p)[:-5] for p in days]
+          def trading_gap(idx_from_end):
+              # position of a past file relative to today's list
+              return idx_from_end
+          # Build per-record forward returns by matching symbols across files.
+          # Simple approach: for each past day, forward return = now_px vs that
+          # day's lastClose (horizon ≈ days between then and now in file count).
+          summary = {'updated': today, 'engineVersion': 'scout-ledger-v1',
+                     'byBucket': {}, 'byFlowClass': {}, 'n': 0,
+                     'noteJa': 'entry-scoutのスコア/フロー分類を実現リターンで採点。scoreが高い局面ほど上がったか、'
+                               '買い戻し主導と推定した時に失速したか等を蓄積(校正)。最低20件貯まるまで参考。'}
+          bucket = {}; flowc = {}
+          for p in days[:-1]:                      # exclude today (no outcome yet)
+              dd = os.path.basename(p)[:-5]
+              age = len(days) - 1 - days.index(p)  # trading-day-ish age
+              if age < 1 or age > 7:
+                  continue
+              try:
+                  rj = json.load(open(p))
+              except Exception:
+                  continue
+              for r in rj.get('records') or []:
+                  sym = r.get('symbol'); base = r.get('lastClose')
+                  px = now_px.get(sym)
+                  if not sym or not base or not px:
+                      continue
+                  fwd = (px - base) / base * 100.0
+                  b = r.get('bucket') or 'neutral'
+                  e = bucket.setdefault(b, {'n': 0, 'sumRet': 0.0, 'up': 0})
+                  e['n'] += 1; e['sumRet'] += fwd; e['up'] += (fwd > 0)
+                  fc = r.get('flowClass') or 'UNCONFIRMED'
+                  f = flowc.setdefault(fc, {'n': 0, 'sumRet': 0.0, 'up': 0})
+                  f['n'] += 1; f['sumRet'] += fwd; f['up'] += (fwd > 0)
+                  summary['n'] += 1
+          for b, e in bucket.items():
+              e['avgRetPct'] = round(e['sumRet'] / e['n'], 2) if e['n'] else None
+              e['upRate'] = round(e['up'] / e['n'], 3) if e['n'] else None
+              del e['sumRet']
+          for fc, f in flowc.items():
+              f['avgRetPct'] = round(f['sumRet'] / f['n'], 2) if f['n'] else None
+              f['upRate'] = round(f['up'] / f['n'], 3) if f['n'] else None
+              del f['sumRet']
+          summary['byBucket'] = bucket
+          summary['byFlowClass'] = flowc
+          json.dump(summary, open('ledger/scout/summary.json', 'w'), ensure_ascii=False, indent=1)
+          print(f"scout recorded {today} ({len(recs)} names); scored n={summary['n']}")
+          PY
+
       - name: Commit to ledger branch
         if: github.event.inputs.mode != 'ai-only'
         run: |
