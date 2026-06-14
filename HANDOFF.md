@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.23.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.23.1 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.23.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.23.1。
 
 ---
 
@@ -36,6 +36,8 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.23.1 窓のノイズ除去 — 本番検証で8058が+0.04%(呼値ノイズ)を「窓」と判定していた→MIN_GAP_PCT=0.5%未満は窓
+  と認めないよう修正。285A+2.02%等の実窓は検知継続。85テスト
 - v10.23.0 窓検知+マイトレード記録 — ①`_detect_gap`(pure・pytest3件): 直近5本の窓(上放れ=本日安値>前日高値/
   下放れ=本日高値<前日安値)、埋め/未埋め判定。_jq_price_historyがH/L(O/H/L候補キーを防御的に抽出・無ければNoneで窓なし)
   を返し_entry_metricsがgapを出力、未埋め窓±0.3で診断に織込み。視覚パターン形状(ダブルボトム等)は未対応(正直表示)。
@@ -174,7 +176,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.23.0**
+- **現在バージョン: v10.23.1**
 
 ---
 

@@ -732,3 +732,11 @@ def test_detect_gap_none_without_hl():
     assert scanner._detect_gap([100, 101, 102], None, None) is None
     # contiguous bars (overlapping ranges) → no gap
     assert scanner._detect_gap([100, 100, 100], [101, 101, 101], [99, 99, 99]) is None
+
+
+def test_detect_gap_ignores_noise():
+    # a 0.04%-level gap is tick noise, not a 窓 → ignored
+    closes = [100.04, 100.0, 99.9, 99.8]
+    highs  = [100.05, 100.0, 99.95, 99.85]
+    lows   = [100.005, 99.96, 99.85, 99.75]
+    assert scanner._detect_gap(closes, highs, lows) is None

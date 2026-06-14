@@ -4832,6 +4832,9 @@ def _detect_gap(closes, highs, lows):
     returns None when unavailable (no faking)."""
     if not highs or not lows or len(closes) < 3:
         return None
+    # Minimum gap size to count as a real 窓 — below this it is just tick/round
+    # noise (verified: 8058 showed a meaningless +0.04% "gap"), not a level.
+    MIN_GAP_PCT = 0.5
     for i in range(min(5, len(closes) - 1)):
         hi_today, lo_today = highs[i], lows[i]
         hi_prev, lo_prev = highs[i + 1], lows[i + 1]
@@ -4839,10 +4842,14 @@ def _detect_gap(closes, highs, lows):
             continue
         if lo_today > hi_prev:        # gap up
             gap_pct = round((lo_today - hi_prev) / hi_prev * 100, 2)
+            if gap_pct < MIN_GAP_PCT:
+                continue
             filled = any(lows[j] is not None and lows[j] <= hi_prev for j in range(i))
             return {"dir": "up", "pct": gap_pct, "sessionsAgo": i, "filled": filled}
         if hi_today < lo_prev:        # gap down
             gap_pct = round((hi_today - lo_prev) / lo_prev * 100, 2)
+            if abs(gap_pct) < MIN_GAP_PCT:
+                continue
             filled = any(highs[j] is not None and highs[j] >= lo_prev for j in range(i))
             return {"dir": "down", "pct": gap_pct, "sessionsAgo": i, "filled": filled}
     return None
