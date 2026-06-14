@@ -296,6 +296,7 @@ const SortableAssetRow: React.FC<{
       confidence: string; reasonsJa: string[]; nextConditionJa: string;
     };
     assessment?: { stance: string; score: number; reasonsJa: string[] };
+    catalystContext?: { items: { kind: string; level?: string; labelJa?: string; count?: number; headline?: string | null; noteJa?: string }[]; noteJa: string };
     dataGapsJa?: string[]; noteJa?: string;
   }
   const FLOW_LABEL: Record<string, string> = {
@@ -497,6 +498,22 @@ const SortableAssetRow: React.FC<{
                       ))}
                   </div>
                   <div className="scout__flow-next">次の確認: {scout.flowInference.nextConditionJa}</div>
+                </div>
+              )}
+              {scout.catalystContext && scout.catalystContext.items.length > 0 && (
+                <div className="scout__cat">
+                  <div className="scout__cat-head">📰 材料(参考)</div>
+                  <ul className="scout__reasons">
+                    {scout.catalystContext.items.map((it, i) => (
+                      <li key={i}>
+                        {it.kind === 'news' && `ニュース: ${it.labelJa}が${it.level === 'high' ? '高水準' : '増加'}(${it.count}件)${it.headline ? ` 「${it.headline}」` : ''}`}
+                        {it.kind === 'link' && `${it.labelJa}: ${it.noteJa}`}
+                        {it.kind === 'regime' && `${it.labelJa}: ${it.noteJa}`}
+                        {it.kind === 'event' && `${it.labelJa}: ${it.noteJa}`}
+                        {it.kind === 'earnings' && `${it.labelJa}: ${it.noteJa}`}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
               {scout.metrics && (

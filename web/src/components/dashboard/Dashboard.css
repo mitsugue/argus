@@ -829,6 +829,8 @@
 .scout__flow-bars { display: flex; flex-wrap: wrap; gap: 8px; margin: 5px 0; font-size: 11px; color: var(--text-sub); }
 .scout__flow-prob { font-variant-numeric: tabular-nums; }
 .scout__flow-next { font-size: 10.5px; color: var(--text-faint); }
+.scout__cat { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: rgba(232,176,75,0.07); border: 1px solid rgba(232,176,75,0.22); }
+.scout__cat-head { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
 .scout__gaps { margin-top: 6px; font-size: 10.5px; color: var(--text-faint); }
 .scout__note { margin-top: 2px; font-size: 10.5px; color: var(--text-faint); }
 

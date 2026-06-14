@@ -4667,6 +4667,31 @@ def _short_disclosed_assess(sd):
         return 0.3, [f"機関の大口空売り残 {pct}%({n}者) — 買い戻し余地あり(両面解釈)"]
     return 0.0, [f"機関の大口空売り残 {pct}%({n}者・小規模)"]
 
+def _catalyst_context(news, regime_label, esc, earnings_days, high_beta):
+    """Pure (unit-tested): assemble the MATERIAL/news backdrop a discretionary
+    trader actually uses, from free sources already fetched — no AI call (the
+    public path must not trigger costly AI). The SoftBank lesson (2026-06-13):
+    the trade was driven by the US-tech link + geopolitics news, which the
+    chart/flow engine cannot see. This surfaces that context as 参考 (not
+    scored — news interpretation is for the human/AI, not a rule)."""
+    items = []
+    for t in (news.get("themes") or []) if isinstance(news, dict) else []:
+        if t.get("level") in ("elevated", "high"):
+            head = (t.get("headlines") or [None])[0]
+            items.append({"kind": "news", "level": t["level"], "labelJa": t.get("labelJa"),
+                          "count": t.get("count"), "headline": head})
+    if high_beta:
+        items.append({"kind": "link", "labelJa": "米ハイテク連動",
+                      "noteJa": "値動きの主因が米NASDAQ/AI株のことが多い銘柄 — 米テックの地合いとレジームを併せて確認"})
+    if regime_label in ("RISK_OFF", "EVENT_WAIT"):
+        items.append({"kind": "regime", "labelJa": "市場レジーム", "noteJa": f"{regime_label}(地合いが逆風)"})
+    if esc in ("D", "D-1"):
+        items.append({"kind": "event", "labelJa": "重要イベント接近", "noteJa": f"{esc}(結果待ち)"})
+    if isinstance(earnings_days, (int, float)) and 0 <= earnings_days <= 7:
+        items.append({"kind": "earnings", "labelJa": "決算接近", "noteJa": f"あと{int(earnings_days)}日"})
+    return {"items": items,
+            "noteJa": "材料は参考情報(点数化しない)。最終的なニュース解釈はGPT-5.5 Pro相談ボタンやご自身で。"}
+
 def _flow_inference(m, flow_ratio, jsf, short_disclosed):
     """Pure (unit-tested): fuse the in-hand 需給 signals into a PROBABILISTIC
     read of WHO is moving the stock — new buying vs short-covering vs
@@ -5079,6 +5104,10 @@ def get_entry_scout(sym):
         "shortDisclosedStatus": short_status,   # ok / none_disclosed / source_unavailable
         # Flow Intelligence (v10.21): probabilistic 新規買い/買い戻し/分配/ノイズ.
         "flowInference": _flow_inference(m, flow_ratio, jsf_sig, short_disclosed),
+        # Material/news backdrop (v10.22) — free sources, 参考 (not scored).
+        "catalystContext": _catalyst_context(
+            get_news_radar(), reg_label if reg_ok else None, esc, earnings_days,
+            high_beta=sym in _US_TECH_LINKED_JP),
         "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
                     "regime": reg_label if reg_ok else None,
                     "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,
@@ -5124,6 +5153,11 @@ _CLOSEPIN_BANDS = (0.25, 0.8)   # % vs pin: |x|<0.25 flat / 0.25–0.8 up·down 
                                 # ≈ a one-hour sigma for JP large caps: the daily ±2% band
                                 # scaled by √(1h/6.5h) ≈ 0.39 → ~0.8%, half of it = 0.25%.
 _CLOSEPIN_ACTIVES_JP = ["8058", "9984", "5801", "5803", "6584", "285A", "9501"]
+# JP names whose price is dominated by US-tech/AI beta (NASDAQ/SMH link) — for
+# these, the US-tech backdrop matters more than the stock's own chart. SBG
+# (9984, Arm + AI holdings), Kioxia (285A, NAND/AI memory), Advantest/SoftBank
+# adjacents. Used only to surface a 参考 'US-tech link' material note.
+_US_TECH_LINKED_JP = {"9984", "285A", "6857", "8035"}
 
 def _closepin_scenarios(chg_so_far, flow_ratio, posture):
     """Pure (unit-tested): scenario distribution for the close-vs-pin move.

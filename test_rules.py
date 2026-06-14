@@ -687,3 +687,23 @@ def test_flow_infer_unconfirmed_when_thin():
     assert out["classification"] == "UNCONFIRMED"
     assert out["probabilities"]["unconfirmed"] == 1.0
     assert out["confidence"] == "low"
+
+
+# ── Catalyst/material context (v10.22) ───────────────────────────────
+def test_catalyst_context_surfaces_news_and_link():
+    news = {"themes": [
+        {"key": "geopolitics", "labelJa": "地政学", "level": "elevated", "count": 12,
+         "headlines": ["Iran ceasefire talks advance"]},
+        {"key": "fx", "labelJa": "為替", "level": "calm", "count": 1, "headlines": []}]}
+    out = scanner._catalyst_context(news, "RISK_OFF", "D-1", 2, high_beta=True)
+    kinds = [i["kind"] for i in out["items"]]
+    assert "news" in kinds and "link" in kinds and "regime" in kinds
+    assert "event" in kinds and "earnings" in kinds
+    news_item = next(i for i in out["items"] if i["kind"] == "news")
+    assert news_item["level"] == "elevated" and "Iran" in (news_item["headline"] or "")
+
+
+def test_catalyst_context_quiet_is_empty():
+    news = {"themes": [{"key": "x", "labelJa": "x", "level": "calm", "count": 0, "headlines": []}]}
+    out = scanner._catalyst_context(news, "RISK_ON", "normal", None, high_beta=False)
+    assert out["items"] == []

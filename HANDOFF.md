@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.21.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.22.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.21.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.22.0。
 
 ---
 
@@ -36,6 +36,12 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.22.0 材料(ニュース地合い)統合 — ユーザーの9984はニュース駆動(米ハイテク連動・イラン停戦・SpaceX)
+  だったがentry-scoutが見えていなかった教訓。`_catalyst_context`(pure・pytest2件): News Radar危機テーマ
+  (elevated/high)+米ハイテク連動銘柄(_US_TECH_LINKED_JP={9984,285A,6857,8035})+レジーム逆風+イベント/決算接近を
+  参考表示。**非点数化**(ニュース解釈はAI/人間主導・公開画面で高コストAIを自動実行しない制約を遵守)。
+  完全なAIニュース要約版はキャッシュ型日次バッチが次の選択肢。⚡診断に📰ブロックでUI表示。
+  PTS夜間上昇=米テック連動の確認(9984は6/2高値9074→6/12 6472へ-28%、ユーザーの押し目買いは妥当だった)
 - v10.21.0 Flow Intelligence Layer(大口の正体推定) — ユーザー要望「新規買いか買い戻しか掴みたい」+
   GPT/Gemini助言を統合。`_flow_inference`(pure・pytest4件): 日証金の新規/返済フロー(貸株返済>新規&株価上昇=
   買い戻し / 融資新規>返済=新規買い)+機関空売り残+moomoo大口フロー+出来高/値動きを重み付けし、
@@ -162,7 +168,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.21.0**
+- **現在バージョン: v10.22.0**
 
 ---
 
