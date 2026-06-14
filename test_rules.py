@@ -707,3 +707,28 @@ def test_catalyst_context_quiet_is_empty():
     news = {"themes": [{"key": "x", "labelJa": "x", "level": "calm", "count": 0, "headlines": []}]}
     out = scanner._catalyst_context(news, "RISK_ON", "normal", None, high_beta=False)
     assert out["items"] == []
+
+
+# ── Gap (窓) detection (entry-scout v2.5, v10.23) ────────────────────
+def test_detect_gap_up_unfilled():
+    # newest-first: today gapped up and stayed above the prior high
+    closes = [120, 100, 99, 98]
+    highs  = [122, 101, 100, 99]
+    lows   = [118, 99, 98, 97]   # today's low 118 > prior high 101 = unfilled gap up
+    g = scanner._detect_gap(closes, highs, lows)
+    assert g and g["dir"] == "up" and g["sessionsAgo"] == 0 and g["filled"] is False
+    assert g["pct"] > 0
+
+
+def test_detect_gap_down():
+    closes = [80, 81, 100, 101]
+    highs  = [82, 83, 101, 102]   # today's high 82 < prior low 99 = gap down
+    lows   = [79, 80, 99, 100]
+    g = scanner._detect_gap(closes, highs, lows)
+    assert g and g["dir"] == "down" and g["pct"] < 0
+
+
+def test_detect_gap_none_without_hl():
+    assert scanner._detect_gap([100, 101, 102], None, None) is None
+    # contiguous bars (overlapping ranges) → no gap
+    assert scanner._detect_gap([100, 100, 100], [101, 101, 101], [99, 99, 99]) is None

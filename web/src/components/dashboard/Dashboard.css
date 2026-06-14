@@ -1259,3 +1259,21 @@
 }
 .regime-limits { color: var(--text-muted); font-size: 12px; }
 .regime-evidence li, .regime-limits li { margin-bottom: 3px; }
+
+/* My Trade Journal (trade-journal-v1, v10.23). */
+.tj { padding: 6px 0; }
+.tj__empty { padding: 12px 14px; font-size: 12px; color: var(--text-faint); }
+.tj__form { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; }
+.tj__in { padding: 6px 8px; background: var(--card-2, rgba(255,255,255,0.04)); border: 1px solid var(--line-faint, rgba(255,255,255,0.1)); border-radius: 5px; color: var(--text-main); font-size: 12px; }
+.tj__why { flex: 1 1 100%; min-height: 44px; padding: 6px 8px; background: var(--card-2, rgba(255,255,255,0.04)); border: 1px solid var(--line-faint, rgba(255,255,255,0.1)); border-radius: 5px; color: var(--text-main); font-size: 12px; resize: vertical; }
+.tj__row { padding: 8px 14px; border-top: 1px solid var(--line-faint, rgba(255,255,255,0.05)); }
+.tj__row--closed { opacity: 0.7; }
+.tj__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.tj__sym { font-weight: 600; }
+.tj__side { font-size: 11px; color: var(--text-sub); }
+.tj__side--buy { color: var(--green); }
+.tj__side--sell { color: var(--risk-high); }
+.tj__pnl { font-variant-numeric: tabular-nums; font-weight: 600; }
+.tj__date { font-size: 10.5px; color: var(--text-faint); margin-left: auto; }
+.tj__why-text { margin: 3px 0; font-size: 11.5px; color: var(--text-sub); }
+.tj__actions { display: flex; gap: 6px; }

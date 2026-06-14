@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.22.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.23.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.22.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.23.0。
 
 ---
 
@@ -36,6 +36,12 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.23.0 窓検知+マイトレード記録 — ①`_detect_gap`(pure・pytest3件): 直近5本の窓(上放れ=本日安値>前日高値/
+  下放れ=本日高値<前日安値)、埋め/未埋め判定。_jq_price_historyがH/L(O/H/L候補キーを防御的に抽出・無ければNoneで窓なし)
+  を返し_entry_metricsがgapを出力、未埋め窓±0.3で診断に織込み。視覚パターン形状(ダブルボトム等)は未対応(正直表示)。
+  ②マイトレード記録(client): lib/tradeJournal.ts(localStorage argus.trades.v1・BACKUP_KEYS追加で同期)、
+  TradeJournalCard(Watchlist)で売買+根拠を記録→ライブ損益。「あなたの判断 vs 結果」の人間側ループ。84テスト。
+  **次: 校正サーバー側(Flow分類/scoutを台帳記録→採点)とマイトレードの採点統合(Phase 3)**
 - v10.22.0 材料(ニュース地合い)統合 — ユーザーの9984はニュース駆動(米ハイテク連動・イラン停戦・SpaceX)
   だったがentry-scoutが見えていなかった教訓。`_catalyst_context`(pure・pytest2件): News Radar危機テーマ
   (elevated/high)+米ハイテク連動銘柄(_US_TECH_LINKED_JP={9984,285A,6857,8035})+レジーム逆風+イベント/決算接近を
@@ -168,7 +174,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.22.0**
+- **現在バージョン: v10.23.0**
 
 ---
 

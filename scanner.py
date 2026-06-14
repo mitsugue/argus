@@ -4444,8 +4444,23 @@ def _jq_price_history(code):
             rows = [q for q in rows if _q_close(q) is not None]
             rows.sort(key=lambda q: q.get("Date", ""), reverse=True)   # newest first
             if len(rows) >= 20:
+                # High/Low for gap (窓) detection — defensive: J-Quants v2
+                # abbreviates fields (C=close); try the likely H/L keys and
+                # fall back to None so a wrong field name yields NO gap rather
+                # than a fake one (Fable 5 rule).
+                def _g(q, keys):
+                    for k in keys:
+                        v = q.get(k)
+                        if v is not None:
+                            try:
+                                return float(v)
+                            except Exception:
+                                pass
+                    return None
                 data = {"closes": [float(_q_close(q)) for q in rows],
                         "volumes": [int(q.get("Vo") or 0) for q in rows],
+                        "highs": [_g(q, ("H", "Hi", "AdjH")) for q in rows],
+                        "lows": [_g(q, ("L", "Lo", "AdjL")) for q in rows],
                         "dates": [q.get("Date") for q in rows]}
         except Exception as e:
             add_log(f"[scout] history fetch failed {code}: {type(e).__name__}")
@@ -4810,7 +4825,29 @@ def _jsf_assess_lines(j):
         reasons.append("本日の新規買い建てが増加 — 短期の買い疲れに注意")
     return score, reasons
 
-def _entry_metrics(closes, volumes=None):
+def _detect_gap(closes, highs, lows):
+    """Pure (unit-tested): most recent price gap (窓) in the last ~5 sessions,
+    newest-first. Gap up = today's low > prior high; gap down = today's high <
+    prior low. Returns {dir, pct, sessionsAgo, filled} or None. Needs H/L —
+    returns None when unavailable (no faking)."""
+    if not highs or not lows or len(closes) < 3:
+        return None
+    for i in range(min(5, len(closes) - 1)):
+        hi_today, lo_today = highs[i], lows[i]
+        hi_prev, lo_prev = highs[i + 1], lows[i + 1]
+        if None in (hi_today, lo_today, hi_prev, lo_prev):
+            continue
+        if lo_today > hi_prev:        # gap up
+            gap_pct = round((lo_today - hi_prev) / hi_prev * 100, 2)
+            filled = any(lows[j] is not None and lows[j] <= hi_prev for j in range(i))
+            return {"dir": "up", "pct": gap_pct, "sessionsAgo": i, "filled": filled}
+        if hi_today < lo_prev:        # gap down
+            gap_pct = round((hi_today - lo_prev) / lo_prev * 100, 2)
+            filled = any(highs[j] is not None and highs[j] >= lo_prev for j in range(i))
+            return {"dir": "down", "pct": gap_pct, "sessionsAgo": i, "filled": filled}
+    return None
+
+def _entry_metrics(closes, volumes=None, highs=None, lows=None):
     """Pure (unit-tested): trend/overheat metrics from NEWEST-FIRST closes.
     <20 sessions → None (too little history to say anything honest)."""
     if not closes or len(closes) < 20:
@@ -4901,6 +4938,7 @@ def _entry_metrics(closes, volumes=None):
         "volRatio5v20": vol_ratio, "sessions": len(closes),
         "macdHist": macd_hist, "macdCross": macd_cross,
         "maCross": ma_cross, "bollPctB": boll_pct_b,
+        "gap": _detect_gap(closes, highs, lows),
     }
 
 def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
@@ -4944,6 +4982,19 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
             score += 0.5; reasons.append(f"ボリンジャー-2σ圏(%b={b}) — 統計的売られすぎ")
         elif b >= 1:
             score -= 0.5; reasons.append(f"ボリンジャー+2σ圏(%b={b}) — 統計的過熱")
+    g = m.get("gap")
+    if isinstance(g, dict):
+        when = "本日" if g["sessionsAgo"] == 0 else f"{g['sessionsAgo']}日前"
+        if g["dir"] == "up":
+            if not g["filled"]:
+                score += 0.3
+            reasons.append(f"{when}に上放れの窓+{g['pct']}%({'未' if not g['filled'] else '埋め'}) — "
+                           + ("下値支持として意識" if not g["filled"] else "窓埋め済み"))
+        else:
+            if not g["filled"]:
+                score -= 0.3
+            reasons.append(f"{when}に下放れの窓{g['pct']}%({'未' if not g['filled'] else '埋め'}) — "
+                           + ("上値抵抗として意識" if not g["filled"] else "窓埋め済み"))
     if isinstance(flow_ratio, (int, float)):
         if flow_ratio >= 0.15:
             score += 1; reasons.append(f"大口資金が純流入+{round(flow_ratio * 100)}%(確証シグナル)")
@@ -5008,7 +5059,7 @@ def get_entry_scout(sym):
     if not hist:
         return {"engineVersion": "entry-scout-v1", "symbol": sym, "status": "unavailable",
                 "noteJa": "価格履歴を取得できませんでした(コード違いか一時的な障害)。"}
-    m = _entry_metrics(hist["closes"], hist["volumes"])
+    m = _entry_metrics(hist["closes"], hist["volumes"], hist.get("highs"), hist.get("lows"))
     if not m:
         return {"engineVersion": "entry-scout-v1", "symbol": sym, "status": "unavailable",
                 "noteJa": "履歴が20営業日未満のため診断できません(上場直後など)。"}
@@ -5123,7 +5174,7 @@ def get_entry_scout(sym):
              "none_disclosed": "機関の大口空売り: 0.5%超の開示報告なし(=機関の大口空売りは記録上なし)",
              "source_unavailable": "機関の大口空売り: JPXデータ源を一時取得できません(自動リトライ)",
              }[short_status],
-            "本格的なパターン形状(ダブルボトム等)の認識は未対応 — RSI/MACD/ボリンジャー/移動平均クロスで近似(v2.1)",
+            "チャート: 窓(ギャップ)は検知済み(v2.5)。ダブルボトム等の視覚的パターン形状は未対応 — RSI/MACD/ボリンジャー/クロスで近似",
             "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
         ],
         "noteJa": "売買指示ではなく、入る前の論点整理。最終判断と数量はあなたのルールで。",
