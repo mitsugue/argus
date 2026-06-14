@@ -823,6 +823,12 @@
 .scout__reasons { margin: 6px 0 4px; padding-left: 18px; font-size: 12px; color: var(--text-sub); }
 .scout__reasons li { margin: 2px 0; }
 .scout__metrics { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.scout__flow { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: rgba(91,141,239,0.08); border: 1px solid rgba(91,141,239,0.25); }
+.scout__flow-head { font-size: 12.5px; }
+.scout__flow-conf { font-size: 11px; color: var(--text-faint); }
+.scout__flow-bars { display: flex; flex-wrap: wrap; gap: 8px; margin: 5px 0; font-size: 11px; color: var(--text-sub); }
+.scout__flow-prob { font-variant-numeric: tabular-nums; }
+.scout__flow-next { font-size: 10.5px; color: var(--text-faint); }
 .scout__gaps { margin-top: 6px; font-size: 10.5px; color: var(--text-faint); }
 .scout__note { margin-top: 2px; font-size: 10.5px; color: var(--text-faint); }
 

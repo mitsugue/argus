@@ -4667,6 +4667,99 @@ def _short_disclosed_assess(sd):
         return 0.3, [f"機関の大口空売り残 {pct}%({n}者) — 買い戻し余地あり(両面解釈)"]
     return 0.0, [f"機関の大口空売り残 {pct}%({n}者・小規模)"]
 
+def _flow_inference(m, flow_ratio, jsf, short_disclosed):
+    """Pure (unit-tested): fuse the in-hand 需給 signals into a PROBABILISTIC
+    read of WHO is moving the stock — new buying vs short-covering vs
+    distribution vs retail noise. Never a certainty (ChatGPT/Gemini both
+    stress this is impossible from external data); confidence drops when data
+    is thin, and VWAP/orderbook gaps are stated. Adopted from the 2026-06-13
+    Gemini+GPT consult, built only on data ARGUS already fetches."""
+    w = {"newLong": 0.0, "shortCovering": 0.0, "distribution": 0.0, "retailNoise": 0.0}
+    reasons, have = [], 0
+    ret1 = m.get("ret1") or 0.0
+    ret5 = m.get("ret5") or 0.0
+    ret20 = m.get("ret20") or 0.0
+    volr = m.get("volRatio5v20")
+    up = ret1 > 0 or ret5 > 0
+
+    if jsf:
+        have += 1
+        sn, sr = jsf.get("shortNew") or 0, jsf.get("shortRepay") or 0
+        ln, lr = jsf.get("loanNew") or 0, jsf.get("loanRepay") or 0
+        ratio = jsf.get("ratio")
+        if up and (sr - sn) > max(1, sr * 0.1):       # short balance shrinking
+            w["shortCovering"] += 2.0
+            reasons.append("株価上昇中に貸株残が縮小(返済>新規)= 買い戻しが進行")
+        if up and (ln - lr) > max(1, lr * 0.1):       # margin longs building
+            w["newLong"] += 1.5
+            reasons.append("融資残が増加(新規>返済)= 新規の信用買いが流入")
+        if (lr - ln) > max(1, ln * 0.1) and not up:   # longs unwinding, no rise
+            w["distribution"] += 1.0
+            reasons.append("信用買い方が返済超(利食い/手仕舞い)= 上値が重い")
+        if isinstance(ratio, (int, float)) and ratio < 1.0:
+            w["shortCovering"] += 1.0
+            reasons.append(f"日証金倍率{ratio}(売り長)= 踏み上げ燃料が残存")
+    if short_disclosed and short_disclosed.get("ratio"):
+        have += 1
+        sd = short_disclosed["ratio"]
+        if sd >= 0.05:
+            w["shortCovering"] += 1.5
+            reasons.append(f"機関の大口空売り{round(sd*100,1)}% = 買い戻し燃料が大きい")
+    if isinstance(flow_ratio, (int, float)):
+        have += 1
+        if flow_ratio >= 0.15 and up:
+            w["newLong"] += 1.0
+            reasons.append(f"大口資金が純流入+{round(flow_ratio*100)}%(当日)")
+        elif flow_ratio <= -0.15:
+            w["distribution"] += 1.5
+            reasons.append(f"大口資金が純流出{round(flow_ratio*100)}%(上で売り抜けの疑い)")
+    if isinstance(volr, (int, float)) and volr >= 1.5:
+        have += 1
+        if not up:
+            w["distribution"] += 1.0
+            reasons.append(f"出来高{volr}倍だが株価が伴わない(分配の疑い)")
+        elif ret20 > 0 and ret5 > 0:
+            w["newLong"] += 0.5
+            reasons.append("出来高増+中期(20日)上昇が継続")
+    # A sharp one-day spike with no credit fuel reads as retail/news noise.
+    if ret1 >= 4 and not (jsf and isinstance(jsf.get("ratio"), (int, float)) and jsf["ratio"] < 1):
+        w["retailNoise"] += 0.5
+        reasons.append("短期急騰だが信用の買い戻し燃料が乏しい(個人・テーマ性ノイズの可能性)")
+
+    LABEL = {"newLong": "NEW_LONG_ACCUMULATION", "shortCovering": "SHORT_COVERING",
+             "distribution": "DISTRIBUTION", "retailNoise": "RETAIL_NOISE"}
+    total = sum(w.values())
+    limits = ["VWAP・板・歩み値が未接続のため日中のリアルタイム・フローは見えない(推定精度は限定的)",
+              "制度信用以外(一般信用・海外勢・ヘッジ)のポジションは見えない",
+              "注文主の内部IDは取得不可 — 断定ではなく確率推定"]
+    nxt = ("翌営業日も上昇が続き出来高を伴えば新規買い寄りに更新。"
+           "続かず貸株残が急減し出来高が細れば買い戻し一巡とみなす。")
+    if total == 0 or have < 2:
+        return {"classification": "UNCONFIRMED",
+                "probabilities": {"newLongAccumulation": 0.0, "shortCovering": 0.0,
+                                  "distribution": 0.0, "retailNoise": 0.0, "unconfirmed": 1.0},
+                "confidence": "low", "reasonsJa": reasons or ["判定に十分な需給データが揃っていません。"],
+                "nextConditionJa": nxt, "dataLimitationsJa": limits}
+    # More independent sources → less reserved for "unconfirmed".
+    unconf = max(0.05, round(0.45 - 0.1 * have, 2))
+    scale = (1.0 - unconf) / total
+    probs = {
+        "newLongAccumulation": round(w["newLong"] * scale, 2),
+        "shortCovering": round(w["shortCovering"] * scale, 2),
+        "distribution": round(w["distribution"] * scale, 2),
+        "retailNoise": round(w["retailNoise"] * scale, 2),
+        "unconfirmed": unconf,
+    }
+    top = max(w, key=w.get)
+    # Squeeze-risk nuance: covering is the call AND fuel still remains.
+    cls = LABEL[top]
+    if cls == "SHORT_COVERING" and ((jsf and (jsf.get("ratio") or 9) < 1)
+                                    or (short_disclosed and short_disclosed.get("ratio", 0) >= 0.05)):
+        reasons.insert(0, "踏み上げ継続リスク: 買い戻し燃料がまだ残っている")
+    return {"classification": cls, "probabilities": probs,
+            "confidence": "medium" if have >= 3 else "low",
+            "reasonsJa": reasons, "nextConditionJa": nxt, "dataLimitationsJa": limits}
+
 def _jsf_assess_lines(j):
     """Pure (unit-tested): JSF daily balance → (score_delta, reasonsJa[]).
     日証金倍率(融資残/貸株残): <1 売り長=踏み上げ燃料(+), 高倍率=買い長で戻り売り(-).
@@ -4984,6 +5077,8 @@ def get_entry_scout(sym):
         "shortDisclosed": (short_disclosed and {"ratioPct": round(short_disclosed["ratio"] * 100, 1),
                                                 "reporters": short_disclosed["reporters"], "date": jpx_short_date}),
         "shortDisclosedStatus": short_status,   # ok / none_disclosed / source_unavailable
+        # Flow Intelligence (v10.21): probabilistic 新規買い/買い戻し/分配/ノイズ.
+        "flowInference": _flow_inference(m, flow_ratio, jsf_sig, short_disclosed),
         "context": {"posture": posture, "vixZone": vix_zone, "vixSpike": vix_spike,
                     "regime": reg_label if reg_ok else None,
                     "relStrengthVsTopix": rel_strength, "earningsDays": earnings_days,

@@ -288,9 +288,20 @@ const SortableAssetRow: React.FC<{
     lastClose?: number; lastDate?: string;
     metrics?: { rsi14: number; ma25DiffPct: number | null; ret5: number | null; ret20: number | null; consecDown: number; volRatio5v20: number | null };
     flow?: { bigNetRatio: number | null; ageMin: number | null };
+    nisshokin?: { ratio: number | null; loan: number; short: number } | null;
+    shortDisclosed?: { ratioPct: number; reporters: number } | null;
+    flowInference?: {
+      classification: string;
+      probabilities: { newLongAccumulation: number; shortCovering: number; distribution: number; retailNoise: number; unconfirmed: number };
+      confidence: string; reasonsJa: string[]; nextConditionJa: string;
+    };
     assessment?: { stance: string; score: number; reasonsJa: string[] };
     dataGapsJa?: string[]; noteJa?: string;
   }
+  const FLOW_LABEL: Record<string, string> = {
+    NEW_LONG_ACCUMULATION: '新規買い主導', SHORT_COVERING: '買い戻し主導(踏み上げ)',
+    DISTRIBUTION: '上値での分配(売り抜け疑い)', RETAIL_NOISE: '短期ノイズ', UNCONFIRMED: '判定不能(データ不足)',
+  };
   const [scout, setScout] = useState<null | 'loading' | 'error' | ScoutData>(null);
   async function runScout() {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
@@ -468,6 +479,26 @@ const SortableAssetRow: React.FC<{
               <ul className="scout__reasons">
                 {scout.assessment.reasonsJa.map((r, i) => <li key={i}>{r}</li>)}
               </ul>
+              {scout.flowInference && scout.flowInference.classification !== 'UNCONFIRMED' && (
+                <div className="scout__flow">
+                  <div className="scout__flow-head">
+                    🐋 大口の正体: <b>{FLOW_LABEL[scout.flowInference.classification] ?? scout.flowInference.classification}</b>
+                    <span className="scout__flow-conf"> (確度 {scout.flowInference.confidence})</span>
+                  </div>
+                  <div className="scout__flow-bars">
+                    {([['新規買い', scout.flowInference.probabilities.newLongAccumulation],
+                       ['買い戻し', scout.flowInference.probabilities.shortCovering],
+                       ['分配', scout.flowInference.probabilities.distribution],
+                       ['ノイズ', scout.flowInference.probabilities.retailNoise],
+                       ['不明', scout.flowInference.probabilities.unconfirmed]] as [string, number][])
+                      .filter(([, v]) => v > 0)
+                      .map(([k, v]) => (
+                        <span className="scout__flow-prob" key={k}>{k} {Math.round(v * 100)}%</span>
+                      ))}
+                  </div>
+                  <div className="scout__flow-next">次の確認: {scout.flowInference.nextConditionJa}</div>
+                </div>
+              )}
               {scout.metrics && (
                 <div className="scout__metrics">
                   RSI14 {scout.metrics.rsi14}・25日線乖離 {scout.metrics.ma25DiffPct ?? '—'}%・5日 {scout.metrics.ret5 ?? '—'}%・20日 {scout.metrics.ret20 ?? '—'}%

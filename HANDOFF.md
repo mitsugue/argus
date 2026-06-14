@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.20.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.21.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.20.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.21.0。
 
 ---
 
@@ -36,6 +36,13 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.21.0 Flow Intelligence Layer(大口の正体推定) — ユーザー要望「新規買いか買い戻しか掴みたい」+
+  GPT/Gemini助言を統合。`_flow_inference`(pure・pytest4件): 日証金の新規/返済フロー(貸株返済>新規&株価上昇=
+  買い戻し / 融資新規>返済=新規買い)+機関空売り残+moomoo大口フロー+出来高/値動きを重み付けし、
+  {newLongAccumulation/shortCovering/distribution/retailNoise/unconfirmed}の確率に正規化。データ源数で
+  confidence(low/medium)とunconfirmed配分を調整。ChatGPTのラベル体系・DISTRIBUTION検知を採用。
+  VWAP/板/歩み値は未接続=日中フローは見えないとdataLimitationsで明示(両AIも合意)。⚡診断に🐋ブロックでUI表示。
+  **次フェーズ候補: ブリッジでmoomoo板(L2)/VWAP送信→リアルタイム吸収検知、Flow分類の台帳採点(Phase 3と統合)**
 - v10.20.0 entry-scout v2.4 機関空売り統合(JPX) — `_jpx_short_table`(index.htmlから最新
   *_Short_Positions.xls をスクレイプ→xlrdでBIFF解析・6hキャッシュ・xlrd遅延import)。列構成を実ファイル検証
   (col2銘柄コード/col10残高割合・データは8行目から・ヘッダ7行)。`_short_disclosed_assess`(pure・pytest3件):
@@ -155,7 +162,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.20.0**
+- **現在バージョン: v10.21.0**
 
 ---
 

@@ -651,3 +651,39 @@ def test_short_disclosed_moderate():
 def test_short_disclosed_none_or_empty():
     assert scanner._short_disclosed_assess(None) == (0.0, [])
     assert scanner._short_disclosed_assess({"ratio": 0.0, "reporters": 0}) == (0.0, [])
+
+
+# ── Flow Intelligence (大口の正体推定, v10.21) ────────────────────────
+def test_flow_infer_short_covering():
+    m = {"ret1": 3.0, "ret5": 5.0, "ret20": 2.0, "volRatio5v20": 1.6}
+    jsf = {"ratio": 0.7, "shortNew": 1000, "shortRepay": 9000, "loanNew": 100, "loanRepay": 100}
+    sd = {"ratio": 0.06, "reporters": 3}
+    out = scanner._flow_inference(m, 0.1, jsf, sd)
+    assert out["classification"] == "SHORT_COVERING"
+    p = out["probabilities"]
+    assert abs(sum(p.values()) - 1.0) < 0.01
+    assert p["shortCovering"] == max(p[k] for k in p)
+    assert any("買い戻し" in r for r in out["reasonsJa"])
+
+
+def test_flow_infer_new_long():
+    m = {"ret1": 1.5, "ret5": 4.0, "ret20": 8.0, "volRatio5v20": 1.6}
+    jsf = {"ratio": 5.0, "shortNew": 100, "shortRepay": 100, "loanNew": 9000, "loanRepay": 1000}
+    out = scanner._flow_inference(m, 0.3, jsf, None)
+    assert out["classification"] == "NEW_LONG_ACCUMULATION"
+    assert abs(sum(out["probabilities"].values()) - 1.0) < 0.01
+
+
+def test_flow_infer_distribution():
+    m = {"ret1": -0.5, "ret5": -1.0, "ret20": 3.0, "volRatio5v20": 2.2}
+    jsf = {"ratio": 6.0, "shortNew": 0, "shortRepay": 0, "loanNew": 100, "loanRepay": 5000}
+    out = scanner._flow_inference(m, -0.25, jsf, None)
+    assert out["classification"] == "DISTRIBUTION"
+
+
+def test_flow_infer_unconfirmed_when_thin():
+    m = {"ret1": 0.2, "ret5": 0.1, "ret20": 0.0, "volRatio5v20": 1.0}
+    out = scanner._flow_inference(m, None, None, None)
+    assert out["classification"] == "UNCONFIRMED"
+    assert out["probabilities"]["unconfirmed"] == 1.0
+    assert out["confidence"] == "low"
