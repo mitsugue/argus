@@ -3,7 +3,7 @@
 // v10.3.3 adds a weekly AUTO-export on app open so a dying SSD or a new Mac
 // never costs more than the last 7 days of holdings edits.
 
-export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.trades.v1'] as const;
+export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.trades.v1', 'argus.research.v1'] as const;
 const LAST_AUTO_KEY = 'argus.lastAutoBackup.v1';
 const AUTO_INTERVAL_MS = 7 * 86_400_000; // weekly
 

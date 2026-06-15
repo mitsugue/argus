@@ -17,6 +17,7 @@ import { useAIJudgment } from '../../hooks/useAIJudgment';
 import { deriveStrategy, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
 import { buildExposure, valueHolding, fmtMoney, fmtSigned, currencyOf, type ExposureSummary } from '../../lib/portfolio';
 import { simulateAdd } from '../../lib/whatif';
+import { getNote, saveNote } from '../../lib/researchNotes';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
 import type { AIJudgmentLabel } from '../../types/aiJudgment';
@@ -349,6 +350,40 @@ const SortableAssetRow: React.FC<{
       window.prompt('コピーできませんでした。手動で選択してください:', text);
     }
   }
+  // Gemini OSINT Handoff (v10.25, user request): the consumer Gemini app's
+  // Deep Research / grounding beats the API at OSINT but has NO API — so the
+  // same manual copy-paste bridge as the GPT handoff, with an OSINT-tuned
+  // prompt that asks Gemini to do exactly what ARGUS cannot (web-grounded
+  // who's-buying / catalysts / filings research). Free, no API, no cost.
+  const [gemCopied, setGemCopied] = useState(false);
+  const [note, setNote] = useState(() => getNote(asset.symbol)?.text ?? '');
+  const [noteSaved, setNoteSaved] = useState(false);
+  async function copyGeminiOsint() {
+    const name0 = asset.displayNameJa || asset.displayName;
+    const L: string[] = [];
+    L.push(`あなたはOSINTに長けた投資リサーチャーです。Web検索/Deep Researchを使い、最新の一次情報に当たって「${asset.symbol} ${name0}」(${asset.market})を調べてください。`);
+    L.push('私の判断支援アプリARGUSは価格・テクニカル・信用需給は見えますが、ニュースや定性材料は十分に見えません。そこをあなたに補ってほしい。');
+    if (strat.status !== 'mock' && strat.price != null) {
+      L.push(`現在値 ${strat.price}(前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'})・ARGUS判断 ${strat.action}。`);
+    }
+    L.push('');
+    L.push('調べてほしいこと(必ずWebの一次情報・日付を添えて):');
+    L.push('(1) 直近2週間の重要ニュース・適時開示・決算・ガイダンス変更');
+    L.push('(2) 直近の値動きの「理由」— 何が買い/売りの材料か(マクロ連動も含む)');
+    L.push('(3) 機関投資家・大株主・インサイダーの動き(大量保有報告・空売り・自社株買い等)');
+    L.push('(4) 業界/テーマ/競合/規制・国策の状況');
+    L.push('(5) 強気材料と弱気材料を箇条書きで対比');
+    L.push('');
+    L.push('最後に必ず: 【新規買い/買い戻し/様子見/回避】の確率配分(%)・確信度(高/中/低)・根拠・出典URL・次に確認すべき条件 を出してください。断定ではなく確率で。');
+    const text = L.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setGemCopied(true);
+      window.setTimeout(() => setGemCopied(false), 2500);
+    } catch {
+      window.prompt('コピーできませんでした。手動で選択してください:', text);
+    }
+  }
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   const name = asset.displayNameJa || asset.displayName;
   const fresh = freshnessOf(strat);
@@ -536,6 +571,17 @@ const SortableAssetRow: React.FC<{
               <div className="scout__note">{scout.noteJa}</div>
             </div>
           )}
+          <div className="asset-detail__note">
+            <span className="asset-detail__k">📝 リサーチメモ(Gemini/GPTの回答を貼り付け・端末内/同期)</span>
+            <textarea
+              className="asset-detail__note-area"
+              value={note}
+              placeholder="Gemini OSINTの結論などをここに保存…"
+              onChange={(e) => { setNote(e.target.value); setNoteSaved(false); }}
+              onBlur={() => { saveNote(asset.symbol, note); setNoteSaved(true); }}
+            />
+            {noteSaved && <span className="asset-detail__note-saved">✓ 保存</span>}
+          </div>
           <div className="asset-detail__foot">
             <span>updated {ageMin(strat.lastUpdated)}</span>
             <span className="asset-detail__actions">
@@ -548,7 +594,12 @@ const SortableAssetRow: React.FC<{
               <button className="asset-mini" aria-label={`Copy ${asset.symbol} prompt for GPT Pro`}
                       title="この銘柄についてGPT-5.5 Proに相談するプロンプトをコピー"
                       onClick={copyProPrompt}>
-                {proCopied ? '✓ Copied' : '🤖 Pro相談'}
+                {proCopied ? '✓ Copied' : '🤖 GPT相談'}
+              </button>
+              <button className="asset-mini" aria-label={`Copy ${asset.symbol} OSINT prompt for Gemini`}
+                      title="Geminiアプリ(Deep Research)でOSINT調査するプロンプトをコピー"
+                      onClick={copyGeminiOsint}>
+                {gemCopied ? '✓ Copied' : '🔮 Gemini OSINT'}
               </button>
               <button className="asset-mini asset-mini--danger" aria-label={`Remove ${asset.symbol}`} onClick={() => onRemove(asset.id)}>Remove</button>
             </span>

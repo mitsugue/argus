@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.24.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.25.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.24.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.25.0。
 
 ---
 
@@ -36,6 +36,11 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.25.0 Gemini OSINT手動ブリッジ+リサーチメモ — 消費者版Gemini(Deep Research/grounding)はOSINTが
+  API版より優秀だがAPIが無い→GPT Pro Handoffと同じ手動コピペ方式。SortableAssetRowに「🔮 Gemini OSINT」ボタン
+  (copyGeminiOsint: 銘柄データ+OSINT質問5項目+確率配分依頼のプロンプト生成・コスト0)。回答貼り戻し用に
+  lib/researchNotes.ts(localStorage argus.research.v1・BACKUP_KEYS追加で同期)+詳細内に📝メモ欄(onBlur保存)。
+  既存「🤖 Pro相談」は「🤖 GPT相談」に改称。クライアントのみ(公開AI自動実行の制約を遵守)
 - v10.24.0 校正ループ完成(scout-ledger-v1 / Phase 3) — `get_scout_batch`(JP実戦7銘柄のscore/bucket/flowClass・
   30分キャッシュ)+`/scout-batch`、`_scout_score_bucket`(pure・pytest1件: strong≥1.5/lean≥0.5/neutral≥-0.5/avoid)。
   prediction-ledger.ymlに記録+採点ステップ(ledger/scout/days/ + summary.json: byBucket/byFlowClassの実現リターン・
@@ -183,7 +188,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.24.0**
+- **現在バージョン: v10.25.0**
 
 ---
 
