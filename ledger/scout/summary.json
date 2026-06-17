@@ -1,52 +1,58 @@
 {
- "updated": "2026-06-16",
+ "updated": "2026-06-17",
  "engineVersion": "scout-ledger-v1",
  "byBucket": {
   "avoid": {
-   "n": 5,
-   "up": 3,
-   "avgRetPct": 3.3,
-   "upRate": 0.6
+   "n": 12,
+   "up": 7,
+   "avgRetPct": 1.78,
+   "upRate": 0.583
   },
   "lean": {
    "n": 1,
    "up": 1,
-   "avgRetPct": 4.91,
+   "avgRetPct": 7.89,
    "upRate": 1.0
   },
   "neutral": {
    "n": 1,
    "up": 1,
-   "avgRetPct": 11.33,
+   "avgRetPct": 11.11,
    "upRate": 1.0
   }
  },
  "byFlowClass": {
   "SHORT_COVERING": {
-   "n": 3,
-   "up": 2,
-   "avgRetPct": 5.21,
+   "n": 6,
+   "up": 4,
+   "avgRetPct": 3.61,
    "upRate": 0.667
   },
   "RETAIL_NOISE": {
-   "n": 2,
+   "n": 3,
    "up": 2,
-   "avgRetPct": 4.55,
-   "upRate": 1.0
+   "avgRetPct": 3.29,
+   "upRate": 0.667
   },
   "UNCONFIRMED": {
-   "n": 1,
-   "up": 1,
-   "avgRetPct": 11.33,
+   "n": 2,
+   "up": 2,
+   "avgRetPct": 5.72,
    "upRate": 1.0
   },
   "NEW_LONG_ACCUMULATION": {
+   "n": 2,
+   "up": 1,
+   "avgRetPct": -0.76,
+   "upRate": 0.5
+  },
+  "DISTRIBUTION": {
    "n": 1,
    "up": 0,
-   "avgRetPct": -3.35,
+   "avgRetPct": -1.05,
    "upRate": 0.0
   }
  },
- "n": 7,
+ "n": 14,
  "noteJa": "entry-scoutのスコア/フロー分類を実現リターンで採点。scoreが高い局面ほど上がったか、買い戻し主導と推定した時に失速したか等を蓄積(校正)。最低20件貯まるまで参考。"
 }

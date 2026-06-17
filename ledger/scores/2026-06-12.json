@@ -283,6 +283,228 @@
     "n": 0,
     "hits": 0
    }
+  },
+  "3": {
+   "scoredOn": "2026-06-17",
+   "tradingAge": 3,
+   "layer1": {
+    "sensors": {
+     "n": 12,
+     "hits": 6,
+     "hitRate": 0.5,
+     "brierMean": 0.66,
+     "rows": [
+      {
+       "sensor": "1306",
+       "realizedPct": 3.23,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.98
+      },
+      {
+       "sensor": "1321",
+       "realizedPct": 5.93,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.875
+      },
+      {
+       "sensor": "8306",
+       "realizedPct": 3.48,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.98
+      },
+      {
+       "sensor": "7203",
+       "realizedPct": 1.24,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "8058",
+       "realizedPct": -1.56,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "9432",
+       "realizedPct": -0.74,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "SMH",
+       "realizedPct": 1.07,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.455
+      },
+      {
+       "sensor": "TLT",
+       "realizedPct": 0.24,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "GLD",
+       "realizedPct": 2.93,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.875
+      },
+      {
+       "sensor": "BTC",
+       "realizedPct": 4.04,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.98
+      },
+      {
+       "sensor": "USDJPY",
+       "realizedPct": -0.01,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "VIX",
+       "realizedPct": -27.09,
+       "bucket": "downside_continuation",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.875
+      }
+     ]
+    },
+    "stocks": {
+     "n": 1,
+     "hits": 1,
+     "hitRate": 1.0,
+     "brierMean": 0.38,
+     "rows": [
+      {
+       "symbol": "8058",
+       "realizedPct": -1.56,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      }
+     ]
+    }
+   },
+   "layer2": {
+    "n": 9,
+    "hits": 4,
+    "hitRate": 0.444,
+    "brierMean": 0.6744,
+    "rows": [
+     {
+      "symbol": "9984",
+      "realizedPct": 6.3,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.98
+     },
+     {
+      "symbol": "5801",
+      "realizedPct": 12.71,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.875
+     },
+     {
+      "symbol": "5803",
+      "realizedPct": 11.11,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.875
+     },
+     {
+      "symbol": "285A",
+      "realizedPct": 18.23,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.855
+     },
+     {
+      "symbol": "9501",
+      "realizedPct": -0.24,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.375
+     },
+     {
+      "symbol": "NVDA",
+      "realizedPct": 1.24,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.375
+     },
+     {
+      "symbol": "AAPL",
+      "realizedPct": 1.22,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "symbol": "TSLA",
+      "realizedPct": 1.38,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.375
+     },
+     {
+      "symbol": "META",
+      "realizedPct": 5.59,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.98
+     }
+    ]
+   },
+   "layer3": {
+    "n": 1,
+    "hits": 0,
+    "hitRate": 0.0,
+    "brierMean": 0.96,
+    "rows": [
+     {
+      "symbol": "6584",
+      "realizedPct": 12.85,
+      "bucket": "rebound_attempt",
+      "argmax": "downside_continuation",
+      "hit": false,
+      "brier": 0.96
+     }
+    ]
+   }
   }
  }
 }
