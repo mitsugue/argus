@@ -1,0 +1,70 @@
+{
+ "asOf": "2026-06-19T07:07:36Z",
+ "dateJst": "2026-06-19",
+ "engineVersion": "scout-ledger-v1",
+ "records": [
+  {
+   "bucket": "lean",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 4540.0,
+   "lastDate": "2026-06-19",
+   "score": 0.9,
+   "stance": "押し目買い検討圏",
+   "symbol": "8058"
+  },
+  {
+   "bucket": "neutral",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 7111.0,
+   "lastDate": "2026-06-19",
+   "score": -0.4,
+   "stance": "中立(急がない)",
+   "symbol": "9984"
+  },
+  {
+   "bucket": "strong",
+   "flowClass": "NEW_LONG_ACCUMULATION",
+   "lastClose": 53360.0,
+   "lastDate": "2026-06-19",
+   "score": 1.8,
+   "stance": "攻め好機(候補)",
+   "symbol": "5801"
+  },
+  {
+   "bucket": "neutral",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 4461.0,
+   "lastDate": "2026-06-18",
+   "score": 0.0,
+   "stance": "中立(急がない)",
+   "symbol": "5803"
+  },
+  {
+   "bucket": "neutral",
+   "flowClass": "SHORT_COVERING",
+   "lastClose": 1035.0,
+   "lastDate": "2026-06-19",
+   "score": -0.5,
+   "stance": "中立(急がない)",
+   "symbol": "6584"
+  },
+  {
+   "bucket": "avoid",
+   "flowClass": "NEW_LONG_ACCUMULATION",
+   "lastClose": 108600.0,
+   "lastDate": "2026-06-19",
+   "score": -3.7,
+   "stance": "見送り",
+   "symbol": "285A"
+  },
+  {
+   "bucket": "lean",
+   "flowClass": "SHORT_COVERING",
+   "lastClose": 514.0,
+   "lastDate": "2026-06-19",
+   "score": 0.8,
+   "stance": "押し目買い検討圏",
+   "symbol": "9501"
+  }
+ ]
+}
