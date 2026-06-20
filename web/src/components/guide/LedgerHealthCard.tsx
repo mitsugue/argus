@@ -17,7 +17,8 @@ function ageJa(row: LedgerRow): string {
   }
   if (row.lastUpdated) {
     const sw = row.staleWeekdays;
-    return sw == null ? row.lastUpdated : sw <= 0 ? `本日 (${row.lastUpdated})` : `${row.lastUpdated} (${sw}営業日前)`;
+    if (sw == null) return row.lastUpdated;
+    return sw <= 0 ? `${row.lastUpdated}（直近営業日）` : `${row.lastUpdated}（${sw}営業日前）`;
   }
   return '—';
 }
