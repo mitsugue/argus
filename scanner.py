@@ -2491,7 +2491,9 @@ def _td_price_history(sym):
                         "dates": [v.get("datetime") for v in rows]}
         except Exception as e:
             add_log(f"[scout] US history fetch failed {sym}: {type(e).__name__}")
-    _TD_HISTORY_CACHE[sym] = {"data": data, "expires": now + (_TD_HISTORY_TTL if data else 600)}
+    # Short failure cache (150s) so a transient TD rate-limit (8/min free) on
+    # one symbol self-heals fast instead of locking it out for 10 min.
+    _TD_HISTORY_CACHE[sym] = {"data": data, "expires": now + (_TD_HISTORY_TTL if data else 150)}
     return data
 
 def _etf_momentum(closes):

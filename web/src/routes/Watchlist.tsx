@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { AIReview } from '../components/dashboard/AIReview';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
-import { CorporateCatalysts } from '../components/dashboard/CorporateCatalysts';
 import { AssetStrategySection } from '../components/dashboard/AssetStrategySection';
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
@@ -59,8 +58,6 @@ export const Watchlist: React.FC = () => {
       />
 
       <TradeJournalCard assets={assets} />
-
-      <CorporateCatalysts />
 
       <div className="watch-toolbar">
         <ProHandoffButton />

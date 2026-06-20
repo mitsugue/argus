@@ -5,8 +5,10 @@ import './AppShell.css';
 // Overscroll-to-next (v10.15.1, user request): at the page bottom, one strong
 // extra pull (touch) or wheel burst advances to the next nav page. Deliberate
 // thresholds + a visible indicator prevent accidental jumps.
-const PULL_THRESHOLD_PX = 90;     // touch: extra upward drag past the bottom
-const WHEEL_THRESHOLD = 350;      // desktop: accumulated deltaY while pinned at bottom
+// Higher tension (v10.28): a deliberate, firm pull is required so a normal
+// scroll never trips a page change by accident.
+const PULL_THRESHOLD_PX = 150;    // touch: extra drag past the edge to flip
+const WHEEL_THRESHOLD = 600;      // desktop: accumulated deltaY at the edge
 
 interface NextEvent {
   title: string;       // short event title
@@ -23,6 +25,10 @@ interface Props {
   nextEvent?: NextEvent;
   /** When set, a strong overscroll at the page bottom advances to this page. */
   overscrollNext?: { label: string; go: () => void };
+  /** When set, a strong overscroll at the page top returns to this page. */
+  overscrollPrev?: { label: string; go: () => void };
+  /** Changes whenever the visible page changes — drives the enter animation. */
+  pageKey?: string;
 }
 
 const IMPACT_COLOR: Record<RiskLevel, string> = {
@@ -52,54 +58,75 @@ function formatDaysAway(days: number): string {
 
 // Slim header (brand + next event + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
-export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext }) => {
+export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey }) => {
   const mainRef = useRef<HTMLElement>(null);
-  const [pull, setPull] = useState(0);          // 0..1 progress toward the jump
+  // Signed pull: + = toward NEXT (bottom), − = toward PREV (top). 0..±1.
+  const [pull, setPull] = useState(0);
   const pullRef = useRef(0);
   const setPullBoth = (v: number) => { pullRef.current = v; setPull(v); };
+  // Page-enter animation: re-keyed whenever the visible page changes.
+  const [animTick, setAnimTick] = useState(0);
+  const [animDir, setAnimDir] = useState<1 | -1>(1);
+  const prevPageKey = useRef(pageKey);
+  useEffect(() => {
+    if (pageKey !== prevPageKey.current) {
+      prevPageKey.current = pageKey;
+      setAnimTick((t) => t + 1);
+    }
+  }, [pageKey]);
 
   useEffect(() => {
     const el = mainRef.current;
-    if (!el || !overscrollNext) return;
+    if (!el || (!overscrollNext && !overscrollPrev)) return;
     const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < 2;
-    // Cooldown: right after a jump the next page may still be SHORT (data
-    // loading → already "at bottom"), and a continuing gesture would chain
-    // through multiple pages. One deliberate gesture = one page.
+    const atTop = () => el.scrollTop < 2;
+    // Cooldown: one deliberate gesture = one page (short next page that is
+    // already "at bottom" must not chain).
     let lastGo = 0;
-    const coolingDown = () => Date.now() - lastGo < 800;
-    const go = () => {
+    const coolingDown = () => Date.now() - lastGo < 900;
+    const go = (dir: 1 | -1) => {
+      const target = dir > 0 ? overscrollNext : overscrollPrev;
+      if (!target) { setPullBoth(0); return; }
       lastGo = Date.now();
       setPullBoth(0);
-      overscrollNext.go();
-      el.scrollTop = 0;   // land at the top of the next page
+      setAnimDir(dir);
+      target.go();
+      el.scrollTop = dir > 0 ? 0 : el.scrollHeight;   // land at the sensible edge
     };
 
-    // Touch: extra upward drag while already pinned at the bottom.
     let startY: number | null = null;
-    let pulling = false;
-    const onTouchStart = (e: TouchEvent) => { startY = e.touches[0].clientY; pulling = false; };
+    let dir: 0 | 1 | -1 = 0;
+    const onTouchStart = (e: TouchEvent) => { startY = e.touches[0].clientY; dir = 0; };
     const onTouchMove = (e: TouchEvent) => {
       if (startY == null || coolingDown()) return;
-      const dy = startY - e.touches[0].clientY;
-      if (dy > 0 && atBottom()) { pulling = true; setPullBoth(Math.min(dy / PULL_THRESHOLD_PX, 1)); }
-      else if (pulling) { pulling = false; setPullBoth(0); }
+      const dy = startY - e.touches[0].clientY;   // +dy = dragging up
+      if (dy > 0 && atBottom() && overscrollNext) {
+        dir = 1; setPullBoth(Math.min(dy / PULL_THRESHOLD_PX, 1));
+      } else if (dy < 0 && atTop() && overscrollPrev) {
+        dir = -1; setPullBoth(-Math.min(-dy / PULL_THRESHOLD_PX, 1));
+      } else if (dir) { dir = 0; setPullBoth(0); }
     };
     const onTouchEnd = () => {
-      if (pulling && pullRef.current >= 1) go();
+      if (dir && Math.abs(pullRef.current) >= 1) go(dir);
       else setPullBoth(0);
-      startY = null; pulling = false;
+      startY = null; dir = 0;
     };
 
-    // Wheel: accumulated downward delta while pinned at the bottom.
+    // Wheel: accumulate at the matching edge.
     let acc = 0;
     let idleTimer: number | undefined;
     const onWheel = (e: WheelEvent) => {
-      if (e.deltaY <= 0 || !atBottom() || coolingDown()) { acc = 0; if (pullRef.current) setPullBoth(0); return; }
-      acc += e.deltaY;
-      setPullBoth(Math.min(acc / WHEEL_THRESHOLD, 1));
+      if (coolingDown()) { acc = 0; if (pullRef.current) setPullBoth(0); return; }
+      const down = e.deltaY > 0, up = e.deltaY < 0;
+      if (down && atBottom() && overscrollNext) {
+        acc = Math.max(0, acc) + e.deltaY; setPullBoth(Math.min(acc / WHEEL_THRESHOLD, 1));
+        if (acc >= WHEEL_THRESHOLD) { acc = 0; go(1); }
+      } else if (up && atTop() && overscrollPrev) {
+        acc = Math.min(0, acc) + e.deltaY; setPullBoth(-Math.min(-acc / WHEEL_THRESHOLD, 1));
+        if (-acc >= WHEEL_THRESHOLD) { acc = 0; go(-1); }
+      } else { acc = 0; if (pullRef.current) setPullBoth(0); return; }
       window.clearTimeout(idleTimer);
       idleTimer = window.setTimeout(() => { acc = 0; setPullBoth(0); }, 600);
-      if (acc >= WHEEL_THRESHOLD) { acc = 0; go(); }
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -113,7 +140,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       el.removeEventListener('wheel', onWheel);
       window.clearTimeout(idleTimer);
     };
-  }, [overscrollNext]);
+  }, [overscrollNext, overscrollPrev]);
 
   return (
     <div className="shell">
@@ -149,9 +176,19 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       <div className="shell__body">
         {sidebar}
         <main className="shell__main" ref={mainRef}>
-          {children}
+          {/* Prev-page indicator (pull DOWN at the top). */}
+          {overscrollPrev && pull < -0.05 && (
+            <div className={`shell__pullnav shell__pullnav--top${pull <= -1 ? ' shell__pullnav--armed' : ''}`}
+                 style={{ opacity: 0.35 + -pull * 0.65 }}>
+              {pull <= -1 ? `↑ 離すと移動: ${overscrollPrev.label}` : `↑ さらに引っ張って ${overscrollPrev.label} へ`}
+            </div>
+          )}
+          <div key={animTick} className={`shell__page shell__page--${animDir > 0 ? 'next' : 'prev'}`}>
+            {children}
+          </div>
+          {/* Next-page indicator (pull UP at the bottom). */}
           {overscrollNext && pull > 0.05 && (
-            <div className={`shell__pullnext${pull >= 1 ? ' shell__pullnext--armed' : ''}`}
+            <div className={`shell__pullnav shell__pullnav--bottom${pull >= 1 ? ' shell__pullnav--armed' : ''}`}
                  style={{ opacity: 0.35 + pull * 0.65 }}>
               {pull >= 1 ? `↓ 離すと移動: ${overscrollNext.label}` : `↓ さらに引っ張って ${overscrollNext.label} へ`}
             </div>

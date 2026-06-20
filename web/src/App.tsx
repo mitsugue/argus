@@ -110,9 +110,13 @@ const App: React.FC = () => {
     command: 'Today', alerts: 'Action Alerts', regime: 'Market Regime',
     events: 'Event Radar', watchlist: 'Watchlist', core: 'Core Portfolio', guide: 'Guide',
   };
-  const nextIdx = NAV_ORDER.indexOf(route) + 1;
-  const overscrollNext = (!isReview && nextIdx > 0 && nextIdx < NAV_ORDER.length)
-    ? { label: NAV_LABEL[NAV_ORDER[nextIdx]], go: () => handleNavSelect(NAV_ORDER[nextIdx]) }
+  const curIdx = NAV_ORDER.indexOf(route);
+  const overscrollNext = (!isReview && curIdx >= 0 && curIdx + 1 < NAV_ORDER.length)
+    ? { label: NAV_LABEL[NAV_ORDER[curIdx + 1]], go: () => handleNavSelect(NAV_ORDER[curIdx + 1]) }
+    : undefined;
+  // Up-pull at the top → previous page (v10.28, user request).
+  const overscrollPrev = (!isReview && curIdx > 0)
+    ? { label: NAV_LABEL[NAV_ORDER[curIdx - 1]], go: () => handleNavSelect(NAV_ORDER[curIdx - 1]) }
     : undefined;
 
   return (
@@ -129,6 +133,8 @@ const App: React.FC = () => {
       lastUpdated={lastUpdated}
       nextEvent={nextEvent}
       overscrollNext={overscrollNext}
+      overscrollPrev={overscrollPrev}
+      pageKey={isReview ? 'review' : route}
     >
       {isReview ? <AIReview /> : <Active onNavigate={handleNavSelect} />}
     </AppShell>

@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.27.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.28.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.27.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.28.0。
 
 ---
 
@@ -36,6 +36,10 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.28.0 スクロール操作改善+Catalysts整理 — AppShellオーバースクロールを双方向化(上=前ページ/下=次ページ)、
+  しきい値強化(PULL 90→150px / WHEEL 350→600)で誤操作防止、ページ切替にshell-page-inアニメ(360ms・dir別)。
+  上indicatorはsticky top。Corporate Catalystsセクション削除(決算接近は個別詳細のCatalyst行+⚡診断のcatalystContextに集約)。
+  _td_price_history失敗キャッシュ600→150s。米国scoutは本番でAAPL/MSFT/TSLA live確認(NVDA初回はTDレート制限の一時失敗)
 - v10.27.0 米国株エントリー診断(us-scout-v1) — `_td_price_history`(Twelve Data 130日OHLCV・6h・1credit)。
   get_entry_scout(sym, market)でルーティング: US→_td履歴/USフロー/SPY相対力、JP専用信号(日証金/JPX空売り/margin)は
   Noneで正直表示。エンドポイントは?market=USで米国受付(_US_SYM_RE)。フロントは米国株にも⚡ボタン。
@@ -197,7 +201,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.27.0**
+- **現在バージョン: v10.28.0**
 
 ---
 

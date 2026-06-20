@@ -181,9 +181,9 @@
 
 /* Overscroll-to-next (v10.15.1): bottom-pull indicator. Sticky inside the
    scroll container so it rides just above the home indicator. */
-.shell__pullnext {
+.shell__pullnav {
   position: sticky;
-  bottom: calc(env(safe-area-inset-bottom) + 10px);
+
   margin: 0 auto;
   width: fit-content;
   padding: 6px 14px;
@@ -195,8 +195,25 @@
   pointer-events: none;
   z-index: 5;
 }
-.shell__pullnext--armed {
+.shell__pullnav--armed {
   color: var(--text-main);
   border-color: rgba(91, 141, 239, 0.9);
   font-weight: 600;
+}
+
+
+/* Overscroll page-nav indicators (v10.28): top for prev, bottom for next. */
+.shell__pullnav--bottom { bottom: calc(env(safe-area-inset-bottom) + 10px); top: auto; }
+.shell__pullnav--top { top: calc(env(safe-area-inset-top) + 10px); bottom: auto; }
+
+/* Weighty page-enter animation so a page change feels deliberate, not slippery. */
+.shell__page { animation: shell-page-in 360ms cubic-bezier(0.22, 1, 0.36, 1); }
+.shell__page--next { --from: 22px; }
+.shell__page--prev { --from: -22px; }
+@keyframes shell-page-in {
+  from { opacity: 0; transform: translateY(var(--from, 22px)) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell__page { animation: none; }
 }
