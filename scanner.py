@@ -2393,6 +2393,13 @@ _REGIME_SUMMARY_JA = {
 
 _REGIME_CACHE     = {"data": None, "expires": 0.0}
 _REGIME_CACHE_TTL = 6 * 3600  # 6h — non-intraday regime scoring, credit-safe
+# Stability (v10.34): the last FULL+live regime. A PARTIAL ETF load (Twelve Data
+# free-tier rate caps) scores from a subset and tilts the axes differently each
+# cold computation, so the headline label wobbled across restarts/cache-expiry.
+# We hold the last good reading and prefer it over a fresh partial (up to 24h)
+# so the call only changes when we actually have full data — not from noise.
+_REGIME_LAST_GOOD = {"data": None, "ts": 0.0}
+_REGIME_LAST_GOOD_TTL = 24 * 3600
 
 def _clip(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
@@ -2754,12 +2761,28 @@ def get_market_regime_snapshot():
         "sourceStatuses": source_statuses,
         "dataLimitations": limitations,
     }
-    if status != "mock":
+    # Last-known-good hold (v10.34): a full+live reading is the source of truth.
+    # When this refresh is only partial/mock, serve the held reading (if recent)
+    # so the label stays put instead of flipping on a tilted ETF subset.
+    if status == "live" and etf_full:
+        _REGIME_LAST_GOOD["data"] = payload
+        _REGIME_LAST_GOOD["ts"] = now
+    elif (_REGIME_LAST_GOOD["data"] is not None
+          and now - _REGIME_LAST_GOOD["ts"] < _REGIME_LAST_GOOD_TTL):
+        held = dict(_REGIME_LAST_GOOD["data"])
+        held["asOf"] = _REGIME_LAST_GOOD["data"].get("asOf")
+        held["heldOverMin"] = int((now - _REGIME_LAST_GOOD["ts"]) / 60)
+        held["dataLimitations"] = (_REGIME_LAST_GOOD["data"].get("dataLimitations") or []) + [
+            f"ETFデータが一時的に不足したため、直近の完全な評価({held['heldOverMin']}分前)を保持表示中"
+            "（地合い判定がノイズで揺れないための安定化。次に全データが揃うと自動更新）。"]
+        payload = held
+    if payload.get("status") != "mock":
         _REGIME_CACHE["data"]    = payload
-        # A partial WITHOUT ETF data (cold start hitting the Twelve Data
-        # per-minute credit cap) must not stick for 6h — retry in 5 min so the
-        # rotation board / class predictions self-heal quickly.
-        _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if etf_live else 300)
+        # A partial WITHOUT a held-over reading must not stick for 6h — retry in
+        # 5 min so the board / class predictions self-heal quickly. A held-over
+        # (stable) reading can sit the full TTL.
+        full = payload.get("status") == "live"
+        _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if full else 300)
     return payload
 
 @app.route("/api/argus/market-regime")
