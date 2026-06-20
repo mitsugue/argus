@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.29.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.30.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.29.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.30.0。
 
 ---
 
@@ -36,7 +36,18 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
-- v10.29.0 ページ送りClearアプリ風リファイン — AppShellでpullを物理化。指の生移動量を
+- v10.30.0 ⚡診断の物語化 + AI相談ボタン統合(ARGUS中心化) — scanner._scout_narrative(pure,
+  unit-tested)がcallJa(一言コール)+narrativeJa(地合い→需給の読み→校正の3文)を生成。
+  get_entry_scoutにengineCalibration(台帳overall)/postureCalibration(byPosture[reg_label]、
+  regime live時のみ=marketPostureキーと一致)を追加。フロントは🤖GPT相談+🔮Gemini OSINTの2ボタンを
+  「🧠 AI相談」1本に統合、copyLlmConsult()はフロー/日証金/空売り/フロー推定/ARGUS校正/callJaを先頭に置く
+  モート起点プロンプト(⚡診断を先に押すと中身が濃くなる)。test_rules.py +4 (91 pass)。
+  【総点検2026-06-20】予測台帳healthy(n=133/6日/58.6%・Layer1 70%/Layer2 43%)、scout校正n=28、
+  87→91テスト緑、全エンドポイント実機確認OK。唯一closepinが空(EC2の30 5 * * 1-5 trigger_closepin.sh
+  が発火しておらず、GH cronは毎回4-5h遅延で窓拒否 — ledger側EC2 cronは07:05稼働中で台帳は正常)。
+  /api/argus/calibrationはRender揮発localファイル読みで常時ゼロだがライブ未使用(CommandCenterは
+  _ledger_summary本物を表示) — 将来掃除。
+- v10.29.0 ページ送りClアプリ風リファイン — AppShellでpullを物理化。指の生移動量を
   rubberBand(x)=RESIST_MAX*(1-exp(-|x|/RESIST_K)) で減衰させ、.shell__pageにinline translateYで適用
   (指に追従しつつ強く抵抗: 100px引いても約30px、260pxトリガーで約60px、500pxでも約84pxで頭打ち)。
   しきい値 PULL 150→260px / WHEEL 600→1200。離すと560ms elasticでスプリングバック、
@@ -206,7 +217,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.29.0**
+- **現在バージョン: v10.30.0**
 
 ---
 

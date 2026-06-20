@@ -299,6 +299,10 @@ const SortableAssetRow: React.FC<{
     assessment?: { stance: string; score: number; reasonsJa: string[] };
     catalystContext?: { items: { kind: string; level?: string; labelJa?: string; count?: number; headline?: string | null; noteJa?: string }[]; noteJa: string };
     scoreTrackRecord?: { n: number; upRate: number | null; avgRetPct: number | null } | null;
+    // v3 (v10.30): one-line call + moat-grounded story + calibration the LLM lacks.
+    callJa?: string; narrativeJa?: string;
+    engineCalibration?: { n: number; hitRate: number | null; days?: number } | null;
+    postureCalibration?: { posture: string; n: number; hitRate: number | null } | null;
     dataGapsJa?: string[]; noteJa?: string;
   }
   const FLOW_LABEL: Record<string, string> = {
@@ -321,66 +325,54 @@ const SortableAssetRow: React.FC<{
   // Per-symbol Pro Handoff (v10.12.2, user request): a SMALL copy button that
   // builds a prompt about THIS symbol only — the global handoff stays for the
   // whole-market consult. Client-side from data already on the card; no API.
-  const [proCopied, setProCopied] = useState(false);
-  async function copyProPrompt() {
-    const name0 = asset.displayNameJa || asset.displayName;
-    const L: string[] = [];
-    L.push(`あなたは経験豊富な投資アドバイザーです。以下は私の判断支援アプリARGUS(ルールベース+AI二重チェック)が出力した「${asset.symbol} ${name0}」の現在の判断です。これを踏まえて相談に乗ってください。`);
-    L.push('');
-    L.push(`■ 銘柄: ${asset.symbol} ${name0}(市場: ${asset.market})`);
-    if (strat.status !== 'mock' && strat.price != null) {
-      L.push(`■ 現在値: ${strat.price}(前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}・データ日 ${strat.date ?? '—'})`);
-    }
-    L.push(`■ ARGUSの判断: ${strat.action}(リスク ${strat.risk}・確信度 ${strat.confidence != null ? Math.round(strat.confidence * 100) + '%' : '—'})`);
-    L.push(`■ 戦略: ${strat.strategyJa}`);
-    L.push(`■ 理由: ${strat.reasonJa}`);
-    L.push(`■ 次に待つ条件: ${strat.nextConditionJa}`);
-    L.push(`■ 判断が変わる条件: ${strat.whatChangesJa}`);
-    if (strat.bigFlowRatio != null) L.push(`■ 大口資金フロー(本日累計・純流入率): ${(strat.bigFlowRatio * 100).toFixed(0)}%`);
-    if (aiLabel) L.push(`■ AI予想(GPT-5.5+Gemini): ${aiLabel.aiView} / 提案 ${aiLabel.aiFinalAction}${aiLabel.openaiReasonJa ? ` — ${aiLabel.openaiReasonJa}` : ''}`);
-    if (strat.catalystNoteJa) L.push(`■ 直近の材料: ${strat.catalystNoteJa}`);
-    if (strat.dataLimitations.length) L.push(`■ データの限界: ${strat.dataLimitations.join(' / ')}`);
-    L.push('');
-    L.push('質問: (1) この判断の妥当性と見落としているリスクは? (2) あなたならこの銘柄をどう扱う?(エントリー/イグジットの具体的条件) (3) 今後1週間で監視すべき指標やイベントは? 売買指示ではなく判断材料の整理としてお願いします。');
-    const text = L.join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      setProCopied(true);
-      window.setTimeout(() => setProCopied(false), 2500);
-    } catch {
-      window.prompt('コピーできませんでした。手動で選択してください:', text);
-    }
-  }
-  // Gemini OSINT Handoff (v10.25, user request): the consumer Gemini app's
-  // Deep Research / grounding beats the API at OSINT but has NO API — so the
-  // same manual copy-paste bridge as the GPT handoff, with an OSINT-tuned
-  // prompt that asks Gemini to do exactly what ARGUS cannot (web-grounded
-  // who's-buying / catalysts / filings research). Free, no API, no cost.
-  const [gemCopied, setGemCopied] = useState(false);
+  // LLM相談 (v10.30, user request 「ボタンは一つでいい」+「モート起点に」):
+  // ONE handoff button. The prompt LEADS with what Gemini/GPT can't fetch —
+  // big-money flow, 信用需給(日証金/空売り), the flow-class read, and ARGUS's
+  // OWN calibrated track record — and explicitly tells the LLM "you already
+  // know the news; corroborate or refute THIS with OSINT". So the answer comes
+  // back anchored to ARGUS instead of generic web sentiment.
+  const [llmCopied, setLlmCopied] = useState(false);
   const [note, setNote] = useState(() => getNote(asset.symbol)?.text ?? '');
   const [noteSaved, setNoteSaved] = useState(false);
-  async function copyGeminiOsint() {
+  async function copyLlmConsult() {
     const name0 = asset.displayNameJa || asset.displayName;
+    const sc = (scout && typeof scout === 'object' && scout.status === 'live') ? scout : null;
     const L: string[] = [];
-    L.push(`あなたはOSINTに長けた投資リサーチャーです。Web検索/Deep Researchを使い、最新の一次情報に当たって「${asset.symbol} ${name0}」(${asset.market})を調べてください。`);
-    L.push('私の判断支援アプリARGUSは価格・テクニカル・信用需給は見えますが、ニュースや定性材料は十分に見えません。そこをあなたに補ってほしい。');
-    if (strat.status !== 'mock' && strat.price != null) {
-      L.push(`現在値 ${strat.price}(前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'})・ARGUS判断 ${strat.action}。`);
+    L.push(`あなたは投資の専門家です。私の判断支援アプリARGUSが出した「${asset.symbol} ${name0}」(${asset.market})の診断を渡します。`);
+    L.push('大前提: ニュースや一般的な地合いはあなたの方が詳しい。だからここでは、ARGUSが掴んでいる「Web検索だけでは取れない情報」を軸に判断してほしい。');
+    L.push('');
+    L.push('【ARGUSにしか見えない情報 — これを最重視して】');
+    const flow = sc?.flow?.bigNetRatio ?? strat.bigFlowRatio;
+    if (flow != null) L.push(`■ 大口資金フロー(moomoo板・純流入率): ${(flow * 100).toFixed(0)}%`);
+    if (sc?.nisshokin?.ratio != null) L.push(`■ 日証金倍率: ${sc.nisshokin.ratio}（1未満=売り長=踏み上げ燃料）`);
+    if (sc?.shortDisclosed) L.push(`■ 機関の大口空売り(JPX開示): ${sc.shortDisclosed.ratioPct}%（${sc.shortDisclosed.reporters}社）`);
+    if (sc?.flowInference && sc.flowInference.classification !== 'UNCONFIRMED') {
+      const p = sc.flowInference.probabilities;
+      L.push(`■ フロー推定(誰が動かしているか): 新規買い${Math.round(p.newLongAccumulation * 100)}% / 買い戻し${Math.round(p.shortCovering * 100)}% / 分配${Math.round(p.distribution * 100)}% / ノイズ${Math.round(p.retailNoise * 100)}%（確度${sc.flowInference.confidence}）`);
     }
+    if (sc?.scoreTrackRecord && sc.scoreTrackRecord.n >= 5) {
+      const t = sc.scoreTrackRecord;
+      L.push(`■ ARGUS校正: このscore水準は過去${t.n}件中${t.upRate != null ? `${Math.round(t.upRate * 100)}%上昇` : ''}${t.avgRetPct != null ? `(平均${t.avgRetPct >= 0 ? '+' : ''}${t.avgRetPct}%)` : ''}`);
+    }
+    if (sc?.postureCalibration?.hitRate != null) L.push(`■ この地合い(${sc.postureCalibration.posture})のエンジン的中率: ${Math.round(sc.postureCalibration.hitRate * 100)}%（n=${sc.postureCalibration.n}）`);
+    else if (sc?.engineCalibration?.hitRate != null) L.push(`■ ARGUSエンジン全体の的中率: ${Math.round(sc.engineCalibration.hitRate * 100)}%（n=${sc.engineCalibration.n}）`);
+    if (sc?.callJa) L.push(`■ ARGUSの一言コール: ${sc.callJa}`);
     L.push('');
-    L.push('調べてほしいこと(必ずWebの一次情報・日付を添えて):');
-    L.push('(1) 直近2週間の重要ニュース・適時開示・決算・ガイダンス変更');
-    L.push('(2) 直近の値動きの「理由」— 何が買い/売りの材料か(マクロ連動も含む)');
-    L.push('(3) 機関投資家・大株主・インサイダーの動き(大量保有報告・空売り・自社株買い等)');
-    L.push('(4) 業界/テーマ/競合/規制・国策の状況');
-    L.push('(5) 強気材料と弱気材料を箇条書きで対比');
+    L.push('【参考(あなたの方が詳しいはず)】');
+    if (strat.status !== 'mock' && strat.price != null) L.push(`■ 現在値 ${strat.price}（前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}）・ARGUS判断 ${strat.action}`);
+    if (sc?.metrics) L.push(`■ テクニカル: RSI14=${sc.metrics.rsi14}・25日線乖離${sc.metrics.ma25DiffPct ?? '—'}%`);
+    if (strat.catalystNoteJa) L.push(`■ 直近の材料(ARGUS把握分): ${strat.catalystNoteJa}`);
     L.push('');
-    L.push('最後に必ず: 【新規買い/買い戻し/様子見/回避】の確率配分(%)・確信度(高/中/低)・根拠・出典URL・次に確認すべき条件 を出してください。断定ではなく確率で。');
+    L.push('依頼:');
+    L.push('(1) Web/Deep ResearchのOSINT(直近2週の開示・決算・大株主/空売り/自社株買い・業界/国策)で、上のARGUSの需給読みを「補強 or 反証」して');
+    L.push('(2) 強気材料と弱気材料を対比');
+    L.push('(3) 最後に必ず:【新規買い/買い戻し/様子見/回避】の確率配分(%)・確信度(高/中/低)・根拠・出典URL・次に確認する条件。断定でなく確率で。');
+    L.push('売買指示ではなく判断材料の整理として。');
     const text = L.join('\n');
     try {
       await navigator.clipboard.writeText(text);
-      setGemCopied(true);
-      window.setTimeout(() => setGemCopied(false), 2500);
+      setLlmCopied(true);
+      window.setTimeout(() => setLlmCopied(false), 2500);
     } catch {
       window.prompt('コピーできませんでした。手動で選択してください:', text);
     }
@@ -513,7 +505,9 @@ const SortableAssetRow: React.FC<{
           )}
           {scout && scout !== 'loading' && scout !== 'error' && scout.status === 'live' && scout.assessment && (
             <div className="scout">
-              <div className="scout__stance">⚡ {scout.assessment.stance} <span className="scout__score">score {scout.assessment.score >= 0 ? '+' : ''}{scout.assessment.score}</span></div>
+              {scout.callJa && <div className="scout__call">⚡ {scout.callJa}</div>}
+              {scout.narrativeJa && <div className="scout__story">{scout.narrativeJa}</div>}
+              <div className="scout__stance">{scout.assessment.stance} <span className="scout__score">score {scout.assessment.score >= 0 ? '+' : ''}{scout.assessment.score}</span></div>
               {scout.scoreTrackRecord && scout.scoreTrackRecord.n >= 5 && (
                 <div className="scout__track">
                   📊 この水準の実績: 過去{scout.scoreTrackRecord.n}件中
@@ -592,15 +586,10 @@ const SortableAssetRow: React.FC<{
                   {scout === 'loading' ? '診断中…' : '⚡ エントリー診断'}
                 </button>
               )}
-              <button className="asset-mini" aria-label={`Copy ${asset.symbol} prompt for GPT Pro`}
-                      title="この銘柄についてGPT-5.5 Proに相談するプロンプトをコピー"
-                      onClick={copyProPrompt}>
-                {proCopied ? '✓ Copied' : '🤖 GPT相談'}
-              </button>
-              <button className="asset-mini" aria-label={`Copy ${asset.symbol} OSINT prompt for Gemini`}
-                      title="Geminiアプリ(Deep Research)でOSINT調査するプロンプトをコピー"
-                      onClick={copyGeminiOsint}>
-                {gemCopied ? '✓ Copied' : '🔮 Gemini OSINT'}
+              <button className="asset-mini" aria-label={`Copy ${asset.symbol} consult prompt for an LLM`}
+                      title="Gemini/GPTに相談するプロンプトをコピー。フロー・信用需給・ARGUS校正実績を先頭に置いたモート起点プロンプト(先に⚡診断を押すと中身が濃くなります)"
+                      onClick={copyLlmConsult}>
+                {llmCopied ? '✓ Copied' : '🧠 AI相談'}
               </button>
               <button className="asset-mini asset-mini--danger" aria-label={`Remove ${asset.symbol}`} onClick={() => onRemove(asset.id)}>Remove</button>
             </span>

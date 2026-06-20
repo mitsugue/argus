@@ -5118,6 +5118,95 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
         stance = "見送り"
     return {"stance": stance, "score": round(score, 2), "reasonsJa": reasons}
 
+# v3 (2026-06-20, user: 「もっとARGUS中心に」): turn the score/flow/credit/
+# calibration into a one-line CALL + a 2-3 sentence STORY grounded in the data
+# Gemini/GPT can't fetch (flow/credit/our own track record). This is the
+# narrative the user otherwise leaves ARGUS to get from an LLM — brought
+# in-house. Not a buy/sell order: a framing of the decision.
+_CALL_BY_STANCE = {
+    "攻め好機(候補)": "買い場(候補)",
+    "押し目買い検討圏": "押し目買い検討",
+    "中立(急がない)": "様子見(急がない)",
+    "見送り": "見送り",
+}
+_FLOW_SHORT = {"SHORT_COVERING": "買い戻し主導", "NEW_LONG_ACCUMULATION": "新規買い流入",
+               "DISTRIBUTION": "売り抜け疑い", "RETAIL_NOISE": "個人ノイズ"}
+_FLOW_STORY = {
+    "SHORT_COVERING": "大口は買い戻し主導の疑い(踏み上げ燃料が残存)",
+    "NEW_LONG_ACCUMULATION": "新規の買いが入っている兆候(融資残増/大口純流入)",
+    "DISTRIBUTION": "上値で売り抜けの疑い(大口純流出/信用の手仕舞い)",
+    "RETAIL_NOISE": "個人・テーマ性の短期ノイズの可能性(信用の裏付けが薄い)",
+    "UNCONFIRMED": "需給の主体は断定できず(板・VWAPが未接続)",
+}
+
+def _scout_narrative(assess, flow_inf, ctx, jsf_sig, short_disclosed, m,
+                     score_track, engine_cal, posture_cal, is_us):
+    """Pure (unit-tested): compose (callJa, narrativeJa) from the assembled
+    scout signals. Leads with the MOAT (flow/credit/calibration). Returns
+    (None, None) when the assessment is missing."""
+    if not isinstance(assess, dict):
+        return None, None
+    ctx = ctx or {}
+    stance = assess.get("stance") or "中立(急がない)"
+    score = assess.get("score")
+    score_s = f"{'+' if (score or 0) >= 0 else ''}{score}"
+    cls = (flow_inf or {}).get("classification") if isinstance(flow_inf, dict) else None
+    regime = ctx.get("regime")
+    posture = ctx.get("posture")
+    rsi = (m or {}).get("rsi14") if isinstance(m, dict) else None
+
+    # ── one-line call: the call + up to 3 dominant context bits ──
+    bits = []
+    if regime in ("RISK_OFF", "EVENT_WAIT"):
+        bits.append(f"地合い{regime}")
+    elif posture == "elevated":
+        bits.append("金利逆風")
+    elif regime == "RISK_ON":
+        bits.append("地合いRISK_ON")
+    if cls and cls != "UNCONFIRMED" and _FLOW_SHORT.get(cls):
+        bits.append(_FLOW_SHORT[cls])
+    if isinstance(rsi, (int, float)):
+        if rsi <= 30:
+            bits.append(f"RSI{rsi}売られすぎ")
+        elif rsi >= 70:
+            bits.append(f"RSI{rsi}買われすぎ")
+    call = _CALL_BY_STANCE.get(stance, stance)
+    call_ja = call + (" — " + "・".join(bits[:3]) if bits else "")
+
+    # ── 2-3 sentence story ──
+    sents = []
+    ground = regime or ("elevated(金利逆風)" if posture == "elevated" else (posture or "中立"))
+    sents.append(f"地合いは{ground}、ARGUSの評価は『{stance}』(score {score_s})。")
+    if is_us:
+        sents.append("米国は信用需給(日証金・空売り開示)が未接続のため、フロー・テクニカル・地合いベースの判断。")
+    else:
+        extra = []
+        if isinstance(jsf_sig, dict) and isinstance(jsf_sig.get("ratio"), (int, float)):
+            extra.append(f"日証金倍率{jsf_sig['ratio']}")
+        if short_disclosed and short_disclosed.get("ratio"):
+            extra.append(f"機関空売り{round(short_disclosed['ratio'] * 100, 1)}%")
+        story = _FLOW_STORY.get(cls or "UNCONFIRMED")
+        sents.append(f"需給の読み: {story}" + (f"({'・'.join(extra)})" if extra else "") + "。")
+    # calibration — the thing no LLM has
+    cal_bits = []
+    if isinstance(score_track, dict) and (score_track.get("n") or 0) >= 5:
+        st = score_track
+        sub = []
+        if st.get("upRate") is not None:
+            sub.append(f"{round(st['upRate'] * 100)}%が上昇")
+        if st.get("avgRetPct") is not None:
+            sub.append(f"平均{'+' if st['avgRetPct'] >= 0 else ''}{st['avgRetPct']}%")
+        cal_bits.append(f"このscore水準は過去{st['n']}件中" + ("・".join(sub) if sub else "—"))
+    if isinstance(posture_cal, dict) and posture_cal.get("hitRate") is not None and (posture_cal.get("n") or 0) >= 10:
+        cal_bits.append(f"この地合い({posture_cal.get('posture')})のエンジン的中率{round(posture_cal['hitRate'] * 100)}%(n={posture_cal['n']})")
+    elif isinstance(engine_cal, dict) and engine_cal.get("hitRate") is not None:
+        cal_bits.append(f"エンジン全体の的中率{round(engine_cal['hitRate'] * 100)}%(n={engine_cal.get('n')})")
+    if cal_bits:
+        sents.append("校正: " + "・".join(cal_bits) + "(参考値・蓄積中)。")
+    else:
+        sents.append("校正: 実績はまだ参考段階(20件未満)。サイズは控えめに。")
+    return call_ja, " ".join(sents)
+
 def get_entry_scout(sym, market="JP"):
     now = time.time()
     ck = f"{market}:{sym}"
@@ -5259,6 +5348,16 @@ def get_entry_scout(sym, market="JP"):
         ],
         "noteJa": "売買指示ではなく、入る前の論点整理。最終判断と数量はあなたのルールで。",
     }
+    # v3 (2026-06-20): engine track record + this-regime calibration (the moat
+    # no LLM has), and the one-line CALL + STORY composed from all of the above.
+    _led = _ledger_summary() or {}
+    out["engineCalibration"] = _led.get("overall")          # {days,n,hitRate,brierMean} | None
+    _pl = reg_label if reg_ok else None                     # when regime live, == marketPosture key
+    _pc = (_led.get("byPosture") or {}).get(_pl) if _pl else None
+    out["postureCalibration"] = ({"posture": _pl, **_pc} if isinstance(_pc, dict) else None)
+    out["callJa"], out["narrativeJa"] = _scout_narrative(
+        assess, out["flowInference"], out["context"], jsf_sig, short_disclosed,
+        m, out["scoreTrackRecord"], out["engineCalibration"], out["postureCalibration"], is_us)
     # If a credit/short source was momentarily down, cache only briefly so the
     # next diagnosis self-heals instead of showing a 30-min gap (検証で確認).
     src_down = jsf_status == "source_unavailable" or short_status == "source_unavailable"

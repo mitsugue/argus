@@ -818,7 +818,10 @@
 /* entry-scout-v1: 瞬間エントリー診断 block inside the strategy card. */
 .scout { margin: 10px 14px; padding: 10px 12px; border: 1px solid rgba(91,141,239,0.35); border-radius: 8px; background: rgba(91,141,239,0.06); }
 .scout--note { border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.03); font-size: 12px; color: var(--text-faint); }
-.scout__stance { font-size: 13px; font-weight: 700; }
+/* v10.30: the one-line CALL + moat-grounded STORY headline the scout panel. */
+.scout__call { font-size: 15px; font-weight: 800; line-height: 1.35; color: var(--accent, #5b8def); margin-bottom: 4px; }
+.scout__story { font-size: 12px; line-height: 1.55; color: var(--text-sub, #c7d0e0); margin-bottom: 8px; }
+.scout__stance { font-size: 12px; font-weight: 700; color: var(--text-faint); }
 .scout__score { font-weight: 400; font-size: 11px; color: var(--text-faint); margin-left: 6px; }
 .scout__reasons { margin: 6px 0 4px; padding-left: 18px; font-size: 12px; color: var(--text-sub); }
 .scout__reasons li { margin: 2px 0; }

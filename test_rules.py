@@ -574,6 +574,55 @@ def test_entry_scout_technicals_scored_and_visible():
     assert any("ボリンジャー" in r for r in a["reasonsJa"])
 
 
+# ── Scout narrative (callJa + story, v3, v10.30) ────────────────────
+def _narr_metrics(rsi=45.0):
+    return {"rsi14": rsi, "ret1": 0.5, "ret5": -1.0, "ret20": 2.0}
+
+
+def test_scout_narrative_short_covering_story_leads_with_moat():
+    assess = {"stance": "押し目買い検討圏", "score": 0.8, "reasonsJa": []}
+    flow = {"classification": "SHORT_COVERING"}
+    ctx = {"posture": "elevated", "regime": "EVENT_WAIT"}
+    jsf = {"ratio": 0.7}
+    short = {"ratio": 0.06}
+    track = {"n": 12, "upRate": 0.75, "avgRetPct": 3.1}
+    eng = {"n": 133, "hitRate": 0.586}
+    pcal = {"posture": "EVENT_WAIT", "n": 89, "hitRate": 0.618}
+    call, narr = scanner._scout_narrative(assess, flow, ctx, jsf, short,
+                                          _narr_metrics(), track, eng, pcal, False)
+    assert call.startswith("押し目買い検討")
+    assert "買い戻し主導" in call                      # flow class surfaced in the call
+    assert "買い戻し主導の疑い" in narr                  # moat story
+    assert "日証金倍率0.7" in narr and "機関空売り6.0%" in narr
+    assert "過去12件" in narr                           # score-bucket calibration
+    assert "EVENT_WAIT" in narr and "62%" in narr       # this-regime engine hit rate
+
+
+def test_scout_narrative_us_omits_credit_and_notes_gap():
+    assess = {"stance": "中立(急がない)", "score": 0.0, "reasonsJa": []}
+    flow = {"classification": "UNCONFIRMED"}
+    ctx = {"posture": "neutral", "regime": "RISK_ON"}
+    call, narr = scanner._scout_narrative(assess, flow, ctx, None, None,
+                                          _narr_metrics(72.0), None, {"n": 133, "hitRate": 0.586},
+                                          None, True)
+    assert "様子見" in call and "RSI72.0買われすぎ" in call
+    assert "信用需給" in narr and "未接続" in narr        # honest US gap
+    assert "エンジン全体の的中率59%" in narr             # falls back to engine-overall
+
+
+def test_scout_narrative_thin_calibration_warns():
+    assess = {"stance": "見送り", "score": -1.5, "reasonsJa": []}
+    call, narr = scanner._scout_narrative(assess, {"classification": "DISTRIBUTION"},
+                                          {"posture": "elevated"}, None, None,
+                                          _narr_metrics(), {"n": 2}, None, None, False)
+    assert call.startswith("見送り")
+    assert "20件未満" in narr                           # thin-data caveat, not a fake stat
+
+
+def test_scout_narrative_none_when_no_assessment():
+    assert scanner._scout_narrative(None, {}, {}, None, None, {}, None, None, None, False) == (None, None)
+
+
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────
 def test_margin_signal_requires_two_weeks():
     assert scanner._margin_signal(None) is None
