@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.34.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.35.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.34.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.35.0。
 
 ---
 
@@ -36,6 +36,14 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.35.0 運用正直化(GPT Proレビューの有効分のみ反映) — (#10)自己採点表示にsample-size注記
+  (n件=相関銘柄含む・独立試行でない・実効サンプル小)。(#6)AI Reviewの古い/矛盾記述を修正
+  (「outcome trackingなし」→台帳で稼働中・「automated AI判定pending」矛盾を解消・Entry Scout/Flow/
+  closepin/market-alerts通知を正しく記載)。(#5)/api/argus/calibrationを_ledger_summary(本物)に接続
+  (旧=Render揮発ファイルで常時ゼロのfootgun除去・deprecated明記)。GPTの他項目は既に対応済み
+  (#1 versionはv10.33で根本修正・#2 closepin EC2発火確認済Mon初記録待ち・#11 secret監査=コミット履歴に
+  ハードコード無し)か大型で後続(#3 quote entitlement・#4 AI fresh/stale UI・#5 Ledger Health画面・
+  #9 scanner分割)。
 - v10.34.0 Market Regime安定化(last-known-good hold) — 8 ETFの一部だけ取得成功(TD無料枠制限)だと
   gsc()でunavailable groupが0.0扱いになり軸が偏ってlabelが振れていた(再起動/6hキャッシュ満了ごとに別subset
   →別label、6h固定で毒化)。_REGIME_LAST_GOOD(full+liveのみ保存)を導入し、fresh計算がpartial/mockの時は
@@ -243,7 +251,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.34.0**
+- **現在バージョン: v10.35.0**
 
 ---
 

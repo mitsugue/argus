@@ -1365,13 +1365,24 @@ def api_margin():
 # ━━━ A.R.G.U.S. — calibration ledger API (React frontend) ━━━
 @app.route("/api/argus/calibration")
 def api_argus_calibration():
-    """Aggregate hit-rate / Brier / reliability over the rolling window."""
-    try:
-        window = int(request.args.get("window", "30"))
-    except (TypeError, ValueError):
-        window = 30
-    window = max(1, min(window, 365))
-    return jsonify(argus_ledger.aggregate_stats(window_days=window))
+    """DEPRECATED (v10.35): this used to read a Render-EPHEMERAL local jsonl
+    (argus_ledger.aggregate_stats) that is always empty in production, so it
+    reported all-zero hit rates — a footgun for any external caller. It now
+    returns the REAL scored calibration from the `ledger` branch summary (the
+    same source the Today screen uses). Read the ledger branch directly going
+    forward; this shim stays only so old links don't silently lie."""
+    real = _ledger_summary() or {}
+    return jsonify({
+        "deprecated": True,
+        "noteJa": "旧実装はRender揮発ファイルを読み常時ゼロでした。現在は台帳ブランチの実集計"
+                  "(_ledger_summary)に接続。今後はledgerブランチを直接参照してください。",
+        "source": "ledger-branch-summary",
+        "updated": real.get("updated"),
+        "overall": real.get("overall"),
+        "byPosture": real.get("byPosture"),
+        "layers": real.get("layers"),
+        "aiDirectional": real.get("aiDirectional"),
+    })
 
 
 @app.route("/api/argus/picks/today")

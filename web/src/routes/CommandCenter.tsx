@@ -233,6 +233,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
                 <> ・センサー1日 <b>{Math.round((ledger.data.layers.layer1.byHorizon['1'].hitRate ?? 0) * 100)}%</b>({ledger.data.layers.layer1.byHorizon['1'].n}件)</>
               )}
               <div className="jlog__acc-note">{ledger.data.noteJa}</div>
+              {/* Sample-size honesty (v10.35): n counts predictions, not independent
+                  trials — same-day/same-theme names are correlated. */}
+              <div className="jlog__acc-warn">
+                ※ {ledger.data.overall.n}件は{ledger.data.overall.days}営業日分で、同日・同テーマの相関した銘柄を含むため独立試行ではありません。実効サンプルは件数より小さく、20営業日ほど貯まるまでは参考値です。
+              </div>
             </div>
           )}
           {/* closepin-v1: same-day 14:30-pin → close scoring,独立した第二台帳 */}
