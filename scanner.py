@@ -3732,13 +3732,17 @@ def api_argus_ai_judgment():
     if cached:
         as_of = cached.get("asOf")
         age_min = _age_min_iso(as_of)
-        if cache_valid and cached is _AI_RESULT_CACHE["data"]:
+        restored = cached.get("runMode") == "restored"
+        # Freshness reflects the actual RUN age, not cache mechanics — a restored
+        # run sitting in a fresh-TTL cache is NOT "fresh" (it can be a day old).
+        ttl_min = _AI_CACHE_TTL / 60 + 5
+        if age_min is not None and age_min <= ttl_min and not restored:
             freshness, run_mode = "fresh", "cached"
-            expires_in = max(0, int((_AI_RESULT_CACHE["expires"] - now) / 60))
+            expires_in = max(0, int((_AI_RESULT_CACHE["expires"] - now) / 60)) if cache_valid else None
+        elif age_min is None or age_min < 24 * 60:
+            freshness, run_mode, expires_in = "persisted", ("restored" if restored else "cached"), None
         else:
-            # Restored from the ledger branch (or cache expired) → persisted.
-            freshness = "persisted" if (age_min is None or age_min < 24 * 60) else "stale"
-            run_mode, expires_in = "restored", None
+            freshness, run_mode, expires_in = "stale", ("restored" if restored else "cached"), None
         return jsonify({**cached, "runMode": run_mode,
                         "freshness": freshness, "ageMin": age_min,
                         "cacheExpiresInMin": expires_in,
@@ -5583,7 +5587,9 @@ def _ledger_health():
     scout = _scout_summary() or {}
     cpin = _closepin_summary() or {}
     ai_truth = _ai_judgment_truth()
-    ai_asof = ai_truth.get("asOf")
+    ai_cached = _ai_cached_result()                 # the real last run (cache or restored)
+    ai_asof = (ai_cached or {}).get("asOf")          # actual run time, not call time
+    ai_age = _age_min_iso(ai_asof)
     out = []
     po = pred.get("overall") or {}
     out.append({
@@ -5609,13 +5615,15 @@ def _ledger_health():
         "nextRunJa": "平日14:30 JST(ピン)+16:05採点", "trigger": "EC2 cron(GHは時刻窓で大抵拒否)",
         "staleWeekdays": weekday_gap(cpin.get("updated")),
         "noteJa": "リアルタイム価格が取れた行のみ採点。bridgeのライブ配信が前提。"})
+    # healthy = a recent run (<24h); stale = an old persisted run; empty = none.
+    ai_status = ("healthy" if (ai_cached and ai_age is not None and ai_age < 24 * 60)
+                 else "stale" if ai_cached
+                 else "empty")
     out.append({
         "id": "ai", "labelJa": "AI判定(GPT-5.5 + Gemini)",
-        "status": ("healthy" if ai_truth.get("status") in ("live", "partial")
-                   else "empty" if ai_truth.get("status") in ("not_run_yet", "no_cached_result", "disabled", "missing_keys")
-                   else "stale"),
+        "status": ai_status,
         "lastUpdated": (ai_asof[:10] if isinstance(ai_asof, str) else None),
-        "lastSuccessAt": ai_asof, "ageMin": _age_min_iso(ai_asof),
+        "lastSuccessAt": ai_asof, "ageMin": ai_age,
         "truthStatus": ai_truth.get("status"),
         "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_JUDGE_MODEL},
         "sampleCount": None, "tradingDays": None, "hitRate": None,
