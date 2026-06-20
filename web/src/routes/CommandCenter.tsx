@@ -73,12 +73,21 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const aiStateJa = useMemo(() => {
     if (aiJ.phase === 'connecting') return null;
     if (aiJ.data && (aiJ.data.status === 'live' || aiJ.data.status === 'partial')) {
+      // v10.36 (#4): distinguish fresh / persisted / stale + show the models, so
+      // a lapsed 30-min cache doesn't read as "AI doesn't exist".
+      const d = aiJ.data as typeof aiJ.data & {
+        freshness?: string; ageMin?: number | null;
+        models?: { primary?: string | null; checker?: string | null };
+      };
       const t = Date.parse(aiJ.data.asOf);
-      const m = Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : null;
-      const age = m == null ? '' : m < 60 ? `${m}分前` : `${Math.round(m / 60)}時間前`;
-      return `🤖 AI見解: ${age}の実行(${aiJ.data.status})。次回は平日16:05に自動実行。`;
+      const m = d.ageMin ?? (Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : null);
+      const age = m == null ? '' : m < 60 ? `${m}分前` : m < 1440 ? `${Math.round(m / 60)}時間前` : `${Math.round(m / 1440)}日前`;
+      const tag = d.freshness === 'fresh' ? '最新' : d.freshness === 'persisted' ? '保持中(前回成功)'
+        : d.freshness === 'stale' ? '古い' : aiJ.data.status;
+      const models = d.models?.primary ? ` [${d.models.primary}+${d.models.checker}]` : '';
+      return `🤖 AI見解: ${age}の実行・${tag}${models}。ルール判定が主・AIは時刻付きの第二意見。次回 平日16:05。`;
     }
-    return '🤖 AI見解: 直近の実行なし(平日16:05に自動実行。それまではルール判定のみ)。';
+    return '🤖 AI見解: まだ未実行(平日16:05に自動実行。それまではルール判定で稼働中)。';
   }, [aiJ.data, aiJ.phase]);
   // The engine follows the USER's actual watchlist (dynamic symbols, v9.8).
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
@@ -333,6 +342,21 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             {priority.length} of {totalNamed} names · view all
           </button>
         </div>
+        {(() => {
+          // v10.36 (#3): honest quote freshness — pushed every ~15s, but say
+          // 'unknown' on entitlement until the bridge confirms realtime vs 15-min.
+          const qf = (jp.data as { quoteFreshness?: { entitlement?: string; newestAgeSec?: number | null; session?: string } } | null)?.quoteFreshness;
+          if (!qf) return null;
+          const entJa = qf.entitlement === 'realtime' ? 'リアルタイム' : qf.entitlement === 'delayed' ? '15分遅延' : '未確認';
+          const sessJa = qf.session === 'open' ? '取引時間中' : qf.session === 'closed' ? '引け後/休場' : '';
+          return (
+            <div className="watch-fresh">
+              📡 moomoo配信: {qf.newestAgeSec != null ? `${qf.newestAgeSec}秒前` : '—'}
+              {sessJa && ` · ${sessJa}`} · データ権限 <b>{entJa}</b>
+              {qf.entitlement !== 'realtime' && '（配信は速いが元データの権限が未確認のため realtime と断定せず）'}
+            </div>
+          );
+        })()}
         <div className="card watch-list">
           {priority.length > 0
             ? priority.map((row) => <CompactWatchRow key={row.symbol} entry={row} />)

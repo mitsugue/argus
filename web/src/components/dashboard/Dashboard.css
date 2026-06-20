@@ -446,6 +446,8 @@
 
 /* ── Watch row (per-stock) ──────────────────────────────────────────── */
 
+.watch-fresh { margin: 0 2px 6px; font-size: 10.5px; line-height: 1.5; color: var(--text-faint, #5f6b78); }
+.watch-fresh b { color: var(--text-sub, #8b98a7); }
 .watch-list {
   display: flex;
   flex-direction: column;

@@ -1983,7 +1983,7 @@ def _overlay_pushed(snapshot, market, requested):
         if not isinstance(snapshot, dict):
             return snapshot
         now = time.time()
-        fresh = {sym: p["row"] for sym, p in (_PUSHED_QUOTES.get(market) or {}).items()
+        fresh = {sym: p for sym, p in (_PUSHED_QUOTES.get(market) or {}).items()
                  if now - p["ts"] <= _PUSH_TTL}
         if not fresh:
             return snapshot
@@ -1992,8 +1992,19 @@ def _overlay_pushed(snapshot, market, requested):
         # on a Saturday (user caught this 2026-06-20). US session check is
         # left to the provider for now.
         jp_closed = (market == "JP" and not _jp_market_open())
-        def _stamp(row):
-            return {**row, "status": "delayed", "session": "closed"} if jp_closed else row
+        session = "closed" if jp_closed else ("open" if market == "JP" else "unknown")
+        def _stamp(p):
+            # v10.36 (#3): per-quote freshness so the UI/inference can be honest.
+            # ageSec = how long since the bridge pushed; entitlement carried from
+            # the bridge (default unknown). A quote can be pushed every 15s yet
+            # still be 15-min DELAYED at source — these are different facts.
+            row = p["row"]
+            age = int(now - p["ts"])
+            stamped = {**row, "ageSec": age, "session": session,
+                       "entitlement": row.get("entitlement", "unknown")}
+            if jp_closed:
+                stamped["status"] = "delayed"
+            return stamped
         stocks, seen, overlaid = [], set(), 0
         for q in snapshot.get("stocks", []):
             sym = q.get("symbol")
@@ -2010,8 +2021,17 @@ def _overlay_pushed(snapshot, market, requested):
                 overlaid += 1
         if overlaid == 0:
             return snapshot
+        ages = [now - p["ts"] for p in fresh.values()]
+        ents = {p["row"].get("entitlement", "unknown") for p in fresh.values()}
         out = {**snapshot, "stocks": stocks, "realtimeCount": overlaid,
-               "marketOpen": (None if market != "JP" else _jp_market_open())}
+               "marketOpen": (None if market != "JP" else _jp_market_open()),
+               "quoteFreshness": {
+                   "session": session,
+                   "newestAgeSec": int(min(ages)) if ages else None,
+                   "oldestAgeSec": int(max(ages)) if ages else None,
+                   "entitlement": (ents.pop() if len(ents) == 1 else "mixed"),
+                   "noteJa": "moomooブリッジは約15秒毎に更新。entitlement=unknownの間は、配信が速くても"
+                             "元データがリアルタイムか15分遅延か未確認のため『リアルタイム』と断定しません。"}}
         if out.get("status") == "mock":
             out["status"] = "partial"   # real pushed data beats an all-mock claim
         if jp_closed and out.get("status") == "live":
@@ -2046,13 +2066,21 @@ def api_argus_quote_push():
             price = float(s["price"])
             if not (price > 0 and math.isfinite(price)):
                 continue
+            # entitlement (v10.36, #3): the bridge MAY report whether the moomoo
+            # account data is realtime or 15-min delayed. Until it does, we say
+            # "unknown" and the UI must NOT claim realtime. exchangeTs (epoch s
+            # or ISO) is the venue's own timestamp when the bridge can supply it.
+            ent = str(s.get("entitlement") or "unknown").lower()
+            if ent not in ("realtime", "delayed", "unknown"):
+                ent = "unknown"
             row = {"symbol": sym,
                    "price": round(price, 4),
                    "changeAbs": round(float(s.get("changeAbs") or 0.0), 4),
                    "changePct": round(float(s.get("changePct") or 0.0), 4),
                    "volume": int(float(s.get("volume") or 0)),
                    "date": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
-                   "status": "live", "source": "moomoo-rt"}
+                   "status": "live", "source": "moomoo-rt",
+                   "entitlement": ent, "exchangeTs": s.get("exchangeTs")}
             # Optional big-money flow (v10.2): today's cumulative in/out split
             # by order size from the bridge. Normalized here so the ratio
             # formula stays transparent and server-side.
@@ -3476,6 +3504,26 @@ def _arbitrate_ai(al, openai_out, gemini_out):
 def _ai_now_iso():
     return datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+def _age_min_iso(iso):
+    """Minutes since an ISO-8601 '…Z' timestamp; None if unparseable."""
+    if not iso or not isinstance(iso, str):
+        return None
+    try:
+        t = datetime.strptime(iso.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z")
+        return max(0, int((datetime.now(pytz.utc) - t).total_seconds() / 60))
+    except Exception:
+        return None
+
+def _next_weekday_run_iso(hh_jst, mm_jst):
+    """Next weekday occurrence of HH:MM JST as ISO (for ledger-health nextRun)."""
+    n = datetime.now(TZ_JST)
+    cand = n.replace(hour=hh_jst, minute=mm_jst, second=0, microsecond=0)
+    if cand <= n:
+        cand += timedelta(days=1)
+    while cand.weekday() >= 5:
+        cand += timedelta(days=1)
+    return cand.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 def _ai_judgment_truth():
     """Single source of truth for the automated-AI-judgment status.
 
@@ -3674,12 +3722,36 @@ def api_argus_ai_judgment():
     if not _OPENAI_API_KEY and not GEMINI_API_KEY:
         return jsonify(_ai_disabled_payload(
             "missing_keys", "AI judgment is enabled but no OpenAI/Gemini API key is configured on the server."))
+    # Freshness truth (v10.36, #4): distinguish a FRESH in-cache run from a
+    # PERSISTED one restored from the ledger branch (last good run, maybe from a
+    # prior day). A 30-min TTL lapsing does NOT mean yesterday's judgment ceased
+    # to exist — show it as persisted/stale with its age, not "no result".
+    now = time.time()
+    cache_valid = bool(_AI_RESULT_CACHE["data"]) and now < _AI_RESULT_CACHE["expires"]
     cached = _ai_cached_result()
     if cached:
-        run_mode = "restored" if cached.get("runMode") == "restored" else "cached"
-        return jsonify({**cached, "runMode": run_mode})
-    return jsonify(_ai_disabled_payload("no_cached_result",
-                                        "No cached AI judgment yet — an admin-triggered run is required."))
+        as_of = cached.get("asOf")
+        age_min = _age_min_iso(as_of)
+        if cache_valid and cached is _AI_RESULT_CACHE["data"]:
+            freshness, run_mode = "fresh", "cached"
+            expires_in = max(0, int((_AI_RESULT_CACHE["expires"] - now) / 60))
+        else:
+            # Restored from the ledger branch (or cache expired) → persisted.
+            freshness = "persisted" if (age_min is None or age_min < 24 * 60) else "stale"
+            run_mode, expires_in = "restored", None
+        return jsonify({**cached, "runMode": run_mode,
+                        "freshness": freshness, "ageMin": age_min,
+                        "cacheExpiresInMin": expires_in,
+                        "models": cached.get("models") or {"primary": _OPENAI_MODEL,
+                                                            "checker": _GEMINI_JUDGE_MODEL},
+                        "nextScheduledRun": _next_weekday_run_iso(16, 5),
+                        "nextScheduledRunJa": "平日16:05 JST(予測台帳cron)",
+                        "fallbackJa": "Action Labelは常にルールベースが主。AIは時刻付きの第二意見で、"
+                                      "未実行/失効でも判定の土台は変わりません。"})
+    return jsonify({**_ai_disabled_payload(
+        "not_run_yet", "まだ自動AI判定が実行されていません(次回 平日16:05 JST)。"),
+        "freshness": "not_run_yet", "nextScheduledRunJa": "平日16:05 JST(予測台帳cron)",
+        "fallbackJa": "Action Labelはルールベースで稼働中。AIは未実行(第二意見待ち)。"})
 
 @app.route("/api/argus/ai-judgment/run", methods=["POST"])
 def api_argus_ai_judgment_run():
@@ -5452,6 +5524,108 @@ def _scout_summary():
     _SCOUT_SUMMARY_CACHE["data"] = data
     _SCOUT_SUMMARY_CACHE["expires"] = now + (1800 if data else 600)
     return data
+
+_CLOSEPIN_SUMMARY_CACHE = {"data": None, "expires": 0.0}
+
+def _closepin_summary():
+    """The accumulated close-pin scoring (ledger/closepin/summary.json) — 30-min
+    cache, None until the 14:30 pin has been recorded+scored. Never raises."""
+    now = time.time()
+    if now < _CLOSEPIN_SUMMARY_CACHE["expires"]:
+        return _CLOSEPIN_SUMMARY_CACHE["data"]
+    data = None
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/closepin/summary.json", timeout=6)
+        if r.status_code == 200:
+            d = r.json()
+            data = d if isinstance(d, dict) else None
+    except Exception:
+        data = None
+    _CLOSEPIN_SUMMARY_CACHE["data"] = data
+    _CLOSEPIN_SUMMARY_CACHE["expires"] = now + (1800 if data else 600)
+    return data
+
+# ── Ledger Health (v10.36, #5) — one view of every self-scoring loop ─────────
+def _days_since_date(date_str):
+    """Calendar days since a 'YYYY-MM-DD' string; None if unparseable."""
+    try:
+        d = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+        return (datetime.now(TZ_JST).date() - d).days
+    except Exception:
+        return None
+
+def _ledger_health():
+    """Unified operational status of every ledger + the AI loop. Honest about
+    empty / stale / healthy — reads the branch summaries + AI truth only."""
+    today = datetime.now(TZ_JST).date()
+    # how many weekdays since a date (the real expected cadence)
+    def weekday_gap(date_str):
+        try:
+            d = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
+        n, c = 0, d
+        while c < today:
+            c += timedelta(days=1)
+            if c.weekday() < 5:
+                n += 1
+        return n
+
+    def state(updated, empty_ok=False):
+        if not updated:
+            return "empty"
+        gap = weekday_gap(updated)
+        if gap is None:
+            return "unknown"
+        return "healthy" if gap <= 1 else "stale"
+
+    pred = _ledger_summary() or {}
+    scout = _scout_summary() or {}
+    cpin = _closepin_summary() or {}
+    ai_truth = _ai_judgment_truth()
+    ai_asof = ai_truth.get("asOf")
+    out = []
+    po = pred.get("overall") or {}
+    out.append({
+        "id": "prediction", "labelJa": "予測台帳(本丸)",
+        "status": state(pred.get("updated")), "lastUpdated": pred.get("updated"),
+        "sampleCount": po.get("n"), "tradingDays": po.get("days"),
+        "hitRate": po.get("hitRate"),
+        "nextRunJa": "平日16:05 JST", "trigger": "EC2 cron + GH fallback",
+        "staleWeekdays": weekday_gap(pred.get("updated")),
+        "noteJa": "毎営業日16:05に当日記録+過去分採点。相関銘柄を含むためnは独立試行ではない。"})
+    out.append({
+        "id": "scout", "labelJa": "Scout校正(エントリー診断)",
+        "status": state(scout.get("updated")), "lastUpdated": scout.get("updated"),
+        "sampleCount": scout.get("n"), "tradingDays": None, "hitRate": None,
+        "nextRunJa": "平日16:05 JST(予測台帳と同時)", "trigger": "EC2 cron + GH fallback",
+        "staleWeekdays": weekday_gap(scout.get("updated")),
+        "noteJa": "scoreバケット/フロー分類を実現リターンで採点。最低20件まで参考値。"})
+    co = cpin.get("overall") or {}
+    out.append({
+        "id": "closepin", "labelJa": "引けピン(14:30→同日終値)",
+        "status": state(cpin.get("updated")), "lastUpdated": cpin.get("updated"),
+        "sampleCount": co.get("n"), "tradingDays": co.get("days"), "hitRate": co.get("hitRate"),
+        "nextRunJa": "平日14:30 JST(ピン)+16:05採点", "trigger": "EC2 cron(GHは時刻窓で大抵拒否)",
+        "staleWeekdays": weekday_gap(cpin.get("updated")),
+        "noteJa": "リアルタイム価格が取れた行のみ採点。bridgeのライブ配信が前提。"})
+    out.append({
+        "id": "ai", "labelJa": "AI判定(GPT-5.5 + Gemini)",
+        "status": ("healthy" if ai_truth.get("status") in ("live", "partial")
+                   else "empty" if ai_truth.get("status") in ("not_run_yet", "no_cached_result", "disabled", "missing_keys")
+                   else "stale"),
+        "lastUpdated": (ai_asof[:10] if isinstance(ai_asof, str) else None),
+        "lastSuccessAt": ai_asof, "ageMin": _age_min_iso(ai_asof),
+        "truthStatus": ai_truth.get("status"),
+        "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_JUDGE_MODEL},
+        "sampleCount": None, "tradingDays": None, "hitRate": None,
+        "nextRunJa": "平日16:05 JST(トークン設定時)", "trigger": "予測台帳cron",
+        "noteJa": "ルールベースが主、AIは時刻付き第二意見。失効してもルール判定は不変。"})
+    return {"asOf": _ai_now_iso(), "engineVersion": "ledger-health-v1", "ledgers": out}
+
+@app.route("/api/argus/ledger-health")
+def api_argus_ledger_health():
+    return jsonify(_ledger_health())
 
 _SCOUT_BATCH_CACHE = {"data": None, "expires": 0.0}
 

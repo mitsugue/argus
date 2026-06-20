@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.35.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.36.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.35.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.36.0。
 
 ---
 
@@ -36,6 +36,14 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.36.0 Operational Truth 3点(GPT Pro #3/#4/#5) — (#3)quote-pushにentitlement/exchangeTs受入、
+  _overlay_pushedが各行にageSec/session/entitlement、japan-watchlistにquoteFreshness top-level。
+  bridge未報告の間entitlement=unknownでUIはrealtime断定せず。(#4)/ai-judgmentにfreshness(fresh/persisted/
+  stale/not_run_yet)+ageMin+models+nextScheduledRun。_age_min_iso/_next_weekday_run_iso追加。
+  30分TTL失効=persisted表示(消滅扱いにしない)。(#5)_closepin_summary追加+/api/argus/ledger-health
+  (_ledger_health: 予測/Scout/closepin/AIの稼働状況=healthy/stale/empty・最終記録・次回・トリガー)。
+  フロント: useLedgerHealth+LedgerHealthCard(Guide)、CommandCenterにAI鮮度+moomoo鮮度行。型はnew
+  optional fieldをnarrow castで対応。92テスト緑。残P2: #9 scanner分割・統計CI化。
 - v10.35.0 運用正直化(GPT Proレビューの有効分のみ反映) — (#10)自己採点表示にsample-size注記
   (n件=相関銘柄含む・独立試行でない・実効サンプル小)。(#6)AI Reviewの古い/矛盾記述を修正
   (「outcome trackingなし」→台帳で稼働中・「automated AI判定pending」矛盾を解消・Entry Scout/Flow/
@@ -251,7 +259,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.35.0**
+- **現在バージョン: v10.36.0**
 
 ---
 

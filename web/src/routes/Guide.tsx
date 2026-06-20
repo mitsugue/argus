@@ -2,6 +2,7 @@ import React from 'react';
 import { PageShell } from './PageShell';
 import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
 import { BackupCard } from '../components/guide/BackupCard';
+import { LedgerHealthCard } from '../components/guide/LedgerHealthCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -45,6 +46,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.36.0', 'Operational Truth 3点 — ①moomoo価格に鮮度/権限を明示(配信は約15秒毎だが元データがrealtimeか15分遅延か未確認の間は「未確認」と正直表示、realtimeと断定しない)②AI判定をfresh/保持中/古いで区別表示(モデル名・次回実行・「ルールが主・AIは第二意見」を明記。30分TTL失効=判定消滅ではない)③Guideに「Ledger Health」追加 — 予測台帳/Scout/引けピン/AIの稼働状況(稼働中/遅延/蓄積前・最終記録・次回実行・トリガー)を一画面で確認'],
   ['v10.35.0', '運用の正直さ強化(GPT Proレビュー反映) — ①自己採点に「n件は相関銘柄を含み独立試行ではない/実効サンプルは小さめ」の注記を追加 ②説明書(AI Review)の古い記述を修正(「成績追跡なし」→台帳で稼働中、「AI判定はpending」の矛盾を解消) ③常時ゼロを返していた/calibrationエンドポイントを本物の台帳集計に接続。地合い安定化(v10.34)も反映'],
   ['v10.34.0', '地合い判定(Market Regime/Risk Level)が読み込むたびに揺れる問題を安定化 — 8本のETFの一部が取得失敗(Twelve Data無料枠の制限)すると残りだけで採点して評価が振れていました。直近の「全データ揃った評価」を保持し、不足時はそれを表示(最大24h・保持中は明記)。データが全部揃うと自動更新。コロコロ変わるのはノイズで、地合い自体が変わったわけではありません'],
   ['v10.33.0', 'バージョン表記が10.30で止まっていた不具合を修正 — package.jsonのバージョン更新が無言で失敗しており、v10.31〜v10.32.1の機能(スクロールのヌルヌル化・PWA自動更新・バックアップDLボタン・物語化診断など)は全て稼働していたのに表記だけ10.30のままでした。今後はバージョンが正しく上がります'],
@@ -155,6 +157,14 @@ export const Guide: React.FC = () => {
             ))}
           </div>
         </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Ledger Health (自己採点ループ)</span>
+          <span className="section-head__count">稼働状況</span>
+        </div>
+        <LedgerHealthCard />
       </section>
 
       <section>
