@@ -751,3 +751,19 @@ def test_scout_score_bucket():
     assert scanner._scout_score_bucket(-0.5) == "neutral"
     assert scanner._scout_score_bucket(-1.0) == "avoid"
     assert scanner._scout_score_bucket(None) == "neutral"
+
+
+# ── JP market-hours awareness (v10.26) ───────────────────────────────
+def test_jp_market_open_hours():
+    import datetime as _dt
+    jst = pytz.timezone("Asia/Tokyo")
+    mon_open = jst.localize(_dt.datetime(2026, 6, 22, 10, 0))    # Mon 10:00
+    mon_lunch = jst.localize(_dt.datetime(2026, 6, 22, 12, 0))   # Mon 12:00 (closed)
+    mon_pm = jst.localize(_dt.datetime(2026, 6, 22, 14, 0))      # Mon 14:00
+    mon_after = jst.localize(_dt.datetime(2026, 6, 22, 16, 0))   # Mon 16:00 (closed)
+    sat = jst.localize(_dt.datetime(2026, 6, 20, 13, 0))         # Sat (closed)
+    assert scanner._jp_market_open(mon_open) is True
+    assert scanner._jp_market_open(mon_lunch) is False
+    assert scanner._jp_market_open(mon_pm) is True
+    assert scanner._jp_market_open(mon_after) is False
+    assert scanner._jp_market_open(sat) is False

@@ -1953,6 +1953,17 @@ _PUSHED_QUOTES = {"JP": {}, "US": {}}   # market -> {symbol: {"row":…, "ts":�
 _PUSH_TTL  = 600                        # use pushed quotes for ≤ 10 min
 _PUSH_MAX  = 50                         # symbols per push request
 
+def _jp_market_open(now_jst=None):
+    """Pure (unit-tested): is the TSE cash session open right now? Weekday and
+    09:00–11:30 or 12:30–15:30 JST. Used to stop labelling weekend/after-hours
+    bridge pushes as 'live' — the bridge pushes 24/7 but a Saturday price is the
+    Friday close, not a real-time quote (user caught this 2026-06-20)."""
+    n = now_jst or datetime.now(TZ_JST)
+    if n.weekday() >= 5:           # Sat/Sun
+        return False
+    hm = n.hour * 60 + n.minute
+    return (9 * 60 <= hm <= 11 * 60 + 30) or (12 * 60 + 30 <= hm <= 15 * 60 + 30)
+
 def _overlay_pushed(snapshot, market, requested):
     """Copy of a watchlist snapshot with fresh pushed quotes overlaid (and
     holes filled for requested symbols the provider missed). Cache-safe —
@@ -1965,25 +1976,35 @@ def _overlay_pushed(snapshot, market, requested):
                  if now - p["ts"] <= _PUSH_TTL}
         if not fresh:
             return snapshot
+        # Honesty: outside the JP cash session a pushed quote is the last close,
+        # NOT a live price — label it 'delayed' so the UI never claims "live"
+        # on a Saturday (user caught this 2026-06-20). US session check is
+        # left to the provider for now.
+        jp_closed = (market == "JP" and not _jp_market_open())
+        def _stamp(row):
+            return {**row, "status": "delayed", "session": "closed"} if jp_closed else row
         stocks, seen, overlaid = [], set(), 0
         for q in snapshot.get("stocks", []):
             sym = q.get("symbol")
             seen.add(sym)
             if sym in fresh:
-                stocks.append({**q, **fresh[sym]})
+                stocks.append({**q, **_stamp(fresh[sym])})
                 overlaid += 1
             else:
                 stocks.append(q)
         for sym in requested or []:
             if sym in fresh and sym not in seen:
                 name = (_jq_name_for(sym) or sym) if market == "JP" else sym
-                stocks.append({**fresh[sym], "name": name, "nameJa": name})
+                stocks.append({**_stamp(fresh[sym]), "name": name, "nameJa": name})
                 overlaid += 1
         if overlaid == 0:
             return snapshot
-        out = {**snapshot, "stocks": stocks, "realtimeCount": overlaid}
+        out = {**snapshot, "stocks": stocks, "realtimeCount": overlaid,
+               "marketOpen": (None if market != "JP" else _jp_market_open())}
         if out.get("status") == "mock":
             out["status"] = "partial"   # real pushed data beats an all-mock claim
+        if jp_closed and out.get("status") == "live":
+            out["status"] = "partial"   # session closed → not a fully-live snapshot
         return out
     except Exception:
         return snapshot
