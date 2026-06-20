@@ -2761,27 +2761,30 @@ def get_market_regime_snapshot():
         "sourceStatuses": source_statuses,
         "dataLimitations": limitations,
     }
-    # Last-known-good hold (v10.34): a full+live reading is the source of truth.
-    # When this refresh is only partial/mock, serve the held reading (if recent)
-    # so the label stays put instead of flipping on a tilted ETF subset.
-    if status == "live" and etf_full:
-        _REGIME_LAST_GOOD["data"] = payload
-        _REGIME_LAST_GOOD["ts"] = now
-    elif (_REGIME_LAST_GOOD["data"] is not None
-          and now - _REGIME_LAST_GOOD["ts"] < _REGIME_LAST_GOOD_TTL):
-        held = dict(_REGIME_LAST_GOOD["data"])
-        held["asOf"] = _REGIME_LAST_GOOD["data"].get("asOf")
-        held["heldOverMin"] = int((now - _REGIME_LAST_GOOD["ts"]) / 60)
-        held["dataLimitations"] = (_REGIME_LAST_GOOD["data"].get("dataLimitations") or []) + [
-            f"ETFデータが一時的に不足したため、直近の完全な評価({held['heldOverMin']}分前)を保持表示中"
-            "（地合い判定がノイズで揺れないための安定化。次に全データが揃うと自動更新）。"]
+    # Last-known-good hold by ETF COVERAGE (v10.34): the label only wobbles when
+    # a recompute scores from a different ETF subset. So we replace the displayed
+    # reading ONLY when the new one is at least as complete (>= ETFs loaded) — or
+    # when the held one is stale (>24h). A thinner refresh is held over, marked.
+    new_cov = len(etf)
+    lg = _REGIME_LAST_GOOD
+    held_fresh = lg["data"] is not None and now - lg["ts"] < _REGIME_LAST_GOOD_TTL
+    # Adopt the fresh reading when: nothing held yet / it's stale, OR this refresh
+    # is FULL (always take fresh full data), OR it strictly improves coverage.
+    # An equal-or-thinner partial is held over so the label can't flip on noise.
+    if new_cov > 0 and (not held_fresh or etf_full or new_cov > lg.get("cov", 0)):
+        lg["data"], lg["ts"], lg["cov"] = payload, now, new_cov
+    elif held_fresh:
+        held = dict(lg["data"])
+        held["heldOverMin"] = int((now - lg["ts"]) / 60)
+        held["dataLimitations"] = (lg["data"].get("dataLimitations") or []) + [
+            f"ETFデータが一時的に不足したため、直近のより完全な評価({held['heldOverMin']}分前)を保持表示中"
+            "（地合い判定がノイズで揺れないための安定化。より完全なデータが揃うと自動更新）。"]
         payload = held
     if payload.get("status") != "mock":
         _REGIME_CACHE["data"]    = payload
-        # A partial WITHOUT a held-over reading must not stick for 6h — retry in
-        # 5 min so the board / class predictions self-heal quickly. A held-over
-        # (stable) reading can sit the full TTL.
-        full = payload.get("status") == "live"
+        # A full (all-ETF) reading can sit the 6h TTL; anything thinner retries
+        # in 5 min so coverage / self-heal improves quickly.
+        full = (payload.get("status") == "live") and not payload.get("heldOverMin")
         _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if full else 300)
     return payload
 
