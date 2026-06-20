@@ -632,6 +632,54 @@ def test_scout_narrative_none_when_no_assessment():
     assert scanner._scout_narrative(None, {}, {}, None, None, {}, None, None, None, False) == (None, None)
 
 
+# ── 24/7 event backbone wiring (v10.39) ──────────────────────────────
+def _clear_events():
+    scanner._EVENTS_ACTIVE.clear()
+    scanner._EVENTS_LOG.clear()
+
+
+def test_event_backbone_detects_limit_up(monkeypatch):
+    _clear_events()
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda *a, **k: True)
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)        # no real push in tests
+    monkeypatch.setattr(scanner, "_EVENT_BACKBONE_ENABLED", True)
+    # prev close 1000 (limit ±300) → price 1300 = S高. changeAbs = 300.
+    scanner._process_events_from_push("JP", [{"symbol": "9999", "price": 1300.0,
+                                              "changeAbs": 300.0, "changePct": 30.0}])
+    active = scanner._events_active_list()
+    types = {e["eventType"] for e in active}
+    assert "LIMIT_UP" in types
+    assert any(e["lifecycleState"] == "HIGH_ALERT" for e in active if e["eventType"] == "LIMIT_UP")
+
+
+def test_event_backbone_dedup_no_duplicate(monkeypatch):
+    _clear_events()
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda *a, **k: True)
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    row = [{"symbol": "9999", "price": 1300.0, "changeAbs": 300.0, "changePct": 30.0}]
+    scanner._process_events_from_push("JP", row)
+    scanner._process_events_from_push("JP", row)           # same anomaly again
+    limit_ups = [e for e in scanner._events_active_list() if e["eventType"] == "LIMIT_UP"]
+    assert len(limit_ups) == 1                              # deduped, no spam
+
+
+def test_event_backbone_respects_session_gate(monkeypatch):
+    _clear_events()
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda *a, **k: False)  # market closed
+    scanner._process_events_from_push("JP", [{"symbol": "9999", "price": 1300.0,
+                                              "changeAbs": 300.0, "changePct": 30.0}])
+    assert scanner._events_active_list() == []             # no fire when closed
+
+
+def test_event_backbone_disabled_flag(monkeypatch):
+    _clear_events()
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda *a, **k: True)
+    monkeypatch.setattr(scanner, "_EVENT_BACKBONE_ENABLED", False)
+    scanner._process_events_from_push("JP", [{"symbol": "9999", "price": 1300.0,
+                                              "changeAbs": 300.0, "changePct": 30.0}])
+    assert scanner._events_active_list() == []
+
+
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────
 def test_margin_signal_requires_two_weeks():
     assert scanner._margin_signal(None) is None

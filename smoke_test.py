@@ -123,6 +123,15 @@ def v_integrations():
     c, d = _get("/api/argus/integrations")
     return "providers" in d, f"keys={list(d.keys())[:4]}"
 
+def v_events_active():
+    c, d = _get("/api/argus/events-active")
+    return isinstance(d.get("events"), list) and "enabled" in d, f"enabled={d.get('enabled')} count={d.get('count')}"
+
+def v_event_status():
+    c, d = _get("/api/argus/event-backbone-status")
+    return ("enabled" in d) and d.get("schemaVersion") == "event-v1", \
+        f"enabled={d.get('enabled')} ntfy={d.get('ntfyConfigured')} jp={d.get('sessionJp')}"
+
 def v_admin_gated_401(path):
     def fn():
         try:
@@ -150,6 +159,8 @@ CHECKS = [
     ("catalysts", v_catalysts),
     ("symbol-search", v_symbol_search),
     ("integrations", v_integrations),
+    ("events-active", v_events_active),
+    ("event-backbone-status", v_event_status),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
 ]

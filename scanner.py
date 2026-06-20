@@ -18,6 +18,7 @@ from argus_rules import (  # pure scoring layer extracted v10.37 (#9)
     _scout_score_bucket, _margin_signal, _margin_assess_lines,
     _jsf_assess_lines, _short_disclosed_assess, _detect_gap,
     _entry_metrics, _flow_inference, _entry_scout_assess, _scout_narrative)
+import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 from flask import Flask, jsonify, request
 from collections import deque
 import argus_ledger  # Local — A.R.G.U.S. prediction ledger
@@ -2071,6 +2072,7 @@ def api_argus_quote_push():
     if not isinstance(stocks, list):
         return jsonify({"error": "bad_payload", "message": "expected {stocks: [...]}"}), 400
     now, accepted = time.time(), 0
+    _pushed_now = {}   # market -> [rows pushed this request] (for event detection)
     for s in stocks[:_PUSH_MAX]:
         try:
             market = str(s.get("market", "")).upper()
@@ -2115,12 +2117,160 @@ def api_argus_quote_push():
                 except (KeyError, TypeError, ValueError):
                     pass
             _PUSHED_QUOTES[market][sym] = {"row": row, "ts": now}
+            _pushed_now.setdefault(market, []).append(row)
             accepted += 1
         except Exception:
             continue
+    # 24/7 event backbone (v10.39): run deterministic Gear-0/1 anomaly detection
+    # on the just-pushed quotes (S高/急変/フロー異常). Cheap, no LLM, gated to
+    # real sessions — the existing bridge feeds this, so it works without any
+    # EC2 change. Never raises into the push response.
+    try:
+        for mkt, rows in _pushed_now.items():
+            _process_events_from_push(mkt, rows)
+    except Exception:
+        pass
     return jsonify({"accepted": accepted, "asOf": _ai_now_iso(),
                     "held": {m: len(v) for m, v in _PUSHED_QUOTES.items()}})
 
+
+# ━━━ 24/7 Gear-Shift Event Backbone (event-v1, v10.39) — Lean ━━━━━━━━━━━━━━━
+# Phase 2: deterministic Gear-0/1 detection on the bridge's existing 24/7 quote
+# pushes → in-memory event store with dedup + lifecycle → ntfy on meaningful new
+# events. NO LLM, NO new AWS infra. Gear 2/3 (AI deep scan) are feature-flagged
+# OFF until explicitly enabled. The whole subsystem is flag-guarded and wrapped
+# so a failure never touches the existing live endpoints.
+def _ev_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+_EVENT_BACKBONE_ENABLED = os.environ.get("EVENT_BACKBONE_ENABLED", "1") not in ("0", "false", "")
+_EVENT_GEAR2_ENABLED    = os.environ.get("EVENT_GEAR2_ENABLED", "0") not in ("0", "false", "")
+_EVENT_NTFY_MIN_SEV     = _ev_int("EVENT_NTFY_MIN_SEVERITY", 4)   # push only sev>=4
+_EVENT_TTL_SEC          = _ev_int("EVENT_TTL_HOURS", 8) * 3600
+_EVENTS_ACTIVE = {}                 # dedupKey -> latest envelope revision
+_EVENTS_LOG    = deque(maxlen=200)  # recent events (history)
+_EVENT_LOCK    = threading.Lock()
+_EVENT_STATE   = {"lastDetectionAt": None, "lastEventAt": None, "detections": 0}
+_EVENT_POSTURE = {
+    "LIMIT_UP": "LIMIT_UP_RISK", "LIMIT_DOWN": "LIMIT_DOWN_RISK",
+    "SPECIAL_QUOTE_RISK": "AVOID_CHASING", "PRICE_SPIKE": "AVOID_CHASING",
+    "PRICE_CRASH": "INVESTIGATE", "VOLUME_ANOMALY": "WATCH", "FLOW_ANOMALY": "WATCH",
+}
+
+def _us_market_open(now_et=None):
+    n = now_et or datetime.now(TZ_ET)
+    if n.weekday() >= 5:
+        return False
+    hm = n.hour * 60 + n.minute
+    return 9 * 60 + 30 <= hm <= 16 * 60
+
+def _event_ntfy(env):
+    """Push an event to the user's phone (ntfy). Topic from env only — never in
+    code/logs. Title ASCII (header limit); Japanese reason in the UTF-8 body."""
+    topic = os.environ.get("NTFY_TOPIC", "")
+    if not topic:
+        return
+    sev = env.get("severity", 1)
+    title = f"ARGUS: {env.get('symbol')} {env.get('eventType')}"
+    body = (f"{env.get('reasonJa') or ''}\n"
+            f"{env.get('market')} / {env.get('session')} / sev{sev} / {env.get('recommendedPosture')}")
+    try:
+        requests.post(f"https://ntfy.sh/{topic}", data=body.encode("utf-8"),
+                      headers={"Title": title, "Tags": "rotating_light" if sev >= 5 else "warning",
+                               "Priority": "urgent" if sev >= 5 else "high"}, timeout=10)
+    except Exception:
+        pass
+
+def _record_event(market, symbol, trig, now, session):
+    """Dedup + lifecycle + notify for one deterministic trigger. Lean: Gear 0/1
+    only, so severity decides the state directly (no AI queue unless enabled)."""
+    key = argus_events.dedup_key(market, symbol, trig["type"], now=now.astimezone(TZ_JST))
+    notify = False
+    with _EVENT_LOCK:
+        prev = _EVENTS_ACTIVE.get(key)
+        if prev and prev.get("severity", 0) >= trig["severity"]:
+            return                              # already have it at >= severity
+        env = argus_events.make_envelope(
+            event_type=trig["type"], symbol=symbol, market=market,
+            source="moomoo-bridge", trigger=trig, now=now,
+            recommended_posture=_EVENT_POSTURE.get(trig["type"], "WATCH"), gear=1)
+        env["ingestAt"] = now.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        env["lifecycleState"] = ("HIGH_ALERT" if trig["severity"] >= 5
+                                 else "VERIFIED" if trig["severity"] >= 4 else "OBSERVING")
+        env["expiresAt"] = (now + timedelta(seconds=_EVENT_TTL_SEC)).astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _EVENTS_ACTIVE[key] = env
+        _EVENTS_LOG.appendleft(env)
+        _EVENT_STATE["lastEventAt"] = env["ingestAt"]
+        do_notify, _why = argus_events.should_notify(prev, env)
+        notify = do_notify and env["severity"] >= _EVENT_NTFY_MIN_SEV
+        out = env
+    if notify:
+        _event_ntfy(out)
+
+def _process_events_from_push(market, rows):
+    """Run Gear-0 detection on the just-pushed quotes. Gated to real sessions so
+    a 24/7 bridge push of a stale weekend/after-hours price never fires."""
+    if not _EVENT_BACKBONE_ENABLED or not rows:
+        return
+    if market == "JP" and not _jp_market_open():
+        return
+    if market == "US" and not _us_market_open():
+        return
+    now = datetime.now(pytz.utc)
+    session = argus_events.session_label(now.astimezone(TZ_JST))
+    _EVENT_STATE["lastDetectionAt"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    _EVENT_STATE["detections"] += 1
+    for r in rows:
+        try:
+            price = r.get("price")
+            chg_abs = r.get("changeAbs")
+            prev_close = (price - chg_abs) if (price and isinstance(chg_abs, (int, float))) else None
+            flow = (r.get("flow") or {}).get("bigNetRatio")
+            quote = {"market": market, "symbol": r.get("symbol"), "price": price,
+                     "changePct": r.get("changePct"), "flowRatio": flow}
+            for trig in argus_events.detect_anomalies(quote, session, prev_close=prev_close):
+                _record_event(market, r["symbol"], trig, now, session)
+        except Exception:
+            continue
+
+def _events_active_list():
+    now = time.time()
+    with _EVENT_LOCK:
+        out = []
+        for e in _EVENTS_ACTIVE.values():
+            exp = e.get("expiresAt")
+            try:
+                if exp and datetime.strptime(exp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).timestamp() < now:
+                    continue
+            except Exception:
+                pass
+            out.append(e)
+    return sorted(out, key=lambda e: (-(e.get("severity") or 0), -argus_events.priority_score(e)))
+
+@app.route("/api/argus/events-active")
+def api_argus_events_active():
+    """Public read: current active 24/7 events for the frontend. Secret-free."""
+    active = _events_active_list()
+    return jsonify({"enabled": _EVENT_BACKBONE_ENABLED, "asOf": _ai_now_iso(),
+                    "schemaVersion": argus_events.SCHEMA_VERSION,
+                    "count": len(active), "events": active[:30]})
+
+@app.route("/api/argus/event-backbone-status")
+def api_argus_event_backbone_status():
+    """Public ops summary (no secrets) — for the Ledger Health / Ops view."""
+    with _EVENT_LOCK:
+        active = len(_EVENTS_ACTIVE)
+    return jsonify({
+        "enabled": _EVENT_BACKBONE_ENABLED, "gear2Enabled": _EVENT_GEAR2_ENABLED,
+        "activeCount": active, "schemaVersion": argus_events.SCHEMA_VERSION,
+        "lastDetectionAt": _EVENT_STATE["lastDetectionAt"], "lastEventAt": _EVENT_STATE["lastEventAt"],
+        "detectionsThisProcess": _EVENT_STATE["detections"],
+        "ntfyConfigured": bool(os.environ.get("NTFY_TOPIC")), "ntfyMinSeverity": _EVENT_NTFY_MIN_SEV,
+        "sessionJp": _jp_market_open(), "sessionUs": _us_market_open(),
+        "noteJa": "決定論的Gear0/1のみ稼働(LLMなし)。ブリッジの既存pushを解析しS高/急変/フロー異常を検知。PTS/L2/VWAPは未対応(capability-gated)。",
+    })
 
 # ━━━ CoinGecko crypto watchlist (keyless, free) ━━━
 # Live USD quotes for the crypto assets the user watches. CoinGecko's
