@@ -23,9 +23,9 @@ jobs:
       - name: Install minimal deps (only what `import scanner` needs)
         run: pip install --quiet anthropic flask flask-cors requests pytz python-dotenv json-repair pytest
       - name: Syntax check
-        run: python -m py_compile scanner.py
-      - name: Rule-engine unit tests
-        run: python -m pytest test_rules.py -q
+        run: python -m py_compile scanner.py argus_rules.py argus_events.py
+      - name: Unit tests (rules + events — whole suite auto-discovered)
+        run: python -m pytest -q
 
   frontend:
     runs-on: ubuntu-latest
