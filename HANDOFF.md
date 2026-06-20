@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.32.1 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.33.0 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.32.1。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.33.0。
 
 ---
 
@@ -36,6 +36,11 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.33.0 バージョン表記スタック修正 — web/package.jsonがv10.30.0で止まっていた(v10.31以降の
+  python bump scriptが無言no-op: cwd/文字列不一致で"bumped"と偽出力しつつ未変更)。バッジは
+  __ARGUS_VERSION__=globalThis(index.htmlにtransformIndexHtmlがpackage.jsonから注入)を読むため
+  10.30固定だった。機能(v10.31〜10.32.1)は全てデプロイ済み・表記のみ誤り。今後bumpはEditツールで直接
+  +dist/index.htmlの__ARGUS_VERSION__を必ず検証(教訓)。
 - v10.32.1 ホイール/トラックパッドのガタつき解消 — onWheelもrAF coalesceに乗せ、ページnudgeを
   growing rubberBand(最大104px)→signed×30pxの小さい固定値に。慣性スクロールでの「伸びる→戻る→
   再掴み」ループを除去(デスクトップ/Claude Codeプレビューで顕著だった)。idle release 600→450ms。
@@ -233,7 +238,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.32.1**
+- **現在バージョン: v10.33.0**
 
 ---
 
