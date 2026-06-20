@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
+import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import { TopRotations } from '../components/regime/TopRotations';
 import { CompactWatchRow } from '../components/dashboard/CompactWatchRow';
 import { CompactEventRow } from '../components/dashboard/CompactEventRow';
@@ -212,6 +213,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       }
     >
       <HeroCard judgment={judgment} />
+
+      <EventIntelligenceCard />
 
       <section>
         <div className="section-head">
