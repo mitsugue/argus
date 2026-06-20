@@ -38,14 +38,15 @@ export const ProHandoffButton: React.FC = () => {
   }
 
   const label =
-    state === 'loading' ? 'Preparing…'
-      : state === 'copied' ? 'Copied for GPT-5.5 Pro'
+    state === 'loading' ? '準備中…'
+      : state === 'copied' ? '✓ コピー済み(全体)'
       : state === 'error' ? 'unavailable'
-      : 'Copy for GPT-5.5 Pro';
+      : '🧠 全体をAIに相談(地合い+保有)';
 
   return (
     <div className="pro-handoff">
-      <button className="pro-handoff__btn" onClick={onClick} disabled={state === 'loading'} title="Pro Handoff">
+      <button className="pro-handoff__btn" onClick={onClick} disabled={state === 'loading'}
+              title="今の地合い+ウォッチリスト全体のスナップショットをLLMに渡すプロンプトをコピー(個別銘柄は各行の🧠 AI相談)">
         {label}
       </button>
       {state === 'manual' && (

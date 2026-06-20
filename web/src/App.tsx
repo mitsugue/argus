@@ -12,7 +12,6 @@ import { AIReview } from './routes/AIReview';
 import { useActionLabels } from './hooks/useActionLabels';
 import { useEventRadar } from './hooks/useEventRadar';
 import { postureToCall, shortKind } from './lib/todayCall';
-import { maybeAutoBackup } from './lib/backup';
 import { startCloudSync } from './lib/vault';
 
 interface RouteProps {
@@ -42,14 +41,12 @@ const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Weekly device-data auto-backup (v10.3.3): on app open, if 7+ days since
-  // the last one, silently download argus-backup-<date>-auto.json. The only
-  // device-local state is the watchlist/holdings + judgment log — this makes
-  // an SSD failure or a Mac replacement cost at most a week of edits.
-  // startCloudSync (sync-v1, v10.10) also runs the 20h cloud heartbeat and,
-  // when cloud backup is enabled, keeps devices with the same passphrase in
-  // sync (debounced push on edit + 90s pull while visible).
-  useEffect(() => { maybeAutoBackup(); startCloudSync(); }, []);
+  // Cloud sync (sync-v1, v10.10): 20h cloud heartbeat + same-passphrase device
+  // sync (debounced push on edit + 90s pull while visible). v10.32: the weekly
+  // auto-DOWNLOAD was removed — it popped a file-save dialog on app open, which
+  // the user disliked. Cloud sync already protects the device-local state, and
+  // a manual "DL backup" button lives in AI Review for an explicit local copy.
+  useEffect(() => { startCloudSync(); }, []);
 
   const exitReview = () => {
     if (window.location.hash === '#review') {

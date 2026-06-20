@@ -71,15 +71,14 @@ function formatDaysAway(days: number): string {
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
 export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey }) => {
   const mainRef = useRef<HTMLElement>(null);
-  // Signed pull progress: + = toward NEXT (bottom), − = toward PREV (top). 0..±1.
-  const [pull, setPull] = useState(0);
-  const pullRef = useRef(0);
-  const setPullBoth = (v: number) => { pullRef.current = v; setPull(v); };
-  // Physical page offset (px) that follows the finger with rubber-band damping.
-  const [dragPx, setDragPx] = useState(0);
-  // While true the page tracks the finger 1:1 (no transition); on release it
-  // springs back with a transition. Drives the "snap" feel.
-  const [dragging, setDragging] = useState(false);
+  // The drag is driven DIRECTLY through the DOM (refs), NOT React state — a
+  // per-frame setState on touchmove re-renders the whole shell ~60×/s and
+  // judders ("ガタガタ"). Refs keep it on the compositor: buttery. React state
+  // is used ONLY for the page-change enter animation (once per gesture).
+  const pageRef = useRef<HTMLDivElement>(null);
+  const topNavRef = useRef<HTMLDivElement>(null);
+  const botNavRef = useRef<HTMLDivElement>(null);
+  const pullRef = useRef(0);   // signed armed-progress at release time
   // Page-enter animation: re-keyed whenever the visible page changes.
   const [animTick, setAnimTick] = useState(0);
   const [animDir, setAnimDir] = useState<1 | -1>(1);
@@ -91,17 +90,43 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
     }
   }, [pageKey]);
 
+  // Stable labels for the indicators (set via textContent — no re-render).
+  const nextLabel = overscrollNext?.label;
+  const prevLabel = overscrollPrev?.label;
   useEffect(() => {
     const el = mainRef.current;
     if (!el || (!overscrollNext && !overscrollPrev)) return;
     const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < 2;
     const atTop = () => el.scrollTop < 2;
-    // Cooldown: one deliberate gesture = one page (short next page that is
-    // already "at bottom" must not chain).
+
+    // ── direct-DOM helpers (no setState) ──
+    const paintPage = (px: number) => {
+      const p = pageRef.current; if (!p) return;
+      if (px === 0) { p.style.transform = ''; p.classList.remove('shell__page--dragging'); }
+      else { p.classList.add('shell__page--dragging'); p.style.transform = `translateY(${px}px)`; }
+    };
+    const paintNav = (signed: number) => {
+      pullRef.current = signed;
+      const top = topNavRef.current, bot = botNavRef.current;
+      if (bot) {
+        if (signed > 0.05) {
+          bot.style.opacity = String(0.35 + Math.min(signed, 1) * 0.65);
+          bot.classList.toggle('shell__pullnav--armed', signed >= 1);
+          bot.textContent = signed >= 1 ? `↓ 離すと移動: ${nextLabel}` : `↓ さらに引っ張って ${nextLabel} へ`;
+        } else { bot.style.opacity = '0'; }
+      }
+      if (top) {
+        if (signed < -0.05) {
+          top.style.opacity = String(0.35 + Math.min(-signed, 1) * 0.65);
+          top.classList.toggle('shell__pullnav--armed', signed <= -1);
+          top.textContent = signed <= -1 ? `↑ 離すと移動: ${prevLabel}` : `↑ さらに引っ張って ${prevLabel} へ`;
+        } else { top.style.opacity = '0'; }
+      }
+    };
+    const release = () => { paintPage(0); paintNav(0); };
+
     let lastGo = 0;
     const coolingDown = () => Date.now() - lastGo < 900;
-    // Release everything back to rest (springs the page back via transition).
-    const release = () => { setPullBoth(0); setDragPx(0); setDragging(false); };
     const go = (dir: 1 | -1) => {
       const target = dir > 0 ? overscrollNext : overscrollPrev;
       if (!target) { release(); return; }
@@ -114,21 +139,24 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
 
     let startY: number | null = null;
     let dir: 0 | 1 | -1 = 0;
+    let raf = 0;
+    // rAF-coalesce: many touchmove events per frame collapse into one paint.
+    const schedule = (px: number, signed: number) => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; paintPage(px); paintNav(signed); });
+    };
     const onTouchStart = (e: TouchEvent) => { startY = e.touches[0].clientY; dir = 0; };
     const onTouchMove = (e: TouchEvent) => {
       if (startY == null || coolingDown()) return;
       const dy = startY - e.touches[0].clientY;   // +dy = dragging up
       if (dy > 0 && atBottom() && overscrollNext) {
-        dir = 1;
-        setPullBoth(Math.min(dy / PULL_THRESHOLD_PX, 1));
-        setDragging(true); setDragPx(-rubberBand(dy));        // content moves up
+        dir = 1; schedule(-rubberBand(dy), Math.min(dy / PULL_THRESHOLD_PX, 1));
       } else if (dy < 0 && atTop() && overscrollPrev) {
-        dir = -1;
-        setPullBoth(-Math.min(-dy / PULL_THRESHOLD_PX, 1));
-        setDragging(true); setDragPx(rubberBand(dy));         // content moves down
-      } else if (dir) { dir = 0; release(); }
+        dir = -1; schedule(rubberBand(dy), -Math.min(-dy / PULL_THRESHOLD_PX, 1));
+      } else if (dir) { dir = 0; if (raf) { cancelAnimationFrame(raf); raf = 0; } release(); }
     };
     const onTouchEnd = () => {
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       if (dir && Math.abs(pullRef.current) >= 1) go(dir);
       else release();
       startY = null; dir = 0;
@@ -142,13 +170,11 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       const down = e.deltaY > 0, up = e.deltaY < 0;
       if (down && atBottom() && overscrollNext) {
         acc = Math.max(0, acc) + e.deltaY;
-        setPullBoth(Math.min(acc / WHEEL_THRESHOLD, 1));
-        setDragging(true); setDragPx(-rubberBand(acc));
+        paintPage(-rubberBand(acc)); paintNav(Math.min(acc / WHEEL_THRESHOLD, 1));
         if (acc >= WHEEL_THRESHOLD) { acc = 0; go(1); }
       } else if (up && atTop() && overscrollPrev) {
         acc = Math.min(0, acc) + e.deltaY;
-        setPullBoth(-Math.min(-acc / WHEEL_THRESHOLD, 1));
-        setDragging(true); setDragPx(rubberBand(acc));
+        paintPage(rubberBand(acc)); paintNav(-Math.min(-acc / WHEEL_THRESHOLD, 1));
         if (-acc >= WHEEL_THRESHOLD) { acc = 0; go(-1); }
       } else { acc = 0; if (pullRef.current) release(); return; }
       window.clearTimeout(idleTimer);
@@ -160,13 +186,14 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
     el.addEventListener('touchend', onTouchEnd, { passive: true });
     el.addEventListener('wheel', onWheel, { passive: true });
     return () => {
+      if (raf) cancelAnimationFrame(raf);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
       el.removeEventListener('wheel', onWheel);
       window.clearTimeout(idleTimer);
     };
-  }, [overscrollNext, overscrollPrev]);
+  }, [overscrollNext, overscrollPrev, nextLabel, prevLabel]);
 
   return (
     <div className="shell">
@@ -202,26 +229,21 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       <div className="shell__body">
         {sidebar}
         <main className="shell__main" ref={mainRef}>
-          {/* Prev-page indicator (pull DOWN at the top). */}
-          {overscrollPrev && pull < -0.05 && (
-            <div className={`shell__pullnav shell__pullnav--top${pull <= -1 ? ' shell__pullnav--armed' : ''}`}
-                 style={{ opacity: 0.35 + -pull * 0.65 }}>
-              {pull <= -1 ? `↑ 離すと移動: ${overscrollPrev.label}` : `↑ さらに引っ張って ${overscrollPrev.label} へ`}
-            </div>
+          {/* Prev-page indicator (pull DOWN at the top). Driven via ref —
+              opacity/text/armed set imperatively in the drag handler. */}
+          {overscrollPrev && (
+            <div ref={topNavRef} className="shell__pullnav shell__pullnav--top" style={{ opacity: 0 }} aria-hidden />
           )}
           <div
             key={animTick}
-            className={`shell__page shell__page--${animDir > 0 ? 'next' : 'prev'}${dragging ? ' shell__page--dragging' : ''}`}
-            style={dragPx ? { transform: `translateY(${dragPx}px)` } : undefined}
+            ref={pageRef}
+            className={`shell__page shell__page--${animDir > 0 ? 'next' : 'prev'}`}
           >
             {children}
           </div>
           {/* Next-page indicator (pull UP at the bottom). */}
-          {overscrollNext && pull > 0.05 && (
-            <div className={`shell__pullnav shell__pullnav--bottom${pull >= 1 ? ' shell__pullnav--armed' : ''}`}
-                 style={{ opacity: 0.35 + pull * 0.65 }}>
-              {pull >= 1 ? `↓ 離すと移動: ${overscrollNext.label}` : `↓ さらに引っ張って ${overscrollNext.label} へ`}
-            </div>
+          {overscrollNext && (
+            <div ref={botNavRef} className="shell__pullnav shell__pullnav--bottom" style={{ opacity: 0 }} aria-hidden />
           )}
         </main>
       </div>

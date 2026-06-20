@@ -27,12 +27,28 @@
   display: flex;
   gap: 10px;
   align-items: center;
-  margin-bottom: 32px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
   padding: 12px 14px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+
+/* "AI連携ツールの違い" explainer — v10.32, user kept asking what each does. */
+.review__toolnote {
+  margin-bottom: 30px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.review__toolnote ul { margin: 6px 0 0; padding-left: 18px; }
+.review__toolnote li { margin: 4px 0; }
+.review__toolnote b { color: var(--text-main); }
 
 .review__copy {
   padding: 6px 12px;

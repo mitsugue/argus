@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ActionPill } from '../components/action/ActionBadge';
 import { ACTIONS, ACTION_ORDER, CORE_ACTIONS, CORE_ACTION_ORDER } from '../domain/actions';
 import type { ActionKey, CoreActionKey } from '../types/action';
+import { downloadBackup, BACKUP_KEYS } from '../lib/backup';
 import './AIReview.css';
 
 // One-page review sheet. Built for LLM eval (ChatGPT etc.): self-contained
@@ -185,6 +186,7 @@ ${GAPS.map((s) => `- ${s}`).join('\n')}
 
 export const AIReview: React.FC = () => {
   const [copied, setCopied] = useState(false);
+  const [backedUp, setBackedUp] = useState<null | number>(null);
   const version = __APP_VERSION__;
 
   const handleCopy = async () => {
@@ -203,6 +205,12 @@ export const AIReview: React.FC = () => {
     }
   };
 
+  const handleBackup = () => {
+    const n = downloadBackup(false);          // argus-backup-<date>.json
+    setBackedUp(n);
+    setTimeout(() => setBackedUp(null), 2600);
+  };
+
   return (
     <article className="review">
       <h1>A.R.G.U.S. — AI Review Sheet</h1>
@@ -216,11 +224,29 @@ export const AIReview: React.FC = () => {
           className={`review__copy ${copied ? 'is-copied' : ''}`}
           onClick={handleCopy}
         >
-          {copied ? '✓ Copied markdown' : 'Copy as markdown'}
+          {copied ? '✓ コピー済み' : '📋 アプリ仕様をコピー(レビュー用)'}
+        </button>
+        <button
+          className={`review__copy ${backedUp != null ? 'is-copied' : ''}`}
+          onClick={handleBackup}
+          title="保有・売買ジャーナル・リサーチメモ・判断ログを1つのJSONとして端末にDL"
+        >
+          {backedUp != null ? (backedUp > 0 ? `✓ ${backedUp}件DL` : '保存対象なし') : '💾 評価用バックアップをDL'}
         </button>
         <span className="review__meta">
           v{version} · live at <code>mitsugue.github.io/argus/</code>
         </span>
+      </div>
+
+      {/* What each AI tool exposes — the user kept asking "それぞれ何が違うのか". */}
+      <div className="review__toolnote">
+        <b>AI連携ツールの違い:</b>
+        <ul>
+          <li><b>📋 アプリ仕様(このボタン)</b> — ARGUS自体の機能・設計・既知の穴をMarkdownで出力。「アプリをレビューして」とLLMに渡す<em>開発レビュー用</em>。投資判断データは入りません。</li>
+          <li><b>🧠 AI相談(各銘柄)</b> — 個別銘柄の入り判断。フロー・信用需給・ARGUS校正を先頭に置いたモート起点プロンプト。<em>エントリー用</em>。</li>
+          <li><b>Copy for GPT(Watchlist下部)</b> — 今の地合い+ウォッチリスト全体のスナップショット。<em>全体相談用</em>。</li>
+          <li><b>💾 バックアップ</b> — {BACKUP_KEYS.length}種の端末データ(保有/売買/メモ/ログ)をJSONでDL。クラウド同期とは別の手動コピー。</li>
+        </ul>
       </div>
 
       <h2>Identity</h2>
