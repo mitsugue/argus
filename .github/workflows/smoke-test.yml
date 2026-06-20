@@ -1,0 +1,61 @@
+# ARGUS production smoke test (v10.38) — the refactor safety net.
+# After every push to main it WAITS for Render to deploy that exact commit
+# (polling /healthz buildSha), then asserts every critical endpoint still
+# returns the fields the app depends on. Also runs every 6h as a health
+# monitor. A failure pushes a phone alert (NTFY_TOPIC) so a bad deploy /
+# refactor regression is caught in minutes, not by the user.
+
+name: smoke-test
+
+on:
+  push:
+    branches: [main]
+    paths: ['scanner.py', 'argus_rules.py', 'argus_ledger.py', 'smoke_test.py', '.github/workflows/smoke-test.yml']
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # On push, don't test the OLD build: wait until Render reports this commit
+      # live via /healthz buildSha. Falls through after ~10 min (Render slow) and
+      # tests whatever is live rather than hanging.
+      - name: Wait for Render to deploy this commit
+        if: github.event_name == 'push'
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          WANT="${GITHUB_SHA:0:7}"
+          for i in $(seq 1 40); do
+            SHA=$(curl -s --max-time 30 "$BE/healthz" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('buildSha') or '')" 2>/dev/null || echo "")
+            echo "attempt $i: live=$SHA want=$WANT"
+            if [ "$SHA" = "$WANT" ]; then echo "deployed ✓"; exit 0; fi
+            sleep 15
+          done
+          echo "::warning::deploy SHA not matched in 10m — smoking whatever is live"
+
+      - name: Run smoke test
+        run: python3 smoke_test.py
+
+      - name: Notify on failure (skipped without NTFY_TOPIC)
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          [ -z "$NTFY_TOPIC" ] && exit 0
+          curl -s --max-time 30 \
+            -H "Title: ARGUS smoke FAILED" -H "Priority: high" -H "Tags: warning" \
+            -H "Click: https://github.com/mitsugue/argus/actions/workflows/smoke-test.yml" \
+            -d "本番スモークテストが失敗しました。直近のデプロイ/リファクタを確認してください。" \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true

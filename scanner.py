@@ -1302,6 +1302,18 @@ def phase5_post_open():
 @app.route("/")
 def index(): return HTML
 
+@app.route("/healthz")
+def healthz():
+    """Liveness + build metadata (v10.38). Public, secret-free. buildSha lets
+    the smoke-test workflow confirm WHICH commit is live before asserting, and
+    gives the backend the build identity GPT's version-sync review asked for."""
+    return jsonify({
+        "status": "ok",
+        "engineVersion": "argus-backend-v1",
+        "buildSha": (os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None),
+        "asOf": _ai_now_iso(),
+    })
+
 @app.route("/api/state")
 def api_state():
     global BACKGROUND_TASK_RUNNING
