@@ -5,10 +5,21 @@ import './AppShell.css';
 // Overscroll-to-next (v10.15.1, user request): at the page bottom, one strong
 // extra pull (touch) or wheel burst advances to the next nav page. Deliberate
 // thresholds + a visible indicator prevent accidental jumps.
-// Higher tension (v10.28): a deliberate, firm pull is required so a normal
-// scroll never trips a page change by accident.
-const PULL_THRESHOLD_PX = 150;    // touch: extra drag past the edge to flip
-const WHEEL_THRESHOLD = 600;      // desktop: accumulated deltaY at the edge
+// "Clear app" tension (v10.29, user request): the page content physically
+// follows the finger but with heavy exponential damping — it yields less the
+// harder you pull, so the gesture feels weighty and resistant. You must pull a
+// long way to cross the trigger, and the next page oozes in with an overshoot.
+const PULL_THRESHOLD_PX = 260;    // touch: extra drag past the edge to flip (heavy)
+const WHEEL_THRESHOLD = 1200;     // desktop: accumulated deltaY at the edge
+const RESIST_MAX = 104;           // max px the page ever yields under the finger
+const RESIST_K = 300;             // damping constant — bigger = heavier resistance
+
+// Exponential rubber-band: raw finger travel → damped page offset. Approaches
+// RESIST_MAX asymptotically, so pulling twice as far moves the page far less
+// than twice as much. This is what makes it feel like it "耐える" (resists).
+function rubberBand(rawPx: number): number {
+  return RESIST_MAX * (1 - Math.exp(-Math.abs(rawPx) / RESIST_K));
+}
 
 interface NextEvent {
   title: string;       // short event title
@@ -60,10 +71,15 @@ function formatDaysAway(days: number): string {
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
 export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey }) => {
   const mainRef = useRef<HTMLElement>(null);
-  // Signed pull: + = toward NEXT (bottom), − = toward PREV (top). 0..±1.
+  // Signed pull progress: + = toward NEXT (bottom), − = toward PREV (top). 0..±1.
   const [pull, setPull] = useState(0);
   const pullRef = useRef(0);
   const setPullBoth = (v: number) => { pullRef.current = v; setPull(v); };
+  // Physical page offset (px) that follows the finger with rubber-band damping.
+  const [dragPx, setDragPx] = useState(0);
+  // While true the page tracks the finger 1:1 (no transition); on release it
+  // springs back with a transition. Drives the "snap" feel.
+  const [dragging, setDragging] = useState(false);
   // Page-enter animation: re-keyed whenever the visible page changes.
   const [animTick, setAnimTick] = useState(0);
   const [animDir, setAnimDir] = useState<1 | -1>(1);
@@ -84,11 +100,13 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
     // already "at bottom" must not chain).
     let lastGo = 0;
     const coolingDown = () => Date.now() - lastGo < 900;
+    // Release everything back to rest (springs the page back via transition).
+    const release = () => { setPullBoth(0); setDragPx(0); setDragging(false); };
     const go = (dir: 1 | -1) => {
       const target = dir > 0 ? overscrollNext : overscrollPrev;
-      if (!target) { setPullBoth(0); return; }
+      if (!target) { release(); return; }
       lastGo = Date.now();
-      setPullBoth(0);
+      release();
       setAnimDir(dir);
       target.go();
       el.scrollTop = dir > 0 ? 0 : el.scrollHeight;   // land at the sensible edge
@@ -101,32 +119,40 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       if (startY == null || coolingDown()) return;
       const dy = startY - e.touches[0].clientY;   // +dy = dragging up
       if (dy > 0 && atBottom() && overscrollNext) {
-        dir = 1; setPullBoth(Math.min(dy / PULL_THRESHOLD_PX, 1));
+        dir = 1;
+        setPullBoth(Math.min(dy / PULL_THRESHOLD_PX, 1));
+        setDragging(true); setDragPx(-rubberBand(dy));        // content moves up
       } else if (dy < 0 && atTop() && overscrollPrev) {
-        dir = -1; setPullBoth(-Math.min(-dy / PULL_THRESHOLD_PX, 1));
-      } else if (dir) { dir = 0; setPullBoth(0); }
+        dir = -1;
+        setPullBoth(-Math.min(-dy / PULL_THRESHOLD_PX, 1));
+        setDragging(true); setDragPx(rubberBand(dy));         // content moves down
+      } else if (dir) { dir = 0; release(); }
     };
     const onTouchEnd = () => {
       if (dir && Math.abs(pullRef.current) >= 1) go(dir);
-      else setPullBoth(0);
+      else release();
       startY = null; dir = 0;
     };
 
-    // Wheel: accumulate at the matching edge.
+    // Wheel: accumulate at the matching edge (same rubber-band feedback).
     let acc = 0;
     let idleTimer: number | undefined;
     const onWheel = (e: WheelEvent) => {
-      if (coolingDown()) { acc = 0; if (pullRef.current) setPullBoth(0); return; }
+      if (coolingDown()) { acc = 0; if (pullRef.current) release(); return; }
       const down = e.deltaY > 0, up = e.deltaY < 0;
       if (down && atBottom() && overscrollNext) {
-        acc = Math.max(0, acc) + e.deltaY; setPullBoth(Math.min(acc / WHEEL_THRESHOLD, 1));
+        acc = Math.max(0, acc) + e.deltaY;
+        setPullBoth(Math.min(acc / WHEEL_THRESHOLD, 1));
+        setDragging(true); setDragPx(-rubberBand(acc));
         if (acc >= WHEEL_THRESHOLD) { acc = 0; go(1); }
       } else if (up && atTop() && overscrollPrev) {
-        acc = Math.min(0, acc) + e.deltaY; setPullBoth(-Math.min(-acc / WHEEL_THRESHOLD, 1));
+        acc = Math.min(0, acc) + e.deltaY;
+        setPullBoth(-Math.min(-acc / WHEEL_THRESHOLD, 1));
+        setDragging(true); setDragPx(rubberBand(acc));
         if (-acc >= WHEEL_THRESHOLD) { acc = 0; go(-1); }
-      } else { acc = 0; if (pullRef.current) setPullBoth(0); return; }
+      } else { acc = 0; if (pullRef.current) release(); return; }
       window.clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(() => { acc = 0; setPullBoth(0); }, 600);
+      idleTimer = window.setTimeout(() => { acc = 0; release(); }, 600);
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -183,7 +209,11 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
               {pull <= -1 ? `↑ 離すと移動: ${overscrollPrev.label}` : `↑ さらに引っ張って ${overscrollPrev.label} へ`}
             </div>
           )}
-          <div key={animTick} className={`shell__page shell__page--${animDir > 0 ? 'next' : 'prev'}`}>
+          <div
+            key={animTick}
+            className={`shell__page shell__page--${animDir > 0 ? 'next' : 'prev'}${dragging ? ' shell__page--dragging' : ''}`}
+            style={dragPx ? { transform: `translateY(${dragPx}px)` } : undefined}
+          >
             {children}
           </div>
           {/* Next-page indicator (pull UP at the bottom). */}
