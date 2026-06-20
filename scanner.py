@@ -2456,6 +2456,44 @@ def _td_timeseries(symbols):
     except Exception:
         return {}
 
+# US entry-scout history (us-scout-v1, v10.27): ~130d daily OHLCV for one US
+# symbol from Twelve Data, newest-first. 6h cache; never raises. 1 credit/call.
+_TD_HISTORY_CACHE = {}
+_TD_HISTORY_TTL = 6 * 3600
+
+def _td_price_history(sym):
+    now = time.time()
+    c = _TD_HISTORY_CACHE.get(sym)
+    if c and now < c["expires"]:
+        return c["data"]
+    data = None
+    if _TWELVEDATA_API_KEY:
+        try:
+            r = requests.get(_TWELVEDATA_TS, params={
+                "symbol": sym, "interval": "1day", "outputsize": 130,
+                "apikey": _TWELVEDATA_API_KEY}, timeout=15)
+            r.raise_for_status()
+            body = r.json()
+            vals = body.get("values") if isinstance(body, dict) else None
+            if (isinstance(vals, list) and len(vals) >= 20
+                    and str(body.get("status", "ok")).lower() != "error"):
+                def _f(v, k):
+                    x = v.get(k)
+                    try:
+                        return float(x) if x not in (None, "") else None
+                    except Exception:
+                        return None
+                rows = [v for v in vals if _f(v, "close") is not None]   # newest-first
+                data = {"closes": [_f(v, "close") for v in rows],
+                        "highs": [_f(v, "high") for v in rows],
+                        "lows": [_f(v, "low") for v in rows],
+                        "volumes": [int(_f(v, "volume") or 0) for v in rows],
+                        "dates": [v.get("datetime") for v in rows]}
+        except Exception as e:
+            add_log(f"[scout] US history fetch failed {sym}: {type(e).__name__}")
+    _TD_HISTORY_CACHE[sym] = {"data": data, "expires": now + (_TD_HISTORY_TTL if data else 600)}
+    return data
+
 def _etf_momentum(closes):
     """1d/5d/20d returns + composite score from a newest-first close list."""
     c0 = closes[0]
@@ -5078,22 +5116,26 @@ def _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
         stance = "見送り"
     return {"stance": stance, "score": round(score, 2), "reasonsJa": reasons}
 
-def get_entry_scout(sym):
+def get_entry_scout(sym, market="JP"):
     now = time.time()
-    c = _SCOUT_CACHE.get(sym)
+    ck = f"{market}:{sym}"
+    c = _SCOUT_CACHE.get(ck)
     if c and now < c["expires"]:
         return c["data"]
-    hist = _jq_price_history(sym)
+    is_us = (market == "US")
+    hist = _td_price_history(sym) if is_us else _jq_price_history(sym)
     if not hist:
-        return {"engineVersion": "entry-scout-v1", "symbol": sym, "status": "unavailable",
+        return {"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+                "status": "unavailable",
                 "noteJa": "価格履歴を取得できませんでした(コード違いか一時的な障害)。"}
     m = _entry_metrics(hist["closes"], hist["volumes"], hist.get("highs"), hist.get("lows"))
     if not m:
-        return {"engineVersion": "entry-scout-v1", "symbol": sym, "status": "unavailable",
+        return {"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+                "status": "unavailable",
                 "noteJa": "履歴が20営業日未満のため診断できません(上場直後など)。"}
     # Realtime flow from the bridge (last push regardless of freshness — the
     # asOf below tells the user how stale it is, e.g. on a weekend).
-    pushed = (_PUSHED_QUOTES.get("JP") or {}).get(sym)
+    pushed = (_PUSHED_QUOTES.get(market) or {}).get(sym)
     flow_ratio, flow_age_min = None, None
     if pushed:
         fl = (pushed.get("row") or {}).get("flow") or {}
@@ -5101,7 +5143,7 @@ def get_entry_scout(sym):
             flow_ratio = float(fl["bigNetRatio"])
             flow_age_min = int((now - pushed["ts"]) / 60)
     ev = get_events_snapshot()
-    esc = _region_event_escalation(ev.get("events", []) if isinstance(ev, dict) else [], "JP")
+    esc = _region_event_escalation(ev.get("events", []) if isinstance(ev, dict) else [], market)
     posture = _rates_posture(get_rates_snapshot())
     vol = _vix_assess(_fred_vix_history())
     vix_zone = vol.get("zone") if isinstance(vol, dict) else None
@@ -5111,10 +5153,10 @@ def get_entry_scout(sym):
     reg = get_market_regime_snapshot()
     reg_label = (reg.get("regime", {}) or {}).get("label") if isinstance(reg, dict) else None
     reg_ok = isinstance(reg, dict) and reg.get("status") in ("live", "partial")
-    # v2: index-relative strength — the stock's day move vs TOPIX ETF (1306),
-    # both from the bridge so the comparison is same-timestamp realtime.
+    # v2: index-relative strength — JP: vs TOPIX ETF 1306; US: vs SPY, both from
+    # the bridge so the comparison is same-timestamp realtime.
     rel_strength = None
-    idx_pushed = (_PUSHED_QUOTES.get("JP") or {}).get("1306")
+    idx_pushed = (_PUSHED_QUOTES.get(market) or {}).get("1306" if not is_us else "SPY")
     if pushed and idx_pushed:
         s_chg = (pushed.get("row") or {}).get("changePct")
         i_chg = (idx_pushed.get("row") or {}).get("changePct")
@@ -5141,27 +5183,29 @@ def get_entry_scout(sym):
             if l.get("symbol") == sym:
                 ai_view = l.get("aiView")
                 break
-    # v2.2: weekly margin (信用残) — plan-dependent, None when unavailable.
-    margin_sig = _margin_signal(_jq_weekly_margin(sym))
-    # v2.3: 日証金(JSF) daily 貸借残 — free, no plan needed (the primary 信用
-    # signal for this user's plan). Distinguish "source down" from "not a
-    # 貸借銘柄" so null is never ambiguous (使い物になる検証, 2026-06-13).
-    jsf_table, jsf_date = _jsf_balance_table()
-    if jsf_table is None:
-        jsf_sig, jsf_status = None, "source_unavailable"
-    elif sym in jsf_table and jsf_table[sym].get("loan") is not None and jsf_table[sym].get("short") is not None:
-        jsf_sig, jsf_status = _jsf_for(sym), "ok"
+    # v2.2-2.4: JP-only credit/short data (日証金・JPX空売り are Japan-only).
+    # For US these are absent — honestly None; US short-interest is a future add.
+    margin_sig = jsf_sig = short_disclosed = None
+    jsf_status = jpx_short_date = jsf_date = None
+    short_status = "us_market" if is_us else None
+    if not is_us:
+        margin_sig = _margin_signal(_jq_weekly_margin(sym))
+        jsf_table, jsf_date = _jsf_balance_table()
+        if jsf_table is None:
+            jsf_sig, jsf_status = None, "source_unavailable"
+        elif sym in jsf_table and jsf_table[sym].get("loan") is not None and jsf_table[sym].get("short") is not None:
+            jsf_sig, jsf_status = _jsf_for(sym), "ok"
+        else:
+            jsf_sig, jsf_status = None, "not_loanable"
+        jpx_short_table, jpx_short_date = _jpx_short_table()
+        if jpx_short_table is None:
+            short_disclosed, short_status = None, "source_unavailable"
+        elif sym in jpx_short_table:
+            short_disclosed, short_status = jpx_short_table[sym], "ok"
+        else:
+            short_disclosed, short_status = None, "none_disclosed"
     else:
-        jsf_sig, jsf_status = None, "not_loanable"
-    # v2.4: JPX disclosed institutional short (≥0.5%). Distinguish source-down
-    # from genuinely-no-disclosed-short (most stocks → none, which is meaningful).
-    jpx_short_table, jpx_short_date = _jpx_short_table()
-    if jpx_short_table is None:
-        short_disclosed, short_status = None, "source_unavailable"
-    elif sym in jpx_short_table:
-        short_disclosed, short_status = jpx_short_table[sym], "ok"
-    else:
-        short_disclosed, short_status = None, "none_disclosed"
+        jsf_status = "us_market"
     assess = _entry_scout_assess(m, flow_ratio, esc, posture, vix_zone, weekday,
                                  regime_label=reg_label if reg_ok else None,
                                  vix_spike=vix_spike, rel_strength=rel_strength,
@@ -5169,8 +5213,8 @@ def get_entry_scout(sym):
                                  margin_sig=margin_sig, jsf_sig=jsf_sig,
                                  short_disclosed=short_disclosed)
     out = {
-        "engineVersion": "entry-scout-v1", "symbol": sym,
-        "name": _jq_name_for(sym) or sym,
+        "engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+        "name": (sym if is_us else (_jq_name_for(sym) or sym)),
         "asOf": _ai_now_iso(), "status": "live",
         "lastClose": hist["closes"][0], "lastDate": hist["dates"][0],
         "metrics": m,
@@ -5196,7 +5240,9 @@ def get_entry_scout(sym):
                     "aiView": ai_view, "eventEscalation": esc or "normal",
                     "weekdayJa": "月火水木金土日"[weekday]},
         "assessment": assess,
-        "dataGapsJa": [
+        "dataGapsJa": ([
+            "信用需給: 日証金・JPX空売りは日本株専用のため米国株では未取得(米国の空売り残はFINRA等で将来対応)",
+        ] if is_us else [
             {"ok": "信用残: 日証金(JSF)貸借残で取得済み(日証金倍率 = 融資残/貸株残)",
              "not_loanable": "信用残: この銘柄は貸借銘柄ではないため日証金データに非掲載 — 取得不可(正常)",
              "source_unavailable": "信用残: 日証金データ源を一時取得できません(自動リトライ。数分後に再診断で復帰)",
@@ -5205,6 +5251,7 @@ def get_entry_scout(sym):
              "none_disclosed": "機関の大口空売り: 0.5%超の開示報告なし(=機関の大口空売りは記録上なし)",
              "source_unavailable": "機関の大口空売り: JPXデータ源を一時取得できません(自動リトライ)",
              }[short_status],
+        ]) + [
             "チャート: 窓(ギャップ)は検知済み(v2.5)。ダブルボトム等の視覚的パターン形状は未対応 — RSI/MACD/ボリンジャー/クロスで近似",
             "国策・テーマ性の自動判定は未対応 — ニュース/開示で各自確認",
         ],
@@ -5213,16 +5260,19 @@ def get_entry_scout(sym):
     # If a credit/short source was momentarily down, cache only briefly so the
     # next diagnosis self-heals instead of showing a 30-min gap (検証で確認).
     src_down = jsf_status == "source_unavailable" or short_status == "source_unavailable"
-    _SCOUT_CACHE[sym] = {"data": out, "expires": now + (180 if src_down else _SCOUT_TTL)}
+    _SCOUT_CACHE[ck] = {"data": out, "expires": now + (180 if src_down else _SCOUT_TTL)}
     return out
 
 @app.route("/api/argus/entry-scout")
 def api_argus_entry_scout():
     sym = (request.args.get("symbol") or "").strip().upper()
-    if not _JP_SYM_RE.match(sym):
-        return jsonify({"error": "bad_symbol",
-                        "noteJa": "現在は日本株の4桁コードのみ対応(米国株はPhase 2)。"}), 400
-    return jsonify(get_entry_scout(sym))
+    mkt = (request.args.get("market") or "").strip().upper()
+    if _JP_SYM_RE.match(sym) and mkt != "US":
+        return jsonify(get_entry_scout(sym, "JP"))
+    if _US_SYM_RE.match(sym) and (mkt == "US" or not _JP_SYM_RE.match(sym)):
+        return jsonify(get_entry_scout(sym, "US"))
+    return jsonify({"error": "bad_symbol",
+                    "noteJa": "日本株4桁コード、または米国ティッカー(?market=US)に対応。"}), 400
 
 # ── Scout calibration (scout-ledger-v1, v10.24) — Phase 3 ────────────────────
 # The learning loop's final piece: record each day's entry-scout score +

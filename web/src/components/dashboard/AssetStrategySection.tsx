@@ -311,7 +311,8 @@ const SortableAssetRow: React.FC<{
     if (!backend) { setScout('error'); return; }
     setScout('loading');
     try {
-      const r = await fetch(`${backend.replace(/\/$/, '')}/api/argus/entry-scout?symbol=${encodeURIComponent(asset.symbol)}`);
+      const mkt = asset.market === 'US' ? '&market=US' : '';
+      const r = await fetch(`${backend.replace(/\/$/, '')}/api/argus/entry-scout?symbol=${encodeURIComponent(asset.symbol)}${mkt}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setScout((await r.json()) as ScoutData);
     } catch { setScout('error'); }
@@ -585,7 +586,7 @@ const SortableAssetRow: React.FC<{
           <div className="asset-detail__foot">
             <span>updated {ageMin(strat.lastUpdated)}</span>
             <span className="asset-detail__actions">
-              {asset.market === 'JP' && (
+              {(asset.market === 'JP' || asset.market === 'US') && (
                 <button className="asset-mini" onClick={runScout} disabled={scout === 'loading'}
                         title="60日トレンド・過熱度・大口フロー・イベント接近を束ねた入りの瞬間診断">
                   {scout === 'loading' ? '診断中…' : '⚡ エントリー診断'}
