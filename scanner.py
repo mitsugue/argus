@@ -2257,6 +2257,27 @@ def api_argus_events_active():
                     "schemaVersion": argus_events.SCHEMA_VERSION,
                     "count": len(active), "events": active[:30]})
 
+_EVENT_TEST_STATE = {"lastTs": 0.0}
+
+@app.route("/api/argus/event-test-notify", methods=["POST"])
+def api_argus_event_test_notify():
+    """One-tap test push so the user can confirm the Render→ntfy pipe works
+    without waiting for a real S高. Public but rate-limited (1 / 3 min, global);
+    it only ever notifies the OWNER's configured topic, never echoes it."""
+    now = time.time()
+    if not os.environ.get("NTFY_TOPIC"):
+        return jsonify({"sent": False, "reason": "ntfy_not_configured",
+                        "noteJa": "RenderにNTFY_TOPICが未設定です。"}), 200
+    if now - _EVENT_TEST_STATE["lastTs"] < 180:
+        wait = int(180 - (now - _EVENT_TEST_STATE["lastTs"]))
+        return jsonify({"sent": False, "reason": "rate_limited",
+                        "noteJa": f"連投防止のため約{wait}秒後に再試行してください。"}), 200
+    _EVENT_TEST_STATE["lastTs"] = now
+    _event_ntfy({"symbol": "TEST", "eventType": "TEST_NOTIFICATION", "market": "—",
+                 "session": "test", "severity": 4, "recommendedPosture": "WATCH",
+                 "reasonJa": "ARGUS 24/7監視の通知テストです。これが届けば設定完了。"})
+    return jsonify({"sent": True, "noteJa": "テスト通知を送信しました。スマホを確認してください。"})
+
 @app.route("/api/argus/event-backbone-status")
 def api_argus_event_backbone_status():
     """Public ops summary (no secrets) — for the Ledger Health / Ops view."""

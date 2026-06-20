@@ -11,3 +11,7 @@
 .ei-row__reason { color: var(--text-sub, #8b98a7); flex: 1 1 200px; }
 .ei-row__posture { font-size: 10.5px; color: var(--text-faint, #5f6b78); border: 1px solid var(--line, rgba(255,255,255,0.1)); border-radius: 4px; padding: 1px 6px; }
 .ei-foot { margin-top: 8px; font-size: 10px; color: var(--text-faint, #5f6b78); line-height: 1.5; }
+.ei-actions { margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ei-test-btn { padding: 5px 12px; font-size: 11.5px; font-weight: 600; color: var(--text-main); background: var(--surface-soft, rgba(255,255,255,0.04)); border: 1px solid var(--line, rgba(255,255,255,0.12)); border-radius: 6px; cursor: pointer; }
+.ei-test-btn:disabled { opacity: 0.5; cursor: default; }
+.ei-test-msg { font-size: 11px; color: var(--text-sub, #8b98a7); }

@@ -32,6 +32,25 @@ function EventRow({ e }: { e: ActiveEvent }) {
 
 export const EventIntelligenceCard: React.FC = () => {
   const { events, status, loading } = useEventsActive();
+  const [testMsg, setTestMsg] = React.useState<string | null>(null);
+  const [testing, setTesting] = React.useState(false);
+  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+
+  async function sendTest() {
+    if (!backend) return;
+    setTesting(true); setTestMsg(null);
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/event-test-notify', { method: 'POST' });
+      const d = await r.json();
+      setTestMsg(d.noteJa ?? (d.sent ? '送信しました。' : '送信できませんでした。'));
+    } catch {
+      setTestMsg('送信に失敗しました(時間をおいて再試行)。');
+    } finally {
+      setTesting(false);
+      window.setTimeout(() => setTestMsg(null), 6000);
+    }
+  }
+
   if (loading && !status) return null;
   const enabled = status?.enabled;
   const inSession = status?.sessionJp || status?.sessionUs;
@@ -63,6 +82,12 @@ export const EventIntelligenceCard: React.FC = () => {
             {events.slice(0, 8).map((e) => <EventRow key={e.eventId} e={e} />)}
           </div>
         )}
+        <div className="ei-actions">
+          <button className="ei-test-btn" onClick={sendTest} disabled={testing}>
+            {testing ? '送信中…' : '🔔 通知テスト'}
+          </button>
+          {testMsg && <span className="ei-test-msg">{testMsg}</span>}
+        </div>
         <div className="ei-foot">
           決定論的検知のみ(LLMなし)。S高/S安はTSE制限値幅で判定。PTS/板/VWAPは未対応。
         </div>
