@@ -214,16 +214,18 @@
      elastic settle (overshoot then ease). */
   transition: transform 560ms cubic-bezier(0.18, 0.9, 0.24, 1.08);
   will-change: transform;
-  animation: shell-page-in 520ms cubic-bezier(0.16, 1.02, 0.3, 1);
+  /* On a real page change the new page slides a LONG way in (continuation of
+     the pull direction) and decelerates to rest — heavy, never a pop. No
+     overshoot, no scale: a solid page travelling in, not fading. */
+  animation: shell-page-in 660ms cubic-bezier(0.22, 0.61, 0.31, 1);
 }
 /* While the finger is down the page tracks it 1:1 with no transition. */
 .shell__page--dragging { transition: none; }
-.shell__page--next { --from: 46px; }
-.shell__page--prev { --from: -46px; }
+.shell__page--next { --from: 34vh; }   /* next page rises up from the bottom */
+.shell__page--prev { --from: -34vh; }  /* prev page descends from the top */
 @keyframes shell-page-in {
-  0%   { opacity: 0; transform: translateY(var(--from, 46px)) scale(0.97); }
-  70%  { opacity: 1; transform: translateY(calc(var(--from, 46px) * -0.06)) scale(1.004); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
+  0%   { opacity: 0.45; transform: translateY(var(--from, 34vh)); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
   .shell__page { animation: none; transition: none; }

@@ -9,8 +9,8 @@ import './AppShell.css';
 // follows the finger but with heavy exponential damping — it yields less the
 // harder you pull, so the gesture feels weighty and resistant. You must pull a
 // long way to cross the trigger, and the next page oozes in with an overshoot.
-const PULL_THRESHOLD_PX = 260;    // touch: extra drag past the edge to flip (heavy)
-const WHEEL_THRESHOLD = 1200;     // desktop: accumulated deltaY at the edge
+const PULL_THRESHOLD_PX = 340;    // touch: extra drag past the edge to flip (heavy)
+const WHEEL_THRESHOLD = 1700;     // desktop: accumulated deltaY at the edge
 const RESIST_MAX = 104;           // max px the page ever yields under the finger
 const RESIST_K = 300;             // damping constant — bigger = heavier resistance
 
