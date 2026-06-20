@@ -162,23 +162,27 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
       startY = null; dir = 0;
     };
 
-    // Wheel: accumulate at the matching edge (same rubber-band feedback).
+    // Wheel/trackpad: accumulate at the matching edge for the threshold + a
+    // SMALL capped page nudge (≤30px, not the growing rubber-band) so momentum
+    // scrolling on desktop doesn't jitter ("ガタガタ"). rAF-coalesced like touch.
     let acc = 0;
     let idleTimer: number | undefined;
     const onWheel = (e: WheelEvent) => {
       if (coolingDown()) { acc = 0; if (pullRef.current) release(); return; }
       const down = e.deltaY > 0, up = e.deltaY < 0;
+      let signed: number;
       if (down && atBottom() && overscrollNext) {
         acc = Math.max(0, acc) + e.deltaY;
-        paintPage(-rubberBand(acc)); paintNav(Math.min(acc / WHEEL_THRESHOLD, 1));
-        if (acc >= WHEEL_THRESHOLD) { acc = 0; go(1); }
+        if (acc >= WHEEL_THRESHOLD) { acc = 0; go(1); return; }
+        signed = Math.min(acc / WHEEL_THRESHOLD, 1);
       } else if (up && atTop() && overscrollPrev) {
         acc = Math.min(0, acc) + e.deltaY;
-        paintPage(rubberBand(acc)); paintNav(-Math.min(-acc / WHEEL_THRESHOLD, 1));
-        if (-acc >= WHEEL_THRESHOLD) { acc = 0; go(-1); }
+        if (-acc >= WHEEL_THRESHOLD) { acc = 0; go(-1); return; }
+        signed = -Math.min(-acc / WHEEL_THRESHOLD, 1);
       } else { acc = 0; if (pullRef.current) release(); return; }
+      schedule(-signed * 30, signed);   // gentle, jitter-free
       window.clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(() => { acc = 0; release(); }, 600);
+      idleTimer = window.setTimeout(() => { acc = 0; release(); }, 450);
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: true });

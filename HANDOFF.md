@@ -1,8 +1,8 @@
-# ARGUS 開発引き継ぎ（HANDOFF）— v10.32.0 時点
+# ARGUS 開発引き継ぎ（HANDOFF）— v10.32.1 時点
 
 > **新しいAIアシスタントへ:** これは ARGUS プロジェクトの引き継ぎ書です。開発を再開する前に
 > このファイルを最後まで読み、下の「最初にやること」を実行して現状を確認してから作業を始めてください。
-> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.32.0。
+> セクション「🔒 セキュリティ制約」と「⚠️ 正確性の絶対制約」は**必ず守る**こと。最終更新: v10.32.1。
 
 ---
 
@@ -36,6 +36,11 @@
     **ユーザー操作待ち: AWSで git pull && sudo systemctl restart argus-bridge + crontab に closepin行追加**
   - UIなし(データ蓄積優先)。蓄積後にTodayへ引けピン成績表示を検討
 
+- v10.32.1 ホイール/トラックパッドのガタつき解消 — onWheelもrAF coalesceに乗せ、ページnudgeを
+  growing rubberBand(最大104px)→signed×30pxの小さい固定値に。慣性スクロールでの「伸びる→戻る→
+  再掴み」ループを除去(デスクトップ/Claude Codeプレビューで顕著だった)。idle release 600→450ms。
+  注: プレビューのバージョン表示が10.30のままなのは__APP_VERSION__がVite起動時のbuild-time define
+  でHMRでは再評価されないため(挙動は最新・本番ビルドは正しいバージョン)。
 - v10.32.0 ドラッグのガタつき解消+PWA自動更新+バックアップ整理 — AppShellのオーバースクロールを
   ref直接DOM操作に書き換え(touchmoveごとのsetState 3連発→React再描画ゼロ、rAF coalesce)。
   「ガタガタ震える」の主因=毎フレーム全shell再描画を除去。指標もref経由でopacity/textContent更新。
@@ -228,7 +233,7 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
   （Python Flask、単一ファイル `scanner.py`、Render、`main` push で auto-deploy）
 - **フロントエンド:** https://mitsugue.github.io/argus/
   （React 18 + TypeScript + Vite、GitHub Pages、base `/argus/`、`web/` 配下）
-- **現在バージョン: v10.32.0**
+- **現在バージョン: v10.32.1**
 
 ---
 
