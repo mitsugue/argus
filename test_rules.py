@@ -593,9 +593,18 @@ def test_scout_narrative_short_covering_story_leads_with_moat():
     assert call.startswith("押し目買い検討")
     assert "買い戻し主導" in call                      # flow class surfaced in the call
     assert "買い戻し主導の疑い" in narr                  # moat story
-    assert "日証金倍率0.7" in narr and "機関空売り6.0%" in narr
+    assert "日証金倍率0.7・売り長=踏み上げ余地" in narr and "機関空売り6.0%" in narr
     assert "過去12件" in narr                           # score-bucket calibration
     assert "EVENT_WAIT" in narr and "62%" in narr       # this-regime engine hit rate
+
+
+def test_scout_narrative_extreme_ratio_formatted_as_buy_long():
+    assess = {"stance": "中立(急がない)", "score": -0.5, "reasonsJa": []}
+    flow = {"classification": "NEW_LONG_ACCUMULATION"}
+    _, narr = scanner._scout_narrative(assess, flow, {"posture": "neutral", "regime": "MIXED"},
+                                       {"ratio": 4753.0}, None, _narr_metrics(),
+                                       None, {"n": 133, "hitRate": 0.586}, None, False)
+    assert "日証金倍率4753・買い長(貸株僅少)" in narr     # int format + meaningful tag, no ".0"
 
 
 def test_scout_narrative_us_omits_credit_and_notes_gap():

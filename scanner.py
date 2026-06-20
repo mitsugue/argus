@@ -5182,7 +5182,11 @@ def _scout_narrative(assess, flow_inf, ctx, jsf_sig, short_disclosed, m,
     else:
         extra = []
         if isinstance(jsf_sig, dict) and isinstance(jsf_sig.get("ratio"), (int, float)):
-            extra.append(f"日証金倍率{jsf_sig['ratio']}")
+            r = jsf_sig["ratio"]
+            rt = str(int(r)) if float(r).is_integer() else str(r)
+            # 倍率 = 融資残/貸株残: <1 = 売り長(踏み上げ余地)、高倍率 = 買い長(貸株僅少).
+            tag = "・売り長=踏み上げ余地" if r < 1 else ("・買い長(貸株僅少)" if r >= 50 else "")
+            extra.append(f"日証金倍率{rt}{tag}")
         if short_disclosed and short_disclosed.get("ratio"):
             extra.append(f"機関空売り{round(short_disclosed['ratio'] * 100, 1)}%")
         story = _FLOW_STORY.get(cls or "UNCONFIRMED")
