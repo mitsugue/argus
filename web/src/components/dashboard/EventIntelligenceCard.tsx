@@ -6,7 +6,7 @@ const TYPE_JA: Record<string, string> = {
   LIMIT_UP: 'ストップ高(S高)', LIMIT_DOWN: 'ストップ安(S安)',
   LIMIT_UP_PROXIMITY: 'S高接近(値幅上限)', LIMIT_DOWN_PROXIMITY: 'S安接近(値幅下限)',
   PRICE_SPIKE: '急騰', PRICE_CRASH: '急落',
-  VOLUME_ANOMALY: '出来高急増', FLOW_ANOMALY: '大口フロー異常',
+  VOLUME_ANOMALY: '出来高急増', FLOW_ANOMALY: '大口フロー異常', CRYPTO_SHOCK: '暗号資産ショック',
 };
 const POSTURE_JA: Record<string, string> = {
   LIMIT_UP_RISK: 'S高リスク', LIMIT_DOWN_RISK: 'S安リスク', AVOID_CHASING: '高値追い回避',
@@ -146,8 +146,8 @@ export const EventIntelligenceCard: React.FC = () => {
         </div>
         {events.length === 0 ? (
           <div className="ei-empty">
-            {inSession ? '現在アラートはありません(S高/急変/フロー異常を検知中)。'
-              : '市場時間外。次の取引時間(東京/米国)に銘柄検知を再開します。深夜・週末の常時監視(暗号資産/ニュース)は今後対応。'}
+            {inSession ? '現在アラートはありません(S高/急変/フロー異常を検知中)。暗号資産は24時間監視。'
+              : '市場時間外。株式の銘柄検知は次の取引時間(東京/米国)に再開。暗号資産のショックは24時間監視中(約30分間隔)。'}
           </div>
         ) : (
           <div className="ei-rows">

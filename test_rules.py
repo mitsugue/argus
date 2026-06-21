@@ -716,6 +716,25 @@ def test_notification_test_requires_admin():
         assert r.status_code in (401, 503)                   # never silently sends
 
 
+def test_crypto_scan_requires_admin():
+    with scanner.app.test_client() as c:
+        assert c.post("/api/argus/crypto-scan").status_code in (401, 503)   # admin-gated
+
+
+def test_crypto_event_records_with_long_dedup(monkeypatch):
+    scanner._EVENTS_ACTIVE.clear(); scanner._EVENTS_LOG.clear()
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.setattr(scanner, "_EVENT_BACKBONE_ENABLED", True)
+    import datetime as _dt
+    now = _dt.datetime(2026, 6, 21, 3, 0, tzinfo=_dt.timezone.utc)   # a Sunday night
+    trig = scanner.argus_events.detect_crypto_anomaly("BTC", -9.0)[0]
+    env = scanner._record_event("CRYPTO", "BTC", trig, now, "CRYPTO_24H",
+                                bucket_minutes=360, source="coingecko", session_override="CRYPTO_24H")
+    assert env and env["eventType"] == "CRYPTO_SHOCK" and env["session"] == "CRYPTO_24H"
+    assert any(e["eventType"] == "CRYPTO_SHOCK" for e in scanner._events_active_list())
+    scanner._EVENTS_ACTIVE.clear(); scanner._EVENTS_LOG.clear()
+
+
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────
 def test_margin_signal_requires_two_weeks():
     assert scanner._margin_signal(None) is None

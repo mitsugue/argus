@@ -226,6 +226,23 @@ def _score(val, threshold):
     return round(max(0.0, min(1.0, (abs(val) / threshold - 1.0) * 0.5 + 0.5)), 3)
 
 
+# ── Crypto 24/7 shock detection (no session gating — crypto always trades) ────
+def detect_crypto_anomaly(symbol, change_pct_24h, shock_pct=5.0, severe_pct=10.0):
+    """Pure: a CRYPTO_SHOCK trigger from the 24h move. Runs 24/7 (incl. nights/
+    weekends) — this is what makes the '24h監視' honest for an asset class that
+    actually trades around the clock. Wider thresholds than equities (crypto is
+    intrinsically more volatile)."""
+    if not isinstance(change_pct_24h, (int, float)) or isinstance(change_pct_24h, bool):
+        return []
+    a = abs(change_pct_24h)
+    if a < shock_pct:
+        return []
+    sev = 5 if a >= severe_pct else 4
+    direction = "急騰" if change_pct_24h > 0 else "急落"
+    return [_trig("CRYPTO_SHOCK", sev, min(1.0, a / severe_pct),
+                  f"{symbol} 24時間で{change_pct_24h:+.1f}%({direction})")]
+
+
 # ── Dedup / novelty / priority ───────────────────────────────────────────────
 def dedup_key(market, symbol, event_type, bucket_minutes=30, now=None):
     """Pure: a stable key so the same anomaly on the same symbol within a time

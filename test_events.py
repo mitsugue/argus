@@ -73,6 +73,16 @@ def test_quiet_quote_produces_nothing():
     assert ev.detect_anomalies(q, "JP_MORNING") == []
 
 
+# ── Crypto 24/7 shock (no session gating) ────────────────────────────────────
+def test_crypto_shock_detection():
+    assert ev.detect_crypto_anomaly("BTC", 2.0) == []                 # quiet → nothing
+    big = ev.detect_crypto_anomaly("BTC", -8.3)
+    assert big and big[0]["type"] == "CRYPTO_SHOCK" and big[0]["severity"] == 4
+    sev = ev.detect_crypto_anomaly("ETH", 12.5)
+    assert sev[0]["severity"] == 5 and "急騰" in sev[0]["reasonJa"]
+    assert ev.detect_crypto_anomaly("BTC", None) == []                # bad input safe
+
+
 # ── Session labels ───────────────────────────────────────────────────────────
 def test_session_labels():
     assert ev.session_label(_jst(10, 0)) == "JP_MORNING"

@@ -2164,7 +2164,7 @@ _EVENT_STATE   = {"lastDetectionAt": None, "lastEventAt": None, "detections": 0}
 _EVENT_POSTURE = {
     "LIMIT_UP": "LIMIT_UP_RISK", "LIMIT_DOWN": "LIMIT_DOWN_RISK",
     "LIMIT_UP_PROXIMITY": "LIMIT_UP_RISK", "LIMIT_DOWN_PROXIMITY": "LIMIT_DOWN_RISK",
-    "PRICE_SPIKE": "AVOID_CHASING",
+    "CRYPTO_SHOCK": "INVESTIGATE", "PRICE_SPIKE": "AVOID_CHASING",
     "PRICE_CRASH": "INVESTIGATE", "VOLUME_ANOMALY": "WATCH", "FLOW_ANOMALY": "WATCH",
 }
 
@@ -2192,10 +2192,14 @@ def _event_ntfy(env):
     except Exception:
         pass
 
-def _record_event(market, symbol, trig, now, session):
+def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
+                  source="moomoo-bridge", session_override=None):
     """Dedup + lifecycle + notify for one deterministic trigger. Lean: Gear 0/1
-    only, so severity decides the state directly (no AI queue unless enabled)."""
-    key = argus_events.dedup_key(market, symbol, trig["type"], now=now.astimezone(TZ_JST))
+    only, so severity decides the state directly (no AI queue unless enabled).
+    bucket_minutes widens the dedup window (crypto uses 360 so a sustained 24h
+    shock doesn't re-alert every poll)."""
+    key = argus_events.dedup_key(market, symbol, trig["type"], bucket_minutes=bucket_minutes,
+                                 now=now.astimezone(TZ_JST))
     notify = False
     with _EVENT_LOCK:
         prev = _EVENTS_ACTIVE.get(key)
@@ -2203,8 +2207,10 @@ def _record_event(market, symbol, trig, now, session):
             return                              # already have it at >= severity
         env = argus_events.make_envelope(
             event_type=trig["type"], symbol=symbol, market=market,
-            source="moomoo-bridge", trigger=trig, now=now,
+            source=source, trigger=trig, now=now,
             recommended_posture=_EVENT_POSTURE.get(trig["type"], "WATCH"), gear=1)
+        if session_override:
+            env["session"] = session_override
         env["ingestAt"] = now.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         env["lifecycleState"] = ("HIGH_ALERT" if trig["severity"] >= 5
                                  else "VERIFIED" if trig["severity"] >= 4 else "OBSERVING")
@@ -2321,6 +2327,33 @@ def api_argus_event_snapshot():
     with _EVENT_LOCK:
         log = list(_EVENTS_LOG)
     return jsonify(argus_event_store.serialize_state(active, log, now_iso=_ai_now_iso()))
+
+@app.route("/api/argus/crypto-scan", methods=["POST"])
+def api_argus_crypto_scan():
+    """ADMIN-ONLY 24/7 crypto shock scan — invoked by the crypto-watch workflow
+    (not the public frontend). Crypto trades around the clock, so this is what
+    makes the 24h promise honest off-session. Deterministic, no LLM."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    if not _EVENT_BACKBONE_ENABLED:
+        return jsonify({"scanned": 0, "recorded": 0, "reason": "backbone_disabled"})
+    snap = get_crypto_watchlist_snapshot(_CRYPTO_DEFAULT_IDS)
+    now = datetime.now(pytz.utc)
+    _events_restore_once()
+    scanned = recorded = 0
+    for q in (snap.get("quotes") if isinstance(snap, dict) else None) or []:
+        if q.get("status") != "live":
+            continue
+        scanned += 1
+        sym = str(q.get("id") or "").upper()[:12] or "CRYPTO"
+        for trig in argus_events.detect_crypto_anomaly(sym, q.get("changePct")):
+            env = _record_event("CRYPTO", sym, trig, now, "CRYPTO_24H",
+                                bucket_minutes=360, source="coingecko",
+                                session_override="CRYPTO_24H")
+            if env:
+                recorded += 1
+    return jsonify({"scanned": scanned, "recorded": recorded, "asOf": _ai_now_iso()})
 
 # ── Evidence-First Research Dossier (dossier-v1, v10.41) — deterministic ──────
 # Built on-demand from signals ARGUS ALREADY has (cached entry-scout flow/credit,

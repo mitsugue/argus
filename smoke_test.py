@@ -136,6 +136,15 @@ def v_event_snapshot():
     c, d = _get("/api/argus/event-snapshot")
     return d.get("schemaVersion") == "event-store-v1" and isinstance(d.get("active"), list), f"active={d.get('activeCount')}"
 
+def _crypto_scan_gated():
+    import urllib.request, urllib.error
+    req = urllib.request.Request(BASE + "/api/argus/crypto-scan", method="POST", headers={"User-Agent": "argus-smoke"})
+    try:
+        urllib.request.urlopen(req, timeout=30)
+        return False, "expected 401/503 (admin), got 200 — UNPROTECTED!"
+    except urllib.error.HTTPError as e:
+        return e.code in (401, 503), f"HTTP {e.code} (admin-gated)"
+
 def v_admin_gated_401(path):
     def fn():
         try:
@@ -166,6 +175,7 @@ CHECKS = [
     ("events-active", v_events_active),
     ("event-backbone-status", v_event_status),
     ("event-snapshot", v_event_snapshot),
+    ("crypto-scan admin", _crypto_scan_gated),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
 ]

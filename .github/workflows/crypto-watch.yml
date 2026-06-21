@@ -1,0 +1,36 @@
+# ARGUS 24/7 crypto shock watch (v10.43).
+# Crypto trades around the clock, so this is the piece that makes the "24時間監視"
+# honest off-session (nights / weekends). Every ~30 min it asks Render to scan
+# the crypto watchlist for shocks (deterministic, no LLM) and record/notify any
+# new ones. Admin-gated endpoint — uses the existing ARGUS_ADMIN_TOKEN secret;
+# skipped gracefully when the secret is absent. NO new secret needed.
+
+name: crypto-watch
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # every 30 min, every day (crypto is 24/7)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Scan crypto for shocks (admin-gated)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "::warning::ARGUS_ADMIN_TOKEN absent — crypto scan skipped"; exit 0
+          fi
+          curl -s --max-time 90 "$BE/api/argus/rates" > /dev/null || true   # warm the dyno
+          RESP=$(curl -s --max-time 60 -X POST \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/crypto-scan" || echo '{"error":"unreachable"}')
+          echo "crypto-scan: $RESP"
+          echo "🪙 crypto-scan: \`${RESP}\`" >> "$GITHUB_STEP_SUMMARY"
