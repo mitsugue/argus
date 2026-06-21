@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { PageShell } from './PageShell';
 import { AlertCard } from '../components/dashboard/AlertCard';
 import { CoreRow } from '../components/dashboard/CoreRow';
+import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import { useActionAlerts } from '../hooks/useActionAlerts';
 import { useAssets } from '../hooks/useAssets';
 import { coreActionFor } from '../lib/todayCall';
@@ -47,6 +48,8 @@ export const ActionAlerts: React.FC = () => {
         </span>
       }
     >
+      <EventIntelligenceCard />
+
       <section>
         <div className="section-head">
           <span className="section-head__title">Satellites</span>
