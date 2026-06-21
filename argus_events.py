@@ -20,7 +20,8 @@ TZ_ET = timezone(timedelta(hours=-4))   # ET (DST-approx; precise DST handled up
 
 # ── Event taxonomy (extensible) ──────────────────────────────────────────────
 EVENT_TYPES = {
-    "PRICE_SPIKE", "PRICE_CRASH", "SPECIAL_QUOTE_RISK", "LIMIT_UP", "LIMIT_DOWN",
+    "PRICE_SPIKE", "PRICE_CRASH", "LIMIT_UP_PROXIMITY", "LIMIT_DOWN_PROXIMITY",
+    "LIMIT_UP", "LIMIT_DOWN",
     "VOLUME_ANOMALY", "FLOW_ANOMALY", "SHORT_COVERING_RISK", "DISTRIBUTION_RISK",
     "TRADING_HALT", "CORPORATE_DISCLOSURE", "EARNINGS", "GUIDANCE_REVISION",
     "NEWS_BREAK", "NEWS_REVISION", "FX_SHOCK", "RATE_SHOCK", "CREDIT_SHOCK",
@@ -122,7 +123,7 @@ def session_label(now_jst):
         return "JP_MORNING"
     if hm < 12 * 60 + 30:
         return "JP_LUNCH"
-    if hm < 15 * 60 + 15:
+    if hm < 15 * 60 + 25:          # TSE afternoon runs to 15:25 (closing auction 15:25–15:30)
         return "JP_AFTERNOON"
     if hm < 15 * 60 + 30:
         return "JP_PRE_CLOSE"
@@ -181,11 +182,13 @@ def detect_anomalies(quote, session, prev_close=None):
             elif sq["atLimitDown"]:
                 out.append(_trig("LIMIT_DOWN", 5, 1.0, f"ストップ安(S安)に到達 — 制限値幅±{sq['limitYen']}円"))
             elif p >= 0.7:
-                out.append(_trig("SPECIAL_QUOTE_RISK", 4, round(p, 2),
-                                 f"S高接近({int(p*100)}% — 上限まであと{round(sq['limitUp']-price,1)}円)"))
+                # PROXIMITY to the price limit — NOT the exchange 特別気配 state
+                # (that needs a verified exchange-status field we don't have).
+                out.append(_trig("LIMIT_UP_PROXIMITY", 4, round(p, 2),
+                                 f"値幅上限まで{int(p*100)}%(あと{round(sq['limitUp']-price,1)}円)"))
             elif p <= -0.7:
-                out.append(_trig("SPECIAL_QUOTE_RISK", 4, round(-p, 2),
-                                 f"S安接近({int(-p*100)}% — 下限まであと{round(price-sq['limitDown'],1)}円)"))
+                out.append(_trig("LIMIT_DOWN_PROXIMITY", 4, round(-p, 2),
+                                 f"値幅下限まで{int(-p*100)}%(あと{round(price-sq['limitDown'],1)}円)"))
 
     # Price spike / crash (session-aware).
     if isinstance(chg, (int, float)):

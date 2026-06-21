@@ -2155,7 +2155,8 @@ _EVENT_LOCK    = threading.Lock()
 _EVENT_STATE   = {"lastDetectionAt": None, "lastEventAt": None, "detections": 0}
 _EVENT_POSTURE = {
     "LIMIT_UP": "LIMIT_UP_RISK", "LIMIT_DOWN": "LIMIT_DOWN_RISK",
-    "SPECIAL_QUOTE_RISK": "AVOID_CHASING", "PRICE_SPIKE": "AVOID_CHASING",
+    "LIMIT_UP_PROXIMITY": "LIMIT_UP_RISK", "LIMIT_DOWN_PROXIMITY": "LIMIT_DOWN_RISK",
+    "PRICE_SPIKE": "AVOID_CHASING",
     "PRICE_CRASH": "INVESTIGATE", "VOLUME_ANOMALY": "WATCH", "FLOW_ANOMALY": "WATCH",
 }
 
@@ -2257,22 +2258,32 @@ def api_argus_events_active():
                     "schemaVersion": argus_events.SCHEMA_VERSION,
                     "count": len(active), "events": active[:30]})
 
-_EVENT_TEST_STATE = {"lastTs": 0.0}
+_EVENT_TEST_STATE = {"lastTs": 0.0, "day": "", "count": 0}
+_EVENT_TEST_DAILY_CAP = 6   # bound abuse: at most 6 owner-phone test pushes/day
 
 @app.route("/api/argus/event-test-notify", methods=["POST"])
 def api_argus_event_test_notify():
     """One-tap test push so the user can confirm the Render→ntfy pipe works
-    without waiting for a real S高. Public but rate-limited (1 / 3 min, global);
-    it only ever notifies the OWNER's configured topic, never echoes it."""
+    without waiting for a real S高. It only ever notifies the OWNER's configured
+    topic (from env, never echoed). Hard-bounded — 1/3 min AND a daily cap — so
+    the public surface can't be used to spam the phone (GPT review #2A)."""
     now = time.time()
     if not os.environ.get("NTFY_TOPIC"):
         return jsonify({"sent": False, "reason": "ntfy_not_configured",
                         "noteJa": "RenderにNTFY_TOPICが未設定です。"}), 200
+    today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    if _EVENT_TEST_STATE["day"] != today:
+        _EVENT_TEST_STATE["day"], _EVENT_TEST_STATE["count"] = today, 0
+    if _EVENT_TEST_STATE["count"] >= _EVENT_TEST_DAILY_CAP:
+        return jsonify({"sent": False, "reason": "daily_cap",
+                        "noteJa": f"本日のテスト送信は上限({_EVENT_TEST_DAILY_CAP}回)に達しました。"}), 200
     if now - _EVENT_TEST_STATE["lastTs"] < 180:
         wait = int(180 - (now - _EVENT_TEST_STATE["lastTs"]))
         return jsonify({"sent": False, "reason": "rate_limited",
                         "noteJa": f"連投防止のため約{wait}秒後に再試行してください。"}), 200
     _EVENT_TEST_STATE["lastTs"] = now
+    _EVENT_TEST_STATE["count"] += 1
+    add_log(f"[event] test-notify fired ({_EVENT_TEST_STATE['count']}/{_EVENT_TEST_DAILY_CAP} today)")
     _event_ntfy({"symbol": "TEST", "eventType": "TEST_NOTIFICATION", "market": "—",
                  "session": "test", "severity": 4, "recommendedPosture": "WATCH",
                  "reasonJa": "ARGUS 24/7監視の通知テストです。これが届けば設定完了。"})

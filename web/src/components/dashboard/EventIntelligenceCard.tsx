@@ -4,7 +4,8 @@ import './EventIntelligenceCard.css';
 
 const TYPE_JA: Record<string, string> = {
   LIMIT_UP: 'ストップ高(S高)', LIMIT_DOWN: 'ストップ安(S安)',
-  SPECIAL_QUOTE_RISK: '特別気配/S高接近', PRICE_SPIKE: '急騰', PRICE_CRASH: '急落',
+  LIMIT_UP_PROXIMITY: 'S高接近(値幅上限)', LIMIT_DOWN_PROXIMITY: 'S安接近(値幅下限)',
+  PRICE_SPIKE: '急騰', PRICE_CRASH: '急落',
   VOLUME_ANOMALY: '出来高急増', FLOW_ANOMALY: '大口フロー異常',
 };
 const POSTURE_JA: Record<string, string> = {
@@ -54,7 +55,11 @@ export const EventIntelligenceCard: React.FC = () => {
   if (loading && !status) return null;
   const enabled = status?.enabled;
   const inSession = status?.sessionJp || status?.sessionUs;
-  const sessionJa = status?.sessionJp ? '東京市場 取引時間中' : status?.sessionUs ? '米国市場 取引時間中' : '市場クローズ(監視継続中)';
+  // Honest wording (GPT review #2D): detection is LIVE only during JP/US market
+  // sessions. Off-hours is idle — no PTS, crypto-24/7 not wired yet.
+  const sessionJa = status?.sessionJp ? '東京市場 取引時間中 — 検知 稼働中'
+    : status?.sessionUs ? '米国市場 取引時間中 — 検知 稼働中'
+    : '市場時間外 — 銘柄検知は次の取引時間から';
 
   return (
     <section>
@@ -74,8 +79,8 @@ export const EventIntelligenceCard: React.FC = () => {
         </div>
         {events.length === 0 ? (
           <div className="ei-empty">
-            {inSession ? '現在アラートはありません(S高/急変/フロー異常を常時監視中)。'
-              : '市場クローズ。次の取引時間に向けて監視を継続しています。'}
+            {inSession ? '現在アラートはありません(S高/急変/フロー異常を検知中)。'
+              : '市場時間外。次の取引時間(東京/米国)に銘柄検知を再開します。深夜・週末の常時監視(暗号資産/ニュース)は今後対応。'}
           </div>
         ) : (
           <div className="ei-rows">
@@ -89,7 +94,7 @@ export const EventIntelligenceCard: React.FC = () => {
           {testMsg && <span className="ei-test-msg">{testMsg}</span>}
         </div>
         <div className="ei-foot">
-          決定論的検知のみ(LLMなし)。S高/S安はTSE制限値幅で判定。PTS/板/VWAPは未対応。
+          決定論的検知のみ(LLMなし)。値幅上限/下限への接近はTSE制限値幅で算出(取引所の特別気配フィールドではありません)。PTS・板(L2)・VWAPは未対応。
         </div>
       </div>
     </section>

@@ -40,10 +40,17 @@ def test_detect_limit_up_event():
     assert any(t["severity"] == 5 for t in trigs if t["type"] == "LIMIT_UP")
 
 
-def test_detect_special_quote_risk_approaching():
+def test_detect_limit_proximity_approaching():
+    # 80% toward the upper limit → LIMIT_UP_PROXIMITY (NOT mislabeled 特別気配).
     q = {"market": "JP", "symbol": "9999", "price": 1240, "changePct": 24.0}
     trigs = ev.detect_anomalies(q, "JP_MORNING", prev_close=1000)
-    assert any(t["type"] == "SPECIAL_QUOTE_RISK" for t in trigs)
+    assert any(t["type"] == "LIMIT_UP_PROXIMITY" for t in trigs)
+    assert not any("SPECIAL_QUOTE" in t["type"] for t in trigs)
+    # afternoon session now correctly runs to 15:25 (closing auction 15:25–15:30)
+    from datetime import datetime, timezone, timedelta
+    jst = timezone(timedelta(hours=9))
+    assert ev.session_label(datetime(2026, 6, 22, 15, 20, tzinfo=jst)) == "JP_AFTERNOON"
+    assert ev.session_label(datetime(2026, 6, 22, 15, 27, tzinfo=jst)) == "JP_PRE_CLOSE"
 
 
 # ── Session-aware anomaly thresholds ─────────────────────────────────────────
