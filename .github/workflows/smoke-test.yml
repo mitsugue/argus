@@ -10,7 +10,7 @@ name: smoke-test
 on:
   push:
     branches: [main]
-    paths: ['scanner.py', 'argus_rules.py', 'argus_events.py', 'argus_research.py', 'argus_ledger.py', 'smoke_test.py', '.github/workflows/smoke-test.yml']
+    paths: ['scanner.py', 'argus_rules.py', 'argus_events.py', 'argus_research.py', 'argus_event_store.py', 'argus_ledger.py', 'smoke_test.py', '.github/workflows/smoke-test.yml']
   schedule:
     - cron: '0 */6 * * *'   # every 6 hours
   workflow_dispatch: {}

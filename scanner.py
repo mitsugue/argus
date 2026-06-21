@@ -20,6 +20,7 @@ from argus_rules import (  # pure scoring layer extracted v10.37 (#9)
     _entry_metrics, _flow_inference, _entry_scout_assess, _scout_narrative)
 import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 import argus_research  # evidence-first deterministic research dossier (v10.41)
+import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -2149,6 +2150,11 @@ def _ev_int(name, default):
         return default
 _EVENT_BACKBONE_ENABLED = os.environ.get("EVENT_BACKBONE_ENABLED", "1") not in ("0", "false", "")
 _EVENT_GEAR2_ENABLED    = os.environ.get("EVENT_GEAR2_ENABLED", "0") not in ("0", "false", "")
+# v10.42: restore active events from the ledger branch on boot (raw read — no
+# secret). The snapshot is written by the event-ledger workflow. Best-effort
+# durability (snapshot granularity); the event HISTORY on the branch is durable.
+_EVENT_PERSISTENCE_ENABLED = os.environ.get("EVENT_PERSISTENCE_ENABLED", "1") not in ("0", "false", "")
+_EVENTS_RESTORED = {"done": False}
 _EVENT_NTFY_MIN_SEV     = _ev_int("EVENT_NTFY_MIN_SEVERITY", 4)   # push only sev>=4
 _EVENT_TTL_SEC          = _ev_int("EVENT_TTL_HOURS", 8) * 3600
 _EVENTS_ACTIVE = {}                 # dedupKey -> latest envelope revision
@@ -2260,13 +2266,61 @@ def _events_active_list():
             out.append(e)
     return sorted(out, key=lambda e: (-(e.get("severity") or 0), -argus_events.priority_score(e)))
 
+def _parse_iso_epoch(iso):
+    try:
+        return datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).timestamp()
+    except Exception:
+        return None
+
+def _events_restore_once():
+    """Restore active events + history from the ledger branch snapshot on first
+    access after a (re)start. Raw read, no secret; never raises. v10.42."""
+    if _EVENTS_RESTORED["done"] or not _EVENT_PERSISTENCE_ENABLED:
+        return
+    _EVENTS_RESTORED["done"] = True
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/events/snapshot.json?cb={int(time.time())}", timeout=6)
+        if r.status_code != 200:
+            return
+        active, log = argus_event_store.restore_state(
+            r.json(), time.time(), _parse_iso_epoch, lambda e: e.get("deduplicationKey"))
+        with _EVENT_LOCK:
+            for k, v in active.items():
+                if k and k not in _EVENTS_ACTIVE:
+                    _EVENTS_ACTIVE[k] = v
+            for e in reversed(log):
+                _EVENTS_LOG.appendleft(e)
+        if active:
+            add_log(f"[event] restored {len(active)} active events from ledger branch")
+    except Exception:
+        pass
+
 @app.route("/api/argus/events-active")
 def api_argus_events_active():
     """Public read: current active 24/7 events for the frontend. Secret-free."""
+    _events_restore_once()
     active = _events_active_list()
     return jsonify({"enabled": _EVENT_BACKBONE_ENABLED, "asOf": _ai_now_iso(),
                     "schemaVersion": argus_events.SCHEMA_VERSION,
                     "count": len(active), "events": active[:30]})
+
+@app.route("/api/argus/event-log")
+def api_argus_event_log():
+    """Public read: recent event history (for the durable-snapshot workflow)."""
+    _events_restore_once()
+    with _EVENT_LOCK:
+        log = list(_EVENTS_LOG)[:60]
+    return jsonify({"asOf": _ai_now_iso(), "count": len(log), "events": log})
+
+@app.route("/api/argus/event-snapshot")
+def api_argus_event_snapshot():
+    """Public read: the full durable snapshot (active + log) the event-ledger
+    workflow commits to the branch. No secrets (events are watchlist anomalies)."""
+    _events_restore_once()
+    active = _events_active_list()
+    with _EVENT_LOCK:
+        log = list(_EVENTS_LOG)
+    return jsonify(argus_event_store.serialize_state(active, log, now_iso=_ai_now_iso()))
 
 # ── Evidence-First Research Dossier (dossier-v1, v10.41) — deterministic ──────
 # Built on-demand from signals ARGUS ALREADY has (cached entry-scout flow/credit,
@@ -2432,11 +2486,32 @@ def api_argus_event_test_notify():
                  "reasonJa": "ARGUS 24/7監視の通知テストです。これが届けば設定完了。"})
     return jsonify({"sent": True, "noteJa": "テスト通知を送信しました。スマホを確認してください。"})
 
+_EVENT_SNAP_META = {"data": None, "expires": 0.0}
+
+def _event_snapshot_meta():
+    """Last durable snapshot's metadata from the ledger branch (10-min cache)."""
+    now = time.time()
+    if now < _EVENT_SNAP_META["expires"]:
+        return _EVENT_SNAP_META["data"]
+    data = None
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/events/snapshot.json?cb={int(now)}", timeout=6)
+        if r.status_code == 200:
+            d = r.json()
+            data = {"snapshotAt": d.get("snapshotAt"), "activeCount": d.get("activeCount")}
+    except Exception:
+        data = None
+    _EVENT_SNAP_META["data"] = data
+    _EVENT_SNAP_META["expires"] = now + (600 if data else 300)
+    return data
+
 @app.route("/api/argus/event-backbone-status")
 def api_argus_event_backbone_status():
     """Public ops summary (no secrets) — for the Ledger Health / Ops view."""
+    _events_restore_once()
     with _EVENT_LOCK:
         active = len(_EVENTS_ACTIVE)
+    snap = _event_snapshot_meta()
     return jsonify({
         "enabled": _EVENT_BACKBONE_ENABLED, "gear2Enabled": _EVENT_GEAR2_ENABLED,
         "activeCount": active, "schemaVersion": argus_events.SCHEMA_VERSION,
@@ -2444,7 +2519,11 @@ def api_argus_event_backbone_status():
         "detectionsThisProcess": _EVENT_STATE["detections"],
         "ntfyConfigured": bool(os.environ.get("NTFY_TOPIC")), "ntfyMinSeverity": _EVENT_NTFY_MIN_SEV,
         "sessionJp": _jp_market_open(), "sessionUs": _us_market_open(),
-        "noteJa": "決定論的Gear0/1のみ稼働(LLMなし)。ブリッジの既存pushを解析しS高/急変/フロー異常を検知。PTS/L2/VWAPは未対応(capability-gated)。",
+        # v10.42 durable store status
+        "persistenceEnabled": _EVENT_PERSISTENCE_ENABLED, "restoredOnBoot": _EVENTS_RESTORED["done"],
+        "lastSnapshotAt": (snap or {}).get("snapshotAt"), "storeMode": "ledger-branch (Lean)",
+        "noteJa": "決定論的Gear0/1のみ稼働(LLMなし)。ブリッジの既存pushを解析しS高/急変/フロー異常を検知。"
+                  "イベントはledgerブランチにスナップショット永続(再起動時に復元)。PTS/L2/VWAPは未対応(capability-gated)。",
     })
 
 # ━━━ CoinGecko crypto watchlist (keyless, free) ━━━

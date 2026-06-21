@@ -1,0 +1,69 @@
+# ARGUS Event Intelligence durable snapshot (event-store-v1, v10.42).
+# Snapshots the live 24/7 event state to the `ledger` branch so a Render
+# restart/deploy doesn't erase active events + revisions + dossiers. Render
+# restores from events/snapshot.json on boot (raw read, no secret). Best-effort
+# durability by snapshot granularity; the event HISTORY is durable + auditable.
+# Uses the built-in GITHUB_TOKEN — NO new secret needed.
+
+name: event-ledger
+
+on:
+  schedule:
+    - cron: '*/15 0-7,13-21 * * 1-5'   # every ~15m during JP + US sessions (UTC)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Fetch the live event snapshot
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4; do
+            curl -sf --max-time 60 "$BE/api/argus/event-snapshot" -o "$RUNNER_TEMP/snap.json" && break
+            echo "retry $i"; sleep 15
+          done
+          test -s "$RUNNER_TEMP/snap.json"
+          N=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/snap.json')).get('activeCount',0))")
+          echo "active=$N"
+          echo "ACTIVE=$N" >> "$GITHUB_ENV"
+
+      - name: Checkout ledger branch
+        if: env.ACTIVE != '0'
+        uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Commit snapshot to ledger branch (only when events are active)
+        if: env.ACTIVE != '0'
+        run: |
+          git fetch origin ledger:ledger 2>/dev/null && git checkout ledger || git checkout --orphan ledger
+          git rm -rq --cached . 2>/dev/null || true
+          find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          mkdir -p ledger/events/log
+          cp "$RUNNER_TEMP/snap.json" ledger/events/snapshot.json
+          DAY=$(TZ=Asia/Tokyo date +%F)
+          python3 - <<'PY'
+          import json, os
+          snap = json.load(open(os.environ['RUNNER_TEMP'] + '/snap.json'))
+          day = os.popen("TZ=Asia/Tokyo date +%F").read().strip()
+          # append active events to the day's history log (one JSON line each)
+          with open(f'ledger/events/log/{day}.jsonl', 'a') as f:
+              for e in snap.get('active', []):
+                  f.write(json.dumps({k: e.get(k) for k in
+                      ('eventId','eventType','symbol','market','severity','lifecycleState',
+                       'recommendedPosture','detectedAt','reasonJa')}, ensure_ascii=False) + "\n")
+          print('logged', len(snap.get('active', [])), 'active events')
+          PY
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/events/
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "events: $(date -u +%FT%TZ) snapshot ($ACTIVE active)"
+            git push origin HEAD:ledger
+          fi

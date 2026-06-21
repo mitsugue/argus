@@ -129,8 +129,12 @@ def v_events_active():
 
 def v_event_status():
     c, d = _get("/api/argus/event-backbone-status")
-    return ("enabled" in d) and d.get("schemaVersion") == "event-v1", \
-        f"enabled={d.get('enabled')} ntfy={d.get('ntfyConfigured')} jp={d.get('sessionJp')}"
+    return ("enabled" in d) and ("persistenceEnabled" in d), \
+        f"enabled={d.get('enabled')} persist={d.get('persistenceEnabled')} lastSnap={d.get('lastSnapshotAt')}"
+
+def v_event_snapshot():
+    c, d = _get("/api/argus/event-snapshot")
+    return d.get("schemaVersion") == "event-store-v1" and isinstance(d.get("active"), list), f"active={d.get('activeCount')}"
 
 def v_admin_gated_401(path):
     def fn():
@@ -161,6 +165,7 @@ CHECKS = [
     ("integrations", v_integrations),
     ("events-active", v_events_active),
     ("event-backbone-status", v_event_status),
+    ("event-snapshot", v_event_snapshot),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
 ]
