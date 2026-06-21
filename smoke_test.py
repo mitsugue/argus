@@ -145,6 +145,11 @@ def _crypto_scan_gated():
     except urllib.error.HTTPError as e:
         return e.code in (401, 503), f"HTTP {e.code} (admin-gated)"
 
+def v_source_registry():
+    c, d = _get("/api/argus/source-registry")
+    return isinstance(d.get("sources"), list) and d.get("engineVersion") == "source-registry-v1", \
+        f"{d.get('confirmedLive')}/{d.get('total')} live"
+
 def v_admin_gated_401(path):
     def fn():
         try:
@@ -176,6 +181,7 @@ CHECKS = [
     ("event-backbone-status", v_event_status),
     ("event-snapshot", v_event_snapshot),
     ("crypto-scan admin", _crypto_scan_gated),
+    ("source-registry", v_source_registry),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
 ]

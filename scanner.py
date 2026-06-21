@@ -4916,10 +4916,11 @@ def get_integrations_snapshot():
          "runtimeStatus": ("live" if (_push_last_age_sec() or 1e9) <= 900 else
                            "stale" if _push_last_age_sec() is not None else
                            "pending_local_validation"),
-         "usedFor": ["realtime-quotes", "flow", "orderbook", "vwap"],
+         "usedFor": ["realtime-quotes", "flow"],   # L2/VWAP NOT live — see source-registry
          "lastKnownStatus": (f"last push {int(_push_last_age_sec())}s ago"
                              if _push_last_age_sec() is not None else None),
-         "notesJa": "ローカルOpenD→quote-pushブリッジ経由のリアルタイム価格。push途絶時はJ-Quants/Twelve Dataへ自動フォールバック。"},
+         "notesJa": "ローカルOpenD→quote-pushブリッジ経由のリアルタイム価格+大口フロー。"
+                    "板(L2)/VWAPは未対応(source-registry参照)。push途絶時はJ-Quants/Twelve Dataへ自動フォールバック。"},
     ]
 
     # Overall: live only if the 3 core market-data providers are live.
@@ -4952,6 +4953,73 @@ def get_integrations_snapshot():
 @app.route("/api/argus/integrations")
 def api_argus_integrations():
     return jsonify(get_integrations_snapshot())
+
+# ── Source Capability Registry (source-registry-v1, v10.47) ──────────────────
+# One honest, capability-LEVEL view of every data source: a provider being
+# configured does NOT mean a capability is live. Statuses: confirmed_live /
+# confirmed_delayed / partial / requires_test / paid_not_enabled / licence_unclear
+# / unavailable / missing. Capabilities ARGUS does not actually have (PTS, L2,
+# tape, VWAP, TDnet/EDINET, FX/futures/commodities) are listed unavailable so the
+# UI / LLM can never over-claim them.
+def _source_registry():
+    integ = get_integrations_snapshot()
+    prov = {p["id"]: p for p in integ.get("providers", [])}
+    def rt(pid):
+        return (prov.get(pid) or {}).get("runtimeStatus", "missing")
+    bridge_live = rt("moomoo") == "live"
+    jq, td, fred, cg = rt("jquants"), rt("twelvedata"), rt("fred"), rt("coingecko")
+    def S(cap, provider, market, status, entitlement, paid, licence, note):
+        return {"capability": cap, "provider": provider, "market": market, "status": status,
+                "entitlement": entitlement, "paid": paid, "licence": licence, "notesJa": note}
+    sources = [
+        S("日本株 価格", "moomoo / J-Quants", "JP",
+          "confirmed_live" if bridge_live else ("confirmed_delayed" if jq == "live" else "missing"),
+          "realtime(bridge) / T-1(J-Quants)", "free", "ok",
+          "ブリッジ稼働中はリアルタイム、途絶時はJ-Quants前日終値へ自動フォールバック。"),
+        S("米国株 価格", "moomoo / Twelve Data", "US",
+          "confirmed_live" if bridge_live else ("confirmed_delayed" if td == "live" else "missing"),
+          "realtime(bridge) / 遅延(Twelve Data無料枠)", "free", "ok",
+          "ブリッジ稼働中はリアルタイム、途絶時はTwelve Dataへ。"),
+        S("大口フロー(資金分布)", "moomoo", "JP/US",
+          "confirmed_live" if bridge_live else "requires_test",
+          "口座のデータ権限依存", "free", "entitlement-dependent",
+          "新規買い/買い戻し/分配の推定に使用。"),
+        S("暗号資産 価格/ショック", "CoinGecko", "CRYPTO",
+          "confirmed_live" if cg == "live" else "partial", "数分遅延", "free", "ok",
+          "24時間ショック検知に使用(キー不要)。"),
+        S("金利・VIX・HY OAS", "FRED", "US", "confirmed_live" if fred == "live" else "missing",
+          "日次", "free", "ok", "地合い/レジーム判定に使用。"),
+        S("ニュース/材料", "Finnhub / GDELT / SEC EDGAR", "US/JP",
+          "partial", "公開フィード", "free/optional", "ok",
+          "二次媒体中心。一次の公式開示としては扱わない。"),
+        S("企業開示(TDnet)", "J-Quants TDnet add-on", "JP", "paid_not_enabled",
+          "有料アドオン未契約", "paid", "ok",
+          "未契約のため公式適時開示フィードは未接続(official_catalystは到達不可)。"),
+        S("企業開示(EDINET)", "EDINET API", "JP", "unavailable",
+          "未接続", "free", "licence_unclear", "対応APIでの取り込みは将来。"),
+        S("日本PTS", "—", "JP", "unavailable", "プロバイダ未確認", "—", "—",
+          "確認済みプロバイダなし。通常のTSE気配からPTSやS高確率を推定しない。"),
+        S("米国 時間外(pre/after)", "—", "US", "requires_test", "プロバイダ機能依存", "—", "—",
+          "明示的な時間外データを返すプロバイダが未確認。"),
+        S("板(L2)", "moomoo", "JP/US", "requires_test", "未検証", "—", "entitlement-dependent",
+          "ブリッジ/権限が未検証のためliveにしない。"),
+        S("テープ(歩み値)", "moomoo", "JP/US", "requires_test", "未検証", "—", "entitlement-dependent", "同上。"),
+        S("VWAP", "—", "JP/US", "unavailable", "入力未接続", "—", "—", "VWAP入力は未接続。"),
+        S("FX / 先物 / 商品", "—", "GLOBAL", "unavailable", "プロバイダ未確認", "—", "—",
+          "確認済みプロバイダが無いためliveにしない(枠だけ確保)。"),
+        S("AI判定(GPT-5.5)", "OpenAI", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("openai"), "missing"),
+          "管理者実行のみ", "paid", "ok", "ルール判定の第二意見。"),
+        S("AIチェック(Gemini)", "Gemini", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("gemini"), "missing"),
+          "管理者実行のみ", "paid/free", "ok", "OpenAI判断の二重チェック。"),
+    ]
+    return {"asOf": _ai_now_iso(), "engineVersion": "source-registry-v1",
+            "confirmedLive": sum(1 for s in sources if s["status"] == "confirmed_live"),
+            "total": len(sources), "sources": sources,
+            "noteJa": "『設定済み』≠『その機能がライブ』。各capabilityの真の状態を表示。"}
+
+@app.route("/api/argus/source-registry")
+def api_argus_source_registry():
+    return jsonify(_source_registry())
 
 
 # ━━━ Context-aware VIX signal (v9.12) ━━━

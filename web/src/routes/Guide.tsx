@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
 import { BackupCard } from '../components/guide/BackupCard';
 import { LedgerHealthCard } from '../components/guide/LedgerHealthCard';
+import { SourceRegistryCard } from '../components/guide/SourceRegistryCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -46,6 +47,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.47.0', 'Source Capability Registry を追加 — 情報源の「真実性」をcapability単位で1画面に(Guide)。「設定済み≠ライブ」を明確化し、各機能をライブ確認/遅延/要検証/有料未契約/未対応で正直表示。PTS・板(L2)・テープ・VWAP・TDnet/EDINET・FX/先物/商品は未対応と明記(過大主張を防止)。moomooの板/VWAPの過大記載も修正'],
   ['v10.46.0', '「全体をAIに相談」(Pro Handoff)に検知中イベントの調査ドシエを自動添付 — S高/急変/暗号資産ショックがある時、その「何が起きた/推定原因/次シナリオ/罠/反証/無効化条件/欠損データ」をLLM相談プロンプトに同梱。事実と推論を区別・確率は未較正・売買指示なしを明記。AIに渡す現状情報が一段濃くなります'],
   ['v10.45.0', 'Action Alertsページに24/7イベント+調査ドシエを統合表示 — Todayだけでなく専用ページでも、検知中のS高/急変/暗号資産ショックとその決定論ドシエ(原因/シナリオ/罠/反証)を展開して読めるように'],
   ['v10.44.0', 'ブリッジ→サーバーの通信にHMAC署名+リプレイ防止を追加(セキュリティ強化) — 価格push に時刻+nonce+HMAC-SHA256署名を要求でき、管理トークンが漏れても偽造・再送をブロック。後方互換(秘密鍵を設定するまで現状動作のまま壊れない)。EC2側に署名コードを足し、両側に共有鍵を設定すると有効化'],
@@ -166,6 +168,14 @@ export const Guide: React.FC = () => {
           <span className="section-head__count">稼働状況</span>
         </div>
         <LedgerHealthCard />
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">情報源レジストリ (真実性)</span>
+          <span className="section-head__count">capability別</span>
+        </div>
+        <SourceRegistryCard />
       </section>
 
       <section>
