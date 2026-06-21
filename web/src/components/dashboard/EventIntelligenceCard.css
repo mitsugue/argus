@@ -15,3 +15,25 @@
 .ei-test-btn { padding: 5px 12px; font-size: 11.5px; font-weight: 600; color: var(--text-main); background: var(--surface-soft, rgba(255,255,255,0.04)); border: 1px solid var(--line, rgba(255,255,255,0.12)); border-radius: 6px; cursor: pointer; }
 .ei-test-btn:disabled { opacity: 0.5; cursor: default; }
 .ei-test-msg { font-size: 11px; color: var(--text-sub, #8b98a7); }
+/* Research Dossier (v10.41) — calm, dense, expandable under each event. */
+.ei-row--open { border: 1px solid var(--line, rgba(255,255,255,0.1)); border-radius: 8px; padding: 8px; background: rgba(255,255,255,0.015); }
+.ei-row__head { display: flex; align-items: baseline; gap: 8px; width: 100%; background: none; border: none; cursor: pointer; text-align: left; padding: 0; flex-wrap: wrap; }
+.ei-row__caret { margin-left: auto; color: var(--text-faint, #5f6b78); font-size: 11px; }
+.dz { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line, rgba(255,255,255,0.1)); display: flex; flex-direction: column; gap: 9px; }
+.dz--note { font-size: 11.5px; color: var(--text-muted, #5f6b78); }
+.dz-head { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; align-items: center; }
+.dz-posture { font-weight: 700; color: var(--amber, #fbbf24); }
+.dz-conf, .dz-scope, .dz-review { color: var(--text-sub, #8b98a7); }
+.dz-sec__t { font-size: 10.5px; font-weight: 700; color: var(--text-faint, #5f6b78); margin-bottom: 4px; }
+.dz-bars { display: flex; flex-direction: column; gap: 3px; }
+.dz-bar { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.dz-bar__label { min-width: 110px; color: var(--text-sub, #8b98a7); }
+.dz-bar__track { flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+.dz-bar__fill { display: block; height: 100%; background: var(--accent, #5b8def); }
+.dz-bar__pct { min-width: 34px; text-align: right; color: var(--text-main); }
+.dz-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.dz-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--line, rgba(255,255,255,0.12)); }
+.dz-chip--warn { color: var(--amber, #fbbf24); border-color: var(--amber, #fbbf24); }
+.dz-list { margin: 0; padding-left: 16px; font-size: 11px; color: var(--text-sub, #8b98a7); line-height: 1.6; }
+.dz-list--muted { color: var(--text-faint, #5f6b78); }
+.dz-disc { font-size: 10px; color: var(--text-faint, #5f6b78); line-height: 1.5; }

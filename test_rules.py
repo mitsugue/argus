@@ -680,6 +680,33 @@ def test_event_backbone_disabled_flag(monkeypatch):
     assert scanner._events_active_list() == []
 
 
+# ── Research dossier orchestration (v10.41) ──────────────────────────
+def test_build_event_dossier_orchestration(monkeypatch):
+    monkeypatch.setattr(scanner, "get_entry_scout", lambda sym, mkt="JP": {
+        "name": "テスト",
+        "flowInference": {"classification": "SHORT_COVERING",
+                          "probabilities": {"newLongAccumulation": 0.2, "shortCovering": 0.5,
+                                            "distribution": 0.1, "retailNoise": 0.1, "unconfirmed": 0.1},
+                          "reasonsJa": ["貸株残縮小"]},
+        "metrics": {"rsi14": 72},
+        "catalystContext": {"items": [{"kind": "news", "headline": "上方修正観測"}]}})
+    env = {"eventId": "e-test", "eventType": "LIMIT_UP", "severity": 5, "symbol": "9999",
+           "market": "JP", "session": "JP_MORNING", "lifecycleState": "HIGH_ALERT",
+           "eventVersion": 1, "reasonJa": "S高到達"}
+    d = scanner._build_event_dossier(env)
+    assert d["researchPosture"] == "LIMIT_UP_RISK"
+    assert d["engine"] == "deterministic"
+    assert abs(sum(c["probability"] for c in d["probableCause"]) - 1.0) < 0.01
+    assert "squeeze_exhaustion" in d["trapRisks"]
+    assert "自動売買" in d["disclaimerJa"]          # never a trade instruction
+
+
+def test_event_dossier_endpoint_404_for_unknown():
+    with scanner.app.test_client() as c:
+        r = c.get("/api/argus/event-dossier?eventId=does-not-exist")
+        assert r.status_code == 404
+
+
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────
 def test_margin_signal_requires_two_weeks():
     assert scanner._margin_signal(None) is None

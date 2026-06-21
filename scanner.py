@@ -19,6 +19,7 @@ from argus_rules import (  # pure scoring layer extracted v10.37 (#9)
     _jsf_assess_lines, _short_disclosed_assess, _detect_gap,
     _entry_metrics, _flow_inference, _entry_scout_assess, _scout_narrative)
 import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
+import argus_research  # evidence-first deterministic research dossier (v10.41)
 from flask import Flask, jsonify, request
 from collections import deque
 import argus_ledger  # Local — A.R.G.U.S. prediction ledger
@@ -2257,6 +2258,79 @@ def api_argus_events_active():
     return jsonify({"enabled": _EVENT_BACKBONE_ENABLED, "asOf": _ai_now_iso(),
                     "schemaVersion": argus_events.SCHEMA_VERSION,
                     "count": len(active), "events": active[:30]})
+
+# ── Evidence-First Research Dossier (dossier-v1, v10.41) — deterministic ──────
+# Built on-demand from signals ARGUS ALREADY has (cached entry-scout flow/credit,
+# news context, broad-index move). NO LLM (AI Gear 2/3 is a future opt-in), so a
+# public GET never triggers a model call — only cheap, cached, deterministic
+# assembly. Cached per event so repeated reads are free.
+_DOSSIER_CACHE = {}   # eventId -> dossier
+
+def _ev_item(n, eid, source, stype, claim_type, claim, reliability, now_iso, url=None):
+    return {"evidenceId": f"{eid}#ev{n}", "eventId": eid, "source": source,
+            "sourceType": stype, "sourceURL": url, "observedAt": now_iso, "fetchedAt": now_iso,
+            "reliability": reliability, "claimType": claim_type, "normalizedClaim": claim,
+            "schemaVersion": "evidence-v1", "status": "active"}
+
+def _event_by_id(eid):
+    with _EVENT_LOCK:
+        for e in _EVENTS_ACTIVE.values():
+            if e.get("eventId") == eid:
+                return e
+        for e in _EVENTS_LOG:
+            if e.get("eventId") == eid:
+                return e
+    return None
+
+def _build_event_dossier(env):
+    """Deterministic dossier for one event — reuses cached scout/flow/news/index."""
+    sym, mkt = env.get("symbol"), env.get("market")
+    eid, now_iso = env.get("eventId"), _ai_now_iso()
+    scout = None
+    try:
+        if mkt in ("JP", "US"):
+            scout = get_entry_scout(sym, mkt)        # 6h-cached — usually free
+    except Exception:
+        scout = None
+    flow_inf = (scout or {}).get("flowInference") or {}
+    metrics = (scout or {}).get("metrics") or {}
+    rsi = metrics.get("rsi14")
+    name = (scout or {}).get("name")
+    pq = (_PUSHED_QUOTES.get(mkt) or {}).get(sym)
+    sym_chg = ((pq or {}).get("row") or {}).get("changePct")
+    iq = (_PUSHED_QUOTES.get(mkt) or {}).get("1306" if mkt == "JP" else "SPY")
+    index_chg = ((iq or {}).get("row") or {}).get("changePct")
+    cat = (scout or {}).get("catalystContext") or {}
+    news_items = [it.get("headline") or it.get("labelJa") for it in (cat.get("items") or [])
+                  if it.get("kind") == "news" and (it.get("headline") or it.get("labelJa"))][:3]
+    has_news = bool(news_items)
+    evidence, n = [], 1
+    if isinstance(sym_chg, (int, float)):
+        evidence.append(_ev_item(n, eid, "moomoo-bridge", "primary_market_data", "market_observation",
+                                  f"{sym} {sym_chg:+.2f}%", 0.9, now_iso)); n += 1
+    if flow_inf.get("classification") and flow_inf["classification"] != "UNCONFIRMED":
+        evidence.append(_ev_item(n, eid, "argus-flow-intelligence", "derived", "derived_metric",
+                                  f"flow={flow_inf['classification']}", 0.6, now_iso)); n += 1
+    for nm in news_items:
+        evidence.append(_ev_item(n, eid, "news-radar", "news", "news_report", nm, 0.5, now_iso)); n += 1
+    return argus_research.build_dossier(
+        event=env, flow_inf=flow_inf, rsi=rsi, sym_chg=sym_chg, index_chg=index_chg,
+        has_news=has_news, news_items=news_items, evidence=evidence, asset_name=name)
+
+@app.route("/api/argus/event-dossier")
+def api_argus_event_dossier():
+    """Public read: the deterministic Research Dossier for one event (cached).
+    No model call — cheap deterministic assembly. 400 if the event is unknown."""
+    eid = (request.args.get("eventId") or "").strip()
+    env = _event_by_id(eid)
+    if not env:
+        return jsonify({"error": "event_not_found"}), 404
+    if eid not in _DOSSIER_CACHE:
+        try:
+            _DOSSIER_CACHE[eid] = _build_event_dossier(env)
+        except Exception as e:
+            return jsonify({"error": "dossier_build_failed", "detail": type(e).__name__}), 200
+    return jsonify(_DOSSIER_CACHE[eid])
 
 _EVENT_TEST_STATE = {"lastTs": 0.0, "day": "", "count": 0}
 _EVENT_TEST_DAILY_CAP = 6   # bound abuse: at most 6 owner-phone test pushes/day
