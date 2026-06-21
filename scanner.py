@@ -5039,6 +5039,13 @@ def api_argus_integrations():
 # tape, VWAP, TDnet/EDINET, FX/futures/commodities) are listed unavailable so the
 # UI / LLM can never over-claim them.
 def _source_registry():
+    # Self-verify EDINET once when a key is configured (cached) so the registry
+    # flips missing→confirmed_live/requires_test without waiting for a JP event.
+    if _EDINET_API_KEY and not _EDINET_STATE["lastFetchOk"]:
+        try:
+            _edinet_filings(datetime.now(TZ_JST).strftime("%Y-%m-%d"))
+        except Exception:
+            pass
     integ = get_integrations_snapshot()
     prov = {p["id"]: p for p in integ.get("providers", [])}
     def rt(pid):
