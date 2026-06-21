@@ -16,7 +16,11 @@ Setup:
 
 Logs: journalctl -u argus-bridge -f
 """
+import hashlib
+import hmac
+import json
 import os
+import secrets
 import sys
 import time
 
@@ -30,6 +34,10 @@ except ImportError:
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
+# v10.44: HMAC anti-replay. When set (must match Render's ARGUS_BRIDGE_HMAC_SECRET)
+# each push is signed so a captured admin token alone can't replay/forge it.
+# Empty = unsigned (works while Render's ARGUS_BRIDGE_HMAC_REQUIRED is off).
+HMAC_SECRET = os.environ.get("ARGUS_BRIDGE_HMAC_SECRET", "")
 HOST     = os.environ.get("OPEND_HOST", "127.0.0.1")
 PORT     = int(os.environ.get("OPEND_PORT", "11111"))
 # v10.10.1: 15s quote cadence (get_market_snapshot is 1 request per cycle —
@@ -104,10 +112,28 @@ def fetch_flow(qc, code):
         return None
 
 
+def _push_quotes(stocks):
+    """POST the quotes, signing the EXACT body bytes (data=raw) so the server's
+    HMAC over '<ts>.<nonce>.<rawbody>' matches. Signs only when HMAC_SECRET is
+    set; otherwise sends the admin token alone (backward compatible)."""
+    raw = json.dumps({"stocks": stocks, "source": "moomoo"},
+                     separators=(",", ":")).encode("utf-8")
+    headers = {"X-ARGUS-ADMIN-TOKEN": TOKEN, "Content-Type": "application/json"}
+    if HMAC_SECRET:
+        ts, nonce = str(time.time()), secrets.token_hex(8)
+        sig = hmac.new(HMAC_SECRET.encode("utf-8"),
+                       f"{ts}.{nonce}.".encode("utf-8") + raw, hashlib.sha256).hexdigest()
+        headers["X-ARGUS-TIMESTAMP"] = ts
+        headers["X-ARGUS-NONCE"] = nonce
+        headers["X-ARGUS-SIGNATURE"] = sig
+    return requests.post(f"{BACKEND}/api/argus/quote-push", data=raw, headers=headers, timeout=30)
+
+
 def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
+    print("argus-bridge: HMAC signing " + ("ON" if HMAC_SECRET else "OFF (no secret set)"))
     print(f"argus-bridge: OpenD {HOST}:{PORT} -> {BACKEND} every {INTERVAL}s "
           f"(flow every {FLOW_INTERVAL}s), {len(CODES)} codes")
     qc = OpenQuoteContext(host=HOST, port=PORT)
@@ -139,12 +165,7 @@ def main():
                         if flow_cache.get(code):
                             s["flow"] = flow_cache[code]
                     if stocks:
-                        resp = requests.post(
-                            f"{BACKEND}/api/argus/quote-push",
-                            json={"stocks": stocks, "source": "moomoo"},
-                            headers={"X-ARGUS-ADMIN-TOKEN": TOKEN},
-                            timeout=30,
-                        )
+                        resp = _push_quotes(stocks)
                         body = resp.json() if resp.ok else {}
                         print(time.strftime("%H:%M:%S"),
                               f"pushed http={resp.status_code} accepted={body.get('accepted')}")
