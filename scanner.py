@@ -24,6 +24,7 @@ import argus_event_store  # Lean durable event store: branch snapshot/restore (v
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
+import hmac
 import argus_ledger  # Local — A.R.G.U.S. prediction ledger
 try:
     from flask_cors import CORS  # optional; only needed for /api/argus/* cross-origin
@@ -1984,6 +1985,59 @@ _PUSHED_QUOTES = {"JP": {}, "US": {}}   # market -> {symbol: {"row":…, "ts":�
 _PUSH_TTL  = 600                        # use pushed quotes for ≤ 10 min
 _PUSH_MAX  = 50                         # symbols per push request
 
+# ── EC2→Render ingress HMAC anti-replay (v10.44) ─────────────────────────────
+# Additive defence on top of the admin token: the bridge signs each push with
+# HMAC-SHA256 over "<ts>.<nonce>.<rawbody>" using a shared secret, so a captured
+# admin token alone can't replay or forge a push. BACKWARD-COMPATIBLE: with no
+# secret set it's a no-op (current behaviour). With a secret set but
+# ARGUS_BRIDGE_HMAC_REQUIRED unset, signed requests are verified and unsigned
+# ones are still allowed (migration window). Flip REQUIRED once the bridge signs.
+_BRIDGE_HMAC_SECRET   = os.environ.get("ARGUS_BRIDGE_HMAC_SECRET", "")
+_BRIDGE_HMAC_REQUIRED = os.environ.get("ARGUS_BRIDGE_HMAC_REQUIRED", "0") not in ("0", "false", "")
+_BRIDGE_HMAC_WINDOW   = 300             # seconds: reject stale/future timestamps
+_BRIDGE_NONCES        = deque()         # (nonce, epoch) within the window
+_BRIDGE_NONCE_SET     = set()
+
+def _hmac_ok(secret, ts, nonce, sig, raw_body, now, window=300):
+    """Pure (unit-tested): verify timestamp freshness + HMAC signature. Nonce
+    replay is checked statefully by the caller. Returns (ok, reason)."""
+    if not (ts and nonce and sig):
+        return False, "missing_signature"
+    try:
+        tsf = float(ts)
+    except (TypeError, ValueError):
+        return False, "bad_timestamp"
+    if abs(now - tsf) > window:
+        return False, "stale_timestamp"
+    expected = hmac.new(secret.encode("utf-8"),
+                        f"{ts}.{nonce}.".encode("utf-8") + raw_body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, str(sig)):
+        return False, "bad_signature"
+    return True, "ok"
+
+def _verify_bridge_signature(raw_body):
+    """(ok, reason) for the current request's bridge signature. No-op when no
+    secret is configured; replay-checks the nonce when verifying."""
+    if not _BRIDGE_HMAC_SECRET:
+        return True, "hmac_disabled"
+    ts = request.headers.get("X-ARGUS-TIMESTAMP", "")
+    nonce = request.headers.get("X-ARGUS-NONCE", "")
+    sig = request.headers.get("X-ARGUS-SIGNATURE", "")
+    if not (ts and nonce and sig):
+        return (False, "missing_signature") if _BRIDGE_HMAC_REQUIRED else (True, "unsigned_allowed")
+    ok, reason = _hmac_ok(_BRIDGE_HMAC_SECRET, ts, nonce, sig, raw_body, time.time(), _BRIDGE_HMAC_WINDOW)
+    if not ok:
+        return False, reason
+    now = time.time()
+    while _BRIDGE_NONCES and _BRIDGE_NONCES[0][1] < now - _BRIDGE_HMAC_WINDOW:
+        old, _ = _BRIDGE_NONCES.popleft()
+        _BRIDGE_NONCE_SET.discard(old)
+    if nonce in _BRIDGE_NONCE_SET:
+        return False, "replay"
+    _BRIDGE_NONCES.append((nonce, now))
+    _BRIDGE_NONCE_SET.add(nonce)
+    return True, "verified"
+
 def _jp_market_open(now_jst=None):
     """Pure (unit-tested): is the TSE cash session open right now? Weekday and
     09:00–11:30 or 12:30–15:30 JST. Used to stop labelling weekend/after-hours
@@ -2070,6 +2124,12 @@ def api_argus_quote_push():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    raw = request.get_data() or b""               # raw bytes for signature verify
+    sig_ok, sig_reason = _verify_bridge_signature(raw)
+    if not sig_ok:
+        send_security_alert({"type": "bridge_signature_rejected", "reason": sig_reason,
+                             "meta": _client_meta()})
+        return jsonify({"error": "signature_invalid", "reason": sig_reason}), 401
     body = request.get_json(silent=True) or {}
     stocks = body.get("stocks")
     if not isinstance(stocks, list):
@@ -4261,6 +4321,7 @@ def api_argus_security_status():
             "allowedCountries": _AI_JUDGE_ALLOW_COUNTRIES, "runCountToday": count,
             "minIntervalMinutes": _AI_JUDGE_MIN_INTERVAL, "dailyLimit": _AI_JUDGE_MAX_RUNS,
             "aiJudgeEnabled": _AI_JUDGE_ENABLED, "alertEmailConfigured": bool(_SECURITY_ALERT_EMAIL),
+            "bridgeHmacConfigured": bool(_BRIDGE_HMAC_SECRET), "bridgeHmacRequired": _BRIDGE_HMAC_REQUIRED,
         })
 
 @app.route("/api/argus/security-unlock", methods=["POST"])

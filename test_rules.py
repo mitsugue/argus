@@ -716,6 +716,22 @@ def test_notification_test_requires_admin():
         assert r.status_code in (401, 503)                   # never silently sends
 
 
+def test_bridge_hmac_signature(monkeypatch):
+    import hmac as _h, hashlib as _hl
+    secret, body = "s3cr3t", b'{"stocks":[]}'
+    import time as _t
+    ts, nonce = str(_t.time()), "nonce-abc"
+    sig = _h.new(secret.encode(), f"{ts}.{nonce}.".encode() + body, _hl.sha256).hexdigest()
+    assert scanner._hmac_ok(secret, ts, nonce, sig, body, float(ts))[0]          # valid
+    assert not scanner._hmac_ok(secret, ts, nonce, "deadbeef", body, float(ts))[0]  # forged
+    assert not scanner._hmac_ok(secret, ts, nonce, sig, b'{"stocks":[1]}', float(ts))[0]  # body tampered
+    assert not scanner._hmac_ok(secret, "0", nonce, sig, body, 1e10)[0]          # stale timestamp
+    assert not scanner._hmac_ok(secret, "", "", "", body, 0)[0]                  # missing
+    # quote-push without admin token is still rejected (HMAC is additive)
+    with scanner.app.test_client() as c:
+        assert c.post("/api/argus/quote-push", json={"stocks": []}).status_code in (401, 503)
+
+
 def test_crypto_scan_requires_admin():
     with scanner.app.test_client() as c:
         assert c.post("/api/argus/crypto-scan").status_code in (401, 503)   # admin-gated
