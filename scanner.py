@@ -22,6 +22,7 @@ import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 import argus_research  # evidence-first deterministic research dossier (v10.41)
 from flask import Flask, jsonify, request
 from collections import deque
+import hashlib
 import argus_ledger  # Local — A.R.G.U.S. prediction ledger
 try:
     from flask_cors import CORS  # optional; only needed for /api/argus/* cross-origin
@@ -2210,6 +2211,7 @@ def _record_event(market, symbol, trig, now, session):
         out = env
     if notify:
         _event_ntfy(out)
+    return out                                   # newly-stored env (for dossier build)
 
 def _process_events_from_push(market, rows):
     """Run Gear-0 detection on the just-pushed quotes. Gated to real sessions so
@@ -2233,7 +2235,14 @@ def _process_events_from_push(market, rows):
             quote = {"market": market, "symbol": r.get("symbol"), "price": price,
                      "changePct": r.get("changePct"), "flowRatio": flow}
             for trig in argus_events.detect_anomalies(quote, session, prev_close=prev_close):
-                _record_event(market, r["symbol"], trig, now, session)
+                env = _record_event(market, r["symbol"], trig, now, session)
+                # Build the EVENT-TIME dossier snapshot for significant events, off
+                # the hot path / outside the lock — so the public GET only reads it.
+                if env and env.get("severity", 0) >= 4 and "dossier" not in env:
+                    try:
+                        env["dossier"] = _build_event_dossier(env, r)
+                    except Exception:
+                        pass
         except Exception:
             continue
 
@@ -2264,13 +2273,28 @@ def api_argus_events_active():
 # news context, broad-index move). NO LLM (AI Gear 2/3 is a future opt-in), so a
 # public GET never triggers a model call — only cheap, cached, deterministic
 # assembly. Cached per event so repeated reads are free.
-_DOSSIER_CACHE = {}   # eventId -> dossier
+_DOSSIER_CACHE = {}   # (eventId, eventVersion, evidenceHash) -> dossier
 
-def _ev_item(n, eid, source, stype, claim_type, claim, reliability, now_iso, url=None):
+def _ev_item(n, eid, source, stype, claim_type, claim, reliability, *,
+             observed_at=None, published_at=None, fetched_at=None, now_iso=None,
+             source_event_id=None, url=None):
+    """One evidence item with TRUE source/event times preserved (null when
+    unavailable — never fabricated to the GET clock). contentHash is stable."""
+    fetched = fetched_at or now_iso
+    fresh = None
+    if observed_at and now_iso:
+        try:
+            o = datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+            fresh = max(0, int((datetime.now(pytz.utc) - o).total_seconds()))
+        except Exception:
+            fresh = None
     return {"evidenceId": f"{eid}#ev{n}", "eventId": eid, "source": source,
-            "sourceType": stype, "sourceURL": url, "observedAt": now_iso, "fetchedAt": now_iso,
-            "reliability": reliability, "claimType": claim_type, "normalizedClaim": claim,
-            "schemaVersion": "evidence-v1", "status": "active"}
+            "sourceType": stype, "sourceURL": url, "sourceEventId": source_event_id,
+            "publishedAt": published_at, "observedAt": observed_at, "fetchedAt": fetched,
+            "freshnessSeconds": fresh, "reliability": reliability, "claimType": claim_type,
+            "normalizedClaim": claim, "compactRawMetadata": None,
+            "contentHash": hashlib.sha256(f"{eid}|{claim_type}|{claim}".encode("utf-8")).hexdigest()[:16],
+            "status": "active", "schemaVersion": "evidence-v1"}
 
 def _event_by_id(eid):
     with _EVENT_LOCK:
@@ -2282,8 +2306,15 @@ def _event_by_id(eid):
                 return e
     return None
 
-def _build_event_dossier(env):
-    """Deterministic dossier for one event — reuses cached scout/flow/news/index."""
+# News-Radar / Catalyst feeds are secondary media (GDELT/Finnhub aggregation),
+# NOT a verified official filing — so the highest tier they can earn is
+# reputable_secondary_media. official_catalyst stays unreachable until a real
+# TDnet/EDINET/IR feed is wired (honest; no over-claiming).
+_NEWS_SOURCE_TIER = "reputable_secondary_media"
+
+def _build_event_dossier(env, push_row=None):
+    """Deterministic EVENT-TIME dossier. push_row is the quote that triggered the
+    event (preferred over the latest quote). Never raises a fabricated timestamp."""
     sym, mkt = env.get("symbol"), env.get("market")
     eid, now_iso = env.get("eventId"), _ai_now_iso()
     scout = None
@@ -2293,54 +2324,92 @@ def _build_event_dossier(env):
     except Exception:
         scout = None
     flow_inf = (scout or {}).get("flowInference") or {}
-    metrics = (scout or {}).get("metrics") or {}
-    rsi = metrics.get("rsi14")
+    rsi = ((scout or {}).get("metrics") or {}).get("rsi14")
     name = (scout or {}).get("name")
+    scout_asof = (scout or {}).get("asOf")
+    # symbol move at EVENT TIME (the triggering push), else the held quote
     pq = (_PUSHED_QUOTES.get(mkt) or {}).get(sym)
-    sym_chg = ((pq or {}).get("row") or {}).get("changePct")
-    iq = (_PUSHED_QUOTES.get(mkt) or {}).get("1306" if mkt == "JP" else "SPY")
-    index_chg = ((iq or {}).get("row") or {}).get("changePct")
+    row = push_row or (pq or {}).get("row") or {}
+    sym_chg = row.get("changePct")
+    obs_at = env.get("observedAt") or env.get("detectedAt")
+    # broad-market baseline: US from the Market-Regime SPY stash (SPY is NOT a
+    # bridge symbol); JP from a pushed 1306 (TOPIX ETF) if present, else None.
+    index_chg, index_fresh = None, True
+    if mkt == "US":
+        spy = _ETF_LAST_PRICE.get("SPY")
+        if spy:
+            index_chg = spy.get("m1d")
+            index_fresh = (time.time() - (spy.get("ts") or 0)) < 6 * 3600
+    else:
+        iq = (_PUSHED_QUOTES.get("JP") or {}).get("1306")
+        if iq:
+            index_chg = (iq.get("row") or {}).get("changePct")
+            index_fresh = (time.time() - (iq.get("ts") or 0)) < 1800
     cat = (scout or {}).get("catalystContext") or {}
     news_items = [it.get("headline") or it.get("labelJa") for it in (cat.get("items") or [])
                   if it.get("kind") == "news" and (it.get("headline") or it.get("labelJa"))][:3]
-    has_news = bool(news_items)
+    catalyst_tier = _NEWS_SOURCE_TIER if news_items else "unknown"
     evidence, n = [], 1
     if isinstance(sym_chg, (int, float)):
         evidence.append(_ev_item(n, eid, "moomoo-bridge", "primary_market_data", "market_observation",
-                                  f"{sym} {sym_chg:+.2f}%", 0.9, now_iso)); n += 1
-    if flow_inf.get("classification") and flow_inf["classification"] != "UNCONFIRMED":
+                                  f"{sym} {sym_chg:+.2f}%", 0.9, observed_at=obs_at, now_iso=now_iso)); n += 1
+    if argus_research.has_confirmed_flow_signal(flow_inf.get("classification")):
         evidence.append(_ev_item(n, eid, "argus-flow-intelligence", "derived", "derived_metric",
-                                  f"flow={flow_inf['classification']}", 0.6, now_iso)); n += 1
+                                  f"flow={flow_inf['classification']}", 0.6,
+                                  observed_at=scout_asof, now_iso=now_iso)); n += 1
     for nm in news_items:
-        evidence.append(_ev_item(n, eid, "news-radar", "news", "news_report", nm, 0.5, now_iso)); n += 1
+        evidence.append(_ev_item(n, eid, "news-radar", "secondary_media", "news_report", nm,
+                                  argus_research.tier_reliability(_NEWS_SOURCE_TIER),
+                                  observed_at=None, now_iso=now_iso)); n += 1   # true pub time unknown → null
+    ev_hash = hashlib.sha256("|".join(e["contentHash"] for e in evidence).encode("utf-8")).hexdigest()[:16]
+    times = {"asOf": now_iso, "dossierGeneratedAt": now_iso,
+             "eventObservedAt": env.get("observedAt"), "eventDetectedAt": env.get("detectedAt"),
+             "evidenceAsOf": obs_at, "nextReviewAt": env.get("nextReviewAt"),
+             "mode": "event_time_snapshot",
+             "sourceFreshness": {"quote": "event-time", "news": "publication-time-unknown",
+                                 "indexBaseline": ("fresh" if index_fresh else "stale_or_missing")}}
     return argus_research.build_dossier(
         event=env, flow_inf=flow_inf, rsi=rsi, sym_chg=sym_chg, index_chg=index_chg,
-        has_news=has_news, news_items=news_items, evidence=evidence, asset_name=name)
+        index_fresh=index_fresh, catalyst_tier=catalyst_tier, evidence=evidence,
+        times=times, evidence_hash=ev_hash, asset_name=name)
 
 @app.route("/api/argus/event-dossier")
 def api_argus_event_dossier():
-    """Public read: the deterministic Research Dossier for one event (cached).
-    No model call — cheap deterministic assembly. 400 if the event is unknown."""
+    """Public read of the deterministic Research Dossier. Reads the stored
+    event-time snapshot; rebuilds only if the event revision changed. No model
+    call. Proper HTTP semantics (400/404/500/503)."""
     eid = (request.args.get("eventId") or "").strip()
+    if not eid:
+        return jsonify({"error": "missing_eventId"}), 400
     env = _event_by_id(eid)
     if not env:
         return jsonify({"error": "event_not_found"}), 404
-    if eid not in _DOSSIER_CACHE:
+    stored = env.get("dossier")
+    ver = env.get("eventVersion", 1)
+    if stored and stored.get("eventVersion") == ver:
+        return jsonify(stored)                    # event-time snapshot, no rebuild
+    ck = (eid, ver, env.get("dossier", {}).get("evidenceHash") if stored else None)
+    if ck not in _DOSSIER_CACHE:
         try:
-            _DOSSIER_CACHE[eid] = _build_event_dossier(env)
+            _DOSSIER_CACHE[ck] = _build_event_dossier(env)
+            _DOSSIER_CACHE[ck]["dossierMode"] = "latest_revision"   # built post-hoc, disclosed
         except Exception as e:
-            return jsonify({"error": "dossier_build_failed", "detail": type(e).__name__}), 200
-    return jsonify(_DOSSIER_CACHE[eid])
+            add_log(f"[dossier] build failed {eid}: {type(e).__name__}")
+            return jsonify({"error": "dossier_build_failed", "detail": type(e).__name__}), 500
+    return jsonify(_DOSSIER_CACHE[ck])
 
 _EVENT_TEST_STATE = {"lastTs": 0.0, "day": "", "count": 0}
 _EVENT_TEST_DAILY_CAP = 6   # bound abuse: at most 6 owner-phone test pushes/day
 
 @app.route("/api/argus/event-test-notify", methods=["POST"])
 def api_argus_event_test_notify():
-    """One-tap test push so the user can confirm the Render→ntfy pipe works
-    without waiting for a real S高. It only ever notifies the OWNER's configured
-    topic (from env, never echoed). Hard-bounded — 1/3 min AND a daily cap — so
-    the public surface can't be used to spam the phone (GPT review #2A)."""
+    """ADMIN-ONLY test push (GPT review #9): a public surface that can buzz the
+    owner's phone is removed. Auth via the standard admin gate (401/503); the
+    cooldown + daily cap + audit log remain as defence in depth. Never echoes
+    the topic."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
     now = time.time()
     if not os.environ.get("NTFY_TOPIC"):
         return jsonify({"sent": False, "reason": "ntfy_not_configured",

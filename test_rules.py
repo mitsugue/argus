@@ -680,10 +680,10 @@ def test_event_backbone_disabled_flag(monkeypatch):
     assert scanner._events_active_list() == []
 
 
-# ── Research dossier orchestration (v10.41) ──────────────────────────
+# ── Research dossier orchestration (v10.41.1) ────────────────────────
 def test_build_event_dossier_orchestration(monkeypatch):
     monkeypatch.setattr(scanner, "get_entry_scout", lambda sym, mkt="JP": {
-        "name": "テスト",
+        "name": "テスト", "asOf": "2026-06-22T01:00:00Z",
         "flowInference": {"classification": "SHORT_COVERING",
                           "probabilities": {"newLongAccumulation": 0.2, "shortCovering": 0.5,
                                             "distribution": 0.1, "retailNoise": 0.1, "unconfirmed": 0.1},
@@ -692,19 +692,28 @@ def test_build_event_dossier_orchestration(monkeypatch):
         "catalystContext": {"items": [{"kind": "news", "headline": "上方修正観測"}]}})
     env = {"eventId": "e-test", "eventType": "LIMIT_UP", "severity": 5, "symbol": "9999",
            "market": "JP", "session": "JP_MORNING", "lifecycleState": "HIGH_ALERT",
-           "eventVersion": 1, "reasonJa": "S高到達"}
-    d = scanner._build_event_dossier(env)
-    assert d["researchPosture"] == "LIMIT_UP_RISK"
-    assert d["engine"] == "deterministic"
-    assert abs(sum(c["probability"] for c in d["probableCause"]) - 1.0) < 0.01
+           "eventVersion": 1, "reasonJa": "S高到達", "observedAt": "2026-06-22T01:00:00Z"}
+    d = scanner._build_event_dossier(env, {"changePct": 18.0})
+    assert d["schemaVersion"] == "dossier-v2" and d["researchPosture"] == "LIMIT_UP_RISK"
     assert "squeeze_exhaustion" in d["trapRisks"]
-    assert "自動売買" in d["disclaimerJa"]          # never a trade instruction
+    assert d["confirmedFacts"] == []                       # news headline is NOT a confirmed fact
+    assert d["dossierMode"] == "event_time_snapshot" and d["evidenceHash"]
+    # a generic news item must NOT create an official catalyst
+    cause = {c["label"]: c["probability"] for c in d["probableCause"]}
+    assert cause.get("official_catalyst", 0) == 0 and cause.get("reported_catalyst", 0) > 0
+    assert "自動売買" in d["disclaimerJa"]
 
 
-def test_event_dossier_endpoint_404_for_unknown():
+def test_event_dossier_endpoint_http_semantics():
     with scanner.app.test_client() as c:
-        r = c.get("/api/argus/event-dossier?eventId=does-not-exist")
-        assert r.status_code == 404
+        assert c.get("/api/argus/event-dossier").status_code == 400          # missing eventId
+        assert c.get("/api/argus/event-dossier?eventId=nope").status_code == 404
+
+
+def test_notification_test_requires_admin():
+    with scanner.app.test_client() as c:
+        r = c.post("/api/argus/event-test-notify")           # no admin token
+        assert r.status_code in (401, 503)                   # never silently sends
 
 
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────

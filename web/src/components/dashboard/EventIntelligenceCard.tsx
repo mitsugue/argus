@@ -71,7 +71,7 @@ function DossierDetail({ eventId }: { eventId: string }) {
     <div className="dz">
       <div className="dz-head">
         <span className="dz-posture">{POSTURE_JA[d.researchPosture] ?? d.researchPosture}</span>
-        <span className="dz-conf">確信度 {Math.round(d.researchConfidence * 100)}%</span>
+        <span className="dz-conf">証拠カバレッジ {Math.round(d.researchConfidence * 100)}%(未較正)</span>
         <span className="dz-scope">範囲: {LABEL_JA[d.marketScope] ?? d.marketScope}</span>
         <span className="dz-review">レビュー: {LABEL_JA[d.reviewVerdict] ?? d.reviewVerdict}</span>
       </div>
@@ -118,24 +118,6 @@ function EventRow({ e, open, onToggle }: { e: ActiveEvent; open: boolean; onTogg
 export const EventIntelligenceCard: React.FC = () => {
   const { events, status, loading } = useEventsActive();
   const [openId, setOpenId] = React.useState<string | null>(null);
-  const [testMsg, setTestMsg] = React.useState<string | null>(null);
-  const [testing, setTesting] = React.useState(false);
-  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
-
-  async function sendTest() {
-    if (!backend) return;
-    setTesting(true); setTestMsg(null);
-    try {
-      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/event-test-notify', { method: 'POST' });
-      const d = await r.json();
-      setTestMsg(d.noteJa ?? (d.sent ? '送信しました。' : '送信できませんでした。'));
-    } catch {
-      setTestMsg('送信に失敗しました(時間をおいて再試行)。');
-    } finally {
-      setTesting(false);
-      window.setTimeout(() => setTestMsg(null), 6000);
-    }
-  }
 
   if (loading && !status) return null;
   const enabled = status?.enabled;
@@ -175,12 +157,6 @@ export const EventIntelligenceCard: React.FC = () => {
             ))}
           </div>
         )}
-        <div className="ei-actions">
-          <button className="ei-test-btn" onClick={sendTest} disabled={testing}>
-            {testing ? '送信中…' : '🔔 通知テスト'}
-          </button>
-          {testMsg && <span className="ei-test-msg">{testMsg}</span>}
-        </div>
         <div className="ei-foot">
           決定論的検知のみ(LLMなし)。値幅上限/下限への接近はTSE制限値幅で算出(取引所の特別気配フィールドではありません)。PTS・板(L2)・VWAPは未対応。
         </div>

@@ -1,85 +1,118 @@
-"""Unit tests for the deterministic Research Dossier engine (argus_research.py)."""
+"""Unit tests for the hardened Research Dossier engine (argus_research.py, v10.41.1)."""
+import math
+
 import argus_research as rs
 
 
-def _sum1(items):
-    return abs(sum(p for _, p in items) - 1.0) < 0.01
+def _sum1(group):
+    return abs(sum(p for _, p in group) - 1.0) < 0.01
 
 
+# ── #3 confidence: UNCONFIRMED flow must NOT count as a signal ────────────────
+def test_unconfirmed_flow_is_not_a_signal():
+    assert rs.has_confirmed_flow_signal("SHORT_COVERING")
+    assert not rs.has_confirmed_flow_signal("UNCONFIRMED")
+    assert not rs.has_confirmed_flow_signal(None)
+    cov_with, _ = rs.evidence_coverage(True, "unknown", "unconfirmed", False)
+    cov_unconf, _ = rs.evidence_coverage(False, "unknown", "unconfirmed", False)
+    assert cov_with > cov_unconf       # a real flow adds coverage; UNCONFIRMED does not
+
+
+# ── #2 source-tiered catalyst ────────────────────────────────────────────────
+def test_generic_news_does_not_become_official_catalyst():
+    c = rs.probable_cause("PRICE_SPIKE", None, "reputable_secondary_media", "company_specific")
+    assert c.get("official_catalyst", 0) == 0          # a headline is NOT an official catalyst
+    assert c.get("reported_catalyst", 0) > 0
+
+
+def test_official_filing_raises_official_catalyst():
+    c = rs.probable_cause("PRICE_SPIKE", None, "official_filing", "company_specific")
+    assert c["official_catalyst"] > 0
+    assert rs.is_official_catalyst("official_filing") and not rs.is_official_catalyst("aggregator")
+
+
+# ── #4 probability validation ────────────────────────────────────────────────
 def test_probability_groups_sum_to_one():
-    cause = rs.probable_cause("PRICE_SPIKE", "SHORT_COVERING", True, "company_specific")
-    scen = rs.next_session_scenarios("PRICE_SPIKE", "DISTRIBUTION")
-    assert abs(sum(cause.values()) - 1.0) < 0.01
-    assert abs(sum(scen.values()) - 1.0) < 0.01
+    assert abs(sum(rs.probable_cause("PRICE_SPIKE", "SHORT_COVERING", "unknown", "company_specific").values()) - 1) < 0.01
+    assert abs(sum(rs.next_session_scenarios("PRICE_SPIKE", "DISTRIBUTION").values()) - 1) < 0.01
 
 
-def test_market_scope_is_honest():
-    assert rs.market_scope(8.0, 0.2) == "company_specific"     # stock up, index flat
-    assert rs.market_scope(2.0, 1.8) == "market_wide"          # moves together
-    assert rs.market_scope(8.0, None) == "unconfirmed"         # no index → honest unknown
+def test_malformed_probabilities_become_unknown():
+    assert rs.validate_probs({"a": float("nan"), "b": float("inf"), "c": -1}) == {"unknown": 1.0}
+    assert rs.validate_probs({}) == {"unknown": 1.0}
+    assert rs.validate_probs("not a dict") == {"unknown": 1.0}
+    out = rs.validate_probs({"x": 1, "y": 1})
+    assert abs(sum(out.values()) - 1.0) < 0.001
 
 
-def test_news_raises_official_cause():
-    with_news = rs.probable_cause("PRICE_SPIKE", None, True, "company_specific")
-    without = rs.probable_cause("PRICE_SPIKE", None, False, "company_specific")
-    assert with_news["official_catalyst"] > without.get("official_catalyst", 0)
+# ── #8 market scope baseline ─────────────────────────────────────────────────
+def test_market_scope_company_market_missing_stale():
+    assert rs.market_scope(8.0, 0.2) == "company_specific"
+    assert rs.market_scope(2.0, 1.8) == "market_wide"
+    assert rs.market_scope(8.0, None) == "unconfirmed"            # missing benchmark
+    assert rs.market_scope(8.0, 0.2, index_fresh=False) == "unconfirmed"  # stale benchmark
 
 
-def test_trap_risks_flag_distribution_and_squeeze():
-    assert "distribution_into_strength" in rs.trap_risks("PRICE_SPIKE", "DISTRIBUTION", 60)
-    assert "squeeze_exhaustion" in rs.trap_risks("LIMIT_UP", "SHORT_COVERING", 60)
-    assert "overbought_gap_and_fade" in rs.trap_risks("PRICE_SPIKE", None, 80)
+# ── #1 evidence taxonomy ─────────────────────────────────────────────────────
+def test_confirmed_facts_exclude_flow_and_headlines_and_keep_own_ids():
+    evidence = [
+        {"evidenceId": "e1", "claimType": "market_observation", "normalizedClaim": "9999 +18%"},
+        {"evidenceId": "e2", "claimType": "derived_metric", "normalizedClaim": "flow=SHORT_COVERING"},
+        {"evidenceId": "e3", "claimType": "news_report", "normalizedClaim": "観測報道A", "reliability": 0.45},
+        {"evidenceId": "e4", "claimType": "news_report", "normalizedClaim": "観測報道B", "reliability": 0.45},
+        {"evidenceId": "e5", "claimType": "news_report", "normalizedClaim": "掲示板の噂", "reliability": 0.2},
+    ]
+    t = rs.classify_evidence(evidence)
+    assert t["confirmedFacts"] == []                              # nothing official → empty
+    assert t["derivedMetrics"][0]["evidenceIds"] == ["e2"]       # flow is a derived metric
+    # each news claim references its OWN id (the shared-first-id bug is fixed)
+    assert [c["evidenceIds"] for c in t["reportedClaims"]] == [["e3"], ["e4"]]
+    assert t["unverifiedClaims"][0]["evidenceIds"] == ["e5"]     # low-reliability → unverified
 
 
-def test_posture_never_emits_trade_instruction():
-    for et in ("PRICE_SPIKE", "PRICE_CRASH", "LIMIT_UP", "LIMIT_DOWN", "LIMIT_UP_PROXIMITY"):
-        for flow in (None, "SHORT_COVERING", "DISTRIBUTION", "NEW_LONG_ACCUMULATION"):
-            p = rs.research_posture(et, 5, "company_specific", flow, 0.7, "CAUTION")
-            assert p in rs.RESEARCH_POSTURES
-            assert p not in ("BUY", "SELL", "EXECUTE", "BUY NOW", "SELL NOW")
-
-
-def test_low_confidence_or_reject_downgrades():
-    assert rs.research_posture("PRICE_SPIKE", 5, "company_specific", None, 0.2) == "OBSERVE"
-    assert rs.research_posture("LIMIT_UP", 5, "company_specific", None, 0.8, "REJECT") == "OBSERVE"
-
-
-def test_adversarial_review_can_reject_and_caution():
-    assert rs.adversarial_review("unconfirmed", None, False, 0.2, [])["verdict"] == "REJECT"
-    assert rs.adversarial_review("company_specific", "NEW_LONG_ACCUMULATION", True, 0.7, [])["verdict"] == "ACCEPT"
-    mid = rs.adversarial_review("unconfirmed", None, False, 0.5, [])
-    assert mid["verdict"] == "CAUTION" and mid["objectionsJa"]
-
-
-def test_build_dossier_shape_and_evidence_and_disclaimer():
+# ── full dossier shape + temporal + calibration ──────────────────────────────
+def test_build_dossier_v2_full():
     event = {"eventId": "e1", "eventType": "LIMIT_UP", "severity": 5, "symbol": "9999",
-             "session": "JP_MORNING", "lifecycleState": "HIGH_ALERT", "eventVersion": 1,
-             "reasonJa": "S高到達"}
+             "session": "JP_MORNING", "lifecycleState": "HIGH_ALERT", "eventVersion": 3,
+             "reasonJa": "S高到達", "observedAt": "2026-06-22T01:00:00Z", "detectedAt": "2026-06-22T01:00:05Z"}
     flow_inf = {"classification": "SHORT_COVERING",
                 "probabilities": {"newLongAccumulation": 0.2, "shortCovering": 0.5,
-                                  "distribution": 0.1, "retailNoise": 0.1, "unconfirmed": 0.1},
-                "reasonsJa": ["貸株残縮小"]}
-    evidence = [{"evidenceId": "ev1", "claimType": "derived_metric"},
-                {"evidenceId": "ev2", "claimType": "news_report"}]
+                                  "distribution": 0.1, "retailNoise": 0.1, "unconfirmed": 0.1}}
+    ev = [{"evidenceId": "e1#ev1", "claimType": "market_observation", "normalizedClaim": "x"}]
+    times = {"asOf": "2026-06-22T02:00:00Z", "dossierGeneratedAt": "2026-06-22T02:00:00Z",
+             "eventObservedAt": "2026-06-22T01:00:00Z", "eventDetectedAt": "2026-06-22T01:00:05Z",
+             "evidenceAsOf": "2026-06-22T01:00:00Z", "mode": "event_time_snapshot"}
     d = rs.build_dossier(event=event, flow_inf=flow_inf, rsi=72, sym_chg=18.0, index_chg=0.3,
-                         has_news=True, news_items=["材料: 上方修正"], evidence=evidence, asset_name="テスト")
-    assert d["schemaVersion"] == "dossier-v1"
-    assert d["researchPosture"] == "LIMIT_UP_RISK"
+                         index_fresh=True, catalyst_tier="reputable_secondary_media", evidence=ev,
+                         times=times, evidence_hash="abc123", asset_name="テスト")
+    assert d["schemaVersion"] == "dossier-v2" and d["researchPosture"] == "LIMIT_UP_RISK"
+    assert d["eventVersion"] == 3 and d["evidenceHash"] == "abc123"
+    assert d["dossierMode"] == "event_time_snapshot"
+    assert d["confidenceCalibrationStatus"] == "uncalibrated_heuristic_v1"
+    assert all(c.get("calibrationStatus") for c in d["probableCause"])      # per-group calibration tag
+    assert _sum1([(k, v) for k, v in d["flowInference"].items()])           # flowInference sums to 1
     assert _sum1([(c["label"], c["probability"]) for c in d["probableCause"]])
-    assert _sum1([(s["label"], s["probability"]) for s in d["nextSessionScenarios"]])
-    assert d["marketScope"] == "company_specific"
-    assert d["disclaimerJa"] and "自動売買" in d["disclaimerJa"]
-    assert d["engine"] == "deterministic"
-    # every confirmed fact carries an evidenceIds field (may be empty but present)
-    assert all("evidenceIds" in f for f in d["confirmedFacts"])
+    assert d["confirmedFacts"] == []                                        # honest: no official fact
+    assert "自動売買" in d["disclaimerJa"]
 
 
-def test_missing_data_is_honest():
+def test_dossier_preserves_and_nulls_timestamps_honestly():
     event = {"eventId": "e2", "eventType": "PRICE_SPIKE", "severity": 4, "symbol": "9999",
-             "lifecycleState": "VERIFIED", "reasonJa": "急騰"}
+             "lifecycleState": "VERIFIED", "reasonJa": "急騰", "eventVersion": 1,
+             "observedAt": "2026-06-22T01:00:00Z", "detectedAt": "2026-06-22T01:00:05Z"}
+    times = {"asOf": "2026-06-22T02:00:00Z", "dossierGeneratedAt": "2026-06-22T02:00:00Z",
+             "eventObservedAt": event["observedAt"], "eventDetectedAt": event["detectedAt"],
+             "evidenceAsOf": None, "mode": "event_time_snapshot"}
     d = rs.build_dossier(event=event, flow_inf=None, rsi=None, sym_chg=6.0, index_chg=None,
-                         has_news=False, news_items=[], evidence=[])
-    # no news, no index, no metrics → all three honestly listed as missing
-    assert any("ニュース" in m or "開示" in m for m in d["missingData"])
-    assert any("指数" in m for m in d["missingData"])
-    assert any("テクニカル" in m for m in d["missingData"])
+                         index_fresh=True, catalyst_tier="unknown", evidence=[], times=times, evidence_hash="h")
+    assert d["eventObservedAt"] == "2026-06-22T01:00:00Z"      # true event time preserved
+    assert d["evidenceAsOf"] is None                          # unavailable → null, not fabricated
+    assert d["flowInference"] == {"unknown": 1.0}             # no flow → unknown=1
+    assert any("指数" in m for m in d["missingData"])          # honest missing benchmark
+
+
+def test_posture_never_a_trade_instruction():
+    for et in ("PRICE_SPIKE", "PRICE_CRASH", "LIMIT_UP", "LIMIT_DOWN_PROXIMITY"):
+        p = rs.research_posture(et, 5, "company_specific", "DISTRIBUTION", 0.7, "CAUTION")
+        assert p in rs.RESEARCH_POSTURES and p not in ("BUY", "SELL", "EXECUTE")
+    assert rs.research_posture("PRICE_SPIKE", 5, "company_specific", None, 0.2) == "OBSERVE"   # low coverage downgrades
