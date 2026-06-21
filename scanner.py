@@ -6311,6 +6311,53 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
     L.append("- Clearly separate what is supported by the current data, what is inference, and what is missing.")
     return "\n".join(L)
 
+_PRO_TYPE_JA = {"LIMIT_UP": "S高", "LIMIT_DOWN": "S安", "LIMIT_UP_PROXIMITY": "S高接近",
+                "LIMIT_DOWN_PROXIMITY": "S安接近", "PRICE_SPIKE": "急騰", "PRICE_CRASH": "急落",
+                "VOLUME_ANOMALY": "出来高急増", "FLOW_ANOMALY": "大口フロー異常",
+                "CRYPTO_SHOCK": "暗号資産ショック"}
+
+def _pro_events_section():
+    """The active 24/7 events + their deterministic dossiers, as a compact prompt
+    block for the GPT-5.5 Pro Handoff (GPT #12). Separates confirmed facts from
+    inference; carries the no-auto-trading disclaimer. No model call, no secrets."""
+    try:
+        _events_restore_once()
+        active = _events_active_list()
+    except Exception:
+        active = []
+    if not active:
+        return ""
+    out = ["## 8. 24/7 検知中イベント + 調査ドシエ(決定論・LLM未使用 / 売買指示ではない)"]
+    for e in active[:5]:
+        d = e.get("dossier")
+        if not d:
+            try:
+                d = _build_event_dossier(e)
+            except Exception:
+                d = None
+        sym = e.get("symbol")
+        t = _PRO_TYPE_JA.get(e.get("eventType"), e.get("eventType"))
+        if not d:
+            out.append(f"■ {sym} {t}(sev{e.get('severity')}) — {e.get('reasonJa')}")
+            continue
+        cause = "、".join(f"{c['label']}{int(c['probability']*100)}%" for c in (d.get("probableCause") or [])[:3])
+        scen = "、".join(f"{s['label']}{int(s['probability']*100)}%" for s in (d.get("nextSessionScenarios") or [])[:3])
+        facts = d.get("confirmedFacts") or []
+        facts_txt = "; ".join(f.get("claimJa") or "" for f in facts) if facts else "公式の確認済み事実なし(報道/観測のみ)"
+        out += [
+            f"■ {sym} {t}(sev{e.get('severity')} / posture {d.get('researchPosture')} / 証拠カバレッジ{int((d.get('researchConfidence') or 0)*100)}%・未較正)",
+            f"  起きたこと: {d.get('whatHappenedJa')}",
+            f"  市場範囲: {d.get('marketScope')} / 推定原因: {cause}",
+            f"  次セッション: {scen}",
+            f"  罠リスク: {'、'.join(d.get('trapRisks') or []) or 'なし'}",
+            f"  反証(レビュー {d.get('reviewVerdict')}): {'; '.join(d.get('reviewObjectionsJa') or []) or 'なし'}",
+            f"  無効化条件: {'; '.join(d.get('invalidationConditions') or []) or '—'}",
+            f"  欠損データ: {'; '.join(d.get('missingData') or []) or 'なし'}",
+            f"  確認済み事実: {facts_txt}",
+        ]
+    out.append("(上記は決定論的に組み立てた論点整理です。事実・推論・欠損を区別し、確率は較正されていません。)")
+    return "\n".join(out)
+
 def _build_pro_handoff():
     rates = get_rates_snapshot(); jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
@@ -6325,6 +6372,9 @@ def _build_pro_handoff():
            "marketRegime": _st(reg)}
     warnings = [f"{k} is {v}" for k, v in src.items() if v != "live"]
     prompt = _compose_pro_prompt(rates, jp, us, ev, al, cat, aij_status, reg)
+    ev_section = _pro_events_section()           # active 24/7 events + dossiers (#12)
+    if ev_section:
+        prompt = prompt + "\n\n" + ev_section
     live_n = sum(1 for v in src.values() if v == "live")
     status = "live" if live_n == len(src) else ("partial" if live_n > 0 else "mock")
     source_statuses = {**src, "proHandoff": "live", "aiJudgment": aij_status}

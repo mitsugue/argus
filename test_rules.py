@@ -751,6 +751,27 @@ def test_crypto_event_records_with_long_dedup(monkeypatch):
     scanner._EVENTS_ACTIVE.clear(); scanner._EVENTS_LOG.clear()
 
 
+# ── Pro Handoff includes active-event dossier (v10.45.1, GPT #12) ──────
+def test_pro_handoff_events_section(monkeypatch):
+    scanner._EVENTS_ACTIVE.clear(); scanner._EVENTS_LOG.clear()
+    assert scanner._pro_events_section() == ""            # no events -> nothing added
+    scanner._EVENTS_ACTIVE["JP:9999:LIMIT_UP"] = {
+        "eventId": "e1", "eventType": "LIMIT_UP", "severity": 5, "symbol": "9999",
+        "market": "JP", "deduplicationKey": "JP:9999:LIMIT_UP", "expiresAt": "2099-01-01T00:00:00Z",
+        "dossier": {"researchPosture": "LIMIT_UP_RISK", "researchConfidence": 0.6,
+                    "whatHappenedJa": "S高到達", "marketScope": "company_specific",
+                    "probableCause": [{"label": "flow_driven", "probability": 0.5}, {"label": "unknown", "probability": 0.5}],
+                    "nextSessionScenarios": [{"label": "gap_and_fade", "probability": 0.6}, {"label": "large_gap_up", "probability": 0.4}],
+                    "trapRisks": ["squeeze_exhaustion"], "reviewVerdict": "CAUTION",
+                    "reviewObjectionsJa": ["公式材料なし"], "invalidationConditions": ["x"],
+                    "missingData": ["y"], "confirmedFacts": []}}
+    sec = scanner._pro_events_section()
+    assert "9999" in sec and "LIMIT_UP_RISK" in sec               # event + posture
+    assert "公式の確認済み事実なし" in sec                          # facts separated honestly
+    assert "売買指示ではない" in sec                               # no-trade disclaimer
+    scanner._EVENTS_ACTIVE.clear()
+
+
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────
 def test_margin_signal_requires_two_weeks():
     assert scanner._margin_signal(None) is None
