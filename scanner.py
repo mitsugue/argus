@@ -2422,6 +2422,67 @@ def api_argus_crypto_scan():
 # assembly. Cached per event so repeated reads are free.
 _DOSSIER_CACHE = {}   # (eventId, eventVersion, evidenceHash) -> dossier
 
+# ── EDINET official-filing source (edinet-v1, v10.48) ────────────────────────
+# 金融庁 EDINET API v2 — official corporate disclosures (有報・大量保有報告 等).
+# Requires a free Subscription-Key (user registers + sets EDINET_API_KEY in
+# Render). When a recent EDINET filing matches an event's symbol, the dossier
+# gains a REAL official_fact (claimType=official_fact, tier=official_filing) so
+# official_catalyst becomes reachable. No key → source missing (honest).
+_EDINET_API_KEY = os.environ.get("EDINET_API_KEY", "")
+_EDINET_BASE    = "https://api.edinet-fsa.go.jp/api/v2/documents.json"
+_EDINET_CACHE   = {}    # date -> (results|None, expires)
+_EDINET_STATE   = {"lastFetchOk": False, "lastAt": None}
+
+def edinet_match_symbol(results, symbol):
+    """Pure (unit-tested): EDINET filings whose secCode (5-digit, ticker+0) maps
+    to the 4-digit symbol. Compact metadata only — never the filing body."""
+    out = []
+    for r in results or []:
+        if str(r.get("secCode") or "")[:4] == str(symbol):
+            out.append({"docID": r.get("docID"), "filerName": r.get("filerName"),
+                        "docTypeCode": r.get("docTypeCode"),
+                        "docDescription": r.get("docDescription"),
+                        "submitDateTime": r.get("submitDateTime")})
+    return out
+
+def _edinet_filings(date_str):
+    """EDINET documents.json for a date (metadata, type=2). Cached. None without
+    a key or on failure. The key is sent server-side over HTTPS, never logged."""
+    if not _EDINET_API_KEY:
+        return None
+    now = time.time()
+    c = _EDINET_CACHE.get(date_str)
+    if c and now < c[1]:
+        return c[0]
+    data = None
+    try:
+        r = requests.get(_EDINET_BASE, params={"date": date_str, "type": "2",
+                                               "Subscription-Key": _EDINET_API_KEY}, timeout=10)
+        if r.status_code == 200:
+            j = r.json()
+            if isinstance(j, dict) and isinstance(j.get("results"), list):
+                data = j["results"]
+                _EDINET_STATE["lastFetchOk"] = True
+                _EDINET_STATE["lastAt"] = _ai_now_iso()
+    except Exception:
+        data = None
+    today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    ttl = 1800 if date_str == today else 6 * 3600
+    _EDINET_CACHE[date_str] = (data, now + (ttl if data is not None else 600))
+    return data
+
+def _edinet_recent_for(symbol, now=None):
+    """Recent EDINET filings (today + yesterday) for a JP symbol. [] without key."""
+    if not _EDINET_API_KEY:
+        return []
+    n = now or datetime.now(TZ_JST)
+    found = []
+    for back in (0, 1):
+        res = _edinet_filings((n - timedelta(days=back)).strftime("%Y-%m-%d"))
+        if res:
+            found += edinet_match_symbol(res, symbol)
+    return found[:3]
+
 def _ev_item(n, eid, source, stype, claim_type, claim, reliability, *,
              observed_at=None, published_at=None, fetched_at=None, now_iso=None,
              source_event_id=None, url=None):
@@ -2495,11 +2556,27 @@ def _build_event_dossier(env, push_row=None):
     cat = (scout or {}).get("catalystContext") or {}
     news_items = [it.get("headline") or it.get("labelJa") for it in (cat.get("items") or [])
                   if it.get("kind") == "news" and (it.get("headline") or it.get("labelJa"))][:3]
-    catalyst_tier = _NEWS_SOURCE_TIER if news_items else "unknown"
+    # EDINET official filings (JP, when EDINET_API_KEY is set) — a REAL official
+    # fact, so the catalyst becomes official-tier (not just reported media).
+    edinet = []
+    try:
+        if mkt == "JP":
+            edinet = _edinet_recent_for(sym)
+    except Exception:
+        edinet = []
+    catalyst_tier = ("official_filing" if edinet
+                     else _NEWS_SOURCE_TIER if news_items else "unknown")
     evidence, n = [], 1
     if isinstance(sym_chg, (int, float)):
         evidence.append(_ev_item(n, eid, "moomoo-bridge", "primary_market_data", "market_observation",
                                   f"{sym} {sym_chg:+.2f}%", 0.9, observed_at=obs_at, now_iso=now_iso)); n += 1
+    for f in edinet[:2]:
+        desc = f.get("docDescription") or f.get("docTypeCode") or "EDINET開示"
+        evidence.append(_ev_item(n, eid, "EDINET", "official_filing", "official_fact",
+                                  f"{f.get('filerName') or sym}: {desc}", 0.92,
+                                  published_at=f.get("submitDateTime"), now_iso=now_iso,
+                                  source_event_id=f.get("docID"),
+                                  url=(f"https://disclosure2.edinet-fsa.go.jp/WEEK0010.aspx" if f.get("docID") else None))); n += 1
     if argus_research.has_confirmed_flow_signal(flow_inf.get("classification")):
         evidence.append(_ev_item(n, eid, "argus-flow-intelligence", "derived", "derived_metric",
                                   f"flow={flow_inf['classification']}", 0.6,
@@ -4995,8 +5072,12 @@ def _source_registry():
         S("企業開示(TDnet)", "J-Quants TDnet add-on", "JP", "paid_not_enabled",
           "有料アドオン未契約", "paid", "ok",
           "未契約のため公式適時開示フィードは未接続(official_catalystは到達不可)。"),
-        S("企業開示(EDINET)", "EDINET API", "JP", "unavailable",
-          "未接続", "free", "licence_unclear", "対応APIでの取り込みは将来。"),
+        S("企業開示(EDINET)", "EDINET API v2", "JP",
+          ("missing" if not _EDINET_API_KEY else
+           "confirmed_live" if _EDINET_STATE["lastFetchOk"] else "requires_test"),
+          ("APIキー未設定" if not _EDINET_API_KEY else "Subscription-Key設定済"),
+          "free", "ok",
+          "公式開示。キー設定でドシエに official_fact が乗り official_catalyst が到達可能。"),
         S("日本PTS", "—", "JP", "unavailable", "プロバイダ未確認", "—", "—",
           "確認済みプロバイダなし。通常のTSE気配からPTSやS高確率を推定しない。"),
         S("米国 時間外(pre/after)", "—", "US", "requires_test", "プロバイダ機能依存", "—", "—",

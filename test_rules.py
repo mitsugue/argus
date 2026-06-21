@@ -772,6 +772,33 @@ def test_pro_handoff_events_section(monkeypatch):
     scanner._EVENTS_ACTIVE.clear()
 
 
+# ── EDINET official-filing source (v10.48) ────────────────────────────
+def test_edinet_match_symbol():
+    results = [{"secCode": "72030", "filerName": "トヨタ自動車", "docDescription": "有価証券報告書", "docID": "S1"},
+               {"secCode": "99840", "filerName": "ソフトバンクG", "docDescription": "大量保有報告書", "docID": "S2"},
+               {"secCode": "", "filerName": "(個人)", "docDescription": "x", "docID": "S3"}]
+    assert [f["docID"] for f in scanner.edinet_match_symbol(results, "7203")] == ["S1"]
+    assert [f["docID"] for f in scanner.edinet_match_symbol(results, "9984")] == ["S2"]
+    assert scanner.edinet_match_symbol(results, "0000") == []
+    assert scanner.edinet_match_symbol(None, "7203") == []
+
+
+def test_dossier_uses_edinet_official_fact(monkeypatch):
+    monkeypatch.setattr(scanner, "get_entry_scout", lambda sym, mkt="JP": {
+        "name": "トヨタ", "flowInference": {}, "metrics": {"rsi14": 60}, "catalystContext": {"items": []}})
+    monkeypatch.setattr(scanner, "_edinet_recent_for", lambda sym, now=None: [
+        {"docID": "D1", "filerName": "トヨタ自動車", "docTypeCode": "120",
+         "docDescription": "有価証券報告書", "submitDateTime": "2026-06-22 09:30"}])
+    env = {"eventId": "e1", "eventType": "PRICE_SPIKE", "severity": 4, "symbol": "7203",
+           "market": "JP", "session": "JP_MORNING", "lifecycleState": "VERIFIED",
+           "eventVersion": 1, "reasonJa": "急騰", "observedAt": "2026-06-22T00:35:00Z"}
+    d = scanner._build_event_dossier(env, {"changePct": 6.0})
+    cause = {c["label"]: c["probability"] for c in d["probableCause"]}
+    assert cause.get("official_catalyst", 0) > 0                  # EDINET → official catalyst reachable
+    facts = " ".join(f.get("claimJa") or "" for f in d["confirmedFacts"])
+    assert "有価証券報告書" in facts                              # real official fact in confirmedFacts
+
+
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────
 def test_margin_signal_requires_two_weeks():
     assert scanner._margin_signal(None) is None
