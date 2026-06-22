@@ -1952,9 +1952,20 @@ def _finnhub_quote_row(sym):
 def get_us_watchlist_snapshot(symbols=None):
     """Core snapshot + real-time overlay from the local moomoo bridge (v9.11).
     Symbols Twelve Data's free plan omits are back-filled via Finnhub (v10.12.1)."""
-    snap = _get_us_watchlist_core(symbols)
     requested = (_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX) if symbols
                  else [s["symbol"] for s in _US_WATCHLIST])
+    # Bridge-first (v10.61): the /us-watchlist poll runs every ~15s. Calling Twelve
+    # Data on EVERY poll burned 28× the free daily quota (22k/800). When the moomoo
+    # bridge has FRESH quotes for every requested symbol, serve those and SKIP the
+    # Twelve Data fetch entirely — Twelve Data is only needed as the off-bridge
+    # fallback + for the regime ETFs.
+    now = time.time()
+    bridge = {sym for sym, p in (_PUSHED_QUOTES.get("US") or {}).items()
+              if now - p.get("ts", 0) <= _PUSH_TTL}
+    if requested and all(s in bridge for s in requested):
+        base = {"status": "live", "asOf": _ai_now_iso(), "provider": "moomoo-bridge", "stocks": []}
+        return _overlay_pushed(base, "US", requested)
+    snap = _get_us_watchlist_core(symbols)
     snap = _overlay_pushed(snap, "US", requested)
     try:
         have = {s.get("symbol") for s in (snap.get("stocks") or [])}
