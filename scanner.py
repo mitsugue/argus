@@ -1985,6 +1985,12 @@ _PUSHED_QUOTES = {"JP": {}, "US": {}}   # market -> {symbol: {"row":…, "ts":�
 _PUSH_TTL  = 600                        # use pushed quotes for ≤ 10 min
 _PUSH_MAX  = 50                         # symbols per push request
 
+# Rolling short-window history per symbol (v10.49) — feeds detect_acceleration,
+# the EARLY-warning layer that catches a move BEFORE the day-change thresholds.
+# ~40 samples × 15s ≈ 10 min of memory; per-process (rebuilds after a restart).
+_PUSH_HISTORY = {"JP": {}, "US": {}}    # market -> {symbol: deque[{ts,price,flowRatio,volRatio}]}
+_PUSH_HIST_MAX = 40
+
 # ── EC2→Render ingress HMAC anti-replay (v10.44) ─────────────────────────────
 # Additive defence on top of the admin token: the bridge signs each push with
 # HMAC-SHA256 over "<ts>.<nonce>.<rawbody>" using a shared secret, so a captured
@@ -2180,6 +2186,11 @@ def api_argus_quote_push():
                 except (KeyError, TypeError, ValueError):
                     pass
             _PUSHED_QUOTES[market][sym] = {"row": row, "ts": now}
+            hist = _PUSH_HISTORY[market].get(sym)
+            if hist is None:
+                hist = _PUSH_HISTORY[market][sym] = deque(maxlen=_PUSH_HIST_MAX)
+            hist.append({"ts": now, "price": row["price"],
+                         "flowRatio": (row.get("flow") or {}).get("bigNetRatio")})
             _pushed_now.setdefault(market, []).append(row)
             accepted += 1
         except Exception:
@@ -2226,6 +2237,8 @@ _EVENT_POSTURE = {
     "LIMIT_UP_PROXIMITY": "LIMIT_UP_RISK", "LIMIT_DOWN_PROXIMITY": "LIMIT_DOWN_RISK",
     "CRYPTO_SHOCK": "INVESTIGATE", "PRICE_SPIKE": "AVOID_CHASING",
     "PRICE_CRASH": "INVESTIGATE", "VOLUME_ANOMALY": "WATCH", "FLOW_ANOMALY": "WATCH",
+    "MOMENTUM_ACCELERATION": "AVOID_CHASING", "FLOW_REVERSAL": "INVESTIGATE",
+    "VOLUME_ACCELERATION": "WATCH",
 }
 
 def _us_market_open(now_et=None):
@@ -2306,7 +2319,15 @@ def _process_events_from_push(market, rows):
             flow = (r.get("flow") or {}).get("bigNetRatio")
             quote = {"market": market, "symbol": r.get("symbol"), "price": price,
                      "changePct": r.get("changePct"), "flowRatio": flow}
-            for trig in argus_events.detect_anomalies(quote, session, prev_close=prev_close):
+            triggers = list(argus_events.detect_anomalies(quote, session, prev_close=prev_close))
+            # Rolling short-window EARLY-warning layer (v10.49): momentum/flow
+            # acceleration from the per-symbol history. Tighter dedup bucket so a
+            # building move can re-warn without spamming. Reuses the same record/
+            # notify/dossier path. Suppressed if the full anomaly already fired this
+            # symbol (no point double-alerting once the day-change threshold is hit).
+            accel = argus_events.detect_acceleration(
+                list(_PUSH_HISTORY[market].get(r["symbol"]) or []), session, now=now)
+            for trig in triggers:
                 env = _record_event(market, r["symbol"], trig, now, session)
                 # Build the EVENT-TIME dossier snapshot for significant events, off
                 # the hot path / outside the lock — so the public GET only reads it.
@@ -2315,6 +2336,14 @@ def _process_events_from_push(market, rows):
                         env["dossier"] = _build_event_dossier(env, r)
                     except Exception:
                         pass
+            if not triggers:
+                for trig in accel:
+                    env = _record_event(market, r["symbol"], trig, now, session, bucket_minutes=15)
+                    if env and env.get("severity", 0) >= 4 and "dossier" not in env:
+                        try:
+                            env["dossier"] = _build_event_dossier(env, r)
+                        except Exception:
+                            pass
         except Exception:
             continue
 
@@ -6470,7 +6499,8 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
 _PRO_TYPE_JA = {"LIMIT_UP": "S高", "LIMIT_DOWN": "S安", "LIMIT_UP_PROXIMITY": "S高接近",
                 "LIMIT_DOWN_PROXIMITY": "S安接近", "PRICE_SPIKE": "急騰", "PRICE_CRASH": "急落",
                 "VOLUME_ANOMALY": "出来高急増", "FLOW_ANOMALY": "大口フロー異常",
-                "CRYPTO_SHOCK": "暗号資産ショック"}
+                "CRYPTO_SHOCK": "暗号資産ショック", "MOMENTUM_ACCELERATION": "急加速",
+                "FLOW_REVERSAL": "フロー反転", "VOLUME_ACCELERATION": "出来高加速"}
 
 def _pro_events_section():
     """The active 24/7 events + their deterministic dossiers, as a compact prompt

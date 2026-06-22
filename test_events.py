@@ -83,6 +83,55 @@ def test_crypto_shock_detection():
     assert ev.detect_crypto_anomaly("BTC", None) == []                # bad input safe
 
 
+# ── Rolling short-window EARLY-warning (detect_acceleration) ─────────────────
+def _ramp(base, per_min_pct, n=8, step_s=15, flow=None):
+    """Build n samples 15s apart climbing per_min_pct %/min from base."""
+    out = []
+    for i in range(n):
+        t = 1_000_000 + i * step_s
+        price = base * (1 + (per_min_pct / 100.0) * (i * step_s / 60.0))
+        out.append({"ts": t, "price": round(price, 4), "flowRatio": flow})
+    return out
+
+
+def test_acceleration_needs_history():
+    assert ev.detect_acceleration([], "JP_MORNING") == []
+    assert ev.detect_acceleration([{"ts": 1, "price": 100}], "JP_MORNING") == []   # <3 samples
+
+
+def test_momentum_acceleration_fires_early():
+    # +3%/min sustained — well over JP_MORNING accel threshold (spike 5% → 2.5%/min),
+    # but cumulative day-change may still be small (this is the EARLY signal).
+    trigs = ev.detect_acceleration(_ramp(1000, 3.0), "JP_MORNING")
+    t = [x for x in trigs if x["type"] == "MOMENTUM_ACCELERATION"]
+    assert t and t[0]["severity"] >= 2 and "急加速上昇" in t[0]["reasonJa"]
+
+
+def test_momentum_quiet_is_silent():
+    assert ev.detect_acceleration(_ramp(1000, 0.5), "JP_MORNING") == []   # 0.5%/min < 2.5 thr
+
+
+def test_momentum_session_aware():
+    # Overnight threshold is wider (spike 8% → 4%/min); a 3%/min move must NOT fire.
+    assert not any(x["type"] == "MOMENTUM_ACCELERATION"
+                   for x in ev.detect_acceleration(_ramp(1000, 3.0), "OVERNIGHT_GLOBAL"))
+
+
+def test_flow_reversal_detected():
+    s = _ramp(1000, 0.2)                          # flat price (no momentum)
+    flows = [-0.30, -0.20, -0.05, 0.10, 0.20, 0.30, 0.30, 0.30]   # outflow → inflow
+    for sample, f in zip(s, flows):
+        sample["flowRatio"] = f
+    trigs = ev.detect_acceleration(s, "JP_MORNING")
+    fr = [x for x in trigs if x["type"] == "FLOW_REVERSAL"]
+    assert fr and "流出→流入に反転" in fr[0]["reasonJa"]
+
+
+def test_bad_samples_safe():
+    assert ev.detect_acceleration("not a list", "JP_MORNING") == []
+    assert ev.detect_acceleration([{"ts": True, "price": 1}] * 5, "JP_MORNING") == []  # bool ts ignored
+
+
 # ── Session labels ───────────────────────────────────────────────────────────
 def test_session_labels():
     assert ev.session_label(_jst(10, 0)) == "JP_MORNING"

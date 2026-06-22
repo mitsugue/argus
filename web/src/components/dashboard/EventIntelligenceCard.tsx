@@ -7,6 +7,7 @@ const TYPE_JA: Record<string, string> = {
   LIMIT_UP_PROXIMITY: 'S高接近(値幅上限)', LIMIT_DOWN_PROXIMITY: 'S安接近(値幅下限)',
   PRICE_SPIKE: '急騰', PRICE_CRASH: '急落',
   VOLUME_ANOMALY: '出来高急増', FLOW_ANOMALY: '大口フロー異常', CRYPTO_SHOCK: '暗号資産ショック',
+  MOMENTUM_ACCELERATION: '急加速(早期)', FLOW_REVERSAL: '大口フロー反転', VOLUME_ACCELERATION: '出来高加速(早期)',
 };
 const POSTURE_JA: Record<string, string> = {
   LIMIT_UP_RISK: 'S高リスク', LIMIT_DOWN_RISK: 'S安リスク', AVOID_CHASING: '高値追い回避',

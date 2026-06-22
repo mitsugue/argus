@@ -742,7 +742,9 @@ def test_crypto_event_records_with_long_dedup(monkeypatch):
     monkeypatch.delenv("NTFY_TOPIC", raising=False)
     monkeypatch.setattr(scanner, "_EVENT_BACKBONE_ENABLED", True)
     import datetime as _dt
-    now = _dt.datetime(2026, 6, 21, 3, 0, tzinfo=_dt.timezone.utc)   # a Sunday night
+    # Use a recent time (not a hard-coded date): the active-list filters by the
+    # 8h TTL against real wall-clock, so a fixed past date would silently expire.
+    now = _dt.datetime.now(_dt.timezone.utc)
     trig = scanner.argus_events.detect_crypto_anomaly("BTC", -9.0)[0]
     env = scanner._record_event("CRYPTO", "BTC", trig, now, "CRYPTO_24H",
                                 bucket_minutes=360, source="coingecko", session_override="CRYPTO_24H")

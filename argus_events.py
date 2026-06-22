@@ -27,6 +27,7 @@ EVENT_TYPES = {
     "NEWS_BREAK", "NEWS_REVISION", "FX_SHOCK", "RATE_SHOCK", "CREDIT_SHOCK",
     "COMMODITY_SHOCK", "CRYPTO_SHOCK", "CROSS_MARKET_ANOMALY", "PRE_MARKET_ANOMALY",
     "AFTER_HOURS_ANOMALY", "PTS_ANOMALY", "DATA_QUALITY_ALERT", "SOURCE_HEARTBEAT_FAILURE",
+    "MOMENTUM_ACCELERATION", "FLOW_REVERSAL", "VOLUME_ACCELERATION",
 }
 # Capability-gated: never emitted until a real provider is verified upstream.
 CAPABILITY_GATED_TYPES = {"PTS_ANOMALY"}
@@ -241,6 +242,73 @@ def detect_crypto_anomaly(symbol, change_pct_24h, shock_pct=5.0, severe_pct=10.0
     direction = "急騰" if change_pct_24h > 0 else "急落"
     return [_trig("CRYPTO_SHOCK", sev, min(1.0, a / severe_pct),
                   f"{symbol} 24時間で{change_pct_24h:+.1f}%({direction})")]
+
+
+# ── Rolling short-window EARLY-warning detection (the "moment it starts" layer) ─
+def detect_acceleration(samples, session, now=None):
+    """Pure: short-window early-warning detection from a rolling buffer of recent
+    quote samples for ONE symbol. Fires BEFORE the cumulative day-change thresholds
+    in detect_anomalies do — it measures the *rate* of change over the last ~1 min
+    rather than the full-day move, so a fast build catches earlier.
+
+    samples: list of {"ts": epoch_sec, "price", "volRatio", "flowRatio"} (any order).
+    Returns [] on insufficient history or when nothing is accelerating (common case)."""
+    out = []
+    if not isinstance(samples, list):
+        return out
+    pts = sorted((s for s in samples
+                  if isinstance(s, dict) and isinstance(s.get("ts"), (int, float))
+                  and not isinstance(s.get("ts"), bool)),
+                 key=lambda s: s["ts"])
+    if len(pts) < 3:
+        return out
+    newest = pts[-1]
+    th = session_thresholds(session)
+    if newest["ts"] - pts[0]["ts"] < 30:        # need ≥30s of real history
+        return out
+
+    # ── Momentum acceleration: signed %-move per minute over the last ~1 min ────
+    ref = None
+    for s in pts[:-1]:
+        if newest["ts"] - s["ts"] >= 45:        # ref ≥45s back; closest-to-newest wins
+            ref = s
+    rp, np_ = (ref or {}).get("price"), newest.get("price")
+    if ref and isinstance(rp, (int, float)) and rp > 0 and isinstance(np_, (int, float)):
+        elapsed_min = (newest["ts"] - ref["ts"]) / 60.0
+        if elapsed_min > 0:
+            rate = ((np_ - rp) / rp * 100.0) / elapsed_min      # %/min, signed
+            accel_th = max(1.0, th["spikePct"] * 0.5)           # half-a-spike per minute
+            if abs(rate) >= accel_th:
+                up = rate > 0
+                out.append(_trig(
+                    "MOMENTUM_ACCELERATION", _sev(abs(rate), accel_th), _score(abs(rate), accel_th),
+                    f"{'急加速上昇' if up else '急加速下落'} {rate:+.1f}%/分"
+                    f"(直近{round(elapsed_min*60)}秒・閾値{accel_th:.1f}%/分)"))
+
+    # ── Flow reversal: big-money flow flipped sign across the buffer ────────────
+    flows = [s["flowRatio"] for s in pts
+             if isinstance(s.get("flowRatio"), (int, float)) and not isinstance(s.get("flowRatio"), bool)]
+    if len(flows) >= 3:
+        first_f, last_f = flows[0], flows[-1]
+        mag = th["flowAbs"] * 0.6
+        if first_f <= -mag and last_f >= mag:
+            out.append(_trig("FLOW_REVERSAL", 4, min(1.0, abs(last_f - first_f)),
+                             f"大口資金が流出→流入に反転({round(first_f*100)}%→{round(last_f*100)}%)"))
+        elif first_f >= mag and last_f <= -mag:
+            out.append(_trig("FLOW_REVERSAL", 4, min(1.0, abs(last_f - first_f)),
+                             f"大口資金が流入→流出に反転({round(first_f*100)}%→{round(last_f*100)}%)"))
+
+    # ── Volume acceleration: volume rate climbing sharply but still UNDER the
+    # absolute VOLUME_ANOMALY threshold (an earlier, distinct signal). ──────────
+    vols = [s["volRatio"] for s in pts
+            if isinstance(s.get("volRatio"), (int, float)) and not isinstance(s.get("volRatio"), bool)]
+    if len(vols) >= 3:
+        first_v, last_v = vols[0], vols[-1]
+        if first_v > 0 and last_v >= first_v * 2.0 and (th["volRatio"] * 0.6) <= last_v < th["volRatio"]:
+            out.append(_trig("VOLUME_ACCELERATION", 3, _score(last_v, th["volRatio"] * 0.6),
+                             f"出来高が急加速中 {round(first_v,1)}倍→{round(last_v,1)}倍"
+                             f"(本格閾値{th['volRatio']}倍の手前)"))
+    return out
 
 
 # ── Dedup / novelty / priority ───────────────────────────────────────────────
