@@ -64,6 +64,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.67.0', 'スモークテスト修正(US全市場のwarming状態を許容)+Guide整理(「最近のアップデート」を一番下に移動し、用語一覧/英語の役をその上に)'],
   ['v10.66.0', '市場全体カバーの二段構え+US計測を上限まで活用 — ①US全市場スキャンを「市場が開いている間 約15分毎(無料枠25回/日をほぼ使い切る)」に変更。公開画面はキャッシュ表示のみで枠を消費しない②日本株の全市場ムーバーをザラ場は Yahoo!ファイナンス全市場ランキング(約20分遅延・全銘柄)、引け後は J-Quants(前日比・全銘柄)で二段カバー。moomooブリッジ未収載の銘柄も遅延ありで網羅'],
   ['v10.65.0', 'US全市場スキャナーの是正 — ①Alpha Vantageが診断ノートにAPIキーを含めて返すため、公開エンドポイントに漏れないようキーを伏字化(セキュリティ)②AV無料枠は25回/日と判明。30分毎の取得で枠超過していたので、キャッシュ60分+取得を1時間毎(米国時間)に抑えて枠内に。日本株の全市場ムーバー(引け後・全3800銘柄)は稼働開始'],
   ['v10.64.0', '日本株の全市場ムーバー(引け後)を追加 — J-Quants Standardの全上場銘柄日次から、その日いちばん動いた銘柄(前日比)を引け後に集計しMarket Contextに表示+24/7イベント化(全市場をカバー)。米国はAlpha Vantageでリアルタイム寄り、日本は引け後(無料のリアルタイム全市場源が無いため)。閾値: 全市場ムーバーは米国±12%/日本±10%以上(severeは±20%・ペニー/低位株は価格フィルタ除外)、ウォッチ銘柄の急騰/急落はセッション別(寄り後場±5%等)。'],
@@ -192,23 +193,6 @@ export const Guide: React.FC = () => {
       </section>
 
       <section>
-        <div className="section-head">
-          <span className="section-head__title">最近のアップデート</span>
-          <span className="section-head__count">{RECENT_UPDATES.length} releases</span>
-        </div>
-        <div className="card guide-card">
-          <div className="guide-caps">
-            {RECENT_UPDATES.map(([v, d]) => (
-              <div className="guide-cap" key={v}>
-                <span className="guide-cap__area guide-cap__area--mono">{v}</span>
-                <span className="guide-cap__desc">{d}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section>
         <div className="section-head"><span className="section-head__title">用語一覧</span></div>
         <div className="card guide-card">
           <div className="guide-glossary">
@@ -264,6 +248,24 @@ export const Guide: React.FC = () => {
             ARGUS は予測エンジンではありません。現在の市場・銘柄の状況を「行動カテゴリ」に整理して、
             今日の判断・リスク・理由・触るもの・避けるもの・待つものを示す投資コマンドセンターです。
           </p>
+        </div>
+      </section>
+
+      {/* バージョン履歴は一番下(ユーザー指示・用語/英語の役より下) */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">最近のアップデート</span>
+          <span className="section-head__count">{RECENT_UPDATES.length} releases</span>
+        </div>
+        <div className="card guide-card">
+          <div className="guide-caps">
+            {RECENT_UPDATES.map(([v, d]) => (
+              <div className="guide-cap" key={v}>
+                <span className="guide-cap__area guide-cap__area--mono">{v}</span>
+                <span className="guide-cap__desc">{d}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
     </PageShell>

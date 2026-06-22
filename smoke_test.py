@@ -85,8 +85,9 @@ def v_fund_nav():
 
 def v_market_movers():
     c, d = _get("/api/argus/market-movers")
-    # valid even without a key (status=missing_key); just assert the shape.
-    return d.get("status") in ("live", "missing_key", "unavailable") and "gainers" in d, \
+    # valid in any of these shapes: live | missing_key | unavailable | warming
+    # ('warming' = public read before the scheduled scan has populated the cache).
+    return d.get("status") in ("live", "missing_key", "unavailable", "warming") and "gainers" in d, \
         f"status={d.get('status')} gainers={len(d.get('gainers', []))}{' note='+d['note'][:40] if d.get('note') else ''}"
 
 def v_jp_market_movers():
