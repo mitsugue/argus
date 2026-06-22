@@ -1580,17 +1580,19 @@ def _layer2b_store_configured():
     return bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO")
                 and os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN"))
 
-def _require_owner_sync():
+def _require_owner_sync(body_token=None):
     """(authorized, error, code) — accepts the dedicated OWNER-SYNC token OR the
-    admin token. Scoped ONLY to watchlist-sync (membership metadata; no portfolio,
-    no other admin action), so a frontend may hold it. Never logs the token."""
+    admin token, from a header OR the request body (body lets a non-ASCII
+    passphrase work — header values must be ASCII). Scoped ONLY to watchlist-sync
+    (membership metadata; no portfolio, no other admin action). Never logs it."""
     owner = os.environ.get("ARGUS_OWNER_SYNC_TOKEN", "")
     admin = _ARGUS_ADMIN_TOKEN
     if not owner and not admin:
         return False, {"error": "owner_sync_unconfigured",
                        "message": "ARGUS_OWNER_SYNC_TOKEN is not configured."}, 503
     tok = (request.headers.get("X-ARGUS-OWNER-TOKEN", "")
-           or request.headers.get("X-ARGUS-ADMIN-TOKEN", ""))
+           or request.headers.get("X-ARGUS-ADMIN-TOKEN", "")
+           or (body_token or ""))
     if tok and ((owner and tok == owner) or (admin and tok == admin)):
         return True, None, 200
     return False, {"error": "unauthorized"}, 401
@@ -1666,11 +1668,13 @@ def api_argus_watchlist_sync():
     portfolio field is hard-rejected. The repo is public, so nothing is persisted
     unless a PRIVATE store is configured — otherwise scoring stays disabled and no
     symbols are stored anywhere. No orders, ever."""
-    ok, err, code = _require_owner_sync()
+    body = request.get_json(silent=True) or {}
+    token = body.pop("ownerToken", None) if isinstance(body, dict) else None  # strip before validate/store
+    ok, err, code = _require_owner_sync(body_token=token)
     if not ok:
         return jsonify(err), code
     W = argus_watchlist_sync
-    valid, cleaned, errs = W.validate_sync_payload(request.get_json(silent=True))
+    valid, cleaned, errs = W.validate_sync_payload(body)
     if not valid:
         return jsonify({"ok": False, "errors": errs,
                         "note": "Research simulation only. Metadata only — no portfolio data accepted."}), 400

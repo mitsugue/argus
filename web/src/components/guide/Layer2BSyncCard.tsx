@@ -27,10 +27,13 @@ export const Layer2BSyncCard: React.FC = () => {
     try { localStorage.setItem(TOKEN_KEY, token.trim()); } catch { /* ignore */ }
     setBusy(true); setResult(null);
     try {
+      // The token goes in the JSON BODY (not a header): header values must be
+      // ASCII, so a passphrase with Japanese/spaces/symbols would throw
+      // "The string did not match the expected pattern" before the request.
       const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-ARGUS-OWNER-TOKEN': token.trim() },
-        body: JSON.stringify({ items }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, ownerToken: token.trim() }),
       });
       const d = await r.json();
       if (!r.ok) { setResult(`失敗: ${d.error || r.status}${d.errors ? ' — ' + d.errors.join(', ') : ''}`); }
