@@ -58,8 +58,10 @@ async function reconcileVersion(): Promise<void> {
   const tries = Number(sessionStorage.getItem(TRIES_KEY) || '0');
   sessionStorage.setItem(TRIES_KEY, String(tries + 1));
   if (tries >= 5) return; // give up this session; avoid any reload loop
-  if (tries >= 2) {
-    await selfHeal(); // forcing didn't take → SW wedged
+  if (tries >= 1) {
+    // First updateSW didn't take → the SW swapped index.html but kept stale JS
+    // chunks. Self-heal aggressively: unregister SWs, clear caches, hard reload.
+    await selfHeal();
     window.location.reload();
     return;
   }

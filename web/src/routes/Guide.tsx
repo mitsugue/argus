@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.79.0', 'PWAの「indexは新しいがJSチャンクが古いまま」固着をより速く自己回復 — 強制更新が1回効かなければ即座にSW登録解除+キャッシュ全消去+再読込(これでLayer 2B同期の旧コード残留=pattern エラーが解消)'],
   ['v10.78.0', 'Layer 2B同期エラー修正 — オーナー同期トークンをHTTPヘッダーでなくJSONボディで送るよう変更(日本語/空白/記号を含むパスフレーズでも「The string did not match the expected pattern」が出ない)。サーバーはヘッダー/ボディ両対応、トークンは検証・保存前に除去'],
   ['v10.77.0', 'コホート重複の安全化 + DV Phase2(検証不要な部分)を搭載 — ①Layer 2Bが1/2Aと重複しても安全(1銘柄=1予測・複数コホート所属・symbolでde-dup。cohort_membershipsで明示+テスト)②Decision Value のポリシーレジストリ(daily_next_session_long/close_pin_long/event_next_open_long/no_trade_control・不変)+ベースライン群+「後出し禁止」タイミング検査+shadow決定スケルトン構築(注文は一切作らない・research only)。API /decision-value/policies。テスト計257。shadow記録の蓄積/ポリシー別期待値/専用UIは検証フェーズで'],
   ['v10.76.0', 'Layer 2B(あなたのwatchlist採点)を実稼働化 — ①専用オーナー同期トークン(管理者権限とは別・membership同期のみ)②サーバーがprivate GitHubリポへ membership を直接コミット(GitHub API・公開リポには一切出さない・不変日次スナップショット+latest)③Guideに「Layer 2B 同期」UI(トークン入力+今すぐ同期。銘柄だけ送信し保有数量・取得単価は送らない。CORE投信は対象外)④オーナー限定の membership 読み戻しAPI。要セットアップ: privateリポ作成+fine-grained PAT+Renderに3環境変数。同期後の日次採点はPhase次段。注文・自動売買は一切なし'],
