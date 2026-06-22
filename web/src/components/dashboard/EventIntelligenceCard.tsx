@@ -105,7 +105,7 @@ function EventRow({ e, open, onToggle }: { e: ActiveEvent; open: boolean; onTogg
     <div className={`ei-row${open ? ' ei-row--open' : ''}`}>
       <button className="ei-row__head" onClick={onToggle}>
         <span className="ei-row__dot" style={{ background: sevColor(e.severity) }} />
-        <span className="ei-row__sym">{e.symbol}</span>
+        <span className="ei-row__sym">{e.nameJa ? `${e.nameJa}(${e.symbol})` : e.symbol}</span>
         <span className="ei-row__type" style={{ color: sevColor(e.severity) }}>{TYPE_JA[e.eventType] ?? e.eventType}</span>
         <span className="ei-row__reason">{e.reasonJa}</span>
         <span className="ei-row__posture">{POSTURE_JA[e.recommendedPosture] ?? e.recommendedPosture}</span>

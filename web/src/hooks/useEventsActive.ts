@@ -6,6 +6,7 @@ export interface ActiveEvent {
   eventId: string;
   eventType: string;
   symbol: string;
+  nameJa?: string | null;
   market: string;
   session: string;
   severity: number;

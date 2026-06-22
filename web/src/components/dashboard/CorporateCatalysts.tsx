@@ -50,7 +50,7 @@ export const CorporateCatalysts: React.FC = () => {
         <div className="catalysts__list">
           {notable.map((it) => (
             <div className="catalysts__item" key={it.symbol}>
-              <span className="catalysts__sym">{it.symbol}</span>
+              <span className="catalysts__sym">{it.name ? `${it.name}(${it.symbol})` : it.symbol}</span>
               <span className="catalysts__risk" style={{ color: RISK_COLOR[it.catalystRisk] }}>{it.catalystRisk}</span>
               <span className="catalysts__data">{line(it)}</span>
               <span className="catalysts__reason">{it.summaryJa}</span>

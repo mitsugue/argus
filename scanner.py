@@ -2344,7 +2344,10 @@ def _event_ntfy(env):
         return
     sev = env.get("severity", 1)
     title = f"ARGUS: {env.get('symbol')} {env.get('eventType')}"
-    body = (f"{env.get('reasonJa') or ''}\n"
+    # Company name goes in the UTF-8 body (the Title header must stay ASCII).
+    nm = env.get("nameJa")
+    head = f"{nm}({env.get('symbol')})" if nm else f"{env.get('symbol')}"
+    body = (f"{head}\n{env.get('reasonJa') or ''}\n"
             f"{env.get('market')} / {env.get('session')} / sev{sev} / {env.get('recommendedPosture')}")
     try:
         requests.post(f"https://ntfy.sh/{topic}", data=body.encode("utf-8"),
@@ -2372,6 +2375,12 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
             recommended_posture=_EVENT_POSTURE.get(trig["type"], "WATCH"), gear=1)
         if session_override:
             env["session"] = session_override
+        # Always carry the JP company name (never a guessed mapping — resolved from
+        # the J-Quants master) so no screen/notification shows a bare 4-digit code.
+        if market == "JP":
+            nm = _jq_name_for(symbol)
+            if nm:
+                env["nameJa"] = nm
         env["ingestAt"] = now.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         env["lifecycleState"] = ("HIGH_ALERT" if trig["severity"] >= 5
                                  else "VERIFIED" if trig["severity"] >= 4 else "OBSERVING")
@@ -6977,7 +6986,8 @@ def _pro_events_section():
                 d = _build_event_dossier(e)
             except Exception:
                 d = None
-        sym = e.get("symbol")
+        nm = e.get("nameJa")
+        sym = f"{nm}({e.get('symbol')})" if nm else e.get("symbol")
         t = _PRO_TYPE_JA.get(e.get("eventType"), e.get("eventType"))
         if not d:
             out.append(f"■ {sym} {t}(sev{e.get('severity')}) — {e.get('reasonJa')}")

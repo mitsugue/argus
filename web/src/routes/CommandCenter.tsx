@@ -3,10 +3,7 @@ import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import SystemHealthLamps from '../components/dashboard/SystemHealthLamps';
-import { TopRotations } from '../components/regime/TopRotations';
 import { CompactWatchRow } from '../components/dashboard/CompactWatchRow';
-import { CompactEventRow } from '../components/dashboard/CompactEventRow';
-import { CompactCoreRow } from '../components/dashboard/CompactCoreRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
 import { useLedgerSummary } from '../hooks/useLedgerSummary';
@@ -16,17 +13,12 @@ import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
-import { useMarketNews } from '../hooks/useMarketNews';
 import { useAssets } from '../hooks/useAssets';
 import {
-  deriveTodayJudgment, toMarketEvents, mapRuleAction, coreActionFor, combinePhase,
+  deriveTodayJudgment, mapRuleAction, combinePhase,
   type TodayPhase,
 } from '../lib/todayCall';
-import { topRotations as mockRotations } from '../mock/regime';
-import { genreOf } from '../types/assetItem';
 import type { ActionKey } from '../types/action';
-import type { TopRotation, } from '../types/regime';
-import type { CorePosition } from '../types/dashboard';
 import type { WatchEntry } from '../types/watch';
 import type { RouteKey } from '../components/NavRail';
 import '../components/dashboard/Dashboard.css';
@@ -48,13 +40,6 @@ const URGENCY: Record<ActionKey, number> = {
 };
 
 const PRIORITY_WATCH_LIMIT = 3;
-const PREVIEW_EVENT_LIMIT = 3;
-
-// Compact aliases for the core preview, keyed by the asset symbol.
-const CORE_SHORT: Record<string, string> = {
-  'EMAXIS-ACWI':  'Global Core (NISA)',
-  'EMAXIS-SP500': 'US Core (NISA)',
-};
 
 const PHASE_COLOR: Record<TodayPhase, string> = {
   live: 'var(--green)', partial: 'var(--amber)', mock: 'var(--text-muted)', connecting: 'var(--text-muted)',
@@ -70,7 +55,6 @@ const formatDate = (iso: string) => {
 export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const { assets } = useAssets();
   const ledger = useLedgerSummary();
-  const news = useMarketNews();
   const aiJ = useAIJudgment();
   const aiStateJa = useMemo(() => {
     if (aiJ.phase === 'connecting') return null;
@@ -141,16 +125,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return { diffLineJa: line, recent: recentJudgments(7) };
   }, [logTick, judgment, phase, al.data]);
 
-  // Live Top Rotations (mock fallback only when the regime engine is unreachable).
-  const rotations: TopRotation[] = useMemo(() => {
-    const live = regime.data?.topRotations ?? [];
-    if (live.length === 0) return regime.phase === 'mock' ? mockRotations : [];
-    return live.map((t) => {
-      const [from, to] = t.label.split(' -> ');
-      return { from: from ?? t.label, to: to ?? '' };
-    });
-  }, [regime.data, regime.phase]);
-
   // Priority watchlist: real action labels + live quotes, most urgent first.
   // Rows without a quote are skipped — no fake prices on the home page.
   const { priority, totalNamed } = useMemo(() => {
@@ -178,28 +152,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       (Math.abs(b.changePct) - Math.abs(a.changePct)));
     return { priority: entries.slice(0, PRIORITY_WATCH_LIMIT), totalNamed: entries.length };
   }, [al.data, jp.data, us.data, judgment.updatedAt]);
-
-  // Live event preview (urgent first).
-  const events = useMemo(
-    () => toMarketEvents(ev.data, judgment.updatedAt).slice(0, PREVIEW_EVENT_LIMIT),
-    [ev.data, judgment.updatedAt],
-  );
-
-  // Core preview from the user's actual core/fund assets + posture-aware label.
-  const corePositions: CorePosition[] = useMemo(() => {
-    const act = coreActionFor(al.data?.marketPosture?.label);
-    return assets
-      .filter((a) => genreOf(a) === 'funds')
-      .slice()
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((a) => ({
-        symbol: a.symbol,
-        name: a.displayNameJa || a.displayName,
-        market: 'JP' as const,
-        action: act.action,
-        reason: act.reason,
-      }));
-  }, [assets, al.data]);
 
   return (
     <PageShell
@@ -282,67 +234,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
       <section>
         <div className="section-head">
-          <span className="section-head__title">Event Radar</span>
-          <button className="section-head__link" onClick={() => onNavigate('events')}>
-            next {events.length}
-          </button>
-        </div>
-        <div className="card event-list">
-          {events.length > 0
-            ? events.map((e) => <CompactEventRow key={e.id} event={e} />)
-            : <p className="today-connecting">connecting… イベントカレンダーを取得中</p>}
-        </div>
-      </section>
-
-      {news.data && news.data.items.length > 0 && (
-        <section>
-          <div className="section-head">
-            <span className="section-head__title">Market News</span>
-            <span className="section-head__count">速報・参考(英語)</span>
-          </div>
-          <div className="card mnews">
-            {news.data.items.slice(0, 6).map((n) => (
-              <a className={`mnews__row${n.major ? ' mnews__row--major' : ''}`}
-                 key={n.url || n.headline} href={n.url} target="_blank" rel="noreferrer">
-                <span className="mnews__flag">{n.major ? '⚡' : '・'}</span>
-                <span className="mnews__head" title={n.headlineJa ? n.headline : undefined}>{n.headlineJa ?? n.headline}</span>
-                <span className="mnews__meta">
-                  {n.source}{n.datetime ? ` · ${Math.max(0, Math.round((Date.now() / 1000 - n.datetime) / 60))}分前` : ''}
-                </span>
-              </a>
-            ))}
-            <div className="mnews__note">{news.data.noteJa}</div>
-          </div>
-        </section>
-      )}
-
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">Top Rotations</span>
-          <button
-            className="section-head__link"
-            onClick={() => {
-              // Signal Market Regime to scroll to the full board after it mounts.
-              try { sessionStorage.setItem('argus.scrollTo', 'full-board'); } catch { /* ignore */ }
-              onNavigate('regime');
-            }}
-          >
-            full board
-          </button>
-        </div>
-        {rotations.length > 0 ? (
-          <TopRotations rotations={rotations} />
-        ) : (
-          <div className="card"><p className="today-connecting">
-            {regime.phase === 'connecting'
-              ? 'connecting… 資金ローテーションを取得中'
-              : '現在、明確な資金ローテーション(優位な資金移動)は検出されていません。'}
-          </p></div>
-        )}
-      </section>
-
-      <section>
-        <div className="section-head">
           <span className="section-head__title">Priority watchlist</span>
           <button className="section-head__link" onClick={() => onNavigate('watchlist')}>
             {priority.length} of {totalNamed} names · view all
@@ -367,24 +258,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           {priority.length > 0
             ? priority.map((row) => <CompactWatchRow key={row.symbol} entry={row} />)
             : <p className="today-connecting">connecting… ライブ価格と行動ラベルを取得中</p>}
-        </div>
-      </section>
-
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">Core Portfolio</span>
-          <button className="section-head__link" onClick={() => onNavigate('core')}>
-            {corePositions.length} positions
-          </button>
-        </div>
-        <div className="card core-list">
-          {corePositions.map((p) => (
-            <CompactCoreRow
-              key={p.symbol}
-              position={p}
-              shortLabel={CORE_SHORT[p.symbol]}
-            />
-          ))}
         </div>
       </section>
     </PageShell>
