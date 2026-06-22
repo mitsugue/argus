@@ -26,26 +26,43 @@ export const Layer2BSyncCard: React.FC = () => {
     if (!token.trim()) { setResult('オーナー同期トークンを入力してください'); return; }
     try { localStorage.setItem(TOKEN_KEY, token.trim()); } catch { /* ignore */ }
     setBusy(true); setResult(null);
-    try {
-      // The token goes in the JSON BODY (not a header): header values must be
-      // ASCII, so a passphrase with Japanese/spaces/symbols would throw
-      // "The string did not match the expected pattern" before the request.
-      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, ownerToken: token.trim() }),
-      });
-      const d = await r.json();
-      if (!r.ok) { setResult(`失敗: ${d.error || r.status}${d.errors ? ' — ' + d.errors.join(', ') : ''}`); }
-      else {
-        setResult(d.status === 'synced'
-          ? `✅ 同期完了: ${d.symbolCount}銘柄を private ストアに保存(${d.effectiveFrom})`
-          : `⚠️ ${d.status}: ${d.note || ''}`);
+    const base = backend.replace(/\/$/, '');
+    // Render cold-start can return a non-JSON 502/timeout for the first hit, which
+    // made r.json() throw "did not match the expected pattern". Warm the dyno,
+    // then POST with retries and a SAFE json parse (read text, then try parse).
+    try { setResult('接続中(バックエンド起動待ち)…'); await fetch(base + '/healthz').catch(() => {}); } catch { /* ignore */ }
+    let lastErr = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(base + '/api/argus/calibration/watchlist-sync', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items, ownerToken: token.trim() }),
+        });
+        const text = await r.text();
+        let d: any = null;
+        try { d = text ? JSON.parse(text) : null; } catch {
+          lastErr = `バックエンド起動中の応答(HTTP ${r.status})`;
+          await new Promise((res) => setTimeout(res, 3000 * (attempt + 1)));
+          setResult(`再試行中…(${attempt + 1}/3)`);
+          continue; // cold-start non-JSON → retry
+        }
+        if (!r.ok || !d) {
+          setResult(`失敗: ${(d && d.error) || r.status}${d && d.errors ? ' — ' + d.errors.join(', ') : ''}`);
+        } else {
+          setResult(d.status === 'synced'
+            ? `✅ 同期完了: ${d.symbolCount}銘柄を private ストアに保存(${d.effectiveFrom})`
+            : `⚠️ ${d.status}: ${d.note || ''}`);
+        }
+        setBusy(false);
+        return; // got a real response — done
+      } catch (e) {
+        lastErr = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        await new Promise((res) => setTimeout(res, 3000 * (attempt + 1)));
+        setResult(`再試行中…(${attempt + 1}/3)`);
       }
-    } catch (e) {
-      const err = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      setResult('通信エラー: ' + err + ` (接続先: ${backend})`);
-    } finally { setBusy(false); }
+    }
+    setResult(`通信エラー: ${lastErr}(接続先: ${backend})。少し待って再度お試しください。`);
+    setBusy(false);
   }
 
   return (

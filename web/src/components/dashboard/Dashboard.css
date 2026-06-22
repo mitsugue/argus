@@ -783,9 +783,9 @@
 /* Glossary / Guide */
 .guide-card { padding: 16px; }
 .guide-glossary { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 18px; }
-.guide-term { display: flex; gap: 10px; align-items: baseline; font-size: 12px; }
-.guide-term__en { font-family: var(--font-mono); color: var(--text-main); min-width: 130px; }
-.guide-term__ja { color: var(--text-sub); }
+.guide-term { display: flex; gap: 10px; align-items: baseline; font-size: 12px; min-width: 0; }
+.guide-term__en { font-family: var(--font-mono); color: var(--text-main); min-width: 130px; overflow-wrap: anywhere; }
+.guide-term__ja { color: var(--text-sub); min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .guide-howto { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
 .guide-howto li { font-size: 13px; line-height: 1.6; color: var(--text-sub); }
 .guide-note { margin-top: 14px; font-size: 12px; line-height: 1.6; color: var(--text-faint); }
@@ -1116,11 +1116,14 @@
   align-items: baseline;
 }
 .guide-cap:last-child { border-bottom: none; }
-.guide-cap__area { font-size: 12.5px; font-weight: 600; color: var(--text-main); }
-.guide-cap__area--mono { font-family: var(--font-mono); font-weight: 500; font-size: 11.5px; color: var(--text-sub); }
-.guide-cap__desc { font-size: 12.5px; color: var(--text-sub); line-height: 1.7; }
+.guide-cap__area { font-size: 12.5px; font-weight: 600; color: var(--text-main); min-width: 0; overflow-wrap: anywhere; }
+.guide-cap__area--mono { font-family: var(--font-mono); font-weight: 500; font-size: 11.5px; color: var(--text-sub); min-width: 0; overflow-wrap: anywhere; }
+/* Long latin identifiers (regime_sensor_v2, daily_next_session_long, …) in the
+   release notes have no break points — force them to wrap so they can't push an
+   inner box wider than the viewport (caused horizontal drift on mobile). */
+.guide-cap__desc { font-size: 12.5px; color: var(--text-sub); line-height: 1.7; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 @media (max-width: 560px) {
-  .guide-cap { grid-template-columns: 1fr; }
+  .guide-cap { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── Portfolio Exposure + holdings (v10.0, device-local) ── */
