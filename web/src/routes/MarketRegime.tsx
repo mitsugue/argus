@@ -119,6 +119,14 @@ export const MarketRegime: React.FC = () => {
         </div>
         {rows.length > 0 ? (
           <CapitalRotationBoard rows={rows} />
+        ) : data && (data.rotationGroups?.length ?? 0) > 0 ? (
+          // Groups exist but ETF momentum is pending (Twelve Data free-tier cap) —
+          // be honest about WHY rather than looking like a stuck "connecting".
+          <div className="card"><p style={{ fontSize: 13, color: 'var(--text-sub)', lineHeight: 1.7 }}>
+            ETFモメンタムのデータ取得待ち(Twelve Data無料枠の上限)。取得でき次第、
+            {data.rotationGroups.map((g) => g.label).join(' / ')} のローテーションがここに表示されます。
+            (金利/VIX/レジーム判定は下に表示中)
+          </p></div>
         ) : (
           <div className="card"><p style={{ fontSize: 13, color: 'var(--text-sub)' }}>
             connecting… 最新のローテーションを取得中

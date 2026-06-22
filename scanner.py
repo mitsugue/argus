@@ -3167,6 +3167,8 @@ _REGIME_SUMMARY_JA = {
 
 _REGIME_CACHE     = {"data": None, "expires": 0.0}
 _REGIME_CACHE_TTL = 6 * 3600  # 6h — non-intraday regime scoring, credit-safe
+_REGIME_PARTIAL_TTL = 45 * 60  # partial reading retry — long enough to stay under
+                               # Twelve Data's 800/day free credit cap (see below)
 # Stability (v10.34): the last FULL+live regime. A PARTIAL ETF load (Twelve Data
 # free-tier rate caps) scores from a subset and tilts the axes differently each
 # cold computation, so the headline label wobbled across restarts/cache-expiry.
@@ -3556,10 +3558,13 @@ def get_market_regime_snapshot():
         payload = held
     if payload.get("status") != "mock":
         _REGIME_CACHE["data"]    = payload
-        # A full (all-ETF) reading can sit the 6h TTL; anything thinner retries
-        # in 5 min so coverage / self-heal improves quickly.
+        # A full (all-ETF) reading can sit the 6h TTL; a thinner reading retries
+        # sooner — but NOT every 5 min: that was 288 retries/day × 8 ETF credits =
+        # ~2304/day, blowing Twelve Data's 800/day free limit so the quota burned
+        # out and ETF data failed ALL day (empty Capital Rotation Board). 45 min
+        # → ~32 retries/day × 8 = ~256 credits, leaving room for the watchlist.
         full = (payload.get("status") == "live") and not payload.get("heldOverMin")
-        _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if full else 300)
+        _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if full else _REGIME_PARTIAL_TTL)
     return payload
 
 @app.route("/api/argus/market-regime")

@@ -64,6 +64,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.58.0', '不具合修正 — ①Market Contextの資金ローテーションが空になる問題を修正(ETFデータが不完全な時に5分毎に再取得し、Twelve Dataの無料枠 800/日を使い切って終日失敗していた。再取得を45分間隔にして枠内に収める)。取得待ち時は「データ取得待ち(無料枠上限)」と正直表示し「接続中」のまま固まらないように②「Add Asset」が画面のずっと下に出る問題を修正(オーバースクロール用のtransform内にあったためで、bodyへポータル化+画面上部に表示)③深夜の変な時刻に通知が来る問題を修正(GitHub cron遅延対策・前掲)'],
   ['v10.57.0', 'ページ統合でさらにシンプルに — ①「Market Regime」と「Event Radar」を1つの「Market Context」に統合(今の地合い+資金回転+金利、これから来る予定イベント+News Radarを1画面に。ナビ6→5ページ)②ページ内の重複も削除: 同じ金利を二度出していた「FRED Rates Snapshot」を撤去(「Rates backdrop」に一本化)、「Regime用語集」をGuideの用語一覧に集約。Todayの「Next ◯◯」ピルはMarket Contextへ遷移。使い方ガイド・用語集も自動で追従更新'],
   ['v10.56.0', '使い方ガイドをページ別に刷新 — Guideの先頭に「使い方 — ページ別ガイド」を追加(共通ヘッダー→Today→Watchlist→Market Regime→Event Radar→Core Portfolio→Guideの順で、各ページの目的と操作を説明)。削除済みのAction Alerts/旧Today要素への古い記述も訂正。以後アプリ更新のたびにこの使い方ページも自動で最新化します'],
   ['v10.55.0', '重複の整理(続き) — ①Topの「Priority watchlist」を削除(Watchlistページの上位抜粋で重複)。Todayは市場ランプ+総合判断+24/7イベント+判断ログに集約 ②「Action Alerts」ページをナビごと廃止(中身のSatellites=Core Portfolioの「クラス判断」、Index Funds=「積立方針」と完全重複。Core Portfolioは「あなたの配分」も持つ上位互換)。不要な価格取得もカット。ナビは Today/Watchlist/Market Regime/Event Radar/Core Portfolio/Guide に簡素化'],

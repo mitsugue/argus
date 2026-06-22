@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { searchFunds } from '../../lib/fundCatalog';
 import type { AssetMarket, AssetType, AssetSource } from '../../types/assetItem';
 
@@ -94,7 +95,9 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
     onClose();
   }
 
-  return (
+  // Portal to <body> so the fixed overlay escapes the overscroll-transformed
+  // page shell (a transform ancestor was making it render far down the screen).
+  return createPortal(
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Add asset" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head">
@@ -169,6 +172,7 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
           <button className="asset-btn asset-btn--primary" onClick={submit}>Add</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
