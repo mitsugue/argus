@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.84.0', 'Guide整理 — 設定系の「バックアップ」と「Layer 2B 同期」をまとめて最下部(バージョン履歴の直前)に移動。Layer 2B同期が稼働開始(あなたのwatchlist 13銘柄をprivateストアへ保存)'],
   ['v10.83.1', 'Layer 2B同期の500を根治 — ハンドラが argus_watchlist_sync を import せずに使っていた(認証通過後にのみ発火するNameError)。importを追加。認証後の経路を実行する回帰テストも追加(no-tokenスモークでは届かなかった死角を塞ぐ)'],
   ['v10.83.0', 'Layer 2B同期のHTTP 500を診断可能に — 認証後の処理をtry/eで包み、原因を所有者にそのまま表示(空の500をなくす)。private保存の失敗時はGitHub APIのHTTPステータス+理由(404=リポ名違い/403=トークン権限不足等)をアプリに表示。同期結果に persistDetail を出すように'],
   ['v10.82.0', '横スクロール(左右のガタつき)を本当に修正+Layer2B同期のコールドスタート対応 — ①「最近のアップデート」等の長い英識別子(regime_sensor_v2等)が折返さずに内側ボックスを画面幅超に広げていた根本原因をCSSで是正(overflow-wrap/word-break/min-width:0、モバイル単一列をminmax(0,1fr)に)。プレビュー実測で横はみ出し0・横スクローラ0を確認②同期はバックエンドを先に起こし最大3回リトライ+安全なJSON解析(Renderコールドスタートの非JSON応答でpattern エラーにならない)'],
@@ -251,14 +252,6 @@ export const Guide: React.FC = () => {
 
       <section>
         <div className="section-head">
-          <span className="section-head__title">Layer 2B 同期(あなたのwatchlist採点)</span>
-          <span className="section-head__count">private/owner限定</span>
-        </div>
-        <Layer2BSyncCard />
-      </section>
-
-      <section>
-        <div className="section-head">
           <span className="section-head__title">Ledger Health (自己採点ループ)</span>
           <span className="section-head__count">稼働状況</span>
         </div>
@@ -271,14 +264,6 @@ export const Guide: React.FC = () => {
           <span className="section-head__count">capability別</span>
         </div>
         <SourceRegistryCard />
-      </section>
-
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">バックアップ (端末データ)</span>
-          <span className="section-head__count">エクスポート / 復元</span>
-        </div>
-        <BackupCard />
       </section>
 
       <section>
@@ -302,7 +287,24 @@ export const Guide: React.FC = () => {
         </div>
       </section>
 
-      {/* バージョン履歴は一番下(ユーザー指示・用語/英語の役より下) */}
+      {/* 設定系(バックアップ + Layer 2B 同期)はまとめて一番下(ユーザー指示) */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">バックアップ (端末データ)</span>
+          <span className="section-head__count">エクスポート / 復元</span>
+        </div>
+        <BackupCard />
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Layer 2B 同期(あなたのwatchlist採点)</span>
+          <span className="section-head__count">private/owner限定</span>
+        </div>
+        <Layer2BSyncCard />
+      </section>
+
+      {/* バージョン履歴は最下部(ユーザー指示・用語/英語の役より下) */}
       <section>
         <div className="section-head">
           <span className="section-head__title">最近のアップデート</span>
