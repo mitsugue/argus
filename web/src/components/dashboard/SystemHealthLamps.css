@@ -43,3 +43,9 @@
 .shl-pop-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
 .shl-pop-title { font-weight: 700; color: var(--text-main); font-size: 12px; }
 .shl-pop-overall { margin-left: auto; color: var(--text-sub, #8b98a7); }
+
+/* Market session lamps (Today header) — green while a market is open, dark when closed. */
+.msl { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 4px 0 12px; font-size: 11.5px; }
+.msl-item { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; letter-spacing: 0.02em; }
+.msl-item--open { color: var(--text-main); }
+.msl-item--closed { color: var(--text-faint, #5f6b78); }

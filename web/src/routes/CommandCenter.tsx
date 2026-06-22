@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
+import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
 import { CompactWatchRow } from '../components/dashboard/CompactWatchRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
@@ -39,10 +40,6 @@ const URGENCY: Record<ActionKey, number> = {
 };
 
 const PRIORITY_WATCH_LIMIT = 3;
-
-const PHASE_COLOR: Record<TodayPhase, string> = {
-  live: 'var(--green)', partial: 'var(--amber)', mock: 'var(--text-muted)', connecting: 'var(--text-muted)',
-};
 
 const formatDate = (iso: string) => {
   const d = new Date(`${iso}T00:00:00+09:00`);
@@ -155,15 +152,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   return (
     <PageShell
       title="Daily Command Center"
-      subtitle={
-        <span>
-          {formatDate(judgment.date)}
-          <span className="today-phase" style={{ color: PHASE_COLOR[phase] }}>
-            {' '}· {phase === 'connecting' ? 'connecting…' : phase}
-          </span>
-        </span>
-      }
+      subtitle={<span>{formatDate(judgment.date)}</span>}
     >
+      <MarketSessionLamps />
+
       <HeroCard judgment={judgment} />
 
       <EventIntelligenceCard />
