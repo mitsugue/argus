@@ -184,6 +184,9 @@ CHECKS = [
     ("source-registry", v_source_registry),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
+    ("ai-cost 401", v_admin_gated_401("/api/argus/ai-cost")),
+    ("tdnet-metrics 401", v_admin_gated_401("/api/argus/tdnet-metrics")),
+    ("moomoo-capability 401", v_admin_gated_401("/api/argus/moomoo-capability")),
 ]
 
 

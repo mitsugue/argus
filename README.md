@@ -84,7 +84,7 @@ list and Render deploy steps.
 | --- | --- | --- |
 | US rates + VIX + HY OAS (10Y / 2Y / Real 10Y / VIX / HY OAS) | FRED (St. Louis Fed) | **live** |
 | Japan watchlist (price / change / volume / date, 7 names) | J-Quants V2 | **live** |
-| US watchlist (price / change / volume / date, 4 names) | Twelve Data | **live** |
+| US watchlist (price / change / volume / date, 4 names) | Twelve Data (Basic = regular-session US equities/ETFs real-time; extended-hours RT needs a higher plan; kept as fallback behind the moomoo bridge — no upgrade) | **live** |
 | Crypto watchlist (BTC/ETH + any added coin, USD, 24h change) | CoinGecko `simple/price` (keyless, 10-min cache) | **live** |
 | Today hero / "Today's call" pill (composed judgment) | action-labels + market-regime + events (rule-based composition) | **live** |
 | Event Radar (official calendar: FOMC / BLS / BEA / BOJ + Treasury auctions) | Fed · BLS · BEA · BOJ · TreasuryDirect | **live / partial** |
@@ -93,8 +93,15 @@ list and Render deploy steps.
 | GPT-5.5 Pro Handoff (manual high-stakes second opinion) | manual copy-paste (no API call, no cost) | **live (manual)** |
 | Integration health (provider configured/live/partial/missing) | `/api/argus/integrations` (`integrations-v1`, secret-free) | **live** |
 | Corporate Catalyst Layer (earnings / filings / news / disclosures) | SEC EDGAR + Finnhub + J-Quants (TDnet pending) | **live / partial** |
-| AI Judgment Layer v1 (automated second opinion) | GPT-5.5 primary + Gemini double-check (code path; needs Render keys + `AI_JUDGE_ENABLED` + admin run) | **disabled / missing_keys until configured** |
+| AI Judgment Layer v1 (automated second opinion) | GPT-5.5 primary + Gemini 2.5 Pro checker (Flash only on 429 fallback); ARGUS-side hard USD budget (daily/monthly, env-tunable) — OpenAI prepaid balance is **not** the stop; estimated cost + actual model recorded (`/api/argus/ai-cost`, admin) | **live (admin-run, budget-gated)** |
+| EDINET official filings (JP) | EDINET API v2 — always an official **fact**; becomes the same-day `official_catalyst` only for a materially-relevant filing (臨時報告/大量保有) whose submission coincides. **Not** equivalent to TDnet | **live** |
+| TDnet timely disclosure (JP same-day catalyst) | J-Quants TDnet add-on (¥11,000/mo) — **not subscribed**; objective purchase metrics tracked (`/api/argus/tdnet-metrics`, admin, no TDnet data used) | **pending decision** |
 | Alerts scanner, earnings *interpretation*, order-book / flow / tape | mock | pending real wiring |
+
+> **Private-use note.** ARGUS is a personal-use app. Market data is intended owner-only,
+> but the GitHub Pages frontend is inherently public and most data endpoints are still
+> anonymously reachable today — real backend owner-authentication is a separate pending
+> patch (GitHub Pages alone cannot make a genuinely private app).
 
 > **AI status is truthful, not flag-driven.** `aiJudgment` is **never** reported
 > `live` merely because `AI_JUDGE_ENABLED=true`. Its status comes from real key +

@@ -785,20 +785,36 @@ def test_edinet_match_symbol():
     assert scanner.edinet_match_symbol(None, "7203") == []
 
 
-def test_dossier_uses_edinet_official_fact(monkeypatch):
+def _edinet_dossier(monkeypatch, filing):
     monkeypatch.setattr(scanner, "get_entry_scout", lambda sym, mkt="JP": {
         "name": "トヨタ", "flowInference": {}, "metrics": {"rsi14": 60}, "catalystContext": {"items": []}})
-    monkeypatch.setattr(scanner, "_edinet_recent_for", lambda sym, now=None: [
-        {"docID": "D1", "filerName": "トヨタ自動車", "docTypeCode": "120",
-         "docDescription": "有価証券報告書", "submitDateTime": "2026-06-22 09:30"}])
+    monkeypatch.setattr(scanner, "_edinet_recent_for", lambda sym, now=None: [filing])
     env = {"eventId": "e1", "eventType": "PRICE_SPIKE", "severity": 4, "symbol": "7203",
            "market": "JP", "session": "JP_MORNING", "lifecycleState": "VERIFIED",
            "eventVersion": 1, "reasonJa": "急騰", "observedAt": "2026-06-22T00:35:00Z"}
-    d = scanner._build_event_dossier(env, {"changePct": 6.0})
+    return scanner._build_event_dossier(env, {"changePct": 6.0})
+
+
+def test_dossier_edinet_periodic_is_fact_not_catalyst(monkeypatch):
+    # v10.50 semantics: a PERIODIC filing (有報) is an official_FACT but NOT the
+    # same-day cause — official_catalyst must stay unreachable.
+    d = _edinet_dossier(monkeypatch, {"docID": "D1", "filerName": "トヨタ自動車",
+        "docTypeCode": "120", "docDescription": "有価証券報告書", "submitDateTime": "2026-06-22 09:30"})
     cause = {c["label"]: c["probability"] for c in d["probableCause"]}
-    assert cause.get("official_catalyst", 0) > 0                  # EDINET → official catalyst reachable
+    assert cause.get("official_catalyst", 0) == 0                 # periodic ≠ cause
     facts = " ".join(f.get("claimJa") or "" for f in d["confirmedFacts"])
-    assert "有価証券報告書" in facts                              # real official fact in confirmedFacts
+    assert "有価証券報告書" in facts                              # still recorded as official fact
+
+
+def test_dossier_edinet_extraordinary_same_day_is_catalyst(monkeypatch):
+    # A materially-relevant filing (臨時報告書) submitted the same day → the move's
+    # official_catalyst becomes reachable.
+    d = _edinet_dossier(monkeypatch, {"docID": "D2", "filerName": "トヨタ自動車",
+        "docTypeCode": "180", "docDescription": "臨時報告書", "submitDateTime": "2026-06-22 09:30"})
+    cause = {c["label"]: c["probability"] for c in d["probableCause"]}
+    assert cause.get("official_catalyst", 0) > 0                  # extraordinary + same day → catalyst
+    facts = " ".join(f.get("claimJa") or "" for f in d["confirmedFacts"])
+    assert "臨時報告書" in facts
 
 
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────

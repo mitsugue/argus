@@ -70,6 +70,61 @@ def is_official_catalyst(tier):
     return tier in OFFICIAL_TIERS
 
 
+# ── EDINET filing semantics (v10.50) ─────────────────────────────────────────
+# An EDINET filing is always an official_FACT, but it is NOT automatically the
+# CAUSE of a same-day move. It earns official_CATALYST only when (1) the document
+# type is materially price-relevant, (2) its submission plausibly precedes/
+# coincides with the move, and (3) the issuer↔symbol mapping is confirmed
+# (filings are pre-matched by secCode upstream). Periodic/amendment filings stay
+# official_fact but do NOT make the catalyst official.
+EDINET_DOC_CLASSES = {"periodic", "extraordinary", "large_volume_holding", "amendment", "other"}
+EDINET_CATALYST_CLASSES = {"extraordinary", "large_volume_holding"}
+
+
+def classify_edinet_doc(doc_type_code, description):
+    """Pure: classify an EDINET filing into one of EDINET_DOC_CLASSES from its
+    description (primary) and docTypeCode (secondary). 訂正(amendment) is checked
+    first because 訂正X is an amendment of X regardless of the underlying type."""
+    d = str(description or "")
+    if "訂正" in d:
+        return "amendment"
+    if "大量保有" in d:
+        return "large_volume_holding"
+    if "臨時報告" in d:
+        return "extraordinary"
+    if any(k in d for k in ("有価証券報告書", "四半期報告書", "半期報告書", "内部統制報告書")):
+        return "periodic"
+    by_code = {"120": "periodic", "130": "amendment", "140": "periodic", "160": "periodic",
+               "180": "extraordinary", "190": "amendment",
+               "350": "large_volume_holding", "360": "large_volume_holding"}
+    return by_code.get(str(doc_type_code or ""), "other")
+
+
+def edinet_event_relationship(submit_dt_str, event_date_str):
+    """Pure: a filing's submission vs the event DATE (both JST). EDINET
+    submitDateTime is 'YYYY-MM-DD HH:MM'. Returns precedes_or_same_day |
+    after_event_day | unknown. We never claim a filing caused a move it postdates."""
+    s = str(submit_dt_str or "")[:10]
+    if not s or not event_date_str:
+        return "unknown"
+    return "precedes_or_same_day" if s <= str(event_date_str) else "after_event_day"
+
+
+def edinet_catalyst_decision(filings, event_date_str):
+    """Pure: do ANY of the (already symbol-matched, classified) EDINET filings
+    qualify as a same-day official_catalyst? Requires a price-relevant doc class
+    AND timing that plausibly coincides. Returns (is_catalyst, qualifying_list)."""
+    q = []
+    for f in filings or []:
+        if not isinstance(f, dict):
+            continue
+        cls = f.get("docClass")
+        rel = edinet_event_relationship(f.get("submitDateTime"), event_date_str)
+        if cls in EDINET_CATALYST_CLASSES and rel == "precedes_or_same_day":
+            q.append(f)
+    return (len(q) > 0), q
+
+
 def market_scope(sym_chg, index_chg, index_fresh=True):
     """company_specific / market_wide / unconfirmed. A stale or missing benchmark
     → unconfirmed (never guessed). sector_wide is NOT claimed (no sector proxy)."""

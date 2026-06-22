@@ -116,3 +116,31 @@ def test_posture_never_a_trade_instruction():
         p = rs.research_posture(et, 5, "company_specific", "DISTRIBUTION", 0.7, "CAUTION")
         assert p in rs.RESEARCH_POSTURES and p not in ("BUY", "SELL", "EXECUTE")
     assert rs.research_posture("PRICE_SPIKE", 5, "company_specific", None, 0.2) == "OBSERVE"   # low coverage downgrades
+
+
+# ── EDINET filing semantics (v10.50) ─────────────────────────────────────────
+def test_classify_edinet_doc():
+    assert rs.classify_edinet_doc("120", "有価証券報告書") == "periodic"
+    assert rs.classify_edinet_doc("180", "臨時報告書") == "extraordinary"
+    assert rs.classify_edinet_doc("350", "大量保有報告書") == "large_volume_holding"
+    assert rs.classify_edinet_doc("", "訂正臨時報告書") == "amendment"   # 訂正 wins
+    assert rs.classify_edinet_doc("999", "謎の書類") == "other"
+    assert rs.classify_edinet_doc("180", "") == "extraordinary"          # falls back to code
+
+
+def test_edinet_event_relationship():
+    assert rs.edinet_event_relationship("2026-06-22 09:30", "2026-06-22") == "precedes_or_same_day"
+    assert rs.edinet_event_relationship("2026-06-23 09:30", "2026-06-22") == "after_event_day"
+    assert rs.edinet_event_relationship("", "2026-06-22") == "unknown"
+
+
+def test_edinet_catalyst_decision():
+    same_day_extra = [{"docClass": "extraordinary", "submitDateTime": "2026-06-22 14:00"}]
+    ok, q = rs.edinet_catalyst_decision(same_day_extra, "2026-06-22")
+    assert ok and len(q) == 1
+    # periodic same-day is NOT a catalyst
+    assert rs.edinet_catalyst_decision(
+        [{"docClass": "periodic", "submitDateTime": "2026-06-22 09:00"}], "2026-06-22")[0] is False
+    # extraordinary but filed the NEXT day cannot have caused today's move
+    assert rs.edinet_catalyst_decision(
+        [{"docClass": "extraordinary", "submitDateTime": "2026-06-23 09:00"}], "2026-06-22")[0] is False

@@ -170,6 +170,40 @@ jobs:
               print(f'no live AI judgment to persist (status={s}) — previous file kept')
           PY
 
+      # ai-cost-persist (v10.50): the month-to-date AI spend (no prompts/keys) is
+      # committed so the ARGUS-side HARD budget stop survives a dyno restart. The
+      # server restores max(persisted, in-memory) on boot. Admin-token gated.
+      - name: Persist AI cost ledger (monthly hard-stop baseline)
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip cost persist"; exit 0; }
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/ai-cost" -o aicost.json || echo '{}' > aicost.json
+          python3 - <<'PY'
+          import json, os
+          try:
+              d = json.load(open('aicost.json'))
+          except Exception:
+              d = {}
+          m = d.get('month'); spent = d.get('monthSpentUsd')
+          if isinstance(m, str) and isinstance(spent, (int, float)):
+              os.makedirs('ledger/ai-cost', exist_ok=True)
+              path = f'ledger/ai-cost/{m}.json'
+              prev = 0.0
+              if os.path.exists(path):
+                  try: prev = float(json.load(open(path)).get('monthSpentUsd') or 0.0)
+                  except Exception: prev = 0.0
+              # Monotonic within a month: never let a mid-month restart lower it.
+              d['monthSpentUsd'] = max(prev, float(spent))
+              json.dump(d, open(path, 'w'), ensure_ascii=False, indent=1)
+              print(f'AI cost persisted {m}: ${d["monthSpentUsd"]:.4f}')
+          else:
+              print('no AI cost to persist (admin gate / no run)')
+          PY
+
       - name: Record today's predictions + score the past
         if: github.event.inputs.mode != 'ai-only'
         run: |

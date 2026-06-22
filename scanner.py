@@ -21,6 +21,7 @@ from argus_rules import (  # pure scoring layer extracted v10.37 (#9)
 import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 import argus_research  # evidence-first deterministic research dossier (v10.41)
 import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
+import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -2232,6 +2233,93 @@ _EVENTS_ACTIVE = {}                 # dedupKey -> latest envelope revision
 _EVENTS_LOG    = deque(maxlen=200)  # recent events (history)
 _EVENT_LOCK    = threading.Lock()
 _EVENT_STATE   = {"lastDetectionAt": None, "lastEventAt": None, "detections": 0}
+
+# ── TDnet decision metrics (v10.50, GPT item G) ──────────────────────────────
+# Objective evidence for/against buying the J-Quants TDnet add-on, measured WITHOUT
+# any TDnet data: for each JP high/critical event, was the official catalyst known
+# (via EDINET) at/after detection, or did we fall back to secondary news / nothing?
+# Upserted by the dossier builder; a protected weekly summary aggregates it.
+_TDNET_METRICS = {}                 # eventId -> metric row (upsert)
+_TDNET_METRICS_LOCK = threading.Lock()
+_TDNET_METRIC_TTL_DAYS = 14
+
+def _parse_iso_z(s):
+    try:
+        return datetime.strptime(str(s), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+    except Exception:
+        return None
+
+def _record_tdnet_metric(env, official_known, news_used):
+    """Upsert a TDnet decision-metric row for a JP high/critical (sev≥4) event.
+    Pure bookkeeping — never fabricates TDnet data, never raises into the caller."""
+    try:
+        if env.get("market") != "JP" or (env.get("severity") or 0) < 4:
+            return
+        eid = env.get("eventId")
+        if not eid:
+            return
+        now = datetime.now(pytz.utc)
+        now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        with _TDNET_METRICS_LOCK:
+            row = _TDNET_METRICS.get(eid)
+            if row is None:
+                row = {"eventId": eid, "symbol": env.get("symbol"), "severity": env.get("severity"),
+                       "eventType": env.get("eventType"), "firstSeenAt": now_iso,
+                       "officialCatalystKnown": False, "causeSource": "unknown",
+                       "secondaryNewsUsedBeforeOfficialSource": False,
+                       "timeToOfficialCauseMinutes": None, "resolvedAt": None}
+                _TDNET_METRICS[eid] = row
+            if official_known and not row["officialCatalystKnown"]:
+                row["officialCatalystKnown"] = True
+                row["causeSource"] = "edinet_official"
+                row["resolvedAt"] = now_iso
+                fs = _parse_iso_z(row["firstSeenAt"])
+                row["timeToOfficialCauseMinutes"] = max(0, int((now - fs).total_seconds() // 60)) if fs else None
+            elif not row["officialCatalystKnown"] and news_used:
+                row["secondaryNewsUsedBeforeOfficialSource"] = True
+                row["causeSource"] = "secondary_news"
+            # age-out old rows
+            cutoff = now - timedelta(days=_TDNET_METRIC_TTL_DAYS)
+            for k in [k for k, v in _TDNET_METRICS.items()
+                      if (_parse_iso_z(v.get("firstSeenAt")) or now) < cutoff]:
+                _TDNET_METRICS.pop(k, None)
+    except Exception:
+        pass
+
+def _tdnet_metrics_summary(days=7):
+    """Protected weekly summary: how often the official catalyst was unknown for
+    JP high/critical events (the TDnet purchase case). No TDnet data involved."""
+    now = datetime.now(pytz.utc)
+    cutoff = now - timedelta(days=days)
+    with _TDNET_METRICS_LOCK:
+        rows = [dict(v) for v in _TDNET_METRICS.values()
+                if (_parse_iso_z(v.get("firstSeenAt")) or cutoff) >= cutoff]
+    n = len(rows)
+    known = [r for r in rows if r["officialCatalystKnown"]]
+    unknown = [r for r in rows if not r["officialCatalystKnown"]]
+    times = sorted(r["timeToOfficialCauseMinutes"] for r in known
+                   if isinstance(r["timeToOfficialCauseMinutes"], int))
+    def _median(xs):
+        if not xs:
+            return None
+        m = len(xs) // 2
+        return xs[m] if len(xs) % 2 else round((xs[m - 1] + xs[m]) / 2.0, 1)
+    unresolved15 = sum(1 for r in unknown
+                       if (_parse_iso_z(r.get("firstSeenAt")) and
+                           (now - _parse_iso_z(r["firstSeenAt"])).total_seconds() > 15 * 60))
+    return {
+        "asOf": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "windowDays": days,
+        "jpHighCriticalEvents": n,
+        "officialCatalystKnown": len(known), "officialCatalystUnknown": len(unknown),
+        "pctUnknownOfficialCatalyst": round(100.0 * len(unknown) / n, 1) if n else None,
+        "meanTimeToOfficialMinutes": round(sum(times) / len(times), 1) if times else None,
+        "medianTimeToOfficialMinutes": _median(times),
+        "unresolvedAfter15Minutes": unresolved15,
+        "tdnetWouldLikelyHelp": len(unknown),
+        "rows": rows[:50],
+        "noteJa": "JPの高/重大イベントで公式原因(EDINET)が当日判明したかの実測。TDnet未契約・TDnetデータ不使用。"
+                  "unknownや未解決が多いほどTDnet適時開示の価値が高い(購入判断は実測の蓄積後に)。",
+    }
 _EVENT_POSTURE = {
     "LIMIT_UP": "LIMIT_UP_RISK", "LIMIT_DOWN": "LIMIT_DOWN_RISK",
     "LIMIT_UP_PROXIMITY": "LIMIT_UP_RISK", "LIMIT_DOWN_PROXIMITY": "LIMIT_DOWN_RISK",
@@ -2514,7 +2602,7 @@ def _edinet_recent_for(symbol, now=None):
 
 def _ev_item(n, eid, source, stype, claim_type, claim, reliability, *,
              observed_at=None, published_at=None, fetched_at=None, now_iso=None,
-             source_event_id=None, url=None):
+             source_event_id=None, url=None, meta=None):
     """One evidence item with TRUE source/event times preserved (null when
     unavailable — never fabricated to the GET clock). contentHash is stable."""
     fetched = fetched_at or now_iso
@@ -2529,7 +2617,7 @@ def _ev_item(n, eid, source, stype, claim_type, claim, reliability, *,
             "sourceType": stype, "sourceURL": url, "sourceEventId": source_event_id,
             "publishedAt": published_at, "observedAt": observed_at, "fetchedAt": fetched,
             "freshnessSeconds": fresh, "reliability": reliability, "claimType": claim_type,
-            "normalizedClaim": claim, "compactRawMetadata": None,
+            "normalizedClaim": claim, "compactRawMetadata": meta,
             "contentHash": hashlib.sha256(f"{eid}|{claim_type}|{claim}".encode("utf-8")).hexdigest()[:16],
             "status": "active", "schemaVersion": "evidence-v1"}
 
@@ -2593,19 +2681,38 @@ def _build_event_dossier(env, push_row=None):
             edinet = _edinet_recent_for(sym)
     except Exception:
         edinet = []
-    catalyst_tier = ("official_filing" if edinet
+    # EDINET semantics (v10.50): an EDINET filing is ALWAYS an official_fact, but
+    # only a MATERIALLY-RELEVANT filing (臨時報告/大量保有) whose submission
+    # plausibly coincides with the move becomes an official_CATALYST. Periodic/
+    # amendment filings are recorded as fact but DON'T attribute the move to them.
+    event_date = (str(obs_at)[:10] if obs_at else datetime.now(TZ_JST).strftime("%Y-%m-%d"))
+    for f in edinet:
+        f["docClass"] = argus_research.classify_edinet_doc(f.get("docTypeCode"), f.get("docDescription"))
+        f["eventRelationship"] = argus_research.edinet_event_relationship(f.get("submitDateTime"), event_date)
+    edinet_is_catalyst, _edinet_cat = argus_research.edinet_catalyst_decision(edinet, event_date)
+    catalyst_tier = ("official_filing" if edinet_is_catalyst
                      else _NEWS_SOURCE_TIER if news_items else "unknown")
+    # TDnet decision metric (item G): record whether the official catalyst was
+    # known for this JP high/critical event (no TDnet data used).
+    _record_tdnet_metric(env, edinet_is_catalyst, bool(news_items))
     evidence, n = [], 1
     if isinstance(sym_chg, (int, float)):
         evidence.append(_ev_item(n, eid, "moomoo-bridge", "primary_market_data", "market_observation",
                                   f"{sym} {sym_chg:+.2f}%", 0.9, observed_at=obs_at, now_iso=now_iso)); n += 1
     for f in edinet[:2]:
         desc = f.get("docDescription") or f.get("docTypeCode") or "EDINET開示"
+        dcl, rel = f.get("docClass") or "other", f.get("eventRelationship") or "unknown"
+        is_cause = (dcl in argus_research.EDINET_CATALYST_CLASSES and rel == "precedes_or_same_day")
+        # official_fact ALWAYS; the claim notes whether it qualifies as the cause.
         evidence.append(_ev_item(n, eid, "EDINET", "official_filing", "official_fact",
-                                  f"{f.get('filerName') or sym}: {desc}", 0.92,
+                                  f"{f.get('filerName') or sym}: {desc} [{dcl}/{rel}"
+                                  f"{'・catalyst候補' if is_cause else '・cause扱いせず'}]", 0.92,
                                   published_at=f.get("submitDateTime"), now_iso=now_iso,
                                   source_event_id=f.get("docID"),
-                                  url=(f"https://disclosure2.edinet-fsa.go.jp/WEEK0010.aspx" if f.get("docID") else None))); n += 1
+                                  url=(f"https://disclosure2.edinet-fsa.go.jp/WEEK0010.aspx" if f.get("docID") else None),
+                                  meta={"docClass": dcl, "docTypeCode": f.get("docTypeCode"),
+                                        "issuer": f.get("filerName"), "eventRelationship": rel,
+                                        "qualifiesAsCatalyst": is_cause})); n += 1
     if argus_research.has_confirmed_flow_signal(flow_inf.get("classification")):
         evidence.append(_ev_item(n, eid, "argus-flow-intelligence", "derived", "derived_metric",
                                   f"flow={flow_inf['classification']}", 0.6,
@@ -3842,7 +3949,8 @@ _AI_RESULT_CACHE = {"data": None, "expires": 0.0}
 
 # Last-run per-model diagnostics (admin-only surface). No secrets, no payloads —
 # just the status of the most recent admin-triggered run, if any.
-_AI_LAST_RUN = {"oai": None, "gem": None, "groundingEnabled": None, "at": None}
+_AI_LAST_RUN = {"oai": None, "gem": None, "groundingEnabled": None, "at": None,
+                "gemModel": None, "oaiUsage": None, "gemUsage": None, "gemError": None}
 
 # ── AI judgment persistence (ai-persist-v1) ──────────────────────────────────
 # The in-memory cache dies on every free-dyno sleep/restart and its 30-min TTL
@@ -3856,6 +3964,127 @@ _LEDGER_RAW_BASE = os.environ.get(
 _AI_RESTORE_MAX_AGE_H = 120          # weekend/holiday tolerance; UI stamps run age
 _AI_RESTORE_BACKOFF_S = 600
 _AI_RESTORE_STATE = {"lastTry": 0.0}
+
+# ── AI cost ledger + HARD budget stops (v10.50, GPT cost-control patch) ───────
+# The OpenAI prepaid balance / provider project budget are NOT our stop — this
+# ARGUS-side ceiling is. Token counts come from the providers' usage metadata;
+# prices are env-overridable (we never hard-code a list price we can't let the
+# owner correct). Cost is always an ESTIMATE. Accumulator is in-memory but the
+# month-to-date total is restored from the ledger branch on boot so a dyno
+# restart cannot silently reset the monthly hard stop.
+def _float_env(name, default):
+    try: return float(os.environ.get(name, str(default)) or default)
+    except Exception: return default
+_AI_DAILY_BUDGET_USD    = _float_env("AI_DAILY_BUDGET_USD", 5.0)
+_AI_MONTHLY_BUDGET_USD  = _float_env("AI_MONTHLY_BUDGET_USD", 80.0)
+_AI_EMERGENCY_RESERVE_USD = _float_env("AI_EMERGENCY_RESERVE_USD", 2.0)
+_AI_PRICING = {
+    _OPENAI_MODEL:        {"in": _float_env("OPENAI_PRICE_INPUT_PER_1M", 1.25),
+                           "out": _float_env("OPENAI_PRICE_OUTPUT_PER_1M", 10.0)},
+    _GEMINI_JUDGE_MODEL:  {"in": _float_env("GEMINI_PRICE_INPUT_PER_1M", 1.25),
+                           "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
+    _GEMINI_FALLBACK_MODEL: {"in": _float_env("GEMINI_FLASH_PRICE_INPUT_PER_1M", 0.30),
+                             "out": _float_env("GEMINI_FLASH_PRICE_OUTPUT_PER_1M", 2.50)},
+}
+_AI_GROUNDING_USD = _float_env("GEMINI_GROUNDING_USD_PER_CALL", argus_ai_cost.DEFAULT_GROUNDING_USD)
+_AI_COST_STATE = {
+    "month": None, "monthSpentUsd": 0.0,     # the monthly hard-stop bucket
+    "day": None,   "daySpentUsd": 0.0,       # the daily hard-stop bucket
+    "lastRun": None,                          # {provider rows, totalUsd, at, eventId, status}
+    "runs": deque(maxlen=50),                 # recent run cost records (no prompts/keys)
+    "restoredMonth": None,                    # provenance of the restored baseline
+}
+_AI_COST_RESTORE_STATE = {"lastTry": 0.0}
+
+def _ai_cost_roll(now_jst):
+    """Reset the day/month buckets when the calendar advances. Caller holds _AI_LOCK."""
+    mk, dk = argus_ai_cost.month_key(now_jst), argus_ai_cost.day_key(now_jst)
+    if _AI_COST_STATE["month"] != mk:
+        _AI_COST_STATE["month"] = mk
+        _AI_COST_STATE["monthSpentUsd"] = 0.0
+    if _AI_COST_STATE["day"] != dk:
+        _AI_COST_STATE["day"] = dk
+        _AI_COST_STATE["daySpentUsd"] = 0.0
+
+def _ai_cost_restore_once():
+    """Best-effort: restore THIS month's spent total from the ledger branch so the
+    monthly hard stop survives a dyno restart. Never raises; backs off on failure."""
+    now = time.time()
+    if _AI_COST_STATE["restoredMonth"] == argus_ai_cost.month_key(datetime.now(TZ_JST)):
+        return
+    if now - _AI_COST_RESTORE_STATE["lastTry"] < _AI_RESTORE_BACKOFF_S:
+        return
+    _AI_COST_RESTORE_STATE["lastTry"] = now
+    mk = argus_ai_cost.month_key(datetime.now(TZ_JST))
+    try:
+        url = f"{_LEDGER_RAW_BASE}/ai-cost/{mk}.json?cb={int(now)}"
+        with urllib.request.urlopen(url, timeout=20) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        with _AI_LOCK:
+            _ai_cost_roll(datetime.now(TZ_JST))
+            base = float(d.get("monthSpentUsd") or 0.0)
+            # Restore only if the persisted baseline is higher (never lose spend).
+            if base > _AI_COST_STATE["monthSpentUsd"]:
+                _AI_COST_STATE["monthSpentUsd"] = base
+            _AI_COST_STATE["restoredMonth"] = mk
+        add_log(f"[AI] cost baseline restored {mk}: ${base:.2f}")
+    except Exception:
+        pass  # no file yet (first month) or branch unreachable — start from 0
+
+def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
+    """Add the just-finished run's ESTIMATED cost to the day/month buckets. Reads
+    per-provider token usage captured in _AI_LAST_RUN; uses the ACTUAL Gemini model
+    that ran (pro vs flash fallback). Never raises. Returns the run cost record."""
+    rows, total = [], 0.0
+    oai_u = _AI_LAST_RUN.get("oaiUsage")
+    if oai_status == "live" and oai_u:
+        c = argus_ai_cost.estimate_cost(_OPENAI_MODEL, oai_u[0], oai_u[1], _AI_PRICING)
+        rows.append({"provider": "openai", "model": _OPENAI_MODEL, "fallbackUsed": False,
+                     "inputTokens": oai_u[0], "outputTokens": oai_u[1], "grounding": False, "estUsd": c})
+        total += c
+    gem_u = _AI_LAST_RUN.get("gemUsage")
+    gem_model = _AI_LAST_RUN.get("gemModel") or _GEMINI_JUDGE_MODEL
+    if gem_status == "live" and gem_u:
+        c = argus_ai_cost.estimate_cost(gem_model, gem_u[0], gem_u[1], _AI_PRICING,
+                                        grounding=bool(grounding_enabled), grounding_usd=_AI_GROUNDING_USD)
+        rows.append({"provider": "gemini", "model": gem_model,
+                     "fallbackUsed": (gem_model == _GEMINI_FALLBACK_MODEL and gem_model != _GEMINI_JUDGE_MODEL),
+                     "inputTokens": gem_u[0], "outputTokens": gem_u[1],
+                     "grounding": bool(grounding_enabled), "estUsd": c})
+        total += c
+    total = round(total, 6)
+    rec = {"at": _ai_now_iso(), "runId": run_id, "rows": rows, "totalUsd": total,
+           "oaiStatus": oai_status, "gemStatus": gem_status, "estimated": True}
+    with _AI_LOCK:
+        _ai_cost_roll(datetime.now(TZ_JST))
+        _AI_COST_STATE["daySpentUsd"] = round(_AI_COST_STATE["daySpentUsd"] + total, 6)
+        _AI_COST_STATE["monthSpentUsd"] = round(_AI_COST_STATE["monthSpentUsd"] + total, 6)
+        _AI_COST_STATE["lastRun"] = rec
+        _AI_COST_STATE["runs"].appendleft(rec)
+    add_log(f"[AI] cost +${total:.4f} day=${_AI_COST_STATE['daySpentUsd']:.2f} "
+            f"month=${_AI_COST_STATE['monthSpentUsd']:.2f}")
+    return rec
+
+def _ai_cost_snapshot():
+    """Protected Operations view of AI spend (no prompts/keys). Pure read."""
+    with _AI_LOCK:
+        _ai_cost_roll(datetime.now(TZ_JST))
+        day_s, month_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
+        last = _AI_COST_STATE["lastRun"]
+        runs = list(_AI_COST_STATE["runs"])[:20]
+    return {
+        "asOf": _ai_now_iso(), "estimated": True,
+        "month": _AI_COST_STATE["month"], "day": _AI_COST_STATE["day"],
+        "dailyBudgetUsd": _AI_DAILY_BUDGET_USD, "daySpentUsd": round(day_s, 4),
+        "dayRemainingUsd": round(max(0.0, _AI_DAILY_BUDGET_USD - day_s), 4),
+        "monthlyBudgetUsd": _AI_MONTHLY_BUDGET_USD, "monthSpentUsd": round(month_s, 4),
+        "monthRemainingUsd": round(max(0.0, _AI_MONTHLY_BUDGET_USD - month_s), 4),
+        "emergencyReserveUsd": _AI_EMERGENCY_RESERVE_USD,
+        "lastRunCostUsd": (last or {}).get("totalUsd"),
+        "lastRun": last, "recentRuns": runs,
+        "pricing": _AI_PRICING, "groundingUsdPerCall": _AI_GROUNDING_USD,
+        "noteJa": "コストは推定値(プロバイダのトークン使用量×設定単価)。OpenAIの前払い残高ではなく、このARGUS側上限がハード停止。",
+    }
 
 def _ai_restore_validate(d, now_utc=None):
     """Pure validation of a persisted AI payload (unit-tested). Accepts only a
@@ -3946,7 +4175,26 @@ _OPENAI_SYSTEM = (
     "limitations honestly. All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 
+def _usage_tokens(resp):
+    """Best-effort (input_tokens, output_tokens) from either the OpenAI Responses
+    API (input_tokens/output_tokens, reasoning folded into output) or chat
+    completions (prompt_tokens/completion_tokens). Returns (0, 0) if absent —
+    never raises. output includes reasoning/thinking tokens (they bill as output)."""
+    u = getattr(resp, "usage", None)
+    if u is None:
+        return 0, 0
+    def _g(*names):
+        for n in names:
+            v = getattr(u, n, None)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return int(v)
+        return 0
+    inp = _g("input_tokens", "prompt_tokens")
+    out = _g("output_tokens", "completion_tokens")
+    return inp, out
+
 def _openai_judge(snapshot):
+    _AI_LAST_RUN["oaiUsage"] = None
     if not _OPENAI_API_KEY:
         return None, "unavailable"
     user = ("Review these rule-based ARGUS labels and return STRICT JSON with keys: status, model, "
@@ -3971,6 +4219,7 @@ def _openai_judge(snapshot):
                 messages=[{"role": "system", "content": _OPENAI_SYSTEM}, {"role": "user", "content": user}],
                 response_format={"type": "json_object"}, timeout=60)
             text = resp.choices[0].message.content
+        _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
         out = safe_json(text or "")
         if not isinstance(out, dict) or not isinstance(out.get("labels"), list):
             return None, "partial"
@@ -3979,8 +4228,25 @@ def _openai_judge(snapshot):
         add_log(f"[AI] openai judge failed: {type(e).__name__}")
         return None, "unavailable"
 
+def _gemini_usage_tokens(resp):
+    """Best-effort (input, output) tokens from Gemini's usage_metadata. output
+    folds in thoughts/thinking tokens (they bill as output). (0,0) if absent."""
+    um = getattr(resp, "usage_metadata", None)
+    if um is None:
+        return 0, 0
+    def _g(*names):
+        for n in names:
+            v = getattr(um, n, None)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return int(v)
+        return 0
+    inp = _g("prompt_token_count")
+    out = _g("candidates_token_count") + _g("thoughts_token_count")
+    return inp, out
+
 def _gemini_check(snapshot, openai_out):
     """Returns (out|None, status, grounding_enabled)."""
+    _AI_LAST_RUN["gemUsage"] = None
     if not google_genai or not GEMINI_API_KEY:
         return None, "unavailable", False
     grounding_enabled = False
@@ -4051,6 +4317,7 @@ def _gemini_check(snapshot, openai_out):
                 out["groundingSources"] = srcs[:5]
         except Exception:
             pass
+        _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(resp)
         return out, "live", grounding_enabled
     except Exception as e:
         add_log(f"[AI] gemini check failed: {type(e).__name__}")
@@ -4273,8 +4540,19 @@ def _execute_ai_judgment(run_mode="manual"):
         _AI_RESULT_CACHE["expires"] = time.time() + _AI_CACHE_TTL
     _AI_LAST_RUN.update({"oai": oai_status, "gem": gem_status,
                          "groundingEnabled": grounding_enabled, "at": _ai_now_iso()})
-    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_GEMINI_JUDGE_MODEL} symbols={len(labels)} "
-            f"oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
+    # Cost ledger (v10.50): record this run's estimated spend into the day/month
+    # hard-stop buckets, using the ACTUAL Gemini model that ran (pro vs flash).
+    try:
+        cost = _ai_record_cost(payload.get("asOf"), oai_status, gem_status, grounding_enabled)
+        payload["costEstimateUsd"] = cost.get("totalUsd")
+        # Surface the real model that ran for calibration (Pro and Flash must not
+        # be merged as one model). gemModelActual is null when Gemini didn't run.
+        payload["models"]["checkerActual"] = (_AI_LAST_RUN.get("gemModel") if gem_status == "live" else None)
+        payload["models"]["groundingUsed"] = bool(grounding_enabled)
+    except Exception:
+        pass
+    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_AI_LAST_RUN.get('gemModel') or _GEMINI_JUDGE_MODEL} "
+            f"symbols={len(labels)} oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
     return payload
 
 # ━━━ Security Gate v1 (protects future expensive AI runs) ━━━
@@ -4322,15 +4600,32 @@ def _require_admin():
         return False, {"error": "unauthorized"}, 401
     return True, None, 200
 
-def _ai_run_gate():
+def _ai_run_gate(force=False):
     """(allowed, payload, http_code). Validates enabled/locked/country/interval/
-    daily-limit. Records the run when allowed. In-memory ledger (resets on dyno
-    restart — move to persistent storage if durable limits are needed)."""
+    daily-count AND the ARGUS-side USD hard budget. Records the run when allowed.
+    force=True (admin) may dip into the small monthly emergency reserve only."""
     now = time.time()
     meta = _client_meta()
     if not _AI_JUDGE_ENABLED:
         return False, {"status": "disabled", "reason": "AI judgment is not enabled yet.",
                        "asOf": _ai_now_iso(), "locked": _is_locked()}, 200
+    # HARD budget stop (v10.50): the OpenAI prepaid balance is NOT our stop — this
+    # is. Restore the month baseline first so a dyno restart can't reset it.
+    _ai_cost_restore_once()
+    with _AI_LOCK:
+        _ai_cost_roll(datetime.now(TZ_JST))
+        day_s, month_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
+    ok_budget, why, used_reserve = argus_ai_cost.budget_check(
+        day_s, month_s, _AI_DAILY_BUDGET_USD, _AI_MONTHLY_BUDGET_USD,
+        reserve_usd=_AI_EMERGENCY_RESERVE_USD, force=force)
+    if not ok_budget:
+        send_security_alert({"type": "run_blocked_budget", "meta": meta})
+        return False, {"status": "budget_exceeded", "reason": why,
+                       "daySpentUsd": round(day_s, 4), "monthSpentUsd": round(month_s, 4),
+                       "dailyBudgetUsd": _AI_DAILY_BUDGET_USD, "monthlyBudgetUsd": _AI_MONTHLY_BUDGET_USD,
+                       "asOf": _ai_now_iso()}, 429
+    if used_reserve:
+        send_security_alert({"type": "run_used_emergency_reserve", "meta": meta})
     if _is_locked():
         send_security_alert({"type": "run_blocked_locked", "meta": meta})
         return False, {"status": "locked", "reason": "AI run gate is locked.",
@@ -4408,10 +4703,40 @@ def api_argus_ai_judgment_run():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    allowed, info, code = _ai_run_gate()
+    # ?force=1 (admin) may dip into the small monthly emergency reserve only.
+    force = str(request.args.get("force", "")).strip().lower() in ("1", "true", "yes", "on")
+    allowed, info, code = _ai_run_gate(force=force)
     if not allowed:
         return jsonify(info), code
     return jsonify(_execute_ai_judgment(run_mode="manual"))
+
+@app.route("/api/argus/ai-cost")
+def api_argus_ai_cost():
+    # Protected Operations: AI spend vs budget + last-run cost. No prompts/keys.
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_ai_cost_snapshot())
+
+@app.route("/api/argus/moomoo-capability")
+def api_argus_moomoo_capability():
+    # Protected capability-test report (item E): per-symbol freshness truth.
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_moomoo_capability_report())
+
+@app.route("/api/argus/tdnet-metrics")
+def api_argus_tdnet_metrics():
+    # Protected: objective TDnet purchase metrics (no TDnet data used).
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        days = max(1, min(30, int(request.args.get("days", 7))))
+    except Exception:
+        days = 7
+    return jsonify(_tdnet_metrics_summary(days))
 
 @app.route("/api/argus/security-status")
 def api_argus_security_status():
@@ -5067,6 +5392,60 @@ def api_argus_integrations():
 # / unavailable / missing. Capabilities ARGUS does not actually have (PTS, L2,
 # tape, VWAP, TDnet/EDINET, FX/futures/commodities) are listed unavailable so the
 # UI / LLM can never over-claim them.
+def _coerce_epoch(ex):
+    """exchangeTs may be epoch seconds or an ISO/space string → epoch float|None."""
+    if isinstance(ex, (int, float)) and not isinstance(ex, bool):
+        return float(ex)
+    if isinstance(ex, str) and ex:
+        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(ex, fmt).replace(tzinfo=pytz.utc).timestamp()
+            except Exception:
+                continue
+    return None
+
+def _moomoo_capability_report():
+    """Protected capability-test (item E): per-symbol exchangeTimestamp /
+    receivedAt / quoteAgeSeconds / entitlement / session for the bridge quotes.
+    The verdict stays 'unknown' unless a venue timestamp PROVES real-time — we
+    never upgrade on push cadence alone. '15-second push' = delivery frequency,
+    NOT data freshness; closepin/early-warning never assume confirmed_realtime."""
+    now = time.time()
+    rows, have_exchange_ts = [], 0
+    for mkt in ("JP", "US"):
+        sess_open = _jp_market_open() if mkt == "JP" else _us_market_open()
+        session = "open" if sess_open else "closed"
+        for sym, rec in (_PUSHED_QUOTES.get(mkt) or {}).items():
+            row = rec.get("row") or {}
+            recv = rec.get("ts")
+            ex_epoch = _coerce_epoch(row.get("exchangeTs"))
+            if ex_epoch:
+                have_exchange_ts += 1
+            quote_age = round(now - recv, 1) if recv else None       # age of OUR copy
+            venue_age = round(now - ex_epoch, 1) if ex_epoch else None  # true age at venue
+            if ex_epoch is None:
+                verdict = "unknown"                                   # unprovable without venue ts
+            elif sess_open and venue_age is not None and venue_age <= 60:
+                verdict = "realtime_evidence"
+            elif sess_open and venue_age is not None and venue_age >= 600:
+                verdict = "delayed_evidence"
+            else:
+                verdict = "unknown"
+            rows.append({
+                "market": mkt, "symbol": sym, "session": session,
+                "exchangeTimestamp": row.get("exchangeTs"),
+                "receivedAt": (datetime.utcfromtimestamp(recv).strftime("%Y-%m-%dT%H:%M:%SZ") if recv else None),
+                "quoteAgeSeconds": quote_age, "venueAgeSeconds": venue_age,
+                "entitlementReported": row.get("entitlement", "unknown"),
+                "entitlementVerdict": verdict})
+    verdicts = {r["entitlementVerdict"] for r in rows}
+    overall = ("realtime_proven" if rows and verdicts == {"realtime_evidence"}
+               else "delayed_evidence" if "delayed_evidence" in verdicts else "unknown")
+    return {"asOf": _ai_now_iso(), "symbols": len(rows), "withExchangeTs": have_exchange_ts,
+            "overallEntitlement": overall, "rows": rows,
+            "noteJa": "『15秒push』は配信頻度でありデータ鮮度ではない。venueのexchangeTsが無い限りリアルタイムは"
+                      "証明不可(entitlement=unknownを維持)。closepin・早期警戒はconfirmed_realtimeを前提にしない。"}
+
 def _source_registry():
     # Self-verify EDINET once when a key is configured (cached) so the registry
     # flips missing→confirmed_live/requires_test without waiting for a JP event.
@@ -5090,9 +5469,11 @@ def _source_registry():
           "realtime(bridge) / T-1(J-Quants)", "free", "ok",
           "ブリッジ稼働中はリアルタイム、途絶時はJ-Quants前日終値へ自動フォールバック。"),
         S("米国株 価格", "moomoo / Twelve Data", "US",
-          "confirmed_live" if bridge_live else ("confirmed_delayed" if td == "live" else "missing"),
-          "realtime(bridge) / 遅延(Twelve Data無料枠)", "free", "ok",
-          "ブリッジ稼働中はリアルタイム、途絶時はTwelve Dataへ。"),
+          "confirmed_live" if bridge_live else ("confirmed_live" if td == "live" else "missing"),
+          "realtime(bridge) / Twelve Data Basic=レギュラー時間RT(鮮度未計測)", "free", "ok",
+          "ブリッジ稼働中はリアルタイム、途絶時はTwelve Dataへフォールバック。Twelve Data Basicは"
+          "レギュラー時間の米国株/ETFがリアルタイム(時間外RTは上位プラン要)。無料枠の実鮮度は"
+          "ランタイム未計測のため『遅延』とも『RT』とも断定しない。アップグレード不要。"),
         S("大口フロー(資金分布)", "moomoo", "JP/US",
           "confirmed_live" if bridge_live else "requires_test",
           "口座のデータ権限依存", "free", "entitlement-dependent",
@@ -5113,7 +5494,8 @@ def _source_registry():
            "confirmed_live" if _EDINET_STATE["lastFetchOk"] else "requires_test"),
           ("APIキー未設定" if not _EDINET_API_KEY else "Subscription-Key設定済"),
           "free", "ok",
-          "公式開示。キー設定でドシエに official_fact が乗り official_catalyst が到達可能。"),
+          "公式開示=official_fact。official_catalystは臨時報告/大量保有など材料性のある開示が"
+          "イベント当日に提出された場合のみ(定期/訂正は事実として記録するが当日の原因とは扱わない)。"),
         S("日本PTS", "—", "JP", "unavailable", "プロバイダ未確認", "—", "—",
           "確認済みプロバイダなし。通常のTSE気配からPTSやS高確率を推定しない。"),
         S("米国 時間外(pre/after)", "—", "US", "requires_test", "プロバイダ機能依存", "—", "—",
