@@ -163,6 +163,30 @@ def _crypto_scan_gated():
     except urllib.error.HTTPError as e:
         return e.code in (401, 503), f"HTTP {e.code} (admin-gated)"
 
+def v_calibration_posture():
+    c, d = _get("/api/argus/calibration/posture")
+    o = d.get("outcome") or {}
+    return o.get("status") in ("ok", "partial") and isinstance(o.get("dimensions"), dict), \
+        f"status={o.get('status')} inputs={len(d.get('inputsUsed') or [])}"
+
+def v_calibration_cohorts_v2():
+    c, d = _get("/api/argus/calibration/cohorts")
+    rs = (d.get("cohorts") or {}).get("regime_sensor_fixed") or {}
+    ta = (d.get("cohorts") or {}).get("tactical_benchmark_fixed") or {}
+    return rs.get("count") == 16 and ta.get("count") == 14, \
+        f"L1={rs.get('count')} L2A={ta.get('count')} univ={d.get('regimeSensorUniverseVersion')}"
+
+def v_watchlist_sync_gated():
+    import urllib.request, urllib.error
+    req = urllib.request.Request(BASE + "/api/argus/calibration/watchlist-sync", method="POST",
+                                 headers={"User-Agent": "argus-smoke", "Content-Type": "application/json"},
+                                 data=b'{"items":[]}')
+    try:
+        urllib.request.urlopen(req, timeout=30)
+        return False, "expected 401/503 (owner-gated), got 200 — UNPROTECTED!"
+    except urllib.error.HTTPError as e:
+        return e.code in (401, 503), f"HTTP {e.code} (owner-gated)"
+
 def v_source_registry():
     c, d = _get("/api/argus/source-registry")
     return isinstance(d.get("sources"), list) and d.get("engineVersion") == "source-registry-v1", \
@@ -211,6 +235,9 @@ CHECKS = [
     ("event-backbone-status", v_event_status),
     ("event-snapshot", v_event_snapshot),
     ("crypto-scan admin", _crypto_scan_gated),
+    ("calibration cohorts v2 (16/14)", v_calibration_cohorts_v2),
+    ("calibration posture (multidim)", v_calibration_posture),
+    ("watchlist-sync owner-gated", v_watchlist_sync_gated),
     ("source-registry", v_source_registry),
     ("system-health (public lamps)", v_system_health),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),

@@ -24,6 +24,7 @@ import argus_event_store  # Lean durable event store: branch snapshot/restore (v
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
+import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -1483,6 +1484,117 @@ def api_argus_calibration_cohorts():
         "tacticalFactorRoles": C.TACTICAL_FACTOR_GROUPS,
         "layer1FactorGroupDemo": fg_demo,
     })
+
+
+@app.route("/api/argus/calibration/posture")
+def api_argus_calibration_posture():
+    """Calibration Ledger v4 — multidimensional posture (read-only).
+
+    Replaces SPY-only posture grading: computes today's risk-appetite across
+    equity/growth/small-cap/credit/duration/volatility/safe-haven/Japan/FX/
+    liquidity dimensions from live data. Marked PARTIAL (never SPY-only) when too
+    few dimensions are available."""
+    P = argus_posture
+    rets = {}
+    try:
+        _alert_etf_momentum()
+        _ensure_sensor_etfs()
+        for sym in ("SPY", "QQQ", "IWM", "SMH", "XLU", "GLD", "TLT", "HYG", "LQD"):
+            st = _ETF_LAST_PRICE.get(sym)
+            if st and st.get("m1d") is not None:
+                rets[sym] = st["m1d"]
+        cw = get_crypto_watchlist_snapshot(["bitcoin"])
+        for q in (cw.get("quotes") or []):
+            if q.get("id") == "bitcoin" and q.get("changePct") is not None:
+                rets["BTC"] = q["changePct"]
+        jp = get_japan_watchlist_snapshot(["1306", "1321"])
+        for s in (jp.get("stocks") or []):
+            if s.get("status") == "live" and s.get("changePct") is not None:
+                rets[s["symbol"]] = s["changePct"]
+        rates = get_rates_snapshot()
+        for key, sym in (("usdJpy", "USDJPY"), ("vix", "VIX")):
+            s = rates.get(key) if isinstance(rates, dict) else None
+            if s and s.get("status") == "live":
+                ch = s.get("change")
+                lvl = s.get("latestValue")
+                if isinstance(ch, (int, float)) and lvl and (lvl - ch):
+                    rets[sym] = round(ch / (lvl - ch) * 100, 2)
+    except Exception:
+        pass
+    outcome = P.posture_outcome(rets)
+    return jsonify({
+        "postureVersion": P.POSTURE_VERSION,
+        "noteJa": "地合いをSPY単独でなく多次元(株式/グロース/小型/クレジット/デュレーション/"
+                  "ボラ/安全資産/日本/FX/流動性)で評価。次元が足りなければpartial(SPY単独に落とさない)。",
+        "inputsUsed": sorted(rets.keys()),
+        "outcome": outcome,
+        "dimensionDefinitions": {d: [s for s, _ in b] for d, b in P.DIMENSIONS.items()},
+    })
+
+
+_LAYER2B_STATE = {"lastSyncAt": None, "lastStatus": "never_synced",
+                  "lastHash": None, "symbolCount": 0}
+
+def _layer2b_store_configured():
+    """Layer 2B persists owner watchlist membership to a PRIVATE store (the repo
+    is public, so it must never go on the public ledger branch). Configured via
+    out-of-band env vars; until they exist, scoring stays disabled."""
+    return bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO")
+                and os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN"))
+
+def _layer2b_persist_private(snapshot):
+    """Push an immutable membership snapshot to the private store. Stub until the
+    private repo is configured (never reached while disabled)."""
+    raise NotImplementedError("private store not yet wired")
+
+@app.route("/api/argus/calibration/watchlist-sync", methods=["POST"])
+def api_argus_watchlist_sync():
+    """Layer 2B — sync the OWNER's watchlist MEMBERSHIP for calibration (owner/
+    admin only). Accepts metadata only (symbol/market/enabled/timestamps); ANY
+    portfolio field is hard-rejected. The repo is public, so nothing is persisted
+    unless a PRIVATE store is configured — otherwise scoring stays disabled and no
+    symbols are stored anywhere. No orders, ever."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    W = argus_watchlist_sync
+    valid, cleaned, errs = W.validate_sync_payload(request.get_json(silent=True))
+    if not valid:
+        return jsonify({"ok": False, "errors": errs,
+                        "note": "Research simulation only. Metadata only — no portfolio data accepted."}), 400
+    eff = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    gen = _ai_now_iso()
+    sid = "wl-" + hashlib.sha256((eff + W.content_hash(cleaned["items"])).encode("utf-8")).hexdigest()[:10]
+    snap = W.build_membership_snapshot(cleaned["items"], effective_date=eff,
+                                       generated_at=gen, snapshot_id=sid)
+    configured = _layer2b_store_configured()
+    status = "synced"
+    if configured:
+        try:
+            _layer2b_persist_private(snap)
+        except Exception:
+            status = "failed"
+    else:
+        status = "disabled_pending_private_store"
+    _LAYER2B_STATE.update({"lastSyncAt": gen, "lastStatus": status,
+                           "lastHash": snap["contentHash"], "symbolCount": snap["symbolCount"]})
+    return jsonify({
+        "ok": True, "status": status, "snapshotId": sid,
+        "symbolCount": snap["symbolCount"], "contentHash": snap["contentHash"],
+        "effectiveFrom": eff, "privateStoreConfigured": configured,
+        "note": ("Stored privately. Research/calibration metadata only — no order, no portfolio data."
+                 if configured else
+                 "Layer 2B scoring disabled until a private store is configured — nothing was persisted "
+                 "(public-repo privacy). Research metadata only; no order."),
+    })
+
+@app.route("/api/argus/calibration/watchlist-sync-status")
+def api_argus_watchlist_sync_status():
+    """Non-sensitive sync status (count/hash/status only — no symbols)."""
+    return jsonify({**_LAYER2B_STATE,
+                    "privateStoreConfigured": _layer2b_store_configured(),
+                    "noteJa": "所有者ウォッチリスト(Layer 2B)同期状態。保有情報は一切送受信しない。"
+                              "公開リポ対策でprivateストア設定前は採点無効(銘柄は保存しない)。"})
 
 
 @app.route("/api/argus/calibration/epochs")

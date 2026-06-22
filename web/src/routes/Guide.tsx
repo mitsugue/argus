@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
 import { BackupCard } from '../components/guide/BackupCard';
 import { LedgerHealthCard } from '../components/guide/LedgerHealthCard';
+import { CalibrationCard } from '../components/guide/CalibrationCard';
 import { SourceRegistryCard } from '../components/guide/SourceRegistryCard';
 import '../components/dashboard/Dashboard.css';
 
@@ -64,6 +65,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.74.0', '校正v4 仕上げ — ①多次元ポスチャー採点(SPY単独をやめ、株式/グロース/小型/クレジット/デュレーション/ボラ/安全資産/日本/FX/流動性の10次元をボラ正規化で評価、次元不足はpartial表示でSPY単独に落とさない)②Layer 2B(あなたのwatchlistを採点)同期APIを実装 — 銘柄メタのみ受領し保有情報は全フィールド拒否、公開リポ対策でprivateストア設定前は採点無効(銘柄は一切保存しない)、毎日の不変メンバーシップ・スナップショット③Guideに「校正ユニバース」ビューを追加(コホート/文脈変数/ファクター加重/ポスチャー/エポック/2B状態を可視化)。テスト計229'],
   ['v10.73.0', 'prediction-snapshot を90秒キャッシュ — v2でJ-Quants取得銘柄が増えたため、公開エンドポイントの連打でJ-Quantsが429になるのを防止(entry-scout等の一時的レート制限を解消)'],
   ['v10.72.0', '校正ユニバースの再選定+バージョン管理(regime_sensor_v2 / tactical_benchmark_v2) — Layer1=16センサーを再構成(JP4: TOPIX/日経225/東証銀行業/東証REIT、US11: SPY/QQQ/IWM/SMH/XLF/XLE/XLU/TLT/LQD/HYG/GLD、BTC)。USDJPY/VIX/金利/HY OASは「文脈変数」に分離(等加重リターン採点に混ぜない)。Layer2A=14銘柄に分散(JP: 三菱UFJ/トヨタ/三菱商事/NTT/SBG/三菱重工/フジクラ、US: NVDA/AAPL/TSLA/JPM/XOM/PG/CAT)。5803フジクラを固定ベンチに意図的に保持、5801とMETAは所有者ウォッチリストで利用可。「Layer3=6584固定」を廃止し実験フラグ制へ。ファクターグループv2で相関銘柄の過大評価を回避。全新規銘柄のプロバイダ稼働を本番確認済み。Brierの読み方を説明書に追加。履歴(burn-in)は保全。テスト計208'],
   ['v10.71.0', '校正台帳v4 Phase 3(記録への接続・非破壊) — 毎日の予測記録の各行に、v4のコホート(固定センサー/タクティカル/実験)・ファクターグループ・実験フラグ・市場別フォーキャストクロック(その銘柄の正しい引け基準の1/3/5営業日対象日)を付与。既存の layer/scenarios 等はそのまま残すので現行の採点は無変更で動作し、ワークフローは今後この市場別対象日を採用可能に。記録は追記のみ=現n≈133は無傷'],
@@ -226,6 +228,14 @@ export const Guide: React.FC = () => {
             <div className="guide-term"><span className="guide-term__en">ARGUSの現状(正直)</span><span className="guide-term__ja">今はburn-in期(n≈133・データ不安定期に収集)で<b>現数値は参考外・ヘッドラインから除外</b>。意味のある比較は新エポックで約120営業日(クラスタ別)蓄積後。サンプルが相関するため「proven(証明済み)」とは決して表示しない。</span></div>
           </div>
         </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">校正ユニバース (Calibration v4)</span>
+          <span className="section-head__count">コホート/エポック/ポスチャー</span>
+        </div>
+        <CalibrationCard />
       </section>
 
       <section>
