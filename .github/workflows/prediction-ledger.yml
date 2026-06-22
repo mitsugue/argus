@@ -548,6 +548,7 @@ jobs:
           import json, os, glob
           today = os.popen("TZ=Asia/Tokyo date +%F").read().strip()
           pin = json.load(open(f'ledger/closepin/days/{today}.json'))
+          os.makedirs('ledger/closepin/scores', exist_ok=True)   # first-ever score: dir may not exist yet
           closes = {}
           try:
               for q in (json.load(open('close.json')).get('stocks') or []):
