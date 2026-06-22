@@ -23,6 +23,7 @@ import argus_research  # evidence-first deterministic research dossier (v10.41)
 import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
+import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -1494,6 +1495,30 @@ def api_argus_calibration_epochs():
         "legacyPreserved": True,
         "noteJa": "現n≈133は削除せず burn_in_legacy_v3 として保存。不安定期データなので"
                   "ヘッドライン指標からは除外。",
+    })
+
+
+@app.route("/api/argus/calibration/clock")
+def api_argus_calibration_clock():
+    """Calibration Ledger v4 (Phase 2) — market-specific forecast clock preview.
+
+    Read-only. Shows, for a symbol (or a representative set across markets), the
+    correct origin session + 1D/3D/5D targets on THAT market's calendar (JP/US
+    trading-session closes, crypto 24/72/120h, FX NY-close). Demonstrates that
+    the legacy 'everything at 16:05 JST' assumption is gone. Wiring into the
+    recording workflow is Phase 3 (this endpoint does not record anything)."""
+    MC = argus_market_clock
+    sym = request.args.get("symbol")
+    if sym:
+        return jsonify(MC.forecast_clock(sym))
+    sample = ["7203", "NVDA", "BTC", "USDJPY", "VIX"]
+    return jsonify({
+        "clockVersion": MC.CLOCK_VERSION,
+        "calendarVersion": MC.CALENDAR_VERSION,
+        "noteJa": "各銘柄を「その市場の正しい引け/セッション」で採点する。"
+                  "全部16:05 JST固定をやめた(JP=TSE引け / US=NYSE引け[EDT/EST自動] / "
+                  "crypto=24/72/120h / FX=NY引け)。記録への接続はPhase 3。",
+        "samples": [MC.forecast_clock(s) for s in sample],
     })
 
 
