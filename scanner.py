@@ -7164,9 +7164,20 @@ def get_prediction_snapshot():
         },
     }
 
+_PREDICTION_SNAPSHOT_CACHE = {"data": None, "expires": 0.0}
+
 @app.route("/api/argus/prediction-snapshot")
 def api_argus_prediction_snapshot():
-    return jsonify(get_prediction_snapshot())
+    # Cache 90s: the v2 snapshot fetches ~11 JP names (4 sensors + 7 benchmark) +
+    # US/ETF, so an uncached public endpoint would hammer J-Quants (429s). The
+    # daily recording reads at most once per cache window, so freshness is fine.
+    now = time.time()
+    if _PREDICTION_SNAPSHOT_CACHE["data"] and now < _PREDICTION_SNAPSHOT_CACHE["expires"]:
+        return jsonify(_PREDICTION_SNAPSHOT_CACHE["data"])
+    snap = get_prediction_snapshot()
+    _PREDICTION_SNAPSHOT_CACHE["data"] = snap
+    _PREDICTION_SNAPSHOT_CACHE["expires"] = now + 90
+    return jsonify(snap)
 
 @app.route("/api/argus/sensor-quotes")
 def api_argus_sensor_quotes():
