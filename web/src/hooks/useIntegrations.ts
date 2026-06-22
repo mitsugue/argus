@@ -33,7 +33,8 @@ const MOCK_SNAPSHOT: IntegrationsSnapshot = {
   nextRecommendedApis: ['coingecko-crypto-watchlist', 'alerts-scanner-live', 'moomoo-flow-vwap-orderbook', 'portfolio-exposure-layer', 'what-if-simulator'],
 };
 
-const ATTEMPT_TIMEOUT_MS = 9_000;
+const ATTEMPT_TIMEOUT_MS = 30_000; // Render cold-start can take 20-40s; don't cry "mock" early
+const ATTEMPTS = 4;                // first request warms the dyno; retry before mock
 
 export function useIntegrations(): State {
   const [state, setState] = useState<State>({ data: null, error: null, loading: true, phase: 'connecting' });
@@ -46,26 +47,33 @@ export function useIntegrations(): State {
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/integrations';
     let cancelled = false;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
 
     (async () => {
-      try {
-        const r = await fetch(url, { signal: ctrl.signal });
-        clearTimeout(timer);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const data = (await r.json()) as IntegrationsSnapshot;
-        if (cancelled) return;
-        setState({ data, error: null, loading: false, phase: data.status });
-      } catch (err: unknown) {
-        clearTimeout(timer);
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock' });
+      let lastErr = '';
+      for (let attempt = 0; attempt < ATTEMPTS && !cancelled; attempt++) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
+        try {
+          const r = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(timer);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = (await r.json()) as IntegrationsSnapshot;
+          if (cancelled) return;
+          setState({ data, error: null, loading: false, phase: data.status });
+          return; // success — done
+        } catch (err: unknown) {
+          clearTimeout(timer);
+          lastErr = err instanceof Error ? err.message : String(err);
+          // keep the panel in "connecting" while we retry (warming the backend)
+          if (!cancelled) setState((s) => ({ ...s, error: lastErr, phase: 'connecting' }));
+          await new Promise((res) => setTimeout(res, 3000 * (attempt + 1)));
+        }
       }
+      // Only after all retries fail do we show the honest "backend unreachable" mock.
+      if (!cancelled) setState({ data: MOCK_SNAPSHOT, error: lastErr, loading: false, phase: 'mock' });
     })();
 
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => { cancelled = true; };
   }, []);
 
   return state;

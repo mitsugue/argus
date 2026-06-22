@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.81.0', 'API稼働状況が「MOCK/UNKNOWN」になる誤表示を修正 — 接続状況パネルが9秒で諦めてモック(全UNKNOWN/MISSING)を出していた(Renderのコールドスタートは20〜40秒かかる)。タイムアウトを30秒に延長+最大4回リトライ(初回でバックエンドを起こす)。リトライ中は「connecting」表示にし、全失敗時のみ正直に未接続を表示。実体はFRED/Twelve Data/Finnhub=live・J-Quants=partialで正常稼働'],
   ['v10.80.0', 'Guideの横スクロール(隙間でガタつく)を修正 — Layer 2B同期のトークン入力が box-sizing 未指定でカード幅を超えていたのを是正(上下スクロールのみに)。同期エラー表示を詳細化(エラー名+接続先URLを表示し原因を特定しやすく)+結果文を折返し表示'],
   ['v10.79.0', 'PWAの「indexは新しいがJSチャンクが古いまま」固着をより速く自己回復 — 強制更新が1回効かなければ即座にSW登録解除+キャッシュ全消去+再読込(これでLayer 2B同期の旧コード残留=pattern エラーが解消)'],
   ['v10.78.0', 'Layer 2B同期エラー修正 — オーナー同期トークンをHTTPヘッダーでなくJSONボディで送るよう変更(日本語/空白/記号を含むパスフレーズでも「The string did not match the expected pattern」が出ない)。サーバーはヘッダー/ボディ両対応、トークンは検証・保存前に除去'],
