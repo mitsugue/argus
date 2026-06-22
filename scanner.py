@@ -1677,6 +1677,145 @@ def _layer2b_read_latest():
     except Exception:
         return None
 
+
+# ── Layer 2B daily record + score (v10.85) ──────────────────────────────────
+# Scores the OWNER's watchlist privately, append-only + swap-safe: each day's
+# membership is frozen, predictions/scores are never deleted, and changing the
+# watchlist only affects FUTURE days. All owner data stays in the private repo.
+_L2B_BANDS = {"JP": 2.0, "US": 2.0, "CRYPTO": 3.0}   # ±1σ-ish bands per market
+_L2B_CRYPTO_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana"}
+
+
+def _layer2b_live_prices(members):
+    """Current prices for owner symbols → {symbol: (price, changePct, market)}."""
+    out = {}
+    jp = [m["symbol"] for m in members if m.get("market") == "JP"]
+    us = [m["symbol"] for m in members if m.get("market") == "US"]
+    cr = [m["symbol"] for m in members if m.get("market") == "CRYPTO"]
+    try:
+        if jp:
+            for s in (get_japan_watchlist_snapshot(jp).get("stocks") or []):
+                if s.get("status") == "live" and s.get("price"):
+                    out[s["symbol"]] = (s["price"], s.get("changePct"), "JP")
+        if us:
+            for s in (get_us_watchlist_snapshot(us).get("stocks") or []):
+                if s.get("status") == "live" and s.get("price"):
+                    out[s["symbol"]] = (s["price"], s.get("changePct"), "US")
+        if cr:
+            ids = [_L2B_CRYPTO_IDS[s] for s in cr if s in _L2B_CRYPTO_IDS]
+            idmap = {v: k for k, v in _L2B_CRYPTO_IDS.items()}
+            if ids:
+                for q in (get_crypto_watchlist_snapshot(ids).get("quotes") or []):
+                    if q.get("status") == "live" and q.get("priceUsd"):
+                        out[idmap.get(q["id"], q["id"])] = (q["priceUsd"], q.get("changePct"), "CRYPTO")
+    except Exception:
+        pass
+    return out
+
+
+def _layer2b_compute_summary(rows):
+    by_h = {"1d": [], "3d": [], "5d": []}
+    for r in rows:
+        sc = r.get("scored") or {}
+        for h in by_h:
+            if sc.get(h):
+                by_h[h].append(sc[h])
+    out = {"updated": _ai_now_iso(), "cohortId": "owner_watchlist_dynamic",
+           "nPredictions": len(rows),
+           "tradingDays": len({r.get("date") for r in rows}),
+           "uniqueSymbols": len({r.get("symbol") for r in rows}),
+           "byHorizon": {}}
+    for h, lst in by_h.items():
+        if lst:
+            hits = sum(1 for x in lst if x.get("argmaxHit"))
+            brier = sum(x.get("brierNormalizedMean", 0) for x in lst) / len(lst)
+            out["byHorizon"][h] = {"n": len(lst), "hitRate": round(hits / len(lst), 4),
+                                   "brierMean": round(brier, 4)}
+        else:
+            out["byHorizon"][h] = {"n": 0}
+    out["sampleStage"] = ("burn_in" if out["tradingDays"] < 30 else
+                          "exploratory" if out["tradingDays"] < 60 else
+                          "provisional" if out["tradingDays"] < 120 else "validation")
+    out["noteJa"] = "所有者ウォッチリストの自己採点(選択バイアスあり・利益保証ではない)。proven表記はしない。"
+    return out
+
+
+def _layer2b_run():
+    """Daily: record today's owner predictions + score any due horizons, in the
+    PRIVATE repo. Append-only, immutable per date, swap-safe."""
+    import json as _json
+    if not _layer2b_store_configured():
+        return {"ok": False, "error": "private_store_not_configured"}
+    mem = _layer2b_read_latest()
+    if not mem or not mem.get("members"):
+        return {"ok": False, "error": "no_membership_synced"}
+    members = [{"symbol": m.get("symbol"), "market": m.get("market")} for m in mem["members"]]
+    prices = _layer2b_live_prices(members)
+    today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+
+    content, _ = _gh_private_get("predictions.jsonl")
+    rows = []
+    if content:
+        for ln in content.splitlines():
+            ln = ln.strip()
+            if ln:
+                try:
+                    rows.append(_json.loads(ln))
+                except Exception:
+                    pass
+
+    new_count = 0
+    if not any(r.get("date") == today for r in rows):  # immutable: record once/day
+        for m in members:
+            sym, mkt = m["symbol"], m["market"]
+            pc = prices.get(sym)
+            if not pc:
+                continue
+            price, chg, _mk = pc
+            clk = argus_market_clock.forecast_clock(sym)
+            targets = {t["horizon"]: (t.get("targetTradingDate") or t.get("targetTimestamp"))
+                       for t in clk.get("targets", [])}
+            rows.append({
+                "id": "l2b-" + hashlib.sha256((today + sym).encode("utf-8")).hexdigest()[:10],
+                "date": today, "symbol": sym, "market": mkt,
+                "cohortId": "owner_watchlist_dynamic",
+                "priceAtPrediction": price, "changePct": chg,
+                "scenarios": {lab: p for lab, p in _scenarios_for(chg)},
+                "bandPct": _L2B_BANDS.get(mkt, 2.0),
+                "targets": targets, "calendar": clk.get("marketCalendar"),
+                "scored": {"1d": None, "3d": None, "5d": None},
+            })
+            new_count += 1
+
+    scored_count = 0
+    for r in rows:
+        sc = r.get("scored") or {}
+        for h in ("1d", "3d", "5d"):
+            if sc.get(h) is not None:
+                continue
+            tgt = (r.get("targets") or {}).get(h)
+            if not tgt or str(tgt)[:10] > today:
+                continue  # not due yet
+            pc = prices.get(r.get("symbol"))
+            if not pc:
+                continue
+            res = argus_calibration.score_prediction(
+                r.get("scenarios") or {}, r.get("priceAtPrediction"), pc[0], r.get("bandPct", 2.0))
+            if res:
+                res["priceAsOf"] = today
+                sc[h] = res
+                scored_count += 1
+        r["scored"] = sc
+
+    newcontent = "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n"
+    ok_w = _gh_private_put("predictions.jsonl", newcontent, f"layer2b run {today}", overwrite=True)
+    summ = _layer2b_compute_summary(rows)
+    _gh_private_put("summary.json", _json.dumps(summ, ensure_ascii=False, indent=2),
+                    f"layer2b summary {today}", overwrite=True)
+    return {"ok": bool(ok_w), "recorded": new_count, "scored": scored_count,
+            "totalRows": len(rows), "date": today, "summary": summ}
+
+
 @app.route("/api/argus/calibration/watchlist-sync", methods=["POST"])
 def api_argus_watchlist_sync():
     """Layer 2B — sync the OWNER's watchlist MEMBERSHIP for calibration (owner/
@@ -1750,6 +1889,40 @@ def api_argus_watchlist_membership():
     if not snap:
         return jsonify({"status": "empty", "privateStoreConfigured": _layer2b_store_configured()})
     return jsonify({"status": "ok", "membership": snap})
+
+@app.route("/api/argus/calibration/layer2b-run", methods=["POST"])
+def api_argus_layer2b_run():
+    """Admin-triggered daily run: record today's owner predictions + score due
+    horizons in the PRIVATE store. Append-only, swap-safe. No orders."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        return jsonify(_layer2b_run())
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
+
+@app.route("/api/argus/calibration/layer2b-summary", methods=["GET", "POST"])
+def api_argus_layer2b_summary():
+    """Owner-gated read of the Layer 2B self-scoring summary from the PRIVATE
+    store (per-horizon hit rate + Brier; sample stage). Reveals nothing public.
+    Accepts the owner token via header (GET) or JSON body (POST, any passphrase)."""
+    body = request.get_json(silent=True) or {}
+    token = body.get("ownerToken") if isinstance(body, dict) else None
+    ok, err, code = _require_owner_sync(body_token=token)
+    if not ok:
+        return jsonify(err), code
+    if not _layer2b_store_configured():
+        return jsonify({"status": "disabled_pending_private_store"})
+    import json as _json
+    content, _ = _gh_private_get("summary.json")
+    if not content:
+        return jsonify({"status": "no_data_yet",
+                        "noteJa": "まだ採点データがありません(同期後、毎営業日の記録+1/3/5営業日後の採点で蓄積)。"})
+    try:
+        return jsonify({"status": "ok", "summary": _json.loads(content)})
+    except Exception:
+        return jsonify({"status": "parse_error"})
 
 
 @app.route("/api/argus/calibration/epochs")

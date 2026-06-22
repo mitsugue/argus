@@ -103,6 +103,19 @@ jobs:
             2>/dev/null || echo '{}')
           echo "🔬 provider diag: \`${DIAG}\`" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Layer 2B daily run (owner watchlist — private store)
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip Layer 2B"; exit 0; }
+          # Records today's owner predictions + scores due horizons into the
+          # PRIVATE repo (no-op if the owner hasn't synced / private store unset).
+          RESP=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/calibration/layer2b-run" || echo '{"error":"unreachable"}')
+          echo "🗂️ Layer 2B: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout ledger branch
         if: github.event.inputs.mode != 'ai-only'
         uses: actions/checkout@v5

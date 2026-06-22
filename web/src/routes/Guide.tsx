@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.85.0', 'Layer 2B 日次採点を実装(あなたの銘柄の自己採点) — 毎営業日、同期済みウォッチリストの各銘柄の予測(シナリオ確率)をprivateストアに記録し、1/3/5営業日後にBrier/RPS/的中で自動採点。★入替OK設計: 各日のメンバーシップは不変スナップショットで凍結、過去の予測・採点は書き換えない=watchlistを入れ替えても過去は保全・データは追記で蓄積。固定ベンチとは別集計。Guideの「Layer 2B 同期」に『採点成績を見る』を追加(営業日別の的中/Brier・サンプル段階)。注文・自動売買なし。日次実行はprediction-ledgerワークフローに追加'],
   ['v10.84.0', 'Guide整理 — 設定系の「バックアップ」と「Layer 2B 同期」をまとめて最下部(バージョン履歴の直前)に移動。Layer 2B同期が稼働開始(あなたのwatchlist 13銘柄をprivateストアへ保存)'],
   ['v10.83.1', 'Layer 2B同期の500を根治 — ハンドラが argus_watchlist_sync を import せずに使っていた(認証通過後にのみ発火するNameError)。importを追加。認証後の経路を実行する回帰テストも追加(no-tokenスモークでは届かなかった死角を塞ぐ)'],
   ['v10.83.0', 'Layer 2B同期のHTTP 500を診断可能に — 認証後の処理をtry/eで包み、原因を所有者にそのまま表示(空の500をなくす)。private保存の失敗時はGitHub APIのHTTPステータス+理由(404=リポ名違い/403=トークン権限不足等)をアプリに表示。同期結果に persistDetail を出すように'],

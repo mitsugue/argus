@@ -335,6 +335,22 @@ def volatility_band(
     }
 
 
+def score_prediction(scenarios: Dict[str, float], price_at: Optional[float],
+                     realized_price: Optional[float], band_pct: float) -> Optional[Dict[str, Any]]:
+    """Score one scenario forecast against a realized price. scenarios may be any
+    scale (normalized internally). Returns realized class + Brier + RPS + argmax,
+    or None if prices are unusable. Pure — used by the Layer 2B daily scorer."""
+    if not price_at or price_at <= 0 or realized_price is None:
+        return None
+    move = (realized_price - price_at) / price_at * 100.0
+    realized = classify_realized(move, band_pct)
+    out = {"movePct": round(move, 4), "realizedClass": realized,
+           "argmaxHit": argmax_hit(scenarios, realized)}
+    out.update(brier_multiclass(scenarios, realized))
+    out.update(rps(scenarios, realized))
+    return out
+
+
 def classify_realized(move_pct: float, band_pct: float) -> str:
     """Map a realized return to its ordered class given the band."""
     if move_pct < -abs(band_pct):

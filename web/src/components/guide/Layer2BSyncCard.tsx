@@ -15,7 +15,21 @@ export const Layer2BSyncCard: React.FC = () => {
   });
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [summary, setSummary] = useState<any>(null);
   const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+
+  async function loadSummary() {
+    if (!backend || !token.trim()) { setResult('成績を見るには合言葉を入力してください'); return; }
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/layer2b-summary', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerToken: token.trim() }),
+      });
+      const d = await r.json().catch(() => null);
+      if (d && d.status === 'ok') setSummary(d.summary);
+      else setResult(`成績: ${d?.status || 'エラー'}`);
+    } catch { setResult('成績の取得に失敗'); }
+  }
 
   const items = assets
     .filter((a) => SYNC_MARKETS.has(a.market))
@@ -100,9 +114,29 @@ export const Layer2BSyncCard: React.FC = () => {
                      opacity: busy ? 0.6 : 1 }}>
             {busy ? '同期中…' : '今すぐ同期'}
           </button>
+          <button onClick={loadSummary} disabled={busy}
+            style={{ marginLeft: 8, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                     background: 'transparent', color: 'inherit',
+                     border: '1px solid var(--border, #2a3340)' }}>
+            採点成績を見る
+          </button>
           {result && (
             <div style={{ fontSize: '0.9em', marginTop: 8, overflowWrap: 'anywhere',
                           wordBreak: 'break-word' }}>{result}</div>
+          )}
+          {summary && (
+            <div style={{ fontSize: '0.85em', marginTop: 10, lineHeight: 1.6 }}>
+              <div>採点成績(あなたの銘柄・{summary.sampleStage}): 営業日 {summary.tradingDays} / 予測 {summary.nPredictions}件</div>
+              {['1d', '3d', '5d'].map((h) => {
+                const x = summary.byHorizon?.[h];
+                return (
+                  <div key={h} style={{ opacity: 0.85 }}>
+                    {h}: {x && x.n ? `的中 ${Math.round(x.hitRate * 100)}% / Brier ${x.brierMean}(n=${x.n})` : '採点待ち'}
+                  </div>
+                );
+              })}
+              <div style={{ opacity: 0.6 }}>※校正の測定。利益保証ではない。proven表記なし。</div>
+            </div>
           )}
         </div>
         <div className="guide-note">

@@ -156,6 +156,18 @@ def test_band_clamped_to_asset_class():
     assert b["bandPctUsed"] <= 6.0
 
 
+def test_score_prediction_reuses_v4_math():
+    # confident rebound forecast, price rose 5% (> 2% band) → realized rebound, hit
+    sc = {"downside_continuation": 10, "sideways_stabilization": 20, "rebound_attempt": 70}
+    r = C.score_prediction(sc, 100.0, 105.0, 2.0)
+    assert r["realizedClass"] == "rebound_attempt"
+    assert r["argmaxHit"] is True
+    assert "brierRawSum" in r and "rpsRaw" in r and r["movePct"] == 5.0
+    # unusable prices → None
+    assert C.score_prediction(sc, None, 105.0, 2.0) is None
+    assert C.score_prediction(sc, 100.0, None, 2.0) is None
+
+
 def test_classify_realized():
     assert C.classify_realized(-3.0, 2.0) == "downside_continuation"
     assert C.classify_realized(3.0, 2.0) == "rebound_attempt"
