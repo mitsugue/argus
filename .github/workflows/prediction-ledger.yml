@@ -111,11 +111,27 @@ jobs:
       - name: Switch to ledger branch (create if missing)
         if: github.event.inputs.mode != 'ai-only'
         run: |
-          git fetch origin ledger:ledger 2>/dev/null && git checkout ledger || git checkout --orphan ledger
-          if [ ! -d ledger ]; then mkdir -p ledger/days ledger/scores; fi
-          # Orphan branch starts with main's tree staged — keep only ledger/.
-          git rm -rq --cached . 2>/dev/null || true
-          find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          # SAFETY (v10.59): NEVER orphan-wipe an existing ledger branch. The old
+          # `fetch … && checkout || checkout --orphan` wiped ~133 records on 06-22
+          # when the fetch hiccupped: the || fell through to an orphan branch built
+          # from main's tree (no ledger history), which then replaced the branch.
+          # Now we orphan ONLY when origin/ledger genuinely does not exist.
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger     # full history
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+            mkdir -p ledger/days ledger/scores
+          fi
+          test -f ledger/days/*.json 2>/dev/null \
+            && echo "ledger branch ready: $(ls ledger/days | wc -l) day file(s)" \
+            || echo "ledger branch ready: (no day files yet)"
 
       - name: Persist backup vault (client-side-encrypted envelopes)
         if: github.event.inputs.mode != 'ai-only'
