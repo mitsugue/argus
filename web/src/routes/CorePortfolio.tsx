@@ -8,6 +8,7 @@ import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
+import { useFundNav } from '../hooks/useFundNav';
 import { buildExposure } from '../lib/portfolio';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
@@ -27,6 +28,7 @@ const fmtJpy = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 export const CorePortfolio: React.FC = () => {
   const { cards, posture, phase } = useActionAlerts();
   const { assets } = useAssets();
+  const { funds: navFunds } = useFundNav();   // 投信 基準価額(NAV) follow
   const rates = useRatesSnapshot();
   const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
 
@@ -138,6 +140,33 @@ export const CorePortfolio: React.FC = () => {
           {funds.length > 0
             ? funds.map((p) => <CoreRow key={p.symbol} position={p} />)
             : <p className="cmd-alloc__empty">コアファンド(投信)をWatchlistに追加すると、姿勢連動の積立方針がここに表示されます。</p>}
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">投信 基準価額 (NAV・日次)</span>
+          <span className="section-head__count">{navFunds.length} funds</span>
+        </div>
+        <div className="card core-list">
+          {navFunds.length > 0 ? navFunds.map((f) => (
+            <div className="core-row" key={f.code}>
+              <div className="core-row__body">
+                <span className="core-row__top">{f.name}</span>
+                <span className="core-row__reason">{f.code} · {f.date}時点</span>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontWeight: 700 }}>¥{Math.round(f.navYen).toLocaleString('en-US')}</div>
+                <div style={{ fontSize: 12, color: f.changePct == null ? 'var(--text-sub)'
+                  : f.changePct > 0 ? 'var(--green)' : f.changePct < 0 ? 'var(--red)' : 'var(--text-sub)' }}>
+                  {f.changePct == null ? '前日比 —' : `前日比 ${f.changePct > 0 ? '+' : ''}${f.changePct}%`}
+                </div>
+              </div>
+            </div>
+          )) : <p className="cmd-alloc__empty">基準価額を取得中…(投信総合ライブラリー)</p>}
+          <div className="cmd-alloc__note" style={{ marginTop: 8 }}>
+            基準価額は投信総合ライブラリー(資産運用業協会)の日次データ。Twelve Data等では取れない国内投信のNAVを直接フォロー。
+          </div>
         </div>
       </section>
     </PageShell>

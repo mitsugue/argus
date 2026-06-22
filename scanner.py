@@ -2919,6 +2919,62 @@ def api_argus_crypto_watchlist():
     return jsonify(get_crypto_watchlist_snapshot(ids))
 
 
+# ━━━ Japanese mutual-fund NAV (基準価額) follow (v10.60) ━━━
+# FINALLY a real source for 投信 NAV: the 投信総合ライブラリー (資産運用業協会) daily
+# CSV by ISIN + 協会コード (SHIFT-JIS). Free, no key. So 投資信託 can be FOLLOWED
+# (latest 基準価額 + 前日比), which Twelve Data does NOT provide for JP open-end funds.
+_FUND_NAV_CATALOG = {
+    "03311182": {"isin": "JP90C000FXV1", "name": "eMAXIS Slim 国内株式(日経平均)"},
+    "03311187": {"isin": "JP90C000GKC6", "name": "eMAXIS Slim 米国株式(S&P500)"},
+    "0331418A": {"isin": "JP90C000H1T1", "name": "eMAXIS Slim 全世界株式(オール・カントリー)"},
+}
+_FUND_NAV_BASE  = "https://toushin-lib.fwg.ne.jp/FdsWeb/FDST030000/csv-file-download"
+_FUND_NAV_CACHE = {}          # code -> {"data": dict|None, "expires": epoch}
+_FUND_NAV_TTL   = 6 * 3600    # NAV is daily — 6h cache is plenty (and source-friendly)
+
+def _toushin_nav(code):
+    """Latest 基準価額(NAV) + 前日比 for a JP 投信 by 協会コード, parsed from the
+    投信総合ライブラリー CSV (SHIFT-JIS). Cached. None on unknown code / error."""
+    meta = _FUND_NAV_CATALOG.get(code)
+    if not meta:
+        return None
+    now = time.time()
+    c = _FUND_NAV_CACHE.get(code)
+    if c and now < c["expires"]:
+        return c["data"]
+    out = None
+    try:
+        r = requests.get(_FUND_NAV_BASE,
+                         params={"isinCd": meta["isin"], "associFundCd": code}, timeout=15)
+        if r.status_code == 200 and r.content:
+            text = r.content.decode("shift_jis", errors="ignore")
+            data_rows = [ln.split(",") for ln in text.splitlines()
+                         if ln[:1].isdigit() and len(ln.split(",")) >= 2]
+            if data_rows:
+                last = data_rows[-1]
+                prev = data_rows[-2] if len(data_rows) >= 2 else None
+                nav = float(last[1])
+                prev_nav = float(prev[1]) if prev and prev[1] else None
+                chg = round((nav / prev_nav - 1) * 100, 2) if prev_nav else None
+                m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", last[0])
+                date = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else last[0]
+                out = {"code": code, "name": meta["name"], "navYen": round(nav, 0),
+                       "changePct": chg, "date": date, "status": "live"}
+    except Exception:
+        out = None
+    _FUND_NAV_CACHE[code] = {"data": out, "expires": now + (_FUND_NAV_TTL if out else 1800)}
+    return out
+
+@app.route("/api/argus/fund-nav")
+def api_argus_fund_nav():
+    """Public: latest NAV + 前日比 for JP 投信 by 協会コード (default = catalog)."""
+    raw = (request.args.get("codes") or "").strip()
+    codes = [c.strip() for c in raw.split(",") if c.strip()] or list(_FUND_NAV_CATALOG.keys())
+    funds = [x for x in (_toushin_nav(c) for c in codes[:10]) if x]
+    return jsonify({"status": "live" if funds else "unavailable",
+                    "asOf": _ai_now_iso(), "provider": "投信総合ライブラリー", "funds": funds})
+
+
 # ━━━ Event Radar (live official calendar) ━━━
 # Phase 1 = schedule/risk timing only (no forecast/actual/consensus). Sources:
 #   - TreasuryDirect: fetched LIVE at runtime (machine-readable JSON API).

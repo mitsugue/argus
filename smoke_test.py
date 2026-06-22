@@ -77,6 +77,12 @@ def v_crypto():
     c, d = _get("/api/argus/crypto-watchlist")
     return isinstance(d.get("quotes"), list), f"{len(d.get('quotes', []))} quotes"
 
+def v_fund_nav():
+    c, d = _get("/api/argus/fund-nav")
+    funds = d.get("funds")
+    ok = isinstance(funds, list) and len(funds) >= 1 and isinstance(funds[0].get("navYen"), (int, float))
+    return ok, f"{len(funds or [])} funds nav (e.g. {funds[0]['code']}=¥{funds[0]['navYen']})" if funds else "no funds"
+
 def v_scout_jp():
     # The key refactor regression check: moved scoring must still produce output.
     c, d = _get("/api/argus/entry-scout?symbol=7203")
@@ -177,6 +183,7 @@ CHECKS = [
     ("japan-watchlist", v_jp),
     ("us-watchlist", v_us),
     ("crypto-watchlist", v_crypto),
+    ("fund-nav (投信 NAV)", v_fund_nav),
     ("entry-scout JP (moved code)", v_scout_jp),
     ("entry-scout US", v_scout_us),
     ("scout-batch", v_scout_batch),

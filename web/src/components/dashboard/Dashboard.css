@@ -720,8 +720,8 @@
   font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
   margin-left: auto;
 }
-.ai-review__summary { margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text-sub); }
-.ai-review__risk { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
+.ai-review__summary { margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text-main); }
+.ai-review__risk { margin-top: 4px; font-size: 11px; color: var(--text-sub); }
 .ai-review__notes { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .ai-review__note {
   display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
@@ -731,7 +731,7 @@
 .ai-review__name { font-family: inherit; font-weight: 400; font-size: 11px; color: var(--text-sub); }
 .ai-review__flow { font-family: var(--font-mono); color: var(--text-sub); }
 .ai-review__view { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
-.ai-review__reason { flex: 1 1 240px; min-width: 0; color: var(--text-faint); }
+.ai-review__reason { flex: 1 1 240px; min-width: 0; color: var(--text-sub); }
 
 /* Pro Handoff — utility action (manual GPT-5.5 Pro export). Calm, not a signal. */
 .watch-toolbar { display: flex; justify-content: flex-end; margin-bottom: 14px; }
