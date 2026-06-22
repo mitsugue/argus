@@ -73,6 +73,7 @@ function toMatrixState(data: MarketRegimeSnapshot): RegimeMatrixState {
 export const MarketRegime: React.FC = () => {
   const { data, phase } = useMarketRegime();
   const movers = useMarketMovers();
+  const jpMovers = useMarketMovers('/api/argus/jp-market-movers');
 
   useEffect(() => {
     let target: string | null = null;
@@ -211,6 +212,41 @@ export const MarketRegime: React.FC = () => {
             </p>
           ) : (
             <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>connecting… 全市場ムーバーを取得中</p>
+          )}
+        </div>
+      </section>
+
+      {/* JP whole-market EOD movers (v10.64) — all listed stocks, via J-Quants. */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">日本株 全市場ムーバー(引け後)</span>
+          <span className="section-head__count">
+            {jpMovers?.status === 'live' ? `as of ${jpMovers.asOf ?? ''}` : jpMovers?.status ?? '…'}
+          </span>
+        </div>
+        <div className="card">
+          {jpMovers?.status === 'live' ? (
+            <div className="regime-backdrop" style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+              {[...jpMovers.gainers.slice(0, 5), ...jpMovers.losers.slice(0, 5)]
+                .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 8)
+                .map((m) => (
+                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, gap: 8 }}>
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
+                    </span>
+                    <span style={{ flex: 'none', color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
+                      {m.changePct > 0 ? '+' : ''}{m.changePct}% (¥{Math.round(m.price).toLocaleString('en-US')})
+                    </span>
+                  </div>
+                ))}
+              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+                全上場銘柄から算出(引け後・前日比)。リアルタイムの寄り中急騰は別途。
+              </div>
+            </div>
+          ) : jpMovers?.status === 'missing_key' ? (
+            <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>J-Quants APIキーが未設定です。</p>
+          ) : (
+            <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>引け後に全市場ムーバーを集計します(取得待ち)。</p>
           )}
         </div>
       </section>

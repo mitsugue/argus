@@ -87,7 +87,12 @@ def v_market_movers():
     c, d = _get("/api/argus/market-movers")
     # valid even without a key (status=missing_key); just assert the shape.
     return d.get("status") in ("live", "missing_key", "unavailable") and "gainers" in d, \
-        f"status={d.get('status')} gainers={len(d.get('gainers', []))}"
+        f"status={d.get('status')} gainers={len(d.get('gainers', []))}{' note='+d['note'][:40] if d.get('note') else ''}"
+
+def v_jp_market_movers():
+    c, d = _get("/api/argus/jp-market-movers", timeout=60)
+    return d.get("status") in ("live", "missing_key", "unavailable") and "gainers" in d, \
+        f"status={d.get('status')} gainers={len(d.get('gainers', []))} universe={d.get('universe')}"
 
 def v_scout_jp():
     # The key refactor regression check: moved scoring must still produce output.
@@ -191,6 +196,7 @@ CHECKS = [
     ("crypto-watchlist", v_crypto),
     ("fund-nav (投信 NAV)", v_fund_nav),
     ("market-movers (US全市場)", v_market_movers),
+    ("jp-market-movers (日本全市場)", v_jp_market_movers),
     ("entry-scout JP (moved code)", v_scout_jp),
     ("entry-scout US", v_scout_us),
     ("scout-batch", v_scout_batch),

@@ -9,6 +9,9 @@ on:
   schedule:
     # Every 30 min, 13:00–21:00 UTC Mon–Fri (covers US pre-market + regular).
     - cron: '*/30 13-21 * * 1-5'
+    # Post-JP-close EOD sweep: 07:30 + 09:00 UTC (16:30 / 18:00 JST) Mon–Fri,
+    # so the JP whole-market movers get recorded even outside US hours.
+    - cron: '30 7,9 * * 1-5'
   workflow_dispatch: {}
 
 jobs:

@@ -3007,11 +3007,17 @@ def _av_market_movers():
     now = time.time()
     if _AV_MOVERS_CACHE["data"] is not None and now < _AV_MOVERS_CACHE["expires"]:
         return _AV_MOVERS_CACHE["data"]
-    out = {"status": "unavailable", "gainers": [], "losers": [], "asOf": None}
+    out = {"status": "unavailable", "gainers": [], "losers": [], "asOf": None, "note": None}
     try:
         r = requests.get(_AV_MOVERS_URL, params={"function": "TOP_GAINERS_LOSERS",
                                                  "apikey": _ALPHAVANTAGE_KEY}, timeout=15)
         j = r.json() if r.status_code == 200 else {}
+        # Surface Alpha Vantage's own message (premium gate / rate limit / bad key)
+        # so the failure is debuggable instead of a silent "unavailable".
+        if isinstance(j, dict):
+            note = j.get("Information") or j.get("Note") or j.get("Error Message")
+            if note:
+                out["note"] = str(note)[:200]
         def _rows(key):
             rows = []
             for x in (j.get(key) or []):
@@ -3063,14 +3069,124 @@ def _scan_market_movers():
 
 @app.route("/api/argus/market-scan", methods=["POST"])
 def api_argus_market_scan():
-    """Admin: run the US whole-market scan (called by the market-watch workflow)."""
+    """Admin: run the whole-market scans (US live + JP EOD)."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     try:
-        return jsonify({"recorded": _scan_market_movers(), "asOf": _ai_now_iso()})
+        return jsonify({"recordedUS": _scan_market_movers(), "recordedJP": _scan_jp_market_movers(),
+                        "asOf": _ai_now_iso()})
     except Exception as e:
         return jsonify({"error": "scan_failed", "message": str(e)[:120]}), 500
+
+
+# ━━━ JP whole-market EOD mover scanner (v10.64) ━━━
+# J-Quants Standard gives daily bars for ALL listed stocks. No free realtime JP
+# full-market feed exists, so this computes the day's biggest movers (vs prev
+# close) AFTER the 15:30 close — "今日 全市場で何が動いたか". One paginated fetch
+# per date, cached 6h, run post-close by the market-watch workflow.
+_JP_MOVERS_CACHE = {"data": None, "expires": 0.0}
+_JP_MOVERS_TTL   = 6 * 3600
+_JP_MOVER_MIN_PRICE = float(os.environ.get("JP_MOVER_MIN_PRICE") or 300)
+_JP_MOVER_PCT       = float(os.environ.get("JP_MOVER_PCT") or 8.0)
+
+def _jq_all_for_date(date_str, headers, max_pages=40):
+    """All-stocks daily bars for one date → {code: row}. {} if no data/error."""
+    out, params = {}, {"date": date_str}
+    try:
+        for _ in range(max_pages):
+            r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
+                             headers=headers, params=params, timeout=20)
+            if r.status_code != 200:
+                break
+            body = r.json()
+            for row in body.get("data", []):
+                c = row.get("Code") or row.get("code")
+                if c:
+                    out[c] = row
+            pk = body.get("pagination_key")
+            if not pk:
+                break
+            params["pagination_key"] = pk
+    except Exception:
+        pass
+    return out
+
+def _jq_market_movers():
+    """JP whole-market EOD movers (all stocks, vs prev close). Cached."""
+    if not _JQUANTS_API_KEY:
+        return {"status": "missing_key", "gainers": [], "losers": [], "asOf": None}
+    now = time.time()
+    if _JP_MOVERS_CACHE["data"] is not None and now < _JP_MOVERS_CACHE["expires"]:
+        return _JP_MOVERS_CACHE["data"]
+    headers = {"x-api-key": _JQUANTS_API_KEY}
+    out = {"status": "unavailable", "gainers": [], "losers": [], "asOf": None}
+    try:
+        base = datetime.now(TZ_JST)
+        latest, latest_date = {}, None
+        for back in range(0, 8):
+            d = (base - timedelta(days=back)).strftime("%Y-%m-%d")
+            latest = _jq_all_for_date(d, headers)
+            if latest:
+                latest_date = d
+                break
+        prev = {}
+        if latest_date:
+            ld = datetime.strptime(latest_date, "%Y-%m-%d")
+            for back in range(1, 8):
+                prev = _jq_all_for_date((ld - timedelta(days=back)).strftime("%Y-%m-%d"), headers)
+                if prev:
+                    break
+        rows = []
+        for code, row in latest.items():
+            c, pr = _q_close(row), _q_close(prev.get(code, {})) if prev.get(code) else None
+            try:
+                c, pr = float(c), float(pr)
+            except (TypeError, ValueError):
+                continue
+            if c < _JP_MOVER_MIN_PRICE or pr <= 0:
+                continue
+            s4 = str(code)[:4]
+            rows.append({"symbol": s4, "name": _jq_name_for(s4) or s4,
+                         "price": round(c, 1), "changePct": round((c / pr - 1) * 100, 2)})
+        if rows:
+            out = {"status": "live", "asOf": latest_date, "universe": len(rows),
+                   "gainers": sorted([r for r in rows if r["changePct"] > 0],
+                                     key=lambda r: -r["changePct"])[:15],
+                   "losers": sorted([r for r in rows if r["changePct"] < 0],
+                                    key=lambda r: r["changePct"])[:15]}
+    except Exception:
+        pass
+    _JP_MOVERS_CACHE["data"] = out
+    _JP_MOVERS_CACHE["expires"] = now + (_JP_MOVERS_TTL if out["status"] == "live" else 1800)
+    return out
+
+@app.route("/api/argus/jp-market-movers")
+def api_argus_jp_market_movers():
+    """Public: JP whole-market EOD top gainers/losers (J-Quants, vs prev close)."""
+    return jsonify(_jq_market_movers())
+
+def _scan_jp_market_movers():
+    """Record MARKET_MOVER events for the day's biggest JP movers (EOD, all market).
+    Daily dedup so it notifies once per day, not every poll."""
+    if not _EVENT_BACKBONE_ENABLED:
+        return 0
+    mv = _jq_market_movers()
+    if mv.get("status") != "live":
+        return 0
+    rows = (mv.get("gainers") or []) + (mv.get("losers") or [])
+    rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
+    now, n = datetime.now(pytz.utc), 0
+    for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:
+        for trig in argus_events.detect_market_mover(
+                row["symbol"], row["changePct"], row["price"],
+                min_price=_JP_MOVER_MIN_PRICE, gainer_pct=max(_JP_MOVER_PCT, 10.0)):
+            env = _record_event("JP", row["symbol"], trig, now, "JP_EOD",
+                                bucket_minutes=1440, source="jquants-eod")
+            if env:
+                env["nameJa"] = row.get("name")
+                n += 1
+    return n
 
 
 # ━━━ Event Radar (live official calendar) ━━━
