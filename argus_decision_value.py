@@ -20,7 +20,101 @@ from typing import Any, Dict, List, Optional, Sequence
 DECISION_VALUE_SCHEMA = "decision-value-v1"
 COST_MODEL_VERSION = "cost-model-v1"
 RISK_MODEL_VERSION = "risk-model-v1"
+POLICY_REGISTRY_VERSION = "policy-registry-v1"
 DISCLAIMER = "Research simulation only. No order was or will be submitted."
+
+# ── Policy Registry (section 4/5): immutable, chosen BEFORE outcomes ──────────
+# Each policy fully defines eligibility/entry/exit/invalidation so a shadow result
+# is reproducible and free of hindsight. Long-only, research-only; NO execution.
+POLICIES = {
+    "daily_next_session_long_v1": {
+        "label": "Daily next-session long (eligible post-close long signals)",
+        "direction": "long",
+        "entryRule": "next eligible regular-session executable price (ask/conservative); "
+                     "NEVER the prior close as if executable after the decision",
+        "exits": ["1D close", "3D close", "5D close"],
+        "invalidationRule": "machine-readable + fixed at decision time, else none",
+        "noFill": ["stale quote", "no executable price", "after deadline", "unsupported entitlement"],
+    },
+    "close_pin_long_v1": {
+        "label": "Close-pin long (eligible close-pin candidates only)",
+        "direction": "long",
+        "entryRule": "first executable price after the decision ts and before the freeze; "
+                     "actual bid/ask when available else conservative est (marked estimated)",
+        "exits": ["same-day closing auction"],
+        "noFill": ["no eligible quote", "stale", "spread too wide", "limit state", "after deadline"],
+    },
+    "event_next_open_long_v1": {
+        "label": "Event next-open long (after-hours official/research events)",
+        "direction": "long",
+        "entryRule": "next regular-session first executable price; account for opening gap; "
+                     "NEVER PTS unless a licensed PTS source exists",
+        "exits": ["1D close", "3D close", "5D close"],
+        "noFill": ["asset does not trade", "stale", "after deadline"],
+    },
+    "no_trade_control_v1": {
+        "label": "No-trade control (WAIT / NO_ACTION / AVOID_CHASING / rejected)",
+        "direction": "none",
+        "entryRule": "no trade is invented",
+        "tracks": ["future MFE", "future MAE", "avoidedDrawdown", "missedUpside", "gap risk"],
+        "note": "descriptive only; never combined with trade P&L as the same utility",
+    },
+}
+
+# Comparison baselines (section 11) — same dates/horizons/costs as the policy.
+BASELINE_POLICIES = {
+    "no_trade": "never enter",
+    "unconditional_next_open_long": "always go long next open (matched universe)",
+    "buy_and_hold": "hold the asset over the same horizon",
+    "previous_day_momentum": "long if prior return > band, else flat",
+    "market_regime_only": "act only on the pre-forecast regime classification",
+    "random_matched": "random candidate selection with matched count/liquidity",
+}
+
+
+def list_policies():
+    return {"policyRegistryVersion": POLICY_REGISTRY_VERSION,
+            "policies": POLICIES, "baselines": BASELINE_POLICIES,
+            "disclaimer": DISCLAIMER + " No broker, no order routes."}
+
+
+def get_policy(policy_id):
+    return POLICIES.get(policy_id)
+
+
+def validate_policy_timing(*, decision_ts, entry_ts, outcome_ts):
+    """No-hindsight guard: entry must be AFTER the decision and BEFORE the outcome
+    is known. Rejects same-/prior-close entries after a post-close decision."""
+    if decision_ts is None or entry_ts is None:
+        return {"ok": False, "reason": "missing_timestamps"}
+    if entry_ts < decision_ts:
+        return {"ok": False, "reason": "entry_before_decision (hindsight)"}
+    if outcome_ts is not None and outcome_ts <= entry_ts:
+        return {"ok": False, "reason": "outcome_at_or_before_entry (hindsight)"}
+    return {"ok": True, "reason": None}
+
+
+def build_shadow_decision(*, policy_id, symbol, market, decision_price,
+                          decision_ts, entry_ts=None, eligible=True,
+                          rejection_reason=None):
+    """Construct an IMMUTABLE shadow-decision skeleton at decision time (outcome
+    filled later). Pins the policy version + identity; never invents an entry from
+    the best price. SHADOW/RESEARCH ONLY — no order is created."""
+    policy = POLICIES.get(policy_id)
+    if not policy:
+        return {"ok": False, "reason": "unknown_policy"}
+    return {
+        "schemaVersion": DECISION_VALUE_SCHEMA,
+        "policyId": policy_id, "policyRegistryVersion": POLICY_REGISTRY_VERSION,
+        "symbol": symbol, "market": market, "direction": policy["direction"],
+        "decisionPrice": decision_price, "decisionTs": decision_ts,
+        "plannedEntryRule": policy["entryRule"], "plannedExits": policy.get("exits"),
+        "eligibilityResult": "eligible" if eligible else "rejected",
+        "rejectionReason": rejection_reason,
+        "fillStatus": "pending", "outcomeStatus": "pending",
+        "kind": "shadow_candidate" if eligible else "shadow_no_trade",
+        "disclaimer": DISCLAIMER,
+    }
 
 # ── Cost model (section 6): versioned, with quality status ───────────────────
 # Conservative liquidity-bucket spread proxies (bps) when real bid/ask is absent.

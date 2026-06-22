@@ -136,3 +136,44 @@ def test_kelly_requires_positive_lower_bound():
 def test_kelly_never_actionable():
     e = {"n": 200, "netExpectancyR": 0.5, "payoffRatio": 3.0, "winRate": 0.6}
     assert DV.kelly_research(e, lower_conf_bound_positive=True)["actionable"] is False
+
+
+# ── policy registry (Phase 2) ────────────────────────────────────────────────
+def test_policy_registry_has_templates_and_baselines():
+    reg = DV.list_policies()
+    for p in ("daily_next_session_long_v1", "close_pin_long_v1",
+              "event_next_open_long_v1", "no_trade_control_v1"):
+        assert p in reg["policies"]
+    assert "buy_and_hold" in reg["baselines"] and "no_trade" in reg["baselines"]
+
+
+def test_policy_long_only_no_execution_words():
+    for pid, p in DV.POLICIES.items():
+        assert p["direction"] in ("long", "none")
+        # entry rules describe research fills, never live execution verbs
+        assert "broker" not in str(p).lower()
+
+
+def test_no_hindsight_timing_guard():
+    assert DV.validate_policy_timing(decision_ts=100, entry_ts=200, outcome_ts=300)["ok"] is True
+    # entry before decision = hindsight
+    assert DV.validate_policy_timing(decision_ts=200, entry_ts=100, outcome_ts=300)["ok"] is False
+    # outcome at/before entry = hindsight
+    bad = DV.validate_policy_timing(decision_ts=100, entry_ts=200, outcome_ts=150)
+    assert bad["ok"] is False and "hindsight" in bad["reason"]
+
+
+def test_build_shadow_decision_eligible_and_rejected():
+    d = DV.build_shadow_decision(policy_id="daily_next_session_long_v1", symbol="7203",
+                                 market="JP", decision_price=3900, decision_ts=1000)
+    assert d["kind"] == "shadow_candidate" and d["fillStatus"] == "pending"
+    assert d["policyRegistryVersion"] == DV.POLICY_REGISTRY_VERSION
+    r = DV.build_shadow_decision(policy_id="daily_next_session_long_v1", symbol="7203",
+                                 market="JP", decision_price=3900, decision_ts=1000,
+                                 eligible=False, rejection_reason="stale_quote")
+    assert r["kind"] == "shadow_no_trade" and r["eligibilityResult"] == "rejected"
+
+
+def test_build_shadow_decision_unknown_policy():
+    assert DV.build_shadow_decision(policy_id="nope", symbol="X", market="US",
+                                    decision_price=1, decision_ts=1)["ok"] is False

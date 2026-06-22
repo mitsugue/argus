@@ -1516,6 +1516,14 @@ def api_argus_decision_value_summary():
     })
 
 
+@app.route("/api/argus/decision-value/policies")
+def api_argus_decision_value_policies():
+    """Decision Value — the immutable Policy Registry + comparison baselines
+    (read-only). Policies define eligibility/entry/exit so shadow results are
+    reproducible + hindsight-free. RESEARCH ONLY — no order routes."""
+    return jsonify(argus_decision_value.list_policies())
+
+
 @app.route("/api/argus/calibration/posture")
 def api_argus_calibration_posture():
     """Calibration Ledger v4 — multidimensional posture (read-only).

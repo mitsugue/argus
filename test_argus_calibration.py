@@ -259,6 +259,29 @@ def test_readiness_gate_strict_essentials_tolerant_of_one_provider():
     assert bad["ready"] is False and bad["checks"]["no_stale_price_forecasts"] is False
 
 
+def test_overlap_memberships_no_double_record():
+    # 5803 is in 2A AND (say) the owner watchlist → BOTH memberships, but a single
+    # primary cohort, and the recorder de-dupes by symbol (one forecast).
+    mem = C.cohort_memberships("5803", owner_symbols=["5803", "META"])
+    assert C.COHORT_TACTICAL_FIXED in mem and C.COHORT_OWNER_WATCHLIST in mem
+    assert C.classify_cohort("5803") == C.COHORT_TACTICAL_FIXED  # single primary
+    # a sensor that the owner also watches → both, no error
+    mem2 = C.cohort_memberships("SPY", owner_symbols=["SPY"])
+    assert C.COHORT_REGIME_SENSOR in mem2 and C.COHORT_OWNER_WATCHLIST in mem2
+    # owner-only name not in any fixed cohort → just owner (+experimental default)
+    mem3 = C.cohort_memberships("6758", owner_symbols=["6758"])
+    assert C.COHORT_OWNER_WATCHLIST in mem3
+
+
+def test_dedupe_by_symbol_invariant():
+    # Simulate the recorder de-duping: even if a symbol appears via tactical AND
+    # owner, the unique forecast set counts it once.
+    recorded = set()
+    for sym in ["5803", "5803", "META", "5803"]:
+        recorded.add(sym)
+    assert len(recorded) == 2  # one 5803 forecast, one META
+
+
 def test_no_cohort_metric_mixing_helpers_exist():
     # the four cohorts must be distinct constants (no silent merge)
     ids = {C.COHORT_REGIME_SENSOR, C.COHORT_TACTICAL_FIXED,

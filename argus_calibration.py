@@ -162,6 +162,30 @@ def classify_cohort(symbol: str) -> str:
     return COHORT_EXPERIMENTAL  # unknown server-side names default to experimental
 
 
+def cohort_memberships(symbol: str, owner_symbols: Optional[Sequence[str]] = None) -> List[str]:
+    """ALL cohorts a symbol belongs to (overlap is allowed + expected).
+
+    Overlap-safety invariant: a symbol may be in regime/tactical AND the owner
+    watchlist at once. The recorder stores ONE immutable forecast per symbol/day
+    and attaches MULTIPLE memberships — it must never fetch twice or emit two
+    predictions for the same symbol. classify_cohort() still returns the single
+    PRIMARY cohort (for the legacy per-row field); this returns the full set for
+    cohort reports so overlaps are counted once globally but appear in each cohort.
+    """
+    s = (symbol or "").upper()
+    owners = {x.upper() for x in (owner_symbols or [])}
+    out: List[str] = []
+    if s in {x.upper() for x in REGIME_SENSORS}:
+        out.append(COHORT_REGIME_SENSOR)
+    if s in {x.upper() for x in TACTICAL_BENCHMARK}:
+        out.append(COHORT_TACTICAL_FIXED)
+    if s in owners:
+        out.append(COHORT_OWNER_WATCHLIST)
+    if s in _MANUAL_EXPERIMENTAL:
+        out.append(COHORT_EXPERIMENTAL)
+    return out or [COHORT_EXPERIMENTAL]
+
+
 def factor_group_of(symbol: str) -> Optional[str]:
     """Layer-1 sensor factor group, else the tactical-benchmark factor role."""
     s = (symbol or "").upper()
