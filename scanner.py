@@ -1566,16 +1566,90 @@ _LAYER2B_STATE = {"lastSyncAt": None, "lastStatus": "never_synced",
                   "lastHash": None, "symbolCount": 0}
 
 def _layer2b_store_configured():
-    """Layer 2B persists owner watchlist membership to a PRIVATE store (the repo
-    is public, so it must never go on the public ledger branch). Configured via
-    out-of-band env vars; until they exist, scoring stays disabled."""
+    """Layer 2B persists owner watchlist membership to a PRIVATE GitHub repo (the
+    public repo must never see owner symbols). Configured via env; until set,
+    scoring stays disabled and nothing is stored."""
     return bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO")
                 and os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN"))
 
+def _require_owner_sync():
+    """(authorized, error, code) — accepts the dedicated OWNER-SYNC token OR the
+    admin token. Scoped ONLY to watchlist-sync (membership metadata; no portfolio,
+    no other admin action), so a frontend may hold it. Never logs the token."""
+    owner = os.environ.get("ARGUS_OWNER_SYNC_TOKEN", "")
+    admin = _ARGUS_ADMIN_TOKEN
+    if not owner and not admin:
+        return False, {"error": "owner_sync_unconfigured",
+                       "message": "ARGUS_OWNER_SYNC_TOKEN is not configured."}, 503
+    tok = (request.headers.get("X-ARGUS-OWNER-TOKEN", "")
+           or request.headers.get("X-ARGUS-ADMIN-TOKEN", ""))
+    if tok and ((owner and tok == owner) or (admin and tok == admin)):
+        return True, None, 200
+    return False, {"error": "unauthorized"}, 401
+
+def _gh_private_headers():
+    return {"Authorization": f"Bearer {os.environ.get('ARGUS_LAYER2B_PRIVATE_TOKEN','')}",
+            "Accept": "application/vnd.github+json", "User-Agent": "argus-layer2b",
+            "X-GitHub-Api-Version": "2022-11-28"}
+
+def _gh_private_get(path):
+    """GET a file from the private repo. Returns (content_str, sha) or (None, None)."""
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    try:
+        r = requests.get(url, headers=_gh_private_headers(), timeout=15)
+        if r.status_code == 200:
+            import base64
+            j = r.json()
+            return base64.b64decode(j.get("content", "")).decode("utf-8"), j.get("sha")
+    except Exception:
+        pass
+    return None, None
+
+def _gh_private_put(path, content_str, message, overwrite=True):
+    """PUT a file to the private repo. If overwrite=False and it exists, skip
+    (immutable daily snapshots). Returns True on success."""
+    import base64
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    _, sha = _gh_private_get(path)
+    if sha and not overwrite:
+        return True  # immutable: already written, never rewrite
+    body = {"message": message,
+            "content": base64.b64encode(content_str.encode("utf-8")).decode("ascii")}
+    if sha:
+        body["sha"] = sha
+    try:
+        r = requests.put(url, headers=_gh_private_headers(), json=body, timeout=20)
+        return r.status_code in (200, 201)
+    except Exception:
+        return False
+
 def _layer2b_persist_private(snapshot):
-    """Push an immutable membership snapshot to the private store. Stub until the
-    private repo is configured (never reached while disabled)."""
-    raise NotImplementedError("private store not yet wired")
+    """Write an IMMUTABLE daily membership snapshot to the private repo, plus a
+    mutable latest pointer. Raises on failure so the caller can mark 'failed'."""
+    import json as _json
+    blob = _json.dumps(snapshot, ensure_ascii=False, indent=2)
+    eff = snapshot.get("effectiveFrom", "unknown")
+    ok1 = _gh_private_put(f"membership/{eff}.json", blob,
+                          f"layer2b membership {eff}", overwrite=False)
+    ok2 = _gh_private_put("membership/latest.json", blob,
+                          f"layer2b latest {eff}", overwrite=True)
+    if not (ok1 and ok2):
+        raise RuntimeError("private store write failed")
+
+def _layer2b_read_latest():
+    """Read the latest membership snapshot from the private repo (owner-gated)."""
+    if not _layer2b_store_configured():
+        return None
+    import json as _json
+    content, _ = _gh_private_get("membership/latest.json")
+    if not content:
+        return None
+    try:
+        return _json.loads(content)
+    except Exception:
+        return None
 
 @app.route("/api/argus/calibration/watchlist-sync", methods=["POST"])
 def api_argus_watchlist_sync():
@@ -1584,7 +1658,7 @@ def api_argus_watchlist_sync():
     portfolio field is hard-rejected. The repo is public, so nothing is persisted
     unless a PRIVATE store is configured — otherwise scoring stays disabled and no
     symbols are stored anywhere. No orders, ever."""
-    ok, err, code = _require_admin()
+    ok, err, code = _require_owner_sync()
     if not ok:
         return jsonify(err), code
     W = argus_watchlist_sync
@@ -1625,6 +1699,18 @@ def api_argus_watchlist_sync_status():
                     "privateStoreConfigured": _layer2b_store_configured(),
                     "noteJa": "所有者ウォッチリスト(Layer 2B)同期状態。保有情報は一切送受信しない。"
                               "公開リポ対策でprivateストア設定前は採点無効(銘柄は保存しない)。"})
+
+@app.route("/api/argus/calibration/watchlist-membership")
+def api_argus_watchlist_membership():
+    """Owner-gated read of the latest synced membership from the PRIVATE store
+    (reveals symbols → requires the owner-sync token)."""
+    ok, err, code = _require_owner_sync()
+    if not ok:
+        return jsonify(err), code
+    snap = _layer2b_read_latest()
+    if not snap:
+        return jsonify({"status": "empty", "privateStoreConfigured": _layer2b_store_configured()})
+    return jsonify({"status": "ok", "membership": snap})
 
 
 @app.route("/api/argus/calibration/epochs")

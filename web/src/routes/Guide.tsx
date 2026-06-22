@@ -4,6 +4,7 @@ import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
 import { BackupCard } from '../components/guide/BackupCard';
 import { LedgerHealthCard } from '../components/guide/LedgerHealthCard';
 import { CalibrationCard } from '../components/guide/CalibrationCard';
+import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
 import { SourceRegistryCard } from '../components/guide/SourceRegistryCard';
 import '../components/dashboard/Dashboard.css';
 
@@ -65,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.76.0', 'Layer 2B(あなたのwatchlist採点)を実稼働化 — ①専用オーナー同期トークン(管理者権限とは別・membership同期のみ)②サーバーがprivate GitHubリポへ membership を直接コミット(GitHub API・公開リポには一切出さない・不変日次スナップショット+latest)③Guideに「Layer 2B 同期」UI(トークン入力+今すぐ同期。銘柄だけ送信し保有数量・取得単価は送らない。CORE投信は対象外)④オーナー限定の membership 読み戻しAPI。要セットアップ: privateリポ作成+fine-grained PAT+Renderに3環境変数。同期後の日次採点はPhase次段。注文・自動売買は一切なし'],
   ['v10.75.0', 'Decision Value Ledger v1 着手(Phase 1・純エンジン・research only) — 「校正(Brier/RPS)が良い≠儲かる」を測る別台帳の数理基盤を実装。現実的コストモデル(spread/slippage/手数料/FX・観測値か保守的推定かを明示)/R正規化(1R=想定最大損失・後付けストップ禁止)/純期待値・payoff比・profit factor/no-trade価値(回避損は別集計・逸失益は機会費用)/リスクオブルイン(損失クラスタを保つブロック・ブートストラップMonte Carlo・決定論シード)/Kelly(既定無効・full Kelly提示しない)。★絶対安全境界: 注文/ブローカー/execute系ルートは一切作らない(shadowシミュレーションのみ)。テスト21件(計250)+ スモークに「注文ルート不存在」安全検査を追加。shadow記録/ポリシー別集計/UIはPhase2'],
   ['v10.74.0', '校正v4 仕上げ — ①多次元ポスチャー採点(SPY単独をやめ、株式/グロース/小型/クレジット/デュレーション/ボラ/安全資産/日本/FX/流動性の10次元をボラ正規化で評価、次元不足はpartial表示でSPY単独に落とさない)②Layer 2B(あなたのwatchlistを採点)同期APIを実装 — 銘柄メタのみ受領し保有情報は全フィールド拒否、公開リポ対策でprivateストア設定前は採点無効(銘柄は一切保存しない)、毎日の不変メンバーシップ・スナップショット③Guideに「校正ユニバース」ビューを追加(コホート/文脈変数/ファクター加重/ポスチャー/エポック/2B状態を可視化)。テスト計229'],
   ['v10.73.0', 'prediction-snapshot を90秒キャッシュ — v2でJ-Quants取得銘柄が増えたため、公開エンドポイントの連打でJ-Quantsが429になるのを防止(entry-scout等の一時的レート制限を解消)'],
@@ -237,6 +239,14 @@ export const Guide: React.FC = () => {
           <span className="section-head__count">コホート/エポック/ポスチャー</span>
         </div>
         <CalibrationCard />
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Layer 2B 同期(あなたのwatchlist採点)</span>
+          <span className="section-head__count">private/owner限定</span>
+        </div>
+        <Layer2BSyncCard />
       </section>
 
       <section>
