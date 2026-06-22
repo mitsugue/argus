@@ -2994,7 +2994,8 @@ def api_argus_fund_nav():
 _ALPHAVANTAGE_KEY  = os.environ.get("ALPHAVANTAGE_API_KEY", "")
 _AV_MOVERS_URL     = "https://www.alphavantage.co/query"
 _AV_MOVERS_CACHE   = {"data": None, "expires": 0.0}
-_AV_MOVERS_TTL     = 900   # 15 min (AV free tier = 25 req/day — stay well under)
+_AV_MOVERS_TTL     = 3600  # 60 min — AV FREE tier is only 25 req/day, so cache hard
+                           # (≤ ~8 calls across US hours) or the daily limit is hit.
 _MARKET_MOVER_MIN_PRICE = float(os.environ.get("MARKET_MOVER_MIN_PRICE") or 1.0)
 _MARKET_MOVER_PCT       = float(os.environ.get("MARKET_MOVER_PCT") or 12.0)
 _MARKET_MOVER_NOTIFY_MAX = int(os.environ.get("MARKET_MOVER_NOTIFY_MAX") or 5)
@@ -3017,7 +3018,12 @@ def _av_market_movers():
         if isinstance(j, dict):
             note = j.get("Information") or j.get("Note") or j.get("Error Message")
             if note:
-                out["note"] = str(note)[:200]
+                note = str(note)
+                # SECURITY: Alpha Vantage echoes the API key in its rate-limit note
+                # — never leak it through this public endpoint.
+                if _ALPHAVANTAGE_KEY:
+                    note = note.replace(_ALPHAVANTAGE_KEY, "***")
+                out["note"] = note[:200]
         def _rows(key):
             rows = []
             for x in (j.get(key) or []):
@@ -3037,7 +3043,8 @@ def _av_market_movers():
     except Exception:
         pass
     _AV_MOVERS_CACHE["data"] = out
-    _AV_MOVERS_CACHE["expires"] = now + (_AV_MOVERS_TTL if out["status"] == "live" else 300)
+    # On failure/rate-limit, back off 60 min too — retrying burns the tiny 25/day quota.
+    _AV_MOVERS_CACHE["expires"] = now + (_AV_MOVERS_TTL if out["status"] == "live" else 3600)
     return out
 
 @app.route("/api/argus/market-movers")
