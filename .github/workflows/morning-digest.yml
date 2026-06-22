@@ -14,15 +14,16 @@ name: morning-digest
 
 on:
   schedule:
-    # GitHub's free cron is best-effort and has been observed running 2–3.5h
-    # late. Strategy: fire EARLY at an odd minute (less queue contention), then
-    # let ntfy's server-side "Delay" scheduling deliver at the exact target
-    # time (08:30 / 22:00 JST). Market data doesn't change in the gap (US
-    # close 05:00 JST, TSE close 15:30 JST).
-    # 21:49 UTC Sun–Thu = 06:49 JST Mon–Fri → delivered 08:30 JST (TSE pre-open)
-    - cron: '49 21 * * 0-4'
-    # 10:49 UTC Mon–Fri = 19:49 JST → delivered 22:00 JST (NYSE pre-open)
-    - cron: '49 10 * * 1-5'
+    # GitHub's free cron is best-effort and has been observed running 2–5h late
+    # (a late US run once delivered at 00:46 JST). Strategy: fire VERY EARLY so
+    # even a multi-hour delay still lands BEFORE the target, then let ntfy's
+    # server-side "Delay" hold the message and deliver at the exact JST time.
+    # The session is taken from github.event.schedule (not the clock) so a big
+    # delay can't misclassify JP vs US. Market data doesn't change in the gap.
+    # 18:00 UTC Sun–Thu → held to 23:30 UTC (=08:30 JST, TSE pre-open). 5.5h buffer.
+    - cron: '0 18 * * 0-4'
+    # 07:00 UTC Mon–Fri → held to 13:00 UTC (=22:00 JST, NYSE pre-open). 6h buffer.
+    - cron: '0 7 * * 1-5'
   workflow_dispatch: {}
 
 permissions: {}
@@ -55,42 +56,50 @@ jobs:
       - name: Push to ntfy (skipped when NTFY_TOPIC secret is not set)
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          GH_SCHEDULE: ${{ github.event.schedule }}
         run: |
           if [ -z "$NTFY_TOPIC" ]; then
             echo "NTFY_TOPIC not configured — skipping push (digest fetched OK)."
             exit 0
           fi
-          # Session detection + exact-time delivery. The 21:49 UTC run (even
-          # delayed past midnight UTC) is the JP brief targeting 23:30 UTC
-          # (=08:30 JST); the 10:49 UTC run is the US brief targeting 13:00 UTC
-          # (=22:00 JST). If we're already past the target (heavy cron delay),
-          # send immediately; otherwise ntfy holds the message server-side and
-          # delivers it at the exact time. No Click header: tapping should show
-          # the text, not jump to the app (user request 2026-06-11).
+          # Session from the CRON that fired (robust — a multi-hour delay can't
+          # misclassify JP vs US). Target = exact JST delivery time; ntfy holds the
+          # message server-side via Delay. If the cron ran so late that we're well
+          # PAST the target (stale brief), SKIP rather than buzzing at a weird hour
+          # (user got one at 00:46 JST). No Click header (user request 2026-06-11).
           python3 - <<'PY' > sched.env
-          import datetime
+          import datetime, os
           now = datetime.datetime.now(datetime.timezone.utc)
-          h = now.hour
-          if h >= 18 or h < 6:  # JP run window (21:49 UTC + up to ~6h delay)
-              session = "JP open"
-              target = now.replace(hour=23, minute=30, second=0, microsecond=0)
-              if h < 6:  # delayed past midnight UTC — target was "yesterday 23:30"
-                  target -= datetime.timedelta(days=1)
+          sched = os.environ.get("GH_SCHEDULE", "")
+          if sched.startswith("0 18"):
+              session, th, tm = "JP open", 23, 30
+          elif sched.startswith("0 7"):
+              session, th, tm = "US open", 13, 0
+          else:  # manual dispatch — fall back to the clock
+              h = now.hour
+              session, th, tm = ("JP open", 23, 30) if (h >= 18 or h < 6) else ("US open", 13, 0)
+          target = now.replace(hour=th, minute=tm, second=0, microsecond=0)
+          if session == "JP open" and now.hour < 6:   # delayed past midnight UTC
+              target -= datetime.timedelta(days=1)
+          past = (now - target).total_seconds()
+          GRACE = 90 * 60   # >90 min late = stale; skip the weird-hour buzz
+          if past > GRACE:
+              print("SKIP=1")
           else:
-              session = "US open"
-              target = now.replace(hour=13, minute=0, second=0, microsecond=0)
-          margin = datetime.timedelta(seconds=120)
-          delay = int(target.timestamp()) if target > now + margin else 0
-          # Delivery time shown IN the title — iOS notification lists collapse
-          # timestamps to "yesterday", so the JST send time must be explicit
-          # (user request 2026-06-12).
-          jst = datetime.timezone(datetime.timedelta(hours=9))
-          shown = (target if delay else now).astimezone(jst)
-          print(f'SESSION="{session}"')
-          print(f"DELAY={delay}")
-          print(f'SENTAT="{shown.strftime("%m/%d %H:%M")}"')
+              margin = datetime.timedelta(seconds=120)
+              delay = int(target.timestamp()) if target > now + margin else 0
+              jst = datetime.timezone(datetime.timedelta(hours=9))
+              shown = (target if delay else now).astimezone(jst)
+              print("SKIP=0")
+              print(f'SESSION="{session}"')
+              print(f"DELAY={delay}")
+              print(f'SENTAT="{shown.strftime("%m/%d %H:%M")}"')
           PY
           . ./sched.env
+          if [ "$SKIP" = "1" ]; then
+            echo "cron ran >90min past target — skipping stale digest (no weird-hour buzz)."
+            exit 0
+          fi
           DELAY_HDR=()
           if [ "$DELAY" != "0" ]; then DELAY_HDR=(-H "Delay: $DELAY"); fi
           curl -sf --max-time 30 \
