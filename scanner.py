@@ -6915,6 +6915,37 @@ def api_argus_closepin_snapshot():
     _CLOSEPIN_CACHE["expires"] = now + 120
     return jsonify(snap)
 
+
+def _v4_record_meta(symbol):
+    """Calibration Ledger v4 per-record metadata (Phase 3, v10.71).
+
+    Additive enrichment for each recorded prediction/sensor: the v4 cohort, its
+    factor group, any experimental flags, and the market-specific forecast clock
+    (correct origin session + 1/3/5 trading-day target dates per market). Recorded
+    ALONGSIDE the legacy `layer`/`scenarios` fields — nothing existing changes, so
+    the current scorer keeps working while the workflow can adopt the per-market
+    target dates next. Best-effort: never raises into the recording path."""
+    try:
+        clk = argus_market_clock.forecast_clock(symbol)
+        compact = {
+            "market": clk.get("market"),
+            "marketCalendar": clk.get("marketCalendar"),
+            "timezone": clk.get("timezone"),
+            "originTradingDate": clk.get("originTradingDate"),
+            "targets": clk.get("targets"),
+            "calendarVersion": clk.get("calendarVersion"),
+        }
+        return {
+            "cohortId": argus_calibration.classify_cohort(symbol),
+            "factorGroup": argus_calibration.factor_group_of(symbol),
+            "experimentalFlags": [f["flag"] for f in argus_calibration.experimental_flags(symbol)],
+            "marketClock": compact,
+            "calibrationSchema": argus_calibration.SCHEMA_VERSION,
+        }
+    except Exception:
+        return {"calibrationSchema": argus_calibration.SCHEMA_VERSION}
+
+
 def get_prediction_snapshot():
     al  = get_action_labels()
     jp  = get_japan_watchlist_snapshot()
@@ -6948,7 +6979,7 @@ def get_prediction_snapshot():
         if not q:
             continue  # no live price = nothing falsifiable to record
         sd = l.get("supportingData", {}) or {}
-        predictions.append({
+        rec = {
             "symbol": l["symbol"], "market": l["market"], "name": l["name"],
             "layer": _layer_of(l["symbol"]),
             "price": q["price"], "changePct": sd.get("changePct"),
@@ -6956,7 +6987,9 @@ def get_prediction_snapshot():
             "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(sd.get("changePct"))],
             "flowRatio": sd.get("bigFlowRatio"),
             "ai": ai_by_sym.get(l["symbol"]),
-        })
+        }
+        rec.update(_v4_record_meta(l["symbol"]))  # cohort + market-clock (v10.71)
+        predictions.append(rec)
 
     # ── Asset-class predictions (ledger-v2, v10.5) ──
     # The agreed learning axis: not individual-stock memorization but the
@@ -7000,15 +7033,21 @@ def get_prediction_snapshot():
     for sym, name in _L1_SENSORS_JP:
         q = jp_sens_live.get(sym)
         if q:
-            sensors.append(_sensor_row(sym, name, "equity_jp", q["price"], q.get("changePct")))
+            _sr = _sensor_row(sym, name, "equity_jp", q["price"], q.get("changePct"))
+            _sr.update(_v4_record_meta(sym))
+            sensors.append(_sr)
     _ensure_sensor_etfs()
     for sym in _L1_SENSORS_US:
         st = _ETF_LAST_PRICE.get(sym)
         if st and now_ts - st["ts"] <= 12 * 3600:
-            sensors.append(_sensor_row(sym, sym, "etf_us", st["price"], st["m1d"]))
+            _sr = _sensor_row(sym, sym, "etf_us", st["price"], st["m1d"])
+            _sr.update(_v4_record_meta(sym))
+            sensors.append(_sr)
     for q in (cw.get("quotes") or []):
         if q.get("id") == "bitcoin" and q.get("status") == "live":
-            sensors.append(_sensor_row("BTC", "Bitcoin", "crypto", q["priceUsd"], q.get("changePct")))
+            _sr = _sensor_row("BTC", "Bitcoin", "crypto", q["priceUsd"], q.get("changePct"))
+            _sr.update(_v4_record_meta("BTC"))
+            sensors.append(_sr)
     rates = get_rates_snapshot()
     for key, sid, sname, kind in (("usdJpy", "USDJPY", "USD/JPY", "fx"),
                                   ("vix", "VIX", "VIX", "vol")):
@@ -7018,7 +7057,9 @@ def get_prediction_snapshot():
             ch = s.get("change")
             chg_pct = (round(ch / (lvl - ch) * 100, 2)
                        if isinstance(ch, (int, float)) and (lvl - ch) else None)
-            sensors.append(_sensor_row(sid, sname, kind, lvl, chg_pct))
+            _sr = _sensor_row(sid, sname, kind, lvl, chg_pct)
+            _sr.update(_v4_record_meta(sid))
+            sensors.append(_sr)
 
     # ── Posture prediction (the call that everything depends on) ──
     # Self-describing scoring rule so the scorer never hardcodes thresholds:
