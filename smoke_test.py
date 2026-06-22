@@ -150,6 +150,15 @@ def v_source_registry():
     return isinstance(d.get("sources"), list) and d.get("engineVersion") == "source-registry-v1", \
         f"{d.get('confirmedLive')}/{d.get('total')} live"
 
+def v_system_health():
+    c, d = _get("/api/argus/system-health")
+    lamps = d.get("lamps")
+    ok = isinstance(lamps, list) and d.get("overall") in ("ok", "warning", "stopped", "off") \
+        and any(l.get("key") == "ai_budget" for l in lamps)
+    # public-safe: no dollar amounts must leak into the lamp payload
+    leaks = "Usd" in json.dumps(d) or "$" in json.dumps(d)
+    return ok and not leaks, f"overall={d.get('overall')} lamps={len(lamps or [])}"
+
 def v_admin_gated_401(path):
     def fn():
         try:
@@ -182,6 +191,7 @@ CHECKS = [
     ("event-snapshot", v_event_snapshot),
     ("crypto-scan admin", _crypto_scan_gated),
     ("source-registry", v_source_registry),
+    ("system-health (public lamps)", v_system_health),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
     ("ai-cost 401", v_admin_gated_401("/api/argus/ai-cost")),

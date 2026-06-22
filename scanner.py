@@ -4718,6 +4718,79 @@ def api_argus_ai_cost():
         return jsonify(err), code
     return jsonify(_ai_cost_snapshot())
 
+def _system_health():
+    """PUBLIC-safe at-a-glance health lamps for the metered/important systems
+    (green=ok, amber=warning, red=stopped). Colors + coarse JA only — NO dollar
+    amounts or secrets (those stay in the admin-only Operations endpoints). The
+    point: a silent budget stop / bridge outage becomes VISIBLE at a glance."""
+    now = time.time()
+    lamps = []
+    def L(key, label, status, detail):
+        lamps.append({"key": key, "labelJa": label, "status": status, "detailJa": detail})
+
+    # ── AI budget (the 'overheat' lamp) — color only, never the $ amount. ──
+    with _AI_LOCK:
+        _ai_cost_roll(datetime.now(TZ_JST))
+        day_s, mon_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
+    def _frac(s, b): return (s / b) if (isinstance(b, (int, float)) and b > 0) else 0.0
+    worst = max(_frac(day_s, _AI_DAILY_BUDGET_USD), _frac(mon_s, _AI_MONTHLY_BUDGET_USD))
+    if worst >= 1.0:
+        L("ai_budget", "AI予算", "stopped", "上限到達 — 新規AI実行を停止中")
+    elif worst >= 0.8:
+        L("ai_budget", "AI予算", "warning", "残りわずか(上限の80%超)")
+    else:
+        L("ai_budget", "AI予算", "ok", "余裕あり")
+
+    integ = get_integrations_snapshot()
+    prov = {p["id"]: p for p in integ.get("providers", [])}
+    def conf(pid): return bool((prov.get(pid) or {}).get("configured"))
+
+    # AI judge availability (stable: based on enabled + key present, not per-worker probe)
+    if not _AI_JUDGE_ENABLED:
+        L("ai_judge", "AI判断", "off", "未有効")
+    elif _OPENAI_API_KEY or GEMINI_API_KEY:
+        L("ai_judge", "AI判断", "ok", "稼働可")
+    else:
+        L("ai_judge", "AI判断", "warning", "キー未設定")
+
+    # moomoo bridge freshness (session-aware so a closed market isn't false-amber)
+    ages = [now - rec["ts"] for mkt in ("JP", "US")
+            for rec in (_PUSHED_QUOTES.get(mkt) or {}).values() if rec.get("ts")]
+    mkt_open = _jp_market_open() or _us_market_open()
+    if not ages:
+        L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
+          "市場時間中なのにpush無し" if mkt_open else "市場時間外(待機)")
+    elif min(ages) <= 120:
+        L("bridge", "moomooブリッジ", "ok", f"最終push {int(min(ages))}秒前")
+    else:
+        L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
+          f"最終push {int(min(ages)//60)}分前" + ("(途絶?)" if mkt_open else ""))
+
+    L("prices_jp", "日本株価格", "ok" if conf("jquants") else "warning",
+      "J-Quants 設定済" if conf("jquants") else "要設定")
+    L("prices_us", "米国株価格", "ok" if conf("twelvedata") else "warning",
+      "Twelve Data 設定済" if conf("twelvedata") else "要設定")
+    L("crypto", "暗号資産", "ok" if conf("coingecko") else "ok", "CoinGecko(鍵不要)")
+    L("macro", "金利/VIX", "ok" if conf("fred") else "warning",
+      "FRED 設定済" if conf("fred") else "要設定")
+    if not _EDINET_API_KEY:
+        L("edinet", "EDINET", "off", "未設定")
+    else:
+        L("edinet", "EDINET", "ok" if _EDINET_STATE.get("lastFetchOk") else "warning",
+          "公式開示 稼働" if _EDINET_STATE.get("lastFetchOk") else "未検証")
+    L("notify", "通知(ntfy)", "ok" if os.environ.get("NTFY_TOPIC") else "off",
+      "設定済" if os.environ.get("NTFY_TOPIC") else "未設定")
+
+    overall = ("stopped" if any(l["status"] == "stopped" for l in lamps)
+               else "warning" if any(l["status"] == "warning" for l in lamps) else "ok")
+    return {"asOf": _ai_now_iso(), "overall": overall, "lamps": lamps,
+            "noteJa": "課金/重要システムの健全性ランプ。緑=正常・橙=注意・赤=停止。"
+                      "金額など詳細は管理者画面のみ。"}
+
+@app.route("/api/argus/system-health")
+def api_argus_system_health():
+    return jsonify(_system_health())
+
 @app.route("/api/argus/moomoo-capability")
 def api_argus_moomoo_capability():
     # Protected capability-test report (item E): per-symbol freshness truth.
