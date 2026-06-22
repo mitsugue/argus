@@ -179,8 +179,14 @@ export function deriveTodayJudgment(
 /** Core (long-term fund) action under the current posture. Accumulation never
     stops on market mood; only the LUMP-SUM timing defers when cautious. */
 export function coreActionFor(posture: string | undefined): { action: CoreActionKey; reason: string } {
+  // REGIME-linked 積立 stance — NOT a per-fund price/chart judgment (ARGUS has no
+  // live 基準価額/NAV for 投信). For long-term index 積立 you deliberately don't
+  // time the fund's chart; you adjust contribution pace by overall posture. The
+  // wording makes this explicit so it doesn't look like a failed chart read.
   if (posture === 'EVENT_WAIT' || posture === 'RISK_OFF') {
-    return { action: 'DEFER_LUMP_SUM', reason: '積立は予定通り継続。一括投入はイベント/地合いの通過まで見送り。' };
+    return { action: 'DEFER_LUMP_SUM',
+             reason: '地合い連動の積立方針: 積立は継続(ドルコスト平均)、一括投入のみイベント/地合い通過まで見送り。※基準価額のチャート判断ではありません。' };
   }
-  return { action: 'CONTINUE', reason: '積立を予定通り継続。' };
+  return { action: 'CONTINUE',
+           reason: '地合い連動の積立方針: 積立を予定通り継続(ドルコスト平均)。※個別の基準価額チャート判断ではありません。' };
 }
