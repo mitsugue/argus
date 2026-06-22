@@ -40,6 +40,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Provide the virtual:pwa-register module in dev too, so `vite dev` (preview)
+      // doesn't fail to resolve it. Zero production impact (build already emits it).
+      devOptions: { enabled: true },
       includeAssets: ['favicon.svg', 'countries.geojson'],
       manifest: {
         name: 'A.R.G.U.S.',
