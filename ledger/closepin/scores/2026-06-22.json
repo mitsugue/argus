@@ -1,0 +1,131 @@
+{
+ "date": "2026-06-22",
+ "engineVersion": "closepin-v1",
+ "posture": "elevated",
+ "n": 12,
+ "hits": 6,
+ "hitRate": 0.5,
+ "brierMean": 0.7269,
+ "rows": [
+  {
+   "symbol": "1306",
+   "layer": 1,
+   "scored": true,
+   "closePct": -0.138,
+   "bucket": "flat",
+   "predicted": "flat",
+   "hit": true,
+   "brier": 0.4221
+  },
+  {
+   "symbol": "1321",
+   "layer": 1,
+   "scored": true,
+   "closePct": -0.039,
+   "bucket": "flat",
+   "predicted": "flat",
+   "hit": true,
+   "brier": 0.4233
+  },
+  {
+   "symbol": "8306",
+   "layer": 1,
+   "scored": true,
+   "closePct": -0.03,
+   "bucket": "flat",
+   "predicted": "flat",
+   "hit": true,
+   "brier": 0.4268
+  },
+  {
+   "symbol": "7203",
+   "layer": 1,
+   "scored": true,
+   "closePct": -0.345,
+   "bucket": "down",
+   "predicted": "flat",
+   "hit": false,
+   "brier": 0.7931
+  },
+  {
+   "symbol": "8058",
+   "layer": 1,
+   "scored": true,
+   "closePct": 0.174,
+   "bucket": "flat",
+   "predicted": "flat",
+   "hit": true,
+   "brier": 0.4212
+  },
+  {
+   "symbol": "9432",
+   "layer": 1,
+   "scored": true,
+   "closePct": 0.069,
+   "bucket": "flat",
+   "predicted": "flat",
+   "hit": true,
+   "brier": 0.4249
+  },
+  {
+   "symbol": "9984",
+   "layer": 2,
+   "scored": true,
+   "closePct": -0.303,
+   "bucket": "down",
+   "predicted": "flat",
+   "hit": false,
+   "brier": 1.0273
+  },
+  {
+   "symbol": "5801",
+   "layer": 2,
+   "scored": true,
+   "closePct": 0.104,
+   "bucket": "flat",
+   "predicted": "flat",
+   "hit": true,
+   "brier": 0.4329
+  },
+  {
+   "symbol": "5803",
+   "layer": 2,
+   "scored": true,
+   "closePct": 19.376,
+   "bucket": "strongUp",
+   "predicted": "flat",
+   "hit": false,
+   "brier": 1.1398
+  },
+  {
+   "symbol": "6584",
+   "layer": 3,
+   "scored": true,
+   "closePct": 1.46,
+   "bucket": "strongUp",
+   "predicted": "flat",
+   "hit": false,
+   "brier": 1.0823
+  },
+  {
+   "symbol": "285A",
+   "layer": 2,
+   "scored": true,
+   "closePct": -1.361,
+   "bucket": "strongDown",
+   "predicted": "flat",
+   "hit": false,
+   "brier": 1.1214
+  },
+  {
+   "symbol": "9501",
+   "layer": 2,
+   "scored": true,
+   "closePct": -1.465,
+   "bucket": "strongDown",
+   "predicted": "flat",
+   "hit": false,
+   "brier": 1.0077
+  }
+ ]
+}
