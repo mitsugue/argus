@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { RiskLevel } from '../types/action';
+import { useSystemHealth, type LampStatus } from '../hooks/useSystemHealth';
+import { SystemHealthPopover } from './dashboard/SystemHealthPopover';
 import './AppShell.css';
+
+const BRAND_DOT: Record<LampStatus, string> = {
+  ok: 'shl-dot--ok', warning: 'shl-dot--warn', stopped: 'shl-dot--stop', off: 'shl-dot--off',
+};
 
 // Overscroll-to-next (v10.15.1, user request): at the page bottom, one strong
 // extra pull (touch) or wheel burst advances to the next nav page. Deliberate
@@ -70,6 +76,9 @@ function formatDaysAway(days: number): string {
 // Slim header (brand + next event + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
 export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey }) => {
+  // System-health beacon on the brand: one poll shared by the dot + popover.
+  const health = useSystemHealth();
+  const [healthOpen, setHealthOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   // The drag is driven DIRECTLY through the DOM (refs), NOT React state — a
   // per-frame setState on touchmove re-renders the whole shell ~60×/s and
@@ -202,13 +211,21 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
   return (
     <div className="shell">
       <header className="shell__header">
-        <div className="shell__brand">
+        <button
+          className="shell__brand"
+          onClick={() => setHealthOpen((v) => !v)}
+          aria-haspopup="dialog"
+          aria-expanded={healthOpen}
+          title="システム状態を表示"
+        >
+          <span className={`shell__brand-beacon shl-dot ${BRAND_DOT[health?.overall ?? 'off']}`} />
           <span className="shell__brand-name">A.R.G.U.S.</span>
           <span className="shell__brand-version">v{__APP_VERSION__}</span>
           <span className="shell__brand-tag">
             Autonomous Risk and Global Uncertainty Scanner
           </span>
-        </div>
+        </button>
+        {healthOpen && <SystemHealthPopover health={health} onClose={() => setHealthOpen(false)} />}
         <div className="shell__meta">
           {nextEvent && (
             <button

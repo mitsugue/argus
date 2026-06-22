@@ -31,7 +31,22 @@
   align-items: baseline;
   gap: 12px;
   min-width: 0;
+  /* now a button (taps open the system-health popover) — reset native chrome */
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: background 0.15s ease;
 }
+.shell__brand:hover { background: var(--surface-soft, rgba(255,255,255,0.04)); }
+
+/* Always-visible health beacon on the logo (green / amber / red·pulse). */
+.shell__brand-beacon { align-self: center; width: 8px; height: 8px; }
 
 .shell__brand-name {
   font-family: var(--font-sans);

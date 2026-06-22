@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
-import SystemHealthLamps from '../components/dashboard/SystemHealthLamps';
 import { CompactWatchRow } from '../components/dashboard/CompactWatchRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
@@ -166,8 +165,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       }
     >
       <HeroCard judgment={judgment} />
-
-      <SystemHealthLamps />
 
       <EventIntelligenceCard />
 
