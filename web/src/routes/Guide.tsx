@@ -65,6 +65,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.75.0', 'Decision Value Ledger v1 着手(Phase 1・純エンジン・research only) — 「校正(Brier/RPS)が良い≠儲かる」を測る別台帳の数理基盤を実装。現実的コストモデル(spread/slippage/手数料/FX・観測値か保守的推定かを明示)/R正規化(1R=想定最大損失・後付けストップ禁止)/純期待値・payoff比・profit factor/no-trade価値(回避損は別集計・逸失益は機会費用)/リスクオブルイン(損失クラスタを保つブロック・ブートストラップMonte Carlo・決定論シード)/Kelly(既定無効・full Kelly提示しない)。★絶対安全境界: 注文/ブローカー/execute系ルートは一切作らない(shadowシミュレーションのみ)。テスト21件(計250)+ スモークに「注文ルート不存在」安全検査を追加。shadow記録/ポリシー別集計/UIはPhase2'],
   ['v10.74.0', '校正v4 仕上げ — ①多次元ポスチャー採点(SPY単独をやめ、株式/グロース/小型/クレジット/デュレーション/ボラ/安全資産/日本/FX/流動性の10次元をボラ正規化で評価、次元不足はpartial表示でSPY単独に落とさない)②Layer 2B(あなたのwatchlistを採点)同期APIを実装 — 銘柄メタのみ受領し保有情報は全フィールド拒否、公開リポ対策でprivateストア設定前は採点無効(銘柄は一切保存しない)、毎日の不変メンバーシップ・スナップショット③Guideに「校正ユニバース」ビューを追加(コホート/文脈変数/ファクター加重/ポスチャー/エポック/2B状態を可視化)。テスト計229'],
   ['v10.73.0', 'prediction-snapshot を90秒キャッシュ — v2でJ-Quants取得銘柄が増えたため、公開エンドポイントの連打でJ-Quantsが429になるのを防止(entry-scout等の一時的レート制限を解消)'],
   ['v10.72.0', '校正ユニバースの再選定+バージョン管理(regime_sensor_v2 / tactical_benchmark_v2) — Layer1=16センサーを再構成(JP4: TOPIX/日経225/東証銀行業/東証REIT、US11: SPY/QQQ/IWM/SMH/XLF/XLE/XLU/TLT/LQD/HYG/GLD、BTC)。USDJPY/VIX/金利/HY OASは「文脈変数」に分離(等加重リターン採点に混ぜない)。Layer2A=14銘柄に分散(JP: 三菱UFJ/トヨタ/三菱商事/NTT/SBG/三菱重工/フジクラ、US: NVDA/AAPL/TSLA/JPM/XOM/PG/CAT)。5803フジクラを固定ベンチに意図的に保持、5801とMETAは所有者ウォッチリストで利用可。「Layer3=6584固定」を廃止し実験フラグ制へ。ファクターグループv2で相関銘柄の過大評価を回避。全新規銘柄のプロバイダ稼働を本番確認済み。Brierの読み方を説明書に追加。履歴(burn-in)は保全。テスト計208'],

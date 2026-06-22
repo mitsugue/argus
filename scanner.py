@@ -25,6 +25,7 @@ import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
+import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -1483,6 +1484,35 @@ def api_argus_calibration_cohorts():
         "factorGroups": {g: list(s) for g, s in C.FACTOR_GROUPS.items()},
         "tacticalFactorRoles": C.TACTICAL_FACTOR_GROUPS,
         "layer1FactorGroupDemo": fg_demo,
+    })
+
+
+@app.route("/api/argus/decision-value/summary")
+def api_argus_decision_value_summary():
+    """Decision Value Ledger v1 (Phase 1: engine ready, no shadow records yet).
+
+    RESEARCH SIMULATION ONLY — no order routes, no broker, no execution. Measures
+    "would a defined policy have positive value AFTER costs/risk?" — SEPARATE from
+    the calibration (Brier/RPS) question. Shadow recording + per-policy expectancy
+    arrive in Phase 2; this exposes engine readiness + versions only."""
+    DV = argus_decision_value
+    return jsonify({
+        "schemaVersion": DV.DECISION_VALUE_SCHEMA,
+        "costModelVersion": DV.COST_MODEL_VERSION,
+        "riskModelVersion": DV.RISK_MODEL_VERSION,
+        "phase": "v1-phase1-engine-only",
+        "status": "no_shadow_records_yet",
+        "noteJa": "「校正(Brier/RPS)が良い ≠ 儲かる」を測る別台帳。明示的な不変ポリシーで shadow "
+                  "(仮想)シミュレーションし、現実的コスト後の純期待値・リスクオブルインを評価。"
+                  "Phase1は純エンジン+テスト(21件)のみ。shadow記録/ポリシー別集計はPhase2。",
+        "engine": {
+            "metrics": ["netExpectancyR", "payoffRatio", "profitFactor",
+                        "riskOfRuin(blockBootstrapMonteCarlo)", "noTradeValue",
+                        "kelly(disabled_by_default)"],
+            "sampleStages": ["burn_in(<30)", "exploratory(30-59)",
+                             "provisional(60-119)", "validation(120+) — never 'proven'"],
+        },
+        "safety": DV.DISCLAIMER + " No broker, no order routes, no auto-trading.",
     })
 
 

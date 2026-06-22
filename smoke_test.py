@@ -187,6 +187,23 @@ def v_watchlist_sync_gated():
     except urllib.error.HTTPError as e:
         return e.code in (401, 503), f"HTTP {e.code} (owner-gated)"
 
+def v_decision_value_summary():
+    c, d = _get("/api/argus/decision-value/summary")
+    return d.get("schemaVersion") == "decision-value-v1" and "No broker" in (d.get("safety") or ""), \
+        f"status={d.get('status')} phase={d.get('phase')}"
+
+def v_no_order_routes():
+    # Safety: there must be NO order/execute route (research-only, no auto-trading).
+    import urllib.error
+    for path in ("/api/argus/decision-value/order", "/api/argus/decision-value/execute"):
+        try:
+            _get(path)
+            return False, f"{path} exists — must NOT (no order routes!)"
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                return False, f"{path} returned {e.code}, expected 404"
+    return True, "no order/execute routes (correct)"
+
 def v_source_registry():
     c, d = _get("/api/argus/source-registry")
     return isinstance(d.get("sources"), list) and d.get("engineVersion") == "source-registry-v1", \
@@ -238,6 +255,8 @@ CHECKS = [
     ("calibration cohorts v2 (16/14)", v_calibration_cohorts_v2),
     ("calibration posture (multidim)", v_calibration_posture),
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
+    ("decision-value summary", v_decision_value_summary),
+    ("no order routes (safety)", v_no_order_routes),
     ("source-registry", v_source_registry),
     ("system-health (public lamps)", v_system_health),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
