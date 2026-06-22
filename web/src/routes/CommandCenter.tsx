@@ -155,6 +155,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               🎯 引けピン(14:30→同日終値・{ledger.closepin.overall.days}日 / {ledger.closepin.overall.n}件):
               的中率 <b>{Math.round((ledger.closepin.overall.hitRate ?? 0) * 100)}%</b>
               ・Brier <b>{ledger.closepin.overall.brierMean?.toFixed(3) ?? '—'}</b>
+              <div className="jlog__acc-note">
+                ※「その日の終値が上/下/横ばいのどれか」をARGUSが当てられたかの自己採点(短期判断の校正)。
+                銘柄横断の集計値で、個別銘柄の売買シグナルでも翌日の上昇予測でもありません。
+              </div>
             </div>
           ) : (!ledger.loading && ledger.data && (
             <div className="jlog__acc">🎯 引けピン台帳: 蓄積開始前(毎営業日14:30にピン → 16:05に同日採点)。</div>
