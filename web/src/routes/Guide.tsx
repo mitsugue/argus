@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.83.1', 'Layer 2B同期の500を根治 — ハンドラが argus_watchlist_sync を import せずに使っていた(認証通過後にのみ発火するNameError)。importを追加。認証後の経路を実行する回帰テストも追加(no-tokenスモークでは届かなかった死角を塞ぐ)'],
   ['v10.83.0', 'Layer 2B同期のHTTP 500を診断可能に — 認証後の処理をtry/eで包み、原因を所有者にそのまま表示(空の500をなくす)。private保存の失敗時はGitHub APIのHTTPステータス+理由(404=リポ名違い/403=トークン権限不足等)をアプリに表示。同期結果に persistDetail を出すように'],
   ['v10.82.0', '横スクロール(左右のガタつき)を本当に修正+Layer2B同期のコールドスタート対応 — ①「最近のアップデート」等の長い英識別子(regime_sensor_v2等)が折返さずに内側ボックスを画面幅超に広げていた根本原因をCSSで是正(overflow-wrap/word-break/min-width:0、モバイル単一列をminmax(0,1fr)に)。プレビュー実測で横はみ出し0・横スクローラ0を確認②同期はバックエンドを先に起こし最大3回リトライ+安全なJSON解析(Renderコールドスタートの非JSON応答でpattern エラーにならない)'],
   ['v10.81.0', 'API稼働状況が「MOCK/UNKNOWN」になる誤表示を修正 — 接続状況パネルが9秒で諦めてモック(全UNKNOWN/MISSING)を出していた(Renderのコールドスタートは20〜40秒かかる)。タイムアウトを30秒に延長+最大4回リトライ(初回でバックエンドを起こす)。リトライ中は「connecting」表示にし、全失敗時のみ正直に未接続を表示。実体はFRED/Twelve Data/Finnhub=live・J-Quants=partialで正常稼働'],

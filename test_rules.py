@@ -1013,3 +1013,18 @@ def test_jp_market_open_hours():
     assert scanner._jp_market_open(mon_pm) is True
     assert scanner._jp_market_open(mon_after) is False
     assert scanner._jp_market_open(sat) is False
+
+
+def test_watchlist_sync_runs_past_auth(monkeypatch):
+    # Regression for v10.83.1: the handler used argus_watchlist_sync without
+    # importing it → NameError 500, only reachable WITH a valid token (so the
+    # no-token smoke check never hit it). Exercise the post-auth path.
+    monkeypatch.setenv("ARGUS_OWNER_SYNC_TOKEN", "testtok")
+    c = scanner.app.test_client()
+    r = c.post("/api/argus/calibration/watchlist-sync",
+               json={"items": [{"symbol": "7203", "market": "JP"}], "ownerToken": "testtok"})
+    assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.get_data(as_text=True)[:120]}"
+    d = r.get_json()
+    assert d.get("ok") is True
+    # private store unconfigured in test env → disabled, nothing persisted
+    assert d.get("status") in ("disabled_pending_private_store", "synced", "failed")

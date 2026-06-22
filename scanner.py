@@ -26,6 +26,7 @@ import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/sco
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
 import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
+import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist sync validation (pure, v10.74)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
