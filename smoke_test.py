@@ -274,6 +274,8 @@ CHECKS = [
     ("ai-cost 401", v_admin_gated_401("/api/argus/ai-cost")),
     ("tdnet-metrics 401", v_admin_gated_401("/api/argus/tdnet-metrics")),
     ("moomoo-capability 401", v_admin_gated_401("/api/argus/moomoo-capability")),
+    ("jp-universe 401", v_admin_gated_401("/api/argus/jp-universe")),
+    ("layer2b-summary 401", v_admin_gated_401("/api/argus/calibration/layer2b-summary")),
 ]
 
 

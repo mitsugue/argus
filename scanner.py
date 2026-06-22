@@ -5711,13 +5711,60 @@ def _system_health():
 def api_argus_system_health():
     return jsonify(_system_health())
 
+_MOOMOO_ALLMARKET_REPORT = {"data": None}  # latest JP all-market sweep from the bridge
+
 @app.route("/api/argus/moomoo-capability")
 def api_argus_moomoo_capability():
-    # Protected capability-test report (item E): per-symbol freshness truth.
+    # Protected capability-test report (item E): per-symbol freshness truth +
+    # the latest JP ALL-MARKET sweep report posted by the EC2 bridge.
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(_moomoo_capability_report())
+    out = _moomoo_capability_report()
+    out["jpAllMarketTest"] = _MOOMOO_ALLMARKET_REPORT["data"]
+    return jsonify(out)
+
+@app.route("/api/argus/jp-universe")
+def api_argus_jp_universe():
+    """JP universe (moomoo codes) for the bridge's all-market capability sweep.
+    Admin-gated. Prime/Standard/Growth common stocks by default (ETF/REIT/PRO
+    excluded for the initial test, per the capability-test spec)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    want = {s.strip() for s in request.args.get("segments", "prime,standard,growth").lower().split(",")}
+    codes, seg_counts = [], {"prime": 0, "standard": 0, "growth": 0, "other": 0}
+    for r in _jq_master():
+        mkt = r.get("mkt") or ""
+        seg = ("prime" if ("プライム" in mkt or "Prime" in mkt) else
+               "standard" if ("スタンダード" in mkt or "Standard" in mkt) else
+               "growth" if ("グロース" in mkt or "Growth" in mkt) else "other")
+        seg_counts[seg] = seg_counts.get(seg, 0) + 1
+        if seg in want:
+            codes.append("JP." + r["code4"])
+    codes = sorted(set(codes))
+    return jsonify({"codes": codes, "count": len(codes), "segments": sorted(want),
+                    "segmentCounts": seg_counts,
+                    "note": "moomoo get_market_snapshot codes for the JP all-market sweep"})
+
+@app.route("/api/argus/moomoo-capability-report", methods=["POST"])
+def api_argus_moomoo_capability_report():
+    """Receive the EC2 bridge's JP all-market capability report (admin + HMAC,
+    same gate as quote-push). Stored in memory + shown via /moomoo-capability."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    raw = request.get_data() or b""
+    sig_ok, sig_reason = _verify_bridge_signature(raw)
+    if not sig_ok:
+        return jsonify({"error": "signature_invalid", "reason": sig_reason}), 401
+    body = request.get_json(silent=True) or {}
+    rep = body.get("report")
+    if not isinstance(rep, dict):
+        return jsonify({"error": "bad_payload", "message": "expected {report: {...}}"}), 400
+    rep["receivedAt"] = _ai_now_iso()
+    _MOOMOO_ALLMARKET_REPORT["data"] = rep
+    return jsonify({"ok": True, "stored": True})
 
 @app.route("/api/argus/tdnet-metrics")
 def api_argus_tdnet_metrics():

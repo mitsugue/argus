@@ -129,6 +129,116 @@ def _push_quotes(stocks):
     return requests.post(f"{BACKEND}/api/argus/quote-push", data=raw, headers=headers, timeout=30)
 
 
+# ── JP all-market capability test (Phase 1) ─────────────────────────────────
+# When CAP_TEST_ENABLED=1, once per JP trading day the bridge sweeps the full
+# JP universe via get_market_snapshot (batches of <=400) and POSTs a metrics
+# report (coverage, quote-age via update_time, entitlement, sweep timing) so we
+# can PROVE whether moomoo can do realtime all-market — without claiming it until
+# the venue timestamps say so. Runs alongside (not instead of) the watchlist push.
+import datetime as _dt
+
+CAP_TEST_ENABLED = os.environ.get("JP_ALL_MARKET_CAP_TEST", "0") not in ("0", "false", "")
+CAP_BATCH = max(50, min(400, int(os.environ.get("CAP_BATCH_SIZE", "400"))))
+_JST = _dt.timezone(_dt.timedelta(hours=9))
+_cap_done_date = None  # JST date string the test last ran
+
+
+def _now_jst():
+    return _dt.datetime.now(_JST)
+
+
+def _jp_open_jst():
+    n = _now_jst()
+    if n.weekday() >= 5:
+        return False
+    hm = n.hour * 60 + n.minute
+    return (9 * 60 <= hm <= 11 * 60 + 30) or (12 * 60 + 30 <= hm <= 15 * 60 + 30)
+
+
+def _fetch_jp_universe():
+    try:
+        r = requests.get(f"{BACKEND}/api/argus/jp-universe",
+                         headers={"X-ARGUS-ADMIN-TOKEN": TOKEN}, timeout=40)
+        return r.json().get("codes", []) if r.ok else []
+    except Exception:
+        return []
+
+
+def _post_capability_report(report):
+    raw = json.dumps({"report": report}, separators=(",", ":")).encode("utf-8")
+    headers = {"X-ARGUS-ADMIN-TOKEN": TOKEN, "Content-Type": "application/json"}
+    if HMAC_SECRET:
+        ts, nonce = str(time.time()), secrets.token_hex(8)
+        sig = hmac.new(HMAC_SECRET.encode("utf-8"),
+                       f"{ts}.{nonce}.".encode("utf-8") + raw, hashlib.sha256).hexdigest()
+        headers["X-ARGUS-TIMESTAMP"] = ts
+        headers["X-ARGUS-NONCE"] = nonce
+        headers["X-ARGUS-SIGNATURE"] = sig
+    return requests.post(f"{BACKEND}/api/argus/moomoo-capability-report",
+                         data=raw, headers=headers, timeout=40)
+
+
+def run_capability_test(qc):
+    """One full-universe sweep + metrics. Returns the report (also POSTed)."""
+    codes = _fetch_jp_universe()
+    if not codes:
+        print(_now_jst().strftime("%H:%M:%S"), "cap-test: no universe (J-Quants/admin?)")
+        return None
+    batches = [codes[i:i + CAP_BATCH] for i in range(0, len(codes), CAP_BATCH)]
+    t0 = time.time()
+    requested = returned = stale = errors = 0
+    ages, latencies = [], []
+    for b in batches:
+        requested += len(b)
+        bt = time.time()
+        try:
+            ret, df = qc.get_market_snapshot(b)
+            latencies.append(round(time.time() - bt, 2))
+            if ret != RET_OK:
+                errors += 1
+                continue
+            for _, row in df.iterrows():
+                returned += 1
+                ut = str(row.get("update_time") or "")[:19]
+                try:
+                    dt = _dt.datetime.strptime(ut, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_JST)
+                    age = (_now_jst() - dt).total_seconds()
+                    ages.append(age)
+                    if age >= 300:
+                        stale += 1
+                except Exception:
+                    pass
+        except Exception:
+            errors += 1
+        time.sleep(0.5)  # stagger batches — stay well under the rate quota
+    ages.sort()
+
+    def _pct(a, p):
+        return round(a[min(len(a) - 1, int(p * len(a)))], 1) if a else None
+    p95 = _pct(ages, 0.95)
+    med = _pct(ages, 0.5)
+    verdict = ("realtime_evidence" if p95 is not None and p95 <= 60 else
+               "delayed_evidence" if med is not None and med >= 600 else "unknown")
+    report = {
+        "asOf": _now_jst().isoformat(), "universeCount": len(codes), "batches": len(batches),
+        "batchSize": CAP_BATCH, "requested": requested, "returned": returned,
+        "coveragePct": round(returned / requested * 100, 1) if requested else 0,
+        "sweepSeconds": round(time.time() - t0, 1),
+        "batchLatencyMaxS": max(latencies) if latencies else None,
+        "quoteAgeMedianS": med, "quoteAgeP95S": p95,
+        "staleCount": stale, "errors": errors, "entitlementVerdict": verdict,
+        "noteJa": "venueのupdate_timeで鮮度を実測。p95<=60sでrealtime_evidence、中央値>=600sでdelayed。",
+    }
+    try:
+        resp = _post_capability_report(report)
+        print(_now_jst().strftime("%H:%M:%S"),
+              f"cap-test: cov={report['coveragePct']}% p95age={p95}s verdict={verdict} "
+              f"post={resp.status_code}")
+    except Exception as e:
+        print(_now_jst().strftime("%H:%M:%S"), "cap-test post error:", str(e)[:120])
+    return report
+
+
 def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
@@ -176,6 +286,20 @@ def main():
                     print(time.strftime("%H:%M:%S"), "snapshot error:", str(df)[:160])
             except Exception as e:
                 print(time.strftime("%H:%M:%S"), "loop error:", type(e).__name__, str(e)[:120])
+
+            # JP all-market capability test: auto-run ONCE per JP trading day, at
+            # the first loop where the market is open. Separate from (and after)
+            # the watchlist push so it never degrades the 16-symbol bridge.
+            if CAP_TEST_ENABLED:
+                global _cap_done_date
+                today = _now_jst().strftime("%Y-%m-%d")
+                if _jp_open_jst() and _cap_done_date != today:
+                    _cap_done_date = today
+                    try:
+                        run_capability_test(qc)
+                    except Exception as e:
+                        print(_now_jst().strftime("%H:%M:%S"), "cap-test error:", str(e)[:120])
+
             time.sleep(INTERVAL)
     finally:
         qc.close()
