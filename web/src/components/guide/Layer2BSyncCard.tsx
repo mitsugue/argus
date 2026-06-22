@@ -43,7 +43,8 @@ export const Layer2BSyncCard: React.FC = () => {
           : `⚠️ ${d.status}: ${d.note || ''}`);
       }
     } catch (e) {
-      setResult('通信エラー: ' + String(e).slice(0, 60));
+      const err = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      setResult('通信エラー: ' + err + ` (接続先: ${backend})`);
     } finally { setBusy(false); }
   }
 
@@ -63,7 +64,8 @@ export const Layer2BSyncCard: React.FC = () => {
             <input
               type="password" value={token} placeholder="Renderに設定したパスフレーズ"
               onChange={(e) => setToken(e.target.value)}
-              style={{ width: '100%', padding: '6px 8px', borderRadius: 6,
+              style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box',
+                       padding: '6px 8px', borderRadius: 6,
                        border: '1px solid var(--border, #2a3340)', background: 'transparent',
                        color: 'inherit', fontFamily: 'monospace' }}
             />
@@ -72,14 +74,17 @@ export const Layer2BSyncCard: React.FC = () => {
             </span>
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+        <div style={{ marginTop: 4 }}>
           <button onClick={sync} disabled={busy}
             style={{ padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
                      background: 'var(--accent, #3b82f6)', color: '#fff', fontWeight: 600,
                      opacity: busy ? 0.6 : 1 }}>
             {busy ? '同期中…' : '今すぐ同期'}
           </button>
-          {result && <span style={{ fontSize: '0.9em' }}>{result}</span>}
+          {result && (
+            <div style={{ fontSize: '0.9em', marginTop: 8, overflowWrap: 'anywhere',
+                          wordBreak: 'break-word' }}>{result}</div>
+          )}
         </div>
         <div className="guide-note">
           注意: これは校正(自己採点)のためのメタデータ同期で、注文・自動売買は一切ありません。
