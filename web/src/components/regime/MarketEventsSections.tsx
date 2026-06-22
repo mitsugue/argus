@@ -1,17 +1,17 @@
 import React, { useMemo } from 'react';
-import { PageShell } from './PageShell';
-import { LiveEventRow } from '../components/dashboard/LiveEventRow';
-import { useEventRadar } from '../hooks/useEventRadar';
-import { useNewsRadar } from '../hooks/useNewsRadar';
-import type { CalendarEvent, Escalation, EventSource } from '../types/events';
-import '../components/dashboard/Dashboard.css';
+import { LiveEventRow } from '../dashboard/LiveEventRow';
+import { useEventRadar } from '../../hooks/useEventRadar';
+import { useNewsRadar } from '../../hooks/useNewsRadar';
+import type { CalendarEvent, Escalation, EventSource } from '../../types/events';
+
+// Scheduled-event calendar + escalation policy + crisis news radar. Extracted from
+// the old Event Radar page (v10.57) so it lives on the unified Market Context page —
+// "what's coming" sits next to "where we are now" instead of in a separate tab.
 
 const NEWS_LEVEL_COLOR: Record<string, string> = {
   calm: 'var(--text-muted)', elevated: 'var(--amber)', high: 'var(--red)', unknown: 'var(--text-muted)',
 };
 
-// Black-swan CAUSE radar (v10.6): crisis-headline counts per theme. Calm and
-// honest — counts are a reference signal (見出しベース), not verified facts.
 const NewsRadarSection: React.FC = () => {
   const { data, loading } = useNewsRadar();
   if (loading) return null;
@@ -56,8 +56,6 @@ const NewsRadarSection: React.FC = () => {
   );
 };
 
-// Window labels stay short English (D-7..D+1) — they're structural. Stage label
-// + note in JP — market commentary stays Japanese while window codes stay English.
 const ESCALATION = [
   { window: 'D-7', label: '警戒(認識)',           note: '認識のみ。ポジション縮小は不要。' },
   { window: 'D-3', label: '新規エントリー抑制',     note: '新規の高確信サテライト・ポジションを避ける。' },
@@ -66,16 +64,12 @@ const ESCALATION = [
   { window: 'D+1', label: '解消 / 押し目買い判定', note: 'リスク解消なら再エントリー、押し目なら段階買い。' },
 ];
 
-// Sort: D first, then D-1, D-3, D-7, then post-event D+1, then far-future normal.
 const ESC_RANK: Record<Escalation, number> = {
   D: 0, 'D-1': 1, 'D-3': 2, 'D-7': 3, 'D+1': 4, normal: 5,
 };
 
 const SOURCE_DOT: Record<string, string> = {
-  live: 'var(--green)',
-  partial: 'var(--amber)',
-  error: 'var(--red)',
-  mock: 'var(--amber)',
+  live: 'var(--green)', partial: 'var(--amber)', error: 'var(--red)', mock: 'var(--amber)',
 };
 
 const SourceStrip: React.FC<{ sources: EventSource[] }> = ({ sources }) => (
@@ -89,7 +83,7 @@ const SourceStrip: React.FC<{ sources: EventSource[] }> = ({ sources }) => (
   </div>
 );
 
-export const EventRadar: React.FC = () => {
+export const MarketEventsSections: React.FC = () => {
   const { data, phase, attempt } = useEventRadar();
 
   const sorted = useMemo<CalendarEvent[]>(() => {
@@ -104,13 +98,10 @@ export const EventRadar: React.FC = () => {
   const asOfDate = data?.asOf ? data.asOf.slice(0, 10) : null;
 
   return (
-    <PageShell
-      title="Event Radar"
-      subtitle="Scheduled official events that drive the action labels. A calm risk calendar, not a news feed."
-    >
+    <>
       <section>
         <div className="section-head">
-          <span className="section-head__title">Upcoming</span>
+          <span className="section-head__title">Upcoming events</span>
           <span className={`watch-status watch-status--${phase}`}>{statusLabel}</span>
           {phase !== 'connecting' && asOfDate ? (
             <span className="section-head__count">{phase} · as of {asOfDate}</span>
@@ -144,6 +135,6 @@ export const EventRadar: React.FC = () => {
       </section>
 
       <NewsRadarSection />
-    </PageShell>
+    </>
   );
 };

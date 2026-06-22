@@ -3,7 +3,6 @@ import { AppShell } from './components/AppShell';
 import { NavRail, type RouteKey } from './components/NavRail';
 import { CommandCenter } from './routes/CommandCenter';
 import { MarketRegime } from './routes/MarketRegime';
-import { EventRadar } from './routes/EventRadar';
 import { Watchlist } from './routes/Watchlist';
 import { CorePortfolio } from './routes/CorePortfolio';
 import { Guide } from './routes/Guide';
@@ -20,7 +19,6 @@ interface RouteProps {
 const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   command:   CommandCenter,
   regime:    MarketRegime as React.FC<RouteProps>,
-  events:    EventRadar as React.FC<RouteProps>,
   watchlist: Watchlist as React.FC<RouteProps>,
   core:      CorePortfolio as React.FC<RouteProps>,
   guide:     Guide as React.FC<RouteProps>,
@@ -86,7 +84,7 @@ const App: React.FC = () => {
       impact: 'high' as const,
       onClick: () => {
         exitReview();
-        setRoute('events');
+        setRoute('regime');   // the event calendar now lives on Market Context
       },
     };
     // exitReview is stable in practice (defined per render but only mutates state)
@@ -100,10 +98,10 @@ const App: React.FC = () => {
 
   // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
   // Keep in sync with NavRail's NAV order (1=全体把握 2=個別 3+=その他情報).
-  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'regime', 'events', 'core', 'guide'];
+  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'regime', 'core', 'guide'];
   const NAV_LABEL: Record<RouteKey, string> = {
-    command: 'Today', regime: 'Market Regime',
-    events: 'Event Radar', watchlist: 'Watchlist', core: 'Core Portfolio', guide: 'Guide',
+    command: 'Today', regime: 'Market Context',
+    watchlist: 'Watchlist', core: 'Core Portfolio', guide: 'Guide',
   };
   const curIdx = NAV_ORDER.indexOf(route);
   const overscrollNext = (!isReview && curIdx >= 0 && curIdx + 1 < NAV_ORDER.length)

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo } from 'react';
 import { PageShell } from './PageShell';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
-import { FredRatesSnapshot } from '../components/regime/FredRatesSnapshot';
+import { MarketEventsSections } from '../components/regime/MarketEventsSections';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import type {
   CapitalRotationRow, FlowLabel, FlowStrength, RegimeMatrixState,
@@ -12,17 +12,6 @@ import '../components/dashboard/Dashboard.css';
 
 // Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
 // bilingual split, not a transition mistake.
-const REGIME_GLOSSARY: { tag: string; gloss: string }[] = [
-  { tag: 'Risk On',               gloss: '株式・ハイベータが牽引、ディフェンシブは遅れる。' },
-  { tag: 'Risk Off',              gloss: 'ディフェンシブが先導、株式・クレジットが弱含み。' },
-  { tag: 'Event Wait',            gloss: 'ウィンドウ内に主要触媒。新規エントリーを抑制。' },
-  { tag: 'Cautious',              gloss: '方向感は限定的、金利・VIX・イベントのリスクがくすぶる。' },
-  { tag: 'Mixed',                 gloss: '明確な主導役がなく、資金の方向感は限定的。' },
-  { tag: 'Rates Pressure',        gloss: '金利上昇 — デュレーション資産とグロース倍率が圧縮。' },
-  { tag: 'Credit Stress',         gloss: 'ハイイールド・スプレッド拡大、リスク回避の兆候。' },
-  { tag: 'Gold Hedge',            gloss: 'マクロ不安または実質利回り反転で金が先行。' },
-];
-
 const REGIME_LABEL_JA: Record<string, string> = {
   RISK_ON: 'Risk On', RISK_OFF: 'Risk Off', CAUTIOUS: 'Cautious',
   EVENT_WAIT: 'Event Wait', MIXED: 'Mixed',
@@ -104,8 +93,8 @@ export const MarketRegime: React.FC = () => {
 
   return (
     <PageShell
-      title="Market Regime"
-      subtitle="Current cross-asset environment and capital rotation. Visualizations support action labels; they are not trading signals by themselves. ETF rotation is a proxy for capital flow, not direct flow."
+      title="Market Context"
+      subtitle="今の地合い(レジーム・資金ローテーション・金利)と、これから来る予定イベント・危機ニュースを1画面に。アクションラベルの裏付けであって、それ自体は売買シグナルではない。ETFローテーションは資金フローのproxy。"
     >
       {/* Status + regime header */}
       <div className="card regime-head">
@@ -182,13 +171,9 @@ export const MarketRegime: React.FC = () => {
         </section>
       )}
 
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">FRED Rates Snapshot</span>
-          <span className="section-head__count">live data source</span>
-        </div>
-        <FredRatesSnapshot />
-      </section>
+      {/* Forward-looking context: scheduled events + escalation + crisis news
+          (merged from the old Event Radar page, v10.57). */}
+      <MarketEventsSections />
 
       {data && data.dataLimitations.length > 0 && (
         <section>
@@ -203,25 +188,6 @@ export const MarketRegime: React.FC = () => {
           </div>
         </section>
       )}
-
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">Regime glossary</span>
-          <span className="section-head__count">{REGIME_GLOSSARY.length} tags</span>
-        </div>
-        <div className="card" style={{ padding: 0 }}>
-          <div className="core-list" style={{ padding: '4px 22px' }}>
-            {REGIME_GLOSSARY.map((g) => (
-              <div className="core-row" key={g.tag}>
-                <div className="core-row__body">
-                  <span className="core-row__top">{g.tag}</span>
-                  <span className="core-row__reason">{g.gloss}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
     </PageShell>
   );
 };
