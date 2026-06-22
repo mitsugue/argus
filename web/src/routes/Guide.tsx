@@ -9,9 +9,28 @@ import '../components/dashboard/Dashboard.css';
 // ── できること / 最近のアップデート ──────────────────────────────
 // RULE (v9.10.1+): バージョンアップのたびに、この2つのリストも必ず更新する。
 // アプリ内の説明書は常に「現在の実力」を正確に語ること（HANDOFF.md にも明記）。
+// Page-by-page "how to use" — in the same order as the left nav, so the guide
+// matches how you actually move through the app. Kept in sync with every update.
+const PAGE_GUIDE: { page: string; descJa: string }[] = [
+  { page: '共通ヘッダー / ナビ',
+    descJa: '左上の「A.R.G.U.S.」をタップ → システム状態のポップアップ(AI予算・各データ源・通知などの健全性。緑=正常/橙=注意/赤=停止。外側タップで閉じる)。ロゴ横の小さなドットは常時の健康ランプ。左の縦ナビでページ移動(各ページは下端で強く引っ張ると次ページへも進める)。' },
+  { page: '① Today(今日の判断)',
+    descJa: 'まずここを開く。市場ランプで今どの市場が開いているか→総合判断(HOLD等/リスク/理由/触る・避ける・次の条件)で今日の構え→24/7イベントでS高/急変の有無(タップで「何が起きた/原因/シナリオ/罠」)→判断ログで自己採点の成績。10秒で全体把握。' },
+  { page: '② Watchlist(個別銘柄)',
+    descJa: '日本株/米国株/投信/暗号資産を検索して追加・ドラッグ並べ替え。各行に行動ラベル+戦略カード(理由/次の条件/シナリオ確率)、日米株は「⚡エントリー診断」で入りの瞬間判断。保有数量・取得単価を入れると評価額/含み損益(端末内のみ)。「¥XをYに追加したら?」のWhat-if試算もここ。' },
+  { page: '③ Market Regime(地合い)',
+    descJa: '資金がどこへ回っているか(資金ローテーション)と全体レジーム(RISK_ON〜EVENT_WAIT)をルールで判定。金利/VIX/HY OASの背景もここ。Todayの判断の「なぜ」を裏取りしたい時に開く。' },
+  { page: '④ Event Radar(予定イベント)',
+    descJa: '公式カレンダー(FOMC/CPI/雇用/日銀/国債入札)をD-7→D+1でエスカレーション表示。危機級ヘッドライン監視(News Radar)も。今週の地雷を事前に把握する静かなリスク暦。' },
+  { page: '⑤ Core Portfolio(資産配分)',
+    descJa: '①あなたの実配分(円換算・含み損益) ②8資産クラスのライブ判断(クラス判断) ③姿勢連動の積立方針。「比率をどう動かすか」の意思決定はこのページで完結。' },
+  { page: '⑥ Guide(このページ)',
+    descJa: '使い方・用語・自己採点の成績(Ledger Health)・情報源の真実性(レジストリ)・暗号化バックアップ設定。困ったらここ。アプリ更新のたびに自動で最新化されます。' },
+];
+
 const CAPABILITIES: { area: string; descJa: string }[] = [
   { area: '今日の判断 (Today)',
-    descJa: '市場全体の姿勢(WAIT/HOLD等)・リスク・理由・触るもの/避けるもの・次に待つ条件を、金利/レジーム/イベント/価格からライブ合成。開いて10秒で今日の構えが分かる。' },
+    descJa: '①市場セッションランプ(JP/US market・Crypto — 開場中は緑、引け後は消灯) ②総合判断(WAIT/HOLD等)・リスク・理由・触る/避ける/次に待つ条件を金利/レジーム/イベント/価格からライブ合成 ③24/7イベント(S高/急変・タップで調査ドシエ) ④判断ログ(自己採点)。開いて10秒で今日の構えが分かる。' },
   { area: 'Watchlist',
     descJa: '銘柄を検索して追加(日本株/米国株/投信/暗号資産)・ドラッグ並べ替え。追加した銘柄には自動でライブ価格+ルールベースの行動ラベル+戦略カード(理由/次の条件/シナリオ確率)が付く。日米株はカード内の「⚡エントリー診断」で入りの瞬間判断(トレンド/過熱/大口フロー/イベント)を即取得(v10.15+)。' },
   { area: '大口フロー (Big-money)',
@@ -19,13 +38,13 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
   { area: '価格データ',
     descJa: '日本株=J-Quants(前日終値)、米国株=Twelve Data(Basicはレギュラー時間の米国株/ETFがリアルタイム・時間外RTは上位プラン要)、暗号資産=CoinGecko。moomooブリッジ稼働中は日米株がリアルタイムに自動アップグレード(途絶時は自動フォールバック)。画面を開いている間は15秒毎に自動更新(v10.10.1+)。「15秒push」は配信頻度でデータ鮮度ではなく、ブリッジの真のリアルタイム性はexchangeTsで証明できるまでentitlement=unknown(過大主張しない)。古いデータは「delayed」表示+確信度を自動で下げる。' },
   { area: '資産クラス司令室 (Core Portfolio)',
-    descJa: '①あなたの実配分(円換算・含み損益・ジャンル別バー) ②金/債券/REIT/仮想通貨/USDJPY/現金/日米株の8クラスのライブ判断 ③姿勢連動の積立方針を1ページに統合(v10.13+)。比率調整の意思決定はここで。8クラス判断はAction Alertsページにも表示。' },
+    descJa: '①あなたの実配分(円換算・含み損益・ジャンル別バー) ②金/債券/REIT/仮想通貨/USDJPY/現金/日米株の8クラスのライブ判断(クラス判断) ③姿勢連動の積立方針を1ページに統合(v10.13+)。比率調整の意思決定はここで。' },
   { area: 'Market Regime',
     descJa: '資金がどこへ回転しているか(ETF proxy)とレジーム(RISK_ON〜EVENT_WAIT)をルールベースで判定。行動ラベルにも反映。' },
   { area: 'Event Radar',
     descJa: 'FOMC/CPI/雇用/日銀/国債入札などの公式カレンダーをD-7→D+1でエスカレーション表示。' },
   { area: 'News Radar (原因検知)',
-    descJa: '戦争・為替介入・金融破綻・緊急会見・非常事態などの危機級ヘッドライン件数を6時間窓で監視(GDELT)。テーマが増加に転じたらスマホへ通知し、朝ダイジェストにも掲載。さらにTodayにはFinnhubの市場速報フィード(ECB/Fed/介入など⚡強調、v10.12+)。いずれも参考情報で事実検証はしない。' },
+    descJa: '戦争・為替介入・金融破綻・緊急会見・非常事態などの危機級ヘッドライン件数を6時間窓で監視(GDELT)。テーマが増加に転じたらスマホへ通知し、朝ダイジェストにも掲載(Event Radarページに表示)。参考情報で事実検証はしない。' },
   { area: 'What-if シミュレーション',
     descJa: '「¥Xを銘柄Yに追加したら?」— 追加後の配分変化・集中リスク警告・シナリオ別損益帯(仮定幅×ルールエンジンの確率)をWatchlist上で試算。予測ではなくシナリオ整理。端末内計算のみ。' },
   { area: '保有と評価 (Portfolio)',
@@ -49,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.56.0', '使い方ガイドをページ別に刷新 — Guideの先頭に「使い方 — ページ別ガイド」を追加(共通ヘッダー→Today→Watchlist→Market Regime→Event Radar→Core Portfolio→Guideの順で、各ページの目的と操作を説明)。削除済みのAction Alerts/旧Today要素への古い記述も訂正。以後アプリ更新のたびにこの使い方ページも自動で最新化します'],
   ['v10.55.0', '重複の整理(続き) — ①Topの「Priority watchlist」を削除(Watchlistページの上位抜粋で重複)。Todayは市場ランプ+総合判断+24/7イベント+判断ログに集約 ②「Action Alerts」ページをナビごと廃止(中身のSatellites=Core Portfolioの「クラス判断」、Index Funds=「積立方針」と完全重複。Core Portfolioは「あなたの配分」も持つ上位互換)。不要な価格取得もカット。ナビは Today/Watchlist/Market Regime/Event Radar/Core Portfolio/Guide に簡素化'],
   ['v10.54.0', 'Topの「partial」表記を「市場セッションのランプ」に置換 — 分かりにくい partial を廃止し、JP market / US market / Crypto の名前+緑ランプで「今どの市場が開いているか」を直接表示(開場中=緑・引け後=消灯)。金利/イベント等の"API/データ源が動いているか"はTopの鮮度ではなく左上ARGUSロゴのシステム状態ポップアップで判断する、と役割を明確に分離'],
   ['v10.53.0', 'システム状態を左上のA.R.G.U.S.ロゴに統合 — ロゴをタップするとポップアップで全システムの健全性(AI予算・各データ源・通知など9項目)を表示、外側をタップ(またはEsc)で閉じる。ロゴ横に常時表示の状態ドット(緑=正常/橙=注意/赤=停止)が付き、どのページからでも一目で異常に気づけます。Todayの帯は廃止し、グローバルなヘッダー表示に一本化'],
@@ -123,10 +143,27 @@ const HOWTO: string[] = [
 
 export const Guide: React.FC = () => {
   return (
-    <PageShell title="Glossary / Guide" subtitle="ARGUS でできること・用語一覧・使い方(日本語ガイド)。">
+    <PageShell title="Glossary / Guide" subtitle="使い方(ページ別)・できること・用語一覧(日本語ガイド)。">
       <section>
         <div className="section-head">
-          <span className="section-head__title">ARGUS でできること</span>
+          <span className="section-head__title">使い方 — ページ別ガイド</span>
+          <span className="section-head__count">ナビ順</span>
+        </div>
+        <div className="card guide-card">
+          <div className="guide-caps">
+            {PAGE_GUIDE.map((p) => (
+              <div className="guide-cap" key={p.page}>
+                <span className="guide-cap__area">{p.page}</span>
+                <span className="guide-cap__desc">{p.descJa}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">ARGUS でできること(機能一覧)</span>
           <span className="section-head__count">v{__APP_VERSION__} 時点</span>
         </div>
         <div className="card guide-card">
