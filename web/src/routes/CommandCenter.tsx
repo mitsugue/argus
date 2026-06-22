@@ -3,7 +3,6 @@ import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
-import { CompactWatchRow } from '../components/dashboard/CompactWatchRow';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
 import { useLedgerSummary } from '../hooks/useLedgerSummary';
@@ -11,15 +10,11 @@ import { useAIJudgment } from '../hooks/useAIJudgment';
 import { useActionLabels } from '../hooks/useActionLabels';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
-import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
-import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useAssets } from '../hooks/useAssets';
 import {
-  deriveTodayJudgment, mapRuleAction, combinePhase,
+  deriveTodayJudgment, combinePhase,
   type TodayPhase,
 } from '../lib/todayCall';
-import type { ActionKey } from '../types/action';
-import type { WatchEntry } from '../types/watch';
 import type { RouteKey } from '../components/NavRail';
 import '../components/dashboard/Dashboard.css';
 
@@ -28,19 +23,7 @@ interface Props {
 }
 
 // Today is a SUMMARY composed from LIVE data (action-labels + market-regime +
-// events + watchlist quotes). Detail lives on the respective detail pages.
-const URGENCY: Record<ActionKey, number> = {
-  EXIT: 0,
-  TRIM: 1,
-  WAIT_FOR_PULLBACK: 2,
-  WAIT: 3,
-  BUY_DIP: 4,
-  ADD: 5,
-  HOLD: 6,
-};
-
-const PRIORITY_WATCH_LIMIT = 3;
-
+// events). Detail lives on the respective detail pages.
 const formatDate = (iso: string) => {
   const d = new Date(`${iso}T00:00:00+09:00`);
   return d.toLocaleDateString('en-US', {
@@ -77,8 +60,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const al = useActionLabels({ jp: jpSyms, us: usSyms });
   const regime = useMarketRegime();
   const ev = useEventRadar();
-  const jp = useJapanWatchlist(jpSyms);
-  const us = useUSWatchlist(usSyms);
 
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
@@ -120,34 +101,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     }
     return { diffLineJa: line, recent: recentJudgments(7) };
   }, [logTick, judgment, phase, al.data]);
-
-  // Priority watchlist: real action labels + live quotes, most urgent first.
-  // Rows without a quote are skipped — no fake prices on the home page.
-  const { priority, totalNamed } = useMemo(() => {
-    // LIVE quotes only — a mock fallback price must never appear on Today.
-    const quotes = new Map<string, { price: number; changePct: number; changeAbs: number; volume: number }>();
-    for (const s of jp.data?.stocks ?? []) if (s.status === 'live') quotes.set(s.symbol, s);
-    for (const s of us.data?.stocks ?? []) if (s.status === 'live') quotes.set(s.symbol, s);
-    const entries: (WatchEntry & { __conf: number })[] = [];
-    for (const l of al.data?.labels ?? []) {
-      const q = quotes.get(l.symbol);
-      if (!q) continue;
-      const base = {
-        symbol: l.symbol, name: l.name,
-        price: q.price, changePct: q.changePct, changeAbs: q.changeAbs,
-        action: mapRuleAction(l.action), reason: l.reasonJa,
-        updatedAt: judgment.updatedAt, confidence: l.confidence,
-        __conf: l.confidence,
-      };
-      entries.push(l.market === 'JP'
-        ? { ...base, market: 'JP', volume: q.volume }
-        : { ...base, market: 'US', volume: q.volume });
-    }
-    entries.sort((a, b) =>
-      (URGENCY[a.action] - URGENCY[b.action]) ||
-      (Math.abs(b.changePct) - Math.abs(a.changePct)));
-    return { priority: entries.slice(0, PRIORITY_WATCH_LIMIT), totalNamed: entries.length };
-  }, [al.data, jp.data, us.data, judgment.updatedAt]);
 
   return (
     <PageShell
@@ -218,35 +171,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               ))}
             </div>
           )}
-        </div>
-      </section>
-
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">Priority watchlist</span>
-          <button className="section-head__link" onClick={() => onNavigate('watchlist')}>
-            {priority.length} of {totalNamed} names · view all
-          </button>
-        </div>
-        {(() => {
-          // v10.36 (#3): honest quote freshness — pushed every ~15s, but say
-          // 'unknown' on entitlement until the bridge confirms realtime vs 15-min.
-          const qf = (jp.data as { quoteFreshness?: { entitlement?: string; newestAgeSec?: number | null; session?: string } } | null)?.quoteFreshness;
-          if (!qf) return null;
-          const entJa = qf.entitlement === 'realtime' ? 'リアルタイム' : qf.entitlement === 'delayed' ? '15分遅延' : '未確認';
-          const sessJa = qf.session === 'open' ? '取引時間中' : qf.session === 'closed' ? '引け後/休場' : '';
-          return (
-            <div className="watch-fresh">
-              📡 moomoo配信: {qf.newestAgeSec != null ? `${qf.newestAgeSec}秒前` : '—'}
-              {sessJa && ` · ${sessJa}`} · データ権限 <b>{entJa}</b>
-              {qf.entitlement !== 'realtime' && '（配信は速いが元データの権限が未確認のため realtime と断定せず）'}
-            </div>
-          );
-        })()}
-        <div className="card watch-list">
-          {priority.length > 0
-            ? priority.map((row) => <CompactWatchRow key={row.symbol} entry={row} />)
-            : <p className="today-connecting">connecting… ライブ価格と行動ラベルを取得中</p>}
         </div>
       </section>
     </PageShell>

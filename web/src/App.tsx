@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { NavRail, type RouteKey } from './components/NavRail';
 import { CommandCenter } from './routes/CommandCenter';
-import { ActionAlerts } from './routes/ActionAlerts';
 import { MarketRegime } from './routes/MarketRegime';
 import { EventRadar } from './routes/EventRadar';
 import { Watchlist } from './routes/Watchlist';
@@ -20,7 +19,6 @@ interface RouteProps {
 
 const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   command:   CommandCenter,
-  alerts:    ActionAlerts as React.FC<RouteProps>,
   regime:    MarketRegime as React.FC<RouteProps>,
   events:    EventRadar as React.FC<RouteProps>,
   watchlist: Watchlist as React.FC<RouteProps>,
@@ -102,9 +100,9 @@ const App: React.FC = () => {
 
   // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
   // Keep in sync with NavRail's NAV order (1=全体把握 2=個別 3+=その他情報).
-  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'alerts', 'regime', 'events', 'core', 'guide'];
+  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'regime', 'events', 'core', 'guide'];
   const NAV_LABEL: Record<RouteKey, string> = {
-    command: 'Today', alerts: 'Action Alerts', regime: 'Market Regime',
+    command: 'Today', regime: 'Market Regime',
     events: 'Event Radar', watchlist: 'Watchlist', core: 'Core Portfolio', guide: 'Guide',
   };
   const curIdx = NAV_ORDER.indexOf(route);

@@ -49,6 +49,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.55.0', '重複の整理(続き) — ①Topの「Priority watchlist」を削除(Watchlistページの上位抜粋で重複)。Todayは市場ランプ+総合判断+24/7イベント+判断ログに集約 ②「Action Alerts」ページをナビごと廃止(中身のSatellites=Core Portfolioの「クラス判断」、Index Funds=「積立方針」と完全重複。Core Portfolioは「あなたの配分」も持つ上位互換)。不要な価格取得もカット。ナビは Today/Watchlist/Market Regime/Event Radar/Core Portfolio/Guide に簡素化'],
   ['v10.54.0', 'Topの「partial」表記を「市場セッションのランプ」に置換 — 分かりにくい partial を廃止し、JP market / US market / Crypto の名前+緑ランプで「今どの市場が開いているか」を直接表示(開場中=緑・引け後=消灯)。金利/イベント等の"API/データ源が動いているか"はTopの鮮度ではなく左上ARGUSロゴのシステム状態ポップアップで判断する、と役割を明確に分離'],
   ['v10.53.0', 'システム状態を左上のA.R.G.U.S.ロゴに統合 — ロゴをタップするとポップアップで全システムの健全性(AI予算・各データ源・通知など9項目)を表示、外側をタップ(またはEsc)で閉じる。ロゴ横に常時表示の状態ドット(緑=正常/橙=注意/赤=停止)が付き、どのページからでも一目で異常に気づけます。Todayの帯は廃止し、グローバルなヘッダー表示に一本化'],
   ['v10.52.0', '日本株は必ず会社名を表示+Today画面の重複を整理 — ①イベントカード/スマホ通知/Pro相談/材料一覧で日本株がバレ4桁だった箇所を「会社名(コード)」表示に(会社名はJ-Quantsマスターから解決・推測しない)②Today(トップ)を統合ビューに専念させ、専用ページと重複していた4セクション(Event Radarカレンダー・Market News・Top Rotations・Core Portfolio抜粋)を削除。イベントカードもTodayに一本化(Action Alertsの重複を解消)。情報は各専用ページに残るので消えません。不要なニュース取得もカット'],

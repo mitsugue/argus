@@ -5,7 +5,6 @@ import './NavRail.css';
 
 export type RouteKey =
   | 'command'
-  | 'alerts'
   | 'regime'
   | 'events'
   | 'watchlist'
@@ -23,7 +22,6 @@ interface NavItem {
 const NAV: NavItem[] = [
   { key: 'command',   label: 'Today' },
   { key: 'watchlist', label: 'Watchlist' },
-  { key: 'alerts',    label: 'Action Alerts' },
   { key: 'regime',    label: 'Market Regime' },
   { key: 'events',    label: 'Event Radar' },
   { key: 'core',      label: 'Core Portfolio' },
