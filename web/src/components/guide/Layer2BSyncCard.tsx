@@ -48,10 +48,12 @@ export const Layer2BSyncCard: React.FC = () => {
         }
         if (!r.ok || !d) {
           setResult(`失敗: ${(d && d.error) || r.status}${d && d.errors ? ' — ' + d.errors.join(', ') : ''}`);
+        } else if (d.status === 'synced') {
+          setResult(`✅ 同期完了: ${d.symbolCount}銘柄を private ストアに保存(${d.effectiveFrom})`);
+        } else if (d.status === 'failed') {
+          setResult(`⚠️ private保存に失敗: ${d.persistDetail || d.note || ''}`);
         } else {
-          setResult(d.status === 'synced'
-            ? `✅ 同期完了: ${d.symbolCount}銘柄を private ストアに保存(${d.effectiveFrom})`
-            : `⚠️ ${d.status}: ${d.note || ''}`);
+          setResult(`⚠️ ${d.status}: ${d.note || ''}`);
         }
         setBusy(false);
         return; // got a real response — done

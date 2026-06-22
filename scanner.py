@@ -1637,16 +1637,31 @@ def _gh_private_put(path, content_str, message, overwrite=True):
 
 def _layer2b_persist_private(snapshot):
     """Write an IMMUTABLE daily membership snapshot to the private repo, plus a
-    mutable latest pointer. Raises on failure so the caller can mark 'failed'."""
-    import json as _json
+    mutable latest pointer. Raises with the GitHub HTTP status on failure so the
+    owner can see WHY (e.g. 404 wrong repo path, 403 token scope)."""
+    import json as _json, base64
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
     blob = _json.dumps(snapshot, ensure_ascii=False, indent=2)
     eff = snapshot.get("effectiveFrom", "unknown")
-    ok1 = _gh_private_put(f"membership/{eff}.json", blob,
-                          f"layer2b membership {eff}", overwrite=False)
-    ok2 = _gh_private_put("membership/latest.json", blob,
-                          f"layer2b latest {eff}", overwrite=True)
-    if not (ok1 and ok2):
-        raise RuntimeError("private store write failed")
+    for path, overwrite in ((f"membership/{eff}.json", False), ("membership/latest.json", True)):
+        url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        sha = None
+        rg = requests.get(url, headers=_gh_private_headers(), timeout=15)
+        if rg.status_code == 200:
+            sha = rg.json().get("sha")
+        elif rg.status_code != 404:
+            raise RuntimeError(f"GitHub GET {rg.status_code} ({repo}/{path}): "
+                               f"{(rg.json().get('message') if rg.headers.get('content-type','').startswith('application/json') else rg.text)[:90]}")
+        if sha and not overwrite:
+            continue  # immutable daily snapshot already exists
+        b = {"message": f"layer2b {path} {eff}",
+             "content": base64.b64encode(blob.encode("utf-8")).decode("ascii")}
+        if sha:
+            b["sha"] = sha
+        rp = requests.put(url, headers=_gh_private_headers(), json=b, timeout=20)
+        if rp.status_code not in (200, 201):
+            msg = rp.json().get("message", "") if rp.headers.get("content-type", "").startswith("application/json") else rp.text
+            raise RuntimeError(f"GitHub PUT {rp.status_code} ({repo}/{path}): {str(msg)[:90]}")
 
 def _layer2b_read_latest():
     """Read the latest membership snapshot from the private repo (owner-gated)."""
@@ -1673,36 +1688,47 @@ def api_argus_watchlist_sync():
     ok, err, code = _require_owner_sync(body_token=token)
     if not ok:
         return jsonify(err), code
-    W = argus_watchlist_sync
-    valid, cleaned, errs = W.validate_sync_payload(body)
-    if not valid:
-        return jsonify({"ok": False, "errors": errs,
-                        "note": "Research simulation only. Metadata only — no portfolio data accepted."}), 400
-    eff = datetime.now(TZ_JST).strftime("%Y-%m-%d")
-    gen = _ai_now_iso()
-    sid = "wl-" + hashlib.sha256((eff + W.content_hash(cleaned["items"])).encode("utf-8")).hexdigest()[:10]
-    snap = W.build_membership_snapshot(cleaned["items"], effective_date=eff,
-                                       generated_at=gen, snapshot_id=sid)
-    configured = _layer2b_store_configured()
-    status = "synced"
-    if configured:
-        try:
-            _layer2b_persist_private(snap)
-        except Exception:
-            status = "failed"
-    else:
-        status = "disabled_pending_private_store"
-    _LAYER2B_STATE.update({"lastSyncAt": gen, "lastStatus": status,
-                           "lastHash": snap["contentHash"], "symbolCount": snap["symbolCount"]})
-    return jsonify({
-        "ok": True, "status": status, "snapshotId": sid,
-        "symbolCount": snap["symbolCount"], "contentHash": snap["contentHash"],
-        "effectiveFrom": eff, "privateStoreConfigured": configured,
-        "note": ("Stored privately. Research/calibration metadata only — no order, no portfolio data."
-                 if configured else
-                 "Layer 2B scoring disabled until a private store is configured — nothing was persisted "
-                 "(public-repo privacy). Research metadata only; no order."),
-    })
+    # Post-auth work is wrapped so a bug surfaces as a readable error to the
+    # AUTHENTICATED owner (safe) instead of a blank HTTP 500. persist_detail
+    # captures WHY a private-store write failed (the common real cause).
+    persist_detail = None
+    try:
+        W = argus_watchlist_sync
+        valid, cleaned, errs = W.validate_sync_payload(body)
+        if not valid:
+            return jsonify({"ok": False, "errors": errs,
+                            "note": "Research simulation only. Metadata only — no portfolio data accepted."}), 400
+        eff = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        gen = _ai_now_iso()
+        sid = "wl-" + hashlib.sha256((eff + W.content_hash(cleaned["items"])).encode("utf-8")).hexdigest()[:10]
+        snap = W.build_membership_snapshot(cleaned["items"], effective_date=eff,
+                                           generated_at=gen, snapshot_id=sid)
+        configured = _layer2b_store_configured()
+        status = "synced"
+        if configured:
+            try:
+                _layer2b_persist_private(snap)
+            except Exception as pe:
+                status = "failed"
+                persist_detail = f"{type(pe).__name__}: {str(pe)[:140]}"
+        else:
+            status = "disabled_pending_private_store"
+        _LAYER2B_STATE.update({"lastSyncAt": gen, "lastStatus": status,
+                               "lastHash": snap["contentHash"], "symbolCount": snap["symbolCount"]})
+        return jsonify({
+            "ok": True, "status": status, "snapshotId": sid,
+            "symbolCount": snap["symbolCount"], "contentHash": snap["contentHash"],
+            "effectiveFrom": eff, "privateStoreConfigured": configured,
+            "persistDetail": persist_detail,
+            "note": ("Stored privately. Research/calibration metadata only — no order, no portfolio data."
+                     if status == "synced" else
+                     "Private-store write did not complete — see persistDetail."
+                     if status == "failed" else
+                     "Layer 2B scoring disabled until a private store is configured."),
+        })
+    except Exception as e:
+        return jsonify({"ok": False,
+                        "error": f"server_error: {type(e).__name__}: {str(e)[:160]}"}), 500
 
 @app.route("/api/argus/calibration/watchlist-sync-status")
 def api_argus_watchlist_sync_status():
