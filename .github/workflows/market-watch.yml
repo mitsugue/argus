@@ -1,0 +1,28 @@
+# ARGUS US whole-market mover scan (v10.62). Polls /market-scan during US hours
+# so market-WIDE gainers/losers (beyond the watchlist) become 24/7 events + ntfy
+# alerts. Admin-token gated. No-op until ALPHAVANTAGE_API_KEY is set on Render
+# (the scan returns status=missing_key and records nothing). Alpha Vantage free
+# tier = 25 req/day, so every 30 min within the US session stays well under.
+name: market-watch
+
+on:
+  schedule:
+    # Every 30 min, 13:00–21:00 UTC Mon–Fri (covers US pre-market + regular).
+    - cron: '*/30 13-21 * * 1-5'
+  workflow_dispatch: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger US market scan
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
+          RESP=$(curl -s --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/market-scan" || echo '{"error":"unreachable"}')
+          echo "market-scan: $RESP"

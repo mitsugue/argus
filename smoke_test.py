@@ -83,6 +83,12 @@ def v_fund_nav():
     ok = isinstance(funds, list) and len(funds) >= 1 and isinstance(funds[0].get("navYen"), (int, float))
     return ok, f"{len(funds or [])} funds nav (e.g. {funds[0]['code']}=¥{funds[0]['navYen']})" if funds else "no funds"
 
+def v_market_movers():
+    c, d = _get("/api/argus/market-movers")
+    # valid even without a key (status=missing_key); just assert the shape.
+    return d.get("status") in ("live", "missing_key", "unavailable") and "gainers" in d, \
+        f"status={d.get('status')} gainers={len(d.get('gainers', []))}"
+
 def v_scout_jp():
     # The key refactor regression check: moved scoring must still produce output.
     c, d = _get("/api/argus/entry-scout?symbol=7203")
@@ -184,6 +190,7 @@ CHECKS = [
     ("us-watchlist", v_us),
     ("crypto-watchlist", v_crypto),
     ("fund-nav (投信 NAV)", v_fund_nav),
+    ("market-movers (US全市場)", v_market_movers),
     ("entry-scout JP (moved code)", v_scout_jp),
     ("entry-scout US", v_scout_us),
     ("scout-batch", v_scout_batch),

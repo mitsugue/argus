@@ -28,7 +28,28 @@ EVENT_TYPES = {
     "COMMODITY_SHOCK", "CRYPTO_SHOCK", "CROSS_MARKET_ANOMALY", "PRE_MARKET_ANOMALY",
     "AFTER_HOURS_ANOMALY", "PTS_ANOMALY", "DATA_QUALITY_ALERT", "SOURCE_HEARTBEAT_FAILURE",
     "MOMENTUM_ACCELERATION", "FLOW_REVERSAL", "VOLUME_ACCELERATION",
+    "MARKET_MOVER",   # market-WIDE gainer/loser (beyond the watchlist), v10.62
 }
+
+
+def detect_market_mover(symbol, change_pct, price, *, min_price=1.0,
+                        gainer_pct=10.0, severe_pct=20.0):
+    """Pure: a MARKET_MOVER trigger from a WHOLE-MARKET scan row (e.g. Alpha
+    Vantage top gainers/losers). Filters penny-stock noise via min_price.
+    severity 4 at gainer_pct, 5 at severe_pct. [] when below threshold/invalid."""
+    if not isinstance(change_pct, (int, float)) or isinstance(change_pct, bool):
+        return []
+    if not isinstance(price, (int, float)) or isinstance(price, bool) or price < min_price:
+        return []
+    a = abs(change_pct)
+    if a < gainer_pct:
+        return []
+    sev = 5 if a >= severe_pct else 4
+    direction = "急騰" if change_pct > 0 else "急落"
+    return [_trig("MARKET_MOVER", sev, min(1.0, a / severe_pct),
+                  f"{symbol} 全市場{direction} {change_pct:+.1f}%(${price})")]
+
+
 # Capability-gated: never emitted until a real provider is verified upstream.
 CAPABILITY_GATED_TYPES = {"PTS_ANOMALY"}
 

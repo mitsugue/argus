@@ -2337,7 +2337,7 @@ _EVENT_POSTURE = {
     "CRYPTO_SHOCK": "INVESTIGATE", "PRICE_SPIKE": "AVOID_CHASING",
     "PRICE_CRASH": "INVESTIGATE", "VOLUME_ANOMALY": "WATCH", "FLOW_ANOMALY": "WATCH",
     "MOMENTUM_ACCELERATION": "AVOID_CHASING", "FLOW_REVERSAL": "INVESTIGATE",
-    "VOLUME_ACCELERATION": "WATCH",
+    "VOLUME_ACCELERATION": "WATCH", "MARKET_MOVER": "INVESTIGATE",
 }
 
 def _us_market_open(now_et=None):
@@ -2984,6 +2984,93 @@ def api_argus_fund_nav():
     funds = [x for x in (_toushin_nav(c) for c in codes[:10]) if x]
     return jsonify({"status": "live" if funds else "unavailable",
                     "asOf": _ai_now_iso(), "provider": "投信総合ライブラリー", "funds": funds})
+
+
+# ━━━ US whole-market mover scanner (v10.62) ━━━
+# ARGUS = the all-seeing, so detection must reach BEYOND the watchlist. Alpha
+# Vantage's free TOP_GAINERS_LOSERS gives the day's biggest US gainers/losers
+# (incl. ETFs); a price floor drops penny-stock pumps. Only the most extreme are
+# turned into events/notifications (no spam). Needs a free ALPHAVANTAGE_API_KEY.
+_ALPHAVANTAGE_KEY  = os.environ.get("ALPHAVANTAGE_API_KEY", "")
+_AV_MOVERS_URL     = "https://www.alphavantage.co/query"
+_AV_MOVERS_CACHE   = {"data": None, "expires": 0.0}
+_AV_MOVERS_TTL     = 900   # 15 min (AV free tier = 25 req/day — stay well under)
+_MARKET_MOVER_MIN_PRICE = float(os.environ.get("MARKET_MOVER_MIN_PRICE") or 1.0)
+_MARKET_MOVER_PCT       = float(os.environ.get("MARKET_MOVER_PCT") or 12.0)
+_MARKET_MOVER_NOTIFY_MAX = int(os.environ.get("MARKET_MOVER_NOTIFY_MAX") or 5)
+
+def _av_market_movers():
+    """US top gainers/losers from Alpha Vantage (price-filtered). Cached.
+    status: live | missing_key | unavailable."""
+    if not _ALPHAVANTAGE_KEY:
+        return {"status": "missing_key", "gainers": [], "losers": [], "asOf": None}
+    now = time.time()
+    if _AV_MOVERS_CACHE["data"] is not None and now < _AV_MOVERS_CACHE["expires"]:
+        return _AV_MOVERS_CACHE["data"]
+    out = {"status": "unavailable", "gainers": [], "losers": [], "asOf": None}
+    try:
+        r = requests.get(_AV_MOVERS_URL, params={"function": "TOP_GAINERS_LOSERS",
+                                                 "apikey": _ALPHAVANTAGE_KEY}, timeout=15)
+        j = r.json() if r.status_code == 200 else {}
+        def _rows(key):
+            rows = []
+            for x in (j.get(key) or []):
+                try:
+                    price = float(x.get("price"))
+                    chg = float(str(x.get("change_percentage", "")).replace("%", ""))
+                except (TypeError, ValueError):
+                    continue
+                if price < _MARKET_MOVER_MIN_PRICE:
+                    continue
+                rows.append({"symbol": x.get("ticker"), "price": round(price, 2),
+                             "changePct": round(chg, 2)})
+            return rows
+        if isinstance(j, dict) and (j.get("top_gainers") or j.get("top_losers")):
+            out = {"status": "live", "asOf": j.get("last_updated"),
+                   "gainers": _rows("top_gainers"), "losers": _rows("top_losers")}
+    except Exception:
+        pass
+    _AV_MOVERS_CACHE["data"] = out
+    _AV_MOVERS_CACHE["expires"] = now + (_AV_MOVERS_TTL if out["status"] == "live" else 300)
+    return out
+
+@app.route("/api/argus/market-movers")
+def api_argus_market_movers():
+    """Public: US whole-market top gainers/losers (Alpha Vantage, price-filtered)."""
+    return jsonify(_av_market_movers())
+
+def _scan_market_movers():
+    """Record MARKET_MOVER events for the most extreme whole-market US movers
+    (beyond the watchlist). Gated to US session. Caps notifications to avoid spam."""
+    if not _EVENT_BACKBONE_ENABLED or not _us_market_open():
+        return 0
+    mv = _av_market_movers()
+    if mv.get("status") != "live":
+        return 0
+    rows = (mv.get("gainers") or []) + (mv.get("losers") or [])
+    rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
+    now, n = datetime.now(pytz.utc), 0
+    for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:
+        for trig in argus_events.detect_market_mover(
+                row["symbol"], row["changePct"], row["price"],
+                min_price=_MARKET_MOVER_MIN_PRICE, gainer_pct=_MARKET_MOVER_PCT):
+            env = _record_event("US", row["symbol"], trig, now, "US_REGULAR",
+                                bucket_minutes=180, source="alphavantage")
+            if env:
+                env["nameJa"] = row["symbol"]   # market-wide; symbol is the label
+                n += 1
+    return n
+
+@app.route("/api/argus/market-scan", methods=["POST"])
+def api_argus_market_scan():
+    """Admin: run the US whole-market scan (called by the market-watch workflow)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        return jsonify({"recorded": _scan_market_movers(), "asOf": _ai_now_iso()})
+    except Exception as e:
+        return jsonify({"error": "scan_failed", "message": str(e)[:120]}), 500
 
 
 # ━━━ Event Radar (live official calendar) ━━━
@@ -7037,7 +7124,8 @@ _PRO_TYPE_JA = {"LIMIT_UP": "S高", "LIMIT_DOWN": "S安", "LIMIT_UP_PROXIMITY": 
                 "LIMIT_DOWN_PROXIMITY": "S安接近", "PRICE_SPIKE": "急騰", "PRICE_CRASH": "急落",
                 "VOLUME_ANOMALY": "出来高急増", "FLOW_ANOMALY": "大口フロー異常",
                 "CRYPTO_SHOCK": "暗号資産ショック", "MOMENTUM_ACCELERATION": "急加速",
-                "FLOW_REVERSAL": "フロー反転", "VOLUME_ACCELERATION": "出来高加速"}
+                "FLOW_REVERSAL": "フロー反転", "VOLUME_ACCELERATION": "出来高加速",
+                "MARKET_MOVER": "全市場ムーバー"}
 
 def _pro_events_section():
     """The active 24/7 events + their deterministic dossiers, as a compact prompt

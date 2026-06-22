@@ -4,6 +4,7 @@ import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard'
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
 import { useMarketRegime } from '../hooks/useMarketRegime';
+import { useMarketMovers } from '../hooks/useMarketMovers';
 import type {
   CapitalRotationRow, FlowLabel, FlowStrength, RegimeMatrixState,
 } from '../types/regime';
@@ -71,6 +72,7 @@ function toMatrixState(data: MarketRegimeSnapshot): RegimeMatrixState {
 // → Data limitations → Glossary. The bubble / SectorBlob viz stays retired.
 export const MarketRegime: React.FC = () => {
   const { data, phase } = useMarketRegime();
+  const movers = useMarketMovers();
 
   useEffect(() => {
     let target: string | null = null;
@@ -178,6 +180,40 @@ export const MarketRegime: React.FC = () => {
           </div>
         </section>
       )}
+
+      {/* US whole-market movers (v10.62) — beyond the watchlist, via Alpha Vantage. */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">US 全市場ムーバー</span>
+          <span className="section-head__count">
+            {movers?.status === 'live' ? `as of ${movers.asOf ?? ''}` : movers?.status ?? '…'}
+          </span>
+        </div>
+        <div className="card">
+          {movers?.status === 'live' ? (
+            <div className="regime-backdrop" style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+              {[...movers.gainers.slice(0, 5), ...movers.losers.slice(0, 5)]
+                .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 8)
+                .map((m) => (
+                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                    <b>{m.symbol}</b>
+                    <span style={{ color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
+                      {m.changePct > 0 ? '+' : ''}{m.changePct}% (${m.price})
+                    </span>
+                  </div>
+                ))}
+            </div>
+          ) : movers?.status === 'missing_key' ? (
+            <p style={{ fontSize: 13, color: 'var(--text-sub)', lineHeight: 1.7 }}>
+              ウォッチリスト外の米国全市場スキャンは <b>Alpha Vantage の無料APIキー</b> が必要です。
+              取得して Render に <code>ALPHAVANTAGE_API_KEY</code> を設定すると、全市場の急騰/急落を検出し
+              24/7イベント+通知に乗ります。
+            </p>
+          ) : (
+            <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>connecting… 全市場ムーバーを取得中</p>
+          )}
+        </div>
+      </section>
 
       {/* Forward-looking context: scheduled events + escalation + crisis news
           (merged from the old Event Radar page, v10.57). */}
