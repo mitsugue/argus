@@ -5298,9 +5298,11 @@ def _alert_etf_momentum():
     if _ALERT_ETF_CACHE["data"] is not None and now < _ALERT_ETF_CACHE["expires"]:
         return _ALERT_ETF_CACHE["data"]
     out = {sym: _etf_momentum(cl) for sym, cl in _td_timeseries(_ALERT_ETF_SYMS).items()}
-    if out:
-        _ALERT_ETF_CACHE["data"] = out
-        _ALERT_ETF_CACHE["expires"] = now + _ALERT_ETF_TTL
+    # Cache EITHER way (v10.63): caching only on success meant every GOLD/BOND/REIT
+    # poll re-hit Twelve Data while the quota was exhausted, re-burning credits and
+    # never recovering. On empty, back off 45 min (stay in budget); on success, 6h.
+    _ALERT_ETF_CACHE["data"] = out
+    _ALERT_ETF_CACHE["expires"] = now + (_ALERT_ETF_TTL if out else 45 * 60)
     return out
 
 def _alert_action_for_etf(m, cautious):
