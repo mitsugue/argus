@@ -2994,20 +2994,27 @@ def api_argus_fund_nav():
 _ALPHAVANTAGE_KEY  = os.environ.get("ALPHAVANTAGE_API_KEY", "")
 _AV_MOVERS_URL     = "https://www.alphavantage.co/query"
 _AV_MOVERS_CACHE   = {"data": None, "expires": 0.0}
-_AV_MOVERS_TTL     = 3600  # 60 min — AV FREE tier is only 25 req/day, so cache hard
-                           # (≤ ~8 calls across US hours) or the daily limit is hit.
+_AV_MOVERS_TTL     = 14 * 60  # scan refreshes every ~15 min during the US session;
+                              # only the scan fetches, sized to ~24/25 free calls/day.
 _MARKET_MOVER_MIN_PRICE = float(os.environ.get("MARKET_MOVER_MIN_PRICE") or 1.0)
 _MARKET_MOVER_PCT       = float(os.environ.get("MARKET_MOVER_PCT") or 12.0)
 _MARKET_MOVER_NOTIFY_MAX = int(os.environ.get("MARKET_MOVER_NOTIFY_MAX") or 5)
 
-def _av_market_movers():
-    """US top gainers/losers from Alpha Vantage (price-filtered). Cached.
-    status: live | missing_key | unavailable."""
+def _av_market_movers(force=False):
+    """US top gainers/losers from Alpha Vantage (price-filtered). status: live |
+    missing_key | unavailable | warming. ONLY the scheduled scan (force=True) hits
+    the API — the public endpoint serves the cache (force=False) so the frontend can
+    never burn the tiny 25/day free quota. The scan cadence is sized to the US
+    session so we use ~24/25 calls/day (see the market-watch workflow)."""
     if not _ALPHAVANTAGE_KEY:
         return {"status": "missing_key", "gainers": [], "losers": [], "asOf": None}
     now = time.time()
-    if _AV_MOVERS_CACHE["data"] is not None and now < _AV_MOVERS_CACHE["expires"]:
-        return _AV_MOVERS_CACHE["data"]
+    cached = _AV_MOVERS_CACHE["data"]
+    if not force:
+        # public read: serve whatever the last scan cached (never fetch).
+        return cached or {"status": "warming", "gainers": [], "losers": [], "asOf": None}
+    if cached is not None and now < _AV_MOVERS_CACHE["expires"]:
+        return cached
     out = {"status": "unavailable", "gainers": [], "losers": [], "asOf": None, "note": None}
     try:
         r = requests.get(_AV_MOVERS_URL, params={"function": "TOP_GAINERS_LOSERS",
@@ -3043,21 +3050,21 @@ def _av_market_movers():
     except Exception:
         pass
     _AV_MOVERS_CACHE["data"] = out
-    # On failure/rate-limit, back off 60 min too — retrying burns the tiny 25/day quota.
-    _AV_MOVERS_CACHE["expires"] = now + (_AV_MOVERS_TTL if out["status"] == "live" else 3600)
+    # On failure/rate-limit, back off ~30 min (don't retry-burn the 25/day quota).
+    _AV_MOVERS_CACHE["expires"] = now + (_AV_MOVERS_TTL if out["status"] == "live" else 1800)
     return out
 
 @app.route("/api/argus/market-movers")
 def api_argus_market_movers():
-    """Public: US whole-market top gainers/losers (Alpha Vantage, price-filtered)."""
-    return jsonify(_av_market_movers())
+    """Public: US whole-market top gainers/losers (cache only — never fetches)."""
+    return jsonify(_av_market_movers(force=False))
 
 def _scan_market_movers():
     """Record MARKET_MOVER events for the most extreme whole-market US movers
     (beyond the watchlist). Gated to US session. Caps notifications to avoid spam."""
     if not _EVENT_BACKBONE_ENABLED or not _us_market_open():
         return 0
-    mv = _av_market_movers()
+    mv = _av_market_movers(force=True)   # the ONLY place that hits Alpha Vantage
     if mv.get("status") != "live":
         return 0
     rows = (mv.get("gainers") or []) + (mv.get("losers") or [])
@@ -3168,17 +3175,67 @@ def _jq_market_movers():
     _JP_MOVERS_CACHE["expires"] = now + (_JP_MOVERS_TTL if out["status"] == "live" else 1800)
     return out
 
+# ── Yahoo!ファイナンス all-market intraday ranking (v10.66, ~20min delayed) ──
+# The wider net: covers ALL listed stocks DURING the session (J-Quants is EOD only,
+# the moomoo bridge is a few-hundred-name subset). Best-effort scrape of the
+# server-rendered ranking JSON; clearly labeled delayed/参考.
+_YAHOO_RANK_URL     = "https://finance.yahoo.co.jp/stocks/ranking/{d}?market=all&term=daily"
+_YAHOO_MOVERS_CACHE = {"data": None, "expires": 0.0}
+_YAHOO_MOVERS_TTL   = 20 * 60   # Yahoo ranking is ~20 min delayed
+
+def _yahoo_rank(direction):
+    rows = []
+    try:
+        html = requests.get(_YAHOO_RANK_URL.format(d=direction),
+                            headers={"User-Agent": "Mozilla/5.0"}, timeout=15).text
+        m = re.search(r'__PRELOADED_STATE__\s*=\s*(\{.*)', html, re.S)
+        raw = m.group(1) if m else ""
+        for ch in raw.split('"stockCode":"')[1:]:
+            code = ch.split('"', 1)[0]
+            nm = re.search(r'"stockName":"([^"]+)"', ch[:400])
+            pr = re.search(r'"savePrice":"([\d,.]+)"', ch[:700])
+            cg = re.search(r'"changePriceRate":"([+\-]?[\d.]+)"', ch[:900])
+            if not (nm and pr and cg):
+                continue
+            try:
+                p, c = float(pr.group(1).replace(",", "")), float(cg.group(1))
+            except ValueError:
+                continue
+            rows.append({"symbol": code[:4], "name": nm.group(1), "price": round(p, 1), "changePct": c})
+            if len(rows) >= 20:
+                break
+    except Exception:
+        pass
+    return rows
+
+def _yahoo_jp_movers():
+    now = time.time()
+    if _YAHOO_MOVERS_CACHE["data"] is not None and now < _YAHOO_MOVERS_CACHE["expires"]:
+        return _YAHOO_MOVERS_CACHE["data"]
+    g, l = _yahoo_rank("up"), _yahoo_rank("down")
+    out = {"status": "live" if (g or l) else "unavailable",
+           "provider": "Yahoo!ファイナンス(約20分遅延・全市場)", "asOf": _ai_now_iso(),
+           "gainers": g[:15], "losers": l[:15]}
+    _YAHOO_MOVERS_CACHE["data"] = out
+    _YAHOO_MOVERS_CACHE["expires"] = now + (_YAHOO_MOVERS_TTL if out["status"] == "live" else 600)
+    return out
+
 @app.route("/api/argus/jp-market-movers")
 def api_argus_jp_market_movers():
-    """Public: JP whole-market EOD top gainers/losers (J-Quants, vs prev close)."""
+    """Public: JP whole-market movers. Intraday → Yahoo (~20min, all market);
+    after close → J-Quants EOD (authoritative, vs prev close)."""
+    if _jp_market_open():
+        y = _yahoo_jp_movers()
+        if y.get("status") == "live":
+            return jsonify(y)
     return jsonify(_jq_market_movers())
 
 def _scan_jp_market_movers():
-    """Record MARKET_MOVER events for the day's biggest JP movers (EOD, all market).
-    Daily dedup so it notifies once per day, not every poll."""
+    """Record MARKET_MOVER events for the day's biggest JP movers. Intraday uses
+    Yahoo (all market, ~20min); after close uses J-Quants EOD. Daily dedup."""
     if not _EVENT_BACKBONE_ENABLED:
         return 0
-    mv = _jq_market_movers()
+    mv = _yahoo_jp_movers() if _jp_market_open() else _jq_market_movers()
     if mv.get("status") != "live":
         return 0
     rows = (mv.get("gainers") or []) + (mv.get("losers") or [])

@@ -219,9 +219,9 @@ export const MarketRegime: React.FC = () => {
       {/* JP whole-market EOD movers (v10.64) — all listed stocks, via J-Quants. */}
       <section>
         <div className="section-head">
-          <span className="section-head__title">日本株 全市場ムーバー(引け後)</span>
+          <span className="section-head__title">日本株 全市場ムーバー</span>
           <span className="section-head__count">
-            {jpMovers?.status === 'live' ? `as of ${jpMovers.asOf ?? ''}` : jpMovers?.status ?? '…'}
+            {jpMovers?.status === 'live' ? (jpMovers.provider ?? `as of ${jpMovers.asOf ?? ''}`) : jpMovers?.status ?? '…'}
           </span>
         </div>
         <div className="card">

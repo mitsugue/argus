@@ -5,8 +5,9 @@ import { useEffect, useState } from 'react';
 // sets ALPHAVANTAGE_API_KEY on Render.
 export interface MoverRow { symbol: string; price: number; changePct: number; name?: string; }
 export interface MarketMovers {
-  status: 'live' | 'missing_key' | 'unavailable';
+  status: 'live' | 'missing_key' | 'unavailable' | 'warming';
   asOf: string | null;
+  provider?: string;
   gainers: MoverRow[];
   losers: MoverRow[];
 }

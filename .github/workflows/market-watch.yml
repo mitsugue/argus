@@ -7,9 +7,11 @@ name: market-watch
 
 on:
   schedule:
-    # US scan hourly during US hours (Alpha Vantage FREE = 25 req/day, so NOT every
-    # 30min — that blew the daily limit). 14-21 UTC Mon–Fri = ~8 calls/day, in budget.
-    - cron: '0 14-21 * * 1-5'
+    # US scan every 15 min across the core US regular session (14:00–19:59 UTC),
+    # Mon–Fri = 24 runs ≈ the Alpha Vantage FREE 25-req/day cap, fully used. The
+    # scan only hits AV when the US market is actually open (further protects quota);
+    # the public endpoint never fetches (serves cache).
+    - cron: '*/15 14-19 * * 1-5'
     # Post-JP-close EOD sweep: 07:30 + 09:00 UTC (16:30 / 18:00 JST) Mon–Fri,
     # so the JP whole-market movers get recorded even outside US hours.
     - cron: '30 7,9 * * 1-5'
