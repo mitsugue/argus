@@ -4773,11 +4773,12 @@ def _system_health():
     L("crypto", "暗号資産", "ok" if conf("coingecko") else "ok", "CoinGecko(鍵不要)")
     L("macro", "金利/VIX", "ok" if conf("fred") else "warning",
       "FRED 設定済" if conf("fred") else "要設定")
+    # Key configured = green (the deep verified/last-fetch nuance lives in the
+    # source-registry; per-worker probe lag must not falsely amber the strip).
     if not _EDINET_API_KEY:
         L("edinet", "EDINET", "off", "未設定")
     else:
-        L("edinet", "EDINET", "ok" if _EDINET_STATE.get("lastFetchOk") else "warning",
-          "公式開示 稼働" if _EDINET_STATE.get("lastFetchOk") else "未検証")
+        L("edinet", "EDINET", "ok", "公式開示 設定済")
     L("notify", "通知(ntfy)", "ok" if os.environ.get("NTFY_TOPIC") else "off",
       "設定済" if os.environ.get("NTFY_TOPIC") else "未設定")
 
