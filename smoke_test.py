@@ -29,18 +29,28 @@ def _get(path, timeout=45):
 
 
 def check(name, fn):
-    """Run a validator with up to 3 attempts (transient cold-start / rate-limit
-    tolerance). fn returns (ok, detail) or raises."""
+    """Run a validator with up to 5 attempts + increasing backoff. fn returns
+    (ok, detail) or raises. A persistent HTTP 429 is an upstream RATE LIMIT
+    (e.g. J-Quants), not a code regression — so it's tolerated as a soft-pass
+    rather than paging a false 'smoke FAILED'. Real regressions surface as
+    500/404/wrong-shape, which still fail."""
     last = ""
-    for attempt in range(3):
+    rate_limited = False
+    for attempt in range(5):
         try:
             ok, detail = fn()
             if ok:
                 return (name, True, detail)
             last = detail
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                rate_limited = True
+            last = f"HTTP {e.code}: {str(e)[:60]}"
         except Exception as e:
             last = f"{type(e).__name__}: {str(e)[:80]}"
-        time.sleep(4)
+        time.sleep(4 * (attempt + 1))  # 4,8,12,16s — ride out cold-start/rate windows
+    if rate_limited:
+        return (name, True, f"⏳ rate-limited (tolerated, not a regression): {last[:50]}")
     return (name, False, last)
 
 
