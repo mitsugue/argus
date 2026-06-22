@@ -22,6 +22,7 @@ import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 import argus_research  # evidence-first deterministic research dossier (v10.41)
 import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
+import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -1404,6 +1405,95 @@ def api_argus_calibration():
         "byPosture": real.get("byPosture"),
         "layers": real.get("layers"),
         "aiDirectional": real.get("aiDirectional"),
+    })
+
+
+@app.route("/api/argus/calibration/cohorts")
+def api_argus_calibration_cohorts():
+    """Calibration Ledger v4 (Phase 1) — the cohort MODEL (read-only).
+
+    Exposes only the fixed server-side structure (regime sensors / tactical
+    benchmark / experimental flags / factor groups). The owner's dynamic
+    watchlist (Layer 2B) is NOT here — it lives in a private store and is never
+    served to anonymous callers. Also applies the new factor-group-weighted
+    aggregation to the LIVE Layer-1 byMember stats, non-destructively, so you can
+    see how equal-group-weighting differs from the flat 16-symbol average."""
+    C = argus_calibration
+    # Demonstrate the section-14 fix on real data (horizon 1d byMember hitRates).
+    fg_demo = None
+    try:
+        summ = _ledger_summary() or {}
+        bm = (((summ.get("layers") or {}).get("layer1") or {}).get("byHorizon") or {}) \
+            .get("1", {}).get("byMember") or {}
+        per_sym = {s: float(v.get("hitRate")) for s, v in bm.items()
+                   if isinstance(v, dict) and v.get("hitRate") is not None}
+        if per_sym:
+            flat = round(sum(per_sym.values()) / len(per_sym), 4)
+            agg = C.factor_group_aggregate(per_sym)
+            fg_demo = {
+                "flatEqualSymbolWeighted": flat,
+                "equalGroupWeighted": agg["overallEqualGroupWeighted"],
+                "factorGroupScores": agg["factorGroupScores"],
+                "noteJa": "従来の16銘柄フラット平均と、相関を抑えたファクターグループ等加重の比較"
+                          "(米株3銘柄が過大に効かないようにする・section 14)",
+            }
+    except Exception:
+        fg_demo = None
+    return jsonify({
+        "schemaVersion": C.SCHEMA_VERSION,
+        "universeVersion": C.UNIVERSE_VERSION,
+        "cohortVersion": C.COHORT_VERSION,
+        "phase": "v4-phase1-model-only",
+        "cohorts": {
+            C.COHORT_REGIME_SENSOR: {
+                "labelJa": "固定レジームセンサー(校正の背骨・不変)",
+                "symbols": list(C.REGIME_SENSORS),
+            },
+            C.COHORT_TACTICAL_FIXED: {
+                "labelJa": "固定タクティカルベンチ(縦断比較用)",
+                "symbols": list(C.TACTICAL_BENCHMARK),
+            },
+            C.COHORT_OWNER_WATCHLIST: {
+                "labelJa": "所有者ウォッチリスト(動的・private保存・採点はPhase4で有効化)",
+                "symbols": [], "status": "pending_private_store",
+            },
+            C.COHORT_EXPERIMENTAL: {
+                "labelJa": "実験コホート(旧「Layer3=6584」をフラグ制に置換)",
+                "examples": list(C._MANUAL_EXPERIMENTAL.keys()),
+                "flags": list(C.EXPERIMENTAL_FLAGS),
+            },
+        },
+        "factorGroups": {g: list(s) for g, s in C.FACTOR_GROUPS.items()},
+        "layer1FactorGroupDemo": fg_demo,
+    })
+
+
+@app.route("/api/argus/calibration/epochs")
+def api_argus_calibration_epochs():
+    """Calibration epochs — the legacy n≈133 is PRESERVED as an archived burn-in
+    epoch (excluded from headline metrics); the clean epoch is pending an
+    admin-gated readiness/activation step (Phase 2). Read-only, no owner data."""
+    C = argus_calibration
+    summ = _ledger_summary() or {}
+    ov = summ.get("overall") or {}
+    n = ov.get("n")
+    updated = summ.get("updated")
+    burn_in = C.burn_in_epoch_record((None, updated), n if isinstance(n, int) else 0)
+    return jsonify({
+        "schemaVersion": C.SCHEMA_VERSION,
+        "epochs": [
+            burn_in,
+            {
+                "epochId": C.ACTIVE_EPOCH,
+                "status": "pending_readiness",
+                "includeInHeadlineMetrics": False,
+                "noteJa": "コホート定義の確定+センサー完全記録+採点スキーマ確定の後に、"
+                          "管理者が明示的に有効化(自動では始めない)。",
+            },
+        ],
+        "legacyPreserved": True,
+        "noteJa": "現n≈133は削除せず burn_in_legacy_v3 として保存。不安定期データなので"
+                  "ヘッドライン指標からは除外。",
     })
 
 
