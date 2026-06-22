@@ -21,10 +21,17 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 SCHEMA_VERSION = "calibration-v4"
-UNIVERSE_VERSION = "calib-univ-1"
+UNIVERSE_VERSION = "regime_sensor_v2"        # v10.72: re-selected 16-sensor universe
+TACTICAL_BENCHMARK_VERSION = "tactical_benchmark_v2"  # v10.72: diversified 14-equity benchmark
+FACTOR_GROUP_VERSION = "factor_groups_v2"
 SCORER_VERSION = "calib-scorer-1"
 BAND_VERSION = "calib-band-1"
-COHORT_VERSION = "calib-cohort-1"
+COHORT_VERSION = "calib-cohort-2"            # bumped with the v2 universe
+# Legacy v1 universe (kept ONLY so legacy/burn-in records remain interpretable —
+# never recompute old records under v2). v1 regime sensors included 8306/7203/
+# 8058/9432 as JP sensors and USDJPY/VIX as scored sensors; v2 moves those to the
+# tactical benchmark and to Context Variables respectively.
+UNIVERSE_VERSION_LEGACY = "regime_sensor_v1"
 
 # ── Ordered scenario classes (the 3-class forecast) ─────────────────────────
 # Order matters for RPS (ranked probability score): downside < sideways < rebound.
@@ -41,35 +48,80 @@ COHORT_TACTICAL_FIXED = "tactical_benchmark_fixed"  # was Layer 2
 COHORT_OWNER_WATCHLIST = "owner_watchlist_dynamic"  # new Layer 2B (private store)
 COHORT_EXPERIMENTAL = "experimental_cohort"       # replaces "Layer 3 = 6584"
 
-# Fixed regime-sensor universe (16). Stable + versioned; does NOT follow the
-# owner's daily interests.
+# Fixed regime-sensor universe v2 (16). Stable + versioned; does NOT follow the
+# owner's daily interests. Context variables (USDJPY/VIX/yields/HY OAS) are NOT
+# here — they are explanatory context, not equal return-scored securities.
 REGIME_SENSORS: Tuple[str, ...] = (
-    "1306", "1321", "8306", "7203", "8058", "9432",          # JP
-    "SPY", "QQQ", "SMH", "IWM", "TLT", "HYG", "GLD",         # US ETF
-    "BTC", "USDJPY", "VIX",                                   # other
+    "1306", "1321", "1615", "1343",                              # JP (4)
+    "SPY", "QQQ", "IWM", "SMH", "XLF", "XLE", "XLU",             # US equity/sector (7)
+    "TLT", "LQD", "HYG", "GLD",                                  # bonds/credit/haven (4)
+    "BTC",                                                       # crypto (1)
 )
+DISPLAY_NAMES: Dict[str, str] = {
+    "1306": "TOPIX ETF", "1321": "日経225 ETF", "1615": "東証銀行業ETF",
+    "1343": "東証REIT ETF", "SPY": "S&P500 ETF", "QQQ": "Nasdaq100 ETF",
+    "IWM": "Russell2000 ETF", "SMH": "半導体ETF", "XLF": "米金融セクターETF",
+    "XLE": "米エネルギーETF", "XLU": "米公益(ディフェンシブ)ETF",
+    "TLT": "米長期国債ETF", "LQD": "米投資適格社債ETF", "HYG": "米ハイイールド債ETF",
+    "GLD": "金ETF", "BTC": "ビットコイン",
+    "8306": "三菱UFJ FG", "7203": "トヨタ自動車", "8058": "三菱商事",
+    "9432": "日本電信電話(NTT)", "9984": "ソフトバンクグループ",
+    "7011": "三菱重工業", "5803": "フジクラ", "NVDA": "NVIDIA", "AAPL": "Apple",
+    "TSLA": "Tesla", "JPM": "JPMorgan Chase", "XOM": "Exxon Mobil",
+    "PG": "Procter & Gamble", "CAT": "Caterpillar",
+}
 
-# Fixed tactical benchmark (longitudinal comparison on a stable equity set).
+# Fixed tactical benchmark v2 (14) — diversified company types (not 4 correlated
+# mega-cap growth names). NOT the owner's changing watchlist. 5803 フジクラ is
+# intentionally the fixed Japan AI-infrastructure benchmark; 5801 and META are
+# NOT here (they remain available via the owner dynamic watchlist).
 TACTICAL_BENCHMARK: Tuple[str, ...] = (
-    "9984", "5801", "5803", "285A", "9501",   # JP
-    "NVDA", "AAPL", "TSLA", "META",           # US
+    "8306", "7203", "8058", "9432", "9984", "7011", "5803",   # JP (7)
+    "NVDA", "AAPL", "TSLA", "JPM", "XOM", "PG", "CAT",        # US (7)
 )
 
-# Factor groups (section 14) — Layer-1 must NOT be a flat equal-weight of 16
-# correlated symbols. Aggregate by group so 3 US-equity sensors don't dominate.
+# Layer-1 factor groups v2 — Layer-1 quality is aggregated by GROUP, never a flat
+# equal-weight of 16 correlated symbols. 1306+1321 share jp_broad_equity (each
+# gets half its weight) so Japan broad equity can't count twice.
 FACTOR_GROUPS: Dict[str, Tuple[str, ...]] = {
     "jp_broad_equity": ("1306", "1321"),
-    "jp_rates_banks": ("8306",),
-    "jp_export_value_defensive": ("7203", "8058", "9432"),
-    "us_broad_growth_semis": ("SPY", "QQQ", "SMH"),
+    "jp_rates_banks": ("1615",),
+    "jp_reit_rates": ("1343",),
+    "us_broad_equity": ("SPY",),
+    "us_growth": ("QQQ",),
     "us_small_cap": ("IWM",),
-    "duration_credit": ("TLT", "HYG"),
+    "us_semiconductor": ("SMH",),
+    "us_financials": ("XLF",),
+    "us_energy": ("XLE",),
+    "us_defensive": ("XLU",),
+    "duration": ("TLT",),
+    "investment_grade_credit": ("LQD",),
+    "high_yield_credit": ("HYG",),
     "safe_haven": ("GLD",),
     "crypto_liquidity": ("BTC",),
-    "fx": ("USDJPY",),
-    "volatility": ("VIX",),
 }
 _SYMBOL_FACTOR_GROUP = {s: g for g, syms in FACTOR_GROUPS.items() for s in syms}
+
+# Tactical-benchmark factor roles (for 2A diversification reporting; orthogonal
+# to the Layer-1 aggregation above).
+TACTICAL_FACTOR_GROUPS: Dict[str, str] = {
+    "8306": "jp_bank_rate_sensitive", "7203": "jp_export_fx_sensitive",
+    "8058": "jp_trading_house_value", "9432": "jp_defensive_telecom",
+    "9984": "jp_high_beta_technology", "7011": "jp_defense_capital_goods",
+    "5803": "jp_ai_infrastructure_momentum",
+    "NVDA": "us_ai_semiconductor", "AAPL": "us_quality_growth",
+    "TSLA": "us_high_beta_event", "JPM": "us_financials", "XOM": "us_energy",
+    "PG": "us_defensive_consumer", "CAT": "us_industrial_cyclical",
+}
+
+# Context Variables (section 3) — macro/market explanatory variables. NOT averaged
+# as equal return-scored Layer-1 securities (VIX is inverse-risk, USDJPY is
+# context-dependent, yields/HY OAS are rates/credit levels, not equity returns).
+CONTEXT_VARIABLES: Dict[str, str] = {
+    "fx_usdjpy": "USDJPY", "volatility_vix": "VIX",
+    "rates_us10y": "US10Y", "rates_us2y": "US2Y",
+    "rates_real10y": "US Real10Y", "credit_hy_oas": "HY OAS",
+}
 
 # Experimental flag vocabulary (section 5). 6584 migrates here instead of being
 # a hardcoded "Layer 3". Flags are data-driven where data exists; manual flags
@@ -80,10 +132,15 @@ EXPERIMENTAL_FLAGS = (
     "short_history", "data_quality_risk",
 )
 
-# Manual seed flags carried over from the legacy "Layer 3 = 6584" decision.
-# Recorded as manual with an explicit reason so they're auditable, not silent.
+# Manual seed flags (flagSource=manual, with an explicit reason so they're
+# auditable). Orthogonal to cohort membership. NOTE: 5803 is deliberately NOT
+# here — it stays in the fixed tactical benchmark even if data-driven rules later
+# add a high-volatility/theme tag to it.
 _MANUAL_EXPERIMENTAL: Dict[str, Tuple[str, ...]] = {
-    "6584": ("small_cap", "high_volatility"),  # 三櫻工業 — legacy noisy/high-vol pick
+    "6584": ("small_cap", "high_volatility", "event_driven"),  # 三櫻工業
+    "9501": ("policy_sensitive", "event_driven"),              # 東京電力HD
+    "285A": ("theme_driven",),                                  # キオクシア
+    "5801": ("theme_driven", "high_volatility"),               # 古河電工 (2B-eligible)
 }
 
 
@@ -106,7 +163,19 @@ def classify_cohort(symbol: str) -> str:
 
 
 def factor_group_of(symbol: str) -> Optional[str]:
-    return _SYMBOL_FACTOR_GROUP.get((symbol or "").upper()) or _SYMBOL_FACTOR_GROUP.get(symbol or "")
+    """Layer-1 sensor factor group, else the tactical-benchmark factor role."""
+    s = (symbol or "").upper()
+    return (_SYMBOL_FACTOR_GROUP.get(s) or _SYMBOL_FACTOR_GROUP.get(symbol or "")
+            or TACTICAL_FACTOR_GROUPS.get(s) or TACTICAL_FACTOR_GROUPS.get(symbol or ""))
+
+
+def context_variables() -> Dict[str, str]:
+    """Context Variables (id → display). NOT equal return-scored Layer-1 assets."""
+    return dict(CONTEXT_VARIABLES)
+
+
+def display_name(symbol: str) -> Optional[str]:
+    return DISPLAY_NAMES.get((symbol or "").upper()) or DISPLAY_NAMES.get(symbol or "")
 
 
 def experimental_flags(
@@ -428,5 +497,5 @@ def factor_group_aggregate(per_symbol_scores: Dict[str, float]) -> Dict[str, Any
     return {
         "factorGroupScores": {g: round(v, 6) for g, v in group_scores.items()},
         "overallEqualGroupWeighted": round(overall, 6) if overall is not None else None,
-        "factorGroupVersion": COHORT_VERSION,
+        "factorGroupVersion": FACTOR_GROUP_VERSION,
     }

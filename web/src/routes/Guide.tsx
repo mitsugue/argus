@@ -64,6 +64,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.72.0', '校正ユニバースの再選定+バージョン管理(regime_sensor_v2 / tactical_benchmark_v2) — Layer1=16センサーを再構成(JP4: TOPIX/日経225/東証銀行業/東証REIT、US11: SPY/QQQ/IWM/SMH/XLF/XLE/XLU/TLT/LQD/HYG/GLD、BTC)。USDJPY/VIX/金利/HY OASは「文脈変数」に分離(等加重リターン採点に混ぜない)。Layer2A=14銘柄に分散(JP: 三菱UFJ/トヨタ/三菱商事/NTT/SBG/三菱重工/フジクラ、US: NVDA/AAPL/TSLA/JPM/XOM/PG/CAT)。5803フジクラを固定ベンチに意図的に保持、5801とMETAは所有者ウォッチリストで利用可。「Layer3=6584固定」を廃止し実験フラグ制へ。ファクターグループv2で相関銘柄の過大評価を回避。全新規銘柄のプロバイダ稼働を本番確認済み。Brierの読み方を説明書に追加。履歴(burn-in)は保全。テスト計208'],
   ['v10.71.0', '校正台帳v4 Phase 3(記録への接続・非破壊) — 毎日の予測記録の各行に、v4のコホート(固定センサー/タクティカル/実験)・ファクターグループ・実験フラグ・市場別フォーキャストクロック(その銘柄の正しい引け基準の1/3/5営業日対象日)を付与。既存の layer/scenarios 等はそのまま残すので現行の採点は無変更で動作し、ワークフローは今後この市場別対象日を採用可能に。記録は追記のみ=現n≈133は無傷'],
   ['v10.70.0', 'バージョンが端末で古いまま固まる問題(PWAのSWが更新されず10.59のまま)を根治 — アプリが「実行中の版」と「配信中の版(キャッシュ回避で取得)」を常時照合し、ズレたら強制更新+リロード。それでも直らない固着SWは自動回復(SW登録解除+キャッシュ全消去+再読込・ループ防止付き)。今後はバージョンが自動で最新化されます'],
   ['v10.69.0', '校正台帳v4 Phase 2(市場別タイミング・純ロジック・既存記録は無傷) — 「全部16:05 JST固定で採点」をやめ、各銘柄をその市場の正しいクロックで採点する基盤を実装。日本株=TSE引け/米国株=NYSE引け(EDT/EST自動切替)/暗号資産=24/72/120h(営業日でなく経過時間)/FX=NY引け。土日+祝日カレンダー対応(2026年JPX/NYSE・要公式照合でバージョン管理)。各予測に originセッション/対象営業日/カレンダー/鮮度/entitlement のメタデータを付与し、価格が古い/無効なら「不適格」として記録せず欠損理由を残す。記録ワークフローへの接続はPhase 3。テスト19件追加(計199)'],
@@ -206,6 +207,22 @@ export const Guide: React.FC = () => {
                 <span className="guide-term__ja">{ja}</span>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">自己採点の読み方(Brier・RPS・スキルスコアの基準)</span>
+          <span className="section-head__count">数字の意味</span>
+        </div>
+        <div className="card guide-card">
+          <div className="guide-glossary">
+            <div className="guide-term"><span className="guide-term__en">Brierスコアとは</span><span className="guide-term__ja">確率予測の「二乗誤差」。0=完璧、大きいほど悪い。例:「上昇70%」と予想し実際に上昇したら誤差(1−0.7)²=0.09、外れたら(0−0.7)²=0.49。これを全予測で平均した値。</span></div>
+            <div className="guide-term"><span className="guide-term__en">2択Brierの目安</span><span className="guide-term__ja">0.0=完璧 / 0.10〜0.20=良好 / <b>0.25=「毎回50%」と言うだけの無情報ライン(これを下回って初めて意味がある)</b> / 0.25〜0.33=スキルほぼ無し / 0.33超=naive以下で悪い / 1.0=自信満々で全部外す最悪。</span></div>
+            <div className="guide-term"><span className="guide-term__en">★最重要</span><span className="guide-term__ja">Brierは単独では良し悪しを判断できない。<b>ベースライン(無情報予測)と比べたスキルスコア = 1 −(自分のBrier ÷ ベースラインBrier)が&gt;0で初めて「ベースラインに勝っている」</b>。v4でスキルスコアとベースライン比較を導入済み。</span></div>
+            <div className="guide-term"><span className="guide-term__en">RPS</span><span className="guide-term__ja">順序付き3分類(下落/横ばい/反発)用のBrier拡張。「外し方の遠さ」も罰する(反発を当てるべき時、横ばい予想より下落予想を大きく減点)。3クラス正規化の無情報ライン≈0.22。</span></div>
+            <div className="guide-term"><span className="guide-term__en">ARGUSの現状(正直)</span><span className="guide-term__ja">今はburn-in期(n≈133・データ不安定期に収集)で<b>現数値は参考外・ヘッドラインから除外</b>。意味のある比較は新エポックで約120営業日(クラスタ別)蓄積後。サンプルが相関するため「proven(証明済み)」とは決して表示しない。</span></div>
           </div>
         </div>
       </section>

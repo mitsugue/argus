@@ -384,13 +384,16 @@ def test_action_labels_response_carries_calibration(monkeypatch):
 
 # ── ledger-v3: 3-layer learning universe (v10.9) ─────────────────────
 def test_layer1_sensor_universe_is_fixed_16():
-    n = len(scanner._L1_SENSORS_JP) + len(scanner._L1_SENSORS_US) + 3  # +BTC/USDJPY/VIX
+    # Regime Sensor Universe v2 (v10.72): 4 JP ETFs + 11 US ETFs + BTC = 16.
+    # USDJPY/VIX are no longer scored sensors — they are Context Variables.
+    n = len(scanner._L1_SENSORS_JP) + len(scanner._L1_SENSORS_US) + 1  # +BTC only
     assert n == 16
     syms = [s for s, _ in scanner._L1_SENSORS_JP] + scanner._L1_SENSORS_US
     assert len(set(syms)) == len(syms)
-    # 9984/7011 were deliberately moved OUT of Layer 1 (idiosyncratic risk)
-    assert "9984" not in syms and "7011" not in syms
-    assert "8058" in syms and "SMH" in syms
+    # single-name JP equities moved OUT of Layer 1 into the Tactical Benchmark
+    assert "9984" not in syms and "7011" not in syms and "8058" not in syms
+    # v2 sensors present: broad-equity + new sector/credit ETFs
+    assert "SMH" in syms and "XLF" in syms and "LQD" in syms and "1615" in syms
 
 
 def test_layer_attribution():

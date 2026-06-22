@@ -1440,31 +1440,47 @@ def api_argus_calibration_cohorts():
             }
     except Exception:
         fg_demo = None
+    def _named(syms):
+        return [{"symbol": s, "name": C.display_name(s) or s,
+                 "factorGroup": C.factor_group_of(s)} for s in syms]
     return jsonify({
         "schemaVersion": C.SCHEMA_VERSION,
-        "universeVersion": C.UNIVERSE_VERSION,
+        "regimeSensorUniverseVersion": C.UNIVERSE_VERSION,
+        "tacticalBenchmarkVersion": C.TACTICAL_BENCHMARK_VERSION,
+        "factorGroupVersion": C.FACTOR_GROUP_VERSION,
         "cohortVersion": C.COHORT_VERSION,
-        "phase": "v4-phase1-model-only",
+        "phase": "v4-universe-v2 (regime_sensor_v2 / tactical_benchmark_v2)",
         "cohorts": {
             C.COHORT_REGIME_SENSOR: {
-                "labelJa": "固定レジームセンサー(校正の背骨・不変)",
-                "symbols": list(C.REGIME_SENSORS),
+                "labelJa": "固定レジームセンサー(校正の背骨・16銘柄・不変)",
+                "count": len(C.REGIME_SENSORS),
+                "members": _named(C.REGIME_SENSORS),
             },
             C.COHORT_TACTICAL_FIXED: {
-                "labelJa": "固定タクティカルベンチ(縦断比較用)",
-                "symbols": list(C.TACTICAL_BENCHMARK),
+                "labelJa": "固定タクティカルベンチ(縦断比較用・14銘柄・分散)",
+                "count": len(C.TACTICAL_BENCHMARK),
+                "jp": _named([s for s in C.TACTICAL_BENCHMARK if s[0].isdigit()]),
+                "us": _named([s for s in C.TACTICAL_BENCHMARK if not s[0].isdigit()]),
+                "noteJa": "5803 フジクラは意図的に固定ベンチに保持。5801/METAは所有者ウォッチリストで利用可。",
             },
             C.COHORT_OWNER_WATCHLIST: {
                 "labelJa": "所有者ウォッチリスト(動的・private保存・採点はPhase4で有効化)",
                 "symbols": [], "status": "pending_private_store",
+                "noteJa": "5801/META/285A/9501/6584/ETH 等が想定。2Aと重複しても予測は1件・コホートは別集計。",
             },
             C.COHORT_EXPERIMENTAL: {
-                "labelJa": "実験コホート(旧「Layer3=6584」をフラグ制に置換)",
+                "labelJa": "実験コホート(旧「Layer3=6584固定」を廃止しフラグ制に置換)",
                 "examples": list(C._MANUAL_EXPERIMENTAL.keys()),
                 "flags": list(C.EXPERIMENTAL_FLAGS),
             },
         },
+        "contextVariables": {
+            "noteJa": "回帰・地合い説明用の文脈変数。等加重のリターン採点センサーには混ぜない"
+                      "(VIXは逆相関リスク、USDJPYは文脈依存、金利/HY OASは水準でリターンでない)。",
+            "variables": C.context_variables(),
+        },
         "factorGroups": {g: list(s) for g, s in C.FACTOR_GROUPS.items()},
+        "tacticalFactorRoles": C.TACTICAL_FACTOR_GROUPS,
         "layer1FactorGroupDemo": fg_demo,
     })
 
@@ -6148,12 +6164,14 @@ def _vix_assess(closes):
 #   Layer 2 — active tactical watchlist (the battlefield names, free to swap).
 #   Layer 3 — experimental / high-noise names, aggregated separately so they
 #             never pollute Layer-1 statistics.
+# Regime Sensor Universe v2 (v10.72): 4 JP ETFs + 11 US ETFs + BTC = 16. The old
+# JP single-names (8306/7203/8058/9432) moved to the Tactical Benchmark; USDJPY/
+# VIX moved to Context Variables (recorded but NOT scored as equal return assets).
 _L1_SENSORS_JP = [
-    ("1306", "TOPIX ETF"), ("1321", "Nikkei 225 ETF"),
-    ("8306", "Mitsubishi UFJ"), ("7203", "Toyota Motor"),
-    ("8058", "Mitsubishi Corporation"), ("9432", "NTT"),
+    ("1306", "TOPIX ETF"), ("1321", "日経225 ETF"),
+    ("1615", "東証銀行業ETF"), ("1343", "東証REIT ETF"),
 ]
-_L1_SENSORS_US = ["SPY", "QQQ", "SMH", "IWM", "TLT", "HYG", "GLD"]
+_L1_SENSORS_US = ["SPY", "QQQ", "IWM", "SMH", "XLF", "XLE", "XLU", "TLT", "LQD", "HYG", "GLD"]
 # + BTC (crypto), USDJPY (fx), VIX (vol) = 16 sensors total.
 # Scenario band per sensor kind ≈ one rough daily sigma, so "sideways" means
 # the same thing for an FX pair (σ≈0.5%) as for an equity ETF (σ≈2%), BTC
@@ -6187,7 +6205,7 @@ def _sensor_row(sensor_id, name, kind, price, chg):
 
 # Layer-1 sensor ETFs not covered by the regime/alerts Twelve Data universes
 # (currently just SMH). 6h cache = 1 extra TD credit per 6 hours.
-_SENSOR_ETF_EXTRA = ["SMH"]
+_SENSOR_ETF_EXTRA = ["SMH", "XLF", "XLE", "LQD"]  # v2 sensors not in _REGIME_ETFS
 _SENSOR_ETF_CACHE = {"expires": 0.0}
 
 def _ensure_sensor_etfs():
@@ -6991,6 +7009,42 @@ def get_prediction_snapshot():
         rec.update(_v4_record_meta(l["symbol"]))  # cohort + market-clock (v10.71)
         predictions.append(rec)
 
+    # ── Fixed Tactical Benchmark v2 (v10.72) ──
+    # Record the 14-name fixed benchmark INDEPENDENT of the owner/display
+    # watchlist, so longitudinal comparison survives watchlist churn. De-duped
+    # against the action-label predictions above. Defensive: a failure here must
+    # never break the daily recording.
+    try:
+        recorded = {p["symbol"] for p in predictions}
+        bench = [s for s in argus_calibration.TACTICAL_BENCHMARK if s not in recorded]
+        bjp = [s for s in bench if s[0].isdigit()]
+        bus = [s for s in bench if not s[0].isdigit()]
+        bprice = {}
+        if bjp:
+            for s in (get_japan_watchlist_snapshot(bjp).get("stocks") or []):
+                if s.get("status") == "live":
+                    bprice[s["symbol"]] = s
+        if bus:
+            for s in (get_us_watchlist_snapshot(bus).get("stocks") or []):
+                if s.get("status") == "live":
+                    bprice[s["symbol"]] = s
+        for sym in bench:
+            q = bprice.get(sym)
+            if not q:
+                continue
+            chg = q.get("changePct")
+            brec = {
+                "symbol": sym, "market": ("JP" if sym[0].isdigit() else "US"),
+                "name": argus_calibration.display_name(sym) or sym,
+                "price": q.get("price"), "changePct": chg,
+                "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(chg)],
+                "benchmarkOnly": True,  # not owner-watched; fixed-benchmark record
+            }
+            brec.update(_v4_record_meta(sym))
+            predictions.append(brec)
+    except Exception:
+        pass  # benchmark enrichment is best-effort
+
     # ── Asset-class predictions (ledger-v2, v10.5) ──
     # The agreed learning axis: not individual-stock memorization but the
     # calibration of CONTEXT × ASSET CLASS. Proxies: the regime/alerts ETF
@@ -7048,18 +7102,24 @@ def get_prediction_snapshot():
             _sr = _sensor_row("BTC", "Bitcoin", "crypto", q["priceUsd"], q.get("changePct"))
             _sr.update(_v4_record_meta("BTC"))
             sensors.append(_sr)
+    # Context Variables (v2): USDJPY/VIX (+ yields/HY OAS when available) are
+    # RECORDED for regime context but NOT scored as equal return-sensors — VIX is
+    # inverse-risk, USDJPY is context-dependent, yields/OAS are levels not returns.
     rates = get_rates_snapshot()
-    for key, sid, sname, kind in (("usdJpy", "USDJPY", "USD/JPY", "fx"),
-                                  ("vix", "VIX", "VIX", "vol")):
+    context_vars = []
+    for ctxId, key, sid, sname in (("fx_usdjpy", "usdJpy", "USDJPY", "USD/JPY"),
+                                   ("volatility_vix", "vix", "VIX", "VIX")):
         s = rates.get(key) if isinstance(rates, dict) else None
         if s and s.get("status") == "live" and s.get("latestValue") is not None:
             lvl = float(s["latestValue"])
             ch = s.get("change")
             chg_pct = (round(ch / (lvl - ch) * 100, 2)
                        if isinstance(ch, (int, float)) and (lvl - ch) else None)
-            _sr = _sensor_row(sid, sname, kind, lvl, chg_pct)
-            _sr.update(_v4_record_meta(sid))
-            sensors.append(_sr)
+            context_vars.append({
+                "contextId": ctxId, "symbol": sid, "name": sname,
+                "value": lvl, "changePct": chg_pct, "asOf": s.get("asOf"),
+                "role": "context_variable",  # explanatory, not return-scored
+            })
 
     # ── Posture prediction (the call that everything depends on) ──
     # Self-describing scoring rule so the scorer never hardcodes thresholds:
@@ -7081,6 +7141,9 @@ def get_prediction_snapshot():
         "dateJst": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
         "asOf": _ai_now_iso(),
         "engineVersion": "ledger-v3",
+        "universeVersion": argus_calibration.UNIVERSE_VERSION,
+        "tacticalBenchmarkVersion": argus_calibration.TACTICAL_BENCHMARK_VERSION,
+        "factorGroupVersion": argus_calibration.FACTOR_GROUP_VERSION,
         "context": {
             "posture": posture_label,
             "regimeConfidence": rg.get("confidence"),
@@ -7089,8 +7152,9 @@ def get_prediction_snapshot():
             "backdrop": rb.get("posture"),
             "aiStatus": ai_status,
         },
-        "sensors": sensors,                    # Layer 1 — fixed 16 regime sensors
-        "predictions": predictions,            # Layers 1-3 stock rows (see .layer)
+        "sensors": sensors,                    # Layer 1 — fixed 16 regime sensors (v2)
+        "contextVariables": context_vars,      # recorded but NOT return-scored (v2)
+        "predictions": predictions,            # cohort rows (see .cohortId / .layer)
         "classPredictions": class_predictions, # legacy continuity (v10.5 axis)
         "posturePrediction": posture_prediction,
         "scoringRule": {

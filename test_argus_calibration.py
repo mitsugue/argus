@@ -7,14 +7,64 @@ import math
 import argus_calibration as C
 
 
+# ── v2 universe: exact composition (spec §13) ────────────────────────────────
+def test_layer1_is_exactly_16():
+    assert len(C.REGIME_SENSORS) == 16
+    assert len(set(C.REGIME_SENSORS)) == 16
+
+
+def test_layer2a_is_14_split_7_7():
+    jp = [s for s in C.TACTICAL_BENCHMARK if s[0].isdigit()]
+    us = [s for s in C.TACTICAL_BENCHMARK if not s[0].isdigit()]
+    assert len(C.TACTICAL_BENCHMARK) == 14
+    assert len(jp) == 7 and len(us) == 7
+
+
+def test_5803_in_2a_5801_not():
+    assert "5803" in C.TACTICAL_BENCHMARK
+    assert "5801" not in C.TACTICAL_BENCHMARK
+    assert C.classify_cohort("5803") == C.COHORT_TACTICAL_FIXED
+
+
+def test_meta_not_deleted_but_not_in_2a():
+    # META is no longer a fixed-benchmark member; it stays owner-watchlist eligible
+    assert "META" not in C.TACTICAL_BENCHMARK
+
+
+def test_8058_and_7011_names_correct():
+    assert C.display_name("8058") == "三菱商事"      # NOT 三菱重工業
+    assert C.display_name("7011") == "三菱重工業"
+
+
+def test_context_variables_separate_from_sensors():
+    # USDJPY/VIX are context variables now, NOT scored Layer-1 securities
+    assert "USDJPY" not in C.REGIME_SENSORS
+    assert "VIX" not in C.REGIME_SENSORS
+    cv = C.context_variables()
+    assert cv["fx_usdjpy"] == "USDJPY" and cv["volatility_vix"] == "VIX"
+    assert "rates_us10y" in cv and "credit_hy_oas" in cv
+
+
+def test_new_sensors_present():
+    for s in ("1615", "1343", "XLF", "XLE", "XLU", "LQD"):
+        assert s in C.REGIME_SENSORS
+        assert C.classify_cohort(s) == C.COHORT_REGIME_SENSOR
+
+
+def test_new_tactical_present():
+    for s in ("7011", "JPM", "XOM", "PG", "CAT"):
+        assert s in C.TACTICAL_BENCHMARK
+        assert C.classify_cohort(s) == C.COHORT_TACTICAL_FIXED
+
+
 # ── cohorts ─────────────────────────────────────────────────────────────────
 def test_regime_sensors_cohort():
-    for s in ("1306", "SPY", "BTC", "USDJPY", "VIX", "8058"):
+    for s in ("1306", "1615", "1343", "SPY", "XLF", "BTC"):
         assert C.classify_cohort(s) == C.COHORT_REGIME_SENSOR
 
 
 def test_tactical_benchmark_cohort():
-    for s in ("9984", "5801", "NVDA", "AAPL", "META"):
+    for s in ("8306", "7203", "8058", "9984", "NVDA", "JPM", "CAT"):
         assert C.classify_cohort(s) == C.COHORT_TACTICAL_FIXED
 
 
@@ -49,21 +99,28 @@ def test_experimental_flags_dedup_manual_and_auto():
 
 # ── factor groups ────────────────────────────────────────────────────────────
 def test_factor_group_mapping():
-    assert C.factor_group_of("SPY") == "us_broad_growth_semis"
-    assert C.factor_group_of("TLT") == "duration_credit"
-    assert C.factor_group_of("VIX") == "volatility"
-    assert C.factor_group_of("NVDA") is None  # not a sensor
+    assert C.factor_group_of("SPY") == "us_broad_equity"
+    assert C.factor_group_of("TLT") == "duration"
+    assert C.factor_group_of("LQD") == "investment_grade_credit"
+    assert C.factor_group_of("VIX") is None       # context variable, not a sensor
+    assert C.factor_group_of("NVDA") == "us_ai_semiconductor"  # tactical role
+
+
+def test_1306_1321_share_broad_equity_group():
+    assert C.factor_group_of("1306") == "jp_broad_equity"
+    assert C.factor_group_of("1321") == "jp_broad_equity"
 
 
 def test_factor_group_aggregate_equal_group_weight():
-    # 3 US-equity sensors all 0.0, one safe-haven 1.0 → group weighting must NOT
-    # let the 3 correlated US names dominate.
-    scores = {"SPY": 0.0, "QQQ": 0.0, "SMH": 0.0, "GLD": 1.0}
+    # 1306+1321 share jp_broad_equity → Japan broad equity must NOT count twice
+    # against safe_haven.
+    scores = {"1306": 0.0, "1321": 0.0, "GLD": 1.0}
     agg = C.factor_group_aggregate(scores)
-    assert agg["factorGroupScores"]["us_broad_growth_semis"] == 0.0
+    assert agg["factorGroupScores"]["jp_broad_equity"] == 0.0
     assert agg["factorGroupScores"]["safe_haven"] == 1.0
-    # equal group weight → (0.0 + 1.0)/2 = 0.5, NOT (0+0+0+1)/4 = 0.25
+    # equal group weight → (0.0 + 1.0)/2 = 0.5, NOT (0+0+1)/3 = 0.33
     assert agg["overallEqualGroupWeighted"] == 0.5
+    assert agg["factorGroupVersion"] == C.FACTOR_GROUP_VERSION
 
 
 # ── volatility bands (no lookahead, sqrt-h) ──────────────────────────────────
