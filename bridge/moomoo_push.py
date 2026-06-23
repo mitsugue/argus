@@ -194,7 +194,7 @@ def run_capability_test(qc):
     batches = [codes[i:i + CAP_BATCH] for i in range(0, len(codes), CAP_BATCH)]
     t0 = time.time()
     requested = returned = stale = errors = 0
-    ages, latencies = [], []
+    ages, latencies, traded_ages = [], [], []
     for b in batches:
         requested += len(b)
         bt = time.time()
@@ -208,9 +208,18 @@ def run_capability_test(qc):
                 returned += 1
                 ut = str(row.get("update_time") or "")[:19]
                 try:
+                    vol = float(row.get("volume") or 0)
+                except (TypeError, ValueError):
+                    vol = 0
+                try:
                     dt = _dt.datetime.strptime(ut, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_JST)
                     age = (_now_jst() - dt).total_seconds()
                     ages.append(age)
+                    # Control set: only names that ACTUALLY TRADED today. An
+                    # illiquid name's old update_time means "no trade", not a feed
+                    # delay — so the entitlement verdict uses traded names (GPT).
+                    if vol > 0:
+                        traded_ages.append(age)
                     if age >= 300:
                         stale += 1
                 except Exception:
@@ -218,14 +227,17 @@ def run_capability_test(qc):
         except Exception:
             errors += 1
         time.sleep(0.5)  # stagger batches — stay well under the rate quota
-    ages.sort()
+    ages.sort(); traded_ages.sort()
 
     def _pct(a, p):
         return round(a[min(len(a) - 1, int(p * len(a)))], 1) if a else None
-    p95 = _pct(ages, 0.95)
-    med = _pct(ages, 0.5)
-    verdict = ("realtime_evidence" if p95 is not None and p95 <= 60 else
-               "delayed_evidence" if med is not None and med >= 600 else "unknown")
+    p95, med = _pct(ages, 0.95), _pct(ages, 0.5)
+    tp95, tmed = _pct(traded_ages, 0.95), _pct(traded_ages, 0.5)
+    # Verdict from the TRADED control set (falls back to all if no volume data).
+    vp95 = tp95 if traded_ages else p95
+    vmed = tmed if traded_ages else med
+    verdict = ("realtime_evidence" if vp95 is not None and vp95 <= 60 else
+               "delayed_evidence" if vmed is not None and vmed >= 600 else "unknown")
     report = {
         "asOf": _now_jst().isoformat(), "universeCount": len(codes),
         "universeFull": full, "sampled": full != len(codes),
@@ -235,13 +247,17 @@ def run_capability_test(qc):
         "sweepSeconds": round(time.time() - t0, 1),
         "batchLatencyMaxS": max(latencies) if latencies else None,
         "quoteAgeMedianS": med, "quoteAgeP95S": p95,
+        "tradedCount": len(traded_ages),
+        "quoteAgeMedianTradedS": tmed, "quoteAgeP95TradedS": tp95,
         "staleCount": stale, "errors": errors, "entitlementVerdict": verdict,
-        "noteJa": "venueのupdate_timeで鮮度を実測。p95<=60sでrealtime_evidence、中央値>=600sでdelayed。",
+        "noteJa": "鮮度は『本日約定あり銘柄(volume>0)』で判定。約定の無い低流動性銘柄の古いupdate_timeは"
+                  "配信遅延ではないため除外。traded p95<=60sでrealtime_evidence。",
     }
     try:
         resp = _post_capability_report(report)
         print(_now_jst().strftime("%H:%M:%S"),
-              f"cap-test: cov={report['coveragePct']}% p95age={p95}s verdict={verdict} "
+              f"cap-test: cov={report['coveragePct']}% tradedP95={tp95}s "
+              f"(traded={len(traded_ages)}) allP95={p95}s verdict={verdict} "
               f"post={resp.status_code}")
     except Exception as e:
         print(_now_jst().strftime("%H:%M:%S"), "cap-test post error:", str(e)[:120])
