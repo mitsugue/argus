@@ -108,7 +108,7 @@ export const BackupCard: React.FC = () => {
         </div>
         <p className="backup__note">
           状態: {enabled
-            ? `有効(最終送信 ${lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '—'})。サーバー反映は平日16:05の台帳ラン時。`
+            ? `有効(最終送信 ${lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '—'})。両端末を開いていれば数分で同期。恒久保存は1日6回(平日 9/12/16/19/22時・深夜2時)。`
             : '未設定(上でパスフレーズを決めて有効化)。'}
           データは端末上で暗号化され、サーバーとGitHubには<b>暗号文しか</b>渡りません。
           パスフレーズを忘れると誰にも復元できません(本人含む)。古い世代は自動削除(直近8世代保持)。

@@ -1,0 +1,102 @@
+name: vault-sync (durable backup catch-up)
+
+# WHY: the cloud-backup relay lives in the backend's memory, which Render's
+# Starter dyno wipes when it idles (~15 min). The durable copy on the `ledger`
+# branch used to be written ONLY by the daily 16:05 ledger run — so a
+# cross-device push could be lost for up to 24h if the relay expired first.
+# This lightweight job drains the relay and commits the durable envelopes
+# several extra times a day, shrinking that worst-case window to a few hours.
+# It touches ONLY ledger/vault/ — never days/, scores/, or summary.json.
+
+on:
+  schedule:
+    # UTC → JST: 09:00 / 12:00 / 19:00 / 22:00 / 02:00. The 16:05 JST slot is
+    # already covered by prediction-ledger.yml's own vault step.
+    - cron: '0 0,3,10,13,17 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Same group as prediction-ledger.yml so the two never push to `ledger` at once.
+concurrency:
+  group: ledger-branch-writer
+  cancel-in-progress: false
+
+jobs:
+  vault-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Switch to ledger branch (must already exist)
+        id: sw
+        run: |
+          # NEVER orphan-wipe (06-22 incident). vault-sync does not own branch
+          # creation — if origin/ledger is missing, skip and let the daily run
+          # create it.
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger
+            echo "ready=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::origin/ledger not found — skipping (daily ledger run owns creation)"
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Drain relay → durable vault files
+        if: steps.sw.outputs.ready == '1'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then echo '{}' > vault.json; else
+            curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/vault-pull" -o vault.json || echo '{}' > vault.json
+          fi
+          python3 - <<'PY'
+          import json, os, glob, datetime
+          slots = (json.load(open('vault.json')) or {}).get('slots') or {}
+          for vid, slot in slots.items():
+              if not (isinstance(vid, str) and len(vid) == 64 and all(c in '0123456789abcdef' for c in vid)):
+                  continue
+              d = f'ledger/vault/{vid}'
+              os.makedirs(d, exist_ok=True)
+              stamp = datetime.datetime.utcfromtimestamp(slot.get('ts', 0)).strftime('%Y-%m-%dT%H%M%SZ')
+              open(f'{d}/{stamp}.json', 'w').write(slot['blob'])
+              open(f'{d}/latest.json', 'w').write(slot['blob'])
+              # Disposable history (user-approved): keep the newest 8 per vault.
+              hist = sorted(p for p in glob.glob(f'{d}/*.json') if not p.endswith('latest.json'))
+              for old in hist[:-8]:
+                  os.remove(old)
+              print('vault saved:', vid[:12], stamp)
+          if not slots:
+              print('no pending vault envelopes')
+          PY
+
+      - name: Commit ledger/vault only
+        if: steps.sw.outputs.ready == '1'
+        run: |
+          git config user.name "argus-vault[bot]"
+          git config user.email "argus-vault@users.noreply.github.com"
+          git add ledger/vault/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "no vault changes"
+          else
+            git commit -m "vault: $(date -u +%FT%TZ) durable catch-up"
+            ok=0
+            for i in 1 2 3; do
+              git fetch origin ledger 2>/dev/null || true
+              if git rebase origin/ledger; then
+                if git push origin HEAD:ledger; then ok=1; break; fi
+              else
+                git rebase --abort 2>/dev/null || true
+              fi
+              echo "push race — retry $i"; sleep 6
+            done
+            [ "$ok" = 1 ] || echo "::warning::vault push failed after retries (next run catches up)"
+          fi

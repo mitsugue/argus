@@ -30,6 +30,13 @@ on:
 permissions:
   contents: write
 
+# Serialize every writer of the `ledger` branch (this workflow + vault-sync.yml)
+# so two runs never push concurrently. cancel-in-progress:false = queue, don't
+# kill — losing a half-done ledger run would be worse than waiting.
+concurrency:
+  group: ledger-branch-writer
+  cancel-in-progress: false
+
 jobs:
   # Dedupe gate (cron-reliability-v1): GitHub's free cron runs HOURS late, so
   # the punctual trigger is an external workflow_dispatch (user's EC2 at 16:05
