@@ -139,6 +139,10 @@ import datetime as _dt
 
 CAP_TEST_ENABLED = os.environ.get("JP_ALL_MARKET_CAP_TEST", "0") not in ("0", "false", "")
 CAP_BATCH = max(50, min(400, int(os.environ.get("CAP_BATCH_SIZE", "400"))))
+# Cap the sweep size so a small EC2 instance (e.g. 411MB RAM) doesn't OOM on the
+# full ~3,900-symbol universe. Default 500 = a representative sample that still
+# proves freshness/entitlement. Set 0 for the full universe (needs a bigger box).
+CAP_UNIVERSE_MAX = int(os.environ.get("CAP_UNIVERSE_MAX", "500"))
 _JST = _dt.timezone(_dt.timedelta(hours=9))
 _cap_done_date = None  # JST date string the test last ran
 
@@ -184,6 +188,9 @@ def run_capability_test(qc):
     if not codes:
         print(_now_jst().strftime("%H:%M:%S"), "cap-test: no universe (J-Quants/admin?)")
         return None
+    full = len(codes)
+    if CAP_UNIVERSE_MAX and full > CAP_UNIVERSE_MAX:
+        codes = codes[:CAP_UNIVERSE_MAX]   # sample to fit small-instance memory
     batches = [codes[i:i + CAP_BATCH] for i in range(0, len(codes), CAP_BATCH)]
     t0 = time.time()
     requested = returned = stale = errors = 0
@@ -220,7 +227,9 @@ def run_capability_test(qc):
     verdict = ("realtime_evidence" if p95 is not None and p95 <= 60 else
                "delayed_evidence" if med is not None and med >= 600 else "unknown")
     report = {
-        "asOf": _now_jst().isoformat(), "universeCount": len(codes), "batches": len(batches),
+        "asOf": _now_jst().isoformat(), "universeCount": len(codes),
+        "universeFull": full, "sampled": full != len(codes),
+        "batches": len(batches),
         "batchSize": CAP_BATCH, "requested": requested, "returned": returned,
         "coveragePct": round(returned / requested * 100, 1) if requested else 0,
         "sweepSeconds": round(time.time() - t0, 1),
