@@ -482,7 +482,19 @@ def jp_intraday_overlay(m):
     if (nik is not None and nik <= NIKKEI_RISK_HARD) or (br is not None and br <= BREADTH_RISK_HARD):
         overlay = "RISK_OFF_WATCH"
 
-    holder_overlay = "REVIEW_REQUIRED" if m.get("ownerAffected") and overlay != "NORMAL" else "NONE"
+    # Escalate on actual severe incidents — a few crashing names must NOT be hidden
+    # by a near-zero *average* breadth (the same masking problem, at index level).
+    severe = int(m.get("jpSevereIncidents") or 0)     # high+critical JP incidents
+    critical = int(m.get("jpCriticalIncidents") or 0)
+    if severe >= 1 or critical >= 1:
+        flags.append("JP_HIGH_BETA_SELL_OFF") if "JP_HIGH_BETA_SELL_OFF" not in flags else None
+        overlay = _max_overlay(overlay, "CAUTION")
+    if severe >= 3 or critical >= 2:
+        overlay = "RISK_OFF_WATCH"
+
+    holder_overlay = ("REVIEW_REQUIRED"
+                      if (m.get("ownerAffected") or m.get("ownerSevereAffected")) and overlay != "NORMAL"
+                      else "NONE")
 
     if overlay == "NORMAL":
         display = f"Global regime: {glob}"

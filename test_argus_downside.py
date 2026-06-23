@@ -89,6 +89,23 @@ def test_jp_overlay_overrides_global_risk_on():
     assert "JP_BREADTH_RISK" in ov["flags"]
 
 
+def test_jp_overlay_escalates_on_severe_incidents_despite_flat_breadth():
+    # A few names crashing must not be hidden by a near-zero average breadth.
+    ov = D.jp_intraday_overlay({"globalRegime": "RISK_ON", "jpBreadth": -0.3,
+                                "jpDecliners": 3, "jpTotal": 7,
+                                "jpSevereIncidents": 3, "jpCriticalIncidents": 3,
+                                "ownerSevereAffected": True})
+    assert ov["jpIntradayOverlay"] == "RISK_OFF_WATCH"
+    assert ov["holderRiskOverlay"] == "REVIEW_REQUIRED"
+    assert "JP_HIGH_BETA_SELL_OFF" in ov["flags"]
+
+
+def test_jp_overlay_one_severe_is_caution():
+    ov = D.jp_intraday_overlay({"globalRegime": "RISK_ON", "jpBreadth": 0.2,
+                                "jpDecliners": 1, "jpTotal": 7, "jpSevereIncidents": 1})
+    assert ov["jpIntradayOverlay"] == "CAUTION"
+
+
 def test_jp_overlay_calm_stays_normal():
     ov = D.jp_intraday_overlay({"globalRegime": "RISK_ON", "nikkeiProxyPct": 0.3,
                                 "jpDecliners": 2, "jpTotal": 7})

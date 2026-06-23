@@ -6507,7 +6507,15 @@ def get_downside_incidents():
     now_iso = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     incidents = argus_downside.classify_incidents(assets, market_ctx, now_iso=now_iso)
     owner_affected = any(i.get("isHeld") for i in incidents)
-    overlay = argus_downside.jp_intraday_overlay(dict(market_ctx, ownerAffected=owner_affected))
+    # Escalate the JP overlay on actual severe incidents (not just average breadth)
+    # so a few crashing names can't hide behind green peers.
+    jp_incs = [i for i in incidents if i.get("market") == "JP"]
+    jp_severe = sum(1 for i in jp_incs if i.get("severity") in ("high", "critical"))
+    jp_critical = sum(1 for i in jp_incs if i.get("severity") == "critical")
+    owner_severe = any(i.get("isHeld") and i.get("severity") in ("high", "critical") for i in jp_incs)
+    overlay = argus_downside.jp_intraday_overlay(dict(
+        market_ctx, ownerAffected=owner_affected, ownerSevereAffected=owner_severe,
+        jpSevereIncidents=jp_severe, jpCriticalIncidents=jp_critical))
 
     payload = {
         "status": "live" if (jp.get("status") == "live" or us.get("status") == "live") else "partial",
