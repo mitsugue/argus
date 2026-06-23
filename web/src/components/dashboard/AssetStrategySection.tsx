@@ -7,6 +7,7 @@ import {
   SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
@@ -279,7 +280,8 @@ const SortableAssetRow: React.FC<{
   onUpdateHolding: Props['onUpdateHolding'];
   aiLabel?: AIJudgmentLabel;
   aiAgeMin?: number | null;
-}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel, aiAgeMin }) => {
+  incident?: DownsideIncident;
+}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel, aiAgeMin, incident }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
   // Entry Scout (v10.15, user request 2026-06-13): on-demand 瞬間診断 for the
   // buy-entry moment — trend/overheat from 60d history + big-money flow +
@@ -401,9 +403,18 @@ const SortableAssetRow: React.FC<{
           <span className="asset-row__price">{fmtPrice(asset.market, priceShown)}</span>
           <span className={pctClass(chgShown)}>{fmtPct(chgShown)}</span>
           <span className="asset-row__action" style={{ color: ACTION_COLOR[strat.action] ?? 'var(--text-sub)' }}>{strat.action}</span>
+          {incident && (
+            <span className="asset-row__override"
+              style={{ color: ['EXIT_WATCH', 'TRIM_WATCH'].includes(incident.actionOverride) ? '#F87171' : '#FBBF24' }}>
+              ⚠ {incident.actionOverride}
+            </span>
+          )}
           <span className="asset-row__meta">
             {strat.risk !== '—' && <span>risk {strat.risk}</span>}
             {strat.confidence != null && <span>· {Math.round(strat.confidence * 100)}%</span>}
+            {incident && incident.ownerState && incident.ownerState !== 'watch' && (
+              <span> · {incident.ownerState}</span>
+            )}
           </span>
           <span className="asset-row__status" style={{ color: fresh.color }}>{fresh.text}</span>
         </button>
@@ -411,6 +422,32 @@ const SortableAssetRow: React.FC<{
 
       {expanded && (
         <div className="asset-row__detail">
+          {incident && (
+            <div className="asset-detail__downside">
+              <div className="asset-detail__downside-head">
+                WHY DOWN? <span className="asset-detail__downside-pct">{typeof incident.changePct === 'number' ? `${incident.changePct.toFixed(1)}%` : ''}</span>
+                <span className="asset-detail__downside-ovr"
+                  style={{ color: ['EXIT_WATCH', 'TRIM_WATCH'].includes(incident.actionOverride) ? '#F87171' : '#FBBF24' }}>
+                  Rule: {incident.currentAction} → Override: {incident.actionOverride}
+                </span>
+              </div>
+              <div className="asset-detail__downside-causes">
+                {incident.causeBuckets.slice(0, 3).map((b) => (
+                  <span key={b.cause} className="asset-detail__downside-cause">
+                    {b.cause} {Math.round(b.probability * 100)}%
+                  </span>
+                ))}
+              </div>
+              <p className="asset-detail__downside-line">{incident.reasonJa}</p>
+              <p className="asset-detail__downside-line"><b>やってはいけない:</b> {incident.doNotDoJa}</p>
+              <p className="asset-detail__downside-line"><b>確認条件:</b> {incident.nextConditionJa}</p>
+              {incident.missingData.length > 0 && (
+                <p className="asset-detail__downside-line asset-detail__downside-missing">
+                  <b>欠損データ:</b> {incident.missingData.join(' / ')}
+                </p>
+              )}
+            </div>
+          )}
           <div className="asset-detail__grid">
             <div><span className="asset-detail__k">Strategy</span><span className="asset-detail__v">{strat.strategyJa}</span></div>
             <div><span className="asset-detail__k">Why</span><span className="asset-detail__v">{strat.reasonJa}</span></div>
@@ -627,6 +664,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
   const us = useUSWatchlist(usSyms);
   const al = useActionLabels({ jp: jpSyms, us: usSyms });
   const cat = useCatalysts();
+  const { data: downside } = useDownsideIncidents();
   // Crypto quotes via CoinGecko: each crypto asset stores its id in the memo
   // as "coingecko:<id>" (the seed assets and symbol-search both do this).
   const cryptoPairs = useMemo(
@@ -656,8 +694,10 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
     for (const l of al.data?.labels ?? []) labels.set(l.symbol, l);
     const cats = new Map<string, CatalystItem>();
     for (const c of cat.data?.items ?? []) cats.set(c.symbol, c);
-    return { quotes, labels, cats };
-  }, [jp.data, us.data, al.data, cat.data, crypto.byId, cryptoPairs]);
+    const downsideBySym = new Map<string, DownsideIncident>();
+    for (const inc of downside?.incidents ?? []) downsideBySym.set(inc.symbol, inc);
+    return { quotes, labels, cats, downsideBySym };
+  }, [jp.data, us.data, al.data, cat.data, crypto.byId, cryptoPairs, downside]);
 
   // Portfolio exposure over LIVE prices only — shared by the Exposure card and
   // the What-if panel. Kept ABOVE the empty-list early return (rules of hooks).
@@ -724,6 +764,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
                         onUpdateHolding={onUpdateHolding}
                         aiLabel={aiBySym.get(a.symbol)}
                         aiAgeMin={aiAgeMin}
+                        incident={maps.downsideBySym.get(a.symbol)}
                       />
                     );
                   })}

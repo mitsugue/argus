@@ -29,6 +29,8 @@ export interface DownsideIncident {
   doNotDoJa: string;
   nextReviewAt: string | null;
   isHeld: boolean;
+  ownerState?: string;       // watch | active | held | protected | null
+  priority?: string;         // low | normal | high
   status: 'live' | 'partial';
   dedupKey?: string;
 }

@@ -1332,3 +1332,19 @@
 .regime-jp-overlay--red { background: rgba(248, 113, 113, 0.12); border-color: #F87171; }
 .regime-jp-overlay__tag { font-size: 12px; font-weight: 700; color: var(--text-main, #E6EDF3); }
 .regime-jp-overlay__reason { font-size: 12px; color: var(--text-sub, #98A7B7); line-height: 1.55; margin: 4px 0 0; }
+
+/* Watchlist row downside override + WHY-DOWN block (v10.104) */
+.asset-row__override { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.asset-detail__downside {
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;
+}
+.asset-detail__downside-head { font-size: 12px; font-weight: 700; color: var(--text-main, #E6EDF3); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.asset-detail__downside-pct { color: #F87171; }
+.asset-detail__downside-ovr { font-size: 11px; font-weight: 700; margin-left: auto; }
+.asset-detail__downside-causes { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.asset-detail__downside-cause { font-size: 10.5px; color: var(--text-sub, #98A7B7); background: rgba(255,255,255,0.05); border-radius: 999px; padding: 2px 8px; }
+.asset-detail__downside-line { font-size: 12px; color: var(--text-sub, #98A7B7); line-height: 1.55; margin: 3px 0; }
+.asset-detail__downside-line b { color: var(--text-main, #E6EDF3); }
+.asset-detail__downside-missing { color: var(--text-muted, #5f6b78); }
