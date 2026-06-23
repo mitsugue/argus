@@ -73,11 +73,18 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
   // 3-layer risk overlay for the hero (v10.103): a green global regime must not
   // hide a weak Japan tape or holder risk.
-  const overlay = useMemo(() => ({
-    globalRegime: downside?.globalRegime || regime.data?.regime?.label || 'UNKNOWN',
-    jpIntradayOverlay: downside?.jpIntradayOverlay || 'NORMAL',
-    holderRiskOverlay: downside?.holderRiskOverlay || 'NONE',
-  }), [downside, regime.data]);
+  const overlay = useMemo(() => {
+    // Prefer the downside engine's globalRegime, but treat "UNKNOWN"/empty as a
+    // miss and fall back to the regime endpoint's label (fixes Global=UNKNOWN
+    // while Market Regime=Mixed when the downside read hit a cold cache, v10.112).
+    const ds = downside?.globalRegime;
+    const global = (ds && ds !== 'UNKNOWN') ? ds : (regime.data?.regime?.label || ds || 'UNKNOWN');
+    return {
+      globalRegime: global,
+      jpIntradayOverlay: downside?.jpIntradayOverlay || 'NORMAL',
+      holderRiskOverlay: downside?.holderRiskOverlay || 'NONE',
+    };
+  }, [downside, regime.data]);
   const ownerAffected = !!downside?.ownerAffected;
   // Partial-data discipline: when data is incomplete, cap confidence at 0.60 and
   // flag PARTIAL so a HOLD never looks high-confidence on thin data.

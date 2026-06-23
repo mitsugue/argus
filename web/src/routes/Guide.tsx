@@ -68,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.112.0', 'Hero「Global Regime」のUNKNOWN表示バグ修正 — ダウンサイド側が一瞬コールドキャッシュの時に globalRegime="UNKNOWN" が残り、Market Regimeは「Mixed」なのにGlobalだけ「UNKNOWN」と食い違っていた。UNKNOWN/空はレジームendpointのラベルにフォールバックするよう修正(Mixed等を表示)。PARTIAL自体はデータ源(Twelve Data/J-Quants)が一時取得不可な時の正直な表示で、日次リセット等で自動回復する'],
   ['v10.111.0', 'Watchlistにも投信の基準価額(NAV)を表示 — これまで投信の基準価額はCore Portfolioだけに出ており、Watchlistの投信行は金額が「—」だった。useFundNav(投信総合ライブラリー)をWatchlistの価格マップに接続し、各投信を銘柄名/シンボルでカタログ3本(国内株式/米国S&P500/全世界オルカン)のNAVに照合して ¥基準価額+前日比 を表示。投信はCORE/FUMD扱いで円表示に修正。実データで EMAXIS-ACWI ¥38,306 / EMAXIS-SP500 ¥44,536 表示を確認。NAVは前営業日基準・日次'],
   ['v10.110.0', 'メモリ最適化(Render 512MB上限超過の再発防止) — ダウンサイド系の再計算頻度を削減(サーバーキャッシュ60→180秒・フロントのポーリング60→120秒)。downside再計算はwatchlist+catalysts+TDnetを引くため、単一プロセス512MBではピークが上限に触れやすかった。3分の1の頻度に下げてピークを抑制。データ(台帳/予測/vault)はledgerブランチ保存で再起動の影響なし。再発する場合はRender Standard(2GB)へのアップグレードが必要(無料/Starterは共に512MB)'],
   ['v10.109.0', 'Top Rotations 履歴の記録 + Δ(GPT#8・#9と同型) — 毎営業日16:05に資金ローテーション(グループ別スコア+トップ・ローテーション)を ledger/rotations/<date>.json に追記(append-only・held/mock読みはスキップ)。読み出しAPI /api/argus/rotation-history は記録日一覧+最新+「Δ=前回記録比のスコア変化(流出が大きい順)」を返す。明日から2点目が貯まればΔが出て『どこから資金が抜けたか』が分かる。Δ表示UIは次の層。テスト312'],
