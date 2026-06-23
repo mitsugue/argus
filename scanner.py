@@ -5794,10 +5794,30 @@ def api_argus_jp_universe():
         seg_counts[seg] = seg_counts.get(seg, 0) + 1
         if seg in want:
             codes.append("JP." + r["code4"])
-    codes = sorted(set(codes))
-    return jsonify({"codes": codes, "count": len(codes), "segments": sorted(want),
-                    "segmentCounts": seg_counts,
-                    "note": "moomoo get_market_snapshot codes for the JP all-market sweep"})
+    # PRIORITY first (flexible scaling): the owner's watchlist (Layer 2B), the
+    # fixed tactical benchmark and the regime sensors are ALWAYS swept, even if
+    # they fall outside a capped sample — the bridge takes codes[:N] from the
+    # front, so prioritised names are never dropped. Broad universe fills the rest.
+    priority = []
+    try:
+        mem = _layer2b_read_latest()
+        for m in (mem.get("members") if isinstance(mem, dict) else []) or []:
+            if str(m.get("market")) == "JP" and m.get("symbol"):
+                priority.append("JP." + str(m["symbol"]))
+    except Exception:
+        pass
+    for s in list(argus_calibration.TACTICAL_BENCHMARK) + list(argus_calibration.REGIME_SENSORS):
+        if s and s[0].isdigit():          # JP listing code (e.g. 7203 / 285A)
+            priority.append("JP." + s)
+    priority = list(dict.fromkeys(priority))          # dedup, keep order
+    pset = set(priority)
+    broad = sorted(c for c in set(codes) if c not in pset)
+    ordered = priority + broad
+    return jsonify({"codes": ordered, "count": len(ordered), "priorityCount": len(priority),
+                    "segments": sorted(want), "segmentCounts": seg_counts,
+                    "noteJa": "先頭は優先銘柄(所有者watchlist+固定ベンチ+センサー)で必ずスイープ対象。"
+                              "残りは全市場。ブリッジが先頭からCAP_UNIVERSE_MAX件を取るので優先銘柄は外れない。",
+                    "note": "priority-first JP codes for the capability sweep"})
 
 @app.route("/api/argus/moomoo-capability-report", methods=["POST"])
 def api_argus_moomoo_capability_report():
