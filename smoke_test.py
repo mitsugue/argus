@@ -218,7 +218,8 @@ def v_legacy_routes_gated():
 def v_no_order_routes():
     # Safety: there must be NO order/execute route (research-only, no auto-trading).
     import urllib.error
-    for path in ("/api/argus/decision-value/order", "/api/argus/decision-value/execute"):
+    for path in ("/api/argus/decision-value/order", "/api/argus/decision-value/execute",
+                 "/api/argus/downside/order", "/api/argus/downside/execute"):
         try:
             _get(path)
             return False, f"{path} exists — must NOT (no order routes!)"
@@ -226,6 +227,24 @@ def v_no_order_routes():
             if e.code != 404:
                 return False, f"{path} returned {e.code}, expected 404"
     return True, "no order/execute routes (correct)"
+
+def v_downside_incidents():
+    # Downside Incident Response (v10.98): public, never just generic "急落".
+    c, d = _get("/api/argus/downside-incidents")
+    if d.get("engineVersion") != "downside-v1":
+        return False, f"engineVersion={d.get('engineVersion')}"
+    if not isinstance(d.get("incidents"), list):
+        return False, "incidents not a list"
+    if "jpIntradayOverlay" not in d or "holderRiskOverlay" not in d:
+        return False, "missing overlay fields"
+    # Every incident must carry cause buckets that sum to ~1 + an action override.
+    for inc in d["incidents"]:
+        total = round(sum(b.get("probability", 0) for b in inc.get("causeBuckets") or []), 2)
+        if inc.get("causeBuckets") and total != 1.0:
+            return False, f"{inc.get('symbol')} buckets sum={total}"
+        if inc.get("actionOverride") in (None, "", "HOLD"):
+            return False, f"{inc.get('symbol')} override not set"
+    return True, f"status={d.get('status')} active={d.get('activeCount')} overlay={d.get('jpIntradayOverlay')}"
 
 def v_source_registry():
     c, d = _get("/api/argus/source-registry")
@@ -280,6 +299,7 @@ CHECKS = [
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
     ("decision-value summary", v_decision_value_summary),
     ("no order routes (safety)", v_no_order_routes),
+    ("downside-incidents (cause+override)", v_downside_incidents),
     ("legacy routes admin-gated", v_legacy_routes_gated),
     ("source-registry", v_source_registry),
     ("system-health (public lamps)", v_system_health),

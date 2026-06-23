@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { AIReview } from '../components/dashboard/AIReview';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { AssetStrategySection } from '../components/dashboard/AssetStrategySection';
+import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
 import { useAssets } from '../hooks/useAssets';
@@ -40,6 +41,8 @@ export const Watchlist: React.FC = () => {
       subtitle="Assets grouped by genre. Drag the handle to reorder; tap a row for its strategy. Rule-based, no automatic AI."
     >
       <AIReview />
+
+      <DownsideIncidentCard />
 
       <div className="asset-toolbar asset-toolbar--end">
         <span className="asset-toolbar__age">Strategy updated {ageLabel(updatedAt, nowMs)}</span>

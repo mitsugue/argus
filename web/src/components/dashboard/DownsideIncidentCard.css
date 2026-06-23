@@ -1,0 +1,57 @@
+/* Downside Incident Response card (v10.98) */
+.dic-card {
+  background: var(--surface, #111A24);
+  border: 1px solid var(--red, #F87171);
+  border-left-width: 3px;
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.dic-card__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.dic-card__head h2 { font-size: 15px; font-weight: 700; margin: 0; color: var(--text-main, #E6EDF3); }
+.dic-jp { font-size: 11px; font-weight: 500; color: var(--text-muted, #5F6B78); margin-left: 6px; }
+
+.dic-overlay { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.dic-overlay--amber { color: #FBBF24; background: rgba(251, 191, 36, 0.12); }
+.dic-overlay--red { color: #F87171; background: rgba(248, 113, 113, 0.14); }
+.dic-overlay-reason { font-size: 12px; color: var(--text-sub, #98A7B7); margin: 6px 0 4px; line-height: 1.55; }
+.dic-holder { font-size: 12px; font-weight: 600; color: #FBBF24; margin: 4px 0 8px; }
+
+.dic-row { border-top: 1px solid var(--line, rgba(255,255,255,0.07)); padding: 10px 0 8px; }
+.dic-row--red { border-left: 2px solid #F87171; padding-left: 8px; }
+.dic-row--amber { border-left: 2px solid #FBBF24; padding-left: 8px; }
+.dic-row--gray { border-left: 2px solid var(--text-muted, #5F6B78); padding-left: 8px; }
+.dic-row__head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.dic-row__id { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.dic-held { font-size: 10px; font-weight: 700; color: #0B1118; background: #FBBF24; border-radius: 4px; padding: 1px 5px; }
+.dic-sym { font-size: 14px; font-weight: 700; color: var(--text-main, #E6EDF3); }
+.dic-name { font-size: 12px; color: var(--text-sub, #98A7B7); overflow-wrap: anywhere; }
+.dic-row__nums { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.dic-pct { font-size: 14px; font-weight: 700; color: #F87171; }
+.dic-ovr { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+.dic-ovr--red { color: #F87171; background: rgba(248, 113, 113, 0.14); }
+.dic-ovr--amber { color: #FBBF24; background: rgba(251, 191, 36, 0.12); }
+
+.dic-overrideline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 4px; font-size: 11px; }
+.dic-lbl { color: var(--text-muted, #5F6B78); font-weight: 600; }
+.dic-lbl--ovr { color: #FBBF24; }
+.dic-arrow { color: var(--text-muted, #5F6B78); }
+.dic-why { color: var(--text-sub, #98A7B7); margin-left: 4px; }
+
+.dic-reason { font-size: 12.5px; color: var(--text-main, #E6EDF3); line-height: 1.6; margin: 4px 0 0; }
+
+.dic-detail { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line, rgba(255,255,255,0.07)); }
+.dic-buckets { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.dic-bucket { display: grid; grid-template-columns: minmax(0, 96px) 1fr 34px; align-items: center; gap: 8px; font-size: 11px; }
+.dic-bucket__name { color: var(--text-sub, #98A7B7); overflow-wrap: anywhere; }
+.dic-bucket__bar { height: 6px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden; }
+.dic-bucket__bar i { display: block; height: 100%; background: #F87171; border-radius: 999px; }
+.dic-bucket__pct { text-align: right; color: var(--text-main, #E6EDF3); font-weight: 600; }
+.dic-line { font-size: 12px; color: var(--text-sub, #98A7B7); line-height: 1.55; margin: 3px 0; }
+.dic-line b { color: var(--text-main, #E6EDF3); }
+.dic-missing { color: var(--text-muted, #5F6B78); }
+
+.dic-foot { font-size: 10.5px; color: var(--text-muted, #5F6B78); margin: 10px 0 0; }

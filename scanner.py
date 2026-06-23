@@ -27,6 +27,7 @@ import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific fore
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
 import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
 import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist sync validation (pure, v10.74)
+import argus_downside  # Downside Incident Response + cause attribution (pure, decision-support only, v10.98)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -2948,6 +2949,24 @@ def _event_ntfy(env):
     if not topic:
         return
     sev = env.get("severity", 1)
+    # Downside incidents get the upgraded, actionable message (cause + override +
+    # next condition) instead of a bare "急落しています" (v10.98).
+    inc = env.get("downsideIncident")
+    if inc:
+        pct = inc.get("changePct")
+        pct_s = f"{pct:+.1f}%" if isinstance(pct, (int, float)) else ""
+        title = f"ARGUS: {inc.get('symbol')} {inc.get('actionOverride')} {pct_s}".strip()
+        note = argus_downside.build_notification(inc)
+        body = (f"{note['title']}\n{note['message']}\n"
+                f"{env.get('market')} / sev{sev} / {inc.get('incidentType')}")
+        try:
+            requests.post(f"https://ntfy.sh/{topic}", data=body.encode("utf-8"),
+                          headers={"Title": title,
+                                   "Tags": "rotating_light" if sev >= 5 else "warning",
+                                   "Priority": "urgent" if sev >= 5 else "high"}, timeout=10)
+        except Exception:
+            pass
+        return
     title = f"ARGUS: {env.get('symbol')} {env.get('eventType')}"
     # Company name goes in the UTF-8 body (the Title header must stay ASCII).
     nm = env.get("nameJa")
@@ -2961,8 +2980,11 @@ def _event_ntfy(env):
     except Exception:
         pass
 
+_DOWNSIDE_EVENT_TYPES = {"PRICE_CRASH", "LIMIT_DOWN_PROXIMITY", "MOMENTUM_ACCELERATION", "FLOW_REVERSAL"}
+
+
 def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
-                  source="moomoo-bridge", session_override=None):
+                  source="moomoo-bridge", session_override=None, quote=None):
     """Dedup + lifecycle + notify for one deterministic trigger. Lean: Gear 0/1
     only, so severity decides the state directly (no AI queue unless enabled).
     bucket_minutes widens the dedup window (crypto uses 360 so a sustained 24h
@@ -2990,6 +3012,28 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
         env["lifecycleState"] = ("HIGH_ALERT" if trig["severity"] >= 5
                                  else "VERIFIED" if trig["severity"] >= 4 else "OBSERVING")
         env["expiresAt"] = (now + timedelta(seconds=_EVENT_TTL_SEC)).astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Downside enrichment (v10.98): for a downward move, classify the incident
+        # so the notification carries cause + action override + next condition
+        # instead of a generic "急落". Pure + cheap; owner/regime read from caches.
+        if quote and trig.get("type") in _DOWNSIDE_EVENT_TYPES:
+            _chg = quote.get("changePct")
+            if isinstance(_chg, (int, float)) and _chg < 0:
+                try:
+                    _owner = _owner_symbols_cached()
+                    _reg = _REGIME_CACHE.get("data") or {}
+                    _nm = env.get("nameJa") or symbol
+                    _inc = argus_downside.classify_incident(
+                        {"symbol": symbol, "market": market, "name": _nm, "assetName": _nm,
+                         "changePct": _chg, "flowRatio": quote.get("flowRatio"),
+                         "beta": "high" if str(symbol) in _DOWNSIDE_HIGH_BETA else None,
+                         "isHeld": str(symbol).upper() in _owner,
+                         "newsChecked": False, "tdnetConnected": False, "currentAction": "HOLD"},
+                        {"globalRegime": (_reg.get("regime") or {}).get("label") or "UNKNOWN"},
+                        now_iso=env.get("ingestAt"))
+                    if _inc:
+                        env["downsideIncident"] = _inc
+                except Exception:
+                    pass
         _EVENTS_ACTIVE[key] = env
         _EVENTS_LOG.appendleft(env)
         _EVENT_STATE["lastEventAt"] = env["ingestAt"]
@@ -3030,7 +3074,7 @@ def _process_events_from_push(market, rows):
             accel = argus_events.detect_acceleration(
                 list(_PUSH_HISTORY[market].get(r["symbol"]) or []), session, now=now)
             for trig in triggers:
-                env = _record_event(market, r["symbol"], trig, now, session)
+                env = _record_event(market, r["symbol"], trig, now, session, quote=quote)
                 # Build the EVENT-TIME dossier snapshot for significant events, off
                 # the hot path / outside the lock — so the public GET only reads it.
                 if env and env.get("severity", 0) >= 4 and "dossier" not in env:
@@ -3040,7 +3084,7 @@ def _process_events_from_push(market, rows):
                         pass
             if not triggers:
                 for trig in accel:
-                    env = _record_event(market, r["symbol"], trig, now, session, bucket_minutes=15)
+                    env = _record_event(market, r["symbol"], trig, now, session, bucket_minutes=15, quote=quote)
                     if env and env.get("severity", 0) >= 4 and "dossier" not in env:
                         try:
                             env["dossier"] = _build_event_dossier(env, r)
@@ -4439,6 +4483,25 @@ def get_market_regime_snapshot():
     matrix_ja = (f"横軸グロース対ディフェンシブ {growth_value_axis:+.2f}、縦軸リスク対デュレーション "
                  f"{risk_duration_axis:+.2f}。{_REGIME_SUMMARY_JA.get(label, '')}")
 
+    # ── JP intraday overlay (v10.98): never collapse a green global (US-ETF)
+    # regime onto a deteriorating Japan tape. Built from JP watchlist breadth as
+    # a proxy (same caveat as the breadth evidence above).
+    _jp_dec = sum(1 for s in jp_live_stocks if float(s.get("changePct", 0) or 0) < 0)
+    _jp_breadth_val = (round(sum(float(s.get("changePct", 0) or 0) for s in jp_live_stocks) / len(jp_live_stocks), 2)
+                       if jp_live_stocks else None)
+    _hb = {"5803", "285A", "5801", "6920", "6857"}   # high-beta/momentum JP proxy set
+    _hb_live = [s for s in jp_live_stocks if str(s.get("symbol")) in _hb]
+    _high_beta_down = bool(_hb_live) and all(float(s.get("changePct", 0) or 0) < -1.0 for s in _hb_live)
+    jp_overlay = argus_downside.jp_intraday_overlay({
+        "globalRegime": label,
+        "nikkeiProxyPct": _jp_breadth_val,
+        "jpBreadth": _jp_breadth_val,
+        "jpDecliners": _jp_dec,
+        "jpTotal": len(jp_live_stocks),
+        "highBetaDown": _high_beta_down,
+        "ownerAffected": False,   # owner-specific overlay is set in the downside endpoint
+    }) if jp_live_stocks else None
+
     payload = {
         "status": status,
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -4464,6 +4527,7 @@ def get_market_regime_snapshot():
         "supportingEvidence": evidence,
         "sourceStatuses": source_statuses,
         "dataLimitations": limitations,
+        "jpIntradayOverlay": jp_overlay,
     }
     # Last-known-good hold by ETF COVERAGE (v10.34): the label only wobbles when
     # a recompute scores from a different ETF subset. So we replace the displayed
@@ -6327,6 +6391,153 @@ def api_argus_action_alerts():
     return jsonify(get_action_alerts())
 
 
+# ━━━ Downside Incident Response + cause attribution (v10.98) ━━━
+# When a held/watched name drops materially (or the JP tape deteriorates), turn
+# the old generic "急落" into an explained incident: classification, likely-cause
+# buckets, holder-specific action OVERRIDE, missing-data, next-review. Pure logic
+# lives in argus_downside; this layer just builds the context from live snapshots.
+# Decision-support only — no orders, ever.
+_DOWNSIDE_THEMES = {
+    # AI / semis / electric-cable complex that moves together on theme unwinds.
+    "ai_semis_cable": {"5801", "5803", "285A", "6920", "6857", "NVDA", "SMH", "AVGO", "TSM"},
+}
+_DOWNSIDE_HIGH_BETA = {"5803", "285A", "5801", "6920", "6857"}
+_OWNER_SYMS_CACHE = {"syms": None, "ts": 0.0}
+_OWNER_SYMS_TTL = 600
+_DOWNSIDE_CACHE = {"data": None, "expires": 0.0}
+_DOWNSIDE_TTL = 60
+
+
+def _owner_symbols_cached():
+    """Owner (Layer 2B) watchlist symbols, upper-cased, cached ~10m. Network read
+    is owner-gated and may be unavailable — degrade to an empty set."""
+    now = time.time()
+    if _OWNER_SYMS_CACHE["syms"] is not None and now - _OWNER_SYMS_CACHE["ts"] < _OWNER_SYMS_TTL:
+        return _OWNER_SYMS_CACHE["syms"]
+    syms = set()
+    try:
+        for mrow in (_layer2b_read_latest() or []):
+            s = str(mrow.get("symbol") or "").upper()
+            if s:
+                syms.add(s)
+    except Exception:
+        syms = _OWNER_SYMS_CACHE["syms"] or set()
+    _OWNER_SYMS_CACHE["syms"] = syms
+    _OWNER_SYMS_CACHE["ts"] = now
+    return syms
+
+
+def _theme_peers_down(sym, by_sym):
+    """True if >=2 same-theme peers are also down materially (theme unwind)."""
+    u = sym.upper()
+    for members in _DOWNSIDE_THEMES.values():
+        if u in members:
+            downs = 0
+            for m in members:
+                if m == u:
+                    continue
+                row = by_sym.get(m)
+                if row and isinstance(row.get("changePct"), (int, float)) and row["changePct"] < -1.5:
+                    downs += 1
+            if downs >= 2:
+                return True
+    return False
+
+
+def get_downside_incidents():
+    now = time.time()
+    if _DOWNSIDE_CACHE["data"] is not None and now < _DOWNSIDE_CACHE["expires"]:
+        return _DOWNSIDE_CACHE["data"]
+
+    jp = get_japan_watchlist_snapshot()
+    us = get_us_watchlist_snapshot()
+    owner = _owner_symbols_cached()
+    jp_stocks = [s for s in (jp.get("stocks") or []) if isinstance(s, dict)]
+    us_stocks = [s for s in (us.get("stocks") or []) if isinstance(s, dict)]
+    live_jp = [s for s in jp_stocks if s.get("status") == "live"]
+
+    jp_breadth = (round(sum(float(s.get("changePct", 0) or 0) for s in live_jp) / len(live_jp), 2)
+                  if live_jp else None)
+    jp_dec = sum(1 for s in live_jp if float(s.get("changePct", 0) or 0) < 0)
+    hb_live = [s for s in live_jp if str(s.get("symbol")) in _DOWNSIDE_HIGH_BETA]
+    high_beta_down = bool(hb_live) and all(float(s.get("changePct", 0) or 0) < -1.0 for s in hb_live)
+    reg = _REGIME_CACHE.get("data") or {}
+    global_regime = (reg.get("regime") or {}).get("label") or "UNKNOWN"
+
+    market_ctx = {
+        "globalRegime": global_regime,
+        "nikkeiProxyPct": jp_breadth, "jpBreadth": jp_breadth,
+        "jpDecliners": jp_dec, "jpTotal": len(live_jp),
+        "highBetaDown": high_beta_down,
+        "themeUnwind": high_beta_down,
+        "dataPartial": (jp.get("status") != "live") and (us.get("status") != "live"),
+    }
+
+    by_sym = {str(s.get("symbol", "")).upper(): s for s in (jp_stocks + us_stocks)}
+    try:
+        news_ok = get_market_news().get("status") == "live"
+    except Exception:
+        news_ok = False
+
+    assets = []
+    for s, market in ([(x, "JP") for x in jp_stocks] + [(x, "US") for x in us_stocks]):
+        sym = str(s.get("symbol") or "")
+        if not sym:
+            continue
+        chg = s.get("changePct")
+        flow = (s.get("flow") or {}).get("bigNetRatio")
+        name = s.get("nameJa") or s.get("name") or sym
+        vs_index = (round(float(chg) - jp_breadth, 2)
+                    if market == "JP" and isinstance(chg, (int, float)) and jp_breadth is not None else None)
+        assets.append({
+            "symbol": sym, "market": market, "name": name, "assetName": name,
+            "changePct": chg, "price": s.get("price"),
+            "flowRatio": flow,
+            "beta": "high" if sym in _DOWNSIDE_HIGH_BETA else None,
+            "vsIndexPct": vs_index,
+            "themePeersDown": _theme_peers_down(sym, by_sym),
+            "catalyst": None,        # honest: confirmed bad-news sentiment not yet auto-detected
+            "newsChecked": news_ok,
+            "tdnetConnected": False,
+            "isHeld": sym.upper() in owner,
+            "dataFreshnessOk": s.get("status") == "live",
+            "currentAction": "HOLD",
+        })
+
+    now_iso = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    incidents = argus_downside.classify_incidents(assets, market_ctx, now_iso=now_iso)
+    owner_affected = any(i.get("isHeld") for i in incidents)
+    overlay = argus_downside.jp_intraday_overlay(dict(market_ctx, ownerAffected=owner_affected))
+
+    payload = {
+        "status": "live" if (jp.get("status") == "live" or us.get("status") == "live") else "partial",
+        "asOf": now_iso,
+        "engineVersion": "downside-v1",
+        "incidents": incidents,
+        "activeCount": len(incidents),
+        "ownerAffected": owner_affected,
+        "globalRegime": overlay["globalRegime"],
+        "jpIntradayOverlay": overlay["jpIntradayOverlay"],
+        "holderRiskOverlay": overlay["holderRiskOverlay"],
+        "overlay": overlay,
+        "dataLimitations": [
+            "原因のニュース/開示の自動取得は限定的(TDnet未接続のため業績修正・決算短信の即時確認に限界)。",
+            "前日比はJ-Quantsでは前営業日終値ベース。moomooブリッジ稼働時のみ当日リアルタイム。",
+            "テーマ判定は固定グループ(AI/半導体/電線)による簡易版。",
+            "公式悪材料の有無は自動では断定しない(無材料=安全ではない)。",
+        ],
+        "noteJa": "急落を分類し原因を推定、保有向けにアクションを上書き提示(決定支援のみ・自動売買なし)。",
+    }
+    _DOWNSIDE_CACHE["data"] = payload
+    _DOWNSIDE_CACHE["expires"] = now + _DOWNSIDE_TTL
+    return payload
+
+
+@app.route("/api/argus/downside-incidents")
+def api_argus_downside_incidents():
+    return jsonify(get_downside_incidents())
+
+
 # ━━━ Backup vault relay (v10.3.4) ━━━
 # The browser pushes a CLIENT-SIDE-ENCRYPTED backup envelope here; the daily
 # prediction-ledger workflow pulls it (admin token) and commits the ciphertext
@@ -8142,6 +8353,37 @@ def _pro_events_section():
     out.append("(上記は決定論的に組み立てた論点整理です。事実・推論・欠損を区別し、確率は較正されていません。)")
     return "\n".join(out)
 
+def _pro_downside_section():
+    """Pro Handoff #9: active downside incidents + cause matrix. Explicitly asks
+    GPT-5.5 Pro to challenge whether HOLD is still valid (v10.98)."""
+    try:
+        d = get_downside_incidents()
+    except Exception:
+        return ""
+    incs = d.get("incidents") or []
+    ov = d.get("overlay") or {}
+    if not incs and ov.get("jpIntradayOverlay", "NORMAL") == "NORMAL":
+        return ""
+    out = ["## 9. ダウンサイド・インシデント + 原因アトリビューション(決定論 / 売買指示ではない)"]
+    out.append(f"地合いオーバーレイ: {ov.get('displayJa', '')} / 保有リスク: {ov.get('holderRiskOverlay', 'NONE')}")
+    for i in incs[:8]:
+        held = "【保有】" if i.get("isHeld") else "【監視】"
+        causes = "・".join(f"{c['cause']} {int(round(c['probability']*100))}%" for c in i.get("causeBuckets", [])[:3])
+        out.append(
+            f"■ {held}{i.get('symbol')}({i.get('assetName')}) {i.get('changePct')}% "
+            f"sev{i.get('severity')} / 現ラベル {i.get('currentAction')} → 上書き {i.get('actionOverride')}\n"
+            f"  推定原因: {causes}\n"
+            f"  理由: {i.get('reasonJa')}\n"
+            f"  やってはいけない: {i.get('doNotDoJa')}\n"
+            f"  次の確認条件: {i.get('nextConditionJa')}\n"
+            f"  欠損データ: {'/ '.join(i.get('missingData') or []) or 'なし'}")
+    out.append("\n■ GPT-5.5 Proへの依頼: 上記の各銘柄について、現行のHOLD(または上書き後のアクション)が"
+               "保有者にとって本当に妥当かを批判的に検証してほしい。特に『原因未確認の急落』を安全と誤認していないか、"
+               "買い増し回避・縮小・撤退検討のいずれが妥当か、反証(なぜHOLDでよいか)も併せて示してほしい。"
+               "※ARGUSは自動売買を行わない。最終判断は本人。")
+    return "\n".join(out)
+
+
 def _build_pro_handoff():
     rates = get_rates_snapshot(); jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
@@ -8159,6 +8401,9 @@ def _build_pro_handoff():
     ev_section = _pro_events_section()           # active 24/7 events + dossiers (#12)
     if ev_section:
         prompt = prompt + "\n\n" + ev_section
+    ds_section = _pro_downside_section()         # active downside incidents + cause matrix (#9, v10.98)
+    if ds_section:
+        prompt = prompt + "\n\n" + ds_section
     live_n = sum(1 for v in src.values() if v == "live")
     status = "live" if live_n == len(src) else ("partial" if live_n > 0 else "mock")
     source_statuses = {**src, "proHandoff": "live", "aiJudgment": aij_status}

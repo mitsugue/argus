@@ -74,4 +74,14 @@ export interface MarketRegimeSnapshot {
     manualFallback: SourceStatus;
   };
   dataLimitations: string[];
+  /** JP intraday overlay (v10.98) — present when JP watchlist breadth is live.
+      Keeps a green global regime from masking a weak Japan tape. */
+  jpIntradayOverlay?: {
+    globalRegime: string;
+    jpIntradayOverlay: 'NORMAL' | 'CAUTION' | 'RISK_OFF_WATCH' | string;
+    holderRiskOverlay: string;
+    flags: string[];
+    displayJa: string;
+    reasonJa: string;
+  } | null;
 }

@@ -113,6 +113,12 @@ export const MarketRegime: React.FC = () => {
           {data?.asOf && <span className="regime-head__asof">asOf {data.asOf.slice(0, 16).replace('T', ' ')}Z</span>}
         </div>
         {data && <p className="regime-head__summary">{data.regime.summaryJa}</p>}
+        {data?.jpIntradayOverlay && data.jpIntradayOverlay.jpIntradayOverlay !== 'NORMAL' && (
+          <div className={`regime-jp-overlay regime-jp-overlay--${data.jpIntradayOverlay.jpIntradayOverlay === 'RISK_OFF_WATCH' ? 'red' : 'amber'}`}>
+            <span className="regime-jp-overlay__tag">{data.jpIntradayOverlay.displayJa}</span>
+            <p className="regime-jp-overlay__reason">{data.jpIntradayOverlay.reasonJa}</p>
+          </div>
+        )}
       </div>
 
       <section id="full-board" className="regime-anchor">

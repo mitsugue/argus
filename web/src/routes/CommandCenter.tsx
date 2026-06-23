@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
+import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
 import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
@@ -111,6 +112,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <MarketSessionLamps />
 
       <HeroCard judgment={judgment} />
+
+      <DownsideIncidentCard />
 
       <MarketNewsCard />
 

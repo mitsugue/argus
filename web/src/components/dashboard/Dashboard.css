@@ -1291,3 +1291,15 @@
 .asset-detail__note { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
 .asset-detail__note-area { min-height: 60px; padding: 7px 9px; background: var(--card-2, rgba(255,255,255,0.04)); border: 1px solid var(--line-faint, rgba(255,255,255,0.1)); border-radius: 6px; color: var(--text-main); font-size: 12px; resize: vertical; font-family: inherit; }
 .asset-detail__note-saved { font-size: 10.5px; color: var(--green); }
+
+/* JP intraday overlay banner on Market Context (v10.98) */
+.regime-jp-overlay {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border-left: 3px solid;
+}
+.regime-jp-overlay--amber { background: rgba(251, 191, 36, 0.10); border-color: #FBBF24; }
+.regime-jp-overlay--red { background: rgba(248, 113, 113, 0.12); border-color: #F87171; }
+.regime-jp-overlay__tag { font-size: 12px; font-weight: 700; color: var(--text-main, #E6EDF3); }
+.regime-jp-overlay__reason { font-size: 12px; color: var(--text-sub, #98A7B7); line-height: 1.55; margin: 4px 0 0; }
