@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.87.0', '24/7イベント+全市場ムーバーのUI改善 — ①24/7: 急騰=緑/急落=赤(アプリ共通の上下カラー・▲▼付き)、アドバイス(高値追い回避等)を目立つチップ表示、各イベントに時刻(JST)を表示、起動中は15秒毎にライブ更新②全市場ムーバーのタイトルを英語(US/JP Market Movers)に統一し、長い銘柄名で画面が左右に動く問題を根治(行を確実にカード幅内で省略表示・実測で横はみ出し0)'],
   ['v10.86.0', 'moomoo JP全市場 能力テスト(自動・ザラ場で起動) — EC2ブリッジが毎JP営業日に1回、全上場ユニバースを get_market_snapshot(400銘柄/バッチ)でスイープし、カバレッジ・鮮度(update_timeで実測)・entitlement・スイープ時間を計測してサーバーへ送信。サーバーに JP universe配信API + 能力レポート受信API(HMAC+admin)+表示(/moomoo-capability)。リアルタイムと証明できるまで主張しない(p95<=60sでrealtime_evidence)。要EC2ブリッジ更新+JP_ALL_MARKET_CAP_TEST=1。watchlist pushとは別動作で16銘柄ブリッジに影響なし'],
   ['v10.85.0', 'Layer 2B 日次採点を実装(あなたの銘柄の自己採点) — 毎営業日、同期済みウォッチリストの各銘柄の予測(シナリオ確率)をprivateストアに記録し、1/3/5営業日後にBrier/RPS/的中で自動採点。★入替OK設計: 各日のメンバーシップは不変スナップショットで凍結、過去の予測・採点は書き換えない=watchlistを入れ替えても過去は保全・データは追記で蓄積。固定ベンチとは別集計。Guideの「Layer 2B 同期」に『採点成績を見る』を追加(営業日別の的中/Brier・サンプル段階)。注文・自動売買なし。日次実行はprediction-ledgerワークフローに追加'],
   ['v10.84.0', 'Guide整理 — 設定系の「バックアップ」と「Layer 2B 同期」をまとめて最下部(バージョン履歴の直前)に移動。Layer 2B同期が稼働開始(あなたのwatchlist 13銘柄をprivateストアへ保存)'],

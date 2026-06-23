@@ -185,20 +185,22 @@ export const MarketRegime: React.FC = () => {
       {/* US whole-market movers (v10.62) — beyond the watchlist, via Alpha Vantage. */}
       <section>
         <div className="section-head">
-          <span className="section-head__title">US 全市場ムーバー</span>
+          <span className="section-head__title">US Market Movers</span>
           <span className="section-head__count">
             {movers?.status === 'live' ? `as of ${movers.asOf ?? ''}` : movers?.status ?? '…'}
           </span>
         </div>
         <div className="card">
           {movers?.status === 'live' ? (
-            <div className="regime-backdrop" style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', minWidth: 0 }}>
               {[...movers.gainers.slice(0, 5), ...movers.losers.slice(0, 5)]
                 .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 8)
                 .map((m) => (
-                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                    <b>{m.symbol}</b>
-                    <span style={{ color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
+                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, minWidth: 0 }}>
+                    <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
+                    </span>
+                    <span style={{ flex: 'none', whiteSpace: 'nowrap', color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
                       {m.changePct > 0 ? '+' : ''}{m.changePct}% (${m.price})
                     </span>
                   </div>
@@ -219,22 +221,22 @@ export const MarketRegime: React.FC = () => {
       {/* JP whole-market EOD movers (v10.64) — all listed stocks, via J-Quants. */}
       <section>
         <div className="section-head">
-          <span className="section-head__title">日本株 全市場ムーバー</span>
+          <span className="section-head__title">JP Market Movers</span>
           <span className="section-head__count">
             {jpMovers?.status === 'live' ? (jpMovers.provider ?? `as of ${jpMovers.asOf ?? ''}`) : jpMovers?.status ?? '…'}
           </span>
         </div>
         <div className="card">
           {jpMovers?.status === 'live' ? (
-            <div className="regime-backdrop" style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', minWidth: 0 }}>
               {[...jpMovers.gainers.slice(0, 5), ...jpMovers.losers.slice(0, 5)]
                 .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 8)
                 .map((m) => (
-                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, gap: 8 }}>
-                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, gap: 8, minWidth: 0 }}>
+                    <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
                     </span>
-                    <span style={{ flex: 'none', color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
+                    <span style={{ flex: 'none', whiteSpace: 'nowrap', color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
                       {m.changePct > 0 ? '+' : ''}{m.changePct}% (¥{Math.round(m.price).toLocaleString('en-US')})
                     </span>
                   </div>

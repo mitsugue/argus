@@ -32,6 +32,31 @@ function sevColor(s: number): string {
   return s >= 5 ? 'var(--red, #f87171)' : s >= 4 ? 'var(--amber, #fbbf24)' : 'var(--text-sub, #8b98a7)';
 }
 
+// Direction follows the app's convention (green=up, red=down — same as the
+// movers board), so 急騰 and 急落 are instantly distinguishable.
+const _UP = new Set(['LIMIT_UP', 'LIMIT_UP_PROXIMITY', 'PRICE_SPIKE']);
+const _DOWN = new Set(['LIMIT_DOWN', 'LIMIT_DOWN_PROXIMITY', 'PRICE_CRASH']);
+function eventDir(e: ActiveEvent): 'up' | 'down' | 'flat' {
+  if (_UP.has(e.eventType)) return 'up';
+  if (_DOWN.has(e.eventType)) return 'down';
+  const r = e.reasonJa || '';
+  if (/下落|急落|反転|流出|-\s?\d/.test(r)) return 'down';
+  if (/急騰|上昇|加速|流入|\+\s?\d/.test(r)) return 'up';
+  return 'flat';
+}
+function dirColor(d: 'up' | 'down' | 'flat'): string {
+  return d === 'up' ? 'var(--green, #34d399)' : d === 'down' ? 'var(--red, #f87171)' : 'var(--amber, #fbbf24)';
+}
+// Advice that must stand out (high-stakes); others are calm.
+const _STRONG_POSTURE = new Set(['AVOID_CHASING', 'LIMIT_UP_RISK', 'LIMIT_DOWN_RISK', 'HIGH_ALERT', 'GAP_RISK']);
+function eventTime(e: ActiveEvent): string {
+  if (!e.detectedAt) return '';
+  try {
+    const d = new Date(e.detectedAt);
+    return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' });
+  } catch { return ''; }
+}
+
 interface Dossier {
   researchPosture: string; researchConfidence: number; whatHappenedJa?: string;
   marketScope: string; reviewVerdict: string; reviewObjectionsJa: string[];
@@ -102,16 +127,29 @@ function DossierDetail({ eventId }: { eventId: string }) {
 }
 
 function EventRow({ e, open, onToggle }: { e: ActiveEvent; open: boolean; onToggle: () => void }) {
+  const dir = eventDir(e);
+  const dc = dirColor(dir);
+  const t = eventTime(e);
+  const strong = _STRONG_POSTURE.has(e.recommendedPosture);
+  const posture = POSTURE_JA[e.recommendedPosture] ?? e.recommendedPosture;
   return (
     <div className={`ei-row${open ? ' ei-row--open' : ''}`}>
       <button className="ei-row__head" onClick={onToggle}>
-        <span className="ei-row__dot" style={{ background: sevColor(e.severity) }} />
+        <span className="ei-row__dot" style={{ background: dc }} />
         <span className="ei-row__sym">{e.nameJa ? `${e.nameJa}(${e.symbol})` : e.symbol}</span>
-        <span className="ei-row__type" style={{ color: sevColor(e.severity) }}>{TYPE_JA[e.eventType] ?? e.eventType}</span>
-        <span className="ei-row__reason">{e.reasonJa}</span>
-        <span className="ei-row__posture">{POSTURE_JA[e.recommendedPosture] ?? e.recommendedPosture}</span>
+        <span className="ei-row__type" style={{ color: dc, fontWeight: 700 }}>
+          {dir === 'up' ? '▲' : dir === 'down' ? '▼' : '・'} {TYPE_JA[e.eventType] ?? e.eventType}
+        </span>
+        {t && <span className="ei-row__time">{t}</span>}
+        {e.severity >= 5 && <span className="ei-row__sev">S{e.severity}</span>}
         <span className="ei-row__caret">{open ? '▾' : '▸'}</span>
       </button>
+      <div className="ei-row__sub">
+        <span className="ei-row__reason" style={{ color: dc }}>{e.reasonJa}</span>
+        {posture && (
+          <span className={`ei-advice${strong ? ' ei-advice--strong' : ''}`}>{posture}</span>
+        )}
+      </div>
       {open && <DossierDetail eventId={e.eventId} />}
     </div>
   );

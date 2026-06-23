@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 
-// 24/7 event backbone — active events + status (v10.39). Polls every 30s while
-// the app is open (cheap public reads; the real-time path is the ntfy push).
+// 24/7 event backbone — active events + status (v10.39). Polls every 15s while
+// the app is open (matches the bridge push cadence) so the list updates live;
+// the ntfy push is the off-app path.
 export interface ActiveEvent {
   eventId: string;
   eventType: string;
@@ -48,7 +49,7 @@ export function useEventsActive() {
       finally { if (alive) setLoading(false); }
     }
     load();
-    const t = window.setInterval(load, 30_000);
+    const t = window.setInterval(load, 15_000);
     return () => { alive = false; window.clearInterval(t); };
   }, [backend]);
 
