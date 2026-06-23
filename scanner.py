@@ -7011,6 +7011,63 @@ def api_argus_source_registry():
     return jsonify(_source_registry())
 
 
+# ── Runtime manifest (v10.107) ───────────────────────────────────────────────
+# Live "current understanding" base for the AI Review Sheet + external-AI handoff,
+# so GPT/Claude never reason from a STALE static doc. Public, secret-free — only
+# booleans for config presence, never any key/value.
+def get_runtime_manifest():
+    reg = _source_registry()
+    try:
+        ds = get_downside_incidents()
+    except Exception:
+        ds = {}
+    try:
+        td = get_tdnet_recent()
+    except Exception:
+        td = {}
+    aij = _ai_judgment_truth()
+    layer2b_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO")
+                              and os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN"))
+    degraded = [f"{s.get('capability')}:{s.get('status')}" for s in (reg.get("sources") or [])
+                if s.get("status") != "confirmed_live"]
+    return {
+        "asOf": _ai_now_iso(), "engineVersion": "runtime-manifest-v1",
+        "buildSha": (os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None),
+        "activeRoutes": ["Today", "Watchlist", "Market Context", "Core Portfolio", "Glossary / Guide"],
+        "providers": {"confirmedLive": reg.get("confirmedLive"), "total": reg.get("total"),
+                      "degraded": degraded[:14]},
+        "calibration": {
+            "schema": argus_calibration.SCHEMA_VERSION, "universe": argus_calibration.UNIVERSE_VERSION,
+            "tacticalBenchmark": argus_calibration.TACTICAL_BENCHMARK_VERSION, "cohort": argus_calibration.COHORT_VERSION,
+            "phase": "v4 dry-run (parallel epoch calibration_v1) alongside v3 headline; burn-in — accuracy NOT proven",
+        },
+        "downside": {
+            "engine": "downside-v1", "activeIncidents": ds.get("activeCount", 0),
+            "jpIntradayOverlay": ds.get("jpIntradayOverlay"), "holderRiskOverlay": ds.get("holderRiskOverlay"),
+            "rule": "serious/unexplained drop is never plain HOLD; held/protected stricter; no-news = caution (not safe)",
+        },
+        "tdnet": {"status": td.get("status", "unavailable"), "provider": td.get("provider"),
+                  "count": len(td.get("items") or [])},
+        "ownerWatchlist": {"layer2bConfigured": layer2b_configured,
+                           "note": "non-monetary flags only (ownerState/strictness/priority); amounts NEVER sent"},
+        "decisionValue": {"phase": "v1 phase1 (pure engine; no shadow records yet); NO order/broker routes — ever"},
+        "ai": {"status": aij["status"], "note": "GPT-5.5 + Gemini 2.5 Pro; admin-run + cached view only"},
+        "safetyBoundaries": ["no auto-trading", "no order/execute/broker routes",
+                             "holdings/cost basis never leave the device in plaintext"],
+        "currentLimitations": [
+            "calibration is burn-in — accuracy not proven (ARGUS classifies the present; it is not a profit guarantee)",
+            "JP prices are J-Quants T-1 unless the moomoo bridge is live (then realtime)",
+            "TDnet via a third-party (yanoshin) wrapper; bad-news sentiment is title-only (要確認, not asserted)",
+            "regime label may be held from the last full ETF coverage (shown as held/stale)",
+        ],
+    }
+
+
+@app.route("/api/argus/runtime-manifest")
+def api_argus_runtime_manifest():
+    return jsonify(get_runtime_manifest())
+
+
 # ━━━ Context-aware VIX signal (v9.12) ━━━
 # A fixed "VIX crossed N" alert is a magic number. The essential read is:
 #   velocity (how fast fear is rising) × position vs ITS OWN recent regime

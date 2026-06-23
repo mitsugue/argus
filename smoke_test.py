@@ -239,6 +239,16 @@ def v_tdnet_recent():
             return False, f"bad sentiment {it.get('sentiment')}"
     return True, f"status={d.get('status')} count={d.get('count')}"
 
+def v_runtime_manifest():
+    c, d = _get("/api/argus/runtime-manifest")
+    if d.get("engineVersion") != "runtime-manifest-v1":
+        return False, f"engineVersion={d.get('engineVersion')}"
+    if not isinstance(d.get("activeRoutes"), list) or len(d["activeRoutes"]) != 5:
+        return False, "activeRoutes not 5"
+    if "safetyBoundaries" not in d or "currentLimitations" not in d:
+        return False, "missing safety/limitations"
+    return True, f"routes={len(d['activeRoutes'])} providers={d.get('providers',{}).get('confirmedLive')}/{d.get('providers',{}).get('total')}"
+
 def v_downside_incidents():
     # Downside Incident Response (v10.98): public, never just generic "急落".
     c, d = _get("/api/argus/downside-incidents")
@@ -310,6 +320,7 @@ CHECKS = [
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
     ("decision-value summary", v_decision_value_summary),
     ("no order routes (safety)", v_no_order_routes),
+    ("runtime-manifest", v_runtime_manifest),
     ("downside-incidents (cause+override)", v_downside_incidents),
     ("tdnet-recent (適時開示)", v_tdnet_recent),
     ("legacy routes admin-gated", v_legacy_routes_gated),

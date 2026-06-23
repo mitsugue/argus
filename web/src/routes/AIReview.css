@@ -211,3 +211,16 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Runtime (live) manifest block at top of AI Review Sheet (v10.107) */
+.review__runtime {
+  border: 1px solid var(--green, #34D399);
+  border-left-width: 3px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 14px 0 18px;
+  background: rgba(52, 211, 153, 0.05);
+}
+.review__runtime-head { font-size: 12px; font-weight: 700; color: var(--green, #34D399); margin-bottom: 8px; }
+.review__runtime-limits { margin: 8px 0 0; padding-left: 18px; }
+.review__runtime-limits li { font-size: 11.5px; color: var(--text-sub, #98A7B7); line-height: 1.5; }

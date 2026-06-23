@@ -85,8 +85,38 @@ const GAPS = [
   'Watchlist config is localStorage-only (per device; no cross-device sync)',
 ];
 
-function buildMarkdown(version: string): string {
+function runtimeBlock(m: any): string {
+  if (!m) return '';
+  const p = m.providers || {}; const d = m.downside || {}; const td = m.tdnet || {};
+  return `## RUNTIME (live — read this FIRST; the static sections below may lag)
+
+- **App build:** ${m.buildSha ?? '—'} · **asOf:** ${m.asOf ?? '—'}
+- **Active routes (5):** ${(m.activeRoutes || []).join(' · ')}
+- **Providers:** ${p.confirmedLive ?? '—'}/${p.total ?? '—'} confirmed live${(p.degraded || []).length ? ` · degraded: ${(p.degraded || []).join(', ')}` : ''}
+- **Calibration:** ${m.calibration?.phase ?? '—'} (universe ${m.calibration?.universe ?? '—'}, cohort ${m.calibration?.cohort ?? '—'})
+- **Downside layer:** ${d.engine ?? '—'} · active incidents ${d.activeIncidents ?? 0} · JP overlay ${d.jpIntradayOverlay ?? '—'} · holder ${d.holderRiskOverlay ?? '—'}
+  - rule: ${d.rule ?? ''}
+- **TDnet (適時開示):** ${td.status ?? '—'}${td.count ? ` (${td.count})` : ''} via ${td.provider ?? '—'}
+- **Owner watchlist (Layer 2B):** configured=${m.ownerWatchlist?.layer2bConfigured} · ${m.ownerWatchlist?.note ?? ''}
+- **Decision Value:** ${m.decisionValue?.phase ?? '—'}
+- **AI judgment:** ${m.ai?.status ?? '—'} · ${m.ai?.note ?? ''}
+- **Safety:** ${(m.safetyBoundaries || []).join('; ')}
+- **Current limitations:** ${(m.currentLimitations || []).map((x: string) => `\n  - ${x}`).join('')}
+
+---
+
+`;
+}
+
+function buildMarkdown(version: string, manifest?: any): string {
   return `# A.R.G.U.S. — AI Review Sheet (v${version})
+
+${runtimeBlock(manifest)}` + `
+` + baseMarkdown(version);
+}
+
+function baseMarkdown(version: string): string {
+  return `<!-- static spec (v${version}); see RUNTIME above for current state -->
 
 **Identity.** A.R.G.U.S. = Autonomous Risk and Global Uncertainty Scanner. A personal action-decision engine for daily investing. Not a chart app. Not a visual toy. **A calm investment command center that classifies market conditions into action categories, with market visuals serving as evidence rather than spectacle.** Answers: what is today's call, what is the risk, why, what to touch, what to avoid, what to wait for next — and what would change the current posture.
 
@@ -188,10 +218,24 @@ ${GAPS.map((s) => `- ${s}`).join('\n')}
 export const AIReview: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [backedUp, setBackedUp] = useState<null | number>(null);
+  const [manifest, setManifest] = useState<any>(null);
   const version = __APP_VERSION__;
 
+  // Live runtime manifest (v10.107): the AI Review Sheet's static prose can drift,
+  // so we LEAD with the real runtime state and also fold it into the copied
+  // markdown — external AIs then reason from current facts, not a stale doc.
+  React.useEffect(() => {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+    if (!backend) return;
+    let alive = true;
+    fetch(backend.replace(/\/$/, '') + '/api/argus/runtime-manifest')
+      .then((r) => r.json()).then((d) => { if (alive) setManifest(d); })
+      .catch(() => { /* static doc still renders */ });
+    return () => { alive = false; };
+  }, []);
+
   const handleCopy = async () => {
-    const md = buildMarkdown(version);
+    const md = buildMarkdown(version, manifest);
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);
@@ -238,6 +282,31 @@ export const AIReview: React.FC = () => {
           v{version} · live at <code>mitsugue.github.io/argus/</code>
         </span>
       </div>
+
+      {/* RUNTIME (live) — current state so the static sections below never mislead
+          an external AI. Generated from /api/argus/runtime-manifest (v10.107). */}
+      {manifest && (
+        <div className="review__runtime">
+          <div className="review__runtime-head">RUNTIME — live state（下の静的な記述より優先）</div>
+          <table className="review__table">
+            <tbody>
+              <tr><td className="dim">Build / asOf</td><td><code>{manifest.buildSha ?? '—'}</code> · {manifest.asOf?.slice(0, 16).replace('T', ' ')}Z</td></tr>
+              <tr><td className="dim">Routes (5)</td><td>{(manifest.activeRoutes || []).join(' · ')}</td></tr>
+              <tr><td className="dim">Providers</td><td>{manifest.providers?.confirmedLive}/{manifest.providers?.total} live{(manifest.providers?.degraded || []).length ? ` · degraded: ${(manifest.providers.degraded).join(', ')}` : ''}</td></tr>
+              <tr><td className="dim">Calibration</td><td>{manifest.calibration?.phase}</td></tr>
+              <tr><td className="dim">Downside</td><td>active {manifest.downside?.activeIncidents} · JP {manifest.downside?.jpIntradayOverlay} · holder {manifest.downside?.holderRiskOverlay}</td></tr>
+              <tr><td className="dim">TDnet</td><td>{manifest.tdnet?.status}{manifest.tdnet?.count ? ` (${manifest.tdnet.count})` : ''} · {manifest.tdnet?.provider}</td></tr>
+              <tr><td className="dim">Layer 2B</td><td>configured={String(manifest.ownerWatchlist?.layer2bConfigured)} — {manifest.ownerWatchlist?.note}</td></tr>
+              <tr><td className="dim">Decision Value</td><td>{manifest.decisionValue?.phase}</td></tr>
+              <tr><td className="dim">AI</td><td>{manifest.ai?.status} · {manifest.ai?.note}</td></tr>
+              <tr><td className="dim">Safety</td><td>{(manifest.safetyBoundaries || []).join('; ')}</td></tr>
+            </tbody>
+          </table>
+          <ul className="review__runtime-limits">
+            {(manifest.currentLimitations || []).map((x: string, i: number) => <li key={i}>{x}</li>)}
+          </ul>
+        </div>
+      )}
 
       {/* What each AI tool exposes — the user kept asking "それぞれ何が違うのか". */}
       <div className="review__toolnote">
