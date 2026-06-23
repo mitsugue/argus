@@ -129,8 +129,9 @@ def add_trading_days(market: str, start: date, n: int) -> date:
 def _local_close(market: str, d: date, now_utc: datetime) -> datetime:
     """The UTC instant of `d`'s session close for the market."""
     if market == JP_EQUITY:
-        # 15:00 JST = 06:00 UTC
-        return datetime(d.year, d.month, d.day, 15, 0, tzinfo=_JST).astimezone(timezone.utc)
+        # TSE closing auction is 15:30 JST (extended from 15:00 in Nov 2024) =
+        # 06:30 UTC. Using 15:30 avoids treating 15:00–15:30 prices as the close.
+        return datetime(d.year, d.month, d.day, 15, 30, tzinfo=_JST).astimezone(timezone.utc)
     if market in (US_EQUITY, VIX_MKT, FX):
         # US regular close 16:00 ET; FX NY close 17:00 ET (use 16:00 for equities/VIX)
         hour = 17 if market == FX else 16

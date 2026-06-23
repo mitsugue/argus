@@ -4770,10 +4770,19 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     imminent_any = esc_by_market["US"] in ("D", "D-1") or esc_by_market["JP"] in ("D", "D-1")
     avg = sum(changes) / len(changes) if changes else 0.0
     if reg_ready:
-        # The Market Regime engine reads the broad cross-asset backdrop, so when
-        # it is live/partial it sets the headline posture; the watchlist-average
-        # rule below is the fallback for when regime is unavailable.
-        mp, mp_ja = reg_label, reg_block.get("summaryJa", "") + "（Market Regime エンジン）"
+        # The Market Regime engine reads the broad cross-asset backdrop (chiefly
+        # US ETF momentum), so when it is live/partial it sets the headline
+        # posture; the watchlist-average rule below is the fallback.
+        mp = reg_label
+        mp_ja = reg_block.get("summaryJa", "") + "（地合い判定=米ETF中心のMarket Regimeエンジン）"
+        # Honesty (#4): the regime is US-led, so flag when what you actually watch
+        # diverges from it — e.g. RISK_ON globally while your watchlist sells off.
+        if changes:
+            if mp == "RISK_ON" and avg <= -0.5:
+                mp_ja += f" ⚠ ただしウォッチリストは本日軟調(平均{avg:+.1f}%)で、米国主導の地合いと乖離。日本株は別の動き。"
+            elif mp == "RISK_OFF" and avg >= 0.5:
+                mp_ja += f" ⚠ ただしウォッチリストは本日堅調(平均{avg:+.1f}%)で地合いと乖離。"
+        mp_ja += " 自己採点はburn-in段階で精度は未証明(分類であって利益保証ではない)。"
     elif imminent_any:
         mp, mp_ja = "EVENT_WAIT", "重要イベントが目前のため、新規ポジションを抑えイベント通過後に判断する。"
     elif avg <= -2.0:
@@ -5518,6 +5527,26 @@ def _require_admin():
         send_security_alert({"type": "admin_auth_failed", "meta": _client_meta()})
         return False, {"error": "unauthorized"}, 401
     return True, None, 200
+
+# ── Legacy /api/* lockdown (v10.88, GPT P0 #1) ──────────────────────────────
+# The pre-ARGUS scanner left these UNAUTHENTICATED: /api/run starts a background
+# scan, /api/reset wipes state, plus /api/logs|chart|price_*|order_book|margin
+# expose data. The ARGUS frontend uses /api/argus/* only, so admin-gate the bare
+# legacy routes (CORS is a browser rule, not auth — curl bypasses it).
+_LEGACY_API_PREFIXES = ("/api/run", "/api/reset", "/api/logs", "/api/chart",
+                        "/api/price_history", "/api/price_now", "/api/order_book",
+                        "/api/margin")
+
+@app.before_request
+def _gate_legacy_api():
+    if request.method == "OPTIONS":
+        return None  # let CORS preflight through
+    p = request.path or ""
+    if any(p.startswith(x) for x in _LEGACY_API_PREFIXES):
+        ok, err, code = _require_admin()
+        if not ok:
+            return jsonify(err), code
+    return None
 
 def _ai_run_gate(force=False):
     """(allowed, payload, http_code). Validates enabled/locked/country/interval/

@@ -202,6 +202,19 @@ def v_decision_value_summary():
     return d.get("schemaVersion") == "decision-value-v1" and "No broker" in (d.get("safety") or ""), \
         f"status={d.get('status')} phase={d.get('phase')}"
 
+def v_legacy_routes_gated():
+    # Security (v10.88): legacy /api/run, /api/reset must NOT be open.
+    import urllib.error
+    for path, method in (("/api/run", "POST"), ("/api/reset", "POST"), ("/api/logs", "GET")):
+        try:
+            req = urllib.request.Request(BASE + path, method=method, headers={"User-Agent": "argus-smoke"})
+            urllib.request.urlopen(req, timeout=20)
+            return False, f"{path} is OPEN — must be admin-gated!"
+        except urllib.error.HTTPError as e:
+            if e.code not in (401, 503):
+                return False, f"{path} returned {e.code}, expected 401/503"
+    return True, "legacy /api/run|reset|logs admin-gated"
+
 def v_no_order_routes():
     # Safety: there must be NO order/execute route (research-only, no auto-trading).
     import urllib.error
@@ -267,6 +280,7 @@ CHECKS = [
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
     ("decision-value summary", v_decision_value_summary),
     ("no order routes (safety)", v_no_order_routes),
+    ("legacy routes admin-gated", v_legacy_routes_gated),
     ("source-registry", v_source_registry),
     ("system-health (public lamps)", v_system_health),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),

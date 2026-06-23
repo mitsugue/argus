@@ -267,15 +267,21 @@ _BAND_CLAMPS = {
 _BAND_K = 1.0  # band = k * sigma1d * sqrt(h); k versioned with BAND_VERSION
 
 
+# All regime sensors except BTC are ETFs — derive the set so newly-added sensors
+# (1615/1343/XLF/XLE/XLU/LQD …) get ETF vol bands automatically (GPT #5 fix:
+# they were silently classified as single-equity before).
+_ETF_SYMBOLS = frozenset(s.upper() for s in REGIME_SENSORS if s != "BTC")
+
+
 def _asset_kind(symbol: str) -> str:
     s = (symbol or "").upper()
     if s == "VIX":
         return "vol"
-    if s == "USDJPY":
+    if s == "USDJPY" or s.endswith("=X"):
         return "fx"
-    if s in ("BTC", "ETH"):
+    if s in ("BTC", "ETH", "SOL"):
         return "crypto"
-    if s in ("SPY", "QQQ", "SMH", "IWM", "TLT", "HYG", "GLD", "1306", "1321"):
+    if s in _ETF_SYMBOLS:
         return "etf"
     return "equity"
 
@@ -362,8 +368,15 @@ def classify_realized(move_pct: float, band_pct: float) -> str:
 
 # ── Scoring (section 9): proper rules primary, argmax auxiliary ──────────────
 def _as_dist(probs: Dict[str, float]) -> List[float]:
-    """Normalize a {class: p} dict to an ordered, summing-to-1 list."""
-    raw = [max(0.0, float(probs.get(c, 0.0))) for c in CLASSES]
+    """Normalize a {class: p} dict to an ordered, summing-to-1 list. Non-finite
+    (NaN/Inf) and negative inputs are treated as 0 (GPT fix: reject bad floats)."""
+    raw = []
+    for c in CLASSES:
+        try:
+            v = float(probs.get(c, 0.0))
+        except (TypeError, ValueError):
+            v = 0.0
+        raw.append(v if (math.isfinite(v) and v > 0) else 0.0)
     s = sum(raw)
     if s <= 0:
         return [1.0 / len(CLASSES)] * len(CLASSES)
@@ -371,9 +384,11 @@ def _as_dist(probs: Dict[str, float]) -> List[float]:
 
 
 def brier_multiclass(probs: Dict[str, float], realized_class: str) -> Dict[str, float]:
-    """Multiclass Brier. Returns raw sum (0..2) and normalized mean (0..1).
+    """Multiclass Brier. Lower is better.
 
-    raw = Σ_k (p_k - o_k)^2 ;  normalized = raw / K.  Lower is better.
+    brierRawSum       = Σ_k (p_k - o_k)^2     range 0 .. 2
+    brierNormalizedMean = raw / K             range 0 .. 2/K  (≈0.667 for K=3)
+    (NOT 0..1 — divide raw by 2 if you need a 0..1 scale.)
     """
     p = _as_dist(probs)
     o = [1.0 if c == realized_class else 0.0 for c in CLASSES]

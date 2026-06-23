@@ -758,6 +758,11 @@ def test_crypto_event_records_with_long_dedup(monkeypatch):
 
 # ── Pro Handoff includes active-event dossier (v10.45.1, GPT #12) ──────
 def test_pro_handoff_events_section(monkeypatch):
+    # Hermetic: _pro_events_section() calls _events_restore_once() which pulls the
+    # LIVE event store over the network — during market hours that refills the
+    # list and broke the == "" assertion (the CI failure at 13:46 JST). Pin the
+    # restore to a no-op so the test only sees what we set here.
+    monkeypatch.setattr(scanner, "_events_restore_once", lambda: None)
     scanner._EVENTS_ACTIVE.clear(); scanner._EVENTS_LOG.clear()
     assert scanner._pro_events_section() == ""            # no events -> nothing added
     scanner._EVENTS_ACTIVE["JP:9999:LIMIT_UP"] = {
