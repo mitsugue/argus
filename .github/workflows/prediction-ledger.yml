@@ -242,6 +242,41 @@ jobs:
               print('no downside incidents today — nothing to persist')
           PY
 
+      # rotation-history-v1 (v10.109): snapshot the day's capital-rotation reading
+      # (group scores + top rotations) to the ledger branch so Δ-from-last-reading
+      # ("where did money leave?") can be shown later. Append-only per date; only
+      # when the regime read is live/partial (a mock/empty read is skipped).
+      - name: Persist capital-rotation reading (history)
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 60 "$BE/api/argus/market-regime" -o reg.json || echo '{}' > reg.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('reg.json'))
+          except Exception:
+              d = {}
+          if isinstance(d, dict) and d.get('status') in ('live', 'partial') and not d.get('heldOverMin'):
+              os.makedirs('ledger/rotations', exist_ok=True)
+              rec = {'date': today, 'asOf': d.get('asOf'),
+                     'regime': (d.get('regime') or {}).get('label'),
+                     'groups': [{'id': g.get('id'), 'label': g.get('label'), 'role': g.get('role'),
+                                 'score': g.get('score'), 'status': g.get('status')}
+                                for g in (d.get('rotationGroups') or []) if g.get('available')],
+                     'topRotations': d.get('topRotations') or []}
+              path = f'ledger/rotations/{today}.json'
+              if not os.path.exists(path):   # append-only: never overwrite a recorded day
+                  json.dump(rec, open(path, 'w'), ensure_ascii=False, indent=1)
+              json.dump(rec, open('ledger/rotations/latest.json', 'w'), ensure_ascii=False, indent=1)
+              print(f'rotation reading persisted: {today} ({len(rec["groups"])} groups)')
+          else:
+              st = d.get('status') if isinstance(d, dict) else '?'
+              print(f'rotation reading not persisted (status={st}, held={bool(d.get("heldOverMin"))})')
+          PY
+
       # ai-cost-persist (v10.50): the month-to-date AI spend (no prompts/keys) is
       # committed so the ARGUS-side HARD budget stop survives a dyno restart. The
       # server restores max(persisted, in-memory) on boot. Admin-token gated.

@@ -68,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.109.0', 'Top Rotations 履歴の記録 + Δ(GPT#8・#9と同型) — 毎営業日16:05に資金ローテーション(グループ別スコア+トップ・ローテーション)を ledger/rotations/<date>.json に追記(append-only・held/mock読みはスキップ)。読み出しAPI /api/argus/rotation-history は記録日一覧+最新+「Δ=前回記録比のスコア変化(流出が大きい順)」を返す。明日から2点目が貯まればΔが出て『どこから資金が抜けたか』が分かる。Δ表示UIは次の層。テスト312'],
   ['v10.108.0', 'Incident Replay 台帳の基盤(GPT「Decision Valueより先に」) — 毎営業日16:05に、その日の急落インシデント(銘柄/下落率/原因/severity/上書きアクション/保有フラグ)を ledger/downside/<date>.json に追記(append-only・急落のない日はスキップ)。読み出しAPI /api/argus/downside-history も追加(記録日一覧+最新)。これで「今日の失敗を後から検証する」土台が蓄積開始。事後の結果スコアリング(何を見落としたか)とUIは次の層。テスト312'],
   ['v10.107.0', 'AI Review Sheetをruntime自動生成に(GPT最重要・古い土台の解消) — バックエンドに /api/argus/runtime-manifest を追加し、版/buildSha/ルート(5)/プロバイダのライブ確認数/校正フェーズ/ダウンサイド状態/TDnet状態/Layer2B設定有無/Decision Valueフェーズ/安全境界/現在の限界を実行時から生成。AI Review Sheetの先頭に「RUNTIME(live)」ブロックを表示し、コピー出力にも先頭挿入。外部AI(GPT/Claude)が古い静的記述ではなく現状から判断できるように(秘密は出さず設定有無はboolのみ)。テスト312'],
   ['v10.106.0', 'Watchlistに「危険のみ」フィルター(P0-3) — 急落日に「今、危ないものだけ見せろ」を実現。チップで[全部 / ⚠危険のみ(件数) / 保有のみ]を切替。⚠危険=急落インシデント該当・保有=数量入力済み。フィルター中は並べ替え無効。実データで15件→危険3件(9984/5801/285A)に絞り込み確認'],

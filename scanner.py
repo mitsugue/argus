@@ -6737,6 +6737,58 @@ def api_argus_downside_history():
     return jsonify(out)
 
 
+# Capital-rotation history + Δ (v10.109): recorded daily readings let us answer
+# "where did money leave since the last reading?". Public, read-only.
+_ROTATION_HIST_CACHE = {"data": None, "expires": 0.0}
+
+
+def _gh_ledger_json(path):
+    r = requests.get(f"https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/{path}",
+                     timeout=10, headers={"User-Agent": "argus/1.0"})
+    return r.json() if r.ok else None
+
+
+@app.route("/api/argus/rotation-history")
+def api_argus_rotation_history():
+    now = time.time()
+    if _ROTATION_HIST_CACHE["data"] and now < _ROTATION_HIST_CACHE["expires"]:
+        return jsonify(_ROTATION_HIST_CACHE["data"])
+    out = {"status": "empty", "asOf": _ai_now_iso(), "days": [], "count": 0, "delta": [],
+           "noteJa": "資金ローテーションの記録(毎営業日16:05にledgerへ追記)。Δ=前回記録比のスコア変化。"}
+    try:
+        r = requests.get("https://api.github.com/repos/mitsugue/argus/contents/ledger/rotations?ref=ledger",
+                         timeout=12, headers={"User-Agent": "argus/1.0", "Accept": "application/vnd.github+json"})
+        if r.ok:
+            files = [f for f in r.json() if isinstance(f, dict)
+                     and str(f.get("name", "")).endswith(".json") and f.get("name") != "latest.json"]
+            days = sorted((f["name"][:-5] for f in files), reverse=True)[:30]
+            out["days"] = days
+            out["count"] = len(days)
+            out["status"] = "live" if days else "empty"
+            # Δ between the two most recent recorded readings (where money left).
+            if len(days) >= 2:
+                cur = _gh_ledger_json(f"rotations/{days[0]}.json") or {}
+                prev = _gh_ledger_json(f"rotations/{days[1]}.json") or {}
+                prev_scores = {g.get("id"): g.get("score") for g in (prev.get("groups") or [])}
+                delta = []
+                for g in (cur.get("groups") or []):
+                    ps = prev_scores.get(g.get("id"))
+                    if isinstance(g.get("score"), (int, float)) and isinstance(ps, (int, float)):
+                        delta.append({"id": g.get("id"), "label": g.get("label"),
+                                      "score": round(g["score"], 3), "delta": round(g["score"] - ps, 3),
+                                      "status": g.get("status")})
+                delta.sort(key=lambda x: x["delta"])   # most outflow first
+                out["delta"] = delta
+                out["deltaFrom"] = days[1]
+                out["latest"] = {"date": days[0], "regime": cur.get("regime")}
+    except Exception:
+        pass
+    if out["status"] == "live":
+        _ROTATION_HIST_CACHE["data"] = out
+        _ROTATION_HIST_CACHE["expires"] = now + 1800
+    return jsonify(out)
+
+
 # ━━━ Backup vault relay (v10.3.4) ━━━
 # The browser pushes a CLIENT-SIDE-ENCRYPTED backup envelope here; the daily
 # prediction-ledger workflow pulls it (admin token) and commits the ciphertext
