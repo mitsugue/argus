@@ -1,8 +1,0 @@
-{
- "updated": "2026-06-23",
- "engineVersion": "scout-ledger-v1",
- "byBucket": {},
- "byFlowClass": {},
- "n": 0,
- "noteJa": "entry-scoutのスコア/フロー分類を実現リターンで採点。scoreが高い局面ほど上がったか、買い戻し主導と推定した時に失速したか等を蓄積(校正)。最低20件貯まるまで参考。"
-}
