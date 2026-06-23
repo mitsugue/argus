@@ -228,6 +228,17 @@ def v_no_order_routes():
                 return False, f"{path} returned {e.code}, expected 404"
     return True, "no order/execute routes (correct)"
 
+def v_tdnet_recent():
+    # TDnet feed (v10.101): public, read-only. Items (when present) carry a
+    # classified sentiment. Unavailable is acceptable (third-party wrapper).
+    c, d = _get("/api/argus/tdnet-recent")
+    if d.get("status") not in ("live", "unavailable"):
+        return False, f"status={d.get('status')}"
+    for it in (d.get("items") or [])[:5]:
+        if it.get("sentiment") not in ("negative", "positive", "neutral"):
+            return False, f"bad sentiment {it.get('sentiment')}"
+    return True, f"status={d.get('status')} count={d.get('count')}"
+
 def v_downside_incidents():
     # Downside Incident Response (v10.98): public, never just generic "急落".
     c, d = _get("/api/argus/downside-incidents")
@@ -300,6 +311,7 @@ CHECKS = [
     ("decision-value summary", v_decision_value_summary),
     ("no order routes (safety)", v_no_order_routes),
     ("downside-incidents (cause+override)", v_downside_incidents),
+    ("tdnet-recent (適時開示)", v_tdnet_recent),
     ("legacy routes admin-gated", v_legacy_routes_gated),
     ("source-registry", v_source_registry),
     ("system-health (public lamps)", v_system_health),

@@ -28,6 +28,7 @@ import argus_posture  # Calibration Ledger v4: multidimensional posture scoring 
 import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
 import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist sync validation (pure, v10.74)
 import argus_downside  # Downside Incident Response + cause attribution (pure, decision-support only, v10.98)
+import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -6457,6 +6458,58 @@ def _theme_peers_down(sym, by_sym):
 _JP_INDEX_CACHE = {"val": None, "ts": 0.0}
 _JP_INDEX_TTL = 300
 
+_TDNET_FEED_CACHE = {"data": None, "expires": 0.0}
+_TDNET_FEED_TTL = 600
+
+
+def get_tdnet_recent(limit=150):
+    """Recent TDnet (適時開示) disclosures via the free yanoshin TDnet API, mapped
+    to 4-digit codes and classified (category + sentiment). Cached 10m. This is
+    the FIRST real TDnet feed in ARGUS — best-effort, third-party wrapper, so it
+    degrades to 'unavailable' on any error (the layer then says 未接続)."""
+    now = time.time()
+    if _TDNET_FEED_CACHE["data"] is not None and now < _TDNET_FEED_CACHE["expires"]:
+        return _TDNET_FEED_CACHE["data"]
+    out = {"status": "unavailable", "asOf": _ai_now_iso(), "items": [], "bySymbol": {},
+           "provider": "yanoshin-tdnet"}
+    try:
+        r = requests.get(f"https://webapi.yanoshin.jp/webapi/tdnet/list/recent.json?limit={limit}",
+                         timeout=12, headers={"User-Agent": "argus/1.0"})
+        if r.ok:
+            data = r.json()
+            items, by_sym = [], {}
+            for row in (data.get("items") or []):
+                td = row.get("Tdnet") or row.get("tdnet") or {}
+                code5 = str(td.get("company_code") or "")
+                code = code5[:4] if len(code5) >= 4 else code5
+                title = td.get("title") or ""
+                if not code or not title:
+                    continue
+                cls = argus_tdnet.classify_disclosure(title)
+                it = {"code": code, "name": td.get("company_name"), "title": title,
+                      "time": td.get("pubdate"), "url": td.get("document_url"),
+                      "category": cls["category"], "categoryJa": cls["categoryJa"],
+                      "sentiment": cls["sentiment"]}
+                items.append(it)
+                by_sym.setdefault(code, []).append(it)
+            if items:
+                out = {"status": "live", "asOf": _ai_now_iso(), "items": items[:200],
+                       "bySymbol": by_sym, "provider": "yanoshin-tdnet"}
+    except Exception:
+        pass
+    if out["status"] == "live":
+        _TDNET_FEED_CACHE["data"] = out
+        _TDNET_FEED_CACHE["expires"] = now + _TDNET_FEED_TTL
+    return out
+
+
+@app.route("/api/argus/tdnet-recent")
+def api_argus_tdnet_recent():
+    d = get_tdnet_recent()
+    # public, read-only: trim the heavy bySymbol map for the wire
+    return jsonify({"status": d["status"], "asOf": d["asOf"], "provider": d.get("provider"),
+                    "count": len(d.get("items") or []), "items": (d.get("items") or [])[:80]})
+
 
 def _jp_index_proxy():
     """Real JP index move (TOPIX ETF 1306 + Nikkei ETF 1321 average), cached 5m.
@@ -6566,6 +6619,10 @@ def get_downside_incidents():
                     cat_map[sym_c] = c
     except Exception:
         cat_map = {}
+    # TDnet (適時開示) feed — the authoritative JP disclosure source (v10.101).
+    tdnet = get_tdnet_recent()
+    tdnet_ok = tdnet.get("status") == "live"
+    tdnet_by_sym = tdnet.get("bySymbol") or {}
 
     assets = []
     for s, market in ([(x, "JP") for x in jp_stocks] + [(x, "US") for x in us_stocks]):
@@ -6580,6 +6637,9 @@ def get_downside_incidents():
                     if isinstance(chg, (int, float)) and ref_index is not None else None)
         of = owner.get(sym.upper()) or {}
         owner_state = of.get("ownerState", "watch") if sym.upper() in owner else None
+        # TDnet disclosure is the authoritative JP catalyst; fall back to the
+        # SEC/Finnhub/J-Quants catalyst map otherwise.
+        td_cat = argus_tdnet.summarize_for_symbol(tdnet_by_sym.get(sym)) if market == "JP" else None
         assets.append({
             "symbol": sym, "market": market, "name": name, "assetName": name,
             "changePct": chg, "price": s.get("price"),
@@ -6587,9 +6647,9 @@ def get_downside_incidents():
             "beta": "high" if sym in _DOWNSIDE_HIGH_BETA else None,
             "vsIndexPct": vs_index,
             "themePeersDown": _theme_peers_down(sym, by_sym),
-            "catalyst": cat_map.get(sym.upper()),   # recent filing/earnings/news (要確認, not asserted bad)
-            "newsChecked": news_ok,
-            "tdnetConnected": False,
+            "catalyst": td_cat or cat_map.get(sym.upper()),   # TDnet first, else filing/earnings/news (要確認)
+            "newsChecked": news_ok or tdnet_ok,
+            "tdnetConnected": tdnet_ok if market == "JP" else True,
             "isHeld": owner_state in ("held", "protected"),
             "ownerState": owner_state,
             "downsideStrictness": of.get("downsideStrictness", "normal"),
@@ -6623,7 +6683,9 @@ def get_downside_incidents():
         "holderRiskOverlay": overlay["holderRiskOverlay"],
         "overlay": overlay,
         "dataLimitations": [
-            "原因のニュース/開示は自動取得(SEC/Finnhub/J-Quants)。ただしTDnet未接続のため業績修正・決算短信の即時確認には限界。",
+            ("原因のニュース/開示は自動取得(SEC/Finnhub/J-Quants + TDnet適時開示[yanoshin経由])。"
+             if tdnet_ok else
+             "原因のニュース/開示は自動取得(SEC/Finnhub/J-Quants)。TDnet適時開示は現在取得不可(即時確認に限界)。"),
             "個別材料を検知しても『悪材料』とは自動断定しない(内容は要確認・無材料=安全ではない)。",
             "地合いはTOPIX/日経ETF(1306/1321)の前日比を指数プロキシに使用(取得不可時はwatchlist平均にフォールバック)。",
             "前日比はJ-Quantsでは前営業日終値ベース。moomooブリッジ稼働時のみ当日リアルタイム。",
