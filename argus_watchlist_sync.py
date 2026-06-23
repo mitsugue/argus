@@ -21,6 +21,14 @@ from typing import Any, Dict, List, Optional, Tuple
 SYNC_SCHEMA_VERSION = "layer2b-sync-v1"
 MAX_SYMBOLS = 200
 
+# Optional NON-MONETARY flags (v10.100). These carry only "is this held / watched
+# / how strict / how important" — NEVER quantity, cost, P/L, or any amount. Each
+# is whitelisted to a fixed enum; anything else falls back to the safe default.
+OWNER_STATES = ("watch", "active", "held", "protected")
+DOWNSIDE_STRICTNESS = ("normal", "strict")
+PRIORITIES = ("low", "normal", "high")
+_DEFAULT_FLAGS = {"ownerState": "watch", "downsideStrictness": "normal", "priority": "normal"}
+
 # Fields that must NEVER be uploaded. Presence of ANY of these rejects the payload.
 FORBIDDEN_FIELDS = frozenset({
     "quantity", "qty", "shares", "averageCost", "avgCost", "purchasePrice",
@@ -92,6 +100,11 @@ def validate_sync_payload(payload: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         seen.add(key)
         ci = {"symbol": sym, "market": mkt.upper(),
               "enabled": bool(it.get("enabled", True))}
+        # Non-monetary flags, enum-whitelisted (anything else → safe default).
+        ci["ownerState"] = it["ownerState"] if it.get("ownerState") in OWNER_STATES else _DEFAULT_FLAGS["ownerState"]
+        ci["downsideStrictness"] = (it["downsideStrictness"] if it.get("downsideStrictness") in DOWNSIDE_STRICTNESS
+                                    else _DEFAULT_FLAGS["downsideStrictness"])
+        ci["priority"] = it["priority"] if it.get("priority") in PRIORITIES else _DEFAULT_FLAGS["priority"]
         if isinstance(it.get("name"), str):
             ci["name"] = it["name"][:48]
         if isinstance(it.get("assetId"), str) and re.match(r"^[A-Za-z0-9_-]{1,40}$", it["assetId"]):
@@ -107,8 +120,10 @@ def validate_sync_payload(payload: Any) -> Tuple[bool, Optional[Dict[str, Any]],
 
 
 def content_hash(items: List[Dict[str, Any]]) -> str:
-    """Stable hash of the membership set (order-independent on symbol/market)."""
-    norm = sorted((i["market"], i["symbol"], bool(i.get("enabled", True))) for i in items)
+    """Stable hash of the membership set (order-independent). Includes ownerState
+    so a held↔watch change registers as a material membership change."""
+    norm = sorted((i["market"], i["symbol"], bool(i.get("enabled", True)),
+                   i.get("ownerState", "watch")) for i in items)
     raw = json.dumps(norm, ensure_ascii=False, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
@@ -131,7 +146,10 @@ def build_membership_snapshot(
         "symbolCount": len(enabled),
         "contentHash": content_hash(enabled),
         "members": [{"symbol": i["symbol"], "market": i["market"],
-                     "assetId": i.get("assetId"), "name": i.get("name")}
+                     "assetId": i.get("assetId"), "name": i.get("name"),
+                     "ownerState": i.get("ownerState", "watch"),
+                     "downsideStrictness": i.get("downsideStrictness", "normal"),
+                     "priority": i.get("priority", "normal")}
                     for i in enabled],
         "cohortId": "owner_watchlist_dynamic",
         "immutable": True,

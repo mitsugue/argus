@@ -3020,13 +3020,17 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
             if isinstance(_chg, (int, float)) and _chg < 0:
                 try:
                     _owner = _owner_symbols_cached()
+                    _of = _owner.get(str(symbol).upper()) or {}
                     _reg = _REGIME_CACHE.get("data") or {}
                     _nm = env.get("nameJa") or symbol
                     _inc = argus_downside.classify_incident(
                         {"symbol": symbol, "market": market, "name": _nm, "assetName": _nm,
                          "changePct": _chg, "flowRatio": quote.get("flowRatio"),
                          "beta": "high" if str(symbol) in _DOWNSIDE_HIGH_BETA else None,
-                         "isHeld": str(symbol).upper() in _owner,
+                         "isHeld": _of.get("ownerState") in ("held", "protected"),
+                         "ownerState": _of.get("ownerState"),
+                         "downsideStrictness": _of.get("downsideStrictness", "normal"),
+                         "priority": _of.get("priority", "normal"),
                          "newsChecked": False, "tdnetConnected": False, "currentAction": "HOLD"},
                         {"globalRegime": (_reg.get("regime") or {}).get("label") or "UNKNOWN"},
                         now_iso=env.get("ingestAt"))
@@ -6409,22 +6413,28 @@ _DOWNSIDE_TTL = 60
 
 
 def _owner_symbols_cached():
-    """Owner (Layer 2B) watchlist symbols, upper-cased, cached ~10m. Network read
-    is owner-gated and may be unavailable — degrade to an empty set."""
+    """Owner (Layer 2B) watchlist as a MAP {SYMBOL(upper): {ownerState,
+    downsideStrictness, priority}}, cached ~10m. Carries only the non-monetary
+    flags — never quantity/cost/P/L. Owner-gated read; degrades to {} if absent.
+    NOTE: returns a dict, so `sym in owner` still works (checks keys)."""
     now = time.time()
     if _OWNER_SYMS_CACHE["syms"] is not None and now - _OWNER_SYMS_CACHE["ts"] < _OWNER_SYMS_TTL:
         return _OWNER_SYMS_CACHE["syms"]
-    syms = set()
+    flags = {}
     try:
         for mrow in (_layer2b_read_latest() or []):
             s = str(mrow.get("symbol") or "").upper()
             if s:
-                syms.add(s)
+                flags[s] = {
+                    "ownerState": mrow.get("ownerState") or "watch",
+                    "downsideStrictness": mrow.get("downsideStrictness") or "normal",
+                    "priority": mrow.get("priority") or "normal",
+                }
     except Exception:
-        syms = _OWNER_SYMS_CACHE["syms"] or set()
-    _OWNER_SYMS_CACHE["syms"] = syms
+        flags = _OWNER_SYMS_CACHE["syms"] or {}
+    _OWNER_SYMS_CACHE["syms"] = flags
     _OWNER_SYMS_CACHE["ts"] = now
-    return syms
+    return flags
 
 
 def _theme_peers_down(sym, by_sym):
@@ -6568,6 +6578,8 @@ def get_downside_incidents():
         ref_index = nikkei_proxy if market == "JP" else None
         vs_index = (round(float(chg) - ref_index, 2)
                     if isinstance(chg, (int, float)) and ref_index is not None else None)
+        of = owner.get(sym.upper()) or {}
+        owner_state = of.get("ownerState", "watch") if sym.upper() in owner else None
         assets.append({
             "symbol": sym, "market": market, "name": name, "assetName": name,
             "changePct": chg, "price": s.get("price"),
@@ -6578,7 +6590,10 @@ def get_downside_incidents():
             "catalyst": cat_map.get(sym.upper()),   # recent filing/earnings/news (要確認, not asserted bad)
             "newsChecked": news_ok,
             "tdnetConnected": False,
-            "isHeld": sym.upper() in owner,
+            "isHeld": owner_state in ("held", "protected"),
+            "ownerState": owner_state,
+            "downsideStrictness": of.get("downsideStrictness", "normal"),
+            "priority": of.get("priority", "normal"),
             "dataFreshnessOk": s.get("status") == "live",
             "currentAction": "HOLD",
         })

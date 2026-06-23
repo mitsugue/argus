@@ -222,3 +222,30 @@ def test_scanner_downside_endpoint_shape():
         total = round(sum(b["probability"] for b in inc["causeBuckets"]), 2)
         assert total == 1.0
         assert inc["actionOverride"] != "HOLD"
+
+
+# ── owner-state escalation (v10.100) ──
+def test_owner_state_held_escalates_vs_watch():
+    base = {"symbol": "5803", "market": "JP", "changePct": -3.4, "newsChecked": True, "catalyst": None}
+    watch = D.classify_incident(dict(base, ownerState="watch"), {})
+    held = D.classify_incident(dict(base, ownerState="held"), {})
+    assert D.SEVERITY_ORDER.index(held["severity"]) > D.SEVERITY_ORDER.index(watch["severity"])
+    assert held["isHeld"] is True
+
+
+def test_owner_state_protected_strictest():
+    a = {"symbol": "5803", "market": "JP", "changePct": -3.2, "ownerState": "protected",
+         "newsChecked": True, "catalyst": None}
+    inc = D.classify_incident(a, {})
+    assert inc["actionOverride"] != "HOLD"
+    assert inc["actionOverride"] in D.ACTION_OVERRIDES
+    assert inc["ownerState"] == "protected"
+
+
+def test_strict_strictness_escalates_override():
+    a = {"symbol": "7203", "market": "JP", "changePct": -3.1, "downsideStrictness": "strict",
+         "newsChecked": True, "catalyst": None}
+    inc = D.classify_incident(a, {})
+    # a held/strict name on a real drop cannot sit at the mildest HOLD_CAUTION
+    assert inc["actionOverride"] != "HOLD_CAUTION"
+    assert inc["actionOverride"] != "HOLD"

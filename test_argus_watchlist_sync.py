@@ -78,3 +78,42 @@ def test_membership_snapshot_immutable_shape():
 def test_brkb_dotted_ticker_ok():
     ok, _, _ = W.validate_sync_payload({"items": [{"symbol": "BRK.B", "market": "US"}]})
     assert ok
+
+
+# ── Non-monetary owner flags (v10.100) ──
+def test_owner_flags_accepted_and_whitelisted():
+    import argus_watchlist_sync as W
+    ok, cleaned, errs = W.validate_sync_payload({"items": [
+        {"symbol": "5803", "market": "JP", "ownerState": "held",
+         "downsideStrictness": "strict", "priority": "high"},
+        {"symbol": "7203", "market": "JP", "ownerState": "bogus", "priority": "nope"},  # → defaults
+    ]})
+    assert ok, errs
+    a, b = cleaned["items"]
+    assert a["ownerState"] == "held" and a["downsideStrictness"] == "strict" and a["priority"] == "high"
+    assert b["ownerState"] == "watch" and b["priority"] == "normal"   # bad enums → safe default
+
+
+def test_owner_flags_never_carry_money():
+    import argus_watchlist_sync as W
+    # quantity/cost must STILL be hard-rejected even alongside the new flags
+    ok, cleaned, errs = W.validate_sync_payload({"items": [
+        {"symbol": "5803", "market": "JP", "ownerState": "held", "quantity": 100, "avgCost": 4200},
+    ]})
+    assert not ok
+    assert any("forbidden" in e for e in errs)
+
+
+def test_membership_snapshot_carries_flags_not_money():
+    import argus_watchlist_sync as W
+    _, cleaned, _ = W.validate_sync_payload({"items": [
+        {"symbol": "5803", "market": "JP", "ownerState": "protected", "priority": "high"}]})
+    snap = W.build_membership_snapshot(cleaned["items"], effective_date="2026-06-23",
+                                       generated_at="2026-06-23T07:00:00Z", snapshot_id="t1")
+    m = snap["members"][0]
+    assert m["ownerState"] == "protected" and m["priority"] == "high"
+    # no monetary keys anywhere in the snapshot
+    import json
+    blob = json.dumps(snap)
+    for bad in ("quantity", "avgCost", "costBasis", "pnl"):
+        assert bad not in blob

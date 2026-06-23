@@ -16,6 +16,7 @@ export const Layer2BSyncCard: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [summary, setSummary] = useState<any>(null);
+  const [syncStatus, setSyncStatus] = useState<{ synced: string[]; missing: string[] } | null>(null);
   const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
 
   async function restoreFromLayer2B() {
@@ -63,9 +64,40 @@ export const Layer2BSyncCard: React.FC = () => {
     } catch { setResult('成績の取得に失敗'); }
   }
 
+  // Send ONLY non-monetary flags. `held` is derived from local holdings but the
+  // quantity/cost are NEVER included — just the boolean state (v10.100).
   const items = assets
     .filter((a) => SYNC_MARKETS.has(a.market))
-    .map((a) => ({ symbol: a.symbol, market: a.market, enabled: a.enabled }));
+    .map((a) => {
+      const held = (a.quantity ?? 0) > 0;
+      return {
+        symbol: a.symbol, market: a.market, enabled: a.enabled,
+        ownerState: held ? 'held' : 'watch',
+        downsideStrictness: held ? 'strict' : 'normal',
+      };
+    });
+  const heldLocal = items.filter((i) => i.ownerState === 'held').map((i) => i.symbol);
+
+  // #7 — confirm the server (private store) actually treats this device's held /
+  // priority names as held/active. If a held name is missing, warn explicitly.
+  async function checkSyncStatus() {
+    if (!backend || !token.trim()) { setResult('同期状態の確認には合言葉を入力してください'); return; }
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerToken: token.trim() }),
+      });
+      const d = await r.json().catch(() => null);
+      const members: any[] = d?.membership?.members || [];
+      const serverHeld = new Set(
+        members.filter((m) => ['held', 'active', 'protected'].includes(m.ownerState))
+          .map((m) => String(m.symbol)),
+      );
+      const synced = heldLocal.filter((s) => serverHeld.has(s));
+      const missing = heldLocal.filter((s) => !serverHeld.has(s));
+      setSyncStatus({ synced, missing });
+    } catch { setResult('同期状態の確認に失敗(合言葉/通信を確認)'); }
+  }
 
   async function sync() {
     if (!backend) { setResult('バックエンド未設定'); return; }
@@ -119,8 +151,9 @@ export const Layer2BSyncCard: React.FC = () => {
         <div className="guide-term">
           <span className="guide-term__en">Layer 2B 同期</span>
           <span className="guide-term__ja">
-            あなたのウォッチリストの<b>銘柄だけ</b>(保有数量・取得単価は送りません)を private ストアへ同期し、
-            ARGUS があなたの銘柄を採点できるようにします。対象 {items.length} 銘柄(JP/US/暗号資産)。
+            あなたのウォッチリストの<b>銘柄と「保有/監視」フラグだけ</b>(保有数量・取得単価・損益は一切送りません)を
+            private ストアへ同期し、ARGUS があなたの銘柄を採点・急落時に一段厳しく扱えるようにします。
+            対象 {items.length} 銘柄(うち保有 {heldLocal.length})。
           </span>
         </div>
         <div className="guide-term">
@@ -158,6 +191,28 @@ export const Layer2BSyncCard: React.FC = () => {
                      border: '1px solid var(--border, #2a3340)' }}>
             銘柄を復元
           </button>
+          <button onClick={checkSyncStatus} disabled={busy}
+            style={{ marginLeft: 8, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                     background: 'transparent', color: 'inherit',
+                     border: '1px solid var(--border, #2a3340)' }}>
+            同期状態を確認
+          </button>
+          {syncStatus && (
+            <div style={{ fontSize: '0.85em', marginTop: 10, lineHeight: 1.6 }}>
+              {heldLocal.length === 0 ? (
+                <div style={{ opacity: 0.7 }}>この端末に「保有(数量&gt;0)」の銘柄はありません(監視のみ)。</div>
+              ) : syncStatus.missing.length === 0 ? (
+                <div style={{ color: 'var(--green, #34D399)' }}>
+                  ✅ 保有{heldLocal.length}銘柄すべてサーバー側で「保有/重点監視」として同期済み。
+                </div>
+              ) : (
+                <div style={{ color: 'var(--amber, #FBBF24)' }}>
+                  ⚠️ 未同期: {syncStatus.missing.join(', ')} — これらは<b>サーバー側では保有/重点監視として扱われていません</b>。
+                  「今すぐ同期」を押すと反映されます(同期後はダウンサイド判定が一段厳しくなります)。
+                </div>
+              )}
+            </div>
+          )}
           {result && (
             <div style={{ fontSize: '0.9em', marginTop: 8, overflowWrap: 'anywhere',
                           wordBreak: 'break-word' }}>{result}</div>

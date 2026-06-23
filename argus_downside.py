@@ -217,9 +217,17 @@ def _severity(a, top_cause):
         sev = "high"
     if top_cause == "STOCK_SPECIFIC_BAD_NEWS" and mag >= abs(DROP_SERIOUS):
         sev = _bump(sev, SEVERITY_ORDER)
-    if a.get("isHeld"):                       # holders carry more risk than watchers
+    if _held_like(a):                         # held/protected carry more risk than watchers
+        sev = _bump(sev, SEVERITY_ORDER)
+    if a.get("ownerState") == "protected":    # protected = one extra notch
+        sev = _bump(sev, SEVERITY_ORDER)
+    if a.get("downsideStrictness") == "strict":
         sev = _bump(sev, SEVERITY_ORDER)
     return sev
+
+
+def _held_like(a):
+    return bool(a.get("isHeld")) or a.get("ownerState") in ("held", "protected")
 
 
 def _override(a, top_cause, sev):
@@ -260,7 +268,15 @@ def _override(a, top_cause, sev):
     if mag >= abs(DROP_SERIOUS) and override == "HOLD_CAUTION":
         override, impact = "REVIEW_REQUIRED", _max_level(impact, "review_required", HOLDER_IMPACT_ORDER)
 
-    if a.get("isHeld"):                       # holders get one notch stricter impact
+    # Held/protected/strict: a real drop (>= watch threshold) cannot sit at the
+    # mildest override — escalate HOLD_CAUTION to REVIEW_REQUIRED so a position
+    # the owner actually holds is never quietly treated as plain HOLD.
+    strict = a.get("downsideStrictness") == "strict" or a.get("ownerState") == "protected"
+    if (_held_like(a) or strict) and override == "HOLD_CAUTION" and mag >= abs(DROP_WATCH):
+        override = "REVIEW_REQUIRED"
+        impact = _max_level(impact, "review_required", HOLDER_IMPACT_ORDER)
+
+    if _held_like(a):                         # held/protected get one notch stricter impact
         impact = _bump(impact, HOLDER_IMPACT_ORDER)
     return override, impact
 
@@ -434,7 +450,9 @@ def classify_incident(a, m=None, now_iso=None):
         "nextConditionJa": _next_condition_ja(top_cause),
         "doNotDoJa": _DONOT_JA.get(override, "新規の買い増しは控える。"),
         "nextReviewAt": now_iso,
-        "isHeld": bool(a.get("isHeld")),
+        "isHeld": _held_like(a),
+        "ownerState": a.get("ownerState") or ("held" if a.get("isHeld") else "watch"),
+        "priority": a.get("priority") or "normal",
         "status": "partial" if partial else "live",
     }
     inc["dedupKey"] = incident_dedup_key(inc, a, m)
