@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.96.0', 'v4 runner移行 Step 2(dry-run並走・v3に無干渉) — prediction-ledgerワークフローに、その日のスナップショットをv4採点エンジンで「市場別ターゲット日・コホート別・append-only」採点し ledger/calibration_v1/ に並行蓄積するステップを追加。書き込みは calibration_v1/ のみで、本番v3(ledger/days等)には一切触れない。US/cryptoは正しい時刻のジョブ実装まで採点保留。実スナップショットでドライラン検証済み(記録19・保留15・JP採点は翌営業日から)。テスト271。次は5〜10営業日の検証→readiness→activate'],
   ['v10.95.0', 'Top画面の余白を詰めて全体を上へ — ページ上部padding(28→16px・モバイル18→10)、セクション間gap(28→20px)、市場ランプ(.msl)の上下余白(4/12px)を撤去。HOLD等のカードが上に来てファーストビューが締まる(詰めすぎない範囲)'],
   ['v10.94.0', '能力テストのユニバースを柔軟スケーリング — /jp-universe が「優先銘柄(あなたのwatchlist[Layer 2B]+固定ベンチ+センサー)」を先頭に並べるように。ブリッジは先頭からCAP_UNIVERSE_MAX件を取るので、サンプル上限(例500)に関わらず、あなたのwatchlist銘柄は必ずスイープ対象に入る。残りは全市場サンプルで補完。watchlist変更後はLayer 2B同期で優先リストが更新される'],
   ['v10.93.0', 'Guideのバージョン履歴をアコーディオン化 — 既定では直近5件のみ表示し、「全○件を表示」で展開/折りたたみ(長すぎる問題を解消)'],

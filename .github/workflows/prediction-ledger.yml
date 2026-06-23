@@ -759,6 +759,25 @@ jobs:
           print(f"scout recorded {today} ({len(recs)} names); scored n={summary['n']}")
           PY
 
+      - name: Calibration v4 dry-run (parallel epoch — never touches v3)
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          # Pure scorer modules from main (raw GitHub — no git-ref dependency).
+          # They land at the repo root as UNTRACKED files; the commit below only
+          # does `git add ledger/`, so they are never committed. The dry-run
+          # writes ONLY to ledger/calibration_v1/ — v3 (ledger/days, ledger/
+          # scores, ledger/summary.json) is never touched.
+          for f in argus_calibration.py argus_ledger_v4.py argus_v4_dryrun.py; do
+            curl -fsSL -o "$f" "https://raw.githubusercontent.com/mitsugue/argus/main/$f" || true
+          done
+          if [ -s snap.json ] && [ -f argus_v4_dryrun.py ]; then
+            python3 argus_v4_dryrun.py snap.json ledger/calibration_v1 \
+              && echo "v4 dry-run ok" >> "$GITHUB_STEP_SUMMARY" \
+              || echo "::warning::v4 dry-run failed (non-fatal — v3 unaffected)"
+          else
+            echo "no snap.json — skip v4 dry-run"
+          fi
+
       - name: Commit to ledger branch
         if: github.event.inputs.mode != 'ai-only'
         run: |
