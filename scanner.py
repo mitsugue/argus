@@ -6444,6 +6444,69 @@ def _theme_peers_down(sym, by_sym):
     return False
 
 
+_JP_INDEX_CACHE = {"val": None, "ts": 0.0}
+_JP_INDEX_TTL = 300
+
+
+def _jp_index_proxy():
+    """Real JP index move (TOPIX ETF 1306 + Nikkei ETF 1321 average), cached 5m.
+    A direct index read beats watchlist-average breadth for market-wide detection.
+    Returns None if unavailable (caller falls back to watchlist breadth)."""
+    now = time.time()
+    if _JP_INDEX_CACHE["val"] is not None and now - _JP_INDEX_CACHE["ts"] < _JP_INDEX_TTL:
+        return _JP_INDEX_CACHE["val"]
+    val = None
+    try:
+        snap = get_japan_watchlist_snapshot(["1306", "1321"])
+        chs = [float(s["changePct"]) for s in (snap.get("stocks") or [])
+               if s.get("status") == "live" and isinstance(s.get("changePct"), (int, float))]
+        if chs:
+            val = round(sum(chs) / len(chs), 2)
+    except Exception:
+        val = _JP_INDEX_CACHE["val"]
+    _JP_INDEX_CACHE["val"] = val
+    _JP_INDEX_CACHE["ts"] = now
+    return val
+
+
+def _downside_catalyst_for(item):
+    """From a catalysts-snapshot item, return a catalyst dict iff there is a
+    RECENT, concrete catalyst (fresh filing/disclosure, earnings just passed, or
+    recent news) that could explain a same-day drop. We do NOT assert it is 'bad'
+    (no reliable sentiment) — confirmedNegative stays False; the UI says 要確認."""
+    if not isinstance(item, dict):
+        return None
+    signals = []
+
+    def _recent(date_str, days):
+        try:
+            d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+            return (datetime.now(pytz.utc).date() - d).days <= days
+        except Exception:
+            return False
+
+    earn = item.get("earnings") or {}
+    du = earn.get("daysUntil")
+    if isinstance(du, (int, float)) and -2 <= du <= 0:
+        signals.append("決算発表直後")
+    for f in (item.get("filings") or []):
+        if _recent(f.get("filingDate"), 3):
+            signals.append(f"開示({f.get('form', 'filing')})")
+            break
+    for d in (item.get("disclosures") or []):
+        if d.get("status") == "live" and _recent(d.get("date"), 3):
+            signals.append(f"開示({d.get('type', '')})")
+            break
+    for n in (item.get("news") or []):
+        if _recent(n.get("publishedAt") or n.get("datetime"), 2):
+            signals.append("関連ニュース")
+            break
+    if not signals:
+        return None
+    return {"recent": True, "detail": "・".join(signals[:3]),
+            "confirmedNegative": False, "source": item.get("status")}
+
+
 def get_downside_incidents():
     now = time.time()
     if _DOWNSIDE_CACHE["data"] is not None and now < _DOWNSIDE_CACHE["expires"]:
@@ -6463,10 +6526,12 @@ def get_downside_incidents():
     high_beta_down = bool(hb_live) and all(float(s.get("changePct", 0) or 0) < -1.0 for s in hb_live)
     reg = _REGIME_CACHE.get("data") or {}
     global_regime = (reg.get("regime") or {}).get("label") or "UNKNOWN"
+    index_proxy = _jp_index_proxy()                     # real 1306/1321 move (v10.99)
+    nikkei_proxy = index_proxy if index_proxy is not None else jp_breadth
 
     market_ctx = {
         "globalRegime": global_regime,
-        "nikkeiProxyPct": jp_breadth, "jpBreadth": jp_breadth,
+        "nikkeiProxyPct": nikkei_proxy, "jpBreadth": jp_breadth,
         "jpDecliners": jp_dec, "jpTotal": len(live_jp),
         "highBetaDown": high_beta_down,
         "themeUnwind": high_beta_down,
@@ -6478,6 +6543,19 @@ def get_downside_incidents():
         news_ok = get_market_news().get("status") == "live"
     except Exception:
         news_ok = False
+    # Per-symbol catalyst map (recent filing/earnings/news) — lets a real cause
+    # surface instead of defaulting to "unknown" (v10.99).
+    cat_map = {}
+    try:
+        cat_snap = get_catalysts_snapshot()
+        if cat_snap.get("status") in ("live", "partial"):
+            for it in (cat_snap.get("items") or []):
+                sym_c = str(it.get("symbol", "")).upper()
+                c = _downside_catalyst_for(it)
+                if sym_c and c:
+                    cat_map[sym_c] = c
+    except Exception:
+        cat_map = {}
 
     assets = []
     for s, market in ([(x, "JP") for x in jp_stocks] + [(x, "US") for x in us_stocks]):
@@ -6487,8 +6565,9 @@ def get_downside_incidents():
         chg = s.get("changePct")
         flow = (s.get("flow") or {}).get("bigNetRatio")
         name = s.get("nameJa") or s.get("name") or sym
-        vs_index = (round(float(chg) - jp_breadth, 2)
-                    if market == "JP" and isinstance(chg, (int, float)) and jp_breadth is not None else None)
+        ref_index = nikkei_proxy if market == "JP" else None
+        vs_index = (round(float(chg) - ref_index, 2)
+                    if isinstance(chg, (int, float)) and ref_index is not None else None)
         assets.append({
             "symbol": sym, "market": market, "name": name, "assetName": name,
             "changePct": chg, "price": s.get("price"),
@@ -6496,7 +6575,7 @@ def get_downside_incidents():
             "beta": "high" if sym in _DOWNSIDE_HIGH_BETA else None,
             "vsIndexPct": vs_index,
             "themePeersDown": _theme_peers_down(sym, by_sym),
-            "catalyst": None,        # honest: confirmed bad-news sentiment not yet auto-detected
+            "catalyst": cat_map.get(sym.upper()),   # recent filing/earnings/news (要確認, not asserted bad)
             "newsChecked": news_ok,
             "tdnetConnected": False,
             "isHeld": sym.upper() in owner,
@@ -6529,10 +6608,11 @@ def get_downside_incidents():
         "holderRiskOverlay": overlay["holderRiskOverlay"],
         "overlay": overlay,
         "dataLimitations": [
-            "原因のニュース/開示の自動取得は限定的(TDnet未接続のため業績修正・決算短信の即時確認に限界)。",
+            "原因のニュース/開示は自動取得(SEC/Finnhub/J-Quants)。ただしTDnet未接続のため業績修正・決算短信の即時確認には限界。",
+            "個別材料を検知しても『悪材料』とは自動断定しない(内容は要確認・無材料=安全ではない)。",
+            "地合いはTOPIX/日経ETF(1306/1321)の前日比を指数プロキシに使用(取得不可時はwatchlist平均にフォールバック)。",
             "前日比はJ-Quantsでは前営業日終値ベース。moomooブリッジ稼働時のみ当日リアルタイム。",
             "テーマ判定は固定グループ(AI/半導体/電線)による簡易版。",
-            "公式悪材料の有無は自動では断定しない(無材料=安全ではない)。",
         ],
         "noteJa": "急落を分類し原因を推定、保有向けにアクションを上書き提示(決定支援のみ・自動売買なし)。",
     }

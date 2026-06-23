@@ -192,3 +192,33 @@ def test_classify_incidents_sorted():
 def test_no_order_surface():
     for bad in ("place_order", "execute", "submit_order", "buy", "sell", "broker"):
         assert not hasattr(D, bad)
+
+
+# ── scanner integration: catalyst detector + index proxy (v10.99) ──
+def test_scanner_catalyst_detector_recent_vs_stale():
+    import scanner
+    from datetime import datetime, timezone, timedelta
+    today = datetime.now(timezone.utc).date()
+    fresh = (today - timedelta(days=1)).isoformat()
+    stale = (today - timedelta(days=30)).isoformat()
+    # recent filing → catalyst present, but never asserted negative
+    c = scanner._downside_catalyst_for({"symbol": "X", "filings": [{"form": "8-K", "filingDate": fresh}]})
+    assert c and c["recent"] is True and c["confirmedNegative"] is False
+    # stale filing only → no catalyst
+    assert scanner._downside_catalyst_for({"symbol": "X", "filings": [{"form": "8-K", "filingDate": stale}]}) is None
+    # earnings just passed → catalyst
+    assert scanner._downside_catalyst_for({"symbol": "X", "earnings": {"daysUntil": 0}}) is not None
+    # nothing → None
+    assert scanner._downside_catalyst_for({"symbol": "X"}) is None
+
+
+def test_scanner_downside_endpoint_shape():
+    import scanner
+    d = scanner.get_downside_incidents()
+    assert d["engineVersion"] == "downside-v1"
+    assert isinstance(d["incidents"], list)
+    assert "jpIntradayOverlay" in d and "holderRiskOverlay" in d
+    for inc in d["incidents"]:
+        total = round(sum(b["probability"] for b in inc["causeBuckets"]), 2)
+        assert total == 1.0
+        assert inc["actionOverride"] != "HOLD"

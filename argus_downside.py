@@ -308,7 +308,7 @@ _CAUSE_JA = {
     "MARKET_WIDE_SELL_OFF": "市場全体の下げ(地合い悪化)",
     "SECTOR_SELL_OFF": "セクター全体の下げ",
     "THEME_PROFIT_TAKING": "テーマ全体の利益確定売り",
-    "STOCK_SPECIFIC_BAD_NEWS": "個別の悪材料",
+    "STOCK_SPECIFIC_BAD_NEWS": "個別の材料(悪材料の可能性・要確認)",
     "FLOW_DISTRIBUTION": "大口の売り(ディストリビューション)疑い",
     "SHORT_COVER_EXHAUSTION": "踏み上げ一巡(買い戻し枯れ)疑い",
     "POST_RALLY_PROFIT_TAKING": "急騰後の利益確定売り",
@@ -358,7 +358,13 @@ def _reason_ja(a, top_cause, buckets, sev):
     elif top_cause == "FLOW_DISTRIBUTION":
         tail = " 大口の流出を伴っており、戻りの弱さに注意。"
     elif top_cause == "STOCK_SPECIFIC_BAD_NEWS":
-        tail = " 個別の材料が確認されている。"
+        cat = a.get("catalyst") if isinstance(a.get("catalyst"), dict) else {}
+        if cat.get("confirmedNegative"):
+            tail = " 個別の悪材料が確認されている。"
+        elif cat.get("detail"):
+            tail = f" 直近に個別材料({cat['detail']})があり下落と整合(内容は要確認・悪材料と断定はしない)。"
+        else:
+            tail = " 個別の材料が示唆される(要確認)。"
     held = " 保有銘柄のため判定を一段厳しめに適用。" if a.get("isHeld") else ""
     return lead + body + "の可能性。" + tail + held
 
