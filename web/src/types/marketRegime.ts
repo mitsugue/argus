@@ -74,6 +74,9 @@ export interface MarketRegimeSnapshot {
     manualFallback: SourceStatus;
   };
   dataLimitations: string[];
+  /** Minutes since the held last-full-coverage reading (v10.34). Present only
+      when the displayed regime is a held-over reading, not a fresh full one. */
+  heldOverMin?: number;
   /** JP intraday overlay (v10.98) — present when JP watchlist breadth is live.
       Keeps a green global regime from masking a weak Japan tape. */
   jpIntradayOverlay?: {

@@ -68,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.105.0', 'Market Contextに「なぜ今のラベルが維持されているか」を明示 — レジームが前回のフル評価の保持表示(v10.34の安定化)の場合「⚠ 前回のフル評価を保持表示中(約N分前)。今のRISK_ON/MIXEDは最新の確定ではない」と表示。ライブ(フル)/部分データ(ソース欠損)も明示。JP intradayオーバーレイのタグも併記。古いRISK_ONが今のRISK_ONに見える問題を解消'],
   ['v10.104.0', 'Watchlistの各銘柄に防御レイヤーを表示(P0-2) — 急落インシデント該当銘柄の行に「⚠ 上書きアクション(EXIT_WATCH/REVIEW_REQUIRED等)」バッジとownerState(held/protected等)を表示。展開すると「WHY DOWN?」ブロック(下落率/Rule→Override/原因確率/理由/やってはいけない/確認条件/欠損データ)が出る。HOLDの上に防御レイヤーを被せ、保有銘柄を放置させない。実データで9984/5801/285A=EXIT_WATCH表示を確認'],
   ['v10.103.0', '危険日の防御レイヤーを前面化(P0) — ①Today Heroを3層表示に: Global Regime / Japan Intraday(NORMAL/CAUTION/RISK_OFF_WATCH) / Owner Risk(CLEAR/REVIEW_REQUIRED等)。グローバルがRISK_ONでも日本のザラ場や保有リスクが別に見える②保有/重点監視銘柄が急落インシデントに該当する日は「Downside Watch」をHeroの上に表示③partial(情報欠損)時はHeroに「PARTIAL DATA」を出し、HOLDの信頼度を上限60%に制限+「/ PARTIAL」表記(欠損データで高信頼HOLDを出さない)。HOLDを信用させすぎない方向への布石'],
   ['v10.102.0', 'US/暗号資産の市場別クロック整合(v4台帳) — これまでUS/暗号資産は「16:05 JSTでは正しい時刻で価格できない」ため採点保留(experimental_invalid_clock)だったが、各予測のtargetClose(実際の市場クローズ時刻)を使い「そのクローズが過ぎたら採点」する方式に変更。USは米国引け後、暗号資産は24/72/120hの窓が過ぎた分から自動採点され、JP専用の保留が不要に(実スナップショットのdry-runでheld 15→0)。日付だけの古い記録は従来どおりJP専用ガードにフォールバック。テスト312'],

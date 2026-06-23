@@ -112,6 +112,24 @@ export const MarketRegime: React.FC = () => {
           <span className="regime-head__conf">confidence {confPct}%</span>
           {data?.asOf && <span className="regime-head__asof">asOf {data.asOf.slice(0, 16).replace('T', ' ')}Z</span>}
         </div>
+        {data && (
+          <div className="regime-head__status">
+            {typeof data.heldOverMin === 'number' ? (
+              <span className="regime-head__held">
+                ⚠ 前回のフル評価を保持表示中(約{data.heldOverMin}分前)。今のRISK_ON/MIXEDは最新の確定ではありません。
+              </span>
+            ) : (
+              <span className="regime-head__fresh">
+                {data.status === 'live' ? 'ライブ(フル評価)' : data.status === 'partial' ? '部分データ(一部ソース欠損 — 確信度を割り引いて解釈)' : 'mock'}
+              </span>
+            )}
+            {data.jpIntradayOverlay && data.jpIntradayOverlay.jpIntradayOverlay !== 'NORMAL' && (
+              <span className="regime-head__overlay-tag">
+                · JP intraday: {data.jpIntradayOverlay.jpIntradayOverlay}
+              </span>
+            )}
+          </div>
+        )}
         {data && <p className="regime-head__summary">{data.regime.summaryJa}</p>}
         {data?.jpIntradayOverlay && data.jpIntradayOverlay.jpIntradayOverlay !== 'NORMAL' && (
           <div className={`regime-jp-overlay regime-jp-overlay--${data.jpIntradayOverlay.jpIntradayOverlay === 'RISK_OFF_WATCH' ? 'red' : 'amber'}`}>
