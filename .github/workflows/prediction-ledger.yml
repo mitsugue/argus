@@ -206,6 +206,42 @@ jobs:
               print(f'no live AI judgment to persist (status={s}) — previous file kept')
           PY
 
+      # incident-replay-v1 (v10.108): snapshot the day's downside incidents to the
+      # ledger branch so a sharp-drop day can be reviewed later (postmortem). Append-
+      # only per date; calm days (no incidents) are skipped. Outcome scoring is a
+      # later layer — this is the durable record it will read.
+      - name: Persist downside incidents (replay history)
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 60 "$BE/api/argus/downside-incidents" -o ds.json || echo '{}' > ds.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('ds.json'))
+          except Exception:
+              d = {}
+          incs = d.get('incidents') or []
+          if incs:
+              os.makedirs('ledger/downside', exist_ok=True)
+              rec = {'date': today, 'asOf': d.get('asOf'),
+                     'globalRegime': d.get('globalRegime'), 'jpIntradayOverlay': d.get('jpIntradayOverlay'),
+                     'holderRiskOverlay': d.get('holderRiskOverlay'), 'activeCount': d.get('activeCount'),
+                     'incidents': [{k: i.get(k) for k in ('symbol','market','assetName','changePct',
+                                    'incidentType','severity','actionOverride','isHeld','ownerState',
+                                    'causeBuckets','reasonJa')} for i in incs]}
+              # Append-only per date: never overwrite an existing day file.
+              path = f'ledger/downside/{today}.json'
+              if not os.path.exists(path):
+                  json.dump(rec, open(path, 'w'), ensure_ascii=False, indent=1)
+              json.dump(rec, open('ledger/downside/latest.json', 'w'), ensure_ascii=False, indent=1)
+              print(f'downside incidents persisted: {today} ({len(incs)})')
+          else:
+              print('no downside incidents today — nothing to persist')
+          PY
+
       # ai-cost-persist (v10.50): the month-to-date AI spend (no prompts/keys) is
       # committed so the ARGUS-side HARD budget stop survives a dyno restart. The
       # server restores max(persisted, in-memory) on boot. Admin-token gated.

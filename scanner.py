@@ -6703,6 +6703,40 @@ def api_argus_downside_incidents():
     return jsonify(get_downside_incidents())
 
 
+# Incident Replay (v10.108): list the dates with a recorded downside snapshot
+# (written daily to the public ledger branch) + the latest. Public, read-only.
+_DOWNSIDE_HIST_CACHE = {"data": None, "expires": 0.0}
+
+
+@app.route("/api/argus/downside-history")
+def api_argus_downside_history():
+    now = time.time()
+    if _DOWNSIDE_HIST_CACHE["data"] and now < _DOWNSIDE_HIST_CACHE["expires"]:
+        return jsonify(_DOWNSIDE_HIST_CACHE["data"])
+    out = {"status": "empty", "asOf": _ai_now_iso(), "days": [], "count": 0,
+           "noteJa": "急落インシデントの記録(replay用・毎営業日16:05にledgerへ追記)。"}
+    try:
+        r = requests.get("https://api.github.com/repos/mitsugue/argus/contents/ledger/downside?ref=ledger",
+                         timeout=12, headers={"User-Agent": "argus/1.0", "Accept": "application/vnd.github+json"})
+        if r.ok:
+            files = [f for f in r.json() if isinstance(f, dict)
+                     and str(f.get("name", "")).endswith(".json") and f.get("name") != "latest.json"]
+            days = sorted((f["name"][:-5] for f in files), reverse=True)[:30]
+            out["days"] = days
+            out["count"] = len(days)
+            out["status"] = "live" if days else "empty"
+        latest = requests.get("https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/downside/latest.json",
+                              timeout=10, headers={"User-Agent": "argus/1.0"})
+        if latest.ok:
+            out["latest"] = latest.json()
+    except Exception:
+        pass
+    if out["status"] == "live":
+        _DOWNSIDE_HIST_CACHE["data"] = out
+        _DOWNSIDE_HIST_CACHE["expires"] = now + 1800
+    return jsonify(out)
+
+
 # ━━━ Backup vault relay (v10.3.4) ━━━
 # The browser pushes a CLIENT-SIDE-ENCRYPTED backup envelope here; the daily
 # prediction-ledger workflow pulls it (admin token) and commits the ciphertext
