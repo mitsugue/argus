@@ -77,7 +77,11 @@ def main():
         if sym and isinstance(pr, (int, float)) and pr > 0:
             prices[sym] = pr
 
-    res = V4.score_records(rows, lambda s: prices.get(s), today)
+    # Pass now (UTC) so US/crypto are scored at their OWN market close (v10.101):
+    # a horizon with a targetClose timestamp is due once that close has passed,
+    # regardless of market — JP-only holding falls away.
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    res = V4.score_records(rows, lambda s: prices.get(s), today, now_iso=now_iso)
 
     with open(pred_file, "w", encoding="utf-8") as f:
         for r in rows:

@@ -17,6 +17,7 @@ data itself.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import argus_calibration as C
@@ -61,20 +62,37 @@ def _record_price(rec: Dict[str, Any]) -> Optional[float]:
     return None
 
 
-def _targets(rec: Dict[str, Any]) -> Dict[str, str]:
-    """horizon -> target date/timestamp from the record's marketClock."""
+def _targets(rec: Dict[str, Any]) -> Dict[str, Dict[str, Optional[str]]]:
+    """horizon -> {date, ts} from the record's marketClock. `ts` is the actual
+    market-close timestamp (targetClose) when present — that is what makes
+    US/crypto due-ness market-clock-correct rather than a flat date assumption."""
     mc = rec.get("marketClock") or {}
-    out: Dict[str, str] = {}
+    out: Dict[str, Dict[str, Optional[str]]] = {}
     for t in mc.get("targets", []) or []:
         h = t.get("horizon")
         d = t.get("targetTradingDate") or t.get("targetTimestamp")
-        if h and d:
-            out[h] = str(d)
+        ts = t.get("targetClose") or t.get("targetTimestamp")
+        if h and (d or ts):
+            out[h] = {"date": str(d) if d else None, "ts": str(ts) if ts else None}
     return out
 
 
+def _to_epoch(iso: Optional[str]) -> Optional[float]:
+    """Parse an ISO timestamp (accepts trailing 'Z') to epoch seconds; None on fail."""
+    if not iso:
+        return None
+    s = str(iso).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
 def horizon_due(target: Optional[str], today: str) -> bool:
-    """A horizon is due once its target trading date has arrived (date-level)."""
+    """Date-level due check (a horizon is due once its target trading date arrived)."""
     if not target:
         return False
     return str(target)[:10] <= today
@@ -86,14 +104,21 @@ def score_records(
     today: str,
     *,
     valid_markets: Optional[set] = None,
+    now_iso: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Score due, unscored horizons in place (append-only). Returns counts.
 
+    Market-clock-correct due-ness (v10.101): when a horizon carries a `targetClose`
+    timestamp AND `now_iso` is given, the horizon is due once that close time has
+    PASSED — so US/crypto are scored at their own market close, not held. Without a
+    timestamp (date-only) it falls back to date-level due + the JP-only guard.
+
     Each record needs: symbol, market, cohortId, scenarios, price(AtPrediction),
     marketClock.targets, and a `scored` dict. price_lookup(symbol) returns the
-    realized price (the run-day close on/after the target date), or None.
+    realized price (the run-day close on/after the target), or None.
     """
     valid = valid_markets if valid_markets is not None else _VALID_DAILY_MARKETS
+    now_epoch = _to_epoch(now_iso)
     scored = held = 0
     for rec in records:
         sc = rec.get("scored")
@@ -105,13 +130,22 @@ def score_records(
         for h in HORIZONS:
             if sc.get(h) is not None:
                 continue  # already scored — append-only, never re-touch
-            if not horizon_due(tgts.get(h), today):
-                continue
-            if mkt not in valid:
-                sc[h] = {"status": "experimental_invalid_clock",
-                         "noteJa": "市場別クロック未実装のため採点保留"}
-                held += 1
-                continue
+            tg = tgts.get(h) or {}
+            ts_epoch = _to_epoch(tg.get("ts"))
+            # Timestamp path (clock-correct, any market): due once close passed.
+            if now_epoch is not None and ts_epoch is not None:
+                if ts_epoch > now_epoch:
+                    continue  # close hasn't happened yet — not due
+                # due + clock-correct → priceable for ANY market
+            else:
+                # Date-only fallback: date due + JP-only guard (legacy behavior).
+                if not horizon_due(tg.get("date"), today):
+                    continue
+                if mkt not in valid:
+                    sc[h] = {"status": "experimental_invalid_clock",
+                             "noteJa": "市場別クロック未実装のため採点保留"}
+                    held += 1
+                    continue
             realized = price_lookup(rec.get("symbol"))
             if realized is None:
                 continue  # stays pending (retried next run)

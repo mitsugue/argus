@@ -79,3 +79,39 @@ def test_no_force_overwrite_surface():
     # the scorer must not expose a way to rewrite recorded scenarios/prices
     for bad in ("overwrite", "force", "rewrite", "delete"):
         assert not any(bad in n.lower() for n in dir(V4))
+
+
+# ── market-clock timestamp due-ness (v10.101) ──
+def _rec_ts(market, ts):
+    return {"symbol": "X", "market": market, "cohortId": "c", "scored": {"1d": None},
+            "priceAtPrediction": 100.0, "bandPct": 2.0,
+            "scenarios": [{"label": "rebound_attempt", "p": 60},
+                          {"label": "sideways_stabilization", "p": 30},
+                          {"label": "downside_continuation", "p": 10}],
+            "marketClock": {"targets": [{"horizon": "1d", "targetClose": ts,
+                                          "targetTradingDate": ts[:10]}]}}
+
+
+def test_us_scored_when_close_passed_via_timestamp():
+    # US close already passed → scored (NOT held) when now_iso is given.
+    rec = _rec_ts("US", "2026-06-23T20:00:00+00:00")
+    out = __import__("argus_ledger_v4").score_records(
+        [rec], lambda s: 110.0, "2026-06-24", now_iso="2026-06-24T07:00:00Z")
+    assert out["scored"] == 1 and out["held"] == 0
+    assert rec["scored"]["1d"]["argmaxHit"] is not None
+
+
+def test_us_not_due_before_close_timestamp():
+    # US close in the future → not due, not held (correctly pending).
+    rec = _rec_ts("US", "2026-06-24T20:00:00+00:00")
+    out = __import__("argus_ledger_v4").score_records(
+        [rec], lambda s: 110.0, "2026-06-24", now_iso="2026-06-24T07:00:00Z")
+    assert out["scored"] == 0 and out["held"] == 0
+    assert rec["scored"]["1d"] is None
+
+
+def test_crypto_scored_via_timestamp():
+    rec = _rec_ts("CRYPTO", "2026-06-23T00:00:00Z")
+    out = __import__("argus_ledger_v4").score_records(
+        [rec], lambda s: 103.0, "2026-06-24", now_iso="2026-06-24T00:00:00Z")
+    assert out["scored"] == 1
