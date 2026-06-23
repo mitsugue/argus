@@ -132,24 +132,28 @@ function EventRow({ e, open, onToggle }: { e: ActiveEvent; open: boolean; onTogg
   const t = eventTime(e);
   const strong = _STRONG_POSTURE.has(e.recommendedPosture);
   const posture = POSTURE_JA[e.recommendedPosture] ?? e.recommendedPosture;
+  // Status line: reasonJa already contains the type word + % (e.g. "急騰 +10.79%"),
+  // so we DON'T also print TYPE_JA — that was the duplicate ("急騰 / 急騰 +10%").
+  const status = e.reasonJa || (TYPE_JA[e.eventType] ?? e.eventType);
   return (
     <div className={`ei-row${open ? ' ei-row--open' : ''}`}>
       <button className="ei-row__head" onClick={onToggle}>
-        <span className="ei-row__dot" style={{ background: dc }} />
-        <span className="ei-row__sym">{e.nameJa ? `${e.nameJa}(${e.symbol})` : e.symbol}</span>
-        <span className="ei-row__type" style={{ color: dc, fontWeight: 700 }}>
-          {dir === 'up' ? '▲' : dir === 'down' ? '▼' : '・'} {TYPE_JA[e.eventType] ?? e.eventType}
+        <span className="ei-row__l1">
+          {t && <span className="ei-row__time">{t}</span>}
+          {e.severity >= 5 && <span className="ei-row__sev">S{e.severity}</span>}
+          <span className="ei-row__caret">{open ? '▾' : '▸'}</span>
         </span>
-        {t && <span className="ei-row__time">{t}</span>}
-        {e.severity >= 5 && <span className="ei-row__sev">S{e.severity}</span>}
-        <span className="ei-row__caret">{open ? '▾' : '▸'}</span>
+        <span className="ei-row__l2">
+          <span className="ei-row__dot" style={{ background: dc }} />
+          {e.nameJa ? `${e.nameJa}(${e.symbol})` : e.symbol}
+        </span>
+        <span className="ei-row__l3">
+          <span className="ei-row__status" style={{ color: dc }}>
+            {dir === 'up' ? '▲' : dir === 'down' ? '▼' : '・'} {status}
+          </span>
+          {posture && <span className={`ei-advice${strong ? ' ei-advice--strong' : ''}`}>{posture}</span>}
+        </span>
       </button>
-      <div className="ei-row__sub">
-        <span className="ei-row__reason" style={{ color: dc }}>{e.reasonJa}</span>
-        {posture && (
-          <span className={`ei-advice${strong ? ' ei-advice--strong' : ''}`}>{posture}</span>
-        )}
-      </div>
       {open && <DossierDetail eventId={e.eventId} />}
     </div>
   );
@@ -191,7 +195,9 @@ export const EventIntelligenceCard: React.FC = () => {
           </div>
         ) : (
           <div className="ei-rows">
-            {events.slice(0, 8).map((e) => (
+            {events.slice()
+              .sort((a, b) => new Date(b.detectedAt || 0).getTime() - new Date(a.detectedAt || 0).getTime())
+              .slice(0, 8).map((e) => (
               <EventRow key={e.eventId} e={e} open={openId === e.eventId}
                         onToggle={() => setOpenId(openId === e.eventId ? null : e.eventId)} />
             ))}

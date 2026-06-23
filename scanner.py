@@ -1878,11 +1878,14 @@ def api_argus_watchlist_sync_status():
                     "noteJa": "所有者ウォッチリスト(Layer 2B)同期状態。保有情報は一切送受信しない。"
                               "公開リポ対策でprivateストア設定前は採点無効(銘柄は保存しない)。"})
 
-@app.route("/api/argus/calibration/watchlist-membership")
+@app.route("/api/argus/calibration/watchlist-membership", methods=["GET", "POST"])
 def api_argus_watchlist_membership():
     """Owner-gated read of the latest synced membership from the PRIVATE store
-    (reveals symbols → requires the owner-sync token)."""
-    ok, err, code = _require_owner_sync()
+    (reveals symbols → requires the owner-sync token via header or JSON body).
+    Used to restore the device watchlist if localStorage was cleared."""
+    body = request.get_json(silent=True) or {}
+    token = body.get("ownerToken") if isinstance(body, dict) else None
+    ok, err, code = _require_owner_sync(body_token=token)
     if not ok:
         return jsonify(err), code
     snap = _layer2b_read_latest()

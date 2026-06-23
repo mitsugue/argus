@@ -18,6 +18,38 @@ export const Layer2BSyncCard: React.FC = () => {
   const [summary, setSummary] = useState<any>(null);
   const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
 
+  async function restoreFromLayer2B() {
+    if (!backend || !token.trim()) { setResult('復元には合言葉を入力してください'); return; }
+    if (!confirm('Layer 2Bに同期済みの銘柄でこの端末のウォッチリストを置き換えます(保有数量・取得単価は対象外)。よろしいですか?')) return;
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerToken: token.trim() }),
+      });
+      const d = await r.json().catch(() => null);
+      const members = d?.membership?.members;
+      if (!members || !members.length) { setResult(`復元データなし: ${d?.status || r.status}`); return; }
+      const now = Date.now();
+      const restored = members.map((m: any, i: number) => {
+        const mk = m.market;
+        const at = mk === 'JP' ? 'jp_equity' : mk === 'US' ? 'us_equity' : 'crypto';
+        const src = mk === 'JP' ? 'jquants' : mk === 'US' ? 'twelvedata' : 'manual';
+        return {
+          id: `${mk.toLowerCase()}-${m.symbol.toLowerCase()}`, symbol: m.symbol,
+          displayName: m.name || m.symbol, displayNameJa: m.name || undefined,
+          market: mk, assetType: at, source: src, enabled: true, sortOrder: i,
+          createdAt: now, updatedAt: now,
+          ...(mk === 'CRYPTO' ? { memo: `coingecko:${m.symbol.toLowerCase() === 'btc' ? 'bitcoin' : m.symbol.toLowerCase() === 'eth' ? 'ethereum' : m.symbol.toLowerCase()}` } : {}),
+        };
+      });
+      localStorage.setItem('argus.assets.v1', JSON.stringify(restored));
+      window.dispatchEvent(new Event('argus:data-synced'));
+      setResult(`✅ ${restored.length}銘柄を復元しました(JP/US/暗号資産)。投信(CORE)と保有数量はバックアップから復元してください。`);
+    } catch (e) {
+      setResult('復元エラー: ' + String(e).slice(0, 80));
+    }
+  }
+
   async function loadSummary() {
     if (!backend || !token.trim()) { setResult('成績を見るには合言葉を入力してください'); return; }
     try {
@@ -119,6 +151,12 @@ export const Layer2BSyncCard: React.FC = () => {
                      background: 'transparent', color: 'inherit',
                      border: '1px solid var(--border, #2a3340)' }}>
             採点成績を見る
+          </button>
+          <button onClick={restoreFromLayer2B} disabled={busy}
+            style={{ marginLeft: 8, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                     background: 'transparent', color: 'inherit',
+                     border: '1px solid var(--border, #2a3340)' }}>
+            銘柄を復元
           </button>
           {result && (
             <div style={{ fontSize: '0.9em', marginTop: 8, overflowWrap: 'anywhere',

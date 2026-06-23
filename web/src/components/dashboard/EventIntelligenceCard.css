@@ -3,16 +3,18 @@
 .ei-status__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .ei-status__warn { color: var(--amber, #fbbf24); }
 .ei-empty { font-size: 12px; color: var(--text-muted, #5f6b78); line-height: 1.6; }
-.ei-rows { display: flex; flex-direction: column; gap: 10px; }
-.ei-row { display: flex; flex-direction: column; gap: 3px; font-size: 12px; min-width: 0; }
-.ei-row__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; align-self: center; }
-.ei-row__sym { font-weight: 700; color: var(--text-main); min-width: 0; overflow-wrap: anywhere; }
-.ei-row__type { font-weight: 700; white-space: nowrap; }
+.ei-rows { display: flex; flex-direction: column; gap: 12px; }
+/* 3-line stack per the spec: line1=time, line2=name, line3=status+advice.
+   Stacking (not a wrapping flex row) keeps long names from misaligning. */
+.ei-row { min-width: 0; font-size: 12px; }
+.ei-row__head { display: flex; flex-direction: column; gap: 2px; width: 100%; background: none; border: none; cursor: pointer; text-align: left; padding: 0; min-width: 0; }
+.ei-row__l1 { display: flex; align-items: center; gap: 6px; }
+.ei-row__l2 { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--text-main); min-width: 0; overflow-wrap: anywhere; }
+.ei-row__l3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.ei-row__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .ei-row__time { font-size: 10.5px; color: var(--text-faint, #5f6b78); white-space: nowrap; }
 .ei-row__sev { font-size: 9.5px; color: var(--red, #f87171); border: 1px solid var(--red, #f87171); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
-/* reason + advice on a second line so long advice never pushes the row wide */
-.ei-row__sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-left: 16px; min-width: 0; }
-.ei-row__reason { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+.ei-row__status { font-weight: 700; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .ei-advice { font-size: 11px; color: var(--text-sub, #8b98a7); border: 1px solid var(--line, rgba(255,255,255,0.18)); border-radius: 5px; padding: 2px 9px; white-space: nowrap; flex: none; }
 .ei-advice--strong { color: #14181d; background: var(--amber, #fbbf24); border-color: var(--amber, #fbbf24); font-weight: 800; }
 .ei-foot { margin-top: 8px; font-size: 10px; color: var(--text-faint, #5f6b78); line-height: 1.5; }
