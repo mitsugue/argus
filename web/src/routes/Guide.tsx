@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.93.0', 'Guideのバージョン履歴をアコーディオン化 — 既定では直近5件のみ表示し、「全○件を表示」で展開/折りたたみ(長すぎる問題を解消)'],
   ['v10.92.0', '画面幅を完全に伸縮(elastic)へ — ページの最大幅キャップ(v7以来の1200px、前回の1600px)を撤廃し、利用可能な幅いっぱいに伸び縮みするように。ウィンドウ/ペインを広げれば横に伸びる(実測で .page がコンテナ幅を充填)。モバイルは元から全幅'],
   ['v10.91.0', 'v4 runner移行 着手(①採点エンジン・テスト付き・ライブ台帳に未接続=無リスク) — argus_ledger_v4: 記録済み予測を「市場別ターゲット日(marketClock)・コホート別・append-only(force上書きなし)」でBrier/RPS/argmax採点する純エンジン。US/cryptoは正しい時刻で価格できるまで採点保留。テスト8件。次段でワークフローからdry-run並走(v3を壊さず新エポックに並行蓄積)→検証→activateの順で本番移行'],
   ['v10.90.0', 'Layer 2B 非JP採点を一時停止(GPT P0#4・誤った時刻での採点を防止) — US/暗号資産は16:05 JST実行では正しい引け時刻で採点できないため、市場別クロック実装まで experimental_invalid_clock として採点保留(記録は継続)。当面はJP銘柄のみ採点。サマリーに heldInvalidClock を表示。市場別ジョブ(US post-close/crypto UTC/FX NY)導入後に有効化'],
@@ -184,6 +185,8 @@ const HOWTO: string[] = [
 ];
 
 export const Guide: React.FC = () => {
+  const [showAllUpdates, setShowAllUpdates] = React.useState(false);
+  const RECENT_SHOWN = 5;
   return (
     <PageShell title="Glossary / Guide" subtitle="使い方(ページ別)・できること・用語一覧(日本語ガイド)。">
       <section>
@@ -320,13 +323,22 @@ export const Guide: React.FC = () => {
         </div>
         <div className="card guide-card">
           <div className="guide-caps">
-            {RECENT_UPDATES.map(([v, d]) => (
+            {(showAllUpdates ? RECENT_UPDATES : RECENT_UPDATES.slice(0, RECENT_SHOWN)).map(([v, d]) => (
               <div className="guide-cap" key={v}>
                 <span className="guide-cap__area guide-cap__area--mono">{v}</span>
                 <span className="guide-cap__desc">{d}</span>
               </div>
             ))}
           </div>
+          {RECENT_UPDATES.length > RECENT_SHOWN && (
+            <button
+              onClick={() => setShowAllUpdates((s) => !s)}
+              style={{ marginTop: 10, padding: '6px 14px', borderRadius: 8, cursor: 'pointer',
+                       background: 'transparent', color: 'var(--text-sub, #8b98a7)',
+                       border: '1px solid var(--line, rgba(255,255,255,0.18))', fontSize: 12 }}>
+              {showAllUpdates ? '▲ 直近のみ表示' : `▼ 全${RECENT_UPDATES.length}件を表示`}
+            </button>
+          )}
         </div>
       </section>
     </PageShell>
