@@ -59,7 +59,7 @@ export interface DownsideSnapshot {
   noteJa: string;
 }
 
-const REFRESH_INTERVAL_MS = 60_000;
+const REFRESH_INTERVAL_MS = 120_000;   // 60→120s (v10.110): lighter load on the 512MB backend
 
 interface State {
   data: DownsideSnapshot | null;

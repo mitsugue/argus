@@ -6410,7 +6410,9 @@ _DOWNSIDE_HIGH_BETA = {"5803", "285A", "5801", "6920", "6857"}
 _OWNER_SYMS_CACHE = {"syms": None, "ts": 0.0}
 _OWNER_SYMS_TTL = 600
 _DOWNSIDE_CACHE = {"data": None, "expires": 0.0}
-_DOWNSIDE_TTL = 60
+_DOWNSIDE_TTL = 180   # 60→180 (v10.110): the downside recompute pulls watchlists +
+# catalysts + TDnet; on a 512MB single-process dyno, recomputing 3× less often
+# cuts the memory/CPU peak that tripped Render's limit. Sub-feeds cache longer.
 
 
 def _owner_symbols_cached():
