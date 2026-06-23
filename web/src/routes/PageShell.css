@@ -1,5 +1,5 @@
 .page {
-  padding: 28px 32px 60px;
+  padding: 16px 32px 60px;   /* tighter top so content sits higher (v10.95) */
   /* Fully elastic — fill the available width (the window/pane minus the nav).
      No max-width cap, so the layout stretches and shrinks with the viewport like
      it used to. (Was capped at 1200px since v7, which felt locked to app-width.) */
@@ -8,7 +8,7 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 20px;                 /* was 28px — moderate tightening between sections */
 }
 
 .page__head {
@@ -62,7 +62,7 @@
 
 @media (max-width: 720px) {
   .page {
-    padding: 18px 14px 40px;
+    padding: 10px 14px 40px;
   }
   .page__title {
     font-size: 18px;
