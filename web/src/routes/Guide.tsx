@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.92.0', '画面幅を完全に伸縮(elastic)へ — ページの最大幅キャップ(v7以来の1200px、前回の1600px)を撤廃し、利用可能な幅いっぱいに伸び縮みするように。ウィンドウ/ペインを広げれば横に伸びる(実測で .page がコンテナ幅を充填)。モバイルは元から全幅'],
   ['v10.91.0', 'v4 runner移行 着手(①採点エンジン・テスト付き・ライブ台帳に未接続=無リスク) — argus_ledger_v4: 記録済み予測を「市場別ターゲット日(marketClock)・コホート別・append-only(force上書きなし)」でBrier/RPS/argmax採点する純エンジン。US/cryptoは正しい時刻で価格できるまで採点保留。テスト8件。次段でワークフローからdry-run並走(v3を壊さず新エポックに並行蓄積)→検証→activateの順で本番移行'],
   ['v10.90.0', 'Layer 2B 非JP採点を一時停止(GPT P0#4・誤った時刻での採点を防止) — US/暗号資産は16:05 JST実行では正しい引け時刻で採点できないため、市場別クロック実装まで experimental_invalid_clock として採点保留(記録は継続)。当面はJP銘柄のみ採点。サマリーに heldInvalidClock を表示。市場別ジョブ(US post-close/crypto UTC/FX NY)導入後に有効化'],
   ['v10.89.0', '24/7デザイン刷新+ウォッチリスト復元 — ①24/7イベントを3行構成に(1行目=時刻/2行目=銘柄/3行目=状態)。状態の二重表示(急騰+急騰+10%)を1つに統合。新しい順(時刻降順)で表示。長い銘柄名でも崩れない②ウォッチリストがlocalStorage消去で初期化された場合に、Layer 2Bの同期済み銘柄から復元する「銘柄を復元」ボタンを追加(membership APIをbodyトークンでPOST可能に)。投信・保有数量はバックアップから復元'],

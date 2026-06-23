@@ -1,8 +1,11 @@
 .page {
   padding: 28px 32px 60px;
-  /* Use more of the window on desktop web (was a fixed 1200px that felt narrow
-     on wide monitors). Mobile is <720px so this cap never bites there. */
-  max-width: min(1600px, 94vw);
+  /* Fully elastic — fill the available width (the window/pane minus the nav).
+     No max-width cap, so the layout stretches and shrinks with the viewport like
+     it used to. (Was capped at 1200px since v7, which felt locked to app-width.) */
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 28px;
