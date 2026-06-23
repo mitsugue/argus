@@ -32,9 +32,14 @@ export const SourceRegistryCard: React.FC = () => {
   }, [backend]);
   if (err && !reg) return <div className="card sr-card"><div className="sr-note">取得できませんでした。</div></div>;
   if (!reg) return <div className="card sr-card"><div className="sr-note">読み込み中…</div></div>;
+  // Guard: an unexpected/partial payload (e.g. during a backend cold-start or
+  // deploy) must NOT crash the whole Guide page (v10.100).
+  if (!Array.isArray(reg.sources)) {
+    return <div className="card sr-card"><div className="sr-note">情報源を取得できませんでした(再読み込みで復帰します)。</div></div>;
+  }
   return (
     <div className="card sr-card">
-      <div className="sr-head">情報源 {reg.confirmedLive}/{reg.total} がライブ確認 — 「設定済み」≠「ライブ」</div>
+      <div className="sr-head">情報源 {reg.confirmedLive ?? '—'}/{reg.total ?? '—'} がライブ確認 — 「設定済み」≠「ライブ」</div>
       <div className="sr-rows">
         {reg.sources.map((s) => (
           <div className="sr-row" key={s.capability}>

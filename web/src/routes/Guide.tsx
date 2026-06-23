@@ -68,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.100.1', 'Guide画面のクラッシュ修正(堅牢化) — 情報源レジストリ(SourceRegistryCard)が、バックエンドのコールドスタート/デプロイ中に想定外の応答を返すとsources.mapで例外を投げ、Guideページ全体(Layer 2B同期カード等を含む)が真っ白になっていた不具合を修正。配列でない場合はフォールバック表示にして全体クラッシュを防止'],
   ['v10.100.0', '保有フラグ同期 + 保有銘柄のダウンサイド厳格化(金額は一切送らない) — owner watchlist同期に「非金額フラグ」だけを追加(ownerState=watch/active/held/protected・downsideStrictness=normal/strict・priority=low/normal/high)。保有数量・取得単価・損益・売買履歴・メモは従来どおりハード拒否(深層スキャン)。アプリ側は保有(数量>0)を検知して「held」フラグだけ送る(金額は送らない)。①held/protected銘柄はダウンサイド判定でseverityを一段(protectedはさらに一段)引き上げ②held/protected/strictが下落したらplain HOLD禁止(HOLD_CAUTION/REVIEW_REQUIRED/DO_NOT_ADD/TRIM_WATCHのいずれか)③Guideに「同期状態を確認」を追加し、保有銘柄がサーバー側で保有/重点監視として扱われていない場合に警告。TDnet未接続は明示・無材料の急落は安全扱いしない(CAUSE_UNKNOWN)。自動売買なし。テスト300'],
   ['v10.99.0', 'ダウンサイドの原因推定を強化(材料の自動検知+指数直結breadth) — ①SEC/Finnhub/J-Quantsから直近の開示・決算直後・関連ニュースを自動検知し、急落と整合すれば「個別の材料(要確認)」として原因に反映(=原因未確認一辺倒を脱却)。ただし内容を悪材料と自動断定はしない(無材料=安全ではない)②地合いの指数プロキシをwatchlist平均からTOPIX/日経ETF(1306/1321)の前日比に変更(取得不可時は平均にフォールバック)。個別の指数比アンダーパフォームも実指数基準に。テスト294'],
   ['v10.98.1', 'ダウンサイドのJP地合いオーバーレイを改善 — 数銘柄が急落しても「平均breadthが浅い」ために地合いが見かけ上NORMALになる取りこぼしを修正。重大インシデント(high/critical)が複数あれば、平均に関わらず JP intraday を CAUTION/RISK_OFF_WATCH に引き上げる(急落を平均で隠さない)'],
