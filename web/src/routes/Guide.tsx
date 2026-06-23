@@ -68,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.103.0', '危険日の防御レイヤーを前面化(P0) — ①Today Heroを3層表示に: Global Regime / Japan Intraday(NORMAL/CAUTION/RISK_OFF_WATCH) / Owner Risk(CLEAR/REVIEW_REQUIRED等)。グローバルがRISK_ONでも日本のザラ場や保有リスクが別に見える②保有/重点監視銘柄が急落インシデントに該当する日は「Downside Watch」をHeroの上に表示③partial(情報欠損)時はHeroに「PARTIAL DATA」を出し、HOLDの信頼度を上限60%に制限+「/ PARTIAL」表記(欠損データで高信頼HOLDを出さない)。HOLDを信用させすぎない方向への布石'],
   ['v10.102.0', 'US/暗号資産の市場別クロック整合(v4台帳) — これまでUS/暗号資産は「16:05 JSTでは正しい時刻で価格できない」ため採点保留(experimental_invalid_clock)だったが、各予測のtargetClose(実際の市場クローズ時刻)を使い「そのクローズが過ぎたら採点」する方式に変更。USは米国引け後、暗号資産は24/72/120hの窓が過ぎた分から自動採点され、JP専用の保留が不要に(実スナップショットのdry-runでheld 15→0)。日付だけの古い記録は従来どおりJP専用ガードにフォールバック。テスト312'],
   ['v10.101.0', 'TDnet(適時開示)を接続 — 日本株の適時開示をyanoshin TDnet API経由で取得し、タイトルを分類(下方修正/減配/増資/特別損失/上場廃止=ネガ、上方修正/増配/自社株買=ポジ、決算短信=中立)。急落銘柄に直近のTDnet開示があれば原因に反映し、明確なネガ開示はSTOCK_SPECIFIC(個別悪材料)として扱う(ただし内容の最終確認は要・断定はしない)。これで「TDnet未接続」の限界を解消(取得不可時は従来どおり未接続表示)。公開エンドポイント /api/argus/tdnet-recent も追加。テスト309'],
   ['v10.100.1', 'Guide画面のクラッシュ修正(堅牢化) — 情報源レジストリ(SourceRegistryCard)が、バックエンドのコールドスタート/デプロイ中に想定外の応答を返すとsources.mapで例外を投げ、Guideページ全体(Layer 2B同期カード等を含む)が真っ白になっていた不具合を修正。配列でない場合はフォールバック表示にして全体クラッシュを防止'],

@@ -4,6 +4,7 @@ import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
+import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
@@ -62,12 +63,27 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const al = useActionLabels({ jp: jpSyms, us: usSyms });
   const regime = useMarketRegime();
   const ev = useEventRadar();
+  const { data: downside } = useDownsideIncidents();
 
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
     () => deriveTodayJudgment(al.data, regime.data, ev.data, Date.now()),
     [al.data, regime.data, ev.data],
   );
+
+  // 3-layer risk overlay for the hero (v10.103): a green global regime must not
+  // hide a weak Japan tape or holder risk.
+  const overlay = useMemo(() => ({
+    globalRegime: downside?.globalRegime || regime.data?.regime?.label || 'UNKNOWN',
+    jpIntradayOverlay: downside?.jpIntradayOverlay || 'NORMAL',
+    holderRiskOverlay: downside?.holderRiskOverlay || 'NONE',
+  }), [downside, regime.data]);
+  const ownerAffected = !!downside?.ownerAffected;
+  // Partial-data discipline: when data is incomplete, cap confidence at 0.60 and
+  // flag PARTIAL so a HOLD never looks high-confidence on thin data.
+  const isPartial = phase === 'partial';
+  const baseConf = regime.data?.regime?.confidence ?? null;
+  const cappedConf = isPartial && baseConf != null ? Math.min(baseConf, 0.60) : baseConf;
 
   // ── Judgment log (device-local memory) ──
   // Record today's LIVE/PARTIAL call (mock is never logged — no fake history),
@@ -80,7 +96,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       overall: judgment.overall,
       risk: judgment.risk,
       posture: al.data?.marketPosture?.label ?? '—',
-      confidence: regime.data?.regime?.confidence ?? null,
+      confidence: cappedConf,
       summary: judgment.summary,
       phase,
       updatedAt: judgment.updatedAt,
@@ -111,9 +127,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     >
       <MarketSessionLamps />
 
-      <HeroCard judgment={judgment} />
+      {/* When an owner/held asset is in a downside incident, the defense layer
+          comes BEFORE the call so HOLD is never read in isolation (v10.103). */}
+      {ownerAffected && <DownsideIncidentCard />}
 
-      <DownsideIncidentCard />
+      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} />
+
+      {!ownerAffected && <DownsideIncidentCard />}
 
       <MarketNewsCard />
 

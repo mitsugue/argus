@@ -3,20 +3,79 @@ import type { DailyJudgment } from '../../types/dashboard';
 import { ActionHero } from '../action/ActionBadge';
 import { RiskIndicator } from './RiskIndicator';
 
-interface Props {
-  judgment: DailyJudgment;
+export interface HeroOverlay {
+  globalRegime: string;
+  jpIntradayOverlay: string;   // NORMAL | CAUTION | RISK_OFF_WATCH
+  holderRiskOverlay: string;   // NONE | REVIEW_REQUIRED | ...
 }
 
+interface Props {
+  judgment: DailyJudgment;
+  overlay?: HeroOverlay | null;
+  isPartialData?: boolean;
+  confidence?: number | null;   // already capped by the caller when partial
+}
+
+function jpTone(v: string): string {
+  if (v === 'RISK_OFF_WATCH') return 'risk-off';
+  if (v === 'CAUTION') return 'caution';
+  return 'normal';
+}
+function ownerTone(v: string): string {
+  if (['REVIEW_REQUIRED', 'TRIM_WATCH', 'EXIT_WATCH', 'DO_NOT_ADD'].includes(v)) return 'risk-off';
+  if (v === 'WATCH' || v === 'CAUTION') return 'caution';
+  return 'normal';
+}
+const OWNER_JA: Record<string, string> = {
+  NONE: 'CLEAR', REVIEW_REQUIRED: 'REVIEW REQUIRED', WATCH: 'WATCH',
+  DO_NOT_ADD: 'DO NOT ADD', TRIM_WATCH: 'TRIM WATCH', EXIT_WATCH: 'EXIT WATCH',
+};
+
 // The single most important card: today's overall judgment. Designed to
-// answer the user's 10-second question — what is the call and why.
-export const HeroCard: React.FC<Props> = ({ judgment }) => {
+// answer the user's 10-second question — what is the call and why. The 3-layer
+// overlay (Global / JP intraday / Owner risk) and the PARTIAL DATA badge keep a
+// green global regime or a high-confidence HOLD from hiding holder risk (v10.103).
+export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence }) => {
+  const ownerRisk = overlay?.holderRiskOverlay && overlay.holderRiskOverlay !== 'NONE';
   return (
-    <article className="card card--hero hero">
+    <article className={`card card--hero hero${isPartialData ? ' hero--partial' : ''}`}>
+      {overlay && (
+        <div className="hero__overlay-row">
+          <div className="hero__ov">
+            <span className="hero__ov-label">Global Regime</span>
+            <span className="hero__ov-value">{overlay.globalRegime}</span>
+          </div>
+          <div className="hero__ov">
+            <span className="hero__ov-label">Japan Intraday</span>
+            <span className={`hero__ov-value hero__ov-value--${jpTone(overlay.jpIntradayOverlay)}`}>
+              {overlay.jpIntradayOverlay}
+            </span>
+          </div>
+          <div className="hero__ov">
+            <span className="hero__ov-label">Owner Risk</span>
+            <span className={`hero__ov-value hero__ov-value--${ownerTone(overlay.holderRiskOverlay)}`}>
+              {OWNER_JA[overlay.holderRiskOverlay] ?? overlay.holderRiskOverlay}
+            </span>
+          </div>
+        </div>
+      )}
+      {isPartialData && (
+        <div className="hero__partial">
+          ⚠ PARTIAL DATA — 情報欠損あり。完全判断ではないため、HOLDの信頼度を下げています
+          {typeof confidence === 'number' ? `(信頼度上限 ${Math.round(confidence * 100)}%)` : ''}。
+        </div>
+      )}
+      {ownerRisk && (
+        <div className="hero__owner-warn">
+          保有/重点監視の銘柄にダウンサイド警戒。通常のHOLDとして扱わず、下の「Downside Watch」を確認してください。
+        </div>
+      )}
       <div className="hero__row">
         <div className="hero__primary">
           <span className="hero__label">Overall Judgment</span>
           <div className="hero__judgment">
             <ActionHero action={judgment.overall} />
+            {isPartialData && <span className="hero__judgment-sub">/ PARTIAL</span>}
           </div>
         </div>
         <div className="hero__attrs">

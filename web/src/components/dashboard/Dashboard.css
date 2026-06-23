@@ -43,6 +43,35 @@
   flex-direction: column;
   gap: 20px;
 }
+.hero--partial { border-color: rgba(251, 191, 36, 0.5); }
+
+/* 3-layer risk overlay (Global / JP intraday / Owner risk) — v10.103 */
+.hero__overlay-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line, rgba(255,255,255,0.07));
+}
+.hero__ov { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hero__ov-label { font-size: 10px; color: var(--text-faint, #5f6b78); text-transform: uppercase; letter-spacing: 0.06em; }
+.hero__ov-value {
+  font-size: 13px; font-weight: 700; color: var(--text-main, #E6EDF3);
+  padding: 3px 8px; border-radius: 6px; background: var(--surface-soft, #162231);
+  align-self: flex-start; overflow-wrap: anywhere;
+}
+.hero__ov-value--caution { color: #FBBF24; background: rgba(251, 191, 36, 0.12); }
+.hero__ov-value--risk-off { color: #F87171; background: rgba(248, 113, 113, 0.14); }
+
+.hero__partial {
+  font-size: 12px; font-weight: 600; color: #FBBF24; line-height: 1.55;
+  background: rgba(251, 191, 36, 0.10); border-radius: 8px; padding: 8px 10px;
+}
+.hero__owner-warn {
+  font-size: 12.5px; font-weight: 600; color: #F87171; line-height: 1.55;
+  background: rgba(248, 113, 113, 0.10); border-radius: 8px; padding: 8px 10px;
+}
+.hero__judgment-sub { font-size: 13px; font-weight: 700; color: #FBBF24; margin-left: 8px; }
 
 .hero__row {
   display: flex;
