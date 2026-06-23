@@ -8,6 +8,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
+import { useFundNav } from '../../hooks/useFundNav';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
@@ -44,7 +45,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 function fmtPrice(market: string, v?: number): string {
   if (v == null) return '—';
-  if (market === 'JP') return `¥${Math.round(v).toLocaleString('en-US')}`;
+  if (market === 'JP' || market === 'CORE' || market === 'FUND') return `¥${Math.round(v).toLocaleString('en-US')}`;
   if (market === 'US') return `$${v.toFixed(2)}`;
   if (market === 'CRYPTO') {
     return v >= 1000 ? `$${Math.round(v).toLocaleString('en-US')}` : `$${v.toFixed(2)}`;
@@ -665,6 +666,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
   const al = useActionLabels({ jp: jpSyms, us: usSyms });
   const cat = useCatalysts();
   const { data: downside } = useDownsideIncidents();
+  const { funds: navFunds } = useFundNav();   // 投信 基準価額(NAV) — show it in the list too (v10.111)
   // Crypto quotes via CoinGecko: each crypto asset stores its id in the memo
   // as "coingecko:<id>" (the seed assets and symbol-search both do this).
   const cryptoPairs = useMemo(
@@ -696,8 +698,28 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
     for (const c of cat.data?.items ?? []) cats.set(c.symbol, c);
     const downsideBySym = new Map<string, DownsideIncident>();
     for (const inc of downside?.incidents ?? []) downsideBySym.set(inc.symbol, inc);
+    // 投信(基準価額): match each fund asset to a catalog NAV by symbol/name so the
+    // Watchlist shows ¥NAV + 前日比 (was only on Core Portfolio before, v10.111).
+    const navByName = (a: AssetItem) => {
+      const sym = (a.symbol || '').toUpperCase();
+      const nm = `${a.displayName || ''} ${a.displayNameJa || ''}`.toLowerCase();
+      const want = (kw: string) => sym.includes(kw) || nm.includes(kw.toLowerCase());
+      for (const f of navFunds) {
+        const fn = (f.name || '').toLowerCase();
+        if (fn.includes('全世界') && (want('ACWI') || nm.includes('全世界') || nm.includes('オルカン') || nm.includes('オール'))) return f;
+        if (fn.includes('s&p500') && (want('SP500') || want('S&P') || nm.includes('米国'))) return f;
+        if (fn.includes('国内') && (want('N225') || want('NIKKEI') || nm.includes('国内') || nm.includes('日経'))) return f;
+      }
+      return null;
+    };
+    for (const a of assets) {
+      if (genreOf(a) === 'funds') {
+        const f = navByName(a);
+        if (f) quotes.set(a.symbol, { price: f.navYen, changePct: f.changePct ?? 0, volume: 0, date: f.date, status: 'live' });
+      }
+    }
     return { quotes, labels, cats, downsideBySym };
-  }, [jp.data, us.data, al.data, cat.data, crypto.byId, cryptoPairs, downside]);
+  }, [jp.data, us.data, al.data, cat.data, crypto.byId, cryptoPairs, downside, navFunds, assets]);
 
   // Portfolio exposure over LIVE prices only — shared by the Exposure card and
   // the What-if panel. Kept ABOVE the empty-list early return (rules of hooks).

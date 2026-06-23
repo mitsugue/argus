@@ -112,19 +112,28 @@ export function deriveStrategy(
   // only quote-less crypto (no coingecko id / fetch failed) stays manual.
   const isCryptoManual = asset.market === 'CRYPTO' && !quote;
 
-  // Core / manual funds: calm core label, no live short-term scenarios.
+  // Core / manual funds: calm core label, no live short-term scenarios. When a
+  // NAV quote is supplied (投信総合ライブラリー基準価額, v10.111) show it.
   if (isCore) {
+    const hasNav = typeof quote?.price === 'number';
     return {
       action: 'CONTINUE', risk: '—', confidence: null,
+      price: hasNav ? quote!.price : undefined,
+      changePct: hasNav ? quote!.changePct : undefined,
+      date: quote?.date ?? null,
       strategyJa: ACTION_STRATEGY_JA.CONTINUE,
-      reasonJa: '長期コア資産は短期の値動きで売買せず、積立方針を維持する。',
+      reasonJa: hasNav
+        ? '長期コア資産。基準価額(NAV)を日次でフォロー。短期の値動きで売買せず、積立方針を維持する。'
+        : '長期コア資産は短期の値動きで売買せず、積立方針を維持する。',
       nextConditionJa: '積立額・目標配分の見直しが必要かを定期的に確認する。',
       whatChangesJa: 'ライフプランや配分目標の変更があれば見直す。',
       scenarios: [], scenarioHorizonJa: '長期(短期シナリオ対象外)',
       scenarioDisclaimerJa: '長期コアは短期シナリオの対象外です。',
       catalystNoteJa: '',
-      dataLimitations: ['非上場投信のライブ基準価額は未取得(手動管理)。'],
-      lastUpdated: nowTs, status: 'manual',
+      dataLimitations: hasNav
+        ? ['基準価額は投信総合ライブラリー(前営業日基準・日次)。約定は当日基準価額のため約定価格とは差が出ます。']
+        : ['非上場投信のライブ基準価額は未取得(手動管理)。'],
+      lastUpdated: nowTs, status: hasNav ? 'live' : 'manual',
     };
   }
 
