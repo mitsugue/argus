@@ -1715,15 +1715,21 @@ def _layer2b_live_prices(members):
 
 def _layer2b_compute_summary(rows):
     by_h = {"1d": [], "3d": [], "5d": []}
+    held = 0  # US/crypto horizons held for invalid clock (not counted in metrics)
     for r in rows:
         sc = r.get("scored") or {}
         for h in by_h:
-            if sc.get(h):
-                by_h[h].append(sc[h])
+            x = sc.get(h)
+            if isinstance(x, dict) and x.get("argmaxHit") is not None:
+                by_h[h].append(x)             # a real numeric score
+            elif isinstance(x, dict) and x.get("status") == "experimental_invalid_clock":
+                held += 1
     out = {"updated": _ai_now_iso(), "cohortId": "owner_watchlist_dynamic",
            "nPredictions": len(rows),
            "tradingDays": len({r.get("date") for r in rows}),
            "uniqueSymbols": len({r.get("symbol") for r in rows}),
+           "heldInvalidClock": held,
+           "scoringNoteJa": "現状JP銘柄のみ採点。US/暗号資産は市場別クロック実装まで採点保留。",
            "byHorizon": {}}
     for h, lst in by_h.items():
         if lst:
@@ -1783,19 +1789,32 @@ def _layer2b_run():
                 "scenarios": {lab: p for lab, p in _scenarios_for(chg)},
                 "bandPct": _L2B_BANDS.get(mkt, 2.0),
                 "targets": targets, "calendar": clk.get("marketCalendar"),
+                # JP records/scores correctly at the 16:05 JST run (post-close).
+                # US/crypto would be scored at the WRONG time here, so they are
+                # held until market-specific clocks exist (GPT P0 #4).
+                "clockValid": (mkt == "JP"),
                 "scored": {"1d": None, "3d": None, "5d": None},
             })
             new_count += 1
 
     scored_count = 0
+    held_count = 0
     for r in rows:
         sc = r.get("scored") or {}
+        jp = r.get("market") == "JP"
         for h in ("1d", "3d", "5d"):
             if sc.get(h) is not None:
                 continue
             tgt = (r.get("targets") or {}).get(h)
             if not tgt or str(tgt)[:10] > today:
                 continue  # not due yet
+            if not jp:
+                # Scoring US/crypto at 16:05 JST uses a wrong-time price (US is
+                # closed, crypto anchor is hour-based). Hold, don't fake a score.
+                sc[h] = {"status": "experimental_invalid_clock",
+                         "noteJa": "市場別クロック未実装のため採点保留(誤時刻採点の防止)"}
+                held_count += 1
+                continue
             pc = prices.get(r.get("symbol"))
             if not pc:
                 continue
@@ -1813,7 +1832,8 @@ def _layer2b_run():
     _gh_private_put("summary.json", _json.dumps(summ, ensure_ascii=False, indent=2),
                     f"layer2b summary {today}", overwrite=True)
     return {"ok": bool(ok_w), "recorded": new_count, "scored": scored_count,
-            "totalRows": len(rows), "date": today, "summary": summ}
+            "heldInvalidClock": held_count, "totalRows": len(rows),
+            "date": today, "summary": summ}
 
 
 @app.route("/api/argus/calibration/watchlist-sync", methods=["POST"])
