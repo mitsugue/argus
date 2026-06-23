@@ -66,6 +66,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.91.0', 'v4 runner移行 着手(①採点エンジン・テスト付き・ライブ台帳に未接続=無リスク) — argus_ledger_v4: 記録済み予測を「市場別ターゲット日(marketClock)・コホート別・append-only(force上書きなし)」でBrier/RPS/argmax採点する純エンジン。US/cryptoは正しい時刻で価格できるまで採点保留。テスト8件。次段でワークフローからdry-run並走(v3を壊さず新エポックに並行蓄積)→検証→activateの順で本番移行'],
   ['v10.90.0', 'Layer 2B 非JP採点を一時停止(GPT P0#4・誤った時刻での採点を防止) — US/暗号資産は16:05 JST実行では正しい引け時刻で採点できないため、市場別クロック実装まで experimental_invalid_clock として採点保留(記録は継続)。当面はJP銘柄のみ採点。サマリーに heldInvalidClock を表示。市場別ジョブ(US post-close/crypto UTC/FX NY)導入後に有効化'],
   ['v10.89.0', '24/7デザイン刷新+ウォッチリスト復元 — ①24/7イベントを3行構成に(1行目=時刻/2行目=銘柄/3行目=状態)。状態の二重表示(急騰+急騰+10%)を1つに統合。新しい順(時刻降順)で表示。長い銘柄名でも崩れない②ウォッチリストがlocalStorage消去で初期化された場合に、Layer 2Bの同期済み銘柄から復元する「銘柄を復元」ボタンを追加(membership APIをbodyトークンでPOST可能に)。投信・保有数量はバックアップから復元'],
   ['v10.88.0', 'GPT再レビュー反映(P0着手)+ニュース復活+地合いの根拠表示+CI修正+横幅 — ①セキュリティ: 旧 /api/run・/api/reset・/api/logs 等(無認証だった)を管理者限定に施錠②Todayに「Market News」復活(材料の見える化)③地合いの根拠を正直化: RISK_ONは米ETF主導と明記し、ウォッチリストが乖離(例:日本株が軟調)なら警告+「校正はburn-inで精度未証明」を併記④東証引けを15:00→15:30に修正⑤新ETF(1615/1343/XLF/XLE/XLU/LQD)が単一株扱いだったボラバンド分類を是正⑥Brierの範囲表記訂正+NaN/Inf拒否⑦CI失敗(非hermeticテスト)を修正⑧Web表示の横幅を拡大(1200→最大1600px)。テスト259'],
