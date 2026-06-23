@@ -717,10 +717,26 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
     })).filter((g) => g.items.length > 0);
   }, [assets]);
 
+  // Risk-day filter (v10.106): "今、危ないものだけ見せろ". 'risk' = in an active
+  // downside incident; 'held' = a position you actually hold (qty>0).
+  const [filter, setFilter] = useState<'all' | 'risk' | 'held'>('all');
+  const riskCount = useMemo(
+    () => assets.filter((a) => maps.downsideBySym.has(a.symbol)).length,
+    [assets, maps.downsideBySym],
+  );
+  const filteredGroups = useMemo(() => {
+    if (filter === 'all') return groups;
+    const keep = (a: AssetItem) => filter === 'risk'
+      ? maps.downsideBySym.has(a.symbol)
+      : (a.quantity ?? 0) > 0;
+    return groups.map((g) => ({ ...g, items: g.items.filter(keep) })).filter((g) => g.items.length > 0);
+  }, [groups, filter, maps.downsideBySym]);
+
   const connecting = jp.phase === 'connecting' && us.phase === 'connecting';
 
   function onDragEnd(groupIds: string[]) {
     return (e: DragEndEvent) => {
+      if (filter !== 'all') return;   // reorder disabled while filtered (partial subset)
       const { active, over } = e;
       if (!over || active.id === over.id) return;
       const from = groupIds.indexOf(String(active.id));
@@ -747,7 +763,20 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
         </div>
       )}
       {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の戦略を取得中</div>}
-      {groups.map((g) => {
+      <div className="asset-filter">
+        <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`} onClick={() => setFilter('all')}>全部</button>
+        <button className={`asset-filter__chip asset-filter__chip--risk${filter === 'risk' ? ' is-active' : ''}`} onClick={() => setFilter('risk')}>
+          ⚠ 危険のみ{riskCount > 0 ? ` (${riskCount})` : ''}
+        </button>
+        <button className={`asset-filter__chip${filter === 'held' ? ' is-active' : ''}`} onClick={() => setFilter('held')}>保有のみ</button>
+        {filter !== 'all' && <span className="asset-filter__note">フィルター中は並べ替え無効</span>}
+      </div>
+      {filteredGroups.length === 0 && filter !== 'all' && (
+        <div className="asset-empty asset-empty--card">
+          {filter === 'risk' ? '現在、急落インシデント該当の銘柄はありません。' : '保有(数量入力済み)の銘柄はありません。'}
+        </div>
+      )}
+      {filteredGroups.map((g) => {
         const ids = g.items.map((a) => a.id);
         return (
           <section className="asset-group" key={g.key}>

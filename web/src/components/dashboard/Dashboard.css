@@ -1354,3 +1354,14 @@
 .regime-head__held { color: #FBBF24; font-weight: 600; }
 .regime-head__fresh { color: var(--text-muted, #5f6b78); }
 .regime-head__overlay-tag { color: #F87171; font-weight: 600; }
+
+/* Watchlist risk-day filter chips (v10.106) */
+.asset-filter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.asset-filter__chip {
+  font-size: 12px; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--text-sub, #98A7B7);
+  border: 1px solid var(--line, rgba(255,255,255,0.12));
+}
+.asset-filter__chip.is-active { background: var(--surface-soft, #162231); color: var(--text-main, #E6EDF3); border-color: var(--line-strong, rgba(255,255,255,0.2)); }
+.asset-filter__chip--risk.is-active { color: #F87171; border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.10); }
+.asset-filter__note { font-size: 10.5px; color: var(--text-muted, #5f6b78); }
