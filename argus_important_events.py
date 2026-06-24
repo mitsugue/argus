@@ -137,6 +137,14 @@ def prioritize_event(event: Dict[str, Any], owner_symbols: set, held_symbols: se
     owner_rel, reasons = _owner_relevance(event.get("linkedAssets") or [],
                                           owner_symbols, held_symbols, ctx)
     display_impact = _promote(base_impact, owner_rel, days)
+    # An imminent (D / D-1) high-impact macro event that is itself driving an
+    # EVENT_WAIT / RISK_OFF regime is, for today's decision, effectively CRITICAL —
+    # surface it as such so the single most decision-relevant event stands out.
+    regime = str((ctx or {}).get("regime") or "").upper()
+    if (display_impact == "high" and days is not None and days <= 1
+            and regime in ("EVENT_WAIT", "RISK_OFF")):
+        display_impact = "critical"
+        reasons.append("imminent_event_driving_regime")
 
     # Direction-neutral priority score (0-100): impact + proximity + relevance +
     # macro stress. Shown to the user only as short reasons, never the raw formula.

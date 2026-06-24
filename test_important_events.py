@@ -68,3 +68,15 @@ def test_lifecycle_states():
 def test_action_until_blocks_on_high_critical():
     e = IE.build_important_events([_ev("pce", "critical", 1, ["USDJPY"])])[0]
     assert "BLOCKED" in e["actionUntilEn"] and "禁止" in e["actionUntilJa"]
+
+
+def test_imminent_high_under_event_wait_becomes_critical():
+    e = IE.build_important_events([_ev("pce", "high", 1, ["USDJPY", "QQQ"])],
+                                  ctx={"regime": "EVENT_WAIT"})[0]
+    assert e["displayImpact"] == "critical"   # PCE pops as CRITICAL when it drives the regime
+
+
+def test_high_stays_high_in_calm_regime():
+    e = IE.build_important_events([_ev("pce", "high", 1, ["USDJPY", "QQQ"])],
+                                  ctx={"regime": "RISK_ON"})[0]
+    assert e["displayImpact"] == "high"        # no false escalation when regime is calm
