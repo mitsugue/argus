@@ -2997,8 +2997,11 @@ def _event_ntfy(env):
     # Company name goes in the UTF-8 body (the Title header must stay ASCII).
     nm = env.get("nameJa")
     head = f"{nm}({env.get('symbol')})" if nm else f"{env.get('symbol')}"
+    # Show the DATA's own time when the source provides it (v10.143), so a mover
+    # alert states WHEN the move was — never implying the push time is the move time.
+    _asof = f"\nデータ時刻 {env.get('dataAsOf')}" if env.get("dataAsOf") else ""
     body = (f"{head}\n{env.get('reasonJa') or ''}\n"
-            f"{env.get('market')} / {env.get('session')} / sev{sev} / {env.get('recommendedPosture')}")
+            f"{env.get('market')} / {env.get('session')} / sev{sev} / {env.get('recommendedPosture')}{_asof}")
     try:
         requests.post(f"https://ntfy.sh/{topic}", data=body.encode("utf-8"),
                       headers={"Title": title, "Tags": "rotating_light" if sev >= 5 else "warning",
@@ -3010,7 +3013,8 @@ _DOWNSIDE_EVENT_TYPES = {"PRICE_CRASH", "LIMIT_DOWN_PROXIMITY", "MOMENTUM_ACCELE
 
 
 def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
-                  source="moomoo-bridge", session_override=None, quote=None):
+                  source="moomoo-bridge", session_override=None, quote=None,
+                  suppress_notify=False):
     """Dedup + lifecycle + notify for one deterministic trigger. Lean: Gear 0/1
     only, so severity decides the state directly (no AI queue unless enabled).
     bucket_minutes widens the dedup window (crypto uses 360 so a sustained 24h
@@ -3075,6 +3079,8 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
         # (API/ledger still get it) but suppress the push outside the market session.
         if notify and env.get("eventType") == "MARKET_MOVER" and not _mover_push_allowed(env.get("market")):
             notify = False
+        if suppress_notify:
+            notify = False                       # caller knows the data is stale/non-actionable
         out = env
     if notify:
         _event_ntfy(out)
@@ -3673,6 +3679,22 @@ _AV_MOVERS_TTL     = 14 * 60  # scan refreshes every ~15 min during the US sessi
 _MARKET_MOVER_MIN_PRICE = float(os.environ.get("MARKET_MOVER_MIN_PRICE") or 1.0)
 _MARKET_MOVER_PCT       = float(os.environ.get("MARKET_MOVER_PCT") or 12.0)
 _MARKET_MOVER_NOTIFY_MAX = int(os.environ.get("MARKET_MOVER_NOTIFY_MAX") or 5)
+# Freshness gate (v10.143): the AV free TOP_GAINERS_LOSERS can return a PRIOR
+# session's snapshot. If its own last_updated is older than this, we record it but
+# do NOT push a "fresh" alert about an hours-old move (the owner saw stale spikes
+# arrive at 1am JST). Env-tunable; 2h covers normal intraday refresh lag.
+_MOVER_FRESH_SEC = float(os.environ.get("MOVER_FRESH_SEC") or 7200)
+
+def _av_lastupdated_epoch(s):
+    """Parse Alpha Vantage's 'YYYY-MM-DD HH:MM:SS US/Eastern' → UTC epoch, or None."""
+    if not s:
+        return None
+    try:
+        base = str(s).replace("US/Eastern", "").replace("US/E-DST", "").strip()
+        dt = datetime.strptime(base, "%Y-%m-%d %H:%M:%S")
+        return pytz.timezone("America/New_York").localize(dt).timestamp()
+    except Exception:
+        return None
 
 def _av_market_movers(force=False):
     """US top gainers/losers from Alpha Vantage (price-filtered). status: live |
@@ -3719,7 +3741,8 @@ def _av_market_movers(force=False):
                              "changePct": round(chg, 2)})
             return rows
         if isinstance(j, dict) and (j.get("top_gainers") or j.get("top_losers")):
-            out = {"status": "live", "asOf": j.get("last_updated"),
+            _lu = j.get("last_updated")
+            out = {"status": "live", "asOf": _lu, "asOfEpoch": _av_lastupdated_epoch(_lu),
                    "gainers": _rows("top_gainers"), "losers": _rows("top_losers")}
     except Exception:
         pass
@@ -3741,17 +3764,25 @@ def _scan_market_movers():
     mv = _av_market_movers(force=True)   # the ONLY place that hits Alpha Vantage
     if mv.get("status") != "live":
         return 0
+    # Use the DATA's own time (AV last_updated), not "now". If that is stale (a
+    # prior session's snapshot), record it but suppress the push so a hours-old
+    # spike never arrives as a fresh 1am alert (v10.143).
+    av_epoch = mv.get("asOfEpoch")
+    ev_time = datetime.fromtimestamp(av_epoch, pytz.utc) if av_epoch else datetime.now(pytz.utc)
+    stale = av_epoch is None or (time.time() - av_epoch) > _MOVER_FRESH_SEC
     rows = (mv.get("gainers") or []) + (mv.get("losers") or [])
     rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
-    now, n = datetime.now(pytz.utc), 0
+    n = 0
     for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:
         for trig in argus_events.detect_market_mover(
                 row["symbol"], row["changePct"], row["price"],
                 min_price=_MARKET_MOVER_MIN_PRICE, gainer_pct=_MARKET_MOVER_PCT):
-            env = _record_event("US", row["symbol"], trig, now, "US_REGULAR",
-                                bucket_minutes=180, source="alphavantage")
+            env = _record_event("US", row["symbol"], trig, ev_time, "US_REGULAR",
+                                bucket_minutes=180, source="alphavantage", suppress_notify=stale)
             if env:
                 env["nameJa"] = row["symbol"]   # market-wide; symbol is the label
+                env["dataAsOf"] = mv.get("asOf")
+                env["dataStale"] = stale
                 n += 1
     return n
 

@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.143.0', 'US全市場moverの鮮度バグを修正(深夜に古い暴騰が届く問題) — 出所はAlpha Vantage無料枠のTOP_GAINERS_LOSERSで、①これまでイベント時刻を記録した瞬間(now)にしていてデータの実時刻を捨てていた→AVの last_updated を時刻に採用②AVのデータ自体が古い(前セッションのスナップショット)場合は記録のみで通知抑止(古い動きを「今」のアラートとして出さない・既定2hより古ければstale)③通知本文に「データ時刻」を明記。これで「昨日の急騰が深夜1時に届く」現象を止める。テスト+2。※AV無料枠はintradayリアルタイム保証が無く前日終値ベースのことがある(構造的制約)'],
   ['v10.142.0', '関連ニュースを銘柄カード内に分類表示 + 下部ニュースを「NEWS」に改名 — ①cause-attribution(原因スタック)に分類済みニュースを追加: 公式かつ時刻整合=CONFIRMED / 関連の可能性=LIKELY_RELATED / 背景=BACKGROUND / 因果不明=UNCONFIRMED(価格の赤緑とは別表示・原因の断定はしない・argus_attribution.classify_newsで時刻整合判定)。TDnet(JP適時開示)・開示filingを源泉に、銘柄の展開カード内(原因スタック)へ表示②それ以外の一般ニュースは下部に集約し、タイトルを「UNLINKED NEWS」→「NEWS」に。テスト+1'],
   ['v10.141.0', '銘柄カード展開時に旧Downside+原因スタックの情報量を復元(オーバーオール全文+深い帰属を再掲・削がない)'],
   ['v10.140.0', 'トップを「一銘柄=一枚」+「重要イベントはコマンドカード内」に再設計 — ①トップのコマンドカードを上下2ブロックに(区切り線のみ・入れ子カードにしない): 上段=現在の命令、下段=IMPORTANT EVENTS(PCE等を初心者向けに・日付/JST/カウントダウン/影響色violet〜gray・発表まで禁止・次の確認)②その後を個別銘柄カードに: JAPAN(WATCHLIST→EMERGING)→ US(WATCHLIST→EMERGING)→ CRYPTO。各カテゴリ最大10・初期5・SHOW 5 MORE・自動展開は最大1③一銘柄=一枚に統合(Downside/原因/24-7/フローを分散させない): 閉=銘柄・騰落・主コマンド・権限・原因一行・最終更新、展=ARGUS VIEW(RULE+GPT+GEMINIの鮮度付き)・CAUSE・NEXT・(連動イベントはLINKED EVENTタグ)④並びは保有/防御/原因未確認/更新時刻/変動の順⑤UNLINKED NEWS・HISTORYを下部に。自動売買なし'],
