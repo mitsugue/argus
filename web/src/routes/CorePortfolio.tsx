@@ -145,19 +145,20 @@ export const CorePortfolio: React.FC = () => {
         <div className="card core-list">
           {navFunds.length > 0 ? navFunds.map((f) => {
             const act = coreActionFor(posture ?? undefined);
+            const isCont = act.action === 'CONTINUE';
             return (
               <div className="core-row" key={f.code}>
                 <div className="core-row__body">
                   <span className="core-row__top">{f.name}</span>
-                  <span className="core-row__reason">{f.code} · {f.date}時点 — {act.reason}</span>
+                  <span className="core-row__reason">{f.code} · {f.date} — {t(isCont ? 'cp.dca.continueReason' : 'cp.dca.deferReason')}</span>
                 </div>
                 <div style={{ textAlign: 'right', flex: 'none' }}>
                   <div style={{ fontWeight: 700 }}>¥{Math.round(f.navYen).toLocaleString('en-US')}</div>
                   <div style={{ fontSize: 12 }}>
                     {t('cp.dayChange')} {f.changePct == null ? '—' : <SignedValue value={f.changePct} suffix="%" arrow={false} />}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>
-                    ● {act.action === 'CONTINUE' ? '積立継続' : '一括は見送り'}
+                  <div style={{ fontSize: 11, color: 'var(--value-positive)', marginTop: 2 }}>
+                    ● {t(isCont ? 'cp.dca.continue' : 'cp.dca.deferLump')}
                   </div>
                 </div>
               </div>

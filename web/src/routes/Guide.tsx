@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.127.0', 'i18n裾野=フロント再構成(その1) — バックエンドのプロ-ズに英訳を足すのではなく、構造化キー+辞書から両言語を生成する方針(切替はAI課金ゼロ)。①holderPosture(保有判断: 損切り/一部縮小/我慢/ナンピン/買い増し/保持)をキー+P/L等のパラメータからen/ja生成に作り替え。Watchlistの「保有」バッジ・詳細の保有判断もen/ja②Core Portfolioの積立コメント(積立継続/一括見送り+理由)を辞書化③Watchlist行のシグナル名もen/ja。実機(en)で確認'],
   ['v10.126.0', 'Render Standard(2GB)契約に伴い鮮度を復元 — 2026-06-24にRenderを2GBへアップグレード(毎日のメモリ超過メールの根本解決)。これに伴い v10.110 でメモリ節約のため鈍らせていたダウンサイド(急落検知)の鮮度を元に戻した:サーバー再計算 180→60秒・フロントのポーリング 120→60秒。急落の検知が3倍速くなる(safety層の本来の価値)。メモリ逼迫の正体はランタイムfootprintで蓄積データ(gitのledger保存)とは無関係だったため、今後データが増えてもRAMには影響しない'],
   ['v10.125.0', '残り画面の数値色+i18nを拡張 — Core Portfolioの含み損益・投信NAVの前日比を SignedValue/--value-* 色トークンに統一(旧 --green/--red から脱却・「Day change −3.55%」のように符号+色+読み上げを一元化)。ページ見出し(地合い/資産配分)も言語切替対応。動的な解説文(積立コメント等のバックエンド由来)は引き続き順次i18n対応'],
   ['v10.124.0', 'A(構造化シグナル+数値色)+C(i18n裾野)を実施 —①バックエンドに argus_signal(Action Levelリゾルバ)を追加し、ダウンサイドAPIに structured signal{code,level,permissions,legacyAction,schemaVersion} を付与(消費側が文言から権限を推測しなくて済む・台帳のスキーマ版管理に対応)。テスト7②共通の SignedValue コンポーネント(符号+色トークン+矢印/読み上げ)を新設し、Watchlistの騰落率に適用(色は --value-* トークンで一元化)。VIX等の逆相関metricは getMetricTone で「プラスでも赤」に③i18nをWatchlistへ拡張(フィルターchip 全部/危険のみ/保有のみ・ツールバー・空状態)+ナビ/見出しと合わせて選択言語で表示。テスト341'],

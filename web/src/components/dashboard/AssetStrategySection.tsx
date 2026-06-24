@@ -12,7 +12,7 @@ import { useFundNav } from '../../hooks/useFundNav';
 import { resolveSignal, type OwnerState } from '../../domain/actionLevel';
 import { holderPosture } from '../../lib/holderPosture';
 import { SignedValue } from '../common/SignedValue';
-import { useLocale, t } from '../../i18n';
+import { useLocale, t, pick, getLocale } from '../../i18n';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
@@ -417,7 +417,7 @@ const SortableAssetRow: React.FC<{
           <span className="asset-row__price">{fmtPrice(asset.market, priceShown)}</span>
           <span className="asset-row__chg">{chgShown == null ? '—' : <SignedValue value={chgShown} suffix="%" arrow={false} />}</span>
           <span className="asset-row__action" style={{ color: `var(${sig.token})` }} title={`${sig.labelEn} (legacy ${strat.action})`}>
-            {sig.labelEn}{sig.permissions.newEntry === 'BLOCKED' && <span className="asset-row__sig-blk"> ⊘</span>}
+            {getLocale() === 'ja' ? sig.labelJa : sig.labelEn}{sig.permissions.newEntry === 'BLOCKED' && <span className="asset-row__sig-blk"> ⊘</span>}
           </span>
           {incident && (
             <span className="asset-row__override"
@@ -426,8 +426,8 @@ const SortableAssetRow: React.FC<{
             </span>
           )}
           {hp && (
-            <span className="asset-row__holder" style={{ color: HP_COLOR[hp.tone] }} title="保有ポジションへの判断">
-              保有: {hp.labelJa}
+            <span className="asset-row__holder" style={{ color: HP_COLOR[hp.tone] }} title={t('hp.heldCall')}>
+              {t('hp.held')}: {pick(hp.labelEn, hp.labelJa)}
             </span>
           )}
           <span className="asset-row__meta">
@@ -445,13 +445,13 @@ const SortableAssetRow: React.FC<{
         <div className="asset-row__detail">
           {hp && (
             <div className="asset-detail__holder" style={{ borderColor: HP_COLOR[hp.tone] }}>
-              <span className="asset-detail__holder-label" style={{ color: HP_COLOR[hp.tone] }}>保有判断: {hp.labelJa}</span>
+              <span className="asset-detail__holder-label" style={{ color: HP_COLOR[hp.tone] }}>{t('hp.heldCall')}: {pick(hp.labelEn, hp.labelJa)}</span>
               {hp.plPct != null && (
                 <span className="asset-detail__holder-pl" style={{ color: hp.plPct >= 0 ? '#34D399' : '#F87171' }}>
                   {hp.plPct >= 0 ? '+' : '−'}{Math.abs(hp.plPct).toFixed(1)}%
                 </span>
               )}
-              <p className="asset-detail__holder-reason">{hp.reasonJa}</p>
+              <p className="asset-detail__holder-reason">{pick(hp.reasonEn, hp.reasonJa)}</p>
             </div>
           )}
           {incident && (

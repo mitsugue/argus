@@ -55,6 +55,13 @@ const en = {
   // core portfolio
   'cp.unrealizedPl': 'Unrealized P/L (JPY)',
   'cp.dayChange': 'Day change',
+  'cp.dca.continue': 'Keep DCA on schedule',
+  'cp.dca.deferLump': 'Lump-sum on hold',
+  'cp.dca.continueReason': 'Regime-linked accumulation: keep DCA (dollar-cost averaging) on schedule. Not a per-fund NAV chart call.',
+  'cp.dca.deferReason': 'Regime-linked accumulation: keep DCA going (dollar-cost averaging); hold lump-sum entries until the event/regime passes. Not a per-fund NAV chart call.',
+  // holder posture
+  'hp.held': 'Held',
+  'hp.heldCall': 'Holder call',
 };
 
 type Dict = typeof en;
@@ -104,6 +111,12 @@ const ja: Record<DictKey, string> = {
   'wl.noHeld': '保有(数量入力済み)の銘柄はありません。',
   'cp.unrealizedPl': '含み損益(円換算)',
   'cp.dayChange': '前日比',
+  'cp.dca.continue': '積立継続',
+  'cp.dca.deferLump': '一括は見送り',
+  'cp.dca.continueReason': '地合い連動の積立方針: 積立を予定通り継続(ドルコスト平均)。※個別の基準価額チャート判断ではありません。',
+  'cp.dca.deferReason': '地合い連動の積立方針: 積立は継続(ドルコスト平均)、一括投入のみイベント/地合い通過まで見送り。※基準価額のチャート判断ではありません。',
+  'hp.held': '保有',
+  'hp.heldCall': '保有判断',
 };
 
 export const DICT: Record<Locale, Dict> = { en, ja };
