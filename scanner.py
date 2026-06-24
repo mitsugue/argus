@@ -4374,21 +4374,27 @@ import xml.etree.ElementTree as _ET
 # public RSS (reutersagency.com) is dead (301→0 items) and was removed — no name-only
 # 0-item placeholder. Strong on finance + macro + company/earnings + official.
 _INTEL_FEEDS = [
+    # Bloomberg 英語版 — public RSS (markets / economics / technology)
+    ("bloomberg_public",     "bbg:markets",      "https://feeds.bloomberg.com/markets/news.rss",      "rss"),
+    ("bloomberg_public",     "bbg:economics",    "https://feeds.bloomberg.com/economics/news.rss",    "rss"),
+    ("bloomberg_public",     "bbg:technology",   "https://feeds.bloomberg.com/technology/news.rss",   "rss"),
+    # Bloomberg 日本語版 — official robots-declared news sitemap (no RSS exists)
+    ("bloomberg_jp",         "bbg-jp:news",      "https://www.bloomberg.co.jp/feeds/cojp/sitemap_news.xml", "sitemap"),
     # CNBC public RSS — markets / finance / economy / earnings
-    ("cnbc_public",          "cnbc:markets",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664"),
-    ("cnbc_public",          "cnbc:finance",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135"),
-    ("cnbc_public",          "cnbc:economy",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
-    ("cnbc_public",          "cnbc:earnings",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839263"),
+    ("cnbc_public",          "cnbc:markets",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "rss"),
+    ("cnbc_public",          "cnbc:finance",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135", "rss"),
+    ("cnbc_public",          "cnbc:economy",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "rss"),
+    ("cnbc_public",          "cnbc:earnings",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839263", "rss"),
     # MarketWatch public RSS (Dow Jones public endpoint)
-    ("marketwatch_public",   "mw:marketpulse",   "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"),
-    ("marketwatch_public",   "mw:topstories",    "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+    ("marketwatch_public",   "mw:marketpulse",   "https://feeds.content.dowjones.io/public/rss/mw_marketpulse", "rss"),
+    ("marketwatch_public",   "mw:topstories",    "https://feeds.content.dowjones.io/public/rss/mw_topstories",  "rss"),
     # Nasdaq markets
-    ("nasdaq_public",        "nasdaq:markets",   "https://www.nasdaq.com/feed/rssoutbound?category=Markets"),
+    ("nasdaq_public",        "nasdaq:markets",   "https://www.nasdaq.com/feed/rssoutbound?category=Markets", "rss"),
     # Yahoo Finance headlines (company news volume)
-    ("yahoo_finance_public", "yahoo:finance",    "https://finance.yahoo.com/news/rssindex"),
+    ("yahoo_finance_public", "yahoo:finance",    "https://finance.yahoo.com/news/rssindex", "rss"),
     # Official / macro — central bank + regulator (public domain)
-    ("federal_reserve",      "fed:press",        "https://www.federalreserve.gov/feeds/press_all.xml"),
-    ("sec_press",            "sec:press",        "https://www.sec.gov/news/pressreleases.rss"),
+    ("federal_reserve",      "fed:press",        "https://www.federalreserve.gov/feeds/press_all.xml", "rss"),
+    ("sec_press",            "sec:press",        "https://www.sec.gov/news/pressreleases.rss", "rss"),
 ]
 _INTEL_STORE = []                  # capped list of recent IntelligenceItems (metadata only)
 _INTEL_STORE_MAX = 400
@@ -4463,6 +4469,38 @@ def _parse_rss(xml_text, source_id, now_iso):
     return out
 
 
+def _parse_news_sitemap(xml_text, source_id, now_iso, language="en", limit=60):
+    """Google-News sitemap (<url><news:news><news:title>) → raw intel records. This
+    is the official, robots.txt-declared public-metadata path for outlets that no
+    longer publish RSS (e.g. Bloomberg 日本語版). Titles/links/dates only; markup
+    stripped; content is DATA, not instructions (§23)."""
+    out = []
+    try:
+        root = _ET.fromstring(xml_text)
+    except Exception:
+        return out
+    for url in root.iter():
+        if url.tag.lower().rsplit("}", 1)[-1] != "url":
+            continue
+        loc = title = pub = ""
+        for el in url.iter():
+            lt = el.tag.lower().rsplit("}", 1)[-1]
+            txt = (el.text or "").strip()
+            if lt == "loc" and not loc:
+                loc = txt[:600]
+            elif lt == "title" and not title:
+                title = re.sub(r"<[^>]+>", "", txt)[:300]
+            elif lt == "publication_date" and not pub:
+                pub = txt[:40]
+        if title:
+            out.append({"sourceId": source_id, "title": title, "canonicalUrl": loc,
+                        "publishedAt": pub or None, "language": language,
+                        "firstDetectedAt": now_iso, "fetchedAt": now_iso})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _intel_link_assets(title):
     """Tag an item with owner symbols/themes mentioned in the public title."""
     t = title.lower()
@@ -4485,9 +4523,14 @@ def collect_institutional_intel():
     now_iso = _ai_now_iso()
     seen = {i["intelligenceId"] for i in _INTEL_STORE}
     per_feed, per_source, total_new = [], {}, 0
-    for sid, label, url in _INTEL_FEEDS:
+    for sid, label, url, kind in _INTEL_FEEDS:
         txt = _fetch_public_text(url)
-        rows = _parse_rss(txt, sid, now_iso) if txt else []
+        if not txt:
+            rows = []
+        elif kind == "sitemap":
+            rows = _parse_news_sitemap(txt, sid, now_iso, language=("ja" if "co.jp" in url else "en"))
+        else:
+            rows = _parse_rss(txt, sid, now_iso)
         new = 0
         for raw in rows:
             raw["linkedAssets"] = _intel_link_assets(raw.get("title", ""))
@@ -4546,7 +4589,7 @@ def api_argus_intel_source_health():
     feeds = [{"feed": label, "source": sid,
               "fetched": per_feed.get(label, {}).get("fetched"),
               "ok": per_feed.get(label, {}).get("ok")}
-             for sid, label, _url in _INTEL_FEEDS]
+             for sid, label, _url, _kind in _INTEL_FEEDS]
     rss_live = sum(1 for f in feeds if f.get("ok"))
     return jsonify({"asOf": _ai_now_iso(), "lastCollectedAt": _INTEL_LAST.get("ts"),
                     "coverage": {

@@ -60,6 +60,8 @@ _CLASS_POLICY = {
 # collection="rss"; everything else is honestly labelled capture/official/licensed.
 SOURCE_RIGHTS: Dict[str, Dict[str, Any]] = {
     # ── LAYER 2 active public RSS (validated: HTTP 200 + items, UA argus-research) ──
+    "bloomberg_public":     {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "notes": "Bloomberg EN public RSS (markets/economics/technology)"},
+    "bloomberg_jp":         {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "language": "ja", "notes": "Bloomberg 日本語版 official news sitemap (robots-declared public metadata)"},
     "cnbc_public":          {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
     "marketwatch_public":   {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
     "nasdaq_public":        {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
@@ -68,7 +70,6 @@ SOURCE_RIGHTS: Dict[str, Dict[str, Any]] = {
     "federal_reserve":      {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "notes": "central bank press (macro)"},
     "sec_press":            {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "notes": "SEC press releases"},
     # ── rights-only news entries (no free public RSS → owner Share/Capture) ──
-    "bloomberg_public":     {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
     "ft_public":            {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
     "wsj_public":           {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
     # ── official confirmation sources (pulled by existing engines / filings) ──

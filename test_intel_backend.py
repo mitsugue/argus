@@ -52,20 +52,24 @@ def test_licensed_feeds_disabled():
 
 def test_feed_allowlist_is_valid_and_no_dead_reuters():
     import argus_research_mesh as M
-    # every feed is (sourceId, label, https-url) with a registered rss source
+    # every feed is (sourceId, label, https-url, kind) with a registered rss source
     for entry in scanner._INTEL_FEEDS:
-        assert len(entry) == 3, entry
-        sid, label, url = entry
+        assert len(entry) == 4, entry
+        sid, label, url, kind = entry
         assert url.startswith("https://"), url
         assert "reutersagency.com" not in url                 # dead URL not in prod
+        assert kind in ("rss", "sitemap"), kind
         assert sid in M.SOURCE_RIGHTS, sid
         assert M.SOURCE_RIGHTS[sid].get("collection") == "rss", sid
     # the dead reuters source is gone (no name-only 0-item placeholder)
     assert "reuters_public" not in M.SOURCE_RIGHTS
-    # finance + macro + official coverage present
+    # finance + macro + official + Bloomberg EN & JP coverage present
     sources = {e[0] for e in scanner._INTEL_FEEDS}
-    assert {"cnbc_public", "marketwatch_public", "nasdaq_public",
-            "yahoo_finance_public", "federal_reserve", "sec_press"} <= sources
+    assert {"bloomberg_public", "bloomberg_jp", "cnbc_public", "marketwatch_public",
+            "nasdaq_public", "yahoo_finance_public", "federal_reserve", "sec_press"} <= sources
+    # Bloomberg EN (rss) AND JP (sitemap) are both monitored
+    kinds = {e[0]: e[3] for e in scanner._INTEL_FEEDS}
+    assert kinds["bloomberg_public"] == "rss" and kinds["bloomberg_jp"] == "sitemap"
 
 
 def test_collect_reports_per_feed(monkeypatch):
