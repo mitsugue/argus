@@ -49,3 +49,6 @@
 .msl-item { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; letter-spacing: 0.02em; }
 .msl-item--open { color: var(--text-main); }
 .msl-item--closed { color: var(--text-faint, #5f6b78); }
+
+/* Market status heading (v10.120) — clarifies this is status, not tabs */
+.msl-head { font-size: 9px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint, #5f6b78); margin-right: 4px; align-self: center; }

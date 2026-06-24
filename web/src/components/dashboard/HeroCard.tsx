@@ -1,6 +1,5 @@
 import React from 'react';
 import type { DailyJudgment } from '../../types/dashboard';
-import { RiskIndicator } from './RiskIndicator';
 import { ActionLevelCard } from '../action/ActionLevel';
 
 export interface HeroOverlay {
@@ -16,87 +15,73 @@ interface Props {
   confidence?: number | null;   // already capped by the caller when partial
 }
 
+const fmtEnum = (s?: string): string => (s || '').replace(/_/g, ' ');
 function jpTone(v: string): string {
   if (v === 'RISK_OFF_WATCH') return 'risk-off';
   if (v === 'CAUTION') return 'caution';
   return 'normal';
 }
 function ownerTone(v: string): string {
-  if (['REVIEW_REQUIRED', 'TRIM_WATCH', 'EXIT_WATCH', 'DO_NOT_ADD'].includes(v)) return 'risk-off';
-  if (v === 'WATCH' || v === 'CAUTION') return 'caution';
+  if (['REVIEW_REQUIRED', 'TRIM_WATCH', 'EXIT_WATCH', 'DO_NOT_ADD', 'DEFEND'].includes(v)) return 'risk-off';
+  if (v === 'WATCH' || v === 'CAUTION' || v === 'REVIEW') return 'caution';
   return 'normal';
 }
-const OWNER_JA: Record<string, string> = {
-  NONE: 'CLEAR', REVIEW_REQUIRED: 'REVIEW REQUIRED', WATCH: 'WATCH',
-  DO_NOT_ADD: 'DO NOT ADD', TRIM_WATCH: 'TRIM WATCH', EXIT_WATCH: 'EXIT WATCH',
+// Owner field display — NO "CLEAR". Only meaningful states are shown (v10.120).
+const OWNER_DISPLAY: Record<string, string> = {
+  REVIEW_REQUIRED: 'REVIEW', DO_NOT_ADD: 'REVIEW', TRIM_WATCH: 'DEFEND',
+  EXIT_WATCH: 'DEFEND', WATCH: 'WATCH', NOT_SYNCED: 'NOT SYNCED',
 };
 
-// The single most important card: today's overall judgment. Designed to
-// answer the user's 10-second question — what is the call and why. The 3-layer
-// overlay (Global / JP intraday / Owner risk) and the PARTIAL DATA badge keep a
-// green global regime or a high-confidence HOLD from hiding holder risk (v10.103).
+// COMMAND-FIRST Today hero (v10.120): the actionable command (Action Level +
+// permissions) is the first thing; market context sits BELOW it; "Why" is the
+// detail. No ambiguous CLEAR; raw enums (EVENT_WAIT) are formatted for display.
 export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence }) => {
-  const ownerRisk = !!(overlay?.holderRiskOverlay && overlay.holderRiskOverlay !== 'NONE');
+  const ownerCode = overlay?.holderRiskOverlay;
+  const ownerRisk = !!(ownerCode && ownerCode !== 'NONE');
   return (
     <article className={`card card--hero hero${isPartialData ? ' hero--partial' : ''}`}>
-      {overlay && (
-        <div className="hero__overlay-row">
-          <div className="hero__ov">
-            <span className="hero__ov-label">Global Regime</span>
-            <span className="hero__ov-value">{overlay.globalRegime}</span>
-          </div>
-          <div className="hero__ov">
-            <span className="hero__ov-label">Japan Intraday</span>
-            <span className={`hero__ov-value hero__ov-value--${jpTone(overlay.jpIntradayOverlay)}`}>
-              {overlay.jpIntradayOverlay}
-            </span>
-          </div>
-          <div className="hero__ov">
-            <span className="hero__ov-label">Owner Risk</span>
-            <span className={`hero__ov-value hero__ov-value--${ownerTone(overlay.holderRiskOverlay)}`}>
-              {OWNER_JA[overlay.holderRiskOverlay] ?? overlay.holderRiskOverlay}
-            </span>
-          </div>
-        </div>
-      )}
-      {isPartialData && (
-        <div className="hero__partial">
-          ⚠ PARTIAL DATA — 情報欠損あり。完全判断ではないため、HOLDの信頼度を下げています
-          {typeof confidence === 'number' ? `(信頼度上限 ${Math.round(confidence * 100)}%)` : ''}。
-        </div>
-      )}
-      {ownerRisk && (
-        <div className="hero__owner-warn">
-          保有/重点監視の銘柄にダウンサイド警戒。通常のHOLDとして扱わず、下の「Downside Watch」を確認してください。
-        </div>
-      )}
-      {/* Action Level (v10.119) — the signal word is never shown alone; explicit
-          permissions block accidental new entry on a cautious "HOLD ONLY". */}
+      {/* 1. COMMAND — what am I allowed to do now? (above the fold) */}
       <ActionLevelCard
         legacyAction={judgment.overall}
         ctx={{ downsideOverride: ownerRisk ? 'REVIEW_REQUIRED' : null, materialDownside: ownerRisk }}
         risk={judgment.risk}
         dataQuality={isPartialData ? 'PARTIAL' : 'LIVE'}
+        confidence={confidence}
         reason={judgment.reasons?.[0] || judgment.summary}
         next={judgment.nextCondition}
       />
-      <div className="hero__row hero__row--meta">
-        <div className="hero__attr">
-          <span className="hero__label">Risk Level</span>
-          <span className="hero__attr-value"><RiskIndicator level={judgment.risk} /></span>
-        </div>
-        <div className="hero__attr">
-          <span className="hero__label">Market Regime</span>
-          <div className="hero__regime-tags">
-            {judgment.regime.map((r) => (<span className="hero__tag" key={r}>{r}</span>))}
+
+      {/* 2. MARKET CONTEXT — supporting, below the command. No CLEAR; Owner only when relevant. */}
+      {overlay && (
+        <div className="hero__context">
+          <span className="hero__context-h">Market context</span>
+          <div className="hero__overlay-row">
+            <div className="hero__ov">
+              <span className="hero__ov-label">Global</span>
+              <span className="hero__ov-value">{fmtEnum(overlay.globalRegime)}</span>
+            </div>
+            <div className="hero__ov">
+              <span className="hero__ov-label">Japan</span>
+              <span className={`hero__ov-value hero__ov-value--${jpTone(overlay.jpIntradayOverlay)}`}>{fmtEnum(overlay.jpIntradayOverlay)}</span>
+            </div>
+            {ownerRisk && (
+              <div className="hero__ov">
+                <span className="hero__ov-label">Owner</span>
+                <span className={`hero__ov-value hero__ov-value--${ownerTone(ownerCode!)}`}>{OWNER_DISPLAY[ownerCode!] ?? fmtEnum(ownerCode!)}</span>
+              </div>
+            )}
           </div>
+          {judgment.regime.length > 0 && (
+            <div className="hero__regime-tags">
+              {judgment.regime.map((r) => (<span className="hero__tag" key={r}>{r}</span>))}
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
-      <p className="hero__summary">{judgment.summary}</p>
-
+      {/* 3. WHY — detail (no duplicated summary/next; those live in the command). */}
       <div className="hero__reasons">
-        <span className="hero__reasons-label">Top reasons</span>
+        <span className="hero__reasons-label">Why</span>
         {judgment.reasons.map((r, i) => (
           <div className="hero__reason" key={i}>
             <span className="hero__reason-num">{String(i + 1).padStart(2, '0')}</span>
@@ -118,11 +103,6 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
             {judgment.assetsToAvoid.map((a) => <span key={a}>{a}</span>)}
           </div>
         </div>
-      </div>
-
-      <div className="hero__next">
-        <span className="hero__next-label">Next condition</span>
-        <span className="hero__next-text">{judgment.nextCondition}</span>
       </div>
     </article>
   );

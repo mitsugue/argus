@@ -32,3 +32,21 @@
 .al-compact { font-size: 12px; font-weight: 700; white-space: nowrap; }
 .al-compact-lvl { font-size: 11px; opacity: 0.85; }
 .al-compact-blk { font-size: 10px; color: var(--value-negative, #F87171); }
+
+/* Command-first layout (v10.120) */
+.al-card--partial { border-color: rgba(251, 191, 36, 0.5); }
+.al-top { justify-content: flex-start; gap: 12px; align-items: baseline; }
+.al-permline { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; flex-wrap: wrap; }
+.al-perm { font-size: 13px; font-weight: 800; letter-spacing: 0.02em; }
+.al-perm--blk { color: var(--value-negative, #F87171); }
+.al-perm--ok { color: var(--value-positive, #34D399); }
+.al-perm-sep { color: var(--text-muted, #5f6b78); }
+.al-partial { font-size: 12px; font-weight: 600; color: var(--amber, #FBBF24); line-height: 1.5;
+  background: rgba(251, 191, 36, 0.10); border-radius: 8px; padding: 7px 10px; margin: 8px 0 0; }
+.al-details { margin-top: 8px; }
+.al-details summary { font-size: 10.5px; color: var(--text-muted, #5f6b78); cursor: pointer; }
+.al-details .al-foot { margin-top: 4px; }
+
+/* Hero market-context section (below the command) */
+.hero__context { padding-top: 12px; border-top: 1px solid var(--line, rgba(255,255,255,0.07)); }
+.hero__context-h { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint, #5f6b78); display: block; margin-bottom: 8px; }
