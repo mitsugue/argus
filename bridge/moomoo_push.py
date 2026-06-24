@@ -145,6 +145,8 @@ CAP_BATCH = max(50, min(400, int(os.environ.get("CAP_BATCH_SIZE", "400"))))
 CAP_UNIVERSE_MAX = int(os.environ.get("CAP_UNIVERSE_MAX", "500"))
 _JST = _dt.timezone(_dt.timedelta(hours=9))
 _cap_done_date = None  # JST date string the test last ran
+_bridge_start = time.time()   # warm-up reference (v10.114)
+CAP_WARMUP_SEC = 150          # let OpenD push fresh quotes before measuring freshness
 
 
 def _now_jst():
@@ -157,6 +159,18 @@ def _jp_open_jst():
         return False
     hm = n.hour * 60 + n.minute
     return (9 * 60 <= hm <= 11 * 60 + 30) or (12 * 60 + 30 <= hm <= 15 * 60 + 30)
+
+
+def _cap_active_window():
+    """Run the cap-test ONLY during active CONTINUOUS trading — skip the open /
+    lunch-reopen edges where 'traded' names are naturally stale (no trades just
+    happened) and would misread as delayed. Morning 09:15–11:25, afternoon
+    12:45–15:25 JST. (v10.114: fixes false delayed_evidence at edges.)"""
+    n = _now_jst()
+    if n.weekday() >= 5:
+        return False
+    hm = n.hour * 60 + n.minute
+    return (9 * 60 + 15 <= hm <= 11 * 60 + 25) or (12 * 60 + 45 <= hm <= 15 * 60 + 25)
 
 
 def _fetch_jp_universe():
@@ -318,7 +332,10 @@ def main():
             if CAP_TEST_ENABLED:
                 global _cap_done_date
                 today = _now_jst().strftime("%Y-%m-%d")
-                if _jp_open_jst() and _cap_done_date != today:
+                # Active continuous window + warm-up only — avoids the open/lunch
+                # edges and cold-reconnect snapshots that misread as delayed (v10.114).
+                warm = (time.time() - _bridge_start) >= CAP_WARMUP_SEC
+                if _cap_active_window() and warm and _cap_done_date != today:
                     _cap_done_date = today
                     try:
                         run_capability_test(qc)

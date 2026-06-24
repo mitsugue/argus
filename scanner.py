@@ -2718,13 +2718,12 @@ def _overlay_pushed(snapshot, market, requested):
         # set) — upgrade 'unknown' to 'realtime' for JP while that proof is fresh
         # (<20h, i.e. today's run). Never override a bridge-reported 'delayed'.
         if market == "JP" and ent == "unknown":
-            _rep = _MOOMOO_ALLMARKET_REPORT.get("data") or {}
-            _re = _parse_iso_epoch(_rep.get("receivedAt"))
-            if _rep.get("entitlementVerdict") == "realtime_evidence" and _re and (now - _re) < 20 * 3600:
+            _proof = _MOOMOO_ALLMARKET_REPORT.get("realtimeProof") or {}
+            if _proof.get("at") and (now - _proof["at"]) < 20 * 3600:
                 ent = "realtime"
-                note = (f"全市場cap-testで売買銘柄の鮮度 p95={_rep.get('quoteAgeP95TradedS', '?')}s "
-                        f"(traded={_rep.get('tradedCount', '?')}銘柄)→リアルタイムと実証(realtime_evidence)。"
-                        "約定の薄い銘柄は更新が遅いことがあります。")
+                note = (f"全市場cap-testで売買銘柄の鮮度 p95={_proof.get('p95', '?')}s "
+                        f"(traded={_proof.get('traded', '?')}銘柄)→リアルタイムと実証(realtime_evidence)。"
+                        "約定の薄い銘柄や昼休み前後は更新が遅く出ることがあります。")
         out = {**snapshot, "stocks": stocks, "realtimeCount": overlaid,
                "marketOpen": (None if market != "JP" else _jp_market_open()),
                "quoteFreshness": {
@@ -5918,6 +5917,14 @@ def api_argus_moomoo_capability_report():
         return jsonify({"error": "bad_payload", "message": "expected {report: {...}}"}), 400
     rep["receivedAt"] = _ai_now_iso()
     _MOOMOO_ALLMARKET_REPORT["data"] = rep
+    # Best-of-day proof (v10.114): realtime is hard to fake (low p95 across many
+    # traded names). A later edge/lunch/cold-reconnect reading can falsely read
+    # 'delayed' — so a realtime_evidence STAMP stands on its own and is not cleared
+    # by a subsequent delayed report.
+    if rep.get("entitlementVerdict") == "realtime_evidence":
+        _MOOMOO_ALLMARKET_REPORT["realtimeProof"] = {
+            "at": time.time(), "p95": rep.get("quoteAgeP95TradedS"),
+            "traded": rep.get("tradedCount")}
     return jsonify({"ok": True, "stored": True})
 
 @app.route("/api/argus/tdnet-metrics")

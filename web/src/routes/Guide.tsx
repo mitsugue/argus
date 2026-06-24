@@ -68,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.115.0', 'cap-testのタイミング欠陥を修正(誤delayed判定の根治) — 昼休み明け直後+ブリッジ再起動16秒後に走った2回目が tradedP95=8730秒→delayed と誤判定した(売買が止まっていた+OpenD再接続直後で古いタイムスタンプを拾っただけ・実際の遅延ではない)。①ブリッジ: cap-testを「連続売買中のみ(前場9:15-11:25/後場12:45-15:25)」かつ「起動150秒のウォームアップ後」に限定 ②バックエンド: 当日realtime実証は「ベスト・オブ・デイ」で保持し、後続のエッジ起因のdelayed読みで上書きされない。要ブリッジ再取得'],
   ['v10.114.0', 'moomoo日本株リアルタイムを実証→entitlement格上げ — 全市場cap-testで「売買銘柄(volume>0)の鮮度 p95=5.7秒・traded=455・verdict=realtime_evidence」を実測。これを受けて、cap-test証明が新しい(<20時間=当日分)間はJP watchlistのentitlementを unknown→realtime に格上げ表示(ブリッジが個別にdelayedと報告した場合は上書きしない)。「配信は速いが元データの鮮度は未証明」だった注記も実証済みに更新。日次でcap-testが再証明(再起動時は次の9:00 JST実行まで一旦unknown)'],
   ['v10.113.0', '重要な指示を日本語化 + 保有ポジションへの判断を追加 — ①Top/Watchlistのアクション表示(WAIT等)を日本語に(待機/保持/押し目買い/買い増し/一部利確/撤退…英語は内部キーとして保持)②数量を入力した保有銘柄に「保有判断」を表示: 含み損益(端末内計算・非送信)+シグナル+急落インシデントを合成して 損切り検討/一部縮小/要点検/一部利確/買い増し候補/ナンピン(慎重)/我慢(様子見)/保持(継続) を提示。決定支援のみ(〜検討/〜候補/慎重に)で命令や自動売買はしない'],
   ['v10.112.0', 'Hero「Global Regime」のUNKNOWN表示バグ修正 — ダウンサイド側が一瞬コールドキャッシュの時に globalRegime="UNKNOWN" が残り、Market Regimeは「Mixed」なのにGlobalだけ「UNKNOWN」と食い違っていた。UNKNOWN/空はレジームendpointのラベルにフォールバックするよう修正(Mixed等を表示)。PARTIAL自体はデータ源(Twelve Data/J-Quants)が一時取得不可な時の正直な表示で、日次リセット等で自動回復する'],
