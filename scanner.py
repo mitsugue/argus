@@ -2711,15 +2711,28 @@ def _overlay_pushed(snapshot, market, requested):
             return snapshot
         ages = [now - p["ts"] for p in fresh.values()]
         ents = {p["row"].get("entitlement", "unknown") for p in fresh.values()}
+        ent = (ents.pop() if len(ents) == 1 else "mixed")
+        note = ("moomooブリッジは約15秒毎に更新。entitlement=unknownの間は、配信が速くても"
+                "元データがリアルタイムか15分遅延か未確認のため『リアルタイム』と断定しません。")
+        # v10.114: the daily all-market cap-test PROVED realtime (traded-control
+        # set) — upgrade 'unknown' to 'realtime' for JP while that proof is fresh
+        # (<20h, i.e. today's run). Never override a bridge-reported 'delayed'.
+        if market == "JP" and ent == "unknown":
+            _rep = _MOOMOO_ALLMARKET_REPORT.get("data") or {}
+            _re = _parse_iso_epoch(_rep.get("receivedAt"))
+            if _rep.get("entitlementVerdict") == "realtime_evidence" and _re and (now - _re) < 20 * 3600:
+                ent = "realtime"
+                note = (f"全市場cap-testで売買銘柄の鮮度 p95={_rep.get('quoteAgeP95TradedS', '?')}s "
+                        f"(traded={_rep.get('tradedCount', '?')}銘柄)→リアルタイムと実証(realtime_evidence)。"
+                        "約定の薄い銘柄は更新が遅いことがあります。")
         out = {**snapshot, "stocks": stocks, "realtimeCount": overlaid,
                "marketOpen": (None if market != "JP" else _jp_market_open()),
                "quoteFreshness": {
                    "session": session,
                    "newestAgeSec": int(min(ages)) if ages else None,
                    "oldestAgeSec": int(max(ages)) if ages else None,
-                   "entitlement": (ents.pop() if len(ents) == 1 else "mixed"),
-                   "noteJa": "moomooブリッジは約15秒毎に更新。entitlement=unknownの間は、配信が速くても"
-                             "元データがリアルタイムか15分遅延か未確認のため『リアルタイム』と断定しません。"}}
+                   "entitlement": ent,
+                   "noteJa": note}}
         if out.get("status") == "mock":
             out["status"] = "partial"   # real pushed data beats an all-mock claim
         if jp_closed and out.get("status") == "live":
