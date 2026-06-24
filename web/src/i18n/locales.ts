@@ -42,6 +42,16 @@ const en = {
   'common.touchToday': 'Touch today',
   'common.avoidToday': 'Avoid today',
   'common.language': 'Language',
+  // watchlist
+  'wl.addAsset': '+ Add Asset',
+  'wl.rescan': 'Rescan',
+  'wl.updated': 'Strategy updated',
+  'wl.filterAll': 'All',
+  'wl.filterDanger': '⚠ At-risk only',
+  'wl.filterHeld': 'Held only',
+  'wl.filterNoReorder': 'reorder disabled while filtered',
+  'wl.noDanger': 'No assets are in an active downside incident.',
+  'wl.noHeld': 'No held (quantity-entered) assets.',
 };
 
 type Dict = typeof en;
@@ -80,6 +90,15 @@ const ja: Record<DictKey, string> = {
   'common.touchToday': '今日触る',
   'common.avoidToday': '今日避ける',
   'common.language': '言語',
+  'wl.addAsset': '+ 銘柄を追加',
+  'wl.rescan': '再スキャン',
+  'wl.updated': '戦略 更新',
+  'wl.filterAll': '全部',
+  'wl.filterDanger': '⚠ 危険のみ',
+  'wl.filterHeld': '保有のみ',
+  'wl.filterNoReorder': 'フィルター中は並べ替え無効',
+  'wl.noDanger': '急落インシデント該当の銘柄はありません。',
+  'wl.noHeld': '保有(数量入力済み)の銘柄はありません。',
 };
 
 export const DICT: Record<Locale, Dict> = { en, ja };

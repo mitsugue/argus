@@ -30,6 +30,7 @@ import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist s
 import argus_downside  # Downside Incident Response + cause attribution (pure, decision-support only, v10.98)
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
+import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -6683,6 +6684,15 @@ def get_downside_incidents():
 
     now_iso = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     incidents = argus_downside.classify_incidents(assets, market_ctx, now_iso=now_iso)
+    # Structured Action Level signal per incident (v10.124) — APIs/ledgers carry
+    # {code, level, permissions, schemaVersion} instead of inferring from text.
+    for _inc in incidents:
+        _inc["signal"] = argus_signal.resolve_signal(
+            _inc.get("currentAction", "HOLD"),
+            downside_override=_inc.get("actionOverride"),
+            data_quality="PARTIAL" if _inc.get("status") == "partial" else "LIVE",
+            material_downside=True,
+            exit_confirmed=(_inc.get("incidentType") == "STOCK_SPECIFIC_BAD_NEWS" and _inc.get("severity") == "critical"))
     owner_affected = any(i.get("isHeld") for i in incidents)
     # Escalate the JP overlay on actual severe incidents (not just average breadth)
     # so a few crashing names can't hide behind green peers.
@@ -6698,6 +6708,7 @@ def get_downside_incidents():
         "status": "live" if (jp.get("status") == "live" or us.get("status") == "live") else "partial",
         "asOf": now_iso,
         "engineVersion": "downside-v1",
+        "signalSchemaVersion": argus_signal.SIGNAL_SCHEMA_VERSION,
         "incidents": incidents,
         "activeCount": len(incidents),
         "ownerAffected": owner_affected,

@@ -7,6 +7,7 @@ import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCa
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
 import { useAssets } from '../hooks/useAssets';
+import { useLocale, t } from '../i18n';
 import '../components/dashboard/Dashboard.css';
 
 function ageLabel(ts: number, nowMs: number): string {
@@ -15,6 +16,7 @@ function ageLabel(ts: number, nowMs: number): string {
 }
 
 export const Watchlist: React.FC = () => {
+  useLocale();   // re-render on locale switch
   const { assets, add, remove, reorderGenre, updateHolding } = useAssets();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -37,7 +39,7 @@ export const Watchlist: React.FC = () => {
 
   return (
     <PageShell
-      title="Watchlist"
+      title={t('nav.watchlist')}
       subtitle="Assets grouped by genre. Drag the handle to reorder; tap a row for its strategy. Rule-based, no automatic AI."
     >
       <AIReview />
@@ -45,9 +47,9 @@ export const Watchlist: React.FC = () => {
       <DownsideIncidentCard />
 
       <div className="asset-toolbar asset-toolbar--end">
-        <span className="asset-toolbar__age">Strategy updated {ageLabel(updatedAt, nowMs)}</span>
-        <button className="asset-btn" onClick={rescan} aria-label="Rescan strategies (rule-based, no AI)">Rescan</button>
-        <button className="asset-btn asset-btn--primary" onClick={() => setAddOpen(true)} aria-label="Add asset">+ Add Asset</button>
+        <span className="asset-toolbar__age">{t('wl.updated')} {ageLabel(updatedAt, nowMs)}</span>
+        <button className="asset-btn" onClick={rescan} aria-label="Rescan strategies (rule-based, no AI)">{t('wl.rescan')}</button>
+        <button className="asset-btn asset-btn--primary" onClick={() => setAddOpen(true)} aria-label="Add asset">{t('wl.addAsset')}</button>
       </div>
 
       <AssetStrategySection

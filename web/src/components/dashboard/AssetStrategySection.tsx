@@ -11,6 +11,8 @@ import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDown
 import { useFundNav } from '../../hooks/useFundNav';
 import { resolveSignal, type OwnerState } from '../../domain/actionLevel';
 import { holderPosture } from '../../lib/holderPosture';
+import { SignedValue } from '../common/SignedValue';
+import { useLocale, t } from '../../i18n';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
@@ -413,7 +415,7 @@ const SortableAssetRow: React.FC<{
             <span className="asset-row__name">{name}</span>
           </span>
           <span className="asset-row__price">{fmtPrice(asset.market, priceShown)}</span>
-          <span className={pctClass(chgShown)}>{fmtPct(chgShown)}</span>
+          <span className="asset-row__chg">{chgShown == null ? '—' : <SignedValue value={chgShown} suffix="%" arrow={false} />}</span>
           <span className="asset-row__action" style={{ color: `var(${sig.token})` }} title={`${sig.labelEn} (legacy ${strat.action})`}>
             {sig.labelEn}{sig.permissions.newEntry === 'BLOCKED' && <span className="asset-row__sig-blk"> ⊘</span>}
           </span>
@@ -668,6 +670,7 @@ const SortableAssetRow: React.FC<{
 };
 
 export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expandedId, onToggleExpand, onRemove, onUpdateHolding }) => {
+  useLocale();   // re-render on locale switch
   const rates = useRatesSnapshot();
   const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
   // Cached AI judgment (read-only — never triggers a run). Per-symbol views
@@ -815,16 +818,16 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
       )}
       {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の戦略を取得中</div>}
       <div className="asset-filter">
-        <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`} onClick={() => setFilter('all')}>全部</button>
+        <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`} onClick={() => setFilter('all')}>{t('wl.filterAll')}</button>
         <button className={`asset-filter__chip asset-filter__chip--risk${filter === 'risk' ? ' is-active' : ''}`} onClick={() => setFilter('risk')}>
-          ⚠ 危険のみ{riskCount > 0 ? ` (${riskCount})` : ''}
+          {t('wl.filterDanger')}{riskCount > 0 ? ` (${riskCount})` : ''}
         </button>
-        <button className={`asset-filter__chip${filter === 'held' ? ' is-active' : ''}`} onClick={() => setFilter('held')}>保有のみ</button>
-        {filter !== 'all' && <span className="asset-filter__note">フィルター中は並べ替え無効</span>}
+        <button className={`asset-filter__chip${filter === 'held' ? ' is-active' : ''}`} onClick={() => setFilter('held')}>{t('wl.filterHeld')}</button>
+        {filter !== 'all' && <span className="asset-filter__note">{t('wl.filterNoReorder')}</span>}
       </div>
       {filteredGroups.length === 0 && filter !== 'all' && (
         <div className="asset-empty asset-empty--card">
-          {filter === 'risk' ? '現在、急落インシデント該当の銘柄はありません。' : '保有(数量入力済み)の銘柄はありません。'}
+          {filter === 'risk' ? t('wl.noDanger') : t('wl.noHeld')}
         </div>
       )}
       {filteredGroups.map((g) => {
