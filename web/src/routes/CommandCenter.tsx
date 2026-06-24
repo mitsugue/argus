@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
-import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
+import { LiveWatchCard } from '../components/dashboard/LiveWatchCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
-import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
 import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
 import { CauseStackCard } from '../components/dashboard/CauseStackCard';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
@@ -89,7 +88,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       holderRiskOverlay: downside?.holderRiskOverlay || 'NONE',
     };
   }, [downside, regime.data]);
-  const ownerAffected = !!downside?.ownerAffected;
   // Partial-data discipline: when data is incomplete, cap confidence at 0.60 and
   // flag PARTIAL so a HOLD never looks high-confidence on thin data.
   const isPartial = phase === 'partial';
@@ -138,26 +136,25 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     >
       <MarketSessionLamps />
 
-      {/* When an owner/held asset is in a downside incident, the defense layer
-          comes BEFORE the call so HOLD is never read in isolation (v10.103). */}
-      {ownerAffected && <DownsideIncidentCard />}
-
+      {/* Today is the main real-time hub (v10.139): 1) overall command, 2) events,
+          3) live per-stock activity, 4) general news, 5) history. */}
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} />
 
       {/* IMPORTANT EVENTS — right after the command so the owner learns WHY a macro
           event matters (e.g. PCE) before reviewing individual assets (v10.138). */}
       <ImportantEventsCard onNavigate={onNavigate} />
 
-      {!ownerAffected && <DownsideIncidentCard />}
+      {/* LIVE WATCH — unified real-time per-stock feed: Downside incidents (drops +
+          cause + holder action) MERGED with the 24/7 event backbone (timestamped
+          S高/急騰/急落/出来高/フロー/movers). Replaces the two separate cards (v10.139). */}
+      <LiveWatchCard />
 
       {/* Deep cause stack for the most severe active incident (v10.117). */}
       {downside?.incidents && downside.incidents.length > 0 && (
         <CauseStackCard symbol={downside.incidents[0].symbol} market={downside.incidents[0].market} />
       )}
 
-      <EventIntelligenceCard />
-
-      {/* General/unlinked market news — below Important Events + owner incidents. */}
+      {/* General/unlinked market news — below the live per-stock activity. */}
       <MarketNewsCard />
 
       <section>

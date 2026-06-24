@@ -1,0 +1,31 @@
+/* Live Watch (v10.139) — unified real-time per-stock hub (Downside + 24/7). */
+.lw-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 14px 16px;
+}
+.lw-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px;
+}
+.lw-head h2 {
+  font-size: 15px; font-weight: 800; margin: 0; letter-spacing: 0.02em;
+  color: var(--text-main);
+}
+.lw-jp { font-size: 11.5px; font-weight: 600; color: var(--text-sub); margin-left: 8px; }
+.lw-status { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; flex: none; }
+.lw-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+.lw-overlay { margin: 4px 0 10px; }
+.lw-events { margin-top: 4px; }
+
+.lw-empty {
+  font-size: 13px; color: var(--text-sub); line-height: 1.6;
+  padding: 12px 0; margin: 0;
+}
+.lw-foot {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--text-muted); line-height: 1.5;
+}

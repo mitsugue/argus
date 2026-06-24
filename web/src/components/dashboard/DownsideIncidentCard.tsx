@@ -25,7 +25,7 @@ function sevTone(s: string): 'red' | 'amber' | 'gray' {
   return 'gray';
 }
 
-const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
+export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
   const [open, setOpen] = React.useState(false);
   const pct = typeof inc.changePct === 'number' ? `${inc.changePct.toFixed(1)}%` : '—';
   const top = inc.causeBuckets?.[0];

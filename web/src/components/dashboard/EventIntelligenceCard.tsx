@@ -126,7 +126,7 @@ function DossierDetail({ eventId }: { eventId: string }) {
   );
 }
 
-function EventRow({ e, open, onToggle }: { e: ActiveEvent; open: boolean; onToggle: () => void }) {
+export function EventRow({ e, open, onToggle }: { e: ActiveEvent; open: boolean; onToggle: () => void }) {
   const dir = eventDir(e);
   const dc = dirColor(dir);
   const t = eventTime(e);
