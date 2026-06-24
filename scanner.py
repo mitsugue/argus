@@ -2206,47 +2206,70 @@ def _rates_snapshot_base():
     return snapshot
 
 
-_TD_FX_CACHE = {"data": None, "expires": 0.0}
-_TD_FX_TTL = 300   # 5 min — realtime enough for USD/JPY without burning TD credits
+_YF_RT_CACHE = {"data": None, "expires": 0.0}
+_YF_RT_TTL = 300   # 5 min — realtime enough without hammering Yahoo
+# snapshot key -> (Yahoo symbol, label). ^TNX = 10Y yield in %, ^VIX = VIX level.
+_YF_RT_MAP = {"usdJpy": ("JPY=X", "USD/JPY"),
+              "us10y":  ("%5ETNX", "US 10Y Treasury yield"),
+              "vix":    ("%5EVIX", "VIX")}
 
 
-def _td_usdjpy_realtime():
-    """Realtime USD/JPY via Twelve Data /quote (forex). 5-min cache, best-effort —
-    returns None on any failure so the FRED daily value remains the fallback. This
-    fixes the week-stale FRED DEXJPUS value that didn't match a broker's live rate."""
+def _yf_quote(sym):
+    """One realtime quote from Yahoo Finance chart API (keyless). None on failure."""
+    try:
+        r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d",
+                         headers={"User-Agent": "Mozilla/5.0 (compatible; argus-research/1.0)"}, timeout=8)
+        if r.status_code != 200:
+            return None
+        res = (r.json().get("chart") or {}).get("result") or []
+        m = (res[0].get("meta") if res else None) or {}
+        px = m.get("regularMarketPrice")
+        prev = m.get("chartPreviousClose") or m.get("previousClose")
+        if px is None:
+            return None
+        return (float(px), float(prev) if prev is not None else float(px))
+    except Exception:
+        return None
+
+
+def _yahoo_rates_rt():
+    """Realtime USD/JPY, US 10Y yield and VIX via Yahoo Finance (keyless). 5-min
+    cache, best-effort per metric — FRED daily stays the fallback. Fixes the multi-
+    day FRED lag (USD/JPY was ~7 days stale) that didn't match a broker's live rate."""
     now = time.time()
-    if _TD_FX_CACHE["data"] is not None and now < _TD_FX_CACHE["expires"]:
-        return _TD_FX_CACHE["data"]
-    out = None
-    if _TWELVEDATA_API_KEY:
-        try:
-            r = requests.get(_TWELVEDATA_QUOTE,
-                             params={"symbol": "USD/JPY", "apikey": _TWELVEDATA_API_KEY}, timeout=8)
-            q = r.json() if r.status_code == 200 else {}
-            if isinstance(q, dict) and str(q.get("status", "")).lower() != "error" and q.get("close") is not None:
-                close = float(q["close"])
-                chg = float(q["change"]) if q.get("change") is not None else 0.0
-                dt = q.get("datetime")
-                out = {"label": "USD/JPY", "latestValue": round(close, 2),
-                       "previousValue": round(close - chg, 2), "change": round(chg, 2),
-                       "changeBp": round(chg * 100, 1), "latestDate": (str(dt)[:10] if dt else None),
-                       "seriesId": "USD/JPY", "source": "twelvedata-rt", "status": "live"}
-        except Exception:
-            out = None
-    if out is not None:
-        _TD_FX_CACHE["data"] = out
-        _TD_FX_CACHE["expires"] = now + _TD_FX_TTL
+    if _YF_RT_CACHE["data"] is not None and now < _YF_RT_CACHE["expires"]:
+        return _YF_RT_CACHE["data"]
+    today = _ai_now_iso()[:10]
+    out = {}
+    for key, (sym, label) in _YF_RT_MAP.items():
+        q = _yf_quote(sym)
+        if not q:
+            continue
+        px, prev = round(q[0], 2), round(q[1], 2)
+        chg = round(px - prev, 2)
+        out[key] = {"label": label, "latestValue": px, "previousValue": prev,
+                    "change": chg, "changeBp": round(chg * 100, 1),
+                    "latestDate": today, "source": "yahoo-rt", "status": "live"}
+    if out:
+        _YF_RT_CACHE["data"] = out
+        _YF_RT_CACHE["expires"] = now + _YF_RT_TTL
     return out
 
 
 def get_rates_snapshot():
-    """Rates snapshot with a REALTIME USD/JPY overlay (Twelve Data) on top of the
-    FRED-daily base. Applied on every call (not frozen into the rates cache) so the
-    FX rate tracks a broker's live quote; 10Y/VIX stay FRED-daily (labelled as such)."""
+    """Rates snapshot with a REALTIME overlay (Yahoo Finance: USD/JPY, US10Y, VIX) on
+    top of the FRED-daily base. Applied on every call (not frozen into the rates cache)
+    so the figures track live quotes; any metric Yahoo misses stays FRED-daily and is
+    labelled with its real as-of date in the UI."""
     snap = _rates_snapshot_base()
-    fx = _td_usdjpy_realtime()
-    if fx:
-        snap = {**snap, "usdJpy": fx}
+    rt = _yahoo_rates_rt()
+    if rt:
+        snap = {**snap, **rt}
+        u10, vx = snap.get("us10y") or {}, snap.get("vix") or {}
+        if u10 and vx:
+            snap["summary"] = (f"10Y {u10['latestValue']:.2f}% ({u10['changeBp']:+.0f}bp), "
+                               f"VIX {vx['latestValue']:.1f}. Pressure: {snap.get('ratesPressure')}, "
+                               f"Vol: {snap.get('riskVolatility')}.")
     return snap
 
 

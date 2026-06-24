@@ -27,7 +27,7 @@ export const FxMacroSection: React.FC = () => {
     <section className="fxm">
       <div className="fxm-head">
         <span className="fxm-title">FX / MACRO</span>
-        <span className="fxm-note">USD/JPYはリアルタイム、金利・VIXはFRED日次(数日遅延)</span>
+        <span className="fxm-note">リアルタイム値(Yahoo)。取得不可時はFRED日次にフォールバック(日付表示)</span>
       </div>
       <div className="card fxm-grid">
         {rows.map((r) => {
@@ -35,7 +35,7 @@ export const FxMacroSection: React.FC = () => {
           const prev = (r.pt as { previousValue?: number }).previousValue;
           const chg = typeof prev === 'number' && prev !== 0 ? ((v - prev) / Math.abs(prev)) * 100 : null;
           const pt = r.pt as { latestDate?: string; source?: string };
-          const rt = pt.source === 'twelvedata-rt';
+          const rt = (pt.source || '').endsWith('-rt');
           const old = daysOld(pt.latestDate);
           return (
             <div className="fxm-cell" key={r.id}>
