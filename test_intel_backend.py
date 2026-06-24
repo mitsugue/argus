@@ -82,3 +82,24 @@ def test_collect_reports_per_feed(monkeypatch):
     assert "perFeed" in res and len(res["perFeed"]) == len(scanner._INTEL_FEEDS)
     assert all("feed" in f and "fetched" in f and "new" in f for f in res["perFeed"])
     assert "summary" in res and ":" in res["summary"]
+
+
+def test_phase23_endpoints_cheap_and_safe(monkeypatch):
+    # public GETs for brief / graph / mission / positioning must not fetch or call a model
+    called = {"n": 0}
+    monkeypatch.setattr(scanner, "_fetch_public_text", lambda u: called.__setitem__("n", called["n"] + 1) or None)
+    scanner._INTEL_STORE[:] = [scanner.argus_research_mesh.normalize_item(
+        {"sourceId": "bloomberg_public", "title": "JPMorgan cautious on Micron ahead of earnings",
+         "linkedAssets": ["MU"], "publishedAt": "2026-06-25T13:50:00Z", "firstDetectedAt": "2026-06-25T13:52:00Z"})]
+    with scanner.app.test_client() as c:
+        assert c.get("/api/argus/institutional-intelligence/brief").status_code == 200
+        g = c.get("/api/argus/institutional-intelligence/relationship-graph?symbol=MU").get_json()
+        assert g["meta"]["version"] == "graph-v1" and g["propagationCandidates"]
+        m = c.get("/api/argus/events/MU/research-mission").get_json()
+        assert m["cost"]["llmCalls"] == 0                     # deterministic, no model call
+        assert "SYNTHESIS_EDITOR" in m["rolesRun"] and "ADVERSARIAL_REVIEWER" in m["rolesRun"]
+        p = c.get("/api/argus/institutional-intelligence/positioning/MU").get_json()
+        probs = p.get("probabilities") or {}
+        assert abs(sum(probs.values()) - 1.0) < 1e-6          # positioning sums to 1
+        assert p.get("identifiedTrader") is None              # never names a trader
+    assert called["n"] == 0                                   # no fetch from any public GET

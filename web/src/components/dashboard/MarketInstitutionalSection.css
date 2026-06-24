@@ -1,0 +1,24 @@
+/* §18 market-wide institutional intelligence (top screen #3) */
+.mis {
+  margin: 10px 0;
+  padding: 12px 14px;
+  background: var(--surface-1, rgba(255,255,255,.03));
+  border: 1px solid var(--border-subtle, rgba(255,255,255,.07));
+  border-radius: 12px;
+}
+.mis-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.mis-title { font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--text-sub); }
+.mis-sub { font-size: 10px; color: var(--text-muted); }
+.mis-row { padding: 6px 0; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06)); }
+.mis-row:first-of-type { border-top: none; }
+.mis-l1 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.mis-inst { font-size: 12px; font-weight: 700; }
+.mis-stance { font-size: 10px; font-weight: 700; }
+.mis-asset {
+  font-size: 10px; font-weight: 700; color: var(--text-sub);
+  background: var(--surface-2, rgba(255,255,255,.06));
+  padding: 1px 5px; border-radius: 5px;
+}
+.mis-headline { display: block; font-size: 12px; line-height: 1.4; margin-top: 2px; color: var(--text-main); text-decoration: none; }
+.mis-headline:hover { text-decoration: underline; }
+.mis-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }

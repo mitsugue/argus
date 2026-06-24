@@ -4,6 +4,7 @@ import { HeroCard } from '../components/dashboard/HeroCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
 import { FxMacroSection } from '../components/dashboard/FxMacroSection';
+import { MarketInstitutionalSection } from '../components/dashboard/MarketInstitutionalSection';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { useEventsActive } from '../hooks/useEventsActive';
 import { useImportantEvents } from '../hooks/useImportantEvents';
@@ -184,6 +185,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           EVENTS as its lower block) → per-stock category cards (JP first, watchlist
           before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} onNavigate={onNavigate} />
+
+      {/* #3 MARKET-WIDE INSTITUTIONAL INTELLIGENCE — max 3, only when material. */}
+      <MarketInstitutionalSection />
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
       <AssetCategorySection title="JAPAN · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.jpEmerging} emptyJa="急浮上中の日本株はありません" />

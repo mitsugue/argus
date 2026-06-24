@@ -34,6 +34,10 @@ import argus_signal  # Action Level signal resolver (structured signal for APIs/
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
 import argus_research_mesh     # Institutional Intelligence + research mesh core (pure, v1, v10.147)
 import argus_licensed_feeds     # LAYER 1 licensed feed adapters (disabled until contracted, v10.147)
+import argus_relationship_graph  # §15 cross-market relationship graph (pure, v10.150)
+import argus_research_swarm      # §12 deterministic research-mission orchestrator (pure, NO LLM, v10.150)
+import argus_positioning         # §14 institutional positioning aggregator (pure, v10.150)
+import argus_daily_brief         # §21 owner daily institutional brief (pure, v10.150)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -4400,6 +4404,34 @@ _INTEL_STORE = []                  # capped list of recent IntelligenceItems (me
 _INTEL_STORE_MAX = 400
 _INTEL_LAST = {"ts": 0.0, "collected": 0, "perSource": {}}
 _INTEL_FETCH_MAX_BYTES = 1_500_000
+_INTEL_STORE_FILE = "/tmp/argus_intel_store.json"   # §27 persistence (survives restarts)
+
+
+def _intel_persist():
+    """Atomically persist the intel store (metadata only — rights already enforced,
+    no full text) so a process restart doesn't drop to WARMING. Best-effort."""
+    try:
+        tmp = f"{_INTEL_STORE_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump({"store": _INTEL_STORE, "last": _INTEL_LAST}, f, ensure_ascii=False, default=str)
+        os.replace(tmp, _INTEL_STORE_FILE)
+    except Exception:
+        pass
+
+
+def _intel_restore():
+    """Load a previously persisted intel store at startup (best-effort)."""
+    try:
+        with open(_INTEL_STORE_FILE, "r") as f:
+            blob = json.load(f)
+        items = blob.get("store") or []
+        if isinstance(items, list):
+            _INTEL_STORE[:] = items[:_INTEL_STORE_MAX]
+            last = blob.get("last")
+            if isinstance(last, dict):
+                _INTEL_LAST.update(last)
+    except Exception:
+        pass
 
 
 def _ssrf_safe_url(url):
@@ -4547,6 +4579,7 @@ def collect_institutional_intel():
     del _INTEL_STORE[_INTEL_STORE_MAX:]
     _INTEL_LAST.update({"ts": time.time(), "collected": total_new,
                         "perSource": per_source, "perFeed": per_feed})
+    _intel_persist()                                   # §27 survive restarts
     # one-line, human-readable summary echoed by the cron (どのfeedから何件)
     summary = " | ".join(f"{f['feed']}:{f['fetched']}(+{f['new']})" for f in per_feed)
     failed = [f["feed"] for f in per_feed if not f["ok"]]
@@ -4662,6 +4695,8 @@ def api_argus_intel_missed():
 
 _MISSED_INTEL = []
 
+_intel_restore()        # §27 reload any persisted intel at startup (avoids WARMING)
+
 
 @app.route("/api/argus/institutional-intelligence/collect", methods=["POST"])
 def api_argus_intel_collect():
@@ -4670,6 +4705,68 @@ def api_argus_intel_collect():
     if not ok:
         return jsonify(err), code
     return jsonify(collect_institutional_intel())
+
+
+def _intel_watchlist_symbols():
+    return sorted({x["symbol"].upper() for x in _JP_WATCHLIST} | {x["symbol"].upper() for x in _US_WATCHLIST})
+
+
+@app.route("/api/argus/institutional-intelligence/brief")
+def api_argus_intel_brief():
+    """§21 daily institutional brief — compact, relevance-first, from the cache.
+    Public GET: folds already-collected metadata, no fetch / no model call."""
+    brief = argus_daily_brief.build_daily_brief(
+        list(_INTEL_STORE), _intel_watchlist_symbols(),
+        active_events=None, now_iso=_ai_now_iso(),
+        rss_item_counts=_INTEL_LAST.get("perSource") or {})
+    return jsonify(brief)
+
+
+@app.route("/api/argus/institutional-intelligence/relationship-graph")
+def api_argus_relationship_graph():
+    """§15 cross-market relationship graph. ?symbol= returns that node's themes /
+    related assets / propagation candidates (each carries the non-causality caveat)."""
+    out = {"meta": argus_relationship_graph.graph_meta()}
+    sym = request.args.get("symbol")
+    if sym:
+        out.update({
+            "symbol": sym.upper(),
+            "themes": argus_relationship_graph.themes_of(sym),
+            "relatedAssets": argus_relationship_graph.related_assets(sym),
+            "propagationCandidates": argus_relationship_graph.propagation_candidates(sym),
+        })
+    return jsonify(out)
+
+
+@app.route("/api/argus/events/<symbol>/research-mission")
+def api_argus_research_mission(symbol):
+    """§12 deterministic research mission for an asset — runs the analyst-role swarm
+    over the collected evidence. NO LLM (cost.llmCalls=0), so it is safe as a public
+    GET. Returns rolesRun + evidence + adversarialFlags + the gated ARGUS view."""
+    symu = str(symbol).upper()
+    held = symu in _intel_watchlist_symbols()
+    event = {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": _ai_now_iso(),
+             "severity": "high" if held else "normal"}
+    mission = argus_research_swarm.run_mission(
+        event, list(_INTEL_STORE), context={"ownerRelevant": held})
+    return jsonify({"symbol": symu, **mission})
+
+
+@app.route("/api/argus/institutional-intelligence/positioning/<symbol>")
+def api_argus_positioning(symbol):
+    """§14 institutional positioning read for an asset (uncalibrated). Uses the
+    best-available FAST signal (realtime pushed quote); slow-positioning feeds
+    (13F/FINRA/EDINET) are honestly absent until wired. Never names a trader."""
+    symu = str(symbol).upper()
+    sig = None
+    for mkt in ("US", "JP"):
+        q = (_PUSHED_QUOTES.get(mkt) or {}).get(symu)
+        if q and time.time() - q.get("ts", 0) <= _PUSH_TTL:
+            row = q.get("row") or {}
+            sig = {"changePct": row.get("changePct"), "volRatio": row.get("volRatio")}
+            break
+    return jsonify({"symbol": symu, "fastSignalAvailable": sig is not None,
+                    **argus_positioning.aggregate_positioning(sig)})
 
 
 # ━━━ Market Regime + Capital Rotation Engine v1 (rule-based, NO LLM) ━━━
@@ -9411,6 +9508,32 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
             if it.get("news"):
                 n0 = it["news"][0]
                 L.append(f"    news: {n0.get('headline', '')} — {n0.get('publisher', '')} {n0.get('url', '')}")
+    L.append("")
+
+    # ── Institutional Intelligence (research mesh — public metadata only) ──
+    inst_items = [i for i in _INTEL_STORE if i.get("institutionId")]
+    rss_n = sum(1 for s in argus_research_mesh.SOURCE_RIGHTS.values() if s.get("collection") == "rss")
+    L.append("## Institutional Intelligence (research mesh — public metadata)")
+    L.append(f"- Public sources monitored: {rss_n} RSS/sitemap feeds "
+             "(Bloomberg EN+JP, CNBC, MarketWatch, Nasdaq, Yahoo Finance, Federal Reserve, SEC). "
+             "Licensed feeds (Bloomberg EDF / LSEG / Factiva / RavenPack) NOT configured.")
+    if inst_items:
+        L.append(f"- Named institutional VIEWS detected: {len(inst_items)} "
+                 "(a NAMED VIEW is reported context — NOT a trading position; confirmed vs reported vs inferred kept separate).")
+        for it in inst_items[:8]:
+            nm = (argus_research_mesh.INSTITUTIONS.get(it.get("institutionId"), {}).get("canonicalName")
+                  or it.get("institutionId"))
+            assets = ",".join(it.get("linkedAssets") or []) or "—"
+            L.append(f"  - {nm} [{it.get('contentType')}] {it.get('publishedAt') or ''} "
+                     f"assets={assets} stance={it.get('stance')} :: {(it.get('title') or '')[:100]} "
+                     f"({it.get('sourceId')}, accessClass={it.get('accessClass')})")
+    else:
+        L.append("- No named institutional views in the current window (store warming or no material institutional news).")
+    L.append("- CHALLENGE THESE (please push back): (a) any DIRECT-CAUSE claim — is an institutional comment really the "
+             "trigger, or did it post-date the move (amplifier)? (b) any NAMED-INSTITUTION TRADING claim — a view is not "
+             "a trade; reject 'X sold' from 'X is cautious'. (c) report TIMING vs the price-move start. (d) DUPLICATE-SOURCE "
+             "false confirmation (one wire across outlets = one origin, not N). (e) is the interpretation BALANCED (both "
+             "bull and bear preserved)? (f) does any new intelligence actually change the Action Level / permission?")
     L.append("")
 
     # ── 4. Current AI State (explicit) ──
