@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { PageShell } from './PageShell';
-import { useLocale, t } from '../i18n';
+import { useLocale, t, tEn } from '../i18n';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
@@ -98,7 +98,7 @@ export const MarketRegime: React.FC = () => {
 
   return (
     <PageShell
-      title={t('nav.marketContext')}
+      title={tEn('nav.marketContext')}
       subtitle="今の地合い(レジーム・資金ローテーション・金利)と、これから来る予定イベント・危機ニュースを1画面に。アクションラベルの裏付けであって、それ自体は売買シグナルではない。ETFローテーションは資金フローのproxy。"
     >
       {/* Status + regime header */}

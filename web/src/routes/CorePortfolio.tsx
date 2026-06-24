@@ -15,7 +15,7 @@ import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
 import { SignedValue } from '../components/common/SignedValue';
 import { getNumericTone, TONE_VAR } from '../lib/numericTone';
-import { useLocale, t } from '../i18n';
+import { useLocale, t, tEn } from '../i18n';
 import '../components/dashboard/Dashboard.css';
 
 // 資産クラス司令室 (command-center-v1, v10.13 — user-approved 案A):
@@ -80,7 +80,7 @@ export const CorePortfolio: React.FC = () => {
 
   return (
     <PageShell
-      title={t('nav.corePortfolio')}
+      title={tEn('nav.corePortfolio')}
       subtitle={
         <span>
           資産クラス司令室 — 配分の現在地と、クラスごとの「いま取るべき構え」。

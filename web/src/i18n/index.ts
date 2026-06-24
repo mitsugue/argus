@@ -42,6 +42,12 @@ export function t(key: DictKey): string {
   return DICT[_locale][key] ?? DICT.en[key] ?? key;
 }
 
+/** Always English, regardless of locale — for the punchy "要所" surfaces the owner
+    wants in English even in Japanese mode (e.g. page/door titles), v10.130. */
+export function tEn(key: DictKey): string {
+  return DICT.en[key] ?? key;
+}
+
 /** Pick the locale-matching field from a bilingual pair (e.g. reasonEn/reasonJa).
     If the active-locale value is missing, returns the other with an ORIGINAL badge
     hint via the caller — here we just return the best available. */

@@ -7,7 +7,7 @@ import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCa
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
 import { useAssets } from '../hooks/useAssets';
-import { useLocale, t } from '../i18n';
+import { useLocale, t, tEn } from '../i18n';
 import '../components/dashboard/Dashboard.css';
 
 function ageLabel(ts: number, nowMs: number): string {
@@ -39,7 +39,7 @@ export const Watchlist: React.FC = () => {
 
   return (
     <PageShell
-      title={t('nav.watchlist')}
+      title={tEn('nav.watchlist')}
       subtitle="Assets grouped by genre. Drag the handle to reorder; tap a row for its strategy. Rule-based, no automatic AI."
     >
       <AIReview />
