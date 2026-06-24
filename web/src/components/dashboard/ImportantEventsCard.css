@@ -25,14 +25,20 @@
 .ie-rows { display: flex; flex-direction: column; }
 .ie-row { border-top: 1px solid var(--line); }
 .ie-row:first-child { border-top: none; }
+/* 2-row grid so the impact never wraps onto a detached line on narrow phones:
+   row 1 = date · time · countdown (full width); row 2 = CODE (left) + impact
+   (right, aligned). (v10.144) */
 .ie-row > summary {
-  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "when when" "code impact";
+  column-gap: 10px; row-gap: 2px; align-items: baseline;
   padding: 8px 0; cursor: pointer; list-style: none;
 }
 .ie-row > summary::-webkit-details-marker { display: none; }
-.ie-when { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; flex: none; }
-.ie-code { font-size: 14px; font-weight: 800; color: var(--text-main); letter-spacing: 0.02em; }
-.ie-impact { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; margin-left: auto; flex: none; }
+.ie-when { grid-area: when; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ie-code { grid-area: code; font-size: 14px; font-weight: 800; color: var(--text-main); letter-spacing: 0.02em; }
+.ie-impact { grid-area: impact; justify-self: end; white-space: nowrap; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
 
 .ie-body { padding: 0 0 10px; }
 .ie-line { font-size: 13px; line-height: 1.6; color: var(--text-main); margin: 4px 0; }

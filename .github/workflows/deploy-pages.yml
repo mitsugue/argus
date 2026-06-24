@@ -18,9 +18,13 @@ permissions:
   pages: write
   id-token: write
 
+# Rapid successive pushes used to QUEUE deploys (cancel-in-progress: false), and
+# when one hung the whole queue timed out at 10 min ("Some jobs were not
+# successful" emails). For a single-dev fast-iteration repo only the latest commit
+# matters, so cancel superseded runs and let the newest win.
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -61,9 +65,12 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          timeout: 300000        # 5 min (default 10) — fail fast on a stuck Pages env

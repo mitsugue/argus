@@ -6979,6 +6979,22 @@ def get_cause_attribution(symbol, market="JP"):
                                   "sameDayRecirculation": True, "official": True}, move_started)})
         except Exception:
             pass
+    else:
+        # US: per-company media headlines (Finnhub). Media ≠ official disclosure, so
+        # these classify as UNCONFIRMED (related to the company, causal link to the
+        # move not asserted). Headlines stay in their source language (v10.144).
+        try:
+            for cn in (get_company_news(symu) or [])[:4]:
+                ts = cn.get("datetime")
+                iso = (datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                       if isinstance(ts, (int, float)) and ts > 0 else None)
+                hl = (cn.get("headline") or "").strip()
+                if not hl:
+                    continue
+                news.append({"time": iso, "titleJa": hl[:120], "source": cn.get("source") or "Finnhub",
+                             "cls": argus_attribution.classify_news({"publishedAt": iso, "official": False}, move_started)})
+        except Exception:
+            pass
 
     # contagion peers from the theme groups (reuse _DOWNSIDE_THEMES)
     peers = []
