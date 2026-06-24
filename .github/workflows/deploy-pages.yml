@@ -18,13 +18,15 @@ permissions:
   pages: write
   id-token: write
 
-# Rapid successive pushes used to QUEUE deploys (cancel-in-progress: false), and
-# when one hung the whole queue timed out at 10 min ("Some jobs were not
-# successful" emails). For a single-dev fast-iteration repo only the latest commit
-# matters, so cancel superseded runs and let the newest win.
+# GitHub's recommended Pages pattern: do NOT cancel in-progress deploys —
+# cancelling actions/deploy-pages mid-flight leaves the github-pages environment
+# with a PENDING deployment that blocks/hangs the next run (the v10.144 cancel:true
+# experiment made the timeouts worse). false = let each deploy complete; the build
+# job's own concurrency + the 5-min deploy timeout below handle a genuine infra hang
+# (it fails fast and the next push recovers; the live site stays current).
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
