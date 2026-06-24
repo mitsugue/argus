@@ -9,7 +9,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
 import { useFundNav } from '../../hooks/useFundNav';
-import { resolveSignal, type OwnerState } from '../../domain/actionLevel';
+import { resolveSignal, OVERRIDE_LABEL_JA, type OwnerState } from '../../domain/actionLevel';
 import { holderPosture } from '../../lib/holderPosture';
 import { SignedValue } from '../common/SignedValue';
 import { useLocale, t, pick, getLocale } from '../../i18n';
@@ -422,7 +422,7 @@ const SortableAssetRow: React.FC<{
           {incident && (
             <span className="asset-row__override"
               style={{ color: ['EXIT_WATCH', 'TRIM_WATCH'].includes(incident.actionOverride) ? '#F87171' : '#FBBF24' }}>
-              ⚠ {incident.actionOverride}
+              ⚠ {OVERRIDE_LABEL_JA[incident.actionOverride] ?? incident.actionOverride}
             </span>
           )}
           {hp && (

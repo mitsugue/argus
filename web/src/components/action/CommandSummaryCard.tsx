@@ -4,6 +4,12 @@ import { SIGNAL_ORDER } from '../../domain/actionLevel';
 import { useLocale, t } from '../../i18n';
 import './CommandSummaryCard.css';
 
+// Existing-position permission code → Japanese (shown in ja mode; the perm row is
+// explanatory, so it follows the Japanese-prose preference, v10.129).
+const EXISTING_JA: Record<string, string> = {
+  EXIT: '撤退', REDUCE_RISK: 'リスク削減', REASSESS: '再点検', MONITOR: '監視', MAINTAIN: '維持',
+};
+
 // One resolved command (v10.122). The PRIMARY COMMAND is the largest text; the
 // abstract signal is secondary metadata; the labeled ladder lives only in help.
 // English chrome (owner preference); detailed ja rationale sits in Market Context.
@@ -16,7 +22,10 @@ export const CommandSummaryCard: React.FC<SummaryInput> = (input) => {
   const addBlocked = SIGNALS[s.signalCode].permissions.add === 'BLOCKED';
   const partial = ['PARTIAL', 'DELAYED', 'STALE', 'UNKNOWN', 'UNAVAILABLE'].includes(s.dataQuality);
   const ja = loc === 'ja';
-  const primary = ja ? s.primaryCommandJa : s.primaryCommandEn;
+  // The primary command is the punchy action keyword (NO NEW ENTRY / EXIT POSITION):
+  // always English, even in Japanese mode — per the owner's preference (v10.129).
+  // The signal line is already English; everything else (reason/next) follows locale.
+  const primary = s.primaryCommandEn;
   const reason = ja ? s.reasonJa : s.reasonEn;
   const next = ja ? s.nextReviewJa : s.nextReviewEn;
 
@@ -30,7 +39,7 @@ export const CommandSummaryCard: React.FC<SummaryInput> = (input) => {
       <div className="cs-perms">
         <span className={`cs-perm cs-perm--${blocked ? 'blk' : 'ok'}`}>{t('cmd.newEntry')}: {blocked ? t('cmd.blocked') : t('cmd.allowed')}</span>
         <span className={`cs-perm cs-perm--${addBlocked ? 'blk' : 'ok'}`}>{t('cmd.add')}: {addBlocked ? t('cmd.blocked') : t('cmd.allowed')}</span>
-        <span className="cs-perm cs-perm--neutral">{t('cmd.existing')}: {s.existingPositionCode.replace('_', ' ')}</span>
+        <span className="cs-perm cs-perm--neutral">{t('cmd.existing')}: {ja ? (EXISTING_JA[s.existingPositionCode] ?? s.existingPositionCode) : s.existingPositionCode.replace('_', ' ')}</span>
       </div>
 
       {/* One status line */}

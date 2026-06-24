@@ -50,6 +50,13 @@ export const SIGNALS: Record<SignalCode, SignalDef> = {
 
 export const SIGNAL_ORDER: SignalCode[] = ['EXIT', 'DEFEND', 'REVIEW', 'PAUSE', 'HOLD_ONLY', 'PREPARE', 'ENTER'];
 
+// Downside override code → Japanese label (v10.129). Single source so the override
+// shows once, in Japanese — not the raw enum nor a doubled "EXIT WATCH(撤退検討)".
+export const OVERRIDE_LABEL_JA: Record<string, string> = {
+  HOLD_CAUTION: '警戒(保有のみ)', WAIT: '待機', DO_NOT_ADD: '買い増し禁止',
+  REVIEW_REQUIRED: '要点検', TRIM_WATCH: '縮小検討', EXIT_WATCH: '撤退検討',
+};
+
 // Legacy tactical action → base signal (§4). BUY_DIP is conditional (resolved below).
 const LEGACY_MAP: Record<string, SignalCode> = {
   EXIT: 'EXIT', TRIM: 'DEFEND', WAIT: 'PAUSE', HOLD: 'HOLD_ONLY',

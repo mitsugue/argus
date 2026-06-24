@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.129.0', '表示言語の方針を「日本語ベース+要所だけ英語」に確定 — ①既定を日本語に変更(長い説明文は全て日本語で読める)②要所のアクション語(Todayの主コマンド NO NEW ENTRY / EXIT POSITION 等 + シグナル名 PAUSE·ACTION 4/7)は日本語モードでも英語で固定③ダウンサイドの上書き表示が「EXIT WATCH(撤退検討)」と英日二重だったのを日本語のみ(撤退検討/縮小検討/要点検…)に統一(actionLevelに単一の日本語ラベルを集約)④権限行の既存ポジションコード(MONITOR等)も日本語(監視/維持/再点検/リスク削減/撤退)に。英語フル切替はGuideの言語セレクターで引き続き選択可'],
   ['v10.128.0', 'i18n裾野(その2)=Core Portfolio を全面en/ja化 — 見出し(あなたの配分/クラス判断/積立方針+投信基準価額)・合計/保有なし・配分の空状態の案内文・価格未取得の注記・NAV取得中の文言を辞書化。これで日常の判断3面(Today / Watchlist / Core Portfolio)はchrome+主要プロ-ズが言語切替対応。残り(Today自己採点の統計文・AIReviewページ・Guide本文=日本語ドキュメント・診断カード)は順次/任意'],
   ['v10.127.0', 'i18n裾野=フロント再構成(その1) — バックエンドのプロ-ズに英訳を足すのではなく、構造化キー+辞書から両言語を生成する方針(切替はAI課金ゼロ)。①holderPosture(保有判断: 損切り/一部縮小/我慢/ナンピン/買い増し/保持)をキー+P/L等のパラメータからen/ja生成に作り替え。Watchlistの「保有」バッジ・詳細の保有判断もen/ja②Core Portfolioの積立コメント(積立継続/一括見送り+理由)を辞書化③Watchlist行のシグナル名もen/ja。実機(en)で確認'],
   ['v10.126.0', 'Render Standard(2GB)契約に伴い鮮度を復元 — 2026-06-24にRenderを2GBへアップグレード(毎日のメモリ超過メールの根本解決)。これに伴い v10.110 でメモリ節約のため鈍らせていたダウンサイド(急落検知)の鮮度を元に戻した:サーバー再計算 180→60秒・フロントのポーリング 120→60秒。急落の検知が3倍速くなる(safety層の本来の価値)。メモリ逼迫の正体はランタイムfootprintで蓄積データ(gitのledger保存)とは無関係だったため、今後データが増えてもRAMには影響しない'],
@@ -244,7 +245,7 @@ export const Guide: React.FC = () => {
           </button>
         ))}
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-          {loc === 'ja' ? 'UIの言語(既定=English)。動的な解説は順次対応。' : 'UI language (default English). Dynamic detail is being migrated.'}
+          {loc === 'ja' ? 'UIの言語(既定=日本語)。説明文は日本語、要所のアクション語(NO NEW ENTRY等)は英語固定。「English」で全面英語に切替。' : 'UI language (default Japanese). English here makes everything English; otherwise prose is Japanese with English action keywords.'}
         </span>
       </section>
       <section>

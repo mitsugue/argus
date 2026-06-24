@@ -1,16 +1,13 @@
 import React from 'react';
 import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
+import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './DownsideIncidentCard.css';
 
 // Downside Incident Response card (v10.98). Renders only when there is an active
 // incident or a JP intraday overlay that differs from the global regime — so on a
 // calm day it stays out of the way. Decision-support only; no order controls.
 
-const OVERRIDE_JA: Record<string, string> = {
-  HOLD_CAUTION: 'HOLD(警戒)', WAIT: 'WAIT(待機)', DO_NOT_ADD: '買い増し禁止',
-  REVIEW_REQUIRED: 'REVIEW REQUIRED(要点検)', TRIM_WATCH: 'TRIM WATCH(縮小検討)',
-  EXIT_WATCH: 'EXIT WATCH(撤退検討)',
-};
+const OVERRIDE_JA = OVERRIDE_LABEL_JA;
 const CAUSE_JA: Record<string, string> = {
   MARKET_WIDE_SELL_OFF: '市場全体の下げ', SECTOR_SELL_OFF: 'セクターの下げ',
   THEME_PROFIT_TAKING: 'テーマ利確', STOCK_SPECIFIC_BAD_NEWS: '個別の悪材料',
