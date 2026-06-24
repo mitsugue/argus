@@ -59,7 +59,7 @@ export interface DownsideSnapshot {
   noteJa: string;
 }
 
-const REFRESH_INTERVAL_MS = 120_000;   // 60→120s (v10.110): lighter load on the 512MB backend
+const REFRESH_INTERVAL_MS = 60_000;    // restored 120→60s (v10.126): Render is on Standard 2GB now — poll the downside layer every 60s for faster drop detection
 
 interface State {
   data: DownsideSnapshot | null;

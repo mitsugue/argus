@@ -6432,9 +6432,10 @@ _DOWNSIDE_HIGH_BETA = {"5803", "285A", "5801", "6920", "6857"}
 _OWNER_SYMS_CACHE = {"syms": None, "ts": 0.0}
 _OWNER_SYMS_TTL = 600
 _DOWNSIDE_CACHE = {"data": None, "expires": 0.0}
-_DOWNSIDE_TTL = 180   # 60→180 (v10.110): the downside recompute pulls watchlists +
-# catalysts + TDnet; on a 512MB single-process dyno, recomputing 3× less often
-# cuts the memory/CPU peak that tripped Render's limit. Sub-feeds cache longer.
+_DOWNSIDE_TTL = 60    # restored 180→60 (v10.126): Render upgraded to Standard 2GB
+# (2026-06-24), so the memory/CPU headroom is there to recompute the downside layer
+# every 60s again — faster drop detection is the whole point of this safety layer.
+# (v10.110 had stretched it to 180 only to survive the 512MB ceiling.)
 
 
 def _owner_symbols_cached():

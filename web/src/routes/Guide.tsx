@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.126.0', 'Render Standard(2GB)契約に伴い鮮度を復元 — 2026-06-24にRenderを2GBへアップグレード(毎日のメモリ超過メールの根本解決)。これに伴い v10.110 でメモリ節約のため鈍らせていたダウンサイド(急落検知)の鮮度を元に戻した:サーバー再計算 180→60秒・フロントのポーリング 120→60秒。急落の検知が3倍速くなる(safety層の本来の価値)。メモリ逼迫の正体はランタイムfootprintで蓄積データ(gitのledger保存)とは無関係だったため、今後データが増えてもRAMには影響しない'],
   ['v10.125.0', '残り画面の数値色+i18nを拡張 — Core Portfolioの含み損益・投信NAVの前日比を SignedValue/--value-* 色トークンに統一(旧 --green/--red から脱却・「Day change −3.55%」のように符号+色+読み上げを一元化)。ページ見出し(地合い/資産配分)も言語切替対応。動的な解説文(積立コメント等のバックエンド由来)は引き続き順次i18n対応'],
   ['v10.124.0', 'A(構造化シグナル+数値色)+C(i18n裾野)を実施 —①バックエンドに argus_signal(Action Levelリゾルバ)を追加し、ダウンサイドAPIに structured signal{code,level,permissions,legacyAction,schemaVersion} を付与(消費側が文言から権限を推測しなくて済む・台帳のスキーマ版管理に対応)。テスト7②共通の SignedValue コンポーネント(符号+色トークン+矢印/読み上げ)を新設し、Watchlistの騰落率に適用(色は --value-* トークンで一元化)。VIX等の逆相関metricは getMetricTone で「プラスでも赤」に③i18nをWatchlistへ拡張(フィルターchip 全部/危険のみ/保有のみ・ツールバー・空状態)+ナビ/見出しと合わせて選択言語で表示。テスト341'],
   ['v10.123.0', 'i18n(英語/日本語 切替)を導入(既定=English) — web/src/i18n に辞書(型付きキー)+useLocale/t()+pick()を新設し、Guideに言語セレクター(English / 日本語・端末に保存)を追加。ナビ・ページ見出し・MARKET STATUS・コマンド要約(主コマンド/権限/WHY NOW/NEXT/ラベル付き梯子)を選択言語で一貫表示(切替でAI課金は発生しない)。コマンド要約の主コマンド・理由・次の条件・ドライバーは既存のen/jaフィールドから選択。実機で en↔ja 双方向の切替を確認。動的な詳細解説(バックエンド由来)は順次i18n対応(長い裾野は段階移行)'],
