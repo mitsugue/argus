@@ -4200,15 +4200,31 @@ def _scale_ret(r):
 # ledger's class predictions and the /class-quotes scoring endpoint (v10.5).
 _ETF_LAST_PRICE = {}   # sym -> {"price": float, "m1d": float, "ts": epoch}
 
+# ETF daily-close cache (v10.134): these are DAILY bars — they don't change
+# intraday — but the regime engine used to refetch them on every refresh, so a
+# Twelve Data free-tier rate-limit/miss dropped coverage and flipped the whole
+# regime to "partial" (capping confidence). Cache for hours, and on a flaky/partial
+# fetch MERGE with the last-good values so coverage never silently degrades.
+_TD_TS_CACHE = {}   # ",".join(symbols) -> {"data": {sym: closes}, "expires": epoch}
+_TD_TS_TTL = float(os.environ.get("TD_TS_TTL", "7200"))   # 2h
+
 def _td_timeseries(symbols):
     """Batched daily closes for the ETF universe.
 
-    Returns {symbol: [latest_close, ..., older]} (newest-first) for each symbol
-    that parsed, or {} on no key / error / rate limit. Never raises. ONE
-    request, len(symbols) credits — keep len(symbols) <= 8 for the free cap.
+    Returns {symbol: [latest_close, ..., older]} (newest-first). Cached ~2h and
+    merged with the last-good set, so a transient rate-limit/partial fetch keeps
+    full coverage instead of downgrading the regime to partial. Never raises.
+    ONE request, len(symbols) credits — keep len(symbols) <= 8 for the free cap.
     """
+    key = ",".join(symbols)
+    now = time.time()
+    cached = _TD_TS_CACHE.get(key)
+    prev = (cached or {}).get("data") or {}
+    # Fresh + full cache → reuse without spending quota (daily data is stable).
+    if cached and now < cached["expires"] and len(prev) == len(symbols):
+        return dict(prev)
     if not _TWELVEDATA_API_KEY:
-        return {}
+        return dict(prev)
     try:
         r = requests.get(_TWELVEDATA_TS, params={
             "symbol": ",".join(symbols), "interval": "1day",
@@ -4218,7 +4234,7 @@ def _td_timeseries(symbols):
         body = r.json()
         # Top-level error (bad key / quota / rate limit) → flat dict status=error.
         if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
-            return {}
+            return dict(prev)   # serve last-good instead of dropping to partial
         out = {}
         for sym in symbols:
             # Multi-symbol responses are keyed by symbol; single is flat.
@@ -4247,9 +4263,15 @@ def _td_timeseries(symbols):
                     "m1d": round((closes[0] / closes[1] - 1) * 100, 2),
                     "ts": time.time(),
                 }
-        return out
+        # Merge: fresh symbols overwrite; any missing this refresh keep last-good,
+        # so a partial response doesn't collapse coverage (→ no spurious partial).
+        if out:
+            merged = {**prev, **out}
+            _TD_TS_CACHE[key] = {"data": merged, "expires": now + _TD_TS_TTL}
+            return merged
+        return dict(prev)   # empty fetch → last-good
     except Exception:
-        return {}
+        return dict(prev)   # network error → last-good, never {}
 
 # US entry-scout history (us-scout-v1, v10.27): ~130d daily OHLCV for one US
 # symbol from Twelve Data, newest-first. 6h cache; never raises. 1 credit/call.

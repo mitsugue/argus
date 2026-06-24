@@ -1,7 +1,7 @@
 import React from 'react';
 import { resolveCommandSummary, SIGNALS, type SummaryInput } from '../../domain/commandSummary';
 import { SIGNAL_ORDER } from '../../domain/actionLevel';
-import { useLocale, t } from '../../i18n';
+import { useLocale, t, tEn } from '../../i18n';
 import './CommandSummaryCard.css';
 
 // Existing-position permission code → Japanese (shown in ja mode; the perm row is
@@ -55,11 +55,12 @@ export const CommandSummaryCard: React.FC<SummaryInput> = (input) => {
         <span className="cs-perm cs-perm--neutral">{t('cmd.existing')}: {ja ? (EXISTING_JA[s.existingPositionCode] ?? s.existingPositionCode) : s.existingPositionCode.replace('_', ' ')}</span>
       </div>
 
-      {/* One status line */}
+      {/* One status line — RISK/DATA are short status keywords: English always
+          (no カタカナ), even in Japanese mode (owner preference, v10.134). */}
       <div className="cs-status">
-        <span className={`cs-stat${s.riskLevel === 'HIGH' ? ' cs-stat--bad' : ''}`}>{s.riskLevel} {t('cmd.risk')}</span>
+        <span className={`cs-stat${s.riskLevel === 'HIGH' ? ' cs-stat--bad' : ''}`}>{s.riskLevel} {tEn('cmd.risk')}</span>
         <span className="cs-stat-sep">·</span>
-        <span className={`cs-stat${partial ? ' cs-stat--warn' : ''}`}>{s.dataQuality} {t('cmd.data')}</span>
+        <span className={`cs-stat${partial ? ' cs-stat--warn' : ''}`}>{s.dataQuality} {tEn('cmd.data')}</span>
       </div>
       {partial && typeof s.confidence === 'number' && (
         <p className="cs-conf">{t('cmd.confCap')} {Math.round(s.confidence * 100)}%.</p>
