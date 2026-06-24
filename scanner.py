@@ -31,6 +31,7 @@ import argus_downside  # Downside Incident Response + cause attribution (pure, d
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
+import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -4087,6 +4088,7 @@ def _build_curated_events(today_jst):
             prefix = "jp" if country == "JP" else "us"
             out.append({
                 "id": f"{prefix}-{kind}-{d}",
+                "kind": kind,
                 "title": t, "category": cat, "country": country, "source": source,
                 "impact": impact, "eventTimeUtc": utc, "eventDate": d,
                 "localTimeJst": jst_local, "daysUntil": days,
@@ -4149,6 +4151,7 @@ def _build_auction_events(today_jst):
         slug = a["term"].lower().replace("-", "")
         out.append({
             "id": f"us-treasury-{slug}-{a['date']}",
+            "kind": "auction",
             "title": f"US Treasury {a['term']} Auction",
             "category": "treasury", "country": "US", "source": "TreasuryDirect",
             "impact": a["impact"], "eventTimeUtc": None, "eventDate": a["date"],
@@ -4209,6 +4212,36 @@ def _events_mock_snapshot():
 @app.route("/api/argus/events")
 def api_argus_events():
     return jsonify(get_events_snapshot())
+
+@app.route("/api/argus/important-events")
+def api_argus_important_events():
+    """Owner-facing IMPORTANT EVENTS for the Today command area: novice explanation +
+    owner-relevance priority + action-until/next-review. No forecast/consensus is
+    invented; impact = how strongly markets may move, not a direction."""
+    snap = get_events_snapshot()
+    events = snap.get("events") or []
+    try:
+        owner_map = _owner_symbols_cached() or {}
+    except Exception:
+        owner_map = {}
+    wl = ({str(s.get("symbol")).upper() for s in _JP_WATCHLIST}
+          | {str(s.get("symbol")).upper() for s in _US_WATCHLIST})
+    owner_symbols = wl | {str(k).upper() for k in owner_map}
+    held = {str(k).upper() for k, v in owner_map.items()
+            if (v or {}).get("ownerState") in ("held", "protected")}
+    regime = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
+    vix_elevated = False
+    try:
+        vix = ((get_rates_snapshot().get("vix") or {}).get("latestValue"))
+        vix_elevated = isinstance(vix, (int, float)) and vix >= 20
+    except Exception:
+        pass
+    items = argus_important_events.build_important_events(
+        events, owner_symbols=owner_symbols, held_symbols=held,
+        ctx={"regime": regime, "vixElevated": vix_elevated}, limit=8)
+    return jsonify({"status": snap.get("status"), "asOf": snap.get("asOf"),
+                    "timezone": "Asia/Tokyo", "engineVersion": "important-events-v1",
+                    "count": len(items), "events": items})
 
 
 # ━━━ Market Regime + Capital Rotation Engine v1 (rule-based, NO LLM) ━━━

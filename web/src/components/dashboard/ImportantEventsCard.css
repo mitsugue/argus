@@ -1,0 +1,42 @@
+/* Important Events (v10.138) — compact, sits directly under the command card.
+   Light container (a divider feel), NOT another big nested card. */
+.ie-card {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+.ie-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.ie-title { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; color: var(--text-sub); }
+.ie-viewall {
+  background: none; border: none; cursor: pointer; font-size: 12px; font-weight: 600;
+  color: var(--text-sub); padding: 2px 4px;
+}
+.ie-viewall:hover { color: var(--text-main); }
+
+.ie-rows { display: flex; flex-direction: column; }
+.ie-row { border-top: 1px solid var(--line); }
+.ie-row:first-child { border-top: none; }
+.ie-row > summary {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 8px 0; cursor: pointer; list-style: none;
+}
+.ie-row > summary::-webkit-details-marker { display: none; }
+.ie-when { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; flex: none; }
+.ie-code { font-size: 14px; font-weight: 800; color: var(--text-main); letter-spacing: 0.02em; }
+.ie-impact { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; margin-left: auto; flex: none; }
+
+.ie-body { padding: 0 0 10px; }
+.ie-line { font-size: 13px; line-height: 1.6; color: var(--text-main); margin: 4px 0; }
+.ie-k {
+  display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em;
+  color: var(--text-muted); margin-right: 8px; vertical-align: 1px;
+}
+.ie-data { font-size: 11px; color: var(--text-muted); margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.ie-note { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 8px 0 0; }
+
+/* Mobile: at most 3 event rows above the fold (head + first 3 rows). */
+@media (max-width: 720px) {
+  .ie-rows .ie-row:nth-child(n+4) { display: none; }
+}

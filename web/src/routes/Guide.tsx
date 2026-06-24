@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.138.0', 'Today に「重要イベント(初心者向け解説)」をコマンド直下へ追加 — PCEの重要性が伝わらなかった反省から、個別銘柄カードの前にマクロ/イベントのリスクを学べるように。①各イベントに初心者向け解説(PCE/CPI/FOMC/BOJ/雇用/GDP/入札 等のen/jaテンプレ)・日時・JST・カウントダウン(D-7〜本日/発表済み)・「影響」の段階を表示②イベント影響色は価格の緑赤とは別トークン(重大=violet/大=amber/中=blue/小=gray)で「影響=動きうる強さ・方向ではない」と明記③owner関連度で表示影響を昇格(保有/watchlist銘柄に紐づくと格上げ)④発表までブロックされる操作・発表後の確認先を提示⑤予想/前回/結果は捏造せず取得不可は明示⑥ヘッダーのNext◯◯チップはタップで同じイベント行へスクロール(二重説明なし)⑦表示順をコマンド→重要イベント→保有インシデント→…→一般ニュースに。自動売買なし。テスト8'],
   ['v10.137.0', 'シグナル7灯ゲージの点灯を強発光に — 現在地のセグメントを多層グロー(最大24px)+明度/彩度アップ+横幅拡大で一目で分かるよう強調、消灯部はより暗く(opacity 0.16)してコントラスト確保。緩やかなパルス(1.8秒・prefers-reduced-motionで自動停止)も追加'],
   ['v10.136.0', '監査で挙げた未着手分をまとめて実装(A1〜A5+closepin) — ①closepin: EC2 cron不発火でも落ちるよう、GitHub fallbackを窓内(14:25/14:35/14:45/15:00 JST)に複数化+重複ガードで1日1pin維持②action-labels: 各銘柄ラベルに構造化signal{code,level,permissions}+応答にsignalSchemaVersion(台帳の一貫性)③数値色SignedValue/--value-*を残り画面へ: Market Contextの米/日ムーバー(±%)・What-ifの中央値・保有損益の色をトークン統一④Pro Handoffのプロンプトに「Action Level(7段階・資本投下許可)」の説明と各ラベルのsignalを明記⑤アクセシビリティ監査: ボタン名/alt/svgラベル/入力ラベル/h1=すべて適合(保有入力は<label>暗黙ラベルで適合)。テスト350'],
   ['v10.135.0', '全市場moverをmoomooリアルタイム3段に — ①ブリッジが場中(平日)に「500銘柄サンプル + あなたのwatchlist」を定期スイープ(get_market_snapshot・秒単位)し、騰落率の大きい銘柄をbackendへPOST②backendのmover検知を3段ウォーターフォールに: moomooリアルタイム → 残りはYahoo(約20分遅延・広い市場) → 閉場後はJ-Quants EOD。銘柄単位で重複排除(上位ソース優先)し|変動|で順位付け。これでwatchlist銘柄が動けばYahoo遅延ではなくmoomoo秒速で検知。pushは引き続き場中のみ(v10.133ゲート)。テスト2追加。※ブリッジはEC2の再デプロイが必要'],

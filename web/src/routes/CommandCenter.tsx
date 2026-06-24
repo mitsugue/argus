@@ -4,6 +4,7 @@ import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
+import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
 import { CauseStackCard } from '../components/dashboard/CauseStackCard';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { useLocale, t, tEn } from '../i18n';
@@ -143,6 +144,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} />
 
+      {/* IMPORTANT EVENTS — right after the command so the owner learns WHY a macro
+          event matters (e.g. PCE) before reviewing individual assets (v10.138). */}
+      <ImportantEventsCard onNavigate={onNavigate} />
+
       {!ownerAffected && <DownsideIncidentCard />}
 
       {/* Deep cause stack for the most severe active incident (v10.117). */}
@@ -150,9 +155,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         <CauseStackCard symbol={downside.incidents[0].symbol} market={downside.incidents[0].market} />
       )}
 
-      <MarketNewsCard />
-
       <EventIntelligenceCard />
+
+      {/* General/unlinked market news — below Important Events + owner incidents. */}
+      <MarketNewsCard />
 
       <section>
         <div className="section-head">

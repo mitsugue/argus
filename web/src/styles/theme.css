@@ -65,6 +65,14 @@
   --value-neutral:     #8B98A7;
   --value-unavailable: #5F6B78;
 
+  /* Event-impact tokens (v10.138) — how strongly markets MAY move, NOT a
+     direction. Deliberately distinct from the green/red return colors so a
+     CRITICAL event is never read as "bearish" or a green event as "good". */
+  --event-critical: #A78BFA;   /* violet */
+  --event-high:     #FBBF24;   /* amber  */
+  --event-medium:   #60A5FA;   /* blue   */
+  --event-low:      #64748B;   /* gray   */
+
   /* Typography */
   --font-sans: 'Inter', 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;

@@ -70,6 +70,23 @@ const en = {
   // holder posture
   'hp.held': 'Held',
   'hp.heldCall': 'Holder call',
+  // important events
+  'ie.title': 'IMPORTANT EVENTS',
+  'ie.viewAll': 'View calendar',
+  'ie.whyMatters': 'WHY IT MATTERS',
+  'ie.untilRelease': 'UNTIL RELEASE',
+  'ie.nextReview': 'NEXT REVIEW',
+  'ie.nextReviewTmpl': 'After release, confirm the reaction in {assets}, then reassess.',
+  'ie.released': 'RELEASED',
+  'ie.impact.critical': 'CRITICAL IMPACT',
+  'ie.impact.high': 'HIGH IMPACT',
+  'ie.impact.medium': 'MEDIUM IMPACT',
+  'ie.impact.low': 'LOW IMPACT',
+  'ie.forecast': 'FORECAST',
+  'ie.previous': 'PREVIOUS',
+  'ie.actual': 'ACTUAL',
+  'ie.unavailable': 'UNAVAILABLE',
+  'ie.impactNote': 'Event impact = how strongly markets may move, not whether the result will be positive or negative.',
 };
 
 type Dict = typeof en;
@@ -133,6 +150,22 @@ const ja: Record<DictKey, string> = {
   'cp.navLoading': '基準価額を取得中…(投信総合ライブラリー)',
   'hp.held': '保有',
   'hp.heldCall': '保有判断',
+  'ie.title': '重要イベント',
+  'ie.viewAll': 'カレンダーを見る',
+  'ie.whyMatters': 'なぜ重要',
+  'ie.untilRelease': '発表まで',
+  'ie.nextReview': '次の確認',
+  'ie.nextReviewTmpl': '発表後、{assets} の反応を確認してから再評価。',
+  'ie.released': '発表済み',
+  'ie.impact.critical': '影響: 重大',
+  'ie.impact.high': '影響: 大',
+  'ie.impact.medium': '影響: 中',
+  'ie.impact.low': '影響: 小',
+  'ie.forecast': '予想',
+  'ie.previous': '前回',
+  'ie.actual': '結果',
+  'ie.unavailable': '取得不可',
+  'ie.impactNote': 'イベントの「影響」は市場がどれだけ動きうるかを示すもので、結果が良い/悪いを示すものではありません。',
 };
 
 export const DICT: Record<Locale, Dict> = { en, ja };

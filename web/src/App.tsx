@@ -79,8 +79,17 @@ const App: React.FC = () => {
       daysAway: next.daysUntil,
       impact: 'high' as const,
       onClick: () => {
+        // Navigation only (v10.138): jump to the single Important Events source on
+        // Today and focus it — no second countdown/explanation lives in the chip.
         exitReview();
-        setRoute('regime');   // the event calendar now lives on Market Context
+        setRoute('command');
+        setTimeout(() => {
+          const el = document.getElementById('important-events');
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            el.querySelector('details')?.setAttribute('open', '');
+          }
+        }, 140);
       },
     };
     // exitReview is stable in practice (defined per render but only mutates state)
