@@ -1,0 +1,9 @@
+/* FX / MACRO (v10.145) */
+.fxm { margin-top: 14px; }
+.fxm-head { padding: 0 2px; margin-bottom: 7px; }
+.fxm-title { font-size: 12px; font-weight: 800; letter-spacing: 0.07em; color: var(--text-sub); }
+.fxm-grid { display: flex; gap: 18px; flex-wrap: wrap; padding: 12px 14px; }
+.fxm-cell { display: flex; align-items: baseline; gap: 8px; }
+.fxm-k { font-size: 12px; color: var(--text-sub); }
+.fxm-v { font-size: 15px; font-weight: 800; color: var(--text-main); font-variant-numeric: tabular-nums; }
+.fxm-chg { font-size: 12px; font-variant-numeric: tabular-nums; }

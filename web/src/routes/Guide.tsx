@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.145.0', '小出しだった「残り」を一括完走 — ①ペニー株ノイズ除去: US全市場moverの価格下限を$1→$10、さらに+60%超(ほぼpump/値幅artifact)を除外②OWNER CRITICAL: 保有銘柄がEXIT/DEFENDの時だけ最上部に小バナー(保有の緊急が埋もれない)③FX/MACROセクションを追加(USDJPY/US10Y/VIX・VIX上昇は逆相関で赤)④テキスト削減: 原因スタックの見出しを「原因の詳細」に簡素化(英語重複を排除)。※US個別ニュース見出し(Finnhub)は前版v10.144で実装済み。残るのは構造的にデータ取得不可のもの(予想/結果/市場反応の有料フィード・蓄積待ちの結果スコアリング)のみ'],
   ['v10.144.0', 'Pagesデプロイ失敗の修正 + イベント行レイアウト + US個別ニュース拡張 — ①GitHub Pagesのdeployがたまに10分タイムアウトで失敗していた(連続pushがキューに滞留)→ concurrencyを「最新で上書き(cancel-in-progress)」+ タイムアウト短縮で解消②重要イベント行の「影響: 重大」が狭幅で改行ずれ→2段グリッド(上=日付、下=銘柄コード左+影響右揃え)で整列③銘柄カードの関連ニュースに US の Finnhub company-news 見出しを追加(媒体ニュース=因果未確認UNCONFIRMEDとして正直表示・原文言語+出所付き)。JPはTDnet/開示が引き続き源泉'],
   ['v10.143.0', 'US全市場moverの鮮度バグを修正(深夜に古い暴騰が届く問題) — 出所はAlpha Vantage無料枠のTOP_GAINERS_LOSERSで、①これまでイベント時刻を記録した瞬間(now)にしていてデータの実時刻を捨てていた→AVの last_updated を時刻に採用②AVのデータ自体が古い(前セッションのスナップショット)場合は記録のみで通知抑止(古い動きを「今」のアラートとして出さない・既定2hより古ければstale)③通知本文に「データ時刻」を明記。これで「昨日の急騰が深夜1時に届く」現象を止める。テスト+2。※AV無料枠はintradayリアルタイム保証が無く前日終値ベースのことがある(構造的制約)'],
   ['v10.142.0', '関連ニュースを銘柄カード内に分類表示 + 下部ニュースを「NEWS」に改名 — ①cause-attribution(原因スタック)に分類済みニュースを追加: 公式かつ時刻整合=CONFIRMED / 関連の可能性=LIKELY_RELATED / 背景=BACKGROUND / 因果不明=UNCONFIRMED(価格の赤緑とは別表示・原因の断定はしない・argus_attribution.classify_newsで時刻整合判定)。TDnet(JP適時開示)・開示filingを源泉に、銘柄の展開カード内(原因スタック)へ表示②それ以外の一般ニュースは下部に集約し、タイトルを「UNLINKED NEWS」→「NEWS」に。テスト+1'],

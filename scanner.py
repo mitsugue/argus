@@ -3676,8 +3676,9 @@ _AV_MOVERS_URL     = "https://www.alphavantage.co/query"
 _AV_MOVERS_CACHE   = {"data": None, "expires": 0.0}
 _AV_MOVERS_TTL     = 14 * 60  # scan refreshes every ~15 min during the US session;
                               # only the scan fetches, sized to ~24/25 free calls/day.
-_MARKET_MOVER_MIN_PRICE = float(os.environ.get("MARKET_MOVER_MIN_PRICE") or 1.0)
+_MARKET_MOVER_MIN_PRICE = float(os.environ.get("MARKET_MOVER_MIN_PRICE") or 10.0)  # $1→$10 (v10.145): drop micro-cap penny pumps the owner doesn't trade
 _MARKET_MOVER_PCT       = float(os.environ.get("MARKET_MOVER_PCT") or 12.0)
+_MARKET_MOVER_MAX_PCT   = float(os.environ.get("MARKET_MOVER_MAX_PCT") or 60.0)  # > this = almost certainly a pump/halt artifact, not a tradable signal
 _MARKET_MOVER_NOTIFY_MAX = int(os.environ.get("MARKET_MOVER_NOTIFY_MAX") or 5)
 # Freshness gate (v10.143): the AV free TOP_GAINERS_LOSERS can return a PRIOR
 # session's snapshot. If its own last_updated is older than this, we record it but
@@ -3770,7 +3771,8 @@ def _scan_market_movers():
     av_epoch = mv.get("asOfEpoch")
     ev_time = datetime.fromtimestamp(av_epoch, pytz.utc) if av_epoch else datetime.now(pytz.utc)
     stale = av_epoch is None or (time.time() - av_epoch) > _MOVER_FRESH_SEC
-    rows = (mv.get("gainers") or []) + (mv.get("losers") or [])
+    rows = [r for r in ((mv.get("gainers") or []) + (mv.get("losers") or []))
+            if abs(r.get("changePct") or 0) <= _MARKET_MOVER_MAX_PCT]   # drop pump/halt artifacts
     rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
     n = 0
     for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:

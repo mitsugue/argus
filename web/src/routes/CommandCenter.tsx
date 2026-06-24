@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
+import { FxMacroSection } from '../components/dashboard/FxMacroSection';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { useEventsActive } from '../hooks/useEventsActive';
 import { useImportantEvents } from '../hooks/useImportantEvents';
@@ -91,6 +92,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     });
   }, [assets, al.data, downside, events247, impEvents, aiJ.data]);
 
+  // OWNER CRITICAL (spec): a held asset on the most defensive signals (EXIT/DEFEND)
+  // gets a small top banner so a held emergency is never buried below the fold.
+  const ownerCritical = useMemo(() =>
+    [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]
+      .filter((c) => c.held && (c.signalCode === 'EXIT' || c.signalCode === 'DEFEND')),
+    [cardGroups]);
+
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
     () => deriveTodayJudgment(al.data, regime.data, ev.data, Date.now()),
@@ -159,9 +167,22 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     >
       <MarketSessionLamps />
 
+      {/* OWNER CRITICAL — a held position on EXIT/DEFEND is surfaced at the very top
+          (small), so a held emergency is never missed below the fold (v10.145). */}
+      {ownerCritical.length > 0 && (
+        <div className="owner-critical" role="alert">
+          <span className="owner-critical__tag">OWNER CRITICAL</span>
+          <span className="owner-critical__items">
+            {ownerCritical.map((c) => (
+              <span key={c.id} className="owner-critical__item">{c.symbol} {c.name} · {c.signalCode === 'EXIT' ? '撤退判断' : '資金防衛'}</span>
+            ))}
+          </span>
+        </div>
+      )}
+
       {/* Top page = the main hub (v10.140). Order: PRIMARY COMMAND (+ IMPORTANT
           EVENTS as its lower block) → per-stock category cards (JP first, watchlist
-          before emerging) → unlinked news → history. ONE unified card per stock. */}
+          before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} onNavigate={onNavigate} />
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
@@ -170,7 +191,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <AssetCategorySection title="US · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.usEmerging} emptyJa="急浮上中の米国株はありません" />
       <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" />
 
-      {/* UNLINKED NEWS — general news not tied to a tracked stock. */}
+      {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
+      <FxMacroSection />
+
+      {/* NEWS — general news not tied to a tracked stock. */}
       <MarketNewsCard />
 
       <section>

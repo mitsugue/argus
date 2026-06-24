@@ -36,7 +36,7 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
   return (
     <section className="csc-card">
       <header className="csc-head">
-        <h2>原因スタック <span className="csc-en">cause attribution</span></h2>
+        <h2>原因の詳細</h2>
         <span className="csc-sym">{data.symbol}{typeof data.changePct === 'number' ? ` ${data.changePct.toFixed(1)}%` : ''}</span>
       </header>
 
