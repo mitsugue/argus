@@ -26,7 +26,10 @@ export interface CauseStack {
   };
   dataLimitations: string[];
   noteJa: string;
+  news?: { time?: string | null; titleJa: string; source?: string; cls: NewsClass; sentiment?: string | null }[];
 }
+
+export type NewsClass = 'CONFIRMED' | 'LIKELY_RELATED' | 'BACKGROUND' | 'UNCONFIRMED';
 
 interface State { data: CauseStack | null; loading: boolean; }
 

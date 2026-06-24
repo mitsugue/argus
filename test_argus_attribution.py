@@ -166,3 +166,16 @@ def test_report_stale_is_background_not_trigger():
 def test_no_order_surface():
     for bad in ("place_order", "execute", "submit_order", "buy", "sell", "broker"):
         assert not hasattr(A, bad)
+
+
+def test_classify_news_buckets():
+    import argus_attribution as A
+    move = "2026-06-25T05:00:00Z"
+    # non-official → UNCONFIRMED
+    assert A.classify_news({"official": False}, move) == "UNCONFIRMED"
+    # official, published right at the move, reliable → CONFIRMED (trigger)
+    assert A.classify_news({"official": True, "publishedAt": "2026-06-25T05:00:00Z", "sourceReliability": 0.7}, move) == "CONFIRMED"
+    # official, published AFTER the move → LIKELY_RELATED (amplifier)
+    assert A.classify_news({"official": True, "publishedAt": "2026-06-25T06:00:00Z", "sourceReliability": 0.7}, move) == "LIKELY_RELATED"
+    # official but stale (days before) w/o recirculation → BACKGROUND
+    assert A.classify_news({"official": True, "publishedAt": "2026-06-20T00:00:00Z", "sourceReliability": 0.7}, move) == "BACKGROUND"

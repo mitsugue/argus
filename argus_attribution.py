@@ -84,6 +84,24 @@ def causal_role(ev: Dict[str, Any], move_started_at: Optional[str]) -> Dict[str,
                  "時間整合または信頼度が中程度。引き金とは断定しない。")
 
 
+def classify_news(item: Dict[str, Any], move_started_at: Optional[str]) -> str:
+    """4-bucket relation of a news/disclosure item to the move (v10.142), for the
+    stock card. NEVER asserts the news caused the move — only its relation:
+      CONFIRMED      official source AND time-consistent with the move,
+      LIKELY_RELATED official, relevant, timing imperfect (after / amplifier),
+      BACKGROUND     official but stale / background context,
+      UNCONFIRMED    non-official source / causal link unclear.
+    """
+    if not item.get("official"):
+        return "UNCONFIRMED"
+    role = causal_role(item, move_started_at).get("role")
+    if role == "trigger":
+        return "CONFIRMED"
+    if role == "amplifier":
+        return "LIKELY_RELATED"
+    return "BACKGROUND"
+
+
 def _align(pub: Optional[float], move: Optional[float]) -> float:
     """1.0 when published right at the move; decays over ~24h; 0 if after/unknown."""
     if pub is None or move is None or pub > move:

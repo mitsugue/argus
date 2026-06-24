@@ -6910,6 +6910,7 @@ def get_cause_attribution(symbol, market="JP"):
 
     # evidence from catalysts (earnings + filings) and TDnet (JP disclosures)
     evidence = []
+    news = []   # classified, displayable news/disclosures for the stock card (v10.142)
     days_to_earn = None
     try:
         for it in (get_catalysts_snapshot().get("items") or []):
@@ -6926,15 +6927,25 @@ def get_cause_attribution(symbol, market="JP"):
                 evidence.append({"id": f"filing:{f.get('form')}", "kind": "filing",
                                  "publishedAt": f.get("filingDate"), "sourceReliability": 0.6,
                                  "supports": ["COMPANY_SPECIFIC_CATALYST"]})
+                news.append({"time": f.get("filingDate"), "titleJa": f"開示: {f.get('form')}",
+                             "source": "SEC/EDGAR",
+                             "cls": argus_attribution.classify_news(
+                                 {"publishedAt": f.get("filingDate"), "sourceReliability": 0.6, "official": True}, move_started)})
     except Exception:
         pass
     if market == "JP":
         try:
             for d in (get_tdnet_recent().get("bySymbol") or {}).get(symu[:4], [])[:3]:
+                neg = d.get("sentiment") == "negative"
                 evidence.append({"id": f"tdnet:{d.get('category')}", "kind": "report",
                                  "publishedAt": d.get("time"), "sourceReliability": 0.7,
                                  "sameDayRecirculation": True,
-                                 "supports": ["COMPANY_SPECIFIC_CATALYST"] if d.get("sentiment") == "negative" else []})
+                                 "supports": ["COMPANY_SPECIFIC_CATALYST"] if neg else []})
+                news.append({"time": d.get("time"), "titleJa": d.get("title") or d.get("category") or "適時開示",
+                             "source": "TDnet", "sentiment": d.get("sentiment"),
+                             "cls": argus_attribution.classify_news(
+                                 {"publishedAt": d.get("time"), "sourceReliability": 0.7,
+                                  "sameDayRecirculation": True, "official": True}, move_started)})
         except Exception:
             pass
 
@@ -6969,6 +6980,7 @@ def get_cause_attribution(symbol, market="JP"):
     stack["changePct"] = chg
     stack["asOf"] = _ai_now_iso()
     stack["positioningSources"] = argus_attribution.POSITIONING_SOURCES
+    stack["news"] = news
     return stack
 
 

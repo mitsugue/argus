@@ -23,6 +23,9 @@ const POS_JA: Record<string, string> = {
   newLongAccumulation: '新規ロング', longLiquidation: 'ロング解消', newShortBuildup: '新規空売り',
   shortCovering: '買い戻し', distribution: '大口売り', retailNoise: '個人ノイズ', unknown: '不明',
 };
+const NEWS_CLS_JA: Record<string, string> = {
+  CONFIRMED: '確定(公式・時刻整合)', LIKELY_RELATED: '関連の可能性', BACKGROUND: '背景', UNCONFIRMED: '因果不明',
+};
 
 export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ symbol, market = 'JP' }) => {
   const { data } = useCauseAttribution(symbol, market);
@@ -69,6 +72,18 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
       <p className="csc-next"><b>何が変われば結論が変わるか:</b> {data.preEvent?.nextEvidenceRequired}</p>
       {data.dataLimitations?.length > 0 && (
         <p className="csc-limits">データ制約: {data.dataLimitations.join(' / ')}</p>
+      )}
+      {data.news && data.news.length > 0 && (
+        <div className="csc-news">
+          <div className="csc-news-h">NEWS<span className="csc-dim"> · 関連ニュース</span></div>
+          {data.news.slice(0, 5).map((n, i) => (
+            <div className="csc-news-row" key={i}>
+              <span className={`csc-news-cls csc-news-cls--${n.cls}`}>{NEWS_CLS_JA[n.cls] ?? n.cls}</span>
+              <span className="csc-news-title">{n.titleJa}</span>
+              <span className="csc-news-meta">{[n.source, n.time].filter(Boolean).join(' · ')}</span>
+            </div>
+          ))}
+        </div>
       )}
       <p className="csc-foot">決定支援のみ・原因の断定や機関名の名指しはしません。</p>
     </section>
