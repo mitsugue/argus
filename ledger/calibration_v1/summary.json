@@ -1,0 +1,13 @@
+{
+  "scorerVersion": "ledger-v4-scorer-1",
+  "cohorts": {},
+  "epochId": "calibration_v1",
+  "status": "dry_run",
+  "updated": "2026-06-24",
+  "recorded": 12,
+  "scored": 0,
+  "held": 0,
+  "totalRows": 12,
+  "tradingDays": 1,
+  "noteJa": "v4のparallel dry-run(本番ヘッドラインではない)。v3とは別ディレクトリ。市場別クロックでJPを採点、US/cryptoは正しい時刻のジョブ実装まで保留。"
+}

@@ -1,0 +1,102 @@
+{
+ "date": "2026-06-24",
+ "asOf": "2026-06-24T10:27:59Z",
+ "globalRegime": "EVENT_WAIT",
+ "jpIntradayOverlay": "CAUTION",
+ "holderRiskOverlay": "NONE",
+ "activeCount": 3,
+ "incidents": [
+  {
+   "symbol": "6584",
+   "market": "JP",
+   "assetName": "三櫻工業",
+   "changePct": -9.17,
+   "incidentType": "STOCK_SPECIFIC_BAD_NEWS",
+   "severity": "critical",
+   "actionOverride": "EXIT_WATCH",
+   "isHeld": false,
+   "ownerState": "watch",
+   "causeBuckets": [
+    {
+     "cause": "STOCK_SPECIFIC_BAD_NEWS",
+     "evidenceIds": [],
+     "probability": 0.42
+    },
+    {
+     "cause": "CAUSE_UNKNOWN_DOWNSIDE",
+     "evidenceIds": [],
+     "probability": 0.33
+    },
+    {
+     "cause": "FLOW_DISTRIBUTION",
+     "evidenceIds": [],
+     "probability": 0.25
+    }
+   ],
+   "reasonJa": "三櫻工業が-9.2%。個別の材料(悪材料の可能性・要確認)(次点: 原因未確認の下落)の可能性。 直近に個別材料(決算発表直後)があり下落と整合(内容は要確認・悪材料と断定はしない)。"
+  },
+  {
+   "symbol": "TSLA",
+   "market": "US",
+   "assetName": "TSLA",
+   "changePct": -5.79,
+   "incidentType": "STOCK_SPECIFIC_BAD_NEWS",
+   "severity": "critical",
+   "actionOverride": "EXIT_WATCH",
+   "isHeld": false,
+   "ownerState": "watch",
+   "causeBuckets": [
+    {
+     "cause": "STOCK_SPECIFIC_BAD_NEWS",
+     "evidenceIds": [],
+     "probability": 0.48
+    },
+    {
+     "cause": "FLOW_DISTRIBUTION",
+     "evidenceIds": [],
+     "probability": 0.3
+    },
+    {
+     "cause": "CAUSE_UNKNOWN_DOWNSIDE",
+     "evidenceIds": [],
+     "probability": 0.22
+    }
+   ],
+   "reasonJa": "TSLAが-5.8%。個別の材料(悪材料の可能性・要確認)(次点: 大口の売り(ディストリビューション)疑い)の可能性。 直近に個別材料(関連ニュース)があり下落と整合(内容は要確認・悪材料と断定はしない)。"
+  },
+  {
+   "symbol": "NVDA",
+   "market": "US",
+   "assetName": "NVDA",
+   "changePct": -4.13,
+   "incidentType": "STOCK_SPECIFIC_BAD_NEWS",
+   "severity": "medium",
+   "actionOverride": "REVIEW_REQUIRED",
+   "isHeld": false,
+   "ownerState": "watch",
+   "causeBuckets": [
+    {
+     "cause": "STOCK_SPECIFIC_BAD_NEWS",
+     "evidenceIds": [],
+     "probability": 0.39
+    },
+    {
+     "cause": "SECTOR_SELL_OFF",
+     "evidenceIds": [],
+     "probability": 0.26
+    },
+    {
+     "cause": "FLOW_DISTRIBUTION",
+     "evidenceIds": [],
+     "probability": 0.23
+    },
+    {
+     "cause": "CAUSE_UNKNOWN_DOWNSIDE",
+     "evidenceIds": [],
+     "probability": 0.12
+    }
+   ],
+   "reasonJa": "NVDAが-4.1%。個別の材料(悪材料の可能性・要確認)(次点: セクター全体の下げ)の可能性。 直近に個別材料(関連ニュース)があり下落と整合(内容は要確認・悪材料と断定はしない)。"
+  }
+ ]
+}
