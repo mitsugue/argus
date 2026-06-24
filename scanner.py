@@ -2163,8 +2163,8 @@ def _classify_risk_volatility(vix_level):
 _RATES_CACHE     = {"data": None, "expires": 0.0}
 _RATES_CACHE_TTL = 600  # seconds (10 min)
 
-def get_rates_snapshot():
-    """Combined snapshot of the four watched series + derived signals."""
+def _rates_snapshot_base():
+    """Combined snapshot of the four watched series + derived signals (FRED daily)."""
     now = time.time()
     if _RATES_CACHE["data"] is not None and now < _RATES_CACHE["expires"]:
         return _RATES_CACHE["data"]
@@ -2204,6 +2204,51 @@ def get_rates_snapshot():
         _RATES_CACHE["data"]    = snapshot
         _RATES_CACHE["expires"] = now + _RATES_CACHE_TTL
     return snapshot
+
+
+_TD_FX_CACHE = {"data": None, "expires": 0.0}
+_TD_FX_TTL = 300   # 5 min — realtime enough for USD/JPY without burning TD credits
+
+
+def _td_usdjpy_realtime():
+    """Realtime USD/JPY via Twelve Data /quote (forex). 5-min cache, best-effort —
+    returns None on any failure so the FRED daily value remains the fallback. This
+    fixes the week-stale FRED DEXJPUS value that didn't match a broker's live rate."""
+    now = time.time()
+    if _TD_FX_CACHE["data"] is not None and now < _TD_FX_CACHE["expires"]:
+        return _TD_FX_CACHE["data"]
+    out = None
+    if _TWELVEDATA_API_KEY:
+        try:
+            r = requests.get(_TWELVEDATA_QUOTE,
+                             params={"symbol": "USD/JPY", "apikey": _TWELVEDATA_API_KEY}, timeout=8)
+            q = r.json() if r.status_code == 200 else {}
+            if isinstance(q, dict) and str(q.get("status", "")).lower() != "error" and q.get("close") is not None:
+                close = float(q["close"])
+                chg = float(q["change"]) if q.get("change") is not None else 0.0
+                dt = q.get("datetime")
+                out = {"label": "USD/JPY", "latestValue": round(close, 2),
+                       "previousValue": round(close - chg, 2), "change": round(chg, 2),
+                       "changeBp": round(chg * 100, 1), "latestDate": (str(dt)[:10] if dt else None),
+                       "seriesId": "USD/JPY", "source": "twelvedata-rt", "status": "live"}
+        except Exception:
+            out = None
+    if out is not None:
+        _TD_FX_CACHE["data"] = out
+        _TD_FX_CACHE["expires"] = now + _TD_FX_TTL
+    return out
+
+
+def get_rates_snapshot():
+    """Rates snapshot with a REALTIME USD/JPY overlay (Twelve Data) on top of the
+    FRED-daily base. Applied on every call (not frozen into the rates cache) so the
+    FX rate tracks a broker's live quote; 10Y/VIX stay FRED-daily (labelled as such)."""
+    snap = _rates_snapshot_base()
+    fx = _td_usdjpy_realtime()
+    if fx:
+        snap = {**snap, "usdJpy": fx}
+    return snap
+
 
 @app.route("/api/argus/rates")
 def api_argus_rates():
@@ -4412,6 +4457,28 @@ _INTEL_FETCH_MAX_BYTES = 1_500_000
 _INTEL_STORE_FILE = "/tmp/argus_intel_store.json"   # §27 persistence (survives restarts)
 
 
+def _intel_translate_titles(cap=40):
+    """Attach a Japanese title (titleJa) to institutional items so the C.A.O.S. UI
+    shows translated headlines. Runs ONLY at collection time (admin/cron) so the
+    public GET never triggers a model call. JP-language items keep their own title;
+    English ones are translated once (cheap Gemini flash) and never re-translated.
+    Bounded per run; best-effort (falls back to the English title)."""
+    pending_items, pending_titles = [], []
+    for it in _INTEL_STORE:
+        if not it.get("institutionId") or it.get("titleJa"):
+            continue
+        if it.get("language") == "ja":
+            it["titleJa"] = it.get("title")
+            continue
+        if len(pending_titles) < cap:
+            pending_items.append(it)
+            pending_titles.append(it.get("title", ""))
+    if pending_titles:
+        tr = _translate_headlines_ja(pending_titles)
+        for i, it in enumerate(pending_items):
+            it["titleJa"] = tr.get(i) or it.get("title")
+
+
 def _intel_persist():
     """Atomically persist the intel store (metadata only — rights already enforced,
     no full text) so a process restart doesn't drop to WARMING. Best-effort."""
@@ -4584,6 +4651,7 @@ def collect_institutional_intel():
         per_feed.append({"feed": label, "source": sid, "fetched": len(rows),
                          "new": new, "ok": bool(txt) and len(rows) > 0})
     del _INTEL_STORE[_INTEL_STORE_MAX:]
+    _intel_translate_titles()                          # attach titleJa (cron-time only)
     _INTEL_LAST.update({"ts": time.time(), "collected": total_new,
                         "perSource": per_source, "perFeed": per_feed})
     _intel_persist()                                   # §27 survive restarts
@@ -4660,7 +4728,8 @@ def api_argus_event_intel(symbol):
         if symu not in (it.get("linkedAssets") or []):
             continue
         link = argus_research_mesh.link_to_event(it, {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move})
-        out.append({"title": it["title"], "institutionId": it.get("institutionId"),
+        out.append({"title": it["title"], "titleJa": it.get("titleJa"),
+                    "institutionId": it.get("institutionId"),
                     "publishedAt": it.get("publishedAt"), "accessClass": it["accessClass"],
                     "canonicalUrl": it.get("canonicalUrl"), "stance": it.get("stance"),
                     "relation": link["causalRole"], "relationLabelJa": link["relationLabelJa"],

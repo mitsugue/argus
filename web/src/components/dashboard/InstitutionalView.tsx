@@ -5,7 +5,7 @@ import React from 'react';
 // article opens at the source. Relation to the move is labelled, not asserted.
 
 interface IntelItem {
-  title: string; institutionId?: string | null; publishedAt?: string | null;
+  title: string; titleJa?: string | null; institutionId?: string | null; publishedAt?: string | null;
   accessClass: string; canonicalUrl?: string | null; stance?: string;
   relation: string; relationLabelJa: string; isNamedView: boolean; notConfirmed: string[];
 }
@@ -41,7 +41,7 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
             <span className="iv-inst">{it.institutionId ? (INST_NAME[it.institutionId] ?? it.institutionId) : '—'}</span>
             <span className="iv-rel" style={{ color: REL_TONE[it.relation] ?? 'var(--text-muted)' }}>{it.relationLabelJa}</span>
           </div>
-          <a className="iv-title" href={it.canonicalUrl || '#'} target="_blank" rel="noopener noreferrer">{it.title}</a>
+          <a className="iv-title" href={it.canonicalUrl || '#'} target="_blank" rel="noopener noreferrer">{it.titleJa || it.title}</a>
           {it.isNamedView && it.notConfirmed.length > 0 && (
             <div className="iv-nc">未確認: {it.notConfirmed.join(' / ')}</div>
           )}

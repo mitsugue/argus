@@ -29,7 +29,10 @@ export const MarketNewsCard: React.FC = () => {
             ニュースは Finnhub の無料APIキーが必要です(Render に <code>FINNHUB_API_KEY</code>)。
           </p>
         ) : items.length === 0 ? (
-          <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>{loading ? 'ニュース取得中…' : '直近のニュースはありません。'}</p>
+          // "no news" ONLY when a live fetch genuinely returned 0; while loading or
+          // the cache is still warming (status not yet 'live'), show Loading — never
+          // imply there is no news when we simply haven't finished fetching.
+          <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>{loading || data?.status !== 'live' ? 'Loading…' : '直近のニュースはありません。'}</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
             {items.map((it, i) => (

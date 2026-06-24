@@ -19,6 +19,7 @@ import { useActionLabels } from '../hooks/useActionLabels';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
 import { useAssets } from '../hooks/useAssets';
+import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import {
   deriveTodayJudgment, combinePhase,
   type TodayPhase,
@@ -67,6 +68,22 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
   const usSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
   const al = useActionLabels({ jp: jpSyms, us: usSyms });
+  // Crypto has no Action Label; pull its live quote separately so the top-screen
+  // crypto cards show the day-change like JP/US (was always "—" before).
+  const cryptoAssets = useMemo(() => assets.filter((a) => a.market === 'CRYPTO'), [assets]);
+  const cryptoIds = useMemo(
+    () => cryptoAssets.map((a) => (a.memo?.match(/coingecko:(\S+)/)?.[1])).filter(Boolean) as string[],
+    [cryptoAssets]);
+  const cw = useCryptoWatchlist(cryptoIds);
+  const cryptoQuotes = useMemo(() => {
+    const m: Record<string, { changePct?: number | null }> = {};
+    for (const a of cryptoAssets) {
+      const id = a.memo?.match(/coingecko:(\S+)/)?.[1];
+      const q = id ? cw.byId?.[id] : undefined;
+      if (q) m[a.symbol.toUpperCase()] = { changePct: q.changePct ?? null };
+    }
+    return m;
+  }, [cryptoAssets, cw.byId]);
   const regime = useMarketRegime();
   const ev = useEventRadar();
   const { data: downside } = useDownsideIncidents();
@@ -89,9 +106,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       : aiJ.data ? 'unavailable' : 'rule_only';
     return groupAssetCards({
       assets, labels: al.data?.labels ?? [], incidents: downside?.incidents ?? [],
-      events: events247 ?? [], linked, aiFreshness,
+      events: events247 ?? [], linked, aiFreshness, cryptoQuotes,
     });
-  }, [assets, al.data, downside, events247, impEvents, aiJ.data]);
+  }, [assets, al.data, downside, events247, impEvents, aiJ.data, cryptoQuotes]);
 
   // OWNER CRITICAL (spec): a held asset on the most defensive signals (EXIT/DEFEND)
   // gets a small top banner so a held emergency is never buried below the fold.

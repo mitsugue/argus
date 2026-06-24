@@ -16,14 +16,27 @@ export const FxMacroSection: React.FC = () => {
     { id: 'vix', label: 'VIX', pt: data.vix, unit: '' },
   ].filter((r) => r.pt);
 
+  // Honesty: most of this is FRED daily (lagged ~1-7 days), NOT realtime like a
+  // broker quote. Show the as-of date + a 遅延 tag when stale so the number isn't
+  // mistaken for live. USD/JPY uses a realtime source (source==='twelvedata-rt')
+  // when available — then no 遅延 tag.
+  const todayJst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  const daysOld = (d?: string) => (d ? Math.round((Date.parse(todayJst) - Date.parse(d)) / 86400000) : 0);
+
   return (
     <section className="fxm">
-      <div className="fxm-head"><span className="fxm-title">FX / MACRO</span></div>
+      <div className="fxm-head">
+        <span className="fxm-title">FX / MACRO</span>
+        <span className="fxm-note">USD/JPYはリアルタイム、金利・VIXはFRED日次(数日遅延)</span>
+      </div>
       <div className="card fxm-grid">
         {rows.map((r) => {
           const v = r.pt!.latestValue;
           const prev = (r.pt as { previousValue?: number }).previousValue;
           const chg = typeof prev === 'number' && prev !== 0 ? ((v - prev) / Math.abs(prev)) * 100 : null;
+          const pt = r.pt as { latestDate?: string; source?: string };
+          const rt = pt.source === 'twelvedata-rt';
+          const old = daysOld(pt.latestDate);
           return (
             <div className="fxm-cell" key={r.id}>
               <span className="fxm-k">{r.label}</span>
@@ -33,6 +46,9 @@ export const FxMacroSection: React.FC = () => {
                   <SignedValue value={chg} suffix="%" arrow={false} />
                 </span>
               )}
+              <span className="fxm-asof">
+                {rt ? 'リアルタイム' : pt.latestDate ? `${pt.latestDate}${old >= 1 ? ` ·遅延${old}日` : ''}` : ''}
+              </span>
             </div>
           );
         })}

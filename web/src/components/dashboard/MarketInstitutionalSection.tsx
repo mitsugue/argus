@@ -7,7 +7,7 @@ import './MarketInstitutionalSection.css';
 // Renders nothing when there is no material institutional intelligence.
 
 interface IntelItem {
-  title: string; institutionId?: string | null; publishedAt?: string | null;
+  title: string; titleJa?: string | null; institutionId?: string | null; publishedAt?: string | null;
   canonicalUrl?: string | null; stance?: string; contentType?: string;
   linkedAssets?: string[]; linkedThemes?: string[]; sourceId?: string;
 }
@@ -53,7 +53,7 @@ export const MarketInstitutionalSection: React.FC = () => {
     <section className="mis">
       <div className="mis-head">
         <span className="mis-title">C.A.O.S.</span>
-        <span className="mis-sub">Corroborated Analyst &amp; Official Signals · 機関の見解(建玉ではない)</span>
+        <span className="mis-sub">Corroborated Analyst &amp; Official Signals</span>
       </div>
       {material.map((it, i) => (
         <div className="mis-row" key={i}>
@@ -69,7 +69,7 @@ export const MarketInstitutionalSection: React.FC = () => {
             ))}
           </div>
           <a className="mis-headline" href={it.canonicalUrl || '#'} target="_blank" rel="noopener noreferrer">
-            {it.title}
+            {it.titleJa || it.title}
           </a>
           <div className="mis-meta">{it.publishedAt || ''} · 公開メタデータ</div>
         </div>

@@ -32,7 +32,7 @@ jobs:
           echo "active=$N"
           echo "ACTIVE=$N" >> "$GITHUB_ENV"
 
-      - name: Checkout ledger branch
+      - name: Checkout repo
         if: env.ACTIVE != '0'
         uses: actions/checkout@v5
         with:
@@ -40,9 +40,27 @@ jobs:
       - name: Commit snapshot to ledger branch (only when events are active)
         if: env.ACTIVE != '0'
         run: |
-          git fetch origin ledger:ledger 2>/dev/null && git checkout ledger || git checkout --orphan ledger
-          git rm -rq --cached . 2>/dev/null || true
-          find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          # SAFETY (v10.152): mirror prediction-ledger's safe switch. The OLD
+          # `git rm -rq --cached . && git add ledger/events/` pattern silently
+          # DELETED every other writer's files (prediction-ledger's days/scores/
+          # summary.json) from each commit — that is why self-scoring showed
+          # "採点データはありません": the accuracy summary was wiped on the next
+          # event snapshot. Now: check out the REAL ledger branch with full
+          # history (all files preserved), append events, and stage ONLY
+          # ledger/events/ (the rest stays in the index from the checkout).
+          # Orphan-create ONLY when origin/ledger genuinely does not exist.
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger     # full history, ALL files
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          fi
           mkdir -p ledger/events/log
           cp "$RUNNER_TEMP/snap.json" ledger/events/snapshot.json
           DAY=$(TZ=Asia/Tokyo date +%F)
