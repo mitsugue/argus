@@ -239,6 +239,21 @@ def v_tdnet_recent():
             return False, f"bad sentiment {it.get('sentiment')}"
     return True, f"status={d.get('status')} count={d.get('count')}"
 
+def v_cause_attribution():
+    c, d = _get("/api/argus/cause-attribution?symbol=285A&market=JP")
+    if d.get("schemaVersion") != "cause-attribution-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    probs = d.get("causeProbabilities") or {}
+    if probs and round(sum(probs.values()), 2) != 1.0:
+        return False, f"probs sum={round(sum(probs.values()),2)}"
+    if "UNKNOWN" not in probs:
+        return False, "UNKNOWN missing (must stay a valid outcome)"
+    # short-volume semantics must be present + correct (the Micron-class error)
+    sv = (d.get("positioningSources") or {}).get("finra_daily_short_volume") or {}
+    if sv.get("isPositionData") is not False or sv.get("identityAvailable") is not False:
+        return False, "short-volume semantics wrong"
+    return True, f"unknownShare={d.get('unknownShare')} trigger={bool(d.get('immediateTrigger'))}"
+
 def v_runtime_manifest():
     c, d = _get("/api/argus/runtime-manifest")
     if d.get("engineVersion") != "runtime-manifest-v1":
@@ -320,6 +335,7 @@ CHECKS = [
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
     ("decision-value summary", v_decision_value_summary),
     ("no order routes (safety)", v_no_order_routes),
+    ("cause-attribution (integrity)", v_cause_attribution),
     ("runtime-manifest", v_runtime_manifest),
     ("downside-incidents (cause+override)", v_downside_incidents),
     ("tdnet-recent (適時開示)", v_tdnet_recent),

@@ -29,6 +29,7 @@ import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (
 import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist sync validation (pure, v10.74)
 import argus_downside  # Downside Incident Response + cause attribution (pure, decision-support only, v10.98)
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
+import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -6723,6 +6724,102 @@ def get_downside_incidents():
 @app.route("/api/argus/downside-incidents")
 def api_argus_downside_incidents():
     return jsonify(get_downside_incidents())
+
+
+# ━━━ Cause Attribution Integrity (v10.116) ━━━
+# Distinguish immediate trigger / background vulnerability / amplifier /
+# propagation / unknown for a material move — with timestamp + source-semantics
+# integrity (no future-earnings-as-cause, no stale-report-as-trigger, no named
+# whale without a filing, short-volume ≠ short-interest). Reuses watchlists,
+# catalysts, TDnet, flow, and the contagion theme groups. Decision-support only.
+def get_cause_attribution(symbol, market="JP"):
+    symu = str(symbol).upper()
+    jp = get_japan_watchlist_snapshot()
+    us = get_us_watchlist_snapshot()
+    by = {str(s.get("symbol", "")).upper(): s for s in
+          ((jp.get("stocks") or []) + (us.get("stocks") or [])) if isinstance(s, dict)}
+    row = by.get(symu) or {}
+    chg = row.get("changePct")
+    flow = (row.get("flow") or {}).get("bigNetRatio")
+
+    # move reference: the JP session open today (so yesterday's filings read stale)
+    now_utc = datetime.now(pytz.utc)
+    move_started = now_utc.replace(hour=0, minute=5, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # evidence from catalysts (earnings + filings) and TDnet (JP disclosures)
+    evidence = []
+    days_to_earn = None
+    try:
+        for it in (get_catalysts_snapshot().get("items") or []):
+            if str(it.get("symbol", "")).upper() != symu:
+                continue
+            earn = it.get("earnings") or {}
+            du = earn.get("daysUntil")
+            if isinstance(du, (int, float)):
+                days_to_earn = du
+                if du > 0:
+                    evidence.append({"id": f"earn:{symu}", "kind": "earnings",
+                                     "isFutureEvent": True, "sourceReliability": 0.7, "supports": []})
+            for f in (it.get("filings") or [])[:3]:
+                evidence.append({"id": f"filing:{f.get('form')}", "kind": "filing",
+                                 "publishedAt": f.get("filingDate"), "sourceReliability": 0.6,
+                                 "supports": ["COMPANY_SPECIFIC_CATALYST"]})
+    except Exception:
+        pass
+    if market == "JP":
+        try:
+            for d in (get_tdnet_recent().get("bySymbol") or {}).get(symu[:4], [])[:3]:
+                evidence.append({"id": f"tdnet:{d.get('category')}", "kind": "report",
+                                 "publishedAt": d.get("time"), "sourceReliability": 0.7,
+                                 "sameDayRecirculation": True,
+                                 "supports": ["COMPANY_SPECIFIC_CATALYST"] if d.get("sentiment") == "negative" else []})
+        except Exception:
+            pass
+
+    # contagion peers from the theme groups (reuse _DOWNSIDE_THEMES)
+    peers = []
+    for members in _DOWNSIDE_THEMES.values():
+        if symu in members:
+            for m in members:
+                if m == symu:
+                    continue
+                r = by.get(m)
+                if r and isinstance(r.get("changePct"), (int, float)):
+                    peers.append({"changePct": r["changePct"], "theme": "ai_semis", "market": r.get("market", market)})
+    contagion = argus_attribution.classify_contagion(symu, peers)
+
+    positioning = argus_attribution.positioning_probabilities({
+        "flowRatio": flow, "changePct": chg, "volRatio": None,
+        "priorFlowRatio": None, "relativeWeakness": bool(peers and chg is not None and chg < 0)})
+
+    ctx = {
+        "moveStartedAt": move_started, "daysToEarnings": days_to_earn,
+        "earningsResultReleased": False, "priorRunupPct": None,
+        "peersDown": contagion.get("downFraction", 0) >= 0.5,
+        "shortWindowDownAccel": bool(chg is not None and chg <= -4),
+        "flowReversal": False, "contagion": contagion, "positioning": positioning,
+        "aiCapexConcern": symu in {"NVDA", "SMH", "285A", "5801", "5803", "MU"},
+        "isHeld": False,
+    }
+    stack = argus_attribution.attribute_cause(ctx, evidence, now_iso=move_started)
+    stack["symbol"] = symu
+    stack["market"] = market
+    stack["changePct"] = chg
+    stack["asOf"] = _ai_now_iso()
+    stack["positioningSources"] = argus_attribution.POSITIONING_SOURCES
+    return stack
+
+
+@app.route("/api/argus/cause-attribution")
+def api_argus_cause_attribution():
+    sym = (request.args.get("symbol") or "").strip()
+    if not sym:
+        return jsonify({"error": "symbol required"}), 400
+    mkt = (request.args.get("market") or "JP").upper()
+    try:
+        return jsonify(get_cause_attribution(sym, mkt))
+    except Exception as e:
+        return jsonify({"error": "attribution_failed", "message": str(e)[:120]}), 200
 
 
 # Incident Replay (v10.108): list the dates with a recorded downside snapshot
