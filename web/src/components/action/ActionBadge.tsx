@@ -1,5 +1,5 @@
 import React from 'react';
-import { actionDef } from '../../domain/actions';
+import { actionDef, actionLabelJa } from '../../domain/actions';
 import type { ActionKey, CoreActionKey } from '../../types/action';
 import './ActionBadge.css';
 
@@ -19,8 +19,8 @@ export const ActionPill: React.FC<PillProps> = ({ action, size = 'md' }) => {
   };
   const cls = size === 'md' ? 'action-pill' : `action-pill action-pill--${size}`;
   return (
-    <span className={cls} style={style} aria-label={def.longLabel}>
-      {def.label}
+    <span className={cls} style={style} aria-label={def.longLabel} title={def.longLabel}>
+      {actionLabelJa(def.key)}
     </span>
   );
 };
@@ -38,8 +38,8 @@ export const ActionHero: React.FC<HeroProps> = ({ action }) => {
     ['--abg-fg' as string]: `var(${def.cssVar})`,
   };
   return (
-    <span className="action-hero" style={style}>
-      {def.longLabel}
+    <span className="action-hero" style={style} title={def.longLabel}>
+      {actionLabelJa(def.key)}
     </span>
   );
 };

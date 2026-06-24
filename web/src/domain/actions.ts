@@ -136,3 +136,23 @@ export function actionDef(key: ActionKey | CoreActionKey): ActionDef {
     (CORE_ACTIONS as Record<string, ActionDef>)[key]
   );
 }
+
+// Japanese action labels (v10.113) — the user reads the call in Japanese on the
+// Top page and Watchlist. English keys stay as the internal structure.
+export const ACTION_LABEL_JA: Record<string, string> = {
+  EXIT: '撤退(売却)',
+  TRIM: '一部利確',
+  WAIT: '待機',
+  WAIT_FOR_PULLBACK: '押し目待ち',
+  BUY_DIP: '押し目買い',
+  ADD: '買い増し',
+  HOLD: '保持',
+  CONTINUE: '継続(積立)',
+  GRADUAL_ADD: '段階的に買い増し',
+  DEFER_LUMP_SUM: '一括投入は見送り',
+  NO_SELL_ACTION: '売却しない',
+};
+
+export function actionLabelJa(key: string): string {
+  return ACTION_LABEL_JA[key] ?? key;
+}

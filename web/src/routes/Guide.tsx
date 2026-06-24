@@ -68,6 +68,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.113.0', '重要な指示を日本語化 + 保有ポジションへの判断を追加 — ①Top/Watchlistのアクション表示(WAIT等)を日本語に(待機/保持/押し目買い/買い増し/一部利確/撤退…英語は内部キーとして保持)②数量を入力した保有銘柄に「保有判断」を表示: 含み損益(端末内計算・非送信)+シグナル+急落インシデントを合成して 損切り検討/一部縮小/要点検/一部利確/買い増し候補/ナンピン(慎重)/我慢(様子見)/保持(継続) を提示。決定支援のみ(〜検討/〜候補/慎重に)で命令や自動売買はしない'],
   ['v10.112.0', 'Hero「Global Regime」のUNKNOWN表示バグ修正 — ダウンサイド側が一瞬コールドキャッシュの時に globalRegime="UNKNOWN" が残り、Market Regimeは「Mixed」なのにGlobalだけ「UNKNOWN」と食い違っていた。UNKNOWN/空はレジームendpointのラベルにフォールバックするよう修正(Mixed等を表示)。PARTIAL自体はデータ源(Twelve Data/J-Quants)が一時取得不可な時の正直な表示で、日次リセット等で自動回復する'],
   ['v10.111.0', 'Watchlistにも投信の基準価額(NAV)を表示 — これまで投信の基準価額はCore Portfolioだけに出ており、Watchlistの投信行は金額が「—」だった。useFundNav(投信総合ライブラリー)をWatchlistの価格マップに接続し、各投信を銘柄名/シンボルでカタログ3本(国内株式/米国S&P500/全世界オルカン)のNAVに照合して ¥基準価額+前日比 を表示。投信はCORE/FUMD扱いで円表示に修正。実データで EMAXIS-ACWI ¥38,306 / EMAXIS-SP500 ¥44,536 表示を確認。NAVは前営業日基準・日次'],
   ['v10.110.0', 'メモリ最適化(Render 512MB上限超過の再発防止) — ダウンサイド系の再計算頻度を削減(サーバーキャッシュ60→180秒・フロントのポーリング60→120秒)。downside再計算はwatchlist+catalysts+TDnetを引くため、単一プロセス512MBではピークが上限に触れやすかった。3分の1の頻度に下げてピークを抑制。データ(台帳/予測/vault)はledgerブランチ保存で再起動の影響なし。再発する場合はRender Standard(2GB)へのアップグレードが必要(無料/Starterは共に512MB)'],

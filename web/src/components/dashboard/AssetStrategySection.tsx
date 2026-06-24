@@ -9,6 +9,8 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
 import { useFundNav } from '../../hooks/useFundNav';
+import { actionLabelJa } from '../../domain/actions';
+import { holderPosture } from '../../lib/holderPosture';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../../hooks/useCryptoWatchlist';
@@ -383,6 +385,8 @@ const SortableAssetRow: React.FC<{
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   const name = asset.displayNameJa || asset.displayName;
   const fresh = freshnessOf(strat);
+  const hp = holderPosture(asset, strat, incident);   // position-aware guidance (held only, v10.113)
+  const HP_COLOR: Record<string, string> = { red: '#F87171', amber: '#FBBF24', green: '#34D399', neutral: 'var(--text-sub)' };
   // Mock rows never show plausible-but-fake numbers — "—" instead.
   const priceShown = strat.status === 'mock' ? undefined : strat.price;
   const chgShown   = strat.status === 'mock' ? undefined : strat.changePct;
@@ -403,11 +407,16 @@ const SortableAssetRow: React.FC<{
           </span>
           <span className="asset-row__price">{fmtPrice(asset.market, priceShown)}</span>
           <span className={pctClass(chgShown)}>{fmtPct(chgShown)}</span>
-          <span className="asset-row__action" style={{ color: ACTION_COLOR[strat.action] ?? 'var(--text-sub)' }}>{strat.action}</span>
+          <span className="asset-row__action" style={{ color: ACTION_COLOR[strat.action] ?? 'var(--text-sub)' }} title={strat.action}>{actionLabelJa(strat.action)}</span>
           {incident && (
             <span className="asset-row__override"
               style={{ color: ['EXIT_WATCH', 'TRIM_WATCH'].includes(incident.actionOverride) ? '#F87171' : '#FBBF24' }}>
               ⚠ {incident.actionOverride}
+            </span>
+          )}
+          {hp && (
+            <span className="asset-row__holder" style={{ color: HP_COLOR[hp.tone] }} title="保有ポジションへの判断">
+              保有: {hp.labelJa}
             </span>
           )}
           <span className="asset-row__meta">
@@ -423,6 +432,17 @@ const SortableAssetRow: React.FC<{
 
       {expanded && (
         <div className="asset-row__detail">
+          {hp && (
+            <div className="asset-detail__holder" style={{ borderColor: HP_COLOR[hp.tone] }}>
+              <span className="asset-detail__holder-label" style={{ color: HP_COLOR[hp.tone] }}>保有判断: {hp.labelJa}</span>
+              {hp.plPct != null && (
+                <span className="asset-detail__holder-pl" style={{ color: hp.plPct >= 0 ? '#34D399' : '#F87171' }}>
+                  {hp.plPct >= 0 ? '+' : '−'}{Math.abs(hp.plPct).toFixed(1)}%
+                </span>
+              )}
+              <p className="asset-detail__holder-reason">{hp.reasonJa}</p>
+            </div>
+          )}
           {incident && (
             <div className="asset-detail__downside">
               <div className="asset-detail__downside-head">
