@@ -2957,6 +2957,16 @@ def _us_market_open(now_et=None):
     hm = n.hour * 60 + n.minute
     return 9 * 60 + 30 <= hm <= 16 * 60
 
+def _mover_push_allowed(market):
+    """Whether a whole-market MARKET_MOVER for `market` is worth pushing right now.
+    Only while that market is actually trading — the JP full-market feed is EOD-only,
+    so a post-close push is stale noise (v10.133). Crypto/unknown = 24h → always."""
+    if market == "JP":
+        return _jp_market_open()
+    if market == "US":
+        return _us_market_open()
+    return True
+
 def _event_ntfy(env):
     """Push an event to the user's phone (ntfy). Topic from env only — never in
     code/logs. Title ASCII (header limit); Japanese reason in the UTF-8 body."""
@@ -3058,6 +3068,12 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
         _EVENT_STATE["lastEventAt"] = env["ingestAt"]
         do_notify, _why = argus_events.should_notify(prev, env)
         notify = do_notify and env["severity"] >= _EVENT_NTFY_MIN_SEV
+        # v10.133: a whole-market MARKET_MOVER is only actionable while that market
+        # is trading. The JP full-market feed is EOD-only, so a post-close scan was
+        # pushing the day's moves hours late (e.g. 19:30 JST = useless). Record it
+        # (API/ledger still get it) but suppress the push outside the market session.
+        if notify and env.get("eventType") == "MARKET_MOVER" and not _mover_push_allowed(env.get("market")):
+            notify = False
         out = env
     if notify:
         _event_ntfy(out)
@@ -3892,9 +3908,14 @@ def _scan_jp_market_movers():
     Yahoo (all market, ~20min); after close uses J-Quants EOD. Daily dedup."""
     if not _EVENT_BACKBONE_ENABLED:
         return 0
-    mv = _yahoo_jp_movers() if _jp_market_open() else _jq_market_movers()
+    _open = _jp_market_open()
+    mv = _yahoo_jp_movers() if _open else _jq_market_movers()
     if mv.get("status") != "live":
         return 0
+    # Label the session/source by what we actually used (v10.133) — intraday Yahoo
+    # vs post-close J-Quants EOD — instead of always "JP_EOD/jquants-eod".
+    _session = "JP_INTRADAY" if _open else "JP_EOD"
+    _source = "yahoo-jp" if _open else "jquants-eod"
     rows = (mv.get("gainers") or []) + (mv.get("losers") or [])
     rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
     now, n = datetime.now(pytz.utc), 0
@@ -3902,8 +3923,8 @@ def _scan_jp_market_movers():
         for trig in argus_events.detect_market_mover(
                 row["symbol"], row["changePct"], row["price"],
                 min_price=_JP_MOVER_MIN_PRICE, gainer_pct=max(_JP_MOVER_PCT, 10.0)):
-            env = _record_event("JP", row["symbol"], trig, now, "JP_EOD",
-                                bucket_minutes=1440, source="jquants-eod")
+            env = _record_event("JP", row["symbol"], trig, now, _session,
+                                bucket_minutes=1440, source=_source)
             if env:
                 env["nameJa"] = row.get("name")
                 n += 1

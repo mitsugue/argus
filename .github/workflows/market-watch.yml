@@ -12,8 +12,14 @@ on:
     # scan only hits AV when the US market is actually open (further protects quota);
     # the public endpoint never fetches (serves cache).
     - cron: '*/15 14-19 * * 1-5'
-    # Post-JP-close EOD sweep: 07:30 + 09:00 UTC (16:30 / 18:00 JST) Mon–Fri,
-    # so the JP whole-market movers get recorded even outside US hours.
+    # JP session sweep: every 30 min 00:00–06:00 UTC (09:00–15:00 JST) Mon–Fri,
+    # so JP whole-market movers are detected + pushed WHILE the TSE is open (via
+    # Yahoo ~20min-delayed all-market) — actionable, not hours after the close.
+    # US is closed in this window, so the US/Alpha-Vantage leg no-ops (no quota use).
+    - cron: '*/30 0-6 * * 1-5'
+    # Post-JP-close EOD sweep: 07:30 + 09:00 UTC (16:30 / 18:00 JST) Mon–Fri, so
+    # the JP whole-market movers are still RECORDED for the API/ledger after close.
+    # (The push itself is suppressed post-close by the backend market-open gate.)
     - cron: '30 7,9 * * 1-5'
   workflow_dispatch: {}
 
