@@ -1,0 +1,57 @@
+{
+ "date": "2026-06-24",
+ "asOf": "2026-06-24T06:55:57Z",
+ "regime": "EVENT_WAIT",
+ "groups": [
+  {
+   "id": "us-growth",
+   "label": "US Growth",
+   "role": "Risk",
+   "score": -0.228,
+   "status": "outflow"
+  },
+  {
+   "id": "us-broad",
+   "label": "US Broad Risk",
+   "role": "Risk",
+   "score": -0.212,
+   "status": "outflow"
+  },
+  {
+   "id": "small-caps",
+   "label": "Small Caps",
+   "role": "Risk",
+   "score": 0.116,
+   "status": "neutral"
+  },
+  {
+   "id": "defensive",
+   "label": "Defensive / Gold",
+   "role": "Defensive",
+   "score": -0.269,
+   "status": "outflow"
+  },
+  {
+   "id": "duration",
+   "label": "Duration / Bonds",
+   "role": "Duration",
+   "score": 0.091,
+   "status": "neutral"
+  },
+  {
+   "id": "credit",
+   "label": "Credit Risk",
+   "role": "Risk",
+   "score": -0.013,
+   "status": "neutral"
+  }
+ ],
+ "topRotations": [
+  {
+   "direction": "inflow",
+   "evidenceJa": "Defensive / Gold が相対的に弱く、Small Caps が優位。",
+   "label": "Defensive / Gold -> Small Caps",
+   "score": 0.385
+  }
+ ]
+}
