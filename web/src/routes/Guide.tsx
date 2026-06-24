@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.136.0', '監査で挙げた未着手分をまとめて実装(A1〜A5+closepin) — ①closepin: EC2 cron不発火でも落ちるよう、GitHub fallbackを窓内(14:25/14:35/14:45/15:00 JST)に複数化+重複ガードで1日1pin維持②action-labels: 各銘柄ラベルに構造化signal{code,level,permissions}+応答にsignalSchemaVersion(台帳の一貫性)③数値色SignedValue/--value-*を残り画面へ: Market Contextの米/日ムーバー(±%)・What-ifの中央値・保有損益の色をトークン統一④Pro Handoffのプロンプトに「Action Level(7段階・資本投下許可)」の説明と各ラベルのsignalを明記⑤アクセシビリティ監査: ボタン名/alt/svgラベル/入力ラベル/h1=すべて適合(保有入力は<label>暗黙ラベルで適合)。テスト350'],
   ['v10.135.0', '全市場moverをmoomooリアルタイム3段に — ①ブリッジが場中(平日)に「500銘柄サンプル + あなたのwatchlist」を定期スイープ(get_market_snapshot・秒単位)し、騰落率の大きい銘柄をbackendへPOST②backendのmover検知を3段ウォーターフォールに: moomooリアルタイム → 残りはYahoo(約20分遅延・広い市場) → 閉場後はJ-Quants EOD。銘柄単位で重複排除(上位ソース優先)し|変動|で順位付け。これでwatchlist銘柄が動けばYahoo遅延ではなくmoomoo秒速で検知。pushは引き続き場中のみ(v10.133ゲート)。テスト2追加。※ブリッジはEC2の再デプロイが必要'],
   ['v10.134.0', 'PARTIAL多発の根本原因を修正 + ステータスのカタカナを英語に — ①原因: 地合いの8本ETF(SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG)の日次終値を毎更新でTwelve Dataに取りに行き、無料枠のレート制限で一部欠落→全体partial→信頼度低下、になっていた。日次データなのに取り直し過ぎ。修正: ETF終値を約2hキャッシュ+部分失敗時は前回good値で補完(欠落しても全体partialに落とさない)。テスト3追加。②ステータス行の「リスク/データ」を英語に(HIGH RISK · PARTIAL DATA)。信頼度の説明文など長文は日本語のまま'],
   ['v10.133.0', '全市場mover通知を「開場中だけ」に修正 — これまでJP全市場の急騰急落アラートが大引け後(例19:30)に来ていて、しかもザラ場の値動きを今頃通知=見ても動けない状態だった。①バックエンドにゲートを追加し、MARKET_MOVERのpushは該当市場が開いている時のみ(閉場後はAPI/台帳に記録だけ・push無し)②market-watchにJPザラ場の実行枠(平日09:00–15:00 JST/30分毎・Yahoo約20分遅延の全市場)を追加。これで急騰急落は開場中=動ける時間に届く。原因はEOD専用データを閉場後に処理していたため(JPは無料の全市場リアルタイム配信が無い)。テスト4追加'],

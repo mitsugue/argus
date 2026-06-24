@@ -13,7 +13,15 @@ name: closepin-pin
 
 on:
   schedule:
-    - cron: '30 5 * * 1-5'   # 05:30 UTC = 14:30 JST Mon-Fri (fallback, often late)
+    # Fallback for the EC2 cron (bridge/trigger_closepin.sh). GitHub scheduled runs
+    # are frequently delayed 5-20 min, and a single shot often slips past the
+    # 14:20–15:20 JST window → no pin. Fire several times across the window so at
+    # least one lands inside it even when delayed; the dedupe guard keeps it to ONE
+    # immutable pin/day. (v10.136 — makes closepin self-sufficient if EC2 is down.)
+    - cron: '25 5 * * 1-5'   # 14:25 JST
+    - cron: '35 5 * * 1-5'   # 14:35 JST
+    - cron: '45 5 * * 1-5'   # 14:45 JST
+    - cron: '0 6 * * 1-5'    # 15:00 JST (last safe slot)
   workflow_dispatch: {}
 
 permissions:

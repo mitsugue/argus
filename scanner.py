@@ -4941,6 +4941,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                                    "eventEscalation": esc or "normal", "ratesPosture": posture},
                 "nextConditionJa": "ライブデータ復帰後に再評価する。",
                 "status": "mock",
+                "signal": argus_signal.resolve_signal("HOLD", data_quality="MOCK"),
             })
             continue
         chg = float(q.get("changePct", 0))
@@ -4982,6 +4983,10 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                                "quoteDate": q.get("date"), "quoteLagDays": lag,
                                "bigFlowRatio": flow_ratio},
             "nextConditionJa": nxt, "status": "live",
+            # Structured Action Level signal per label (v10.136) so API/ledger
+            # consumers get {code,level,permissions} without re-deriving from text.
+            "signal": argus_signal.resolve_signal(
+                action, data_quality="LIVE" if lag in (0, None) else "DELAYED"),
         })
 
     imminent_any = esc_by_market["US"] in ("D", "D-1") or esc_by_market["JP"] in ("D", "D-1")
@@ -5024,6 +5029,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         "status": status,
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "engineVersion": "action-v0",
+        "signalSchemaVersion": argus_signal.SIGNAL_SCHEMA_VERSION,
         "marketPosture": {"label": mp, "rationaleJa": mp_ja},
         "marketRegime": {
             "label": reg_label or "n/a",
@@ -8794,6 +8800,13 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
     L.append("- Calm Bloomberg Terminal + Linear + Raycast + Stripe Dashboard direction. No HUD / cyberpunk / neon / fake terminal styling.")
     L.append("- Tactical action labels: EXIT / TRIM / WAIT / WAIT FOR PULLBACK / BUY DIP / ADD / HOLD.")
     L.append("- Core (long-term index) labels: CONTINUE / GRADUAL ADD / DEFER LUMP SUM / NO SELL ACTION.")
+    L.append("- Action Level (the canonical signal, schema " + argus_signal.SIGNAL_SCHEMA_VERSION + "): a 7-level"
+             " CAPITAL-DEPLOYMENT PERMISSION scale, NOT model confidence and NOT market regime. Higher = freer to deploy:")
+    L.append("  7 ENTER (new-entry allowed) / 6 PREPARE / 5 HOLD_ONLY (hold existing only, no new entry) /"
+             " 4 PAUSE (no new entry) / 3 REVIEW (reassess now) / 2 DEFEND (protect capital) / 1 EXIT (exit position).")
+    L.append("  Legacy labels map onto it (HOLD→HOLD_ONLY, WAIT→PAUSE, TRIM→DEFEND, ADD→ENTER, …); each action-label"
+             " row in section 3 carries a structured `signal{code,level,permissions}`. A material/unexplained drop can"
+             " never stay a plain HOLD. Decision-support only — ARGUS never places an order.")
     L.append("")
 
     # ── 3. Current Live State (generated from backend snapshots) ──

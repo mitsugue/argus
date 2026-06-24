@@ -12,6 +12,7 @@ import { useFundNav } from '../../hooks/useFundNav';
 import { resolveSignal, OVERRIDE_LABEL_JA, type OwnerState } from '../../domain/actionLevel';
 import { holderPosture } from '../../lib/holderPosture';
 import { SignedValue } from '../common/SignedValue';
+import { getNumericTone, TONE_VAR } from '../../lib/numericTone';
 import { useLocale, t, pick, getLocale } from '../../i18n';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
@@ -255,7 +256,7 @@ const WhatIfPanel: React.FC<{
                   </div>
                 ))}
                 <p className="whatif__expected">
-                  確率加重の中央値(参考): <b style={{ color: result.expectedMid >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                  確率加重の中央値(参考): <b style={{ color: TONE_VAR[getNumericTone(result.expectedMid)] }}>
                     {fmtSigned(result.currency, result.expectedMid)}
                   </b>
                 </p>
@@ -537,7 +538,7 @@ const SortableAssetRow: React.FC<{
                     <span className="asset-hold__val">
                       評価 <b>{fmtMoney(hv.currency, hv.value)}</b>
                       {' ／ 損益 '}
-                      <b style={{ color: hv.pl > 0 ? 'var(--green)' : hv.pl < 0 ? 'var(--red)' : 'var(--text-sub)' }}>
+                      <b style={{ color: TONE_VAR[getNumericTone(hv.pl)] }}>
                         {fmtSigned(hv.currency, hv.pl)}（{hv.plPct >= 0 ? '+' : ''}{hv.plPct.toFixed(1)}%）
                       </b>
                     </span>

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { PageShell } from './PageShell';
 import { useLocale, t, tEn } from '../i18n';
+import { SignedValue } from '../components/common/SignedValue';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
@@ -226,8 +227,8 @@ export const MarketRegime: React.FC = () => {
                     <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
                     </span>
-                    <span style={{ flex: 'none', whiteSpace: 'nowrap', color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {m.changePct > 0 ? '+' : ''}{m.changePct}% (${m.price})
+                    <span style={{ flex: 'none', whiteSpace: 'nowrap' }}>
+                      <SignedValue value={m.changePct} suffix="%" arrow={false} /> (${m.price})
                     </span>
                   </div>
                 ))}
@@ -262,8 +263,8 @@ export const MarketRegime: React.FC = () => {
                     <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
                     </span>
-                    <span style={{ flex: 'none', whiteSpace: 'nowrap', color: m.changePct > 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {m.changePct > 0 ? '+' : ''}{m.changePct}% (¥{Math.round(m.price).toLocaleString('en-US')})
+                    <span style={{ flex: 'none', whiteSpace: 'nowrap' }}>
+                      <SignedValue value={m.changePct} suffix="%" arrow={false} /> (¥{Math.round(m.price).toLocaleString('en-US')})
                     </span>
                   </div>
                 ))}
