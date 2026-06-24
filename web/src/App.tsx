@@ -9,7 +9,7 @@ import { Guide } from './routes/Guide';
 import { AIReview } from './routes/AIReview';
 import { useActionLabels } from './hooks/useActionLabels';
 import { useEventRadar } from './hooks/useEventRadar';
-import { postureToCall, shortKind } from './lib/todayCall';
+import { shortKind } from './lib/todayCall';
 import { startCloudSync } from './lib/vault';
 
 interface RouteProps {
@@ -65,10 +65,6 @@ const App: React.FC = () => {
   // while connecting; never a hand-written judgment).
   const al = useActionLabels();
   const ev = useEventRadar();
-  const todayCall = useMemo(
-    () => postureToCall(al.data?.marketPosture?.label),
-    [al.data],
-  );
   const lastUpdated = useMemo(() => new Date(), [al.data]);
 
   const nextEvent = useMemo(() => {
@@ -118,7 +114,6 @@ const App: React.FC = () => {
         <NavRail
           active={isReview ? null : route}
           onSelect={handleNavSelect}
-          todayCall={todayCall}
           onReviewLink={enterReview}
           isReview={isReview}
         />

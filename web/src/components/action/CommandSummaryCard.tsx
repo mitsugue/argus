@@ -33,7 +33,20 @@ export const CommandSummaryCard: React.FC<SummaryInput> = (input) => {
     <div className="cs-card">
       {/* PRIMARY COMMAND — largest, highest contrast */}
       <div className="cs-primary" style={{ color: sigColor }}>{primary}</div>
-      <div className="cs-signal">{s.signalCode.replace('_', ' ')} · ACTION {s.signalLevel}/7</div>
+      <div className="cs-signal">
+        <span className="cs-sig-code">{s.signalCode.replace('_', ' ')}</span>
+        {/* 7-light scale (red caution → green clear). Current segment lit; the rest
+            stay color-tinted so the scale reads even when unlit. (v10.131) */}
+        <span className="cs-gauge" role="img"
+          aria-label={ja ? `アクション ${s.signalLevel}/7(左=注意・右=良好)` : `Action ${s.signalLevel} of 7 (left caution, right clear)`}>
+          {SIGNAL_ORDER.map((code) => (
+            <span key={code}
+              className={`cs-gauge-seg${code === s.signalCode ? ' cs-gauge-seg--on' : ''}`}
+              style={{ ['--seg' as string]: `var(${SIGNALS[code].token})` }}
+              title={`${SIGNALS[code].level}. ${ja ? SIGNALS[code].labelJa : SIGNALS[code].labelEn}`} />
+          ))}
+        </span>
+      </div>
 
       {/* Permissions */}
       <div className="cs-perms">

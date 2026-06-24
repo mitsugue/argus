@@ -1,6 +1,4 @@
 import React from 'react';
-import { ActionPill } from './action/ActionBadge';
-import type { ActionKey, RiskLevel } from '../types/action';
 import { useLocale, t, type DictKey } from '../i18n';
 import './NavRail.css';
 
@@ -34,7 +32,6 @@ interface Props {
   // null when the user is on the (hidden) AI Review route — no main item is "active" then
   active: RouteKey | null;
   onSelect: (key: RouteKey) => void;
-  todayCall: { action: ActionKey; risk: RiskLevel };
   onReviewLink?: () => void;
   isReview?: boolean;
 }
@@ -42,22 +39,12 @@ interface Props {
 export const NavRail: React.FC<Props> = ({
   active,
   onSelect,
-  todayCall,
   onReviewLink,
   isReview,
 }) => {
   useLocale();   // re-render on locale switch
   return (
     <nav className="nav" aria-label="Sections">
-      <button
-        className="nav__today"
-        onClick={() => onSelect('command')}
-        aria-label="Jump to today's command center"
-      >
-        <span className="nav__today-label">{t('nav.todaysCall')}</span>
-        <ActionPill action={todayCall.action} />
-      </button>
-
       <div className="nav__group-label">Workspace</div>
       {NAV.map((n) => (
         <button

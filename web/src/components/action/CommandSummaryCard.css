@@ -4,7 +4,22 @@
 .cs-primary {
   font-size: 30px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.1;
 }
-.cs-signal { font-size: 12px; font-weight: 600; color: var(--text-muted, #5f6b78); margin-top: 4px; letter-spacing: 0.03em; }
+.cs-signal { font-size: 12px; font-weight: 600; color: var(--text-muted, #5f6b78); margin-top: 4px; letter-spacing: 0.03em;
+  display: flex; align-items: center; gap: 8px; }
+.cs-sig-code { flex: none; }
+
+/* 7-light action scale — red (caution) → green (clear), left to right. */
+.cs-gauge { display: inline-flex; align-items: center; gap: 3px; }
+.cs-gauge-seg {
+  width: 13px; height: 6px; border-radius: 2px;
+  background: var(--seg, var(--text-muted));
+  opacity: 0.26;                 /* unlit but the color still reads */
+  transition: opacity 0.15s ease, height 0.15s ease;
+}
+.cs-gauge-seg--on {
+  opacity: 1; height: 9px;
+  box-shadow: 0 0 7px var(--seg), 0 0 2px var(--seg);   /* "lit" glow */
+}
 
 .cs-perms { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 12px 0 0; }
 .cs-perm { font-size: 12.5px; font-weight: 800; letter-spacing: 0.02em; }
