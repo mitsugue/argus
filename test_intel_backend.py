@@ -65,7 +65,7 @@ def test_feed_allowlist_is_valid_and_no_dead_reuters():
     assert "reuters_public" not in M.SOURCE_RIGHTS
     # finance + macro + official + Bloomberg EN & JP coverage present
     sources = {e[0] for e in scanner._INTEL_FEEDS}
-    assert {"bloomberg_public", "bloomberg_jp", "cnbc_public", "marketwatch_public",
+    assert {"bloomberg_public", "bloomberg_jp", "nikkei_web", "cnbc_public", "marketwatch_public",
             "nasdaq_public", "yahoo_finance_public", "federal_reserve", "sec_press"} <= sources
     # Bloomberg EN (rss) AND JP (sitemap) are both monitored
     kinds = {e[0]: e[3] for e in scanner._INTEL_FEEDS}

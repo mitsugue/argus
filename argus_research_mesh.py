@@ -24,6 +24,12 @@ from typing import Any, Dict, List, Optional
 SCHEMA = "research-mesh-v1"
 CALIB = "uncalibrated_heuristic_v1"
 
+# Feature name (owner-confirmed 2026-06-25). C.A.O.S. = the research desk that turns
+# the CHAOS of scattered, repeated, contradictory market chatter into one ordered view.
+SYSTEM_NAME = "C.A.O.S."
+SYSTEM_NAME_FULL = "Corroborated Analyst & Official Signals"
+SYSTEM_TAGLINE_JA = "情報のカオスを、ひとつのARGUSビューへ。"
+
 # ── §2 the five categories ARGUS must never conflate ─────────────────────────
 CATEGORIES = {
     "INSTITUTIONAL_RESEARCH_VIEW": "発表された見解(分析・戦略)",
@@ -62,6 +68,7 @@ SOURCE_RIGHTS: Dict[str, Dict[str, Any]] = {
     # ── LAYER 2 active public RSS (validated: HTTP 200 + items, UA argus-research) ──
     "bloomberg_public":     {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "notes": "Bloomberg EN public RSS (markets/economics/technology)"},
     "bloomberg_jp":         {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "language": "ja", "notes": "Bloomberg 日本語版 official news sitemap (robots-declared public metadata)"},
+    "nikkei_web":           {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "language": "ja", "notes": "日経 web headlines (metadata only, links back to nikkei.com; via a public 3rd-party RSS aggregator — Nikkei has no official public RSS)"},
     "cnbc_public":          {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
     "marketwatch_public":   {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
     "nasdaq_public":        {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},

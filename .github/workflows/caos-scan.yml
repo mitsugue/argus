@@ -1,0 +1,29 @@
+# C.A.O.S. (Corroborated Analyst & Official Signals) — institutional-intelligence
+# source scan. Institutional/news chatter does NOT follow market hours, so this runs
+# every 30 min AROUND THE CLOCK (incl. weekends), independent of market-watch. It
+# POSTs the admin-gated /collect, which fetches the allow-listed public RSS/sitemap
+# feeds (Bloomberg EN+JP, Nikkei, CNBC, MarketWatch, Nasdaq, Yahoo, Fed, SEC),
+# normalizes + dedups + persists. All public RSS (no quota source), so 48 runs/day is
+# safe. The public GET never fetches — this cron is the only collection path.
+name: caos-scan
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'      # every 30 min, 24/7
+  workflow_dispatch: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Collect C.A.O.S. public sources
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          curl -s --max-time 60 "$BE/healthz" > /dev/null || true   # warm dyno
+          RESP=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/institutional-intelligence/collect" || echo '{"error":"unreachable"}')
+          echo "caos-collect: $RESP"

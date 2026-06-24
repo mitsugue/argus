@@ -52,8 +52,8 @@ export const MarketInstitutionalSection: React.FC = () => {
   return (
     <section className="mis">
       <div className="mis-head">
-        <span className="mis-title">INSTITUTIONAL INTELLIGENCE</span>
-        <span className="mis-sub">機関の見解(建玉ではない)</span>
+        <span className="mis-title">C.A.O.S.</span>
+        <span className="mis-sub">Corroborated Analyst &amp; Official Signals · 機関の見解(建玉ではない)</span>
       </div>
       {material.map((it, i) => (
         <div className="mis-row" key={i}>

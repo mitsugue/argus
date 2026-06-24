@@ -4384,6 +4384,11 @@ _INTEL_FEEDS = [
     ("bloomberg_public",     "bbg:technology",   "https://feeds.bloomberg.com/technology/news.rss",   "rss"),
     # Bloomberg 日本語版 — official robots-declared news sitemap (no RSS exists)
     ("bloomberg_jp",         "bbg-jp:news",      "https://www.bloomberg.co.jp/feeds/cojp/sitemap_news.xml", "sitemap"),
+    # 日経 web headlines (metadata only). Nikkei has no official public RSS, so this
+    # uses a public 3rd-party RSS aggregator of Nikkei's free headlines; links resolve
+    # to nikkei.com. PUBLIC_METADATA — titles + links only, no full text.
+    ("nikkei_web",           "nikkei:markets",   "https://assets.wor.jp/rss/rdf/nikkei/markets.rdf",  "rss"),
+    ("nikkei_web",           "nikkei:business",  "https://assets.wor.jp/rss/rdf/nikkei/business.rdf", "rss"),
     # CNBC public RSS — markets / finance / economy / earnings
     ("cnbc_public",          "cnbc:markets",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "rss"),
     ("cnbc_public",          "cnbc:finance",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135", "rss"),
@@ -4563,8 +4568,10 @@ def collect_institutional_intel():
             rows = _parse_news_sitemap(txt, sid, now_iso, language=("ja" if "co.jp" in url else "en"))
         else:
             rows = _parse_rss(txt, sid, now_iso)
+        src_lang = (argus_research_mesh.SOURCE_RIGHTS.get(sid) or {}).get("language", "en")
         new = 0
         for raw in rows:
+            raw.setdefault("language", src_lang)           # ja for nikkei/bbg-jp feeds
             raw["linkedAssets"] = _intel_link_assets(raw.get("title", ""))
             item = argus_research_mesh.normalize_item(raw)
             if item["intelligenceId"] in seen:
@@ -4598,6 +4605,9 @@ def api_argus_institutional_intelligence():
     Only items with a RESOLVED named institution are surfaced as institutional."""
     inst = [i for i in _INTEL_STORE if i.get("institutionId")]
     return jsonify({"asOf": _ai_now_iso(), "schema": argus_research_mesh.SCHEMA,
+                    "system": argus_research_mesh.SYSTEM_NAME,
+                    "systemFull": argus_research_mesh.SYSTEM_NAME_FULL,
+                    "taglineJa": argus_research_mesh.SYSTEM_TAGLINE_JA,
                     "institutionalCount": len(inst), "totalCollected": len(_INTEL_STORE),
                     "lastCollectedAt": _INTEL_LAST.get("ts"),
                     "items": inst[:30], "clusters": _intel_clusters()[:20]})
