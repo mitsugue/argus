@@ -1379,3 +1379,10 @@
 /* Action Level signal in watchlist row + hero meta row (v10.119) */
 .asset-row__sig-blk { color: var(--value-negative, #F87171); font-weight: 700; }
 .hero__row--meta { gap: 28px; }
+
+/* Collapsible Market Context on the hero (v10.122) */
+.hero__context-d { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line, rgba(255,255,255,0.07)); }
+.hero__context-d > summary { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-sub, #98A7B7); cursor: pointer; list-style: none; }
+.hero__context-d > summary::-webkit-details-marker { display: none; }
+.hero__context-d[open] > summary { margin-bottom: 12px; }
+.hero__context-d .hero__overlay-row { border-bottom: 0; padding-bottom: 0; }

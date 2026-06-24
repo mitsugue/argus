@@ -1,6 +1,6 @@
 import React from 'react';
 import type { DailyJudgment } from '../../types/dashboard';
-import { ActionLevelCard } from '../action/ActionLevel';
+import { CommandSummaryCard } from '../action/CommandSummaryCard';
 
 export interface HeroOverlay {
   globalRegime: string;
@@ -40,21 +40,23 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
   const ownerRisk = !!(ownerCode && ownerCode !== 'NONE');
   return (
     <article className={`card card--hero hero${isPartialData ? ' hero--partial' : ''}`}>
-      {/* 1. COMMAND — what am I allowed to do now? (above the fold) */}
-      <ActionLevelCard
+      {/* ONE resolved command — the owner never reconciles parallel states. */}
+      <CommandSummaryCard
         legacyAction={judgment.overall}
-        ctx={{ downsideOverride: ownerRisk ? 'REVIEW_REQUIRED' : null, materialDownside: ownerRisk }}
+        globalRegime={overlay?.globalRegime}
+        jpOverlay={overlay?.jpIntradayOverlay}
+        ownerRisk={overlay?.holderRiskOverlay}
         risk={judgment.risk}
-        dataQuality={isPartialData ? 'PARTIAL' : 'LIVE'}
+        isPartial={isPartialData}
         confidence={confidence}
-        reason={judgment.reasons?.[0] || judgment.summary}
-        next={judgment.nextCondition}
+        nextConditionJa={judgment.nextCondition}
       />
 
-      {/* 2. MARKET CONTEXT — supporting, below the command. No CLEAR; Owner only when relevant. */}
+      {/* Market Context — supporting, collapsed by default (the detailed ja
+          rationale lives here, not duplicated above). */}
       {overlay && (
-        <div className="hero__context">
-          <span className="hero__context-h">Market context</span>
+        <details className="hero__context-d">
+          <summary>VIEW MARKET CONTEXT</summary>
           <div className="hero__overlay-row">
             <div className="hero__ov">
               <span className="hero__ov-label">Global</span>
@@ -76,34 +78,29 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
               {judgment.regime.map((r) => (<span className="hero__tag" key={r}>{r}</span>))}
             </div>
           )}
-        </div>
+          {judgment.reasons.length > 0 && (
+            <div className="hero__reasons">
+              <span className="hero__reasons-label">詳細(根拠)</span>
+              {judgment.reasons.map((r, i) => (
+                <div className="hero__reason" key={i}>
+                  <span className="hero__reason-num">{String(i + 1).padStart(2, '0')}</span>
+                  <span>{r}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="hero__lists">
+            <div className="hero__list-block">
+              <span className="hero__list-label">Touch today</span>
+              <div className="hero__list-items">{judgment.assetsToTouch.map((a) => <span key={a}>{a}</span>)}</div>
+            </div>
+            <div className="hero__list-block">
+              <span className="hero__list-label">Avoid today</span>
+              <div className="hero__list-items hero__list-items--avoid">{judgment.assetsToAvoid.map((a) => <span key={a}>{a}</span>)}</div>
+            </div>
+          </div>
+        </details>
       )}
-
-      {/* 3. WHY — detail (no duplicated summary/next; those live in the command). */}
-      <div className="hero__reasons">
-        <span className="hero__reasons-label">Why</span>
-        {judgment.reasons.map((r, i) => (
-          <div className="hero__reason" key={i}>
-            <span className="hero__reason-num">{String(i + 1).padStart(2, '0')}</span>
-            <span>{r}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="hero__lists">
-        <div className="hero__list-block">
-          <span className="hero__list-label">Touch today</span>
-          <div className="hero__list-items">
-            {judgment.assetsToTouch.map((a) => <span key={a}>{a}</span>)}
-          </div>
-        </div>
-        <div className="hero__list-block">
-          <span className="hero__list-label">Avoid today</span>
-          <div className="hero__list-items hero__list-items--avoid">
-            {judgment.assetsToAvoid.map((a) => <span key={a}>{a}</span>)}
-          </div>
-        </div>
-      </div>
     </article>
   );
 };

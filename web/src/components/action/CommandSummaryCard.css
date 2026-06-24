@@ -1,0 +1,34 @@
+/* Command Summary card (v10.122) — one resolved command, command-first. */
+.cs-card { max-width: 100%; box-sizing: border-box; }
+
+.cs-primary {
+  font-size: 30px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.1;
+}
+.cs-signal { font-size: 12px; font-weight: 600; color: var(--text-muted, #5f6b78); margin-top: 4px; letter-spacing: 0.03em; }
+
+.cs-perms { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 12px 0 0; }
+.cs-perm { font-size: 12.5px; font-weight: 800; letter-spacing: 0.02em; }
+.cs-perm--blk { color: var(--value-negative, #F87171); }
+.cs-perm--ok { color: var(--value-positive, #34D399); }
+.cs-perm--neutral { color: var(--text-sub, #98A7B7); }
+
+.cs-status { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--text-sub, #98A7B7); }
+.cs-stat--bad { color: var(--value-negative, #F87171); }
+.cs-stat--warn { color: var(--amber, #FBBF24); }
+.cs-stat-sep { color: var(--text-muted, #5f6b78); }
+.cs-conf { font-size: 12px; color: var(--amber, #FBBF24); margin: 5px 0 0; }
+
+.cs-block { margin-top: 12px; }
+.cs-h { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint, #5f6b78); margin-bottom: 3px; }
+.cs-drivers { font-size: 13px; font-weight: 600; color: var(--text-main, #E6EDF3); }
+.cs-next { font-size: 12.5px; color: var(--text-sub, #98A7B7); line-height: 1.55; }
+
+.cs-help { margin-top: 12px; }
+.cs-help summary { font-size: 10.5px; color: var(--text-muted, #5f6b78); cursor: pointer; }
+.cs-ladder { margin: 8px 0; }
+.cs-ladder-cap { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint, #5f6b78); margin-bottom: 4px; }
+.cs-rung { display: flex; align-items: center; gap: 8px; font-size: 11.5px; padding: 1px 0; color: var(--text-sub, #98A7B7); }
+.cs-rung--cur { background: rgba(255,255,255,0.04); border-radius: 4px; padding: 2px 4px; }
+.cs-rung-n { width: 14px; color: var(--text-muted, #5f6b78); font-variant-numeric: tabular-nums; }
+.cs-rung-cur { font-size: 10px; font-weight: 700; color: var(--text-main, #E6EDF3); }
+.cs-disc { font-size: 10px; color: var(--text-muted, #5f6b78); line-height: 1.45; margin: 6px 0 0; }
