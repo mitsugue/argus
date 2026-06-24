@@ -1375,3 +1375,7 @@
 .asset-detail__holder-label { font-size: 13px; font-weight: 700; }
 .asset-detail__holder-pl { font-size: 12px; font-weight: 700; margin-left: 8px; }
 .asset-detail__holder-reason { font-size: 12px; color: var(--text-sub, #98A7B7); line-height: 1.55; margin: 5px 0 0; }
+
+/* Action Level signal in watchlist row + hero meta row (v10.119) */
+.asset-row__sig-blk { color: var(--value-negative, #F87171); font-weight: 700; }
+.hero__row--meta { gap: 28px; }

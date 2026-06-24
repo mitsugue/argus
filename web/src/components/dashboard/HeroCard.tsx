@@ -1,7 +1,7 @@
 import React from 'react';
 import type { DailyJudgment } from '../../types/dashboard';
-import { ActionHero } from '../action/ActionBadge';
 import { RiskIndicator } from './RiskIndicator';
+import { ActionLevelCard } from '../action/ActionLevel';
 
 export interface HeroOverlay {
   globalRegime: string;
@@ -36,7 +36,7 @@ const OWNER_JA: Record<string, string> = {
 // overlay (Global / JP intraday / Owner risk) and the PARTIAL DATA badge keep a
 // green global regime or a high-confidence HOLD from hiding holder risk (v10.103).
 export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence }) => {
-  const ownerRisk = overlay?.holderRiskOverlay && overlay.holderRiskOverlay !== 'NONE';
+  const ownerRisk = !!(overlay?.holderRiskOverlay && overlay.holderRiskOverlay !== 'NONE');
   return (
     <article className={`card card--hero hero${isPartialData ? ' hero--partial' : ''}`}>
       {overlay && (
@@ -70,28 +70,25 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
           保有/重点監視の銘柄にダウンサイド警戒。通常のHOLDとして扱わず、下の「Downside Watch」を確認してください。
         </div>
       )}
-      <div className="hero__row">
-        <div className="hero__primary">
-          <span className="hero__label">Overall Judgment</span>
-          <div className="hero__judgment">
-            <ActionHero action={judgment.overall} />
-            {isPartialData && <span className="hero__judgment-sub">/ PARTIAL</span>}
-          </div>
+      {/* Action Level (v10.119) — the signal word is never shown alone; explicit
+          permissions block accidental new entry on a cautious "HOLD ONLY". */}
+      <ActionLevelCard
+        legacyAction={judgment.overall}
+        ctx={{ downsideOverride: ownerRisk ? 'REVIEW_REQUIRED' : null, materialDownside: ownerRisk }}
+        risk={judgment.risk}
+        dataQuality={isPartialData ? 'PARTIAL' : 'LIVE'}
+        reason={judgment.reasons?.[0] || judgment.summary}
+        next={judgment.nextCondition}
+      />
+      <div className="hero__row hero__row--meta">
+        <div className="hero__attr">
+          <span className="hero__label">Risk Level</span>
+          <span className="hero__attr-value"><RiskIndicator level={judgment.risk} /></span>
         </div>
-        <div className="hero__attrs">
-          <div className="hero__attr">
-            <span className="hero__label">Risk Level</span>
-            <span className="hero__attr-value">
-              <RiskIndicator level={judgment.risk} />
-            </span>
-          </div>
-          <div className="hero__attr">
-            <span className="hero__label">Market Regime</span>
-            <div className="hero__regime-tags">
-              {judgment.regime.map((r) => (
-                <span className="hero__tag" key={r}>{r}</span>
-              ))}
-            </div>
+        <div className="hero__attr">
+          <span className="hero__label">Market Regime</span>
+          <div className="hero__regime-tags">
+            {judgment.regime.map((r) => (<span className="hero__tag" key={r}>{r}</span>))}
           </div>
         </div>
       </div>

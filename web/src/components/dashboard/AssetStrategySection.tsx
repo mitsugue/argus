@@ -9,7 +9,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
 import { useFundNav } from '../../hooks/useFundNav';
-import { actionLabelJa } from '../../domain/actions';
+import { resolveSignal, type OwnerState } from '../../domain/actionLevel';
 import { holderPosture } from '../../lib/holderPosture';
 import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../../hooks/useUSWatchlist';
@@ -387,6 +387,13 @@ const SortableAssetRow: React.FC<{
   const fresh = freshnessOf(strat);
   const hp = holderPosture(asset, strat, incident);   // position-aware guidance (held only, v10.113)
   const HP_COLOR: Record<string, string> = { red: '#F87171', amber: '#FBBF24', green: '#34D399', neutral: 'var(--text-sub)' };
+  // Action Level signal (v10.119) — never show the ambiguous raw action alone.
+  const sig = resolveSignal(strat.action, {
+    downsideOverride: incident?.actionOverride,
+    dataQuality: strat.status === 'live' ? 'LIVE' : strat.status === 'mock' ? 'MOCK' : 'PARTIAL',
+    materialDownside: !!incident,
+    ownerState: (incident?.ownerState as OwnerState) || undefined,
+  });
   // Mock rows never show plausible-but-fake numbers — "—" instead.
   const priceShown = strat.status === 'mock' ? undefined : strat.price;
   const chgShown   = strat.status === 'mock' ? undefined : strat.changePct;
@@ -407,7 +414,9 @@ const SortableAssetRow: React.FC<{
           </span>
           <span className="asset-row__price">{fmtPrice(asset.market, priceShown)}</span>
           <span className={pctClass(chgShown)}>{fmtPct(chgShown)}</span>
-          <span className="asset-row__action" style={{ color: ACTION_COLOR[strat.action] ?? 'var(--text-sub)' }} title={strat.action}>{actionLabelJa(strat.action)}</span>
+          <span className="asset-row__action" style={{ color: `var(${sig.token})` }} title={`${sig.labelEn} (legacy ${strat.action})`}>
+            {sig.labelEn}{sig.permissions.newEntry === 'BLOCKED' && <span className="asset-row__sig-blk"> ⊘</span>}
+          </span>
           {incident && (
             <span className="asset-row__override"
               style={{ color: ['EXIT_WATCH', 'TRIM_WATCH'].includes(incident.actionOverride) ? '#F87171' : '#FBBF24' }}>

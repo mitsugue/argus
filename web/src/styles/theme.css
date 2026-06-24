@@ -48,6 +48,23 @@
   --risk-high:    var(--red);
   --risk-extreme: #DC2626;
 
+  /* Action Level signal tokens (action-level-v1, v10.119) — capital-deployment
+     permission / defensive posture. NOT model confidence. HOLD ONLY is muted
+     slate, NEVER green, so it can't be read as positive permission. */
+  --signal-exit:      #F87171;   /* red */
+  --signal-defend:    #FB7185;   /* red-orange / rose */
+  --signal-review:    #FBBF24;   /* amber */
+  --signal-pause:     #8B98A7;   /* neutral gray */
+  --signal-hold-only: #6B7A99;   /* muted slate blue-gray — NOT green */
+  --signal-prepare:   #22D3EE;   /* cyan */
+  --signal-enter:     #34D399;   /* green */
+
+  /* Numeric sign tokens (v10.119) — single source for up/down/flat/unavailable. */
+  --value-positive:    #34D399;
+  --value-negative:    #F87171;
+  --value-neutral:     #8B98A7;
+  --value-unavailable: #5F6B78;
+
   /* Typography */
   --font-sans: 'Inter', 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
