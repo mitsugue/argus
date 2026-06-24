@@ -237,11 +237,25 @@ def _horizon(title: str, snippet: str) -> str:
 
 
 # ── §9 story clustering / syndication dedup ──────────────────────────────────
+_STOPWORDS = {"the", "a", "an", "of", "to", "in", "on", "for", "and", "as", "is",
+              "after", "says", "say", "amid", "with", "its", "by", "at", "from"}
+
+
+def _title_fingerprint(title: str, n: int = 4) -> str:
+    """First N significant title tokens — a deterministic syndication proxy. Two
+    outlets repeating the SAME headline share a fingerprint; distinct headlines do
+    not (prevents unrelated generic news from collapsing into one mega-cluster)."""
+    toks = [t for t in re.findall(r"[a-z0-9]+", (title or "").lower()) if t not in _STOPWORDS]
+    return "-".join(toks[:n]) if toks else "_"
+
+
 def _norm_key(item: Dict[str, Any]) -> str:
-    """Canonical event = institution + content-type + the salient asset/theme. Wire
-    repeats collapse onto the same cluster (one origin, not N confirmations)."""
+    """Canonical event = institution + content-type + salient asset/theme + title
+    fingerprint. Wire repeats of ONE story collapse (one origin, not N confirmations);
+    genuinely different stories stay separate even when both lack an institution."""
     asset = (item.get("linkedAssets") or ["_"])[0]
-    return _hash(item.get("institutionId") or "_", item.get("contentType") or "_", asset)
+    return _hash(item.get("institutionId") or "_", item.get("contentType") or "_",
+                 asset, _title_fingerprint(item.get("title", "")))
 
 
 def cluster_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

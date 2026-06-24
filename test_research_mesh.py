@@ -74,3 +74,17 @@ def test_gate_rejects_forbidden_and_requires_sections():
 def test_no_order_surface():
     for bad in ("place_order", "execute_trade", "buy", "sell", "broker"):
         assert not hasattr(M, bad)
+
+
+def test_distinct_generic_news_not_collapsed():
+    # two UNRELATED institution-less market headlines must NOT cluster together
+    a = M.normalize_item({"sourceId": "cnbc_public", "title": "Dell shares jump 39% on server sales"})
+    b = M.normalize_item({"sourceId": "cnbc_public", "title": "Gap shares tumble 14% on weak guidance"})
+    cl = M.cluster_items([a, b])
+    assert len(cl) == 2                          # different stories stay separate
+
+def test_same_headline_syndication_still_collapses():
+    a = M.normalize_item({"sourceId": "reuters_public", "title": "Snowflake surges 36% for best day ever"})
+    b = M.normalize_item({"sourceId": "cnbc_public",    "title": "Snowflake surges 36% for best day ever"})
+    cl = M.cluster_items([a, b])
+    assert len(cl) == 1 and cl[0]["syndicationCount"] == 1
