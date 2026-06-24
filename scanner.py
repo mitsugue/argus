@@ -4380,9 +4380,21 @@ def _etf_series_with_moomoo(symbols):
         p = pushed.get(str(sym).upper())
         if not p or now - p.get("ts", 0) > _PUSH_TTL:
             continue
-        price = (p.get("row") or {}).get("price")
-        if isinstance(price, (int, float)) and price > 0 and series.get(sym):
-            series[sym] = [float(price)] + series[sym][1:]   # realtime current close
+        row = p.get("row") or {}
+        price = row.get("price")
+        if not (isinstance(price, (int, float)) and price > 0):
+            continue
+        if series.get(sym):
+            series[sym] = [float(price)] + series[sym][1:]   # realtime current + TD history
+        else:
+            # Twelve Data is down for this ETF — build a minimal series from moomoo
+            # alone (current price + prev close reconstructed from changePct) so the
+            # ETF still COUNTS toward etf_full (cures PARTIAL). Real 1d momentum; 5d/
+            # 20d stay None (the regime honestly lacks the longer trend until TD
+            # returns). This is the cold-start / TD-quota case (v10.146.2).
+            chg = row.get("changePct")
+            prev = price / (1 + chg / 100.0) if isinstance(chg, (int, float)) and chg > -100 else price
+            series[sym] = [float(price), float(prev)]
     return series
 
 _ROTATION_GROUPS = [

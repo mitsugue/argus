@@ -40,3 +40,14 @@ def test_etf_overlay_uses_moomoo_price(monkeypatch):
     out = scanner._etf_series_with_moomoo(["SPY"])
     assert out["SPY"][0] == 511.0 and out["SPY"][1:] == [498.0, 495.0]   # realtime current + TD history
     scanner._PUSHED_QUOTES["US"].pop("SPY", None)
+
+
+def test_etf_moomoo_only_when_td_down(monkeypatch):
+    import time
+    monkeypatch.setattr(scanner, "_td_timeseries", lambda syms: {})   # TD fully down
+    scanner._PUSHED_QUOTES["US"]["QQQ"] = {"row": {"price": 440.0, "changePct": 2.0}, "ts": time.time()}
+    out = scanner._etf_series_with_moomoo(["QQQ"])
+    assert "QQQ" in out and len(out["QQQ"]) == 2          # moomoo-only series → ETF counts
+    assert out["QQQ"][0] == 440.0
+    assert abs(out["QQQ"][1] - 440.0 / 1.02) < 0.01        # prev close reconstructed from changePct
+    scanner._PUSHED_QUOTES["US"].pop("QQQ", None)
