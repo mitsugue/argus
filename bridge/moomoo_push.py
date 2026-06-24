@@ -55,6 +55,11 @@ CODES = [c.strip() for c in os.environ.get(
     "JP.8058,JP.9984,JP.5801,JP.5803,JP.6584,JP.285A,JP.9501,"
     "JP.1306,JP.1321,JP.8306,JP.7203,JP.9432,"
     "US.NVDA,US.AAPL,US.TSLA,US.META").split(",") if c.strip()]
+# Always push the 8 regime ETFs realtime (v10.146) so the backend regime engine
+# reads moomoo prices instead of rate-limited Twelve Data — independent of the
+# user's PUSH_SYMBOLS. Deduped, order-preserving.
+_REGIME_ETF_CODES = ["US.SPY", "US.QQQ", "US.IWM", "US.XLK", "US.XLU", "US.GLD", "US.TLT", "US.HYG"]
+CODES = list(dict.fromkeys(CODES + _REGIME_ETF_CODES))
 
 
 def rows_from_snapshot(df):
@@ -339,6 +344,73 @@ def sweep_jp_movers(qc):
         print(_now_jst().strftime("%H:%M:%S"), "mover-sweep post error:", str(e)[:120])
 
 
+# ── US realtime mover sweep (v10.146) — same idea for the US session ──────────
+def _us_open():
+    """Rough US regular session in UTC (covers EDT/EST). The backend applies the
+    precise ET gate; the bridge just needs to sweep during the right window."""
+    n = _dt.datetime.now(_dt.timezone.utc)
+    if n.weekday() >= 5:
+        return False
+    hm = n.hour * 60 + n.minute
+    return 13 * 60 + 30 <= hm <= 20 * 60 + 30
+
+
+def _fetch_us_universe():
+    try:
+        r = requests.get(f"{BACKEND}/api/argus/us-universe",
+                         headers={"X-ARGUS-ADMIN-TOKEN": TOKEN}, timeout=40)
+        return r.json().get("codes", []) if r.ok else []
+    except Exception:
+        return []
+
+
+def _post_us_movers(movers, as_of, coverage):
+    raw = json.dumps({"movers": movers, "asOf": as_of, "coverage": coverage, "source": "moomoo"},
+                     separators=(",", ":")).encode("utf-8")
+    headers = {"X-ARGUS-ADMIN-TOKEN": TOKEN, "Content-Type": "application/json"}
+    if HMAC_SECRET:
+        ts, nonce = str(time.time()), secrets.token_hex(8)
+        sig = hmac.new(HMAC_SECRET.encode("utf-8"),
+                       f"{ts}.{nonce}.".encode("utf-8") + raw, hashlib.sha256).hexdigest()
+        headers["X-ARGUS-TIMESTAMP"] = ts
+        headers["X-ARGUS-NONCE"] = nonce
+        headers["X-ARGUS-SIGNATURE"] = sig
+    return requests.post(f"{BACKEND}/api/argus/us-movers-push", data=raw, headers=headers, timeout=30)
+
+
+def sweep_us_movers(qc):
+    """Realtime sweep of the backend US universe (curated ∪ watchlist ∪ ETFs) → POST
+    the biggest movers. Mirrors sweep_jp_movers; replaces Alpha Vantage's stale feed."""
+    uni = _fetch_us_universe()
+    codes, seen = [], set()
+    for c in [c for c in CODES if c.upper().startswith("US.")] + uni:
+        cu = c.upper()
+        if cu not in seen:
+            seen.add(cu); codes.append(c)
+    if not codes:
+        print(_now_jst().strftime("%H:%M:%S"), "us-mover-sweep: no universe")
+        return
+    rows = []
+    for i in range(0, len(codes), CAP_BATCH):
+        ret, df = qc.get_market_snapshot(codes[i:i + CAP_BATCH])
+        if ret == RET_OK:
+            rows.extend(rows_from_snapshot(df))
+        time.sleep(0.5)
+    movers = sorted([r for r in rows if abs(r.get("changePct") or 0) >= MOVER_MIN_PCT],
+                    key=lambda r: abs(r.get("changePct") or 0), reverse=True)[:MOVER_MAX]
+    try:
+        resp = _post_us_movers(movers, _now_jst().isoformat(), len(codes))
+        body = resp.json() if resp.ok else {}
+        print(_now_jst().strftime("%H:%M:%S"),
+              f"us-mover-sweep: swept={len(codes)} movers>={MOVER_MIN_PCT}%={len(movers)} "
+              f"accepted={body.get('accepted')} http={resp.status_code}")
+    except Exception as e:
+        print(_now_jst().strftime("%H:%M:%S"), "us-mover-sweep post error:", str(e)[:120])
+
+
+_us_mover_sweep_at = 0.0
+
+
 def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
@@ -412,6 +484,16 @@ def main():
                         sweep_jp_movers(qc)
                     except Exception as e:
                         print(_now_jst().strftime("%H:%M:%S"), "mover-sweep error:", str(e)[:120])
+
+            # US realtime mover sweep — curated S&P500 ∪ watchlist ∪ ETFs (v10.146).
+            if MOVER_SWEEP_ENABLED and _us_open():
+                global _us_mover_sweep_at
+                if time.time() - _us_mover_sweep_at >= MOVER_SWEEP_INTERVAL:
+                    _us_mover_sweep_at = time.time()
+                    try:
+                        sweep_us_movers(qc)
+                    except Exception as e:
+                        print(_now_jst().strftime("%H:%M:%S"), "us-mover-sweep error:", str(e)[:120])
 
             time.sleep(INTERVAL)
     finally:

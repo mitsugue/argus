@@ -3757,22 +3757,99 @@ def api_argus_market_movers():
     """Public: US whole-market top gainers/losers (cache only — never fetches)."""
     return jsonify(_av_market_movers(force=False))
 
+# ━━━ moomoo realtime US movers (v10.146) ━━━
+# Curated liquid US universe; the bridge sweeps (this ∪ live watchlist ∪ regime
+# ETFs) realtime via get_market_snapshot — replacing Alpha Vantage's stale/penny
+# whole-market feed for the US EMERGING movers. Env-overridable.
+_US_MOVER_UNIVERSE = (os.environ.get("US_MOVER_UNIVERSE") or
+    "AAPL,MSFT,NVDA,AMZN,GOOGL,GOOG,META,TSLA,AVGO,BRK.B,LLY,JPM,V,XOM,UNH,MA,COST,HD,"
+    "PG,JNJ,WMT,ABBV,NFLX,CRM,BAC,ORCL,KO,MRK,CVX,AMD,PEP,ADBE,TMO,LIN,ACN,MCD,CSCO,"
+    "WFC,ABT,GE,DHR,IBM,NOW,TXN,QCOM,INTU,AMAT,ISRG,CAT,VZ,PFE,DIS,CMCSA,GS,SPGI,RTX,"
+    "AMGN,UBER,PM,T,LOW,UNP,HON,ELV,BKNG,NKE,COP,MU,LRCX,ADI,PLD,SYK,VRTX,REGN,PANW,"
+    "KLAC,SNPS,CDNS,MDLZ,GILD,C,SBUX,BSX,ADP,MMC,CB,TJX,SCHW,MO,DE,BMY,SO,FI,DUK,"
+    "INTC,PYPL,SHOP,SMCI,COIN,PLTR,MRVL,CRWD,ARM,DELL,WDAY,SNOW,ABNB,MSTR").split(",")
+
+_MOOMOO_US_MOVERS  = {"rows": [], "ts": 0.0, "asOf": None}
+
+@app.route("/api/argus/us-universe")
+def api_argus_us_universe():
+    """Bridge helper: the US sweep universe = curated liquid names ∪ the owner's
+    live US watchlist ∪ the regime ETFs, as moomoo codes (auto-updates when the
+    watchlist changes, no env edit needed). Admin-gated like jp-universe."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    syms = {s.strip().upper() for s in _US_MOVER_UNIVERSE if s.strip()}
+    syms |= {s["symbol"].upper() for s in _US_WATCHLIST}
+    syms |= {e.upper() for e in _REGIME_ETFS}
+    return jsonify({"codes": sorted(f"US.{s}" for s in syms), "count": len(syms),
+                    "asOf": _ai_now_iso()})
+
+@app.route("/api/argus/us-movers-push", methods=["POST"])
+def api_argus_us_movers_push():
+    """Bridge → backend: realtime US movers from the moomoo sweep (admin+HMAC)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    raw = request.get_data() or b""
+    sig_ok, sig_reason = _verify_bridge_signature(raw)
+    if not sig_ok:
+        send_security_alert({"type": "bridge_signature_rejected", "reason": sig_reason, "meta": _client_meta()})
+        return jsonify({"error": "signature_invalid", "reason": sig_reason}), 401
+    body = request.get_json(silent=True) or {}
+    rows = []
+    for m in (body.get("movers") or [])[:200]:
+        try:
+            sym = str(m.get("symbol", "")).strip().upper()
+            if not _US_SYM_RE.match(sym):
+                continue
+            price, chg = float(m.get("price") or 0), float(m.get("changePct") or 0)
+            if not (price > 0 and math.isfinite(price) and math.isfinite(chg)):
+                continue
+            rows.append({"symbol": sym, "price": price, "changePct": round(chg, 4),
+                         "volume": int(m.get("volume") or 0), "name": m.get("name")})
+        except (TypeError, ValueError):
+            continue
+    _MOOMOO_US_MOVERS.update({"rows": rows, "ts": time.time(), "asOf": body.get("asOf")})
+    return jsonify({"ok": True, "accepted": len(rows)})
+
+def _moomoo_us_movers():
+    """Fresh moomoo-swept US movers (realtime, curated ∪ watchlist) or []."""
+    if time.time() - (_MOOMOO_US_MOVERS["ts"] or 0) > _MOOMOO_MOVERS_TTL:
+        return []
+    return list(_MOOMOO_US_MOVERS["rows"])
+
 def _scan_market_movers():
-    """Record MARKET_MOVER events for the most extreme whole-market US movers
-    (beyond the watchlist). Gated to US session. Caps notifications to avoid spam."""
+    """Whole-market US movers, moomoo-first (v10.146): moomoo realtime sweep of the
+    curated US universe ∪ watchlist → Alpha Vantage fallback (stale-gated). Gated to
+    the US session; price floor + max-% filter drop penny/pump noise; caps spam."""
     if not _EVENT_BACKBONE_ENABLED or not _us_market_open():
         return 0
-    mv = _av_market_movers(force=True)   # the ONLY place that hits Alpha Vantage
+    now_real = datetime.now(pytz.utc)
+    mm = _moomoo_us_movers()
+    if mm:
+        rows = [r for r in mm if abs(r.get("changePct") or 0) <= _MARKET_MOVER_MAX_PCT
+                and (r.get("price") or 0) >= _MARKET_MOVER_MIN_PRICE]
+        rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
+        n = 0
+        for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:
+            for trig in argus_events.detect_market_mover(row["symbol"], row["changePct"], row["price"],
+                                                         min_price=_MARKET_MOVER_MIN_PRICE, gainer_pct=_MARKET_MOVER_PCT):
+                env = _record_event("US", row["symbol"], trig, now_real, "US_REGULAR",
+                                    bucket_minutes=180, source="moomoo-rt")
+                if env:
+                    env["nameJa"] = row.get("name") or row["symbol"]
+                    n += 1
+        return n
+    # Fallback: Alpha Vantage (delayed). Data time + staleness gate (v10.143).
+    mv = _av_market_movers(force=True)
     if mv.get("status") != "live":
         return 0
-    # Use the DATA's own time (AV last_updated), not "now". If that is stale (a
-    # prior session's snapshot), record it but suppress the push so a hours-old
-    # spike never arrives as a fresh 1am alert (v10.143).
     av_epoch = mv.get("asOfEpoch")
-    ev_time = datetime.fromtimestamp(av_epoch, pytz.utc) if av_epoch else datetime.now(pytz.utc)
+    ev_time = datetime.fromtimestamp(av_epoch, pytz.utc) if av_epoch else now_real
     stale = av_epoch is None or (time.time() - av_epoch) > _MOVER_FRESH_SEC
     rows = [r for r in ((mv.get("gainers") or []) + (mv.get("losers") or []))
-            if abs(r.get("changePct") or 0) <= _MARKET_MOVER_MAX_PCT]   # drop pump/halt artifacts
+            if abs(r.get("changePct") or 0) <= _MARKET_MOVER_MAX_PCT]
     rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
     n = 0
     for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:
@@ -3782,7 +3859,7 @@ def _scan_market_movers():
             env = _record_event("US", row["symbol"], trig, ev_time, "US_REGULAR",
                                 bucket_minutes=180, source="alphavantage", suppress_notify=stale)
             if env:
-                env["nameJa"] = row["symbol"]   # market-wide; symbol is the label
+                env["nameJa"] = row["symbol"]
                 env["dataAsOf"] = mv.get("asOf")
                 env["dataStale"] = stale
                 n += 1
@@ -4290,6 +4367,24 @@ _TWELVEDATA_TS = "https://api.twelvedata.com/time_series"
 # additions once a higher-credit plan or per-minute pacing is in place.
 _REGIME_ETFS = ["SPY", "QQQ", "IWM", "XLK", "XLU", "GLD", "TLT", "HYG"]
 
+def _etf_series_with_moomoo(symbols):
+    """Daily ETF closes (Twelve Data, cached) with the CURRENT point overlaid from
+    the realtime moomoo bridge when fresh (v10.146). Twelve Data still supplies the
+    daily HISTORY for momentum (moomoo gives one realtime point, not 20 days), but
+    the latest value — what the regime reads as 'now' — is realtime, and the bridge
+    being live means less Twelve-Data refetch pressure (the cause of PARTIAL)."""
+    series = _td_timeseries(symbols)            # {sym: [latest_close, ...]} cached
+    pushed = _PUSHED_QUOTES.get("US") or {}
+    now = time.time()
+    for sym in symbols:
+        p = pushed.get(str(sym).upper())
+        if not p or now - p.get("ts", 0) > _PUSH_TTL:
+            continue
+        price = (p.get("row") or {}).get("price")
+        if isinstance(price, (int, float)) and price > 0 and series.get(sym):
+            series[sym] = [float(price)] + series[sym][1:]   # realtime current close
+    return series
+
 _ROTATION_GROUPS = [
     {"id": "us-growth",  "label": "US Growth",        "assets": ["QQQ", "XLK"], "role": "Risk"},
     {"id": "us-broad",   "label": "US Broad Risk",    "assets": ["SPY"],        "role": "Risk"},
@@ -4518,7 +4613,7 @@ def get_market_regime_snapshot():
     jp    = get_japan_watchlist_snapshot()
     hy    = fetch_fred_series("BAMLH0A0HYM2")  # live or per-series mock
 
-    etf = {sym: _etf_momentum(cl) for sym, cl in _td_timeseries(_REGIME_ETFS).items()}
+    etf = {sym: _etf_momentum(cl) for sym, cl in _etf_series_with_moomoo(_REGIME_ETFS).items()}
     etf_full = len(etf) == len(_REGIME_ETFS)
     etf_live = len(etf) >= max(1, len(_REGIME_ETFS) // 2)
 
