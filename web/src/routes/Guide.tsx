@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocale, setLocale, t } from '../i18n';
 import { PageShell } from './PageShell';
 import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
 import { BackupCard } from '../components/guide/BackupCard';
@@ -70,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.123.0', 'i18n(英語/日本語 切替)を導入(既定=English) — web/src/i18n に辞書(型付きキー)+useLocale/t()+pick()を新設し、Guideに言語セレクター(English / 日本語・端末に保存)を追加。ナビ・ページ見出し・MARKET STATUS・コマンド要約(主コマンド/権限/WHY NOW/NEXT/ラベル付き梯子)を選択言語で一貫表示(切替でAI課金は発生しない)。コマンド要約の主コマンド・理由・次の条件・ドライバーは既存のen/jaフィールドから選択。実機で en↔ja 双方向の切替を確認。動的な詳細解説(バックエンド由来)は順次i18n対応(長い裾野は段階移行)'],
   ['v10.122.0', 'Todayを単一コマンド要約に集約(10秒ルール達成) — 並列に出ていた状態(PAUSE/EVENT WAIT/CAUTION/HIGH/PARTIAL…)をユーザーが頭で統合する必要をなくし、ARGUSが1つの指令に合成。①最大文字は人間向けの命令(例: 新規購入禁止 NO NEW ENTRY)、シグナル(PAUSE · 4/7)は副次表示②匿名の7分割ゲージをヒーローから撤去(ラベル付きの梯子は「説明」内のみ・CAPITAL DEPLOYMENT PERMISSIONと明示)③ドライバーは最大3つに正規化(重要イベント接近/日本株警戒/部分データ 等・Event Wait+Event Risk+Highの重複表現を解消)④理由・次の条件は1回だけ⑤Market Contextは下に折りたたみ(VIEW MARKET CONTEXT)⑥MARKET STATUSは控えめに。決定論的なcommandSummaryリゾルバ1本に集約し、各コンポーネントが個別に再解釈しない。自動売買なし'],
   ['v10.121.0', '通知をAction Level形式に + GuideにAction Levels解説を追加 — ①急落通知が「アクション X/7 — シグナル / 新規購入:禁止 · 買い増し:禁止 / 原因 / 次」形式に(英語ロケール ACTION X/7 — REVIEW / NEW ENTRY: BLOCKED にも対応)。汎用「急落」表現を撤廃②Guide能力一覧の先頭に「アクションレベル(7段階)」解説を追加(HOLD ONLY=新規・買い増し禁止/ENTER≠全力/EXIT≠自動注文/データ不完全でENTER不可/無材料=安全ではない/数値色も明記)'],
   ['v10.120.0', 'Today画面を指揮優先(Command-First)に再構成 + 曖昧な CLEAR を撤去 — ①最上段にアクション指令(シグナル+権限)を配置し、地合い(Global/Japan)は下へ。「今何をしてよいか」が一目で分かる(NEW ENTRY BLOCKED · ADD BLOCKED を大きく表示)②Owner Riskの「CLEAR」を撤去(=安全/買いOKと誤解されるため)。意味のあるオーナー状態(REVIEW/DEFEND/NOT SYNCED等)がある時だけ表示③PARTIAL DATAを指令カード内に統合(独立した大きな段落を廃止・信頼度上限を併記)④EVENT_WAIT等の生enumを「EVENT WAIT」と整形⑤指令カードは英語で統一(「PAUSE 保留」等の言語混在を解消)⑥市場行に「MARKET STATUS」見出し+OPEN/CLOSED/24Hを付けタブ誤認を防止⑦重複していた理由/次の条件を整理。動的な理由文の完全な言語切替は次のi18nフェーズ'],
@@ -222,8 +224,24 @@ const HOWTO: string[] = [
 export const Guide: React.FC = () => {
   const [showAllUpdates, setShowAllUpdates] = React.useState(false);
   const RECENT_SHOWN = 5;
+  const loc = useLocale();
   return (
-    <PageShell title="Glossary / Guide" subtitle="使い方(ページ別)・できること・用語一覧(日本語ガイド)。">
+    <PageShell title={t('nav.guide')} subtitle="使い方(ページ別)・できること・用語一覧(日本語ガイド)。">
+      <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)' }}>{t('common.language')}</span>
+        {(['en', 'ja'] as const).map((l) => (
+          <button key={l} onClick={() => setLocale(l)}
+            style={{ padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13,
+                     background: loc === l ? 'var(--surface-soft)' : 'transparent',
+                     color: loc === l ? 'var(--text-main)' : 'var(--text-sub)',
+                     border: `1px solid ${loc === l ? 'var(--line-strong)' : 'var(--line)'}` }}>
+            {l === 'en' ? 'English' : '日本語'}
+          </button>
+        ))}
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {loc === 'ja' ? 'UIの言語(既定=English)。動的な解説は順次対応。' : 'UI language (default English). Dynamic detail is being migrated.'}
+        </span>
+      </section>
       <section>
         <div className="section-head">
           <span className="section-head__title">使い方 — ページ別ガイド</span>

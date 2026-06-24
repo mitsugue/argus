@@ -6,6 +6,7 @@ import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
 import { CauseStackCard } from '../components/dashboard/CauseStackCard';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
+import { useLocale, t } from '../i18n';
 import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
@@ -36,6 +37,7 @@ const formatDate = (iso: string) => {
 };
 
 export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
+  useLocale();   // re-render Today on locale switch
   const { assets } = useAssets();
   const ledger = useLedgerSummary();
   const aiJ = useAIJudgment();
@@ -130,7 +132,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
   return (
     <PageShell
-      title="Daily Command Center"
+      title={t('page.today')}
       subtitle={<span>{formatDate(judgment.date)}</span>}
     >
       <MarketSessionLamps />

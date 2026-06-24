@@ -1,6 +1,7 @@
 import React from 'react';
 import { resolveCommandSummary, SIGNALS, type SummaryInput } from '../../domain/commandSummary';
 import { SIGNAL_ORDER } from '../../domain/actionLevel';
+import { useLocale, t } from '../../i18n';
 import './CommandSummaryCard.css';
 
 // One resolved command (v10.122). The PRIMARY COMMAND is the largest text; the
@@ -8,65 +9,70 @@ import './CommandSummaryCard.css';
 // English chrome (owner preference); detailed ja rationale sits in Market Context.
 
 export const CommandSummaryCard: React.FC<SummaryInput> = (input) => {
+  const loc = useLocale();
   const s = resolveCommandSummary(input);
   const sigColor = `var(${SIGNALS[s.signalCode].token})`;
   const blocked = SIGNALS[s.signalCode].permissions.newEntry === 'BLOCKED';
   const addBlocked = SIGNALS[s.signalCode].permissions.add === 'BLOCKED';
   const partial = ['PARTIAL', 'DELAYED', 'STALE', 'UNKNOWN', 'UNAVAILABLE'].includes(s.dataQuality);
+  const ja = loc === 'ja';
+  const primary = ja ? s.primaryCommandJa : s.primaryCommandEn;
+  const reason = ja ? s.reasonJa : s.reasonEn;
+  const next = ja ? s.nextReviewJa : s.nextReviewEn;
 
   return (
     <div className="cs-card">
       {/* PRIMARY COMMAND — largest, highest contrast */}
-      <div className="cs-primary" style={{ color: sigColor }}>{s.primaryCommandEn}</div>
+      <div className="cs-primary" style={{ color: sigColor }}>{primary}</div>
       <div className="cs-signal">{s.signalCode.replace('_', ' ')} · ACTION {s.signalLevel}/7</div>
 
       {/* Permissions */}
       <div className="cs-perms">
-        <span className={`cs-perm cs-perm--${blocked ? 'blk' : 'ok'}`}>NEW ENTRY: {blocked ? 'BLOCKED' : 'ALLOWED'}</span>
-        <span className={`cs-perm cs-perm--${addBlocked ? 'blk' : 'ok'}`}>ADD: {addBlocked ? 'BLOCKED' : 'ALLOWED'}</span>
-        <span className="cs-perm cs-perm--neutral">EXISTING: {s.existingPositionCode.replace('_', ' ')}</span>
+        <span className={`cs-perm cs-perm--${blocked ? 'blk' : 'ok'}`}>{t('cmd.newEntry')}: {blocked ? t('cmd.blocked') : t('cmd.allowed')}</span>
+        <span className={`cs-perm cs-perm--${addBlocked ? 'blk' : 'ok'}`}>{t('cmd.add')}: {addBlocked ? t('cmd.blocked') : t('cmd.allowed')}</span>
+        <span className="cs-perm cs-perm--neutral">{t('cmd.existing')}: {s.existingPositionCode.replace('_', ' ')}</span>
       </div>
 
       {/* One status line */}
       <div className="cs-status">
-        <span className={`cs-stat${s.riskLevel === 'HIGH' ? ' cs-stat--bad' : ''}`}>{s.riskLevel} RISK</span>
+        <span className={`cs-stat${s.riskLevel === 'HIGH' ? ' cs-stat--bad' : ''}`}>{s.riskLevel} {t('cmd.risk')}</span>
         <span className="cs-stat-sep">·</span>
-        <span className={`cs-stat${partial ? ' cs-stat--warn' : ''}`}>{s.dataQuality} DATA</span>
+        <span className={`cs-stat${partial ? ' cs-stat--warn' : ''}`}>{s.dataQuality} {t('cmd.data')}</span>
       </div>
       {partial && typeof s.confidence === 'number' && (
-        <p className="cs-conf">Decision confidence is capped at {Math.round(s.confidence * 100)}%.</p>
+        <p className="cs-conf">{t('cmd.confCap')} {Math.round(s.confidence * 100)}%.</p>
       )}
 
       {/* WHY NOW — ≤3 drivers, one line */}
       {s.drivers.length > 0 && (
         <div className="cs-block">
-          <span className="cs-h">WHY NOW</span>
-          <span className="cs-drivers">{s.drivers.map((d) => d.labelEn).join(' · ')}</span>
+          <span className="cs-h">{t('cmd.whyNow')}</span>
+          <span className="cs-drivers">{s.drivers.map((d) => (ja ? d.labelJa : d.labelEn)).join(' · ')}</span>
         </div>
       )}
 
       {/* NEXT REVIEW — one line */}
       <div className="cs-block">
-        <span className="cs-h">NEXT REVIEW</span>
-        <span className="cs-next">{s.nextReviewEn}</span>
+        <span className="cs-h">{t('cmd.nextReview')}</span>
+        <span className="cs-next">{next}</span>
       </div>
 
       {/* Labeled ladder + disclaimer — help only (no anonymous gauge in the card). */}
       <details className="cs-help">
-        <summary>What does this mean?</summary>
+        <summary>{t('cmd.whatMeans')}</summary>
         <div className="cs-ladder" aria-label="Capital deployment permission ladder">
-          <div className="cs-ladder-cap">CAPITAL DEPLOYMENT PERMISSION</div>
+          <div className="cs-ladder-cap">{t('cmd.ladderCap')}</div>
           {[...SIGNAL_ORDER].reverse().map((c) => (
             <div key={c} className={`cs-rung${c === s.signalCode ? ' cs-rung--cur' : ''}`}>
               <span className="cs-rung-n">{SIGNALS[c].level}</span>
               <span className="cs-rung-l" style={c === s.signalCode ? { color: `var(${SIGNALS[c].token})`, fontWeight: 700 } : undefined}>
-                {SIGNALS[c].labelEn}
+                {ja ? SIGNALS[c].labelJa : SIGNALS[c].labelEn}
               </span>
-              {c === s.signalCode && <span className="cs-rung-cur">← CURRENT</span>}
+              {c === s.signalCode && <span className="cs-rung-cur">{t('cmd.current')}</span>}
             </div>
           ))}
         </div>
-        <p className="cs-disc">Action Level = capital-deployment permission, not model confidence and not market regime. Decision-support only — ARGUS never places an order.</p>
+        <p className="cs-disc">{t('cmd.disclaimer')}</p>
       </details>
     </div>
   );

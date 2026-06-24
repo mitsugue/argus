@@ -1,7 +1,12 @@
 import React from 'react';
 import { ActionPill } from './action/ActionBadge';
 import type { ActionKey, RiskLevel } from '../types/action';
+import { useLocale, t, type DictKey } from '../i18n';
 import './NavRail.css';
+
+const NAV_KEY: Record<string, DictKey> = {
+  command: 'nav.today', watchlist: 'nav.watchlist', regime: 'nav.marketContext', core: 'nav.corePortfolio',
+};
 
 export type RouteKey =
   | 'command'
@@ -41,6 +46,7 @@ export const NavRail: React.FC<Props> = ({
   onReviewLink,
   isReview,
 }) => {
+  useLocale();   // re-render on locale switch
   return (
     <nav className="nav" aria-label="Sections">
       <button
@@ -48,7 +54,7 @@ export const NavRail: React.FC<Props> = ({
         onClick={() => onSelect('command')}
         aria-label="Jump to today's command center"
       >
-        <span className="nav__today-label">Today's call</span>
+        <span className="nav__today-label">{t('nav.todaysCall')}</span>
         <ActionPill action={todayCall.action} />
       </button>
 
@@ -61,7 +67,7 @@ export const NavRail: React.FC<Props> = ({
           aria-current={active === n.key ? 'page' : undefined}
         >
           <span className="nav__dot" aria-hidden />
-          {n.label}
+          {t(NAV_KEY[n.key] ?? 'nav.today')}
         </button>
       ))}
 
@@ -71,7 +77,7 @@ export const NavRail: React.FC<Props> = ({
         aria-current={active === 'guide' ? 'page' : undefined}
       >
         <span className="nav__dot" aria-hidden />
-        Glossary / Guide
+        {t('nav.guide')}
       </button>
 
       <div className="nav__footer">
