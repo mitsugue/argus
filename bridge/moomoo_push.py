@@ -148,6 +148,17 @@ _cap_done_date = None  # JST date string the test last ran
 _bridge_start = time.time()   # warm-up reference (v10.114)
 CAP_WARMUP_SEC = 150          # let OpenD push fresh quotes before measuring freshness
 
+# ── Realtime JP movers sweep (v10.135) ───────────────────────────────────────
+# Periodically sweep (CAP_UNIVERSE_MAX-sample ∪ watchlist) during the JP session,
+# extract the biggest movers, and POST them so the backend can push them WHILE the
+# TSE is open (moomoo realtime — seconds), instead of relying on Yahoo (~20min) or
+# post-close J-Quants. Same get_market_snapshot path as the cap-test.
+MOVER_SWEEP_ENABLED  = os.environ.get("JP_MOVER_SWEEP", "1") not in ("0", "false", "")
+MOVER_SWEEP_INTERVAL = max(120, int(os.environ.get("JP_MOVER_SWEEP_SEC", "300")))   # 5 min
+MOVER_MIN_PCT        = float(os.environ.get("JP_MOVER_MIN_PCT", "8"))               # report |move| >= 8%
+MOVER_MAX            = int(os.environ.get("JP_MOVER_MAX", "60"))
+_mover_sweep_at = 0.0
+
 
 def _now_jst():
     return _dt.datetime.now(_JST)
@@ -278,6 +289,56 @@ def run_capability_test(qc):
     return report
 
 
+def _post_movers(movers, as_of, coverage):
+    """Signed POST of realtime JP movers to the backend (same HMAC scheme)."""
+    raw = json.dumps({"movers": movers, "asOf": as_of, "coverage": coverage,
+                      "source": "moomoo"}, separators=(",", ":")).encode("utf-8")
+    headers = {"X-ARGUS-ADMIN-TOKEN": TOKEN, "Content-Type": "application/json"}
+    if HMAC_SECRET:
+        ts, nonce = str(time.time()), secrets.token_hex(8)
+        sig = hmac.new(HMAC_SECRET.encode("utf-8"),
+                       f"{ts}.{nonce}.".encode("utf-8") + raw, hashlib.sha256).hexdigest()
+        headers["X-ARGUS-TIMESTAMP"] = ts
+        headers["X-ARGUS-NONCE"] = nonce
+        headers["X-ARGUS-SIGNATURE"] = sig
+    return requests.post(f"{BACKEND}/api/argus/jp-movers-push", data=raw, headers=headers, timeout=30)
+
+
+def sweep_jp_movers(qc):
+    """One realtime sweep of (CAP_UNIVERSE_MAX-sample ∪ watchlist) → POST the biggest
+    movers. Reuses get_market_snapshot + rows_from_snapshot. Never raises fatally."""
+    uni = _fetch_jp_universe()
+    if CAP_UNIVERSE_MAX and len(uni) > CAP_UNIVERSE_MAX:
+        uni = uni[:CAP_UNIVERSE_MAX]
+    # Always include the watchlist (the sample may not contain it).
+    codes, seen = [], set()
+    for c in list(CODES) + uni:
+        cu = c.upper()
+        if cu not in seen:
+            seen.add(cu)
+            codes.append(c)
+    if not codes:
+        print(_now_jst().strftime("%H:%M:%S"), "mover-sweep: no universe")
+        return
+    rows = []
+    for i in range(0, len(codes), CAP_BATCH):
+        ret, df = qc.get_market_snapshot(codes[i:i + CAP_BATCH])
+        if ret == RET_OK:
+            rows.extend(rows_from_snapshot(df))
+        time.sleep(0.5)   # stay under the rate quota
+    movers = [r for r in rows if abs(r.get("changePct") or 0) >= MOVER_MIN_PCT]
+    movers.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
+    movers = movers[:MOVER_MAX]
+    try:
+        resp = _post_movers(movers, _now_jst().isoformat(), len(codes))
+        body = resp.json() if resp.ok else {}
+        print(_now_jst().strftime("%H:%M:%S"),
+              f"mover-sweep: swept={len(codes)} movers>={MOVER_MIN_PCT}%={len(movers)} "
+              f"accepted={body.get('accepted')} http={resp.status_code}")
+    except Exception as e:
+        print(_now_jst().strftime("%H:%M:%S"), "mover-sweep post error:", str(e)[:120])
+
+
 def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
@@ -341,6 +402,16 @@ def main():
                         run_capability_test(qc)
                     except Exception as e:
                         print(_now_jst().strftime("%H:%M:%S"), "cap-test error:", str(e)[:120])
+
+            # Realtime mover sweep — periodic during the JP session (v10.135).
+            if MOVER_SWEEP_ENABLED and _jp_open_jst():
+                global _mover_sweep_at
+                if time.time() - _mover_sweep_at >= MOVER_SWEEP_INTERVAL:
+                    _mover_sweep_at = time.time()
+                    try:
+                        sweep_jp_movers(qc)
+                    except Exception as e:
+                        print(_now_jst().strftime("%H:%M:%S"), "mover-sweep error:", str(e)[:120])
 
             time.sleep(INTERVAL)
     finally:

@@ -3903,28 +3903,96 @@ def api_argus_jp_market_movers():
             return jsonify(y)
     return jsonify(_jq_market_movers())
 
+# ━━━ moomoo realtime JP movers (v10.135) ━━━
+# The local bridge sweeps (500-sample ∪ your watchlist) via get_market_snapshot and
+# POSTs the movers here — realtime (seconds), but only the swept universe. The mover
+# scan then layers Yahoo (~20min, broader market) and J-Quants EOD underneath it.
+# Fresh window kept short so a stale sweep never reads as live.
+_MOOMOO_JP_MOVERS  = {"rows": [], "ts": 0.0, "asOf": None}
+_MOOMOO_MOVERS_TTL = float(os.environ.get("MOOMOO_MOVERS_TTL", "720"))   # 12 min
+
+@app.route("/api/argus/jp-movers-push", methods=["POST"])
+def api_argus_jp_movers_push():
+    """Bridge → backend: realtime JP movers from the moomoo all-market sweep.
+    Admin + HMAC gated (same as quote-push). Non-monetary market data only."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    raw = request.get_data() or b""
+    sig_ok, sig_reason = _verify_bridge_signature(raw)
+    if not sig_ok:
+        send_security_alert({"type": "bridge_signature_rejected", "reason": sig_reason,
+                             "meta": _client_meta()})
+        return jsonify({"error": "signature_invalid", "reason": sig_reason}), 401
+    body = request.get_json(silent=True) or {}
+    movers = body.get("movers")
+    if not isinstance(movers, list):
+        return jsonify({"error": "bad_payload", "message": "expected {movers: [...]}"}), 400
+    rows = []
+    for m in movers[:200]:
+        try:
+            sym = str(m.get("symbol", "")).strip().upper()
+            if not _JP_SYM_RE.match(sym):
+                continue
+            price = float(m.get("price") or 0)
+            chg = float(m.get("changePct") or 0)
+            if not (price > 0 and math.isfinite(price) and math.isfinite(chg)):
+                continue
+            rows.append({"symbol": sym, "price": price, "changePct": round(chg, 4),
+                         "volume": int(m.get("volume") or 0), "name": m.get("name")})
+        except (TypeError, ValueError):
+            continue
+    _MOOMOO_JP_MOVERS.update({"rows": rows, "ts": time.time(), "asOf": body.get("asOf")})
+    return jsonify({"ok": True, "accepted": len(rows)})
+
+def _moomoo_jp_movers():
+    """Fresh moomoo-swept JP movers (realtime; 500-sample ∪ watchlist) or []."""
+    if time.time() - (_MOOMOO_JP_MOVERS["ts"] or 0) > _MOOMOO_MOVERS_TTL:
+        return []
+    return list(_MOOMOO_JP_MOVERS["rows"])
+
 def _scan_jp_market_movers():
-    """Record MARKET_MOVER events for the day's biggest JP movers. Intraday uses
-    Yahoo (all market, ~20min); after close uses J-Quants EOD. Daily dedup."""
+    """Whole-market JP movers via a 3-tier waterfall (v10.135): moomoo realtime
+    (500-sample ∪ watchlist) → Yahoo (~20min, broader market) → J-Quants EOD
+    (post-close backstop). Dedup by symbol (higher tier wins), rank by |move|,
+    record + (session-gated) push. Daily dedup per symbol."""
     if not _EVENT_BACKBONE_ENABLED:
         return 0
     _open = _jp_market_open()
-    mv = _yahoo_jp_movers() if _open else _jq_market_movers()
-    if mv.get("status") != "live":
+    tiers = []   # (source, session, rows) — priority order
+    mm = _moomoo_jp_movers()
+    if mm:
+        tiers.append(("moomoo-rt", "JP_RT", mm))             # realtime, swept universe
+    if _open:
+        y = _yahoo_jp_movers()
+        if y.get("status") == "live":
+            tiers.append(("yahoo-jp", "JP_INTRADAY",
+                          (y.get("gainers") or []) + (y.get("losers") or [])))
+    else:
+        # J-Quants EOD is yesterday's data intraday — only meaningful after close,
+        # where it's the day's final tape (push is suppressed post-close anyway).
+        jq = _jq_market_movers()
+        if jq.get("status") == "live":
+            tiers.append(("jquants-eod", "JP_EOD",
+                          (jq.get("gainers") or []) + (jq.get("losers") or [])))
+    if not tiers:
         return 0
-    # Label the session/source by what we actually used (v10.133) — intraday Yahoo
-    # vs post-close J-Quants EOD — instead of always "JP_EOD/jquants-eod".
-    _session = "JP_INTRADAY" if _open else "JP_EOD"
-    _source = "yahoo-jp" if _open else "jquants-eod"
-    rows = (mv.get("gainers") or []) + (mv.get("losers") or [])
-    rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
+    seen, merged = set(), []
+    for source, session, rows in tiers:
+        for r in rows:
+            sym = str(r.get("symbol") or "")
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            merged.append((source, session, r))
+    merged.sort(key=lambda t: abs(t[2].get("changePct") or 0), reverse=True)
     now, n = datetime.now(pytz.utc), 0
-    for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:
+    for source, session, row in merged[:_MARKET_MOVER_NOTIFY_MAX]:
         for trig in argus_events.detect_market_mover(
                 row["symbol"], row["changePct"], row["price"],
                 min_price=_JP_MOVER_MIN_PRICE, gainer_pct=max(_JP_MOVER_PCT, 10.0)):
-            env = _record_event("JP", row["symbol"], trig, now, _session,
-                                bucket_minutes=1440, source=_source)
+            env = _record_event("JP", row["symbol"], trig, now, session,
+                                bucket_minutes=1440, source=source)
             if env:
                 env["nameJa"] = row.get("name")
                 n += 1
