@@ -8166,18 +8166,41 @@ def get_closepin_snapshot():
             "bandPct": list(_CLOSEPIN_BANDS),
             "scenarios": _closepin_scenarios(chg, flow_ratio, posture),
         })
+    # ⑩ Intraday phase (v10.118): the pin is a LATE-day read (full-day context),
+    # and 15:25–15:30 is the closing auction — NOT continuous trading. Be explicit
+    # so nothing claims continuous quotes or block-trade certainty in that window.
+    _jn = datetime.now(pytz.timezone("Asia/Tokyo"))
+    _hm = _jn.hour * 60 + _jn.minute
+    if _jn.weekday() >= 5:
+        phase = "closed_weekend"
+    elif _hm < 9 * 60:
+        phase = "pre_market"
+    elif _hm < 14 * 60 + 30:
+        phase = "intraday_pre_pin"
+    elif _hm < 15 * 60 + 25:
+        phase = "decision_window"      # 14:30–15:25 — heaviest weight, final decision
+    elif _hm < 15 * 60 + 30:
+        phase = "closing_auction"      # 15:25–15:30 — auction, not continuous trading
+    else:
+        phase = "closed"
     return {
         "engineVersion": "closepin-v1",
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "dateJst": datetime.now(pytz.timezone("Asia/Tokyo")).strftime("%Y-%m-%d"),
+        "dateJst": _jn.strftime("%Y-%m-%d"),
         "status": "live" if rows else "no_realtime",
         "marketPosture": posture,
+        "intradayPhase": phase,
         "rows": rows,
         "scoringRule": {
             "targetJa": "同日15:30の終値がピン価格に対してどのバケットに着地するか",
             "buckets": {"flatWithinPct": _CLOSEPIN_BANDS[0], "strongBeyondPct": _CLOSEPIN_BANDS[1]},
             "noteJa": "リアルタイム価格(moomooブリッジ)が取れた銘柄のみピン。T-1価格では当日予測にならないため除外。",
         },
+        "dataLimitations": [
+            "ピンは大引け前(全日の値動きを織り込んだ後半の読み)。14:30→15:25が最終判断窓。",
+            "15:25–15:30は引け条件(クロージング・オークション)で連続売買ではない。連続的な気配は前提にしない。",
+            "板(L2)/VWAP/ティック未取得のため、ブロック取引・新規ロングの断定はしない。",
+        ],
     }
 
 @app.route("/api/argus/closepin-snapshot")

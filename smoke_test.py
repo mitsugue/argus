@@ -239,6 +239,17 @@ def v_tdnet_recent():
             return False, f"bad sentiment {it.get('sentiment')}"
     return True, f"status={d.get('status')} count={d.get('count')}"
 
+def v_closepin_phase():
+    c, d = _get("/api/argus/closepin-snapshot")
+    if d.get("engineVersion") != "closepin-v1":
+        return False, f"engine={d.get('engineVersion')}"
+    if not d.get("intradayPhase"):
+        return False, "no intradayPhase"
+    lims = " ".join(d.get("dataLimitations") or [])
+    if "オークション" not in lims:
+        return False, "missing closing-auction disclaimer"
+    return True, f"phase={d.get('intradayPhase')}"
+
 def v_cause_attribution():
     c, d = _get("/api/argus/cause-attribution?symbol=285A&market=JP")
     if d.get("schemaVersion") != "cause-attribution-v1":
@@ -335,6 +346,7 @@ CHECKS = [
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
     ("decision-value summary", v_decision_value_summary),
     ("no order routes (safety)", v_no_order_routes),
+    ("closepin phase (full-day)", v_closepin_phase),
     ("cause-attribution (integrity)", v_cause_attribution),
     ("runtime-manifest", v_runtime_manifest),
     ("downside-incidents (cause+override)", v_downside_incidents),

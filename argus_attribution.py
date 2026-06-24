@@ -298,6 +298,47 @@ def narrative_violations(text: str, *, evidence: Optional[List[Dict[str, Any]]] 
     return out
 
 
+# ── 6. Report intelligence (preserve BOTH bullish and bearish) ──────────────
+_BULL_KW = ["強い", "好調", "増益", "上方修正", "恩恵", "堅調", "最高益", "需要拡大",
+            "strong", "beat", "upgrade", "raise", "robust", "tailwind", "record"]
+_BEAR_KW = ["懸念", "下方修正", "悪化", "減益", "頭打ち", "巻き戻し", "割高", "catch-down",
+            "roi", "pressure", "downgrade", "cut", "weak", "headwind", "overvalued", "derat"]
+_COND_KW = ["もし", "可能性", "リスク", "条件", "次第", "if ", "could", "may ", "risk of",
+            "potential", "unless", "depending"]
+
+
+def analyze_report(text: str, *, source: str = "", title: str = "",
+                   published_at: Optional[str] = None,
+                   move_started_at: Optional[str] = None) -> Dict[str, Any]:
+    """Extract a report's bullish AND bearish claims + conditional risks WITHOUT
+    collapsing a balanced report to one bearish keyword score. Classifies it as
+    background vs immediate-trigger using the timestamp rule."""
+    sents = [s.strip() for s in
+             (text or "").replace("。", "。\n").replace(". ", ".\n").splitlines() if s.strip()]
+    bull, bear, cond = [], [], []
+    for s in sents:
+        sl = s.lower()
+        if any(k in s or k in sl for k in _BULL_KW):
+            bull.append(s[:140])
+        if any(k in s or k in sl for k in _BEAR_KW):
+            bear.append(s[:140])
+        if any(k in s or k in sl for k in _COND_KW):
+            cond.append(s[:140])
+    # background vs trigger via timestamp (a report rarely is an immediate trigger)
+    role = causal_role({"publishedAt": published_at, "sourceReliability": 0.6, "kind": "report"},
+                       move_started_at)["role"] if move_started_at else "background_only"
+    balanced = bool(bull) and bool(bear)
+    return {
+        "source": source, "title": title, "publishedAt": published_at,
+        "bullishClaims": bull[:5], "bearishClaims": bear[:5], "conditionalRisks": cond[:5],
+        "balanced": balanced,
+        "backgroundVsTrigger": "background" if role in ("background_only", "vulnerability") else role,
+        "noteJa": ("両論(強気・弱気)を保持。単一キーワードで弱気と断定しない。"
+                   if balanced else "一方向の主張が中心(両論の有無を確認)。"),
+        "dominantKeywordScoreRejected": True,
+    }
+
+
 # ── 1. Cause attribution stack (orchestrator) ───────────────────────────────
 def attribute_cause(ctx: Dict[str, Any], evidence: Sequence[Dict[str, Any]],
                     *, now_iso: Optional[str] = None) -> Dict[str, Any]:

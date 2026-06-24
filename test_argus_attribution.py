@@ -145,6 +145,23 @@ def test_cause_probs_sum_to_one_unknown_nonzero():
     assert out["immediateTrigger"] is None   # no valid trigger
 
 
+# balanced report preserves bullish AND bearish claims (not monocausal)
+def test_report_preserves_both_sides():
+    text = ("足元の半導体決算は好調で恩恵が大きい。"
+            "一方でAI設備投資のROIに懸念があり、catch-downのリスクもある。")
+    out = A.analyze_report(text, source="JPM", title="AI capex", published_at="2026-06-20T00:00:00Z",
+                           move_started_at="2026-06-23T00:30:00Z")
+    assert out["bullishClaims"] and out["bearishClaims"]    # both preserved
+    assert out["balanced"] is True
+    assert out["dominantKeywordScoreRejected"] is True
+
+
+def test_report_stale_is_background_not_trigger():
+    out = A.analyze_report("懸念がある。", source="x", published_at="2026-06-18T00:00:00Z",
+                           move_started_at="2026-06-23T00:30:00Z")
+    assert out["backgroundVsTrigger"] == "background"
+
+
 # no automatic trading surface
 def test_no_order_surface():
     for bad in ("place_order", "execute", "submit_order", "buy", "sell", "broker"):
