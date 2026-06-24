@@ -119,9 +119,13 @@ def test_notification_actionable():
     inc = D.classify_incident(a, {})
     note = D.build_notification(inc)
     assert "5803" in note["title"] and "-6.2%" in note["title"]
-    assert "REVIEW REQUIRED" in note["message"] or "要点検" in note["message"]
-    assert "確認条件" in note["message"]
+    assert "アクション" in note["message"] and "/7" in note["message"]   # Action Level format
+    assert "新規購入: 禁止" in note["message"] and "買い増し: 禁止" in note["message"]
+    assert note["actionLevel"] in (1, 2, 3, 4, 5)
     assert "急落しています" != note["message"]
+    # English locale variant
+    en = D.build_notification(inc, locale="en")
+    assert "ACTION" in en["message"] and "NEW ENTRY: BLOCKED" in en["message"]
 
 
 # 11. no duplicate notification without a material change

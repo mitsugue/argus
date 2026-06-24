@@ -29,6 +29,8 @@ const PAGE_GUIDE: { page: string; descJa: string }[] = [
 ];
 
 const CAPABILITIES: { area: string; descJa: string }[] = [
+  { area: 'アクションレベル(7段階・最重要)',
+    descJa: 'シグナルは7段階で「資本投下の許可/守りの姿勢」を表す(モデルの信頼度や地合いとは別物)。1 EXIT(撤退)/2 DEFEND(防御)/3 REVIEW(再点検)/4 PAUSE(保留)/5 HOLD ONLY(保有のみ)/6 PREPARE(準備)/7 ENTER(エントリー可)。各シグナルには必ず権限を併記する: 新規購入・買い増し・既存ポジション。★HOLD ONLYは「既存ポジションの維持のみ」で、新規購入・買い増しは禁止です(緑にしないのはこのため。HOLDを単独表示しない理由)。ENTER=全力買いではなく、別途定めたリスク予算内での新規可。EXITは注文を出すのではなく撤退の構え(ARGUSは自動売買をしない)。データが不完全(PARTIAL/STALE)だとENTERは出ず信頼度の上限が下がる。急落+不完全データは最低REVIEWに格下げ。「公式材料が無い=安全」ではない。数値の色は 利益/上昇=緑・損失/下落=赤・ゼロ=中立・取得不可=グレー。ただしVIX上昇やHYスプレッド拡大は「プラスでも悪材料=赤」で表示(v10.119+)。' },
   { area: '今日の判断 (Today)',
     descJa: '①市場セッションランプ(JP/US market・Crypto — 開場中は緑、引け後は消灯) ②総合判断(WAIT/HOLD等)・リスク・理由・触る/避ける/次に待つ条件を金利/レジーム/イベント/価格からライブ合成 ③24/7イベント(S高/急変・タップで調査ドシエ) ④判断ログ(自己採点)。開いて10秒で今日の構えが分かる。' },
   { area: 'Watchlist',
@@ -68,6 +70,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.121.0', '通知をAction Level形式に + GuideにAction Levels解説を追加 — ①急落通知が「アクション X/7 — シグナル / 新規購入:禁止 · 買い増し:禁止 / 原因 / 次」形式に(英語ロケール ACTION X/7 — REVIEW / NEW ENTRY: BLOCKED にも対応)。汎用「急落」表現を撤廃②Guide能力一覧の先頭に「アクションレベル(7段階)」解説を追加(HOLD ONLY=新規・買い増し禁止/ENTER≠全力/EXIT≠自動注文/データ不完全でENTER不可/無材料=安全ではない/数値色も明記)'],
   ['v10.120.0', 'Today画面を指揮優先(Command-First)に再構成 + 曖昧な CLEAR を撤去 — ①最上段にアクション指令(シグナル+権限)を配置し、地合い(Global/Japan)は下へ。「今何をしてよいか」が一目で分かる(NEW ENTRY BLOCKED · ADD BLOCKED を大きく表示)②Owner Riskの「CLEAR」を撤去(=安全/買いOKと誤解されるため)。意味のあるオーナー状態(REVIEW/DEFEND/NOT SYNCED等)がある時だけ表示③PARTIAL DATAを指令カード内に統合(独立した大きな段落を廃止・信頼度上限を併記)④EVENT_WAIT等の生enumを「EVENT WAIT」と整形⑤指令カードは英語で統一(「PAUSE 保留」等の言語混在を解消)⑥市場行に「MARKET STATUS」見出し+OPEN/CLOSED/24Hを付けタブ誤認を防止⑦重複していた理由/次の条件を整理。動的な理由文の完全な言語切替は次のi18nフェーズ'],
   ['v10.119.0', 'Action Level システム導入(HOLD曖昧さの根治・Phase1)+ 数値カラー標準化 — 「HOLD」が「保有=安全・新規買いOK」と誤解された問題に対し、7段階のAction Level(1 EXIT/2 DEFEND/3 REVIEW/4 PAUSE/5 HOLD ONLY/6 PREPARE/7 ENTER)を唯一の真実源(domain/actionLevel.ts)として導入。シグナル語は単独表示せず、必ず権限(NEW ENTRY/ADD/EXISTING)を併記。HOLDは「HOLD ONLY(新規・買い増しBLOCKED)」になり緑色にしない(スレート色)。Todayヒーロー+Watchlist各行に適用。レガシー値は保持(legacyAction)。数値色トークン(--value-positive/negative/neutral/unavailable)+getNumericTone/getMetricTone(VIX上昇は緑でなく赤=higher_is_worse)も追加。次フェーズ: 全画面の数値色適用・en/ja言語切替・Guide詳細・通知・API構造化'],
   ['v10.118.0', 'レポート知能(⑥)+ close-pin全日加重・正直化(⑩)で残タスク完走 — ⑥ analyze_report: バンク/戦略レポートから強気・弱気・条件付きリスクの文節を両方保持して抽出(単一キーワードで弱気と断定しない)+古いレポートは即時引き金でなく背景に分類。⑩ close-pin: intradayPhase(寄り前/ピン前/14:30-15:25=最終判断窓/15:25-15:30=クロージング・オークション/引け後)を明示し、データ制約に「15:25-15:30は連続売買でない・板/L2/VWAP未取得のためブロック取引や新規ロングは断定しない」を追加。テスト334。これでGemini誤分析対策の①〜⑪を全て実装'],

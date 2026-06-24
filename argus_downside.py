@@ -552,18 +552,31 @@ _OVERRIDE_JA = {
 }
 
 
-def build_notification(inc):
-    """One actionable line: symbol/name, %, cause class, override, holder flag,
-    next condition. Never just '急落しています'."""
+# Downside override → Action Level (mirror of domain/actionLevel.ts, v10.121):
+# (level, EN label, JA label). All downside levels BLOCK new entry + add.
+_ACTION_LEVEL = {
+    "EXIT_WATCH": (2, "DEFEND", "防御"), "TRIM_WATCH": (2, "DEFEND", "防御"),
+    "REVIEW_REQUIRED": (3, "REVIEW", "再点検"), "DO_NOT_ADD": (3, "REVIEW", "再点検"),
+    "HOLD_CAUTION": (5, "HOLD ONLY", "保有のみ"), "WAIT": (4, "PAUSE", "保留"),
+}
+
+
+def build_notification(inc, locale="ja"):
+    """Action-Level notification (v10.121) — never a bare "急落". Shows the level,
+    explicit BLOCKED permissions, cause, and next condition, in the chosen locale."""
     pct = inc.get("changePct")
-    pct_s = f"{pct:+.1f}%" if isinstance(pct, (int, float)) else "下落"
+    pct_s = f"{pct:+.1f}%" if isinstance(pct, (int, float)) else ("downside" if locale == "en" else "下落")
+    level, label_en, label_ja = _ACTION_LEVEL.get(inc.get("actionOverride"), (3, "REVIEW", "再点検"))
     cause = _CAUSE_JA.get(inc.get("incidentType"), "下落")
-    override = _OVERRIDE_JA.get(inc.get("actionOverride"), inc.get("actionOverride"))
-    held = "【保有】" if inc.get("isHeld") else ""
-    title = f"{held}{inc.get('symbol')} {inc.get('assetName')} {pct_s}"
-    msg = (f"{cause}。通常のHOLDとして扱わず {override}。{inc.get('doNotDoJa')} "
-           f"確認条件: {inc.get('nextConditionJa')}")
-    return {"title": title, "message": msg,
+    held = ("[HELD] " if locale == "en" else "【保有】") if inc.get("isHeld") else ""
+    title = f"{held}{inc.get('symbol')} {inc.get('assetName')} {pct_s}".strip()
+    if locale == "en":
+        msg = (f"ACTION {level}/7 — {label_en}\nNEW ENTRY: BLOCKED · ADD: BLOCKED\n"
+               f"Cause: {cause}\nNext: {inc.get('nextConditionJa')}")
+    else:
+        msg = (f"アクション {level}/7 — {label_ja}\n新規購入: 禁止 · 買い増し: 禁止\n"
+               f"原因: {cause}\n次: {inc.get('nextConditionJa')}")
+    return {"title": title, "message": msg, "actionLevel": level, "signalLabel": label_en,
             "priority": "high" if inc.get("severity") in ("high", "critical") else "default"}
 
 
