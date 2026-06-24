@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
-import { LiveWatchCard } from '../components/dashboard/LiveWatchCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
-import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
-import { CauseStackCard } from '../components/dashboard/CauseStackCard';
+import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
+import { useEventsActive } from '../hooks/useEventsActive';
+import { useImportantEvents } from '../hooks/useImportantEvents';
+import { groupAssetCards, type LinkedEventTag, type AiFreshness } from '../domain/assetCard';
 import { useLocale, t, tEn } from '../i18n';
 import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
 import { ActionPill } from '../components/action/ActionBadge';
@@ -67,6 +68,28 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const regime = useMarketRegime();
   const ev = useEventRadar();
   const { data: downside } = useDownsideIncidents();
+  const { events: events247 } = useEventsActive();
+  const { data: impEvents } = useImportantEvents();
+
+  // Unified per-stock cards (v10.140): merge action-labels + downside + 24/7 events
+  // + linked macro-event tags into ONE card per stock, grouped + sorted per market.
+  const cardGroups = useMemo(() => {
+    const linked: Record<string, LinkedEventTag[]> = {};
+    for (const ie of impEvents?.events ?? []) {
+      for (const a of ie.linkedAssets ?? []) {
+        const k = String(a).toUpperCase();
+        (linked[k] ??= []).push({ code: ie.eventCode, countdown: ie.countdown, impact: ie.displayImpact.toUpperCase() });
+      }
+    }
+    const aiF = aiJ.data as undefined | { freshness?: string };
+    const aiFreshness: AiFreshness = aiF?.freshness === 'fresh' ? 'fresh'
+      : aiF?.freshness === 'persisted' || aiF?.freshness === 'stale' ? 'stale'
+      : aiJ.data ? 'unavailable' : 'rule_only';
+    return groupAssetCards({
+      assets, labels: al.data?.labels ?? [], incidents: downside?.incidents ?? [],
+      events: events247 ?? [], linked, aiFreshness,
+    });
+  }, [assets, al.data, downside, events247, impEvents, aiJ.data]);
 
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
@@ -136,30 +159,23 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     >
       <MarketSessionLamps />
 
-      {/* Today is the main real-time hub (v10.139): 1) overall command, 2) events,
-          3) live per-stock activity, 4) general news, 5) history. */}
-      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} />
+      {/* Top page = the main hub (v10.140). Order: PRIMARY COMMAND (+ IMPORTANT
+          EVENTS as its lower block) → per-stock category cards (JP first, watchlist
+          before emerging) → unlinked news → history. ONE unified card per stock. */}
+      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} onNavigate={onNavigate} />
 
-      {/* IMPORTANT EVENTS — right after the command so the owner learns WHY a macro
-          event matters (e.g. PCE) before reviewing individual assets (v10.138). */}
-      <ImportantEventsCard onNavigate={onNavigate} />
+      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
+      <AssetCategorySection title="JAPAN · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.jpEmerging} emptyJa="急浮上中の日本株はありません" />
+      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" />
+      <AssetCategorySection title="US · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.usEmerging} emptyJa="急浮上中の米国株はありません" />
+      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" />
 
-      {/* LIVE WATCH — unified real-time per-stock feed: Downside incidents (drops +
-          cause + holder action) MERGED with the 24/7 event backbone (timestamped
-          S高/急騰/急落/出来高/フロー/movers). Replaces the two separate cards (v10.139). */}
-      <LiveWatchCard />
-
-      {/* Deep cause stack for the most severe active incident (v10.117). */}
-      {downside?.incidents && downside.incidents.length > 0 && (
-        <CauseStackCard symbol={downside.incidents[0].symbol} market={downside.incidents[0].market} />
-      )}
-
-      {/* General/unlinked market news — below the live per-stock activity. */}
+      {/* UNLINKED NEWS — general news not tied to a tracked stock. */}
       <MarketNewsCard />
 
       <section>
         <div className="section-head">
-          <span className="section-head__title">Judgment Log</span>
+          <span className="section-head__title">HISTORY / JUDGMENT LOG</span>
           <span className="section-head__count">device-local memory</span>
         </div>
         <div className="card jlog">

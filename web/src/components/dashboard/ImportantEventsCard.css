@@ -7,6 +7,13 @@
   border-radius: 12px;
   background: color-mix(in srgb, var(--surface) 70%, transparent);
 }
+/* Embedded = lower block of the top command card (spec §2): divider only, no
+   card border/background — it belongs to the command card above it. */
+.ie-embed {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
 .ie-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .ie-title { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; color: var(--text-sub); }
 .ie-viewall {

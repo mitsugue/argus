@@ -57,9 +57,11 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean }> = ({ e, open }) =
   );
 };
 
-interface Props { onNavigate?: (key: RouteKey) => void; }
+interface Props { onNavigate?: (key: RouteKey) => void; embedded?: boolean; }
 
-export const ImportantEventsCard: React.FC<Props> = ({ onNavigate }) => {
+// `embedded` = the lower block of the top command card (divider only, no card
+// chrome) per spec §2. Standalone = its own card (used elsewhere).
+export const ImportantEventsCard: React.FC<Props> = ({ onNavigate, embedded }) => {
   useLocale();
   const { data } = useImportantEvents();
   const events = data?.events ?? [];
@@ -67,7 +69,7 @@ export const ImportantEventsCard: React.FC<Props> = ({ onNavigate }) => {
   const shown = events.slice(0, 5);              // desktop ≤5; CSS hides beyond 3 on mobile
 
   return (
-    <section id="important-events" className="ie-card" aria-label="Important events">
+    <section id="important-events" className={embedded ? 'ie-embed' : 'ie-card'} aria-label="Important events">
       <div className="ie-head">
         <span className="ie-title">{t('ie.title')}</span>
         <button className="ie-viewall" onClick={() => onNavigate?.('regime')}>{t('ie.viewAll')} →</button>

@@ -1,0 +1,14 @@
+/* Today category section (v10.140) */
+.acs { margin-top: 14px; }
+.acs-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; padding: 0 2px; }
+.acs-title { font-size: 12px; font-weight: 800; letter-spacing: 0.07em; color: var(--text-sub); }
+.acs-sub { font-size: 11px; color: var(--text-muted); }
+.acs-count { font-size: 11px; color: var(--text-muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+.acs-rows { display: flex; flex-direction: column; gap: 8px; }
+.acs-empty { font-size: 12.5px; color: var(--text-muted); padding: 6px 2px; margin: 0; }
+.acs-more {
+  align-self: flex-start; background: none; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--text-sub); font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 6px 12px; cursor: pointer; margin-top: 2px;
+}
+.acs-more:hover { color: var(--text-main); border-color: var(--line-strong, var(--text-muted)); }

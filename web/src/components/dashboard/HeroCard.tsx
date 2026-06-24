@@ -1,6 +1,8 @@
 import React from 'react';
 import type { DailyJudgment } from '../../types/dashboard';
 import { CommandSummaryCard } from '../action/CommandSummaryCard';
+import { ImportantEventsCard } from './ImportantEventsCard';
+import type { RouteKey } from '../NavRail';
 
 export interface HeroOverlay {
   globalRegime: string;
@@ -13,6 +15,7 @@ interface Props {
   overlay?: HeroOverlay | null;
   isPartialData?: boolean;
   confidence?: number | null;   // already capped by the caller when partial
+  onNavigate?: (key: RouteKey) => void;
 }
 
 const fmtEnum = (s?: string): string => (s || '').replace(/_/g, ' ');
@@ -35,7 +38,7 @@ const OWNER_DISPLAY: Record<string, string> = {
 // COMMAND-FIRST Today hero (v10.120): the actionable command (Action Level +
 // permissions) is the first thing; market context sits BELOW it; "Why" is the
 // detail. No ambiguous CLEAR; raw enums (EVENT_WAIT) are formatted for display.
-export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence }) => {
+export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence, onNavigate }) => {
   const ownerCode = overlay?.holderRiskOverlay;
   const ownerRisk = !!(ownerCode && ownerCode !== 'NONE');
   return (
@@ -51,6 +54,11 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
         confidence={confidence}
         nextConditionJa={judgment.nextCondition}
       />
+
+      {/* LOWER BLOCK (spec §2): IMPORTANT EVENTS inside the SAME command card,
+          separated by a divider — so the owner learns why e.g. PCE matters right
+          under today's command, before any individual stock. */}
+      <ImportantEventsCard embedded onNavigate={onNavigate} />
 
       {/* Market Context — supporting, collapsed by default (the detailed ja
           rationale lives here, not duplicated above). */}

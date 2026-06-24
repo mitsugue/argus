@@ -18,7 +18,7 @@ export const MarketNewsCard: React.FC = () => {
   return (
     <section>
       <div className="section-head">
-        <span className="section-head__title">Market News</span>
+        <span className="section-head__title">UNLINKED NEWS</span>
         <span className="section-head__count" style={{ color: data?.status === 'live' ? 'var(--green, #34d399)' : 'var(--text-muted)' }}>
           {data?.status === 'live' ? `LIVE · ${items.length}` : data?.status ?? (loading ? '…' : 'off')}
         </span>
