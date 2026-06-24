@@ -90,9 +90,9 @@ export const CorePortfolio: React.FC = () => {
     >
       <section>
         <div className="section-head">
-          <span className="section-head__title">あなたの配分</span>
+          <span className="section-head__title">{t('cp.yourAllocation')}</span>
           <span className="section-head__count">
-            {exp.combinedJpy != null ? `合計 ${fmtJpy(exp.combinedJpy)}` : 'live価格の保有なし'}
+            {exp.combinedJpy != null ? `${t('cp.total')} ${fmtJpy(exp.combinedJpy)}` : t('cp.noLivePos')}
           </span>
         </div>
         <div className="card cmd-alloc">
@@ -112,12 +112,12 @@ export const CorePortfolio: React.FC = () => {
                 </div>
               )}
               {exp.unpriced.length > 0 && (
-                <div className="cmd-alloc__note">価格未取得のため除外: {exp.unpriced.join(', ')}(投信の基準価額は今後対応予定)</div>
+                <div className="cmd-alloc__note">{t('cp.unpriced')} {exp.unpriced.join(', ')}</div>
               )}
             </>
           ) : (
             <p className="cmd-alloc__empty">
-              Watchlistで銘柄の行を開いて「保有数量・平均取得単価」を入力すると、ここに配分の現在地が表示されます(データは端末内のみ)。
+              {t('cp.emptyAlloc')}
             </p>
           )}
         </div>
@@ -125,7 +125,7 @@ export const CorePortfolio: React.FC = () => {
 
       <section>
         <div className="section-head">
-          <span className="section-head__title">クラス判断</span>
+          <span className="section-head__title">{t('cp.classCalls')}</span>
           <span className="section-head__count">{cards.length} classes</span>
         </div>
         <div className="alert-grid">
@@ -139,7 +139,7 @@ export const CorePortfolio: React.FC = () => {
           「地合い連動の積立コメント」を同じ行で表示(重複セクションを解消)。 */}
       <section>
         <div className="section-head">
-          <span className="section-head__title">積立方針 + 投信 基準価額</span>
+          <span className="section-head__title">{t('cp.accumPlan')}</span>
           <span className="section-head__count">{navFunds.length} funds</span>
         </div>
         <div className="card core-list">
@@ -163,7 +163,7 @@ export const CorePortfolio: React.FC = () => {
                 </div>
               </div>
             );
-          }) : <p className="cmd-alloc__empty">基準価額を取得中…(投信総合ライブラリー)</p>}
+          }) : <p className="cmd-alloc__empty">{t('cp.navLoading')}</p>}
           <div className="cmd-alloc__note" style={{ marginTop: 8 }}>
             基準価額=投信総合ライブラリー(資産運用業協会)の日次。積立方針は地合い連動(ドルコスト平均)で、個別の基準価額チャート判断ではありません。
           </div>
