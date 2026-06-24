@@ -4,7 +4,7 @@ import argus_research_mesh as M
 
 # ── source rights enforcement (§4/§30) ──
 def test_rights_metadata_only_strips_fulltext():
-    rec = M.enforce_storage("reuters_public", {"title": "x", "fullText": "BODY", "publicSnippet": "snip"})
+    rec = M.enforce_storage("marketwatch_public", {"title": "x", "fullText": "BODY", "publicSnippet": "snip"})
     assert "fullText" not in rec and rec["accessClass"] == "PUBLIC_METADATA"
     assert rec.get("publicSnippet") == "snip"           # excerpt allowed
 
@@ -36,7 +36,7 @@ def test_asset_manager_not_sellside():
 
 # ── dedup / syndication (§9/§30) ──
 def test_syndication_counts_as_one_origin():
-    items = [M.normalize_item({"sourceId": "reuters_public", "title": "JPMorgan flags Micron earnings risk", "linkedAssets": ["MU"], "firstDetectedAt": "2026-06-25T14:02:00Z"}),
+    items = [M.normalize_item({"sourceId": "marketwatch_public", "title": "JPMorgan flags Micron earnings risk", "linkedAssets": ["MU"], "firstDetectedAt": "2026-06-25T14:02:00Z"}),
              M.normalize_item({"sourceId": "cnbc_public", "title": "JPMorgan flags Micron earnings risk", "linkedAssets": ["MU"], "firstDetectedAt": "2026-06-25T14:05:00Z"})]
     clusters = M.cluster_items(items)
     assert len(clusters) == 1 and clusters[0]["count"] == 2 and clusters[0]["syndicationCount"] == 1
@@ -49,7 +49,7 @@ def test_report_after_move_not_trigger():
     assert link["causalRole"] != "IMMEDIATE_TRIGGER" and link["causalRole"] == "AMPLIFIER"
 
 def test_named_view_is_not_named_trade():
-    item = M.normalize_item({"sourceId": "reuters_public", "title": "JPMorgan cautious on Micron", "linkedAssets": ["MU"], "publishedAt": "2026-06-25T13:50:00Z"})
+    item = M.normalize_item({"sourceId": "marketwatch_public", "title": "JPMorgan cautious on Micron", "linkedAssets": ["MU"], "publishedAt": "2026-06-25T13:50:00Z"})
     link = M.link_to_event(item, {"eventId": "e1", "linkedAssets": ["MU"], "moveStartedAt": "2026-06-25T14:00:00Z"})
     assert link["isNamedView"] is True
     assert "当該機関の建玉/売買の変化" in link["notConfirmed"]
@@ -84,7 +84,7 @@ def test_distinct_generic_news_not_collapsed():
     assert len(cl) == 2                          # different stories stay separate
 
 def test_same_headline_syndication_still_collapses():
-    a = M.normalize_item({"sourceId": "reuters_public", "title": "Snowflake surges 36% for best day ever"})
+    a = M.normalize_item({"sourceId": "marketwatch_public", "title": "Snowflake surges 36% for best day ever"})
     b = M.normalize_item({"sourceId": "cnbc_public",    "title": "Snowflake surges 36% for best day ever"})
     cl = M.cluster_items([a, b])
     assert len(cl) == 1 and cl[0]["syndicationCount"] == 1

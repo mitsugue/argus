@@ -50,25 +50,40 @@ _CLASS_POLICY = {
     "UNAVAILABLE":        {"fulltext": False, "llm": False, "excerpt": False, "retain": False},
 }
 
-# Default registry. Licensed feeds are DISABLED + UNAVAILABLE until a signed
-# contract + credentials + a successful runtime fetch flip them on (§3, §25).
+# Default registry. `collection` = how a source is actually ingested:
+#   rss          → an active, runtime-validated public RSS feed (LAYER 2)
+#   owner_capture→ rights-only entry; reached when the owner Shares an article
+#                  (no usable free public RSS — Bloomberg/FT/WSJ killed theirs)
+#   official     → official/regulator source (RSS or filing pull)
+#   licensed     → DISABLED + UNAVAILABLE until a signed contract + credentials
+# A source is NEVER left as a dead 0-item RSS entry: only validated feeds carry
+# collection="rss"; everything else is honestly labelled capture/official/licensed.
 SOURCE_RIGHTS: Dict[str, Dict[str, Any]] = {
-    "bloomberg_public":  {"accessClass": "PUBLIC_METADATA", "kind": "news",   "licenceStatus": "public",   "notes": "public article pages / headlines / metadata only"},
-    "reuters_public":    {"accessClass": "PUBLIC_METADATA", "kind": "news",   "licenceStatus": "public"},
-    "cnbc_public":       {"accessClass": "PUBLIC_METADATA", "kind": "news",   "licenceStatus": "public"},
-    "ft_public":         {"accessClass": "PUBLIC_METADATA", "kind": "news",   "licenceStatus": "public"},
-    "wsj_public":        {"accessClass": "PUBLIC_METADATA", "kind": "news",   "licenceStatus": "public"},
-    "institution_ir":    {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public",  "notes": "official IR / press release pages"},
-    "sec_edgar":         {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public"},
-    "tdnet":             {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public"},
-    "edinet":            {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public"},
-    "jpx":               {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public"},
-    "finra":             {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public"},
-    "owner_capture":     {"accessClass": "SUBSCRIBER_CAPTURE", "kind": "capture", "licenceStatus": "owner"},
-    "bloomberg_feed":    {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "vendor": "Bloomberg Event-Driven Feeds"},
-    "lseg_mrn":          {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "vendor": "LSEG Machine Readable News"},
-    "factiva_ai":        {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "vendor": "Dow Jones Factiva AI"},
-    "ravenpack":         {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "vendor": "RavenPack"},
+    # ── LAYER 2 active public RSS (validated: HTTP 200 + items, UA argus-research) ──
+    "cnbc_public":          {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
+    "marketwatch_public":   {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
+    "nasdaq_public":        {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
+    "yahoo_finance_public": {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss"},
+    # ── official / macro (public-domain gov; RSS validated) ──
+    "federal_reserve":      {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "notes": "central bank press (macro)"},
+    "sec_press":            {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "notes": "SEC press releases"},
+    # ── rights-only news entries (no free public RSS → owner Share/Capture) ──
+    "bloomberg_public":     {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
+    "ft_public":            {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
+    "wsj_public":           {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
+    # ── official confirmation sources (pulled by existing engines / filings) ──
+    "institution_ir":       {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "official", "notes": "official IR / press release pages"},
+    "sec_edgar":            {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "official"},
+    "tdnet":                {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "official"},
+    "edinet":               {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "official"},
+    "jpx":                  {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "official"},
+    "finra":                {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "official"},
+    "owner_capture":        {"accessClass": "SUBSCRIBER_CAPTURE", "kind": "capture", "licenceStatus": "owner", "collection": "owner_capture"},
+    # ── LAYER 1 licensed feeds — DISABLED until contracted (§3/§25) ──
+    "bloomberg_feed":       {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "collection": "licensed", "vendor": "Bloomberg Event-Driven Feeds"},
+    "lseg_mrn":             {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "collection": "licensed", "vendor": "LSEG Machine Readable News"},
+    "factiva_ai":           {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "collection": "licensed", "vendor": "Dow Jones Factiva AI"},
+    "ravenpack":            {"accessClass": "UNAVAILABLE", "kind": "licensed", "licenceStatus": "not_configured", "collection": "licensed", "vendor": "RavenPack"},
 }
 
 
@@ -79,6 +94,7 @@ def source_rights(source_id: str) -> Dict[str, Any]:
     return {
         "sourceId": source_id, "accessClass": base["accessClass"], "kind": base.get("kind"),
         "licenceStatus": base.get("licenceStatus"), "vendor": base.get("vendor"),
+        "collection": base.get("collection", "none"),
         "canStoreFullText": pol["fulltext"], "canSendToLLM": pol["llm"],
         "canDisplayExcerpt": pol["excerpt"], "canRetain": pol["retain"],
         "retentionDays": 365 if pol["retain"] else 0, "notes": base.get("notes", ""),

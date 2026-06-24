@@ -4367,11 +4367,28 @@ import ipaddress as _ipaddress
 from urllib.parse import urlparse as _urlparse
 import xml.etree.ElementTree as _ET
 
-# Public RSS allow-list (PUBLIC_METADATA). Targeted, NOT a generic crawler.
+# Public RSS allow-list — TARGETED, NOT a generic crawler. Every URL here was
+# runtime-validated (HTTP 200 + parseable items with the argus-research UA) before
+# shipping; unreachable/dead feeds are NEVER left in production. Each entry is
+# (sourceId, label, url); the label is what per-feed logging reports. Reuters's old
+# public RSS (reutersagency.com) is dead (301→0 items) and was removed — no name-only
+# 0-item placeholder. Strong on finance + macro + company/earnings + official.
 _INTEL_FEEDS = [
-    ("reuters_public", "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"),
-    ("cnbc_public",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664"),
-    ("cnbc_public",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135"),  # markets
+    # CNBC public RSS — markets / finance / economy / earnings
+    ("cnbc_public",          "cnbc:markets",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664"),
+    ("cnbc_public",          "cnbc:finance",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135"),
+    ("cnbc_public",          "cnbc:economy",     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
+    ("cnbc_public",          "cnbc:earnings",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839263"),
+    # MarketWatch public RSS (Dow Jones public endpoint)
+    ("marketwatch_public",   "mw:marketpulse",   "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"),
+    ("marketwatch_public",   "mw:topstories",    "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+    # Nasdaq markets
+    ("nasdaq_public",        "nasdaq:markets",   "https://www.nasdaq.com/feed/rssoutbound?category=Markets"),
+    # Yahoo Finance headlines (company news volume)
+    ("yahoo_finance_public", "yahoo:finance",    "https://finance.yahoo.com/news/rssindex"),
+    # Official / macro — central bank + regulator (public domain)
+    ("federal_reserve",      "fed:press",        "https://www.federalreserve.gov/feeds/press_all.xml"),
+    ("sec_press",            "sec:press",        "https://www.sec.gov/news/pressreleases.rss"),
 ]
 _INTEL_STORE = []                  # capped list of recent IntelligenceItems (metadata only)
 _INTEL_STORE_MAX = 400
@@ -4462,27 +4479,37 @@ def _intel_link_assets(title):
 
 def collect_institutional_intel():
     """Admin/scheduled: fetch the allow-listed public feeds, normalize + dedup, store
-    metadata-only IntelligenceItems. Never called by a public GET."""
+    metadata-only IntelligenceItems. Reports PER-FEED counts (fetched + new) and any
+    feed that returned nothing, so the market-watch log proves what was ingested.
+    Never called by a public GET."""
     now_iso = _ai_now_iso()
-    raws, per = [], {}
-    for sid, url in _INTEL_FEEDS:
-        txt = _fetch_public_text(url)
-        items = _parse_rss(txt, sid, now_iso) if txt else []
-        per[sid] = per.get(sid, 0) + len(items)
-        raws.extend(items)
     seen = {i["intelligenceId"] for i in _INTEL_STORE}
-    added = 0
-    for raw in raws:
-        raw["linkedAssets"] = _intel_link_assets(raw.get("title", ""))
-        item = argus_research_mesh.normalize_item(raw)
-        if item["intelligenceId"] in seen:
-            continue
-        seen.add(item["intelligenceId"])
-        _INTEL_STORE.insert(0, item)
-        added += 1
+    per_feed, per_source, total_new = [], {}, 0
+    for sid, label, url in _INTEL_FEEDS:
+        txt = _fetch_public_text(url)
+        rows = _parse_rss(txt, sid, now_iso) if txt else []
+        new = 0
+        for raw in rows:
+            raw["linkedAssets"] = _intel_link_assets(raw.get("title", ""))
+            item = argus_research_mesh.normalize_item(raw)
+            if item["intelligenceId"] in seen:
+                continue
+            seen.add(item["intelligenceId"])
+            _INTEL_STORE.insert(0, item)
+            new += 1
+        total_new += new
+        per_source[sid] = per_source.get(sid, 0) + len(rows)
+        per_feed.append({"feed": label, "source": sid, "fetched": len(rows),
+                         "new": new, "ok": bool(txt) and len(rows) > 0})
     del _INTEL_STORE[_INTEL_STORE_MAX:]
-    _INTEL_LAST.update({"ts": time.time(), "collected": added, "perSource": per})
-    return {"collected": added, "stored": len(_INTEL_STORE), "perSource": per}
+    _INTEL_LAST.update({"ts": time.time(), "collected": total_new,
+                        "perSource": per_source, "perFeed": per_feed})
+    # one-line, human-readable summary echoed by the cron (どのfeedから何件)
+    summary = " | ".join(f"{f['feed']}:{f['fetched']}(+{f['new']})" for f in per_feed)
+    failed = [f["feed"] for f in per_feed if not f["ok"]]
+    return {"collected": total_new, "stored": len(_INTEL_STORE),
+            "feeds": len(_INTEL_FEEDS), "failedFeeds": failed,
+            "perFeed": per_feed, "perSource": per_source, "summary": summary}
 
 
 def _intel_clusters():
@@ -4509,19 +4536,29 @@ def api_argus_intel_institutions():
 @app.route("/api/argus/institutional-intelligence/source-health")
 def api_argus_intel_source_health():
     """Honest source coverage (§24) — access class + last success per source."""
+    per_feed = {f["feed"]: f for f in _INTEL_LAST.get("perFeed", [])}
     sources = []
     for sid in argus_research_mesh.SOURCE_RIGHTS:
         r = argus_research_mesh.source_rights(sid)
         r["lastDetected"] = _INTEL_LAST.get("perSource", {}).get(sid)
         sources.append(r)
+    # active RSS feeds (validated allow-list) with their last-collection counts
+    feeds = [{"feed": label, "source": sid,
+              "fetched": per_feed.get(label, {}).get("fetched"),
+              "ok": per_feed.get(label, {}).get("ok")}
+             for sid, label, _url in _INTEL_FEEDS]
+    rss_live = sum(1 for f in feeds if f.get("ok"))
     return jsonify({"asOf": _ai_now_iso(), "lastCollectedAt": _INTEL_LAST.get("ts"),
                     "coverage": {
                         "LICENSED_FEED": "NOT_CONFIGURED",
-                        "PUBLIC_WEB": "LIVE" if _INTEL_STORE else "PARTIAL",
+                        "PUBLIC_WEB": ("LIVE" if rss_live and rss_live == len(feeds)
+                                       else "PARTIAL" if rss_live else "WARMING"),
                         "OFFICIAL_SOURCES": "LIVE",
                         "SUBSCRIBER_CAPTURE": "ENABLED",
                         "INSTITUTION_WATCHLIST": "ACTIVE",
-                    }, "sources": sources,
+                    },
+                    "activeFeeds": feeds, "activeFeedCount": len(feeds), "feedsLive": rss_live,
+                    "sources": sources,
                     "licensedFeeds": argus_licensed_feeds.all_health()})
 
 
