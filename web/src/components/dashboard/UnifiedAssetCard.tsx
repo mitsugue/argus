@@ -3,6 +3,7 @@ import type { AssetCardModel } from '../../domain/assetCard';
 import type { SignalCode } from '../../domain/actionLevel';
 import { SIGNALS } from '../../domain/actionLevel';
 import { SignedValue } from '../common/SignedValue';
+import { CauseStackCard } from './CauseStackCard';
 import './UnifiedAssetCard.css';
 
 // One unified card per stock (v10.140). Collapsed = the 4 things you need (what's
@@ -58,6 +59,9 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
           <div className="uac-av">
             <div className="uac-av-h"><b>ARGUS VIEW</b>{c.lastUpdate && <span> · {c.lastUpdate}</span>}</div>
             <p className="uac-av-t">{c.argusViewJa}</p>
+            {/* The full overall sentence, right under the stock — same depth as the
+                old Downside row; nothing stripped (v10.141). */}
+            {c.overallJa && c.overallJa !== c.argusViewJa && <p className="uac-overall">{c.overallJa}</p>}
             <div className="uac-av-src">
               <span>RULE + GPT-5.5 + GEMINI</span>
               <span className="uac-ai" style={{ color: ai.tone }}>· {ai.txt}</span>
@@ -94,6 +98,15 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
             <div className="uac-sec">
               <div className="uac-sec-t">NEXT</div>
               <p className="uac-next">{c.nextJa}</p>
+            </div>
+          )}
+
+          {/* Deep cause attribution — the full 原因スタック (immediate trigger /
+              distribution / contagion / positioning / what-would-change / data
+              limits). Same depth as the old standalone card; nothing stripped. */}
+          {c.hasIncident && (
+            <div className="uac-sec uac-deep">
+              <CauseStackCard symbol={c.symbol} market={c.market} />
             </div>
           )}
         </div>

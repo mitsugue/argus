@@ -28,6 +28,8 @@ export interface AssetCardModel {
   permAdd: 'BLOCKED' | 'ALLOWED';
   permExistingJa: string;
   argusViewJa: string;          // one-line resolved view (header)
+  overallJa: string | null;     // the full Japanese overall sentence (incident reasonJa)
+  hasIncident: boolean;         // → embed the deep cause-attribution stack on expand
   causeOneLineJa: string | null;
   causeSlices: CauseSlice[];
   timeline: TimelineItem[];
@@ -133,6 +135,8 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
     permAdd: sig.permissions.add,
     permExistingJa: existingJa(sig.code),
     argusViewJa,
+    overallJa: incident?.reasonJa ?? label?.reasonJa ?? null,
+    hasIncident: !!incident,
     causeOneLineJa,
     causeSlices: buckets,
     timeline: tl,
