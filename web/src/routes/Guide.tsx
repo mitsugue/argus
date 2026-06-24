@@ -71,6 +71,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.137.0', 'シグナル7灯ゲージの点灯を強発光に — 現在地のセグメントを多層グロー(最大24px)+明度/彩度アップ+横幅拡大で一目で分かるよう強調、消灯部はより暗く(opacity 0.16)してコントラスト確保。緩やかなパルス(1.8秒・prefers-reduced-motionで自動停止)も追加'],
   ['v10.136.0', '監査で挙げた未着手分をまとめて実装(A1〜A5+closepin) — ①closepin: EC2 cron不発火でも落ちるよう、GitHub fallbackを窓内(14:25/14:35/14:45/15:00 JST)に複数化+重複ガードで1日1pin維持②action-labels: 各銘柄ラベルに構造化signal{code,level,permissions}+応答にsignalSchemaVersion(台帳の一貫性)③数値色SignedValue/--value-*を残り画面へ: Market Contextの米/日ムーバー(±%)・What-ifの中央値・保有損益の色をトークン統一④Pro Handoffのプロンプトに「Action Level(7段階・資本投下許可)」の説明と各ラベルのsignalを明記⑤アクセシビリティ監査: ボタン名/alt/svgラベル/入力ラベル/h1=すべて適合(保有入力は<label>暗黙ラベルで適合)。テスト350'],
   ['v10.135.0', '全市場moverをmoomooリアルタイム3段に — ①ブリッジが場中(平日)に「500銘柄サンプル + あなたのwatchlist」を定期スイープ(get_market_snapshot・秒単位)し、騰落率の大きい銘柄をbackendへPOST②backendのmover検知を3段ウォーターフォールに: moomooリアルタイム → 残りはYahoo(約20分遅延・広い市場) → 閉場後はJ-Quants EOD。銘柄単位で重複排除(上位ソース優先)し|変動|で順位付け。これでwatchlist銘柄が動けばYahoo遅延ではなくmoomoo秒速で検知。pushは引き続き場中のみ(v10.133ゲート)。テスト2追加。※ブリッジはEC2の再デプロイが必要'],
   ['v10.134.0', 'PARTIAL多発の根本原因を修正 + ステータスのカタカナを英語に — ①原因: 地合いの8本ETF(SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG)の日次終値を毎更新でTwelve Dataに取りに行き、無料枠のレート制限で一部欠落→全体partial→信頼度低下、になっていた。日次データなのに取り直し過ぎ。修正: ETF終値を約2hキャッシュ+部分失敗時は前回good値で補完(欠落しても全体partialに落とさない)。テスト3追加。②ステータス行の「リスク/データ」を英語に(HIGH RISK · PARTIAL DATA)。信頼度の説明文など長文は日本語のまま'],

@@ -13,12 +13,22 @@
 .cs-gauge-seg {
   width: 13px; height: 6px; border-radius: 2px;
   background: var(--seg, var(--text-muted));
-  opacity: 0.26;                 /* unlit but the color still reads */
-  transition: opacity 0.15s ease, height 0.15s ease;
+  opacity: 0.16;                 /* unlit: dim so the lit one clearly stands out */
+  transition: opacity 0.15s ease, height 0.15s ease, box-shadow 0.15s ease;
 }
 .cs-gauge-seg--on {
-  opacity: 1; height: 9px;
-  box-shadow: 0 0 7px var(--seg), 0 0 2px var(--seg);   /* "lit" glow */
+  opacity: 1; height: 12px; width: 17px;
+  filter: brightness(1.2) saturate(1.25);
+  /* strong multi-layer glow so the current level is unmistakable */
+  box-shadow: 0 0 4px var(--seg), 0 0 10px var(--seg), 0 0 18px var(--seg), 0 0 1px #fff inset;
+  animation: cs-gauge-pulse 1.8s ease-in-out infinite;
+}
+@keyframes cs-gauge-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--seg), 0 0 9px var(--seg), 0 0 15px var(--seg), 0 0 1px #fff inset; }
+  50%      { box-shadow: 0 0 6px var(--seg), 0 0 14px var(--seg), 0 0 24px var(--seg), 0 0 1px #fff inset; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-gauge-seg--on { animation: none; }
 }
 
 .cs-perms { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 12px 0 0; }
