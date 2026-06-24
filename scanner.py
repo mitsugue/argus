@@ -6822,6 +6822,67 @@ def api_argus_cause_attribution():
         return jsonify({"error": "attribution_failed", "message": str(e)[:120]}), 200
 
 
+# ⑧ Cause Attribution Ledger (v10.117): the cause stack for every active incident,
+# in one call, so the daily workflow can persist it (and later compare to outcome).
+def get_cause_attribution_batch():
+    try:
+        ds = get_downside_incidents()
+    except Exception:
+        ds = {}
+    incs = ds.get("incidents") or []
+    out = []
+    for i in incs[:8]:
+        try:
+            st = get_cause_attribution(i.get("symbol"), i.get("market", "JP"))
+            out.append({"symbol": st.get("symbol"), "market": st.get("market"),
+                        "changePct": st.get("changePct"),
+                        "immediateTrigger": st.get("immediateTrigger"),
+                        "causeProbabilities": st.get("causeProbabilities"),
+                        "unknownShare": st.get("unknownShare"),
+                        "contagionScope": (st.get("contagion") or {}).get("scope"),
+                        "preEventDeRisking": (st.get("preEvent") or {}).get("preEventDeRiskingProbability")})
+        except Exception:
+            continue
+    return {"status": "live" if out else "empty", "asOf": _ai_now_iso(),
+            "engineVersion": "cause-attribution-v1", "attributions": out, "count": len(out)}
+
+
+@app.route("/api/argus/cause-attribution-batch")
+def api_argus_cause_attribution_batch():
+    return jsonify(get_cause_attribution_batch())
+
+
+_ATTRIB_HIST_CACHE = {"data": None, "expires": 0.0}
+
+
+@app.route("/api/argus/attribution-history")
+def api_argus_attribution_history():
+    now = time.time()
+    if _ATTRIB_HIST_CACHE["data"] and now < _ATTRIB_HIST_CACHE["expires"]:
+        return jsonify(_ATTRIB_HIST_CACHE["data"])
+    out = {"status": "empty", "asOf": _ai_now_iso(), "days": [], "count": 0,
+           "noteJa": "原因アトリビューションの記録(毎営業日16:05・後日結果と照合)。"}
+    try:
+        r = requests.get("https://api.github.com/repos/mitsugue/argus/contents/ledger/attribution?ref=ledger",
+                         timeout=12, headers={"User-Agent": "argus/1.0", "Accept": "application/vnd.github+json"})
+        if r.ok:
+            files = [f for f in r.json() if isinstance(f, dict)
+                     and str(f.get("name", "")).endswith(".json") and f.get("name") != "latest.json"]
+            days = sorted((f["name"][:-5] for f in files), reverse=True)[:30]
+            out["days"] = days
+            out["count"] = len(days)
+            out["status"] = "live" if days else "empty"
+        latest = _gh_ledger_json("attribution/latest.json")
+        if latest:
+            out["latest"] = latest
+    except Exception:
+        pass
+    if out["status"] == "live":
+        _ATTRIB_HIST_CACHE["data"] = out
+        _ATTRIB_HIST_CACHE["expires"] = now + 1800
+    return jsonify(out)
+
+
 # Incident Replay (v10.108): list the dates with a recorded downside snapshot
 # (written daily to the public ledger branch) + the latest. Public, read-only.
 _DOWNSIDE_HIST_CACHE = {"data": None, "expires": 0.0}

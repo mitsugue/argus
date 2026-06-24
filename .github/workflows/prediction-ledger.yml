@@ -277,6 +277,35 @@ jobs:
               print(f'rotation reading not persisted (status={st}, held={bool(d.get("heldOverMin"))})')
           PY
 
+      # cause-attribution-ledger-v1 (v10.117): persist the integrity-checked cause
+      # stack for each active incident, so a later run can compare attribution to
+      # the realized 1/3/5D outcome. Append-only per date; only when incidents exist.
+      - name: Persist cause attributions (ledger)
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 90 "$BE/api/argus/cause-attribution-batch" -o attrib.json || echo '{}' > attrib.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('attrib.json'))
+          except Exception:
+              d = {}
+          atts = d.get('attributions') or []
+          if atts:
+              os.makedirs('ledger/attribution', exist_ok=True)
+              rec = {'date': today, 'asOf': d.get('asOf'), 'count': len(atts), 'attributions': atts}
+              path = f'ledger/attribution/{today}.json'
+              if not os.path.exists(path):
+                  json.dump(rec, open(path, 'w'), ensure_ascii=False, indent=1)
+              json.dump(rec, open('ledger/attribution/latest.json', 'w'), ensure_ascii=False, indent=1)
+              print(f'cause attributions persisted: {today} ({len(atts)})')
+          else:
+              print('no active incidents — no attributions to persist')
+          PY
+
       # ai-cost-persist (v10.50): the month-to-date AI spend (no prompts/keys) is
       # committed so the ARGUS-side HARD budget stop survives a dyno restart. The
       # server restores max(persisted, in-memory) on boot. Admin-token gated.

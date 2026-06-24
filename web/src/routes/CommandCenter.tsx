@@ -4,6 +4,7 @@ import { HeroCard } from '../components/dashboard/HeroCard';
 import { EventIntelligenceCard } from '../components/dashboard/EventIntelligenceCard';
 import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
+import { CauseStackCard } from '../components/dashboard/CauseStackCard';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
 import { ActionPill } from '../components/action/ActionBadge';
@@ -141,6 +142,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} />
 
       {!ownerAffected && <DownsideIncidentCard />}
+
+      {/* Deep cause stack for the most severe active incident (v10.117). */}
+      {downside?.incidents && downside.incidents.length > 0 && (
+        <CauseStackCard symbol={downside.incidents[0].symbol} market={downside.incidents[0].market} />
+      )}
 
       <MarketNewsCard />
 

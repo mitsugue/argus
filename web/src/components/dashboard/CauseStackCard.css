@@ -1,0 +1,38 @@
+/* Cause-stack card (v10.117) */
+.csc-card {
+  background: var(--surface, #111A24);
+  border: 1px solid var(--line, rgba(255,255,255,0.1));
+  border-left: 3px solid var(--amber, #FBBF24);
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.csc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.csc-head h2 { font-size: 15px; font-weight: 700; margin: 0; color: var(--text-main, #E6EDF3); }
+.csc-en { font-size: 11px; font-weight: 500; color: var(--text-muted, #5f6b78); margin-left: 6px; }
+.csc-sym { font-size: 13px; font-weight: 700; color: var(--text-sub, #98A7B7); }
+
+.csc-k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint, #5f6b78); display: block; }
+.csc-v { font-size: 13px; font-weight: 600; color: var(--text-main, #E6EDF3); }
+.csc-dim { font-size: 11px; font-weight: 400; color: var(--text-muted, #5f6b78); }
+
+.csc-trigger { margin-top: 10px; }
+.csc-trigger-v { font-size: 14px; font-weight: 700; color: var(--text-main, #E6EDF3); }
+.csc-trigger-none { font-size: 14px; font-weight: 700; color: #FBBF24; }
+
+.csc-causes { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
+.csc-cause { display: grid; grid-template-columns: minmax(0, 120px) 1fr 36px; align-items: center; gap: 8px; font-size: 12px; }
+.csc-cause-name { color: var(--text-sub, #98A7B7); overflow-wrap: anywhere; }
+.csc-cause-name--unknown { color: #FBBF24; }
+.csc-bar { height: 6px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden; }
+.csc-bar i { display: block; height: 100%; background: var(--text-sub, #98A7B7); border-radius: 999px; }
+.csc-bar i.csc-bar--unknown { background: #FBBF24; }
+.csc-pct { text-align: right; font-weight: 600; color: var(--text-main, #E6EDF3); }
+
+.csc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.csc-next { font-size: 12px; color: var(--text-sub, #98A7B7); line-height: 1.55; margin: 10px 0 0; }
+.csc-next b { color: var(--text-main, #E6EDF3); }
+.csc-limits { font-size: 10.5px; color: var(--text-muted, #5f6b78); line-height: 1.5; margin: 6px 0 0; }
+.csc-foot { font-size: 10.5px; color: var(--text-muted, #5f6b78); margin: 8px 0 0; }
