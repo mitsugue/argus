@@ -4,6 +4,7 @@ import type { SignalCode } from '../../domain/actionLevel';
 import { SIGNALS } from '../../domain/actionLevel';
 import { SignedValue } from '../common/SignedValue';
 import { CauseStackCard } from './CauseStackCard';
+import { InstitutionalView } from './InstitutionalView';
 import './UnifiedAssetCard.css';
 
 // One unified card per stock (v10.140). Collapsed = the 4 things you need (what's
@@ -100,6 +101,10 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
               <p className="uac-next">{c.nextJa}</p>
             </div>
           )}
+
+          {/* Named institutional views attached to THIS asset (public metadata).
+              A reported view, never a trading position; renders nothing when none. */}
+          <InstitutionalView symbol={c.symbol} />
 
           {/* Deep cause attribution — the full 原因スタック (immediate trigger /
               distribution / contagion / positioning / what-would-change / data

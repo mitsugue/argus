@@ -38,3 +38,8 @@ jobs:
           RESP=$(curl -s --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/market-scan" || echo '{"error":"unreachable"}')
           echo "market-scan: $RESP"
+          # Institutional Intelligence — collect allow-listed public feeds (LAYER 2,
+          # metadata only, SSRF-hardened, admin-gated). The public GET never fetches.
+          INTEL=$(curl -s --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/institutional-intelligence/collect" || echo '{"error":"unreachable"}')
+          echo "intel-collect: $INTEL"

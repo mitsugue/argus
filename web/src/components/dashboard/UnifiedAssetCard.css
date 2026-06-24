@@ -53,3 +53,14 @@
 .uac-cz-p { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
 
 .uac-next { font-size: 12.5px; line-height: 1.6; color: var(--text-main); margin: 0; }
+
+/* INSTITUTIONAL VIEW (v10.147) — named view inside the asset card */
+.iv-row { padding: 6px 0; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06)); }
+.iv-row:first-of-type { border-top: none; }
+.iv-l1 { display: flex; align-items: baseline; gap: 8px; }
+.iv-inst { font-weight: 700; font-size: 12px; letter-spacing: .02em; }
+.iv-rel { font-size: 10px; font-weight: 700; letter-spacing: .03em; }
+.iv-title { display: block; font-size: 12px; line-height: 1.4; margin-top: 2px; color: var(--text-main); text-decoration: none; }
+.iv-title:hover { text-decoration: underline; }
+.iv-nc { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.iv-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }

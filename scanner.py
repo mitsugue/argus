@@ -32,6 +32,8 @@ import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v1
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
+import argus_research_mesh     # Institutional Intelligence + research mesh core (pure, v1, v10.147)
+import argus_licensed_feeds     # LAYER 1 licensed feed adapters (disabled until contracted, v10.147)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -4352,6 +4354,242 @@ def api_argus_important_events():
     return jsonify({"status": snap.get("status"), "asOf": snap.get("asOf"),
                     "timezone": "Asia/Tokyo", "engineVersion": "important-events-v1",
                     "count": len(items), "events": items})
+
+
+# ━━━ Institutional Intelligence + Research Mesh v1 (v10.147) ━━━
+# Phase-1 LAYER 2 (public web): collect public METADATA (titles/links/timestamps)
+# from an ALLOW-LIST of public financial RSS, normalize to IntelligenceItems, dedup
+# story clusters, resolve named institutions, and link to owner symbols. All access
+# rights enforced by argus_research_mesh. Collection is admin/scheduled only; the
+# public GET serves the cache and never fetches or calls a model. SSRF-hardened.
+import socket as _socket
+import ipaddress as _ipaddress
+from urllib.parse import urlparse as _urlparse
+import xml.etree.ElementTree as _ET
+
+# Public RSS allow-list (PUBLIC_METADATA). Targeted, NOT a generic crawler.
+_INTEL_FEEDS = [
+    ("reuters_public", "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"),
+    ("cnbc_public",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664"),
+    ("cnbc_public",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135"),  # markets
+]
+_INTEL_STORE = []                  # capped list of recent IntelligenceItems (metadata only)
+_INTEL_STORE_MAX = 400
+_INTEL_LAST = {"ts": 0.0, "collected": 0, "perSource": {}}
+_INTEL_FETCH_MAX_BYTES = 1_500_000
+
+
+def _ssrf_safe_url(url):
+    """Block non-public targets (SSRF, §23): https only, public host, no private IPs."""
+    try:
+        u = _urlparse(url)
+        if u.scheme != "https" or not u.hostname:
+            return False
+        for fam, _, _, _, sa in _socket.getaddrinfo(u.hostname, 443, proto=_socket.IPPROTO_TCP):
+            ip = _ipaddress.ip_address(sa[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _fetch_public_text(url):
+    """Size/timeout/redirect-limited fetch of public content (data, never trusted as
+    instructions). Returns text or None."""
+    if not _ssrf_safe_url(url):
+        return None
+    try:
+        r = requests.get(url, timeout=12, allow_redirects=True,
+                         headers={"User-Agent": "argus-research/1.0"}, stream=True)
+        if r.status_code != 200:
+            return None
+        # Validate redirect target too + cap size.
+        if not _ssrf_safe_url(r.url):
+            return None
+        chunks, total = [], 0
+        for c in r.iter_content(16384):
+            total += len(c)
+            if total > _INTEL_FETCH_MAX_BYTES:
+                break
+            chunks.append(c)
+        return b"".join(chunks).decode("utf-8", "replace")
+    except Exception:
+        return None
+
+
+def _parse_rss(xml_text, source_id, now_iso):
+    """Public RSS/Atom → raw intel records (title/link/pubDate only). Strips any
+    embedded markup; content is DATA, not instructions (§23)."""
+    out = []
+    try:
+        root = _ET.fromstring(xml_text)
+    except Exception:
+        return out
+    for item in root.iter():
+        tag = item.tag.lower().rsplit("}", 1)[-1]
+        if tag not in ("item", "entry"):
+            continue
+        title = link = pub = ""
+        for ch in item:
+            ct = ch.tag.lower().rsplit("}", 1)[-1]
+            txt = (ch.text or "").strip()
+            if ct == "title":
+                title = re.sub(r"<[^>]+>", "", txt)[:300]
+            elif ct == "link":
+                link = (ch.attrib.get("href") or txt)[:600]
+            elif ct in ("pubdate", "published", "updated"):
+                pub = txt[:40]
+        if title:
+            out.append({"sourceId": source_id, "title": title, "canonicalUrl": link,
+                        "publishedAt": pub or None, "firstDetectedAt": now_iso, "fetchedAt": now_iso})
+    return out
+
+
+def _intel_link_assets(title):
+    """Tag an item with owner symbols/themes mentioned in the public title."""
+    t = title.lower()
+    assets = []
+    for s in ({x["symbol"] for x in _JP_WATCHLIST} | {x["symbol"] for x in _US_WATCHLIST}):
+        if s.lower() in t:
+            assets.append(s.upper())
+    for name, sym in [("nvidia", "NVDA"), ("micron", "MU"), ("apple", "AAPL"), ("tesla", "TSLA"),
+                      ("meta", "META"), ("softbank", "9984"), ("mitsubishi", "8058")]:
+        if name in t and sym not in assets:
+            assets.append(sym)
+    return assets
+
+
+def collect_institutional_intel():
+    """Admin/scheduled: fetch the allow-listed public feeds, normalize + dedup, store
+    metadata-only IntelligenceItems. Never called by a public GET."""
+    now_iso = _ai_now_iso()
+    raws, per = [], {}
+    for sid, url in _INTEL_FEEDS:
+        txt = _fetch_public_text(url)
+        items = _parse_rss(txt, sid, now_iso) if txt else []
+        per[sid] = per.get(sid, 0) + len(items)
+        raws.extend(items)
+    seen = {i["intelligenceId"] for i in _INTEL_STORE}
+    added = 0
+    for raw in raws:
+        raw["linkedAssets"] = _intel_link_assets(raw.get("title", ""))
+        item = argus_research_mesh.normalize_item(raw)
+        if item["intelligenceId"] in seen:
+            continue
+        seen.add(item["intelligenceId"])
+        _INTEL_STORE.insert(0, item)
+        added += 1
+    del _INTEL_STORE[_INTEL_STORE_MAX:]
+    _INTEL_LAST.update({"ts": time.time(), "collected": added, "perSource": per})
+    return {"collected": added, "stored": len(_INTEL_STORE), "perSource": per}
+
+
+def _intel_clusters():
+    return argus_research_mesh.cluster_items(list(_INTEL_STORE))
+
+
+@app.route("/api/argus/institutional-intelligence")
+def api_argus_institutional_intelligence():
+    """Public (cheap, cache-only): recent institutional intelligence + clusters.
+    Only items with a RESOLVED named institution are surfaced as institutional."""
+    inst = [i for i in _INTEL_STORE if i.get("institutionId")]
+    return jsonify({"asOf": _ai_now_iso(), "schema": argus_research_mesh.SCHEMA,
+                    "institutionalCount": len(inst), "totalCollected": len(_INTEL_STORE),
+                    "lastCollectedAt": _INTEL_LAST.get("ts"),
+                    "items": inst[:30], "clusters": _intel_clusters()[:20]})
+
+
+@app.route("/api/argus/institutional-intelligence/institutions")
+def api_argus_intel_institutions():
+    return jsonify({"count": len(argus_research_mesh.INSTITUTIONS),
+                    "institutions": list(argus_research_mesh.INSTITUTIONS.values())})
+
+
+@app.route("/api/argus/institutional-intelligence/source-health")
+def api_argus_intel_source_health():
+    """Honest source coverage (§24) — access class + last success per source."""
+    sources = []
+    for sid in argus_research_mesh.SOURCE_RIGHTS:
+        r = argus_research_mesh.source_rights(sid)
+        r["lastDetected"] = _INTEL_LAST.get("perSource", {}).get(sid)
+        sources.append(r)
+    return jsonify({"asOf": _ai_now_iso(), "lastCollectedAt": _INTEL_LAST.get("ts"),
+                    "coverage": {
+                        "LICENSED_FEED": "NOT_CONFIGURED",
+                        "PUBLIC_WEB": "LIVE" if _INTEL_STORE else "PARTIAL",
+                        "OFFICIAL_SOURCES": "LIVE",
+                        "SUBSCRIBER_CAPTURE": "ENABLED",
+                        "INSTITUTION_WATCHLIST": "ACTIVE",
+                    }, "sources": sources,
+                    "licensedFeeds": argus_licensed_feeds.all_health()})
+
+
+@app.route("/api/argus/events/<symbol>/institutional-intelligence")
+def api_argus_event_intel(symbol):
+    """Per-asset institutional intelligence (cheap) — items naming the symbol, with
+    causal role vs the symbol's recent move. Goes INSIDE the asset card."""
+    symu = str(symbol).upper()
+    reg = (_REGIME_CACHE.get("data") or {})
+    move = _ai_now_iso()
+    out = []
+    for it in _INTEL_STORE:
+        if symu not in (it.get("linkedAssets") or []):
+            continue
+        link = argus_research_mesh.link_to_event(it, {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move})
+        out.append({"title": it["title"], "institutionId": it.get("institutionId"),
+                    "publishedAt": it.get("publishedAt"), "accessClass": it["accessClass"],
+                    "canonicalUrl": it.get("canonicalUrl"), "stance": it.get("stance"),
+                    "relation": link["causalRole"], "relationLabelJa": link["relationLabelJa"],
+                    "isNamedView": link["isNamedView"], "notConfirmed": link["notConfirmed"]})
+    return jsonify({"symbol": symu, "count": len(out), "items": out[:8]})
+
+
+@app.route("/api/argus/institutional-intelligence/capture", methods=["POST"])
+def api_argus_intel_capture():
+    """Owner Share/Capture (§3B) — title/link/excerpt/institution only. NEVER
+    credentials/cookies/tokens/authenticated content."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    b = request.get_json(silent=True) or {}
+    for forbidden in ("credentials", "cookies", "token", "session", "password"):
+        if forbidden in b:
+            return jsonify({"error": "forbidden_field", "field": forbidden}), 400
+    raw = {"sourceId": "owner_capture", "title": (b.get("title") or "")[:300],
+           "canonicalUrl": (b.get("url") or "")[:600], "author": b.get("analyst"),
+           "publicSnippet": (b.get("excerpt") or "")[:500],
+           "linkedAssets": b.get("relatedAssets") or [], "firstDetectedAt": _ai_now_iso(), "fetchedAt": _ai_now_iso()}
+    item = argus_research_mesh.normalize_item(raw)
+    _INTEL_STORE.insert(0, item)
+    del _INTEL_STORE[_INTEL_STORE_MAX:]
+    return jsonify({"ok": True, "intelligenceId": item["intelligenceId"], "accessClass": item["accessClass"]})
+
+
+@app.route("/api/argus/institutional-intelligence/missed", methods=["POST"])
+def api_argus_intel_missed():
+    """Owner 'missed important info' feedback (§22) — recorded, never auto-retrains."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    b = request.get_json(silent=True) or {}
+    rec = {"url": (b.get("url") or "")[:600], "institution": b.get("institution"),
+           "symbol": b.get("symbol"), "whyJa": (b.get("why") or "")[:400], "at": _ai_now_iso()}
+    _MISSED_INTEL.insert(0, rec)
+    del _MISSED_INTEL[200:]
+    return jsonify({"ok": True, "recorded": rec})
+
+
+_MISSED_INTEL = []
+
+
+@app.route("/api/argus/institutional-intelligence/collect", methods=["POST"])
+def api_argus_intel_collect():
+    """Admin/cron: run the public-feed collection (the ONLY fetch path)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(collect_institutional_intel())
 
 
 # ━━━ Market Regime + Capital Rotation Engine v1 (rule-based, NO LLM) ━━━
