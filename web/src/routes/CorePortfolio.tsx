@@ -13,6 +13,9 @@ import { buildExposure } from '../lib/portfolio';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
+import { SignedValue } from '../components/common/SignedValue';
+import { getNumericTone, TONE_VAR } from '../lib/numericTone';
+import { useLocale, t } from '../i18n';
 import '../components/dashboard/Dashboard.css';
 
 // 資産クラス司令室 (command-center-v1, v10.13 — user-approved 案A):
@@ -26,6 +29,7 @@ import '../components/dashboard/Dashboard.css';
 const fmtJpy = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 
 export const CorePortfolio: React.FC = () => {
+  useLocale();   // re-render on locale switch
   const { cards, posture, phase } = useActionAlerts();
   const { assets } = useAssets();
   const { funds: navFunds } = useFundNav();   // 投信 基準価額(NAV) follow
@@ -76,7 +80,7 @@ export const CorePortfolio: React.FC = () => {
 
   return (
     <PageShell
-      title="Core Portfolio"
+      title={t('nav.corePortfolio')}
       subtitle={
         <span>
           資産クラス司令室 — 配分の現在地と、クラスごとの「いま取るべき構え」。
@@ -103,8 +107,8 @@ export const CorePortfolio: React.FC = () => {
                 </div>
               ))}
               {exp.combinedPlJpy != null && (
-                <div className="cmd-alloc__pl" style={{ color: exp.combinedPlJpy >= 0 ? 'var(--green)' : 'var(--risk-high)' }}>
-                  含み損益(円換算) {exp.combinedPlJpy >= 0 ? '+' : ''}{fmtJpy(exp.combinedPlJpy)}
+                <div className="cmd-alloc__pl" style={{ color: TONE_VAR[getNumericTone(exp.combinedPlJpy)] }}>
+                  {t('cp.unrealizedPl')} {exp.combinedPlJpy >= 0 ? '+' : ''}{fmtJpy(exp.combinedPlJpy)}
                 </div>
               )}
               {exp.unpriced.length > 0 && (
@@ -149,9 +153,8 @@ export const CorePortfolio: React.FC = () => {
                 </div>
                 <div style={{ textAlign: 'right', flex: 'none' }}>
                   <div style={{ fontWeight: 700 }}>¥{Math.round(f.navYen).toLocaleString('en-US')}</div>
-                  <div style={{ fontSize: 12, color: f.changePct == null ? 'var(--text-sub)'
-                    : f.changePct > 0 ? 'var(--green)' : f.changePct < 0 ? 'var(--red)' : 'var(--text-sub)' }}>
-                    {f.changePct == null ? '前日比 —' : `前日比 ${f.changePct > 0 ? '+' : ''}${f.changePct}%`}
+                  <div style={{ fontSize: 12 }}>
+                    {t('cp.dayChange')} {f.changePct == null ? '—' : <SignedValue value={f.changePct} suffix="%" arrow={false} />}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>
                     ● {act.action === 'CONTINUE' ? '積立継続' : '一括は見送り'}

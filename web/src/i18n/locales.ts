@@ -52,6 +52,9 @@ const en = {
   'wl.filterNoReorder': 'reorder disabled while filtered',
   'wl.noDanger': 'No assets are in an active downside incident.',
   'wl.noHeld': 'No held (quantity-entered) assets.',
+  // core portfolio
+  'cp.unrealizedPl': 'Unrealized P/L (JPY)',
+  'cp.dayChange': 'Day change',
 };
 
 type Dict = typeof en;
@@ -99,6 +102,8 @@ const ja: Record<DictKey, string> = {
   'wl.filterNoReorder': 'フィルター中は並べ替え無効',
   'wl.noDanger': '急落インシデント該当の銘柄はありません。',
   'wl.noHeld': '保有(数量入力済み)の銘柄はありません。',
+  'cp.unrealizedPl': '含み損益(円換算)',
+  'cp.dayChange': '前日比',
 };
 
 export const DICT: Record<Locale, Dict> = { en, ja };

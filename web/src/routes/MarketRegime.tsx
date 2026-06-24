@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { PageShell } from './PageShell';
+import { useLocale, t } from '../i18n';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
@@ -71,6 +72,7 @@ function toMatrixState(data: MarketRegimeSnapshot): RegimeMatrixState {
 // Regime Matrix (supporting) → Regime Summary → Rates backdrop → FRED snapshot
 // → Data limitations → Glossary. The bubble / SectorBlob viz stays retired.
 export const MarketRegime: React.FC = () => {
+  useLocale();   // re-render on locale switch
   const { data, phase } = useMarketRegime();
   const movers = useMarketMovers();
   const jpMovers = useMarketMovers('/api/argus/jp-market-movers');
@@ -96,7 +98,7 @@ export const MarketRegime: React.FC = () => {
 
   return (
     <PageShell
-      title="Market Context"
+      title={t('nav.marketContext')}
       subtitle="今の地合い(レジーム・資金ローテーション・金利)と、これから来る予定イベント・危機ニュースを1画面に。アクションラベルの裏付けであって、それ自体は売買シグナルではない。ETFローテーションは資金フローのproxy。"
     >
       {/* Status + regime header */}
