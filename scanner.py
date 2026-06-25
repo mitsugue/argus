@@ -2389,9 +2389,11 @@ def _jq_fetch_bar_row(code, name, headers):
         return None
 
 def _jquants_fetch_quote(s, headers):
-    """Curated-list fetch: live bar row → keyless Yahoo prev-close → mock (last resort)."""
-    row = _jq_fetch_bar_row(s["symbol"], s["name"], headers)
-    return row or _yahoo_jp_row(s["symbol"], s["name"]) or _jp_mock_quote(s)
+    """Curated-list fetch (moomoo overlays on top later): Yahoo (fresher) → J-Quants
+    (T-1) → mock. Order matches the owner spec (v10.157)."""
+    return (_yahoo_jp_row(s["symbol"], s["name"])
+            or _jq_fetch_bar_row(s["symbol"], s["name"], headers)
+            or _jp_mock_quote(s))
 
 def _jp_mock_snapshot():
     return {"status": "mock", "asOf": None,
@@ -2444,9 +2446,15 @@ def _get_japan_watchlist_core(symbols=None):
         # MOCK. The moomoo bridge overlay (applied after) still overrides with realtime.
         headers = {"x-api-key": _JQUANTS_API_KEY} if _JQUANTS_API_KEY else None
         def fetch(code):
+            # Order (owner spec v10.157): moomoo realtime overlays on top later; for a
+            # non-moomoo symbol use the FRESHER source first — Yahoo (intraday ~20min /
+            # today's close) BEFORE J-Quants (free = T-1 yesterday). J-Quants is the
+            # last resort for names Yahoo lacks.
             nm = _jq_name_for(code) or code
-            row = _jq_fetch_bar_row(code, nm, headers) if headers else None
-            return row or _yahoo_jp_row(code, nm)
+            row = _yahoo_jp_row(code, nm)
+            if row is None and headers:
+                row = _jq_fetch_bar_row(code, nm, headers)
+            return row
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(syms))) as ex:
             stocks = [q for q in ex.map(fetch, syms) if q is not None]
         live_n = sum(1 for q in stocks if q.get("status") == "live")
