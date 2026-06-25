@@ -112,10 +112,14 @@ const App: React.FC = () => {
   const overscrollNext = (!isReview && curIdx >= 0 && curIdx + 1 < NAV_ORDER.length)
     ? { label: NAV_LABEL[NAV_ORDER[curIdx + 1]], go: () => handleNavSelect(NAV_ORDER[curIdx + 1]) }
     : undefined;
-  // Up-pull at the top → previous page (v10.28, user request).
+  // Up-pull at the top → previous page (v10.28). On the FIRST page (Today) there is
+  // no previous page, so an up-pull RELOADS instead (v10.153, owner request) — same
+  // gesture + threshold + indicator, label "再読み込み".
   const overscrollPrev = (!isReview && curIdx > 0)
     ? { label: NAV_LABEL[NAV_ORDER[curIdx - 1]], go: () => handleNavSelect(NAV_ORDER[curIdx - 1]) }
-    : undefined;
+    : (!isReview && curIdx === 0)
+      ? { label: '再読み込み', go: () => window.location.reload() }
+      : undefined;
 
   return (
     <AppShell

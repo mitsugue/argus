@@ -2314,6 +2314,32 @@ def _jp_mock_quote(s):
         "volume": m["volume"], "date": None, "status": "mock",
     }
 
+
+_YF_JP_CACHE = {}        # code -> {"row": .., "ts": ..}
+_YF_JP_TTL = 600
+
+
+def _yahoo_jp_row(code, name):
+    """Previous-close fallback for a JP name via Yahoo Finance (<code>.T), keyless.
+    Used ONLY when J-Quants + the moomoo bridge both lack the symbol, so the card
+    shows a REAL (delayed) price instead of MOCK. status='delayed' (never 'live').
+    10-min cache; None on failure."""
+    now = time.time()
+    hit = _YF_JP_CACHE.get(code)
+    if hit and now - hit["ts"] <= _YF_JP_TTL:
+        return hit["row"]
+    row = None
+    q = _yf_quote(f"{code}.T")
+    if q:
+        px, prev = round(q[0], 2), round(q[1], 2)
+        chg = round(px - prev, 2)
+        pct = round((chg / prev) * 100, 2) if prev else 0.0
+        row = {"symbol": code, "name": name, "nameJa": name, "price": px,
+               "changeAbs": chg, "changePct": pct, "volume": 0, "date": None,
+               "source": "yahoo-delayed", "status": "delayed"}
+    _YF_JP_CACHE[code] = {"row": row, "ts": now}
+    return row
+
 def _q_close(q):
     # V2 abbreviated fields: C = close; fall back to AdjC (adjusted close).
     v = q.get("C")
@@ -2359,9 +2385,9 @@ def _jq_fetch_bar_row(code, name, headers):
         return None
 
 def _jquants_fetch_quote(s, headers):
-    """Curated-list fetch: live bar row, or the per-symbol mock fallback."""
+    """Curated-list fetch: live bar row → keyless Yahoo prev-close → mock (last resort)."""
     row = _jq_fetch_bar_row(s["symbol"], s["name"], headers)
-    return row if row is not None else _jp_mock_quote(s)
+    return row or _yahoo_jp_row(s["symbol"], s["name"]) or _jp_mock_quote(s)
 
 def _jp_mock_snapshot():
     return {"status": "mock", "asOf": None,
@@ -2409,14 +2435,18 @@ def _get_japan_watchlist_core(symbols=None):
         hit = _JP_DYN_CACHE.get(syms)
         if hit and now < hit["expires"]:
             return hit["data"]
-        if not _JQUANTS_API_KEY:
-            return {"status": "mock", "asOf": None, "stocks": []}
-        headers = {"x-api-key": _JQUANTS_API_KEY}
+        # J-Quants when configured; otherwise (or per-symbol miss) a keyless Yahoo
+        # previous-close fallback so a watched name shows a REAL delayed price, never
+        # MOCK. The moomoo bridge overlay (applied after) still overrides with realtime.
+        headers = {"x-api-key": _JQUANTS_API_KEY} if _JQUANTS_API_KEY else None
         def fetch(code):
-            return _jq_fetch_bar_row(code, _jq_name_for(code) or code, headers)
+            nm = _jq_name_for(code) or code
+            row = _jq_fetch_bar_row(code, nm, headers) if headers else None
+            return row or _yahoo_jp_row(code, nm)
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(syms))) as ex:
             stocks = [q for q in ex.map(fetch, syms) if q is not None]
-        overall = "live" if len(stocks) == len(syms) else ("partial" if stocks else "mock")
+        live_n = sum(1 for q in stocks if q.get("status") == "live")
+        overall = "live" if live_n == len(syms) else ("partial" if stocks else "mock")
         as_of   = max((q["date"] for q in stocks if q.get("date")), default=None)
         snapshot = {"status": overall, "asOf": as_of, "stocks": stocks}
         if stocks:
@@ -5997,11 +6027,33 @@ def _build_ai_snapshot():
                "eventEscalation": l["supportingData"]["eventEscalation"],
                "reasonJa": l["reasonJa"], "nextConditionJa": l["nextConditionJa"]}
               for l in al.get("labels", [])]
+    # CLOSE-THE-LOOP (v10.153): give the AI judges (a) the self-scoring ledger as a
+    # "textbook" so they calibrate against ARGUS's own past accuracy, and (b) the
+    # C.A.O.S. institutional signals so the decision reflects fresh institutional
+    # views — not just the rule labels. Both are compact + secret-free.
+    led = _ledger_summary() or {}
+    self_scoring = {
+        "overall": led.get("overall"),
+        "byPosture": {k: {"n": v.get("n"), "hitRate": v.get("hitRate"), "brierMean": v.get("brierMean")}
+                      for k, v in (led.get("byPosture") or {}).items()},
+        "aiDirectional": led.get("aiDirectional"),
+        "noteJa": "これはARGUS自身の過去成績(自己採点)。hitRateが低い局面では確信度を下げ、高い局面のみ強気にする。将来の利益保証ではない。",
+    }
+    caos = []
+    try:
+        for it in [x for x in _INTEL_STORE if x.get("institutionId")][:6]:
+            caos.append({"institution": it.get("institutionId"), "stance": it.get("stance"),
+                         "type": it.get("contentType"), "assets": it.get("linkedAssets") or [],
+                         "title": (it.get("titleJa") or it.get("title") or "")[:120]})
+    except Exception:
+        caos = []
     snap = {
         "marketPosture": al.get("marketPosture"),
         "rates": {k: rates.get(k) for k in ("ratesPressure", "riskVolatility", "summary")} if isinstance(rates, dict) else {},
         "urgentEvents": urgent,
         "labels": labels,
+        "selfScoring": self_scoring,            # the learning "textbook" (close-the-loop)
+        "institutionalSignals": caos,           # C.A.O.S. — reported views, not trades
     }
     return snap, al
 
@@ -6013,7 +6065,13 @@ _OPENAI_SYSTEM = (
     "do NOT claim intraday rate direction. Be conservative: prefer WAIT/HOLD/WAIT FOR PULLBACK. "
     "ADD/BUY DIP require explicit stabilization or a positive setup in the data; EXIT/TRIM require a "
     "severe rule condition or clear risk evidence; if uncertain, choose WAIT or HOLD. State data "
-    "limitations honestly. All *Ja fields must be concise Japanese. Return STRICT JSON only."
+    "limitations honestly. "
+    # close-the-loop: the snapshot now carries ARGUS's own learning + institutional intel.
+    "You MUST factor `selfScoring` (ARGUS's own past hit-rate/Brier by posture) into your "
+    "confidence: where past hitRate is low, LOWER confidence; only raise it where history supports it. "
+    "You MAY reference `institutionalSignals` (public, reported institutional VIEWS — a view is NOT a "
+    "trade, and published-after-a-move is not the cause); never assert an institution traded. "
+    "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 
 def _usage_tokens(resp):

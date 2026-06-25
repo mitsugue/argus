@@ -236,11 +236,15 @@
 }
 /* While the finger is down the page tracks it 1:1 with no transition. */
 .shell__page--dragging { transition: none; }
-.shell__page--next { --from: 34vh; }   /* next page rises up from the bottom */
-.shell__page--prev { --from: -34vh; }  /* prev page descends from the top */
+/* v10.153 (owner request): pages feel like ONE continuous vertical strip — the
+   next page slides up a FULL screen from below (and prev down from above) as a
+   SOLID page (no fade), so it reads as the adjacent page connecting in, not a
+   small rise + cross-fade. Transform-only = GPU-cheap (no extra weight). */
+.shell__page--next { --from: 100vh; }   /* next page slides up a full screen from below */
+.shell__page--prev { --from: -100vh; }  /* prev page slides down a full screen from above */
 @keyframes shell-page-in {
-  0%   { opacity: 0.45; transform: translateY(var(--from, 34vh)); }
-  100% { opacity: 1; transform: translateY(0); }
+  0%   { transform: translateY(var(--from, 100vh)); }
+  100% { transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
   .shell__page { animation: none; transition: none; }

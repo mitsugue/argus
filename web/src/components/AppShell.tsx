@@ -15,8 +15,10 @@ const BRAND_DOT: Record<LampStatus, string> = {
 // follows the finger but with heavy exponential damping — it yields less the
 // harder you pull, so the gesture feels weighty and resistant. You must pull a
 // long way to cross the trigger, and the next page oozes in with an overshoot.
-const PULL_THRESHOLD_PX = 340;    // touch: extra drag past the edge to flip (heavy)
-const WHEEL_THRESHOLD = 1700;     // desktop: accumulated deltaY at the edge
+// v10.153 (owner request): page flip ~30% lighter in BOTH directions (down=next,
+// up=prev) — was 340 / 1700. Still deliberate enough to avoid accidental jumps.
+const PULL_THRESHOLD_PX = 238;    // touch: extra drag past the edge to flip
+const WHEEL_THRESHOLD = 1190;     // desktop: accumulated deltaY at the edge
 const RESIST_MAX = 104;           // max px the page ever yields under the finger
 const RESIST_K = 300;             // damping constant — bigger = heavier resistance
 

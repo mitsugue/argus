@@ -5,6 +5,7 @@ import { SIGNALS } from '../../domain/actionLevel';
 import { SignedValue } from '../common/SignedValue';
 import { CauseStackCard } from './CauseStackCard';
 import { InstitutionalView } from './InstitutionalView';
+import { SignalGauge } from '../action/SignalGauge';
 import './UnifiedAssetCard.css';
 
 // One unified card per stock (v10.140). Collapsed = the 4 things you need (what's
@@ -43,7 +44,7 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
         </span>
         <span className="uac-l2">
           <span className="uac-cmd" style={{ color: sigColor }}>{PRIMARY_EN[c.signalCode]}</span>
-          <span className="uac-sig">· ACTION {c.signalLevel}/7</span>
+          <SignalGauge code={c.signalCode} />
         </span>
         <span className="uac-l3">{`新規${c.permNewEntry === 'BLOCKED' ? '禁止' : '可'} · 追加${c.permAdd === 'BLOCKED' ? '禁止' : '可'} · 既存は${c.permExistingJa}`}</span>
         {c.causeOneLineJa && <span className="uac-cause">{c.causeOneLineJa}</span>}
