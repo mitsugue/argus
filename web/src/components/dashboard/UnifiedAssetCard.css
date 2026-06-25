@@ -11,11 +11,13 @@
   width: 100%; text-align: left; background: none; border: none; cursor: pointer;
   display: grid; grid-template-columns: 1fr; gap: 3px; padding: 10px 12px;
 }
-.uac-l1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.uac-held { font-size: 10px; font-weight: 800; color: var(--value-positive); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }
-.uac-sym { font-size: 15px; font-weight: 800; color: var(--text-main); }
+/* Single fixed line: long names truncate with … so price/% never wrap (v10.158). */
+.uac-l1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+.uac-held { flex: none; font-size: 10px; font-weight: 800; color: var(--value-positive); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+.uac-sym { flex: none; font-size: 15px; font-weight: 800; color: var(--text-main); white-space: nowrap; }
 .uac-name { font-size: 13px; color: var(--text-sub); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.uac-chg { font-size: 14px; font-weight: 700; flex: none; font-variant-numeric: tabular-nums; }
+.uac-price { flex: none; white-space: nowrap; }
+.uac-chg { flex: none; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; margin-left: auto; }
 
 .uac-l2 { display: flex; align-items: baseline; gap: 6px; }
 .uac-cmd { font-size: 14px; font-weight: 800; letter-spacing: 0.01em; }
