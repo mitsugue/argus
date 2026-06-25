@@ -1,0 +1,57 @@
+{
+ "date": "2026-06-25",
+ "asOf": "2026-06-25T04:08:19Z",
+ "regime": "EVENT_WAIT",
+ "groups": [
+  {
+   "id": "us-growth",
+   "label": "US Growth",
+   "role": "Risk",
+   "score": -0.177,
+   "status": "outflow"
+  },
+  {
+   "id": "us-broad",
+   "label": "US Broad Risk",
+   "role": "Risk",
+   "score": -0.184,
+   "status": "outflow"
+  },
+  {
+   "id": "small-caps",
+   "label": "Small Caps",
+   "role": "Risk",
+   "score": 0.155,
+   "status": "inflow"
+  },
+  {
+   "id": "defensive",
+   "label": "Defensive / Gold",
+   "role": "Defensive",
+   "score": -0.342,
+   "status": "outflow"
+  },
+  {
+   "id": "duration",
+   "label": "Duration / Bonds",
+   "role": "Duration",
+   "score": 0.183,
+   "status": "inflow"
+  },
+  {
+   "id": "credit",
+   "label": "Credit Risk",
+   "role": "Risk",
+   "score": -0.025,
+   "status": "neutral"
+  }
+ ],
+ "topRotations": [
+  {
+   "direction": "inflow",
+   "evidenceJa": "Defensive / Gold（-0.34）から US Growth（-0.18）へ資金がシフト。",
+   "label": "Defensive -> Growth",
+   "score": 0.165
+  }
+ ]
+}
