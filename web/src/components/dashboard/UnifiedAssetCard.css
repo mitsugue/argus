@@ -64,3 +64,6 @@
 .iv-title:hover { text-decoration: underline; }
 .iv-nc { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 .iv-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* live price next to the symbol (v10.155) */
+.uac-price { font-size: 12px; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; }

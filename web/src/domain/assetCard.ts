@@ -21,6 +21,7 @@ export interface AssetCardModel {
   held: boolean;
   ownerState?: OwnerState;
   changePct: number | null;
+  price: number | null;
   flowRatio: number | null;
   signalCode: SignalCode;
   signalLevel: number;
@@ -44,7 +45,7 @@ export interface AssetCardModel {
 
 // ── inputs (loosely typed against the existing hook shapes) ──
 interface LabelLike { symbol: string; action: string; reasonJa?: string; nextConditionJa?: string;
-  supportingData?: { changePct?: number; bigFlowRatio?: number | null; quoteDate?: string | null }; status?: string; }
+  supportingData?: { price?: number | null; changePct?: number; bigFlowRatio?: number | null; quoteDate?: string | null }; status?: string; }
 interface IncidentLike { symbol: string; changePct?: number | null; causeBuckets?: { cause: string; probability: number }[];
   actionOverride?: string; reasonJa?: string; nextConditionJa?: string; severity?: string; isHeld?: boolean; ownerState?: string;
   currentAction?: string; }
@@ -80,13 +81,14 @@ export interface BuildCtx {
   aiFreshness?: AiFreshness;
   /** Direct quote for assets that have no Action Label (crypto): supplies the
       day-change % so the top-screen card shows a value, not "—". */
-  quote?: { changePct?: number | null };
+  quote?: { price?: number | null; changePct?: number | null };
 }
 
 export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel {
   const { label, incident, events = [], linked = [], aiFreshness = 'rule_only' } = ctx;
   const held = (asset.quantity ?? 0) > 0 || incident?.ownerState === 'held' || incident?.ownerState === 'protected';
-  const changePct = label?.supportingData?.changePct ?? incident?.changePct ?? ctx.quote?.changePct ?? null;
+  const changePct = ctx.quote?.changePct ?? label?.supportingData?.changePct ?? incident?.changePct ?? null;
+  const price = ctx.quote?.price ?? label?.supportingData?.price ?? null;
   const flowRatio = label?.supportingData?.bigFlowRatio ?? null;
 
   // Resolve the Action Level signal (override from a downside incident can only
@@ -131,6 +133,7 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
     held,
     ownerState: incident?.ownerState as OwnerState | undefined,
     changePct,
+    price,
     flowRatio,
     signalCode: sig.code,
     signalLevel: def.level,
@@ -173,7 +176,7 @@ export interface GroupInputs {
   events: EventLike[];
   linked: Record<string, LinkedEventTag[]>;   // symbol(upper) -> tags
   aiFreshness: AiFreshness;
-  cryptoQuotes?: Record<string, { changePct?: number | null }>;   // symbol(upper) -> quote
+  cryptoQuotes?: Record<string, { price?: number | null; changePct?: number | null }>;   // symbol(upper) -> quote
 }
 export interface AssetCardGroups {
   jpWatch: AssetCardModel[]; jpEmerging: AssetCardModel[];

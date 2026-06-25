@@ -1,0 +1,40 @@
+# Option C (owner-chosen, v10.155): periodic AI re-judgment every 15 min DURING
+# MARKET HOURS, so the GPT-5.5 + Gemini view (and its self-scoring/C.A.O.S.-aware
+# confidence) stays fresh through the session — not just the daily 16:05 run.
+#
+# Cost: ~52 runs/weekday ≈ $2.6/day ≈ $57/mo at ~$0.05/run — under the server's
+# $5/day / $80/mo AI budget HARD-STOP, which pauses AI gracefully if exceeded
+# (the real cost guard). The daily ledger/scoring run stays separate (16:05 JST).
+# 'ai-only' style: this only refreshes + caches the AI view; it does NOT write the
+# ledger. Admin-token gated; no-op without the secret.
+name: ai-rejudge
+
+on:
+  schedule:
+    - cron: '*/15 0-6 * * 1-5'    # JP session  00:00–06:30 UTC (09:00–15:30 JST)
+    - cron: '*/15 13-20 * * 1-5'  # US session  13:30–20:00 UTC (09:30–16:00 ET)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Don't pile up runs if one is slow; latest wins.
+concurrency:
+  group: ai-rejudge
+  cancel-in-progress: true
+
+jobs:
+  rejudge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Trigger AI re-judgment (admin-gated; bounded by the AI budget)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
+          RESP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/ai-judgment/run" || echo '{"error":"unreachable"}')
+          echo "ai-rejudge: ${RESP:0:240}"

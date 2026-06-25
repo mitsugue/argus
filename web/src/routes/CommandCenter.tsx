@@ -76,11 +76,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     [cryptoAssets]);
   const cw = useCryptoWatchlist(cryptoIds);
   const cryptoQuotes = useMemo(() => {
-    const m: Record<string, { changePct?: number | null }> = {};
+    const m: Record<string, { price?: number | null; changePct?: number | null }> = {};
     for (const a of cryptoAssets) {
       const id = a.memo?.match(/coingecko:(\S+)/)?.[1];
       const q = id ? cw.byId?.[id] : undefined;
-      if (q) m[a.symbol.toUpperCase()] = { changePct: q.changePct ?? null };
+      if (q) m[a.symbol.toUpperCase()] = { price: q.priceUsd ?? null, changePct: q.changePct ?? null };
     }
     return m;
   }, [cryptoAssets, cw.byId]);

@@ -40,6 +40,7 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
           {c.held && <span className="uac-held">保有</span>}
           <span className="uac-sym">{c.symbol}</span>
           <span className="uac-name">{c.name}</span>
+          {c.price != null && <span className="uac-price">{c.price.toLocaleString()}</span>}
           <span className="uac-chg">{c.changePct == null ? '—' : <SignedValue value={c.changePct} suffix="%" arrow={false} />}</span>
         </span>
         <span className="uac-l2">

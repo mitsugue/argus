@@ -5657,7 +5657,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                 "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
                 "action": "HOLD", "confidence": 0.2, "risk": "low",
                 "reasonJa": "ライブ価格が未取得のため中立で保留。",
-                "supportingData": {"changePct": (q or {}).get("changePct", 0), "volume": (q or {}).get("volume", 0),
+                "supportingData": {"price": (q or {}).get("price"), "changePct": (q or {}).get("changePct", 0), "volume": (q or {}).get("volume", 0),
                                    "eventEscalation": esc or "normal", "ratesPosture": posture},
                 "nextConditionJa": "ライブデータ復帰後に再評価する。",
                 "status": "mock",
@@ -5697,7 +5697,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         labels.append({
             "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
             "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
-            "supportingData": {"changePct": chg, "volume": q.get("volume", 0),
+            "supportingData": {"price": q.get("price"), "changePct": chg, "volume": q.get("volume", 0),
                                "eventEscalation": esc or "normal", "ratesPosture": posture,
                                "marketRegime": reg_label or "n/a",
                                "quoteDate": q.get("date"), "quoteLagDays": lag,
@@ -5792,8 +5792,13 @@ _AI_JUDGE_ENABLED  = os.environ.get("AI_JUDGE_ENABLED", "false").strip().lower()
 def _int_env(name, default):
     try: return int(os.environ.get(name, str(default)) or default)
     except Exception: return default
-_AI_JUDGE_MAX_RUNS      = _int_env("AI_JUDGE_MAX_RUNS_PER_DAY", 3)
-_AI_JUDGE_MIN_INTERVAL  = _int_env("AI_JUDGE_MIN_INTERVAL_MINUTES", 30)
+# Option C (owner, v10.155): 15-min AI re-judgment during market hours. The run-COUNT
+# cap was a proxy guard; the real cost protection is the daily/monthly USD budget
+# hard-stop below ($5/day, $80/mo) which pauses AI gracefully if spend is exceeded.
+# So the count cap is raised to allow the 15-min cadence (~52 runs/day ≈ $2.6/day,
+# well under $5). Tune via env if desired.
+_AI_JUDGE_MAX_RUNS      = _int_env("AI_JUDGE_MAX_RUNS_PER_DAY", 64)
+_AI_JUDGE_MIN_INTERVAL  = _int_env("AI_JUDGE_MIN_INTERVAL_MINUTES", 14)
 _AI_JUDGE_LOCKED_ENV    = os.environ.get("AI_JUDGE_LOCKED", "false").strip().lower() in ("1", "true", "yes", "on")
 _AI_JUDGE_ALLOW_COUNTRIES = [c.strip().upper() for c in os.environ.get("AI_JUDGE_ALLOW_COUNTRIES", "JP").split(",") if c.strip()]
 _SECURITY_ALERT_EMAIL    = os.environ.get("SECURITY_ALERT_EMAIL", "")
