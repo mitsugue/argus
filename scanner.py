@@ -2488,14 +2488,17 @@ def get_japan_watchlist_snapshot(symbols=None):
     snap = _get_japan_watchlist_core(symbols)
     requested = (_sanitize_symbols(symbols, _JP_SYM_RE, _JP_DYN_MAX) if symbols
                  else [s["symbol"] for s in _JP_WATCHLIST])
+    # Remember the requested symbols HERE (not just in the HTTP route) so BOTH the
+    # watchlist page AND the Today page (which reaches this via get_action_labels)
+    # teach the bridge the owner's watchlist → /jp-watchlist-codes → realtime push.
+    if symbols and requested:
+        _remember_jp_symbols(requested)
     return _overlay_pushed(snap, "JP", requested)
 
 @app.route("/api/argus/japan-watchlist")
 def api_argus_japan_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
-    if symbols:
-        _remember_jp_symbols(symbols)   # so the bridge learns watchlist adds (e.g. 6965)
     return jsonify(get_japan_watchlist_snapshot(symbols))
 
 
