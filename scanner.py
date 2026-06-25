@@ -2207,7 +2207,7 @@ def _rates_snapshot_base():
 
 
 _YF_RT_CACHE = {"data": None, "expires": 0.0}
-_YF_RT_TTL = 300   # 5 min — realtime enough without hammering Yahoo
+_YF_RT_TTL = 90    # ~realtime FX/rates — realtime enough without hammering Yahoo
 # snapshot key -> (Yahoo symbol, label). ^TNX = 10Y yield in %, ^VIX = VIX level.
 _YF_RT_MAP = {"usdJpy": ("JPY=X", "USD/JPY"),
               "us10y":  ("%5ETNX", "US 10Y Treasury yield"),
@@ -3646,7 +3646,7 @@ _CRYPTO_ID_RE      = re.compile(r"^[a-z0-9-]{1,50}$")
 _CRYPTO_MAX_IDS    = 15
 _CRYPTO_CACHE      = {}          # ids-tuple -> {"data":..., "expires":...}
 _CRYPTO_CACHE_MAX  = 16          # bound memory on a public endpoint
-_CRYPTO_CACHE_TTL  = 600         # 10 min
+_CRYPTO_CACHE_TTL  = 90          # ~realtime (coingecko simple/price)
 # Plausible fallback values (NOT real quotes) so the UI renders in mock state.
 _CRYPTO_MOCK = {
     "bitcoin":  {"price": 68_200.0, "changePct": 1.2, "volume": 28_000_000_000},

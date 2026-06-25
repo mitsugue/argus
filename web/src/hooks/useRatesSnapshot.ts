@@ -159,8 +159,12 @@ export function useRatesSnapshot(): State {
     }
 
     void run();
+    // Live refresh every 60s — was fetch-once-on-mount, so FX/MACRO sat frozen at
+    // the load-time values. USD/JPY/10Y/VIX now have a realtime backend overlay.
+    const iv = setInterval(() => void run(), 60_000);
     return () => {
       cancelled = true;
+      clearInterval(iv);
     };
   }, []);
 

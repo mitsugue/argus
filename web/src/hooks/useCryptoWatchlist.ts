@@ -34,11 +34,10 @@ export function useCryptoWatchlist(ids: string[]): State {
     const url = backend.replace(/\/$/, '') +
       '/api/argus/crypto-watchlist?ids=' + encodeURIComponent(key);
     let cancelled = false;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
-    setState((s) => ({ ...s, phase: 'connecting' }));
-
-    (async () => {
+    const fetchOnce = async () => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
+      setState((s) => ({ ...s, phase: 'connecting' }));
       try {
         const r = await fetch(url, { signal: ctrl.signal });
         clearTimeout(timer);
@@ -50,11 +49,13 @@ export function useCryptoWatchlist(ids: string[]): State {
         setState({ byId, phase: data.status, asOf: data.asOf });
       } catch {
         clearTimeout(timer);
-        if (!cancelled) setState({ byId: {}, phase: 'mock', asOf: null });
+        if (!cancelled) setState((s) => (Object.keys(s.byId).length ? s : { byId: {}, phase: 'mock', asOf: null }));
       }
-    })();
-
-    return () => { cancelled = true; clearTimeout(timer); };
+    };
+    void fetchOnce();
+    // Live refresh every 30s (crypto is 24/7) — was fetch-once-on-mount (frozen).
+    const iv = setInterval(() => void fetchOnce(), 30_000);
+    return () => { cancelled = true; clearInterval(iv); };
   }, [key]);
 
   return state;

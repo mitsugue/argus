@@ -30,7 +30,7 @@ const RETRY_DELAYS_MS = [3_000, 6_000];
 // and we settle on mock, a later silent refresh recovers to live as soon as
 // the server is warm — same cadence as the watchlist hooks. Failures keep the
 // last good data instead of flashing back to "connecting"/mock.
-const REFRESH_INTERVAL_MS = 60_000;
+const REFRESH_INTERVAL_MS = 15_000;  // top-page % + signals live (was 60s)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
