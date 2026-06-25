@@ -45,6 +45,18 @@ jobs:
           done
           echo "::warning::deploy SHA not matched in 10m — smoking whatever is live"
 
+      # A deploy RESTARTS the dyno, so every cache (regime/rates/watchlist/news) is
+      # cold right after buildSha flips. Prime the key endpoints + a short settle so
+      # the assertions don't fail on a still-WARMING regime etc. (the noisy-email
+      # cause). Cheap; the smoke's own 5-retry backoff covers the rest.
+      - name: Warm caches before asserting
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for ep in rates market-regime japan-watchlist us-watchlist crypto-watchlist market-news events-active action-labels; do
+            curl -s --max-time 40 "$BE/api/argus/$ep" > /dev/null || true
+          done
+          sleep 45
+
       - name: Run smoke test
         run: python3 smoke_test.py
 

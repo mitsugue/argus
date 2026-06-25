@@ -108,8 +108,11 @@ def v_jp_market_movers():
 def v_scout_jp():
     # The key refactor regression check: moved scoring must still produce output.
     c, d = _get("/api/argus/entry-scout?symbol=7203")
-    if d.get("status") != "live":
-        return False, f"status={d.get('status')} (expected live for 7203)"
+    # Accept 'delayed' too: when the TSE is closed (the 6-hourly cron) or 7203 is on
+    # the Yahoo/J-Quants fallback, the quote is honestly 'delayed' but the scout still
+    # produces a full assessment. Only 'mock'/error is a real failure.
+    if d.get("status") not in ("live", "delayed"):
+        return False, f"status={d.get('status')} (expected live/delayed for 7203)"
     a = d.get("assessment") or {}
     ok = bool(d.get("callJa")) and isinstance(a.get("reasonsJa"), list) and a.get("reasonsJa") \
         and isinstance((d.get("metrics") or {}).get("rsi14"), (int, float))
