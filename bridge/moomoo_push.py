@@ -198,6 +198,18 @@ def _fetch_jp_universe():
         return []
 
 
+def _fetch_jp_watchlist_codes():
+    """JP names the owner's watchlist needs pushed REALTIME (Layer-2B ∪ recently-
+    requested frontend symbols). Merged into the 15s push so a newly-added name
+    (e.g. JP.6965) goes realtime without editing the CODES env. Best-effort."""
+    try:
+        r = requests.get(f"{BACKEND}/api/argus/jp-watchlist-codes",
+                         headers={"X-ARGUS-ADMIN-TOKEN": TOKEN}, timeout=20)
+        return r.json().get("codes", []) if r.ok else []
+    except Exception:
+        return []
+
+
 def _post_capability_report(report):
     raw = json.dumps({"report": report}, separators=(",", ":")).encode("utf-8")
     headers = {"X-ARGUS-ADMIN-TOKEN": TOKEN, "Content-Type": "application/json"}
@@ -421,10 +433,19 @@ def main():
     qc = OpenQuoteContext(host=HOST, port=PORT)
     flow_cache = {}   # code -> last known flow dict (carried between flow cycles)
     last_flow_at = 0.0
+    # Dynamic push set = static CODES ∪ the owner's watchlist (refreshed from the
+    # backend every ~3 min) so a newly-added JP name goes realtime automatically.
+    push_codes = list(CODES)
+    last_wl_at = 0.0
     try:
         while True:
             try:
-                ret, df = qc.get_market_snapshot(CODES)
+                if time.time() - last_wl_at >= 180:
+                    last_wl_at = time.time()
+                    wl = _fetch_jp_watchlist_codes()
+                    if wl:
+                        push_codes = list(dict.fromkeys(list(CODES) + wl))
+                ret, df = qc.get_market_snapshot(push_codes)
                 if ret == RET_OK:
                     stocks = rows_from_snapshot(df)
                     # Big-money flow on its own slower cadence (quota: the
@@ -435,7 +456,7 @@ def main():
                     if do_flow:
                         last_flow_at = time.time()
                     by_sym = {s["market"] + "." + s["symbol"]: s for s in stocks}
-                    for code in CODES:
+                    for code in push_codes:
                         s = by_sym.get(code.upper())
                         if s is None:
                             continue

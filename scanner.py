@@ -2379,7 +2379,11 @@ def _jq_fetch_bar_row(code, name, headers):
             "changePct": round((change / pclose) * 100, 2) if pclose else 0.0,
             "volume": int(vol) if vol is not None else 0,
             "date": latest.get("Date"),
-            "status": "live",
+            # Honesty (v10.156): J-Quants free is lagged. Only call it "live" when
+            # the bar is actually today's; otherwise it is delayed (T-1+), so the UI
+            # shows 遅延 instead of pretending a yesterday close is a live quote.
+            "status": "live" if latest.get("Date") == datetime.now(TZ_JST).strftime("%Y-%m-%d") else "delayed",
+            "source": "jquants",
         }
     except Exception:
         return None
@@ -2482,7 +2486,36 @@ def get_japan_watchlist_snapshot(symbols=None):
 def api_argus_japan_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
+    if symbols:
+        _remember_jp_symbols(symbols)   # so the bridge learns watchlist adds (e.g. 6965)
     return jsonify(get_japan_watchlist_snapshot(symbols))
+
+
+# Watchlist symbols the frontend has actually requested — so the moomoo bridge can
+# push REALTIME for them (not just the hardcoded CODES). The frontend's watchlist is
+# client-side; this is how the server-side bridge learns about a newly-added name.
+_JP_SEEN_SYMBOLS = {}      # symbol(upper) -> last_seen_epoch
+_JP_SEEN_MAX = 200
+_JP_SEEN_TTL = 7 * 24 * 3600   # forget a symbol unseen for a week
+
+
+def _remember_jp_symbols(symbols):
+    now = time.time()
+    for s in symbols:
+        c = str(s).strip().upper()
+        if c:
+            _JP_SEEN_SYMBOLS[c] = now
+    # prune stale + cap
+    for k in [k for k, ts in _JP_SEEN_SYMBOLS.items() if now - ts > _JP_SEEN_TTL]:
+        _JP_SEEN_SYMBOLS.pop(k, None)
+    if len(_JP_SEEN_SYMBOLS) > _JP_SEEN_MAX:
+        for k in sorted(_JP_SEEN_SYMBOLS, key=_JP_SEEN_SYMBOLS.get)[:-_JP_SEEN_MAX]:
+            _JP_SEEN_SYMBOLS.pop(k, None)
+
+
+def _recent_jp_watchlist_codes():
+    """Recently-requested JP watchlist symbols as moomoo codes (for the bridge)."""
+    return ["JP." + s for s in sorted(_JP_SEEN_SYMBOLS)]
 
 
 # ━━━ Twelve Data (live US watchlist) ━━━
@@ -6759,6 +6792,9 @@ def api_argus_jp_universe():
                 priority.append("JP." + str(m["symbol"]))
     except Exception:
         pass
+    # Also include symbols the frontend recently requested (covers watchlist adds
+    # that aren't in the synced Layer-2B set yet, e.g. a just-added 6965).
+    priority += _recent_jp_watchlist_codes()
     for s in list(argus_calibration.TACTICAL_BENCHMARK) + list(argus_calibration.REGIME_SENSORS):
         if s and s[0].isdigit():          # JP listing code (e.g. 7203 / 285A)
             priority.append("JP." + s)
@@ -6771,6 +6807,27 @@ def api_argus_jp_universe():
                     "noteJa": "先頭は優先銘柄(所有者watchlist+固定ベンチ+センサー)で必ずスイープ対象。"
                               "残りは全市場。ブリッジが先頭からCAP_UNIVERSE_MAX件を取るので優先銘柄は外れない。",
                     "note": "priority-first JP codes for the capability sweep"})
+
+@app.route("/api/argus/jp-watchlist-codes")
+def api_argus_jp_watchlist_codes():
+    """Lightweight list of JP names the bridge should PUSH REALTIME (not just sweep
+    for movers): Layer-2B synced watchlist ∪ recently-requested frontend symbols, as
+    moomoo codes. Admin-gated. The bridge merges these into its 15s quote push so any
+    watchlist add (e.g. 6965) goes realtime without editing the bridge's CODES env."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    syms = set(_JP_SEEN_SYMBOLS.keys())
+    try:
+        mem = _layer2b_read_latest()
+        for m in (mem.get("members") if isinstance(mem, dict) else []) or []:
+            if str(m.get("market")) == "JP" and m.get("symbol"):
+                syms.add(str(m["symbol"]).upper())
+    except Exception:
+        pass
+    return jsonify({"codes": sorted("JP." + s for s in syms), "count": len(syms),
+                    "asOf": _ai_now_iso()})
+
 
 @app.route("/api/argus/moomoo-capability-report", methods=["POST"])
 def api_argus_moomoo_capability_report():
