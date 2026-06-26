@@ -90,9 +90,11 @@ jobs:
           GATE=$(curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/security-status" || echo '{"error":"unreachable"}')
           echo "gate: $GATE"
           echo "🔐 gate: \`${GATE}\`" >> "$GITHUB_STEP_SUMMARY"
+          # checker=pro: the daily run is the AUTHORITATIVE judgment that gets scored
+          # into the ledger (the learning "textbook"), so it uses the strong tier.
           RESP=$(curl -s --max-time 240 -X POST \
             -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/ai-judgment/run" || echo '{"error":"unreachable"}')
+            "$BE/api/argus/ai-judgment/run?checker=pro" || echo '{"error":"unreachable"}')
           SHORT=$(echo "$RESP" | head -c 300)
           echo "ai run: $SHORT"
           echo "🤖 ai run: \`${SHORT}\`" >> "$GITHUB_STEP_SUMMARY"

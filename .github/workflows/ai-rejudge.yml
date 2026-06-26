@@ -35,6 +35,8 @@ jobs:
           BE="https://argus-backend-3j2m.onrender.com"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
           curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
+          # checker=flash: the frequent 15-min refresh uses the cheap double-check
+          # tier (routine verification ≈ pro). The daily scored run uses pro.
           RESP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/ai-judgment/run" || echo '{"error":"unreachable"}')
-          echo "ai-rejudge: ${RESP:0:240}"
+            "$BE/api/argus/ai-judgment/run?checker=flash" || echo '{"error":"unreachable"}')
+          echo "ai-rejudge(flash): ${RESP:0:240}"

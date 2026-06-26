@@ -6192,7 +6192,7 @@ def _gemini_usage_tokens(resp):
     out = _g("candidates_token_count") + _g("thoughts_token_count")
     return inp, out
 
-def _gemini_check(snapshot, openai_out):
+def _gemini_check(snapshot, openai_out, checker_model=None):
     """Returns (out|None, status, grounding_enabled)."""
     _AI_LAST_RUN["gemUsage"] = None
     if not google_genai or not GEMINI_API_KEY:
@@ -6221,7 +6221,7 @@ def _gemini_check(snapshot, openai_out):
             return (client.models.generate_content(model=model, contents=prompt, config=config)
                     if config else client.models.generate_content(model=model, contents=prompt))
 
-        model_used = _GEMINI_JUDGE_MODEL
+        model_used = checker_model or _GEMINI_JUDGE_MODEL   # per-run tier (flash/pro)
         try:
             resp = _gen(model_used, cfg)
         except Exception as e:
@@ -6447,13 +6447,19 @@ def _ai_disabled_payload(status="disabled", reason="AI judgment is not enabled y
             "summaryJa": "", "marketRiskJa": "", "labels": [],
             "globalRedFlags": [], "groundingSources": []}
 
-def _execute_ai_judgment(run_mode="manual"):
+def _execute_ai_judgment(run_mode="manual", checker=None):
     """Run a fresh AI judgment (GPT-5.5 primary + Gemini double-check), arbitrate,
     cache, return. Never raises. The security gate / run limits are enforced by
-    the caller (POST route) — this function performs the actual model work."""
+    the caller (POST route) — this function performs the actual model work.
+
+    `checker` picks the Gemini double-check tier per run (cost/quality, v10.159):
+      'flash' → cheap fallback model (the frequent 15-min/off-hours refresh)
+      'pro' / None → the strong configured model (the daily scored run + on-demand).
+    """
     snap, al = _build_ai_snapshot()
     openai_out, oai_status = _openai_judge(snap)
-    gemini_out, gem_status, grounding_enabled = _gemini_check(snap, openai_out)
+    checker_model = _GEMINI_FALLBACK_MODEL if checker == "flash" else _GEMINI_JUDGE_MODEL
+    gemini_out, gem_status, grounding_enabled = _gemini_check(snap, openai_out, checker_model)
     labels = _arbitrate_ai(al, openai_out, gemini_out)
 
     ai_ok = (1 if oai_status == "live" else 0) + (1 if gem_status == "live" else 0)
@@ -6676,7 +6682,11 @@ def api_argus_ai_judgment_run():
     allowed, info, code = _ai_run_gate(force=force)
     if not allowed:
         return jsonify(info), code
-    return jsonify(_execute_ai_judgment(run_mode="manual"))
+    # ?checker=flash|pro picks the Gemini double-check tier (default pro). The 15-min
+    # ai-rejudge cron passes flash (cheap, frequent); the daily scored run passes pro.
+    checker = (request.args.get("checker") or "").strip().lower()
+    checker = checker if checker in ("flash", "pro") else None
+    return jsonify(_execute_ai_judgment(run_mode="manual", checker=checker))
 
 @app.route("/api/argus/ai-cost")
 def api_argus_ai_cost():
