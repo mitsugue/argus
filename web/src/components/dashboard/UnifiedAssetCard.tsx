@@ -46,6 +46,10 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
         <span className="uac-l2">
           <span className="uac-cmd" style={{ color: sigColor }}>{PRIMARY_EN[c.signalCode]}</span>
           <SignalGauge code={c.signalCode} />
+          <span className={`uac-jsrc uac-jsrc--${c.judgmentSource}`}
+                title={c.judgmentSource === 'ai' ? 'GPT+Geminiの判断(自己採点・C.A.O.S.参照)' : 'AI未更新のためルール暫定(ガードレール)'}>
+            {c.judgmentSource === 'ai' ? 'AI' : 'ルール暫定'}
+          </span>
         </span>
         <span className="uac-l3">{`新規${c.permNewEntry === 'BLOCKED' ? '禁止' : '可'} · 追加${c.permAdd === 'BLOCKED' ? '禁止' : '可'} · 既存は${c.permExistingJa}`}</span>
         {c.causeOneLineJa && <span className="uac-cause">{c.causeOneLineJa}</span>}

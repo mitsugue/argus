@@ -39,13 +39,15 @@ export interface AssetCardModel {
   lastUpdate: string | null;    // HH:MM JST
   linkedEvents: LinkedEventTag[];
   aiFreshness: AiFreshness;
+  judgmentSource: 'ai' | 'rule';   // 'ai' = displayed call is the GPT+Gemini loop output; 'rule' = guardrail
   autoExpand: boolean;          // held-critical / worsened / new official / cause shift
   severityRank: number;         // for sort
 }
 
 // ── inputs (loosely typed against the existing hook shapes) ──
 interface LabelLike { symbol: string; action: string; reasonJa?: string; nextConditionJa?: string;
-  supportingData?: { price?: number | null; changePct?: number; bigFlowRatio?: number | null; quoteDate?: string | null }; status?: string; }
+  supportingData?: { price?: number | null; changePct?: number; bigFlowRatio?: number | null; quoteDate?: string | null }; status?: string;
+  judgmentSource?: 'ai' | 'rule'; }   // 'ai' = the displayed call is GPT+Gemini's; 'rule' = guardrail fallback
 interface IncidentLike { symbol: string; changePct?: number | null; causeBuckets?: { cause: string; probability: number }[];
   actionOverride?: string; reasonJa?: string; nextConditionJa?: string; severity?: string; isHeld?: boolean; ownerState?: string;
   currentAction?: string; }
@@ -112,10 +114,15 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
     .sort((a, b) => new Date(a.detectedAt || 0).getTime() - new Date(b.detectedAt || 0).getTime())
     .map((e) => ({ time: hhmm(e.detectedAt), textJa: e.reasonJa || e.eventType, tone: EV_TONE[e.eventType] ?? 'flat' }));
 
-  // ARGUS VIEW — one resolved line from cause + signal permissions.
+  // ARGUS VIEW — one resolved line. When the call is AI-driven, lead with the AI's
+  // own reasoning (the loop output); otherwise the rule label + permissions.
+  const judgmentSource: 'ai' | 'rule' = label?.judgmentSource ?? 'rule';
   const permJa = `${sig.permissions.newEntry === 'BLOCKED' ? '新規禁止' : '新規可'} · ${sig.permissions.add === 'BLOCKED' ? '追加禁止' : '追加可'} · 既存は${existingJa(sig.code)}`;
+  const aiReason = (judgmentSource === 'ai' && label?.reasonJa) ? label.reasonJa.slice(0, 120) : null;
   const argusViewJa = incident?.reasonJa
     ? `${causeOneLineJa ?? '原因確認中'}。${permJa}。`
+    : aiReason
+    ? `${aiReason}（${permJa}）`
     : `${def.labelJa}。${permJa}。`;
 
   // Auto-expand triggers (spec §伸縮): held + critical / EXIT-DEFEND override / unknown cause.
@@ -151,6 +158,7 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
     lastUpdate: last || null,
     linkedEvents: linked,
     aiFreshness,
+    judgmentSource,
     autoExpand,
     severityRank: sevRank,
   };

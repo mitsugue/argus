@@ -100,12 +100,28 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         (linked[k] ??= []).push({ code: ie.eventCode, countdown: ie.countdown, impact: ie.displayImpact.toUpperCase() });
       }
     }
-    const aiF = aiJ.data as undefined | { freshness?: string };
+    const aiF = aiJ.data as undefined | { freshness?: string; status?: string };
     const aiFreshness: AiFreshness = aiF?.freshness === 'fresh' ? 'fresh'
       : aiF?.freshness === 'persisted' || aiF?.freshness === 'stale' ? 'stale'
       : aiJ.data ? 'unavailable' : 'rule_only';
+    // (a) AI-AS-PRIMARY (v10.160): when a recent AI run exists (live/partial + fresh/
+    // persisted), the displayed per-stock call IS the GPT+Gemini arbitrated judgment
+    // (aiFinalAction + the AI's reason). The rule engine is the guardrail fallback
+    // (stale/cold/budget-paused → shown as ルール暫定). Holdings stay device-local;
+    // this only swaps which judgment the card shows.
+    const aiPrimary = !!aiJ.data && (aiF?.status === 'live' || aiF?.status === 'partial')
+      && (aiF?.freshness === 'fresh' || aiF?.freshness === 'persisted');
+    const aiBySym = new Map((aiJ.data?.labels ?? []).map((l) => [l.symbol.toUpperCase(), l]));
+    const labels = (al.data?.labels ?? []).map((rl) => {
+      const ai = aiPrimary ? aiBySym.get(rl.symbol.toUpperCase()) : undefined;
+      if (ai && ai.aiFinalAction) {
+        return { ...rl, action: ai.aiFinalAction, reasonJa: ai.reasonJa || rl.reasonJa,
+                 confidence: ai.confidence ?? rl.confidence, judgmentSource: 'ai' as const };
+      }
+      return { ...rl, judgmentSource: 'rule' as const };
+    });
     return groupAssetCards({
-      assets, labels: al.data?.labels ?? [], incidents: downside?.incidents ?? [],
+      assets, labels, incidents: downside?.incidents ?? [],
       events: events247 ?? [], linked, aiFreshness, cryptoQuotes,
     });
   }, [assets, al.data, downside, events247, impEvents, aiJ.data, cryptoQuotes]);

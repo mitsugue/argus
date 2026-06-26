@@ -69,3 +69,8 @@
 
 /* live price next to the symbol (v10.155) */
 .uac-price { font-size: 12px; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; }
+
+/* judgment source badge (v10.160): AI-driven vs rule guardrail */
+.uac-jsrc { font-size: 9px; font-weight: 800; letter-spacing: .04em; padding: 0 5px; border-radius: 5px; line-height: 1.5; }
+.uac-jsrc--ai { color: var(--signal-enter, #34d399); border: 1px solid currentColor; }
+.uac-jsrc--rule { color: var(--text-muted); border: 1px solid var(--border-subtle, rgba(255,255,255,.18)); }

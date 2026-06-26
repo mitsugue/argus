@@ -6061,6 +6061,43 @@ def _ai_most_conservative(a, b):
     # Smaller rank = more defensive; prefer the more defensive of the two.
     return a if _AI_RANK.get(a, 99) <= _AI_RANK.get(b, 99) else b
 
+_AI_ENRICH_CACHE = {}     # symbol -> {"data": {...}, "expires": epoch}
+_AI_ENRICH_TTL = 1800     # 30 min — the 15-min AI runs reuse this, no refetch each time
+
+
+def _ai_enrich_symbol(sym, market):
+    """(b, v10.160) Per-stock CHART (RSI14 + trend from daily candles) + 日証金/信用
+    margin signal (JP weekly, J-Quants) for the AI snapshot — so GPT+Gemini judge WITH
+    technicals + margin, not just price/%. 30-min cached, best-effort ({} on failure).
+    US margin/JSF is unavailable (no J-Quants); JP only."""
+    now = time.time()
+    c = _AI_ENRICH_CACHE.get(sym)
+    if c and now < c["expires"]:
+        return c["data"]
+    out = {}
+    try:
+        candles = get_stock_candles(sym, days=30)
+        closes = [x["close"] for x in (candles or []) if x.get("close") is not None]
+        if len(closes) >= 15:
+            m = _entry_metrics(closes)
+            if isinstance(m, dict) and m.get("rsi14") is not None:
+                out["rsi14"] = round(float(m["rsi14"]), 1)
+                sma10 = sum(closes[-10:]) / 10.0
+                out["trend"] = "up" if closes[-1] >= sma10 else "down"
+    except Exception:
+        pass
+    if market == "JP":
+        try:
+            sig = _margin_signal(_jq_weekly_margin(sym))
+            lines = _margin_assess_lines(sig) if sig else None
+            if lines:
+                out["marginJa"] = " / ".join(lines[:2])[:160]
+        except Exception:
+            pass
+    _AI_ENRICH_CACHE[sym] = {"data": out, "expires": now + _AI_ENRICH_TTL}
+    return out
+
+
 def _build_ai_snapshot():
     """Compact, secret-free structured snapshot for the AI judges."""
     al = get_action_labels()
@@ -6076,6 +6113,19 @@ def _build_ai_snapshot():
                "eventEscalation": l["supportingData"]["eventEscalation"],
                "reasonJa": l["reasonJa"], "nextConditionJa": l["nextConditionJa"]}
               for l in al.get("labels", [])]
+    # (b) enrich each stock with CHART (rsi14/trend) + 日証金/信用 margin so the AI
+    # judges WITH them. Concurrent + 30-min cached (bounded API load on 15-min runs).
+    try:
+        pairs = [(x["symbol"], x["market"]) for x in labels]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(pairs) or 1)) as ex:
+            enr = dict(zip([p[0] for p in pairs], ex.map(lambda p: _ai_enrich_symbol(*p), pairs)))
+        for x in labels:
+            e = enr.get(x["symbol"]) or {}
+            for k in ("rsi14", "trend", "marginJa"):
+                if e.get(k) is not None:
+                    x[k] = e[k]
+    except Exception:
+        pass
     # CLOSE-THE-LOOP (v10.153): give the AI judges (a) the self-scoring ledger as a
     # "textbook" so they calibrate against ARGUS's own past accuracy, and (b) the
     # C.A.O.S. institutional signals so the decision reflects fresh institutional
@@ -6120,6 +6170,8 @@ _OPENAI_SYSTEM = (
     "confidence: where past hitRate is low, LOWER confidence; only raise it where history supports it. "
     "You MAY reference `institutionalSignals` (public, reported institutional VIEWS — a view is NOT a "
     "trade, and published-after-a-move is not the cause); never assert an institution traded. "
+    "Each label may carry `rsi14`/`trend` (chart technicals) and `marginJa` (Japan 信用/JSF margin-balance "
+    "signal) — factor them in (e.g. RSI extremes, margin short-cover fuel) but never treat them as certainty. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 
