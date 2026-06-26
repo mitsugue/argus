@@ -6179,6 +6179,19 @@ def _build_ai_snapshot():
                          "title": (it.get("titleJa") or it.get("title") or "")[:120]})
     except Exception:
         caos = []
+    # (c) general market news — AWARENESS only (uncorroborated). Major-flagged first. The AI
+    # must NOT treat a headline as fact/cause or let it drive the call; it cross-checks it
+    # against institutionalSignals + price/rates. Folds news into the same C.A.O.S. input.
+    news_digest = []
+    try:
+        mn = get_market_news()
+        if isinstance(mn, dict) and mn.get("status") == "live":
+            ranked = sorted(mn.get("items", []), key=lambda n: 0 if n.get("major") else 1)
+            for n in ranked[:8]:
+                news_digest.append({"headlineJa": (n.get("headlineJa") or n.get("headline") or "")[:140],
+                                    "source": n.get("source"), "major": bool(n.get("major"))})
+    except Exception:
+        news_digest = []
     snap = {
         "marketPosture": al.get("marketPosture"),
         "rates": {k: rates.get(k) for k in ("ratesPressure", "riskVolatility", "summary")} if isinstance(rates, dict) else {},
@@ -6186,6 +6199,7 @@ def _build_ai_snapshot():
         "labels": labels,
         "selfScoring": self_scoring,            # the learning "textbook" (close-the-loop)
         "institutionalSignals": caos,           # C.A.O.S. — reported views, not trades
+        "marketNews": news_digest,              # C.A.O.S. — uncorroborated general news (awareness only)
     }
     return snap, al
 
@@ -6203,6 +6217,9 @@ _OPENAI_SYSTEM = (
     "confidence: where past hitRate is low, LOWER confidence; only raise it where history supports it. "
     "You MAY reference `institutionalSignals` (public, reported institutional VIEWS — a view is NOT a "
     "trade, and published-after-a-move is not the cause); never assert an institution traded. "
+    "`marketNews` is UNCORROBORATED general news for AWARENESS only: never treat a headline as an "
+    "established fact or the cause of a move, never let news alone drive the call; cross-check it "
+    "against `institutionalSignals` and the price/rates data, and stay conservative when they conflict. "
     "Each label may carry `rsi14`/`trend` (chart technicals) and `marginJa` (Japan 信用/JSF margin-balance "
     "signal) — factor them in (e.g. RSI extremes, margin short-cover fuel) but never treat them as certainty. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."

@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { HeroCard } from '../components/dashboard/HeroCard';
-import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
 import { FxMacroSection } from '../components/dashboard/FxMacroSection';
-import { MarketInstitutionalSection } from '../components/dashboard/MarketInstitutionalSection';
-import { CaosEvents } from '../components/dashboard/CaosEvents';
+import { CaosHub } from '../components/dashboard/CaosHub';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { useEventsActive } from '../hooks/useEventsActive';
 import { useImportantEvents } from '../hooks/useImportantEvents';
@@ -220,11 +218,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} onNavigate={onNavigate} />
 
-      {/* #3 MARKET-WIDE INSTITUTIONAL INTELLIGENCE — max 3, only when material. */}
-      <MarketInstitutionalSection />
-
-      {/* C.A.O.S. event lifecycle — pre/post-event analysis (織り込み・シナリオ・結果・反応). */}
-      <CaosEvents limit={3} />
+      {/* C.A.O.S. — the 2nd card, ALWAYS present. One intelligence hub folding three tiers:
+          機関シグナル (institutional views) + イベント分析 (pre/post) + ニュース (market news).
+          News is always live, so the card never disappears even when intel/events are empty. */}
+      <CaosHub />
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
       <AssetCategorySection title="JAPAN · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.jpEmerging} emptyJa="急浮上中の日本株はありません" />
@@ -234,9 +231,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
       <FxMacroSection />
-
-      {/* NEWS — general news not tied to a tracked stock. */}
-      <MarketNewsCard />
 
       <section>
         <div className="section-head">
