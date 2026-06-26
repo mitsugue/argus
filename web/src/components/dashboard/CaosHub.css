@@ -20,8 +20,11 @@
 .caoshub-news-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--amber, #fbbf24); }
 .caoshub-news-time, .caoshub-news-src { flex: none; font-size: 10px; color: var(--text-faint); white-space: nowrap; }
 .caoshub-news-src { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
-.caoshub-news-wire { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: .04em;
-  color: var(--value-positive); border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; opacity: .8; }
+.caoshub-corrob { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: .04em;
+  border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; opacity: .85; }
+.caoshub-corrob--official { color: var(--cyan, #22d3ee); }
+.caoshub-corrob--ok { color: var(--value-positive, #34d399); }
+.caoshub-corrob--single { color: var(--text-muted); opacity: .65; }
 .caoshub-news-h { font-size: 12.5px; line-height: 1.5; color: var(--text-sub); overflow-wrap: anywhere; margin-top: 1px; }
 .caoshub-news-h--major { color: var(--text-main); font-weight: 600; }
 

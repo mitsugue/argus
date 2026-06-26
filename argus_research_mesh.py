@@ -282,6 +282,49 @@ def _norm_key(item: Dict[str, Any]) -> str:
                  asset, _title_fingerprint(item.get("title", "")))
 
 
+# Source FAMILIES — many outlets re-syndicate ONE wire, so distinct sourceIds are not
+# distinct confirmations. Collapsing to families is what makes "corroborated" honest:
+# 5 sites running the same Reuters story = 1 family = NOT independent corroboration.
+_SOURCE_FAMILY_KEYS = (
+    ("federal_reserve", "official:fed"), ("federalreserve", "official:fed"),
+    ("sec_press", "official:sec"), ("sec.gov", "official:sec"),
+    ("treasury", "official:treasury"), ("boj", "official:boj"), ("bls", "official:bls"),
+    ("reuters", "reuters"), ("bloomberg", "bloomberg"), ("nikkei", "nikkei"),
+    ("cnbc", "cnbc"), ("marketwatch", "dowjones"), ("wall street", "dowjones"),
+    ("dow jones", "dowjones"), ("barron", "dowjones"), ("nasdaq", "nasdaq"),
+    ("yahoo", "yahoo"), ("associated press", "ap"), (" ap ", "ap"),
+    ("financial times", "ft"), ("cnn", "cnn"), ("forbes", "forbes"),
+    ("business insider", "insider"), ("seeking alpha", "seekingalpha"),
+)
+# Portals that mostly re-publish others — never counted as an INDEPENDENT family.
+_AGGREGATOR_FAMILIES = {"yahoo", "nasdaq", "seekingalpha"}
+
+
+def source_family(source_id: Optional[str]) -> str:
+    """Map a sourceId / publisher name to its source FAMILY (wire of origin)."""
+    s = (source_id or "").strip().lower().replace("_public", "").replace("_web", "")
+    if not s:
+        return "unknown"
+    for key, fam in _SOURCE_FAMILY_KEYS:
+        if key in s:
+            return fam
+    return s
+
+
+def is_official_source(source_id: Optional[str]) -> bool:
+    return source_family(source_id).startswith("official:")
+
+
+def corroboration_level(source_ids) -> str:
+    """official (an authoritative source) / corroborated (>=2 independent, non-aggregator
+    families) / single. The lever that keeps a lone headline from driving a decision."""
+    fams = {source_family(s) for s in source_ids if s}
+    if any(f.startswith("official:") for f in fams):
+        return "official"
+    independent = {f for f in fams if f not in _AGGREGATOR_FAMILIES}
+    return "corroborated" if len(independent) >= 2 else "single"
+
+
 def cluster_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Group into story clusters; mark independent corroboration vs syndication.
     Two items are INDEPENDENT only when they have DIFFERENT source families AND
@@ -301,16 +344,23 @@ def cluster_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out = []
     for c in clusters.values():
         srcs = {s for s in c["sources"] if s}
-        # independent corroboration = distinct NON-aggregator source families.
-        independent = len(srcs)
+        # independent corroboration = distinct NON-aggregator source FAMILIES (wire
+        # re-syndication collapses to one family, so it is not counted as confirmation).
+        fams = {source_family(s) for s in srcs}
+        independent_families = len({f for f in fams if f not in _AGGREGATOR_FAMILIES}) or len(fams)
+        level = corroboration_level(srcs)
+        note = {"official": "公式ソースで確認",
+                "corroborated": "複数の独立系統で確認",
+                "single": "単一系統(同一ワイヤーの転載は独立確認ではない)"}[level]
         out.append({
             "storyClusterId": c["storyClusterId"], "count": len(c["items"]),
-            "sources": sorted(srcs), "independentSourceCount": independent,
+            "sources": sorted(srcs), "independentSourceCount": len(srcs),
+            "independentFamilyCount": independent_families,
+            "corroborationLevel": level,
             "syndicationCount": len(c["items"]) - 1,
             "earliestDetectedAt": c["earliestDetectedAt"], "originalSourceId": c["originalSourceId"],
             "items": c["items"],
-            "corroborationNote": ("複数の独立系統で確認" if independent >= 2
-                                  else "単一系統(同一ワイヤーの転載は独立確認ではない)"),
+            "corroborationNote": note,
         })
     return out
 

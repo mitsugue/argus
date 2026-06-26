@@ -16,6 +16,8 @@ export interface MarketNewsItem {
   relevant?: boolean;
   /** source-trust tier (v10.169). */
   tier?: 'wire' | 'aggregator' | 'official';
+  /** corroboration level (v10.170): official | corroborated (>=2 indep families) | single. */
+  corroboration?: 'official' | 'corroborated' | 'single';
 }
 
 export interface MarketNews {

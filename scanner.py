@@ -6186,14 +6186,18 @@ def _build_ai_snapshot():
     try:
         mn = get_market_news()
         if isinstance(mn, dict) and mn.get("status") == "live":
-            # precision (v10.169): only MARKET-RELEVANT headlines reach the AI, wire
-            # sources first, major next — so irrelevant/clickbait headlines can't bias it.
+            # precision (v10.169 + v10.170): only MARKET-RELEVANT headlines reach the AI,
+            # ranked by corroboration (official>corroborated>single) then source tier — so
+            # uncorroborated/clickbait headlines sort last and are flagged for near-zero weight.
+            _clvl = {"official": 0, "corroborated": 1, "single": 2}
             _tier = {"official": 0, "wire": 1, "aggregator": 2}
             relevant = [n for n in mn.get("items", []) if n.get("relevant")]
-            relevant.sort(key=lambda n: (_tier.get(n.get("tier"), 2), 0 if n.get("major") else 1))
+            relevant.sort(key=lambda n: (_clvl.get(n.get("corroboration"), 2),
+                                         _tier.get(n.get("tier"), 2), 0 if n.get("major") else 1))
             for n in relevant[:6]:
                 news_digest.append({"headlineJa": (n.get("headlineJa") or n.get("headline") or "")[:140],
                                     "source": n.get("source"), "tier": n.get("tier"),
+                                    "corroboration": n.get("corroboration") or "single",
                                     "major": bool(n.get("major"))})
     except Exception:
         news_digest = []
@@ -6222,12 +6226,14 @@ _OPENAI_SYSTEM = (
     "confidence: where past hitRate is low, LOWER confidence; only raise it where history supports it. "
     "You MAY reference `institutionalSignals` (public, reported institutional VIEWS — a view is NOT a "
     "trade, and published-after-a-move is not the cause); never assert an institution traded. "
-    "`marketNews` is a digest of UNVERIFIED news HEADLINES (NOT article bodies — the headline wording "
-    "often does not match the actual content). Treat each as an unconfirmed CLAIM, never an established "
-    "fact or the proven cause of a move; do NOT infer specifics beyond the headline text. Weight "
-    "`tier`=wire/official above aggregator. A headline may affect the call ONLY if the price/rates data "
-    "CONFIRM it; if news and the data conflict, trust the data and stay conservative. News alone NEVER "
-    "triggers ADD/BUY DIP/EXIT/TRIM. "
+    "`marketNews` is a digest of news HEADLINES (NOT article bodies — the headline wording often does "
+    "not match the actual content). Treat each as an unconfirmed CLAIM, never an established fact or the "
+    "proven cause of a move; do NOT infer specifics beyond the headline text. Each item has "
+    "`corroboration`: 'official' (an authoritative source) / 'corroborated' (>=2 independent source "
+    "families) / 'single' (one source — UNVERIFIED). A 'single' item is AWARENESS-ONLY with near-zero "
+    "weight and MUST NOT move the call. 'corroborated'/'official' items may inform it ONLY if the "
+    "price/rates data CONFIRM them; if news and data conflict, trust the data and stay conservative. "
+    "News ALONE never triggers ADD/BUY DIP/EXIT/TRIM. "
     "Each label may carry `rsi14`/`trend` (chart technicals) and `marginJa` (Japan 信用/JSF margin-balance "
     "signal) — factor them in (e.g. RSI extremes, margin short-cover fuel) but never treat them as certainty. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
@@ -7382,6 +7388,33 @@ def _news_relevant(headline, headline_ja=None):
     txt = f"{headline or ''} {headline_ja or ''}"
     return bool(_NEWS_RELEVANCE_RE.search(txt))
 
+def _annotate_news_corroboration(news_items):
+    """Tag each headline with a corroborationLevel by clustering it against the C.A.O.S.
+    mesh store via argus_research_mesh.cluster_items (independent SOURCE FAMILIES = real
+    corroboration; wire re-syndication is not). A lone unverified headline gets 'single'
+    so it carries near-zero weight in the AI's call and can't rattle the judgment. This is
+    the robust foundation: news reaches the AI corroboration-rated, not as a raw headline."""
+    try:
+        norm = []
+        for n in news_items:
+            d = {"sourceId": n.get("source"), "title": n.get("headline") or "",
+                 "linkedAssets": _intel_link_assets(n.get("headline") or ""),
+                 "contentType": None, "institutionId": None, "_n": n}
+            norm.append(d)
+        mesh = [{"sourceId": it.get("sourceId"), "title": it.get("title") or "",
+                 "linkedAssets": it.get("linkedAssets") or [],
+                 "contentType": it.get("contentType"), "institutionId": it.get("institutionId")}
+                for it in list(_INTEL_STORE)[:200]]
+        clusters = {c["storyClusterId"]: c for c in argus_research_mesh.cluster_items(norm + mesh)}
+        for d in norm:
+            c = clusters.get(d.get("storyClusterId")) or {}
+            d["_n"]["corroboration"] = c.get("corroborationLevel") or "single"
+    except Exception as e:
+        add_log(f"[news] corroboration tag failed: {type(e).__name__}")
+        for n in news_items:
+            n.setdefault("corroboration", "single")
+    return news_items
+
 def _translate_headlines_ja(headlines):
     """Batch-translate headlines via the cheap Gemini flash model. Best-effort:
     any failure returns {} and the UI falls back to English. Called at most
@@ -7440,8 +7473,11 @@ def get_market_news():
         # markets/finance (incl. the JA translation) so the UI + AI can drop noise.
         for item in items:
             item["relevant"] = _news_relevant(item["headline"], item.get("headlineJa"))
+        # Corroboration rating (v10.170): cluster against the C.A.O.S. mesh so each
+        # headline carries official/corroborated/single — single can't drive the AI.
+        _annotate_news_corroboration(items)
         out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
-               "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=金融政策/介入/地政学などの重要キーワード検出。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のもののみ・通信社優先で参考投入。"}
+               "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=重要キーワード。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のみ・裏取り(公式>複数系統>単一)で重み付けして参考投入。単一ソースは判断を動かさない。"}
         _MARKET_NEWS_CACHE["data"] = out
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_TTL
         return out

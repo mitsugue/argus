@@ -35,6 +35,13 @@ const MATERIAL_TYPES = new Set([
   'ANALYST_UPGRADE', 'ANALYST_DOWNGRADE', 'PRICE_TARGET_CHANGE', 'ESTIMATE_REVISION',
 ]);
 const IMPACT_JA: Record<string, string> = { critical: '重大', high: '大', medium: '中', low: '小' };
+// Corroboration badge (v10.170) — official > corroborated (>=2 independent families) > single.
+// A 'single' (unverified) headline is shown muted so it reads as low-trust at a glance.
+const CORROB: Record<string, { ja: string; cls: string }> = {
+  official: { ja: '公式', cls: 'caoshub-corrob--official' },
+  corroborated: { ja: '裏取り', cls: 'caoshub-corrob--ok' },
+  single: { ja: '単一ソース', cls: 'caoshub-corrob--single' },
+};
 const PHASE: Record<string, { ja: string; tone: string }> = {
   pre: { ja: '発表前', tone: 'var(--event-high)' },
   post: { ja: '発表後', tone: 'var(--event-medium)' },
@@ -158,7 +165,9 @@ export const CaosHub: React.FC = () => {
                 {it.major && <span className="caoshub-news-dot" />}
                 <span className="caoshub-news-time">{hhmm(it.datetime)}</span>
                 <span className="caoshub-news-src">{it.source}</span>
-                {it.tier === 'wire' && <span className="caoshub-news-wire">通信社</span>}
+                {it.corroboration && CORROB[it.corroboration] && (
+                  <span className={`caoshub-corrob ${CORROB[it.corroboration].cls}`}>{CORROB[it.corroboration].ja}</span>
+                )}
               </div>
               <div className={`caoshub-news-h${it.major ? ' caoshub-news-h--major' : ''}`}>
                 {it.headlineJa || it.headline}

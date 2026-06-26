@@ -88,3 +88,32 @@ def test_same_headline_syndication_still_collapses():
     b = M.normalize_item({"sourceId": "cnbc_public",    "title": "Snowflake surges 36% for best day ever"})
     cl = M.cluster_items([a, b])
     assert len(cl) == 1 and cl[0]["syndicationCount"] == 1
+
+
+# ── corroboration (§9, v10.170): source-FAMILY aware, official-priority ──
+def test_source_family_collapses_wire_to_one():
+    # Dow Jones stable (MarketWatch / WSJ / Barron's) is ONE family, not three.
+    assert M.source_family("marketwatch_public") == "dowjones"
+    assert M.source_family("Wall Street Journal") == "dowjones"
+    assert M.source_family("CNBC") == "cnbc"
+    assert M.is_official_source("federal_reserve") and M.is_official_source("sec_press")
+
+def test_corroboration_single_when_same_family():
+    # two Dow Jones outlets = one origin family = NOT independent corroboration
+    assert M.corroboration_level(["marketwatch_public", "Wall Street Journal"]) == "single"
+
+def test_corroboration_corroborated_two_independent_families():
+    assert M.corroboration_level(["cnbc_public", "bloomberg_public"]) == "corroborated"
+
+def test_corroboration_official_outranks_count():
+    assert M.corroboration_level(["federal_reserve"]) == "official"
+
+def test_corroboration_aggregators_are_not_independent():
+    # yahoo + nasdaq are portals that re-syndicate → never counted as independent
+    assert M.corroboration_level(["yahoo_finance_public", "nasdaq_public"]) == "single"
+
+def test_cluster_emits_corroboration_level():
+    items = [M.normalize_item({"sourceId": "cnbc_public", "title": "Fed signals rate cut path", "linkedAssets": ["_"]}),
+             M.normalize_item({"sourceId": "bloomberg_public", "title": "Fed signals rate cut path", "linkedAssets": ["_"]})]
+    cl = M.cluster_items(items)
+    assert len(cl) == 1 and cl[0]["corroborationLevel"] == "corroborated"
