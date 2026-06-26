@@ -11,6 +11,9 @@ import type { CalendarEvent, Escalation, EventSource } from '../../types/events'
 const NEWS_LEVEL_COLOR: Record<string, string> = {
   calm: 'var(--text-muted)', elevated: 'var(--amber)', high: 'var(--red)', unknown: 'var(--text-muted)',
 };
+const NEWS_LEVEL_JA: Record<string, string> = {
+  calm: '平穏', elevated: 'やや増加', high: '高水準', unknown: '不明',
+};
 
 const NewsRadarSection: React.FC = () => {
   const { data, loading } = useNewsRadar();
@@ -31,7 +34,7 @@ const NewsRadarSection: React.FC = () => {
       <div className="section-head">
         <span className="section-head__title">News Radar</span>
         <span className="section-head__count" style={{ color: NEWS_LEVEL_COLOR[data.level] }}>
-          {data.level}・直近6時間
+          {NEWS_LEVEL_JA[data.level] ?? data.level}・直近6時間
         </span>
       </div>
       <div className="card newsradar">
@@ -39,7 +42,7 @@ const NewsRadarSection: React.FC = () => {
           <div className="newsradar__row" key={t.key}>
             <span className="newsradar__label">{t.labelJa}</span>
             <span className="newsradar__count" style={{ color: NEWS_LEVEL_COLOR[t.level] }}>
-              {t.count}件 {t.level !== 'calm' ? `(${t.level})` : ''}
+              {t.count}件 {t.level !== 'calm' ? `(${NEWS_LEVEL_JA[t.level] ?? t.level})` : ''}
             </span>
             <span className="newsradar__heads">
               {t.headlines.slice(0, 2).map((h) => (
@@ -56,12 +59,14 @@ const NewsRadarSection: React.FC = () => {
   );
 };
 
+// Plain-Japanese proximity labels (was D-7/D-3/D-1 jargon) — the escalation policy
+// itself is kept; only the cryptic window codes are made readable (v10.162).
 const ESCALATION = [
-  { window: 'D-7', label: '警戒(認識)',           note: '認識のみ。ポジション縮小は不要。' },
-  { window: 'D-3', label: '新規エントリー抑制',     note: '新規の高確信サテライト・ポジションを避ける。' },
-  { window: 'D-1', label: '大きな新規ポジ禁止',     note: '現金保持。イベントウィンドウ内の新規エントリーなし。' },
-  { window: 'D',   label: '発表まで様子見',         note: 'ポジションを動かさず。発表後 30 分以内に再評価。' },
-  { window: 'D+1', label: '解消 / 押し目買い判定', note: 'リスク解消なら再エントリー、押し目なら段階買い。' },
+  { when: '1週間前', label: '警戒(認識)',           note: '認識のみ。ポジション縮小は不要。' },
+  { when: '数日前',   label: '新規エントリー抑制',     note: '新規の高確信サテライト・ポジションを避ける。' },
+  { when: '前日',     label: '大きな新規ポジ禁止',     note: '現金保持。イベントウィンドウ内の新規エントリーなし。' },
+  { when: '当日',     label: '発表まで様子見',         note: 'ポジションを動かさず。発表後 30 分以内に再評価。' },
+  { when: '翌日',     label: '解消 / 押し目買い判定', note: 'リスク解消なら再エントリー、押し目なら段階買い。' },
 ];
 
 const ESC_RANK: Record<Escalation, number> = {
@@ -123,8 +128,8 @@ export const MarketEventsSections: React.FC = () => {
         </div>
         <div className="card event-list">
           {ESCALATION.map((row) => (
-            <div className="event-row" key={row.window}>
-              <span className="event-row__when">{row.window}</span>
+            <div className="event-row" key={row.when}>
+              <span className="event-row__when">{row.when}</span>
               <span className="event-row__title">{row.label}</span>
               <span />
               <span />
