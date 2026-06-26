@@ -5866,6 +5866,9 @@ _FAILED_ATTEMPTS_LOCK_THRESHOLD = 5
 # writes it. In-memory (resets on dyno restart).
 _AI_CACHE_TTL = _int_env("AI_JUDGE_CACHE_TTL_MINUTES", 30) * 60
 _AI_RESULT_CACHE = {"data": None, "expires": 0.0}
+_AI_LATEST_FILE = "/tmp/argus_ai_latest.json"   # persist EVERY successful run (incl. the
+# 15-min ai-rejudge) so an in-instance restart restores the LATEST AI view, not just the
+# daily ledger one. Deploys (new container) still fall back to the ledger ai/latest.json.
 
 # Last-run per-model diagnostics (admin-only surface). No secrets, no payloads —
 # just the status of the most recent admin-triggered run, if any.
@@ -6047,12 +6050,42 @@ def _ai_try_restore():
         add_log(f"[AI] ledger restore failed: {type(e).__name__}")
         return None
 
+def _ai_persist_latest(payload):
+    """Persist a successful run to /tmp so an in-instance restart restores the LATEST
+    AI view (incl. 15-min ai-rejudge), not just the daily ledger. Best-effort, atomic."""
+    try:
+        if isinstance(payload, dict) and payload.get("status") in ("live", "partial") and payload.get("labels"):
+            tmp = f"{_AI_LATEST_FILE}.{os.getpid()}.tmp"
+            with open(tmp, "w") as f:
+                json.dump(payload, f, ensure_ascii=False, default=str)
+            os.replace(tmp, _AI_LATEST_FILE)
+    except Exception:
+        pass
+
+
+def _ai_restore_local():
+    """Restore the latest persisted run from /tmp (validated, age-bounded). Fresher
+    than the daily ledger; survives in-instance restarts (not deploys). None if absent."""
+    try:
+        with open(_AI_LATEST_FILE) as f:
+            d = _ai_restore_validate(json.load(f))
+        if d:
+            d.setdefault("runMode", "restored")
+            _AI_RESULT_CACHE["data"] = d
+            _AI_RESULT_CACHE["expires"] = time.time() + _AI_CACHE_TTL
+            return d
+    except Exception:
+        pass
+    return None
+
+
 def _ai_cached_result():
-    """The valid in-memory AI run, else a ledger-restored one, else None."""
+    """Valid in-memory run → /tmp-restored latest (in-instance restart) → ledger-
+    restored daily (deploys) → None."""
     cached = _AI_RESULT_CACHE["data"]
     if cached and time.time() < _AI_RESULT_CACHE["expires"]:
         return cached
-    return _ai_try_restore()
+    return _ai_restore_local() or _ai_try_restore()
 
 _AI_CONSERVATIVE = {"WAIT", "HOLD", "WAIT FOR PULLBACK"}
 _AI_RANK = {"EXIT": 0, "TRIM": 1, "WAIT FOR PULLBACK": 2, "WAIT": 3, "BUY DIP": 4, "ADD": 5, "HOLD": 6}
@@ -6544,6 +6577,7 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
     if status != "mock":
         _AI_RESULT_CACHE["data"] = payload
         _AI_RESULT_CACHE["expires"] = time.time() + _AI_CACHE_TTL
+        _ai_persist_latest(payload)   # /tmp — survive in-instance restarts (every run)
     _AI_LAST_RUN.update({"oai": oai_status, "gem": gem_status,
                          "groundingEnabled": grounding_enabled, "at": _ai_now_iso()})
     # Cost ledger (v10.50): record this run's estimated spend into the day/month
