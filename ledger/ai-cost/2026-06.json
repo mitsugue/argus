@@ -1,17 +1,44 @@
 {
- "asOf": "2026-06-25T07:05:22Z",
+ "asOf": "2026-06-26T07:07:06Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-06-25",
- "dayRemainingUsd": 5.0,
- "daySpentUsd": 0.0,
+ "day": "2026-06-26",
+ "dayRemainingUsd": 4.8776,
+ "daySpentUsd": 0.1224,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
- "lastRun": null,
- "lastRunCostUsd": null,
+ "lastRun": {
+  "at": "2026-06-26T07:06:57Z",
+  "estimated": true,
+  "gemStatus": "live",
+  "oaiStatus": "live",
+  "rows": [
+   {
+    "estUsd": 0.032931,
+    "fallbackUsed": false,
+    "grounding": false,
+    "inputTokens": 1905,
+    "model": "gpt-5.5",
+    "outputTokens": 3055,
+    "provider": "openai"
+   },
+   {
+    "estUsd": 0.089466,
+    "fallbackUsed": false,
+    "grounding": true,
+    "inputTokens": 3517,
+    "model": "gemini-2.5-pro",
+    "outputTokens": 5007,
+    "provider": "gemini"
+   }
+  ],
+  "runId": "2026-06-26T07:06:57Z",
+  "totalUsd": 0.122397
+ },
+ "lastRunCostUsd": 0.122397,
  "month": "2026-06",
- "monthRemainingUsd": 80.0,
- "monthSpentUsd": 0.0,
+ "monthRemainingUsd": 79.8776,
+ "monthSpentUsd": 0.1224,
  "monthlyBudgetUsd": 80.0,
  "noteJa": "コストは推定値(プロバイダのトークン使用量×設定単価)。OpenAIの前払い残高ではなく、このARGUS側上限がハード停止。",
  "pricing": {
@@ -28,5 +55,34 @@
    "out": 10.0
   }
  },
- "recentRuns": []
+ "recentRuns": [
+  {
+   "at": "2026-06-26T07:06:57Z",
+   "estimated": true,
+   "gemStatus": "live",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.032931,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 1905,
+     "model": "gpt-5.5",
+     "outputTokens": 3055,
+     "provider": "openai"
+    },
+    {
+     "estUsd": 0.089466,
+     "fallbackUsed": false,
+     "grounding": true,
+     "inputTokens": 3517,
+     "model": "gemini-2.5-pro",
+     "outputTokens": 5007,
+     "provider": "gemini"
+    }
+   ],
+   "runId": "2026-06-26T07:06:57Z",
+   "totalUsd": 0.122397
+  }
+ ]
 }

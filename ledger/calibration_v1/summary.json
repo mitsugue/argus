@@ -1,13 +1,38 @@
 {
   "scorerVersion": "ledger-v4-scorer-1",
-  "cohorts": {},
+  "cohorts": {
+    "tactical_benchmark_fixed": {
+      "1d": {
+        "n": 7,
+        "hitRate": 0.5714,
+        "brierMean": 0.1933,
+        "rpsMean": 0.165
+      }
+    },
+    "experimental_cohort": {
+      "1d": {
+        "n": 1,
+        "hitRate": 0.0,
+        "brierMean": 0.26,
+        "rpsMean": 0.265
+      }
+    },
+    "regime_sensor_fixed": {
+      "1d": {
+        "n": 3,
+        "hitRate": 0.6667,
+        "brierMean": 0.1467,
+        "rpsMean": 0.0767
+      }
+    }
+  },
   "epochId": "calibration_v1",
   "status": "dry_run",
-  "updated": "2026-06-25",
-  "recorded": 16,
-  "scored": 0,
+  "updated": "2026-06-26",
+  "recorded": 15,
+  "scored": 11,
   "held": 0,
-  "totalRows": 16,
-  "tradingDays": 1,
+  "totalRows": 31,
+  "tradingDays": 2,
   "noteJa": "v4のparallel dry-run(本番ヘッドラインではない)。v3とは別ディレクトリ。市場別クロックでJPを採点、US/cryptoは正しい時刻のジョブ実装まで保留。"
 }

@@ -1,0 +1,158 @@
+{
+ "date": "2026-06-25",
+ "engine": "ledger-v3",
+ "context": {
+  "aiStatus": "none",
+  "backdrop": "neutral",
+  "posture": "EVENT_WAIT",
+  "regimeConfidence": 0.72,
+  "vixLevel": 19.5,
+  "vixZone": "elevated"
+ },
+ "horizons": {
+  "1": {
+   "scoredOn": "2026-06-26",
+   "tradingAge": 1,
+   "layer1": {
+    "sensors": {
+     "n": 3,
+     "hits": 2,
+     "hitRate": 0.667,
+     "brierMean": 0.44,
+     "rows": [
+      {
+       "sensor": "TLT",
+       "realizedPct": -0.03,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "GLD",
+       "realizedPct": 0.97,
+       "bucket": "sideways_stabilization",
+       "argmax": "downside_continuation",
+       "hit": false,
+       "brier": 0.56
+      },
+      {
+       "sensor": "BTC",
+       "realizedPct": -2.25,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      }
+     ]
+    },
+    "stocks": {
+     "n": 0,
+     "hits": 0,
+     "hitRate": null,
+     "brierMean": null,
+     "rows": []
+    }
+   },
+   "layer2": {
+    "n": 4,
+    "hits": 2,
+    "hitRate": 0.5,
+    "brierMean": 0.58,
+    "rows": [
+     {
+      "symbol": "NVDA",
+      "realizedPct": -1.64,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "symbol": "AAPL",
+      "realizedPct": -6.12,
+      "bucket": "downside_continuation",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.78
+     },
+     {
+      "symbol": "TSLA",
+      "realizedPct": -0.11,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "symbol": "META",
+      "realizedPct": -2.65,
+      "bucket": "downside_continuation",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.78
+     }
+    ]
+   },
+   "layer3": {
+    "n": 0,
+    "hits": 0,
+    "hitRate": null,
+    "brierMean": null,
+    "rows": []
+   },
+   "classes": {
+    "n": 5,
+    "hits": 2,
+    "hitRate": 0.4,
+    "brierMean": 0.576,
+    "rows": [
+     {
+      "assetClass": "GOLD",
+      "realizedPct": 0.97,
+      "bucket": "sideways_stabilization",
+      "argmax": "downside_continuation",
+      "hit": false,
+      "brier": 0.56
+     },
+     {
+      "assetClass": "BOND",
+      "realizedPct": -0.03,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "REIT",
+      "realizedPct": 0.18,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "CRYPTO_BTC",
+      "realizedPct": -2.25,
+      "bucket": "downside_continuation",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.78
+     },
+     {
+      "assetClass": "CRYPTO_ETH",
+      "realizedPct": -4.78,
+      "bucket": "downside_continuation",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.78
+     }
+    ]
+   },
+   "aiDirectional": {
+    "n": 0,
+    "hits": 0
+   }
+  }
+ }
+}

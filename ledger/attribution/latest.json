@@ -1,0 +1,107 @@
+{
+ "date": "2026-06-26",
+ "asOf": "2026-06-26T07:07:06Z",
+ "count": 7,
+ "attributions": [
+  {
+   "causeProbabilities": {
+    "LONG_LIQUIDATION": 0.211,
+    "UNKNOWN": 0.789
+   },
+   "changePct": -12.5316,
+   "contagionScope": "unconfirmed",
+   "immediateTrigger": null,
+   "market": "JP",
+   "preEventDeRisking": 0.1,
+   "symbol": "9984",
+   "unknownShare": 0.789
+  },
+  {
+   "causeProbabilities": {
+    "AI_CAPEX_ROI_CONCERN": 0.143,
+    "CROWDED_TRADE_UNWIND": 0.143,
+    "LONG_LIQUIDATION": 0.143,
+    "SECTOR_WIDE_DELEVERAGING": 0.214,
+    "UNKNOWN": 0.357
+   },
+   "changePct": -11.2374,
+   "contagionScope": "sector_wide",
+   "immediateTrigger": null,
+   "market": "JP",
+   "preEventDeRisking": 0.25,
+   "symbol": "285A",
+   "unknownShare": 0.357
+  },
+  {
+   "causeProbabilities": {
+    "AI_CAPEX_ROI_CONCERN": 0.143,
+    "CROWDED_TRADE_UNWIND": 0.143,
+    "LONG_LIQUIDATION": 0.143,
+    "SECTOR_WIDE_DELEVERAGING": 0.214,
+    "UNKNOWN": 0.357
+   },
+   "changePct": -9.2949,
+   "contagionScope": "sector_wide",
+   "immediateTrigger": null,
+   "market": "JP",
+   "preEventDeRisking": 0.25,
+   "symbol": "5801",
+   "unknownShare": 0.357
+  },
+  {
+   "causeProbabilities": {
+    "LONG_LIQUIDATION": 0.211,
+    "UNKNOWN": 0.789
+   },
+   "changePct": -6.1178,
+   "contagionScope": "unconfirmed",
+   "immediateTrigger": null,
+   "market": "US",
+   "preEventDeRisking": 0.1,
+   "symbol": "AAPL",
+   "unknownShare": 0.789
+  },
+  {
+   "causeProbabilities": {
+    "LONG_LIQUIDATION": 0.211,
+    "UNKNOWN": 0.789
+   },
+   "changePct": -5.1122,
+   "contagionScope": "unconfirmed",
+   "immediateTrigger": null,
+   "market": "JP",
+   "preEventDeRisking": 0.1,
+   "symbol": "9501",
+   "unknownShare": 0.789
+  },
+  {
+   "causeProbabilities": {
+    "AI_CAPEX_ROI_CONCERN": 0.148,
+    "CROWDED_TRADE_UNWIND": 0.148,
+    "NEW_SHORT_BUILDUP": 0.114,
+    "SECTOR_WIDE_DELEVERAGING": 0.222,
+    "UNKNOWN": 0.368
+   },
+   "changePct": -4.739,
+   "contagionScope": "sector_wide",
+   "immediateTrigger": null,
+   "market": "JP",
+   "preEventDeRisking": 0.25,
+   "symbol": "5803",
+   "unknownShare": 0.368
+  },
+  {
+   "causeProbabilities": {
+    "LONG_LIQUIDATION": 0.211,
+    "UNKNOWN": 0.789
+   },
+   "changePct": -3.9961,
+   "contagionScope": "unconfirmed",
+   "immediateTrigger": null,
+   "market": "JP",
+   "preEventDeRisking": 0.0,
+   "symbol": "6584",
+   "unknownShare": 0.789
+  }
+ ]
+}
