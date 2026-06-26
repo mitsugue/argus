@@ -2,6 +2,7 @@ import React from 'react';
 import type { DailyJudgment } from '../../types/dashboard';
 import { CommandSummaryCard } from '../action/CommandSummaryCard';
 import { ImportantEventsCard } from './ImportantEventsCard';
+import { jpIntradayJa, globalRegimeJa } from '../../lib/regimeLabels';
 import type { RouteKey } from '../NavRail';
 
 export interface HeroOverlay {
@@ -68,11 +69,11 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
           <div className="hero__overlay-row">
             <div className="hero__ov">
               <span className="hero__ov-label">Global</span>
-              <span className="hero__ov-value">{fmtEnum(overlay.globalRegime)}</span>
+              <span className="hero__ov-value">{globalRegimeJa(overlay.globalRegime)}</span>
             </div>
             <div className="hero__ov">
               <span className="hero__ov-label">Japan</span>
-              <span className={`hero__ov-value hero__ov-value--${jpTone(overlay.jpIntradayOverlay)}`}>{fmtEnum(overlay.jpIntradayOverlay)}</span>
+              <span className={`hero__ov-value hero__ov-value--${jpTone(overlay.jpIntradayOverlay)}`}>{jpIntradayJa(overlay.jpIntradayOverlay)}</span>
             </div>
             {ownerRisk && (
               <div className="hero__ov">

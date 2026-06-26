@@ -1,4 +1,5 @@
 import React from 'react';
+import { jpIntradayJa } from '../../lib/regimeLabels';
 import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './DownsideIncidentCard.css';
@@ -90,7 +91,7 @@ export const DownsideIncidentCard: React.FC = () => {
         <h2>Downside Watch <span className="dic-jp">急落の理由と対応</span></h2>
         {overlayActive && (
           <span className={`dic-overlay dic-overlay--${data.jpIntradayOverlay === 'RISK_OFF_WATCH' ? 'red' : 'amber'}`}>
-            JP intraday: {data.jpIntradayOverlay}
+            日本ザラ場: {jpIntradayJa(data.jpIntradayOverlay)}
           </span>
         )}
       </header>

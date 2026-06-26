@@ -18,6 +18,18 @@ const PRIMARY_EN: Record<SignalCode, string> = {
   EXIT: 'EXIT POSITION', DEFEND: 'PROTECT CAPITAL', REVIEW: 'REASSESS NOW', PAUSE: 'NO NEW ENTRY',
   HOLD_ONLY: 'HOLD EXISTING ONLY', PREPARE: 'WAIT FOR SETUP', ENTER: 'ENTRY ALLOWED',
 };
+// LINKED EVENT tag — Japanese (was raw "BOJ · normal · HIGH" jargon). Event code +
+// (proximity, omitted when far out) + impact, all読める日本語に.
+const EVENT_CODE_JA: Record<string, string> = {
+  BOJ: '日銀', FOMC: 'FOMC', PCE: '米PCE', CPI: '米CPI', PPI: '米PPI', NFP: '米雇用統計',
+  JOLTS: 'JOLTS', GDP: 'GDP', AUCTION: '国債入札', EARNINGS: '決算', BOE: '英中銀', ECB: '欧中銀',
+};
+const ESC_JA: Record<string, string> = { 'D-7': '7日前', 'D-3': '3日前', 'D-1': '前日', D: '当日', 'D+1': '翌日' };
+const IMPACT_JA: Record<string, string> = { CRITICAL: '影響:重大', HIGH: '影響:大', MEDIUM: '影響:中', LOW: '影響:小' };
+const linkedTagJa = (le: { code: string; countdown: string; impact: string }) =>
+  [EVENT_CODE_JA[le.code] ?? le.code, ESC_JA[le.countdown], IMPACT_JA[le.impact] ?? le.impact]
+    .filter(Boolean).join(' · ');
+
 const AI_BADGE: Record<string, { txt: string; tone: string }> = {
   fresh: { txt: 'AI FRESH', tone: 'var(--value-positive)' },
   stale: { txt: 'AI STALE', tone: 'var(--value-neutral)' },
@@ -55,7 +67,7 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
         {c.causeOneLineJa && <span className="uac-cause">{c.causeOneLineJa}</span>}
         <span className="uac-foot">
           {c.linkedEvents.map((le) => (
-            <span key={le.code} className="uac-linked" title="LINKED EVENT">{le.code} · {le.countdown} · {le.impact}</span>
+            <span key={le.code} className="uac-linked" title="関連イベント">{linkedTagJa(le)}</span>
           ))}
           {c.lastUpdate && <span className="uac-upd">最終更新 {c.lastUpdate}</span>}
         </span>

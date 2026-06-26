@@ -1,10 +1,9 @@
 import React from 'react';
-import { useLocale, t, type DictKey } from '../i18n';
 import './NavRail.css';
 
-const NAV_KEY: Record<string, DictKey> = {
-  command: 'nav.today', watchlist: 'nav.watchlist', regime: 'nav.marketContext', core: 'nav.corePortfolio',
-};
+// Page/door titles are ALWAYS English (owner spec) — Japanese is reserved for the
+// in-page explanatory text, not the nav. So the nav renders the English NAV labels
+// directly (no locale lookup).
 
 export type RouteKey =
   | 'command'
@@ -42,7 +41,6 @@ export const NavRail: React.FC<Props> = ({
   onReviewLink,
   isReview,
 }) => {
-  useLocale();   // re-render on locale switch
   return (
     <nav className="nav" aria-label="Sections">
       <div className="nav__group-label">Workspace</div>
@@ -54,7 +52,7 @@ export const NavRail: React.FC<Props> = ({
           aria-current={active === n.key ? 'page' : undefined}
         >
           <span className="nav__dot" aria-hidden />
-          {t(NAV_KEY[n.key] ?? 'nav.today')}
+          {n.label}
         </button>
       ))}
 
@@ -64,7 +62,7 @@ export const NavRail: React.FC<Props> = ({
         aria-current={active === 'guide' ? 'page' : undefined}
       >
         <span className="nav__dot" aria-hidden />
-        {t('nav.guide')}
+        Guide
       </button>
 
       <div className="nav__footer">

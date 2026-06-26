@@ -1,4 +1,5 @@
 import React from 'react';
+import { jpIntradayJa } from '../../lib/regimeLabels';
 import { useDownsideIncidents } from '../../hooks/useDownsideIncidents';
 import { useEventsActive } from '../../hooks/useEventsActive';
 import { IncidentRow } from './DownsideIncidentCard';
@@ -56,7 +57,7 @@ export const LiveWatchCard: React.FC = () => {
       {overlayActive && (
         <div className="lw-overlay">
           <span className={`dic-overlay dic-overlay--${downside?.jpIntradayOverlay === 'RISK_OFF_WATCH' ? 'red' : 'amber'}`}>
-            JP intraday: {downside?.jpIntradayOverlay}
+            日本ザラ場: {jpIntradayJa(downside?.jpIntradayOverlay)}
           </span>
           {downside?.overlay?.reasonJa && <p className="dic-overlay-reason">{downside.overlay.reasonJa}</p>}
         </div>
