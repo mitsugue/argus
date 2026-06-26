@@ -28,4 +28,6 @@
 .caoshub-news-h { font-size: 12.5px; line-height: 1.5; color: var(--text-sub); overflow-wrap: anywhere; margin-top: 1px; }
 .caoshub-news-h--major { color: var(--text-main); font-weight: 600; }
 
+.caoshub-pending { font-size: 10px; color: var(--text-faint); margin-top: 3px; font-style: italic; }
+
 .caoshub-foot { font-size: 10px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }

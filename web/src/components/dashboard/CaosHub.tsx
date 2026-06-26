@@ -1,5 +1,6 @@
 import React from 'react';
 import { useMarketNews } from '../../hooks/useMarketNews';
+import { useImportantEvents } from '../../hooks/useImportantEvents';
 import './CaosEvents.css';
 import './MarketInstitutionalSection.css';
 import './CaosHub.css';
@@ -58,6 +59,7 @@ export const CaosHub: React.FC = () => {
   const [intel, setIntel] = React.useState<IntelItem[]>([]);
   const [events, setEvents] = React.useState<CaosEvent[]>([]);
   const { data: newsData } = useMarketNews();
+  const { data: evData } = useImportantEvents();   // baseline events so the tier never vanishes
 
   React.useEffect(() => {
     if (!backend) return;
@@ -79,13 +81,27 @@ export const CaosHub: React.FC = () => {
       (MATERIAL_TYPES.has(it.contentType || '') || (it.stance && it.stance !== 'neutral'))).slice(0, 3),
     [intel],
   );
-  const evShown = events.slice(0, 3);
+  // Events tier (v10.171): ALWAYS show the material upcoming/recent events as a baseline
+  // (impact + なぜ重要), and overlay the AI evaluation (概要/事前予想/事後) per eventCode when
+  // it has been generated. Previously the tier showed ONLY the AI prose, so it vanished
+  // whenever the AI cron hadn't run yet — that's why the event evaluation "disappeared".
+  const aiByCode = React.useMemo(() => {
+    const m: Record<string, CaosEvent> = {};
+    for (const e of events) m[e.eventCode] = e;
+    return m;
+  }, [events]);
+  const materialEvents = React.useMemo(
+    () => (evData?.events ?? [])
+      .filter((e) => e.displayImpact === 'critical' || e.displayImpact === 'high')
+      .slice(0, 3),
+    [evData],
+  );
   // precision (v10.169): show only market-relevant headlines (drop sports/unrelated
   // noise); fall back to the raw list only if nothing is flagged, so it never empties.
   const allNews = newsData?.items ?? [];
   const relNews = allNews.filter((n) => n.relevant);
   const news = (relNews.length ? relNews : allNews).slice(0, 6);
-  const empty = material.length === 0 && evShown.length === 0 && news.length === 0;
+  const empty = material.length === 0 && materialEvents.length === 0 && news.length === 0;
 
   return (
     <section className="caoshub">
@@ -122,22 +138,24 @@ export const CaosHub: React.FC = () => {
         </div>
       )}
 
-      {evShown.length > 0 && (
+      {materialEvents.length > 0 && (
         <div className="caoshub-tier">
           <div className="caoshub-tierhead">
-            イベント分析 <span className="caoshub-tiernote">発表前=織り込み/シナリオ · 発表後=結果/受け止め</span>
+            イベント評価 <span className="caoshub-tiernote">発表前=織り込み/シナリオ · 発表後=結果/受け止め</span>
           </div>
-          {evShown.map((it) => {
-            const ph = PHASE[it.phase] ?? PHASE.pre;
-            const summary = it.summaryJa || it.headlineJa || it.bodyJa || '';
-            const pre = (it.preJa || '').trim();
-            const post = (it.postJa || '').trim();
+          {materialEvents.map((ev) => {
+            const ai = aiByCode[ev.eventCode];
+            const isPost = ev.daysUntil != null && ev.daysUntil <= 0;
+            const ph = isPost ? PHASE.post : PHASE.pre;
+            const summary = ai?.summaryJa || ai?.headlineJa || ai?.bodyJa || ev.noviceJa || '';   // AI overlay, else baseline 概要
+            const pre = (ai?.preJa || '').trim();
+            const post = (ai?.postJa || '').trim();
             return (
-              <div className="caose-row" key={it.eventId}>
+              <div className="caose-row" key={ev.eventId}>
                 <div className="caose-l1">
                   <span className="caose-phase" style={{ color: ph.tone, borderColor: ph.tone }}>{ph.ja}</span>
-                  <span className="caose-code">{it.eventCode}</span>
-                  <span className="caose-impact">影響:{IMPACT_JA[it.displayImpact] ?? it.displayImpact}</span>
+                  <span className="caose-code">{ev.eventCode}</span>
+                  <span className="caose-impact">影響:{IMPACT_JA[ev.displayImpact] ?? ev.displayImpact}</span>
                 </div>
                 {summary && (
                   <div className="caose-line"><span className="caose-h">概要</span><span className="caose-t">{summary}</span></div>
@@ -147,6 +165,9 @@ export const CaosHub: React.FC = () => {
                 )}
                 {post && (
                   <div className="caose-line"><span className="caose-h caose-h--post">事後</span><span className="caose-t">{post}</span></div>
+                )}
+                {!ai && (
+                  <div className="caoshub-pending">AI評価は生成中…(発表前=織り込み・シナリオ / 発表後=結果・大口と市場の受け止め)</div>
                 )}
               </div>
             );
