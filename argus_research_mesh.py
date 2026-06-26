@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 SCHEMA = "research-mesh-v1"
@@ -325,6 +326,91 @@ def corroboration_level(source_ids) -> str:
     return "corroborated" if len(independent) >= 2 else "single"
 
 
+# ── §9b entity+event+time corroboration (v10.172) ────────────────────────────
+# Pass 2 over the fingerprint clusters: link two clusters as ONE corroboration unit
+# only when they are INDEPENDENT reports of the SAME event — same primary-ticker anchor
+# + same polarity-aware event bucket + within the time window + >=2 independent source
+# families. Precision-first: any unknown (no anchor, generic/None bucket, missing time,
+# same family) BLOCKS the merge. This catches differently-WORDED reports the fingerprint
+# pass misses ("Fed signals rate cut" + "Powell hints at easing") without ever fusing
+# two different stories about one company ("earnings beat" + "lawsuit").
+_EVENT_MERGE_WINDOW_H = 36
+_MAX_DT = datetime.max.replace(tzinfo=timezone.utc)
+
+# Ordered, first-match-wins (EN + JP). Polarity is encoded INTO the label so opposite
+# directions on one ticker land in DIFFERENT buckets and never merge. Specific before generic.
+_EVENT_BUCKETS = [
+    ("price-target-raise", ("price target raised", "target raised", "pt raised", "raises pt", "raises price target")),
+    ("price-target-cut",   ("price target lowered", "target lowered", "price target cut", "target cut", "cuts price target")),
+    ("rating-upgrade",     ("upgrade", "upgraded", "格上げ")),
+    ("rating-downgrade",   ("downgrade", "downgraded", "格下げ")),
+    ("guidance-raise",     ("raises forecast", "raises guidance", "raises full-year", "raise full-year",
+                            "profit forecast", "lifts guidance", "boosts outlook", "上方修正")),
+    ("guidance-cut",       ("cuts guidance", "cuts forecast", "lowers forecast", "lowers guidance", "slashes",
+                            "capex guidance", "capital spending", "下方修正")),
+    ("jobs-payrolls",      ("payrolls", "nonfarm", "jobs report", "jobs in", "hiring", "unemployment", "雇用", "失業率")),
+    ("earnings-beat",      ("earnings beat", "beats estimates", "beats forecasts", "beat estimates", "tops estimates",
+                            "tops forecasts", "tops wall street", "tops q", "beating expectations", "beats", "上振れ")),
+    ("earnings-miss",      ("misses estimates", "miss estimates", "misses forecasts", "fall short", "falls short",
+                            "fell short", "deliveries miss", "earnings miss", "下振れ")),
+    ("rate-decision",      ("rate cut", "rate hike", "rate-cut", "rate-hike", "easing", "tightening", "hawkish",
+                            "dovish", "fomc", "holds rates", "hold rates", "rate decision", "利下げ", "利上げ")),
+    ("mna-order",          ("acquire", "acquisition", "merger", "takeover", "buyout", "wins order", "places order",
+                            "record order", "777x", "stake in", "買収", "合併", "受注")),
+    ("litigation-regulatory", ("sued", "lawsuit", "antitrust", "probe", "investigation", "settlement", "seized by regulators",
+                               "提訴", "調査", "課徴金")),
+    ("recall",             ("recall", "recalls", "grounded", "grounds ", "リコール")),
+    ("corp-leadership",    ("step down", "steps down", "chief exits", "ceo exits", "to step down", "resign", "退任", "辞任")),
+    ("proxy-activist",     ("proxy", "activist", "shareholder vote", "proxy fight")),
+    ("dividend-buyback",   ("cuts dividend", "dividend", "buyback", "share repurchase", "増配", "減配", "自社株")),
+    ("product-launch",     ("unveils", "debuts", "launches", "next-gen", "new model", "accelerators", "発表")),
+    ("grant-subsidy",      ("chips act", "grant", "awarded", "subsidy", "補助金")),
+]
+
+
+def _parse_iso(s: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO8601 string to an AWARE UTC datetime; tz-naive/unparseable -> None
+    (so an unknown timestamp fails the merge window closed, never compared as 0)."""
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(s.strip().replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo is not None else None
+
+
+def normalize_primary_asset(item: Dict[str, Any]) -> Optional[str]:
+    """The anchor = primary linked ticker (upper). The '_' placeholder / empty never anchors."""
+    a = item.get("linkedAssets") or []
+    if not a:
+        return None
+    s = str(a[0]).strip().upper()
+    return s if (s and s != "_") else None
+
+
+def event_bucket(title: str) -> Optional[str]:
+    """First-match-wins polarity-aware event bucket, or None (generic = merge-ineligible)."""
+    t = (title or "").lower()
+    for label, kws in _EVENT_BUCKETS:
+        if any(kw in t for kw in kws):
+            return label
+    return None
+
+
+def _cluster_repr(c: Dict[str, Any]) -> Dict[str, Any]:
+    """Representative item of a fingerprint cluster = earliest detected (stable tie-break)."""
+    its = c.get("items") or []
+    return min(its, key=lambda it: (it.get("firstDetectedAt") or "~", it.get("intelligenceId") or "")) if its else {}
+
+
+def _cluster_ts(c: Dict[str, Any]) -> Optional[datetime]:
+    """Earliest parseable timestamp across the cluster's items (firstDetectedAt else publishedAt)."""
+    ts = [t for it in (c.get("items") or [])
+          for t in (_parse_iso(it.get("firstDetectedAt")) or _parse_iso(it.get("publishedAt")),) if t]
+    return min(ts) if ts else None
+
+
 def cluster_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Group into story clusters; mark independent corroboration vs syndication.
     Two items are INDEPENDENT only when they have DIFFERENT source families AND
@@ -341,9 +427,52 @@ def cluster_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if it.get("firstDetectedAt") and (c["earliestDetectedAt"] is None or it["firstDetectedAt"] < c["earliestDetectedAt"]):
             c["earliestDetectedAt"] = it["firstDetectedAt"]
             c["originalSourceId"] = it.get("sourceId")
+    # ── Pass 2: union-find merge of independent same-event reports across wordings ──
+    keys = list(clusters.keys())
+    parent = {k: k for k in keys}
+
+    def _find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    meta = {}
+    anchor_groups: Dict[str, List[str]] = {}
+    for k, c in clusters.items():
+        rep = _cluster_repr(c)
+        anchor = normalize_primary_asset(rep)
+        nonagg = {f for f in (source_family(s) for s in c["sources"] if s) if f not in _AGGREGATOR_FAMILIES}
+        meta[k] = {"anchor": anchor, "bucket": event_bucket(rep.get("title", "")),
+                   "ts": _cluster_ts(c), "nonagg": nonagg}
+        if anchor:
+            anchor_groups.setdefault(anchor, []).append(k)
+
+    for anchor, ks in anchor_groups.items():
+        ks = sorted(ks, key=lambda k: (meta[k]["ts"] or _MAX_DT, k))
+        for i in range(len(ks)):
+            for j in range(i + 1, len(ks)):
+                a, b = meta[ks[i]], meta[ks[j]]
+                if not a["bucket"] or a["bucket"] != b["bucket"]:      # gate 2: same non-generic event
+                    continue
+                if a["ts"] is None or b["ts"] is None:                # gate 3: known timing only
+                    continue
+                if abs((a["ts"] - b["ts"]).total_seconds()) > _EVENT_MERGE_WINDOW_H * 3600:
+                    continue
+                fa, fb = a["nonagg"], b["nonagg"]                     # gate 4: each adds a NEW indep family
+                if len(fa | fb) < 2 or not (fa - fb) or not (fb - fa):
+                    continue
+                parent[_find(ks[i])] = _find(ks[j])
+
+    groups: Dict[str, List[str]] = {}
+    for k in keys:
+        groups.setdefault(_find(k), []).append(k)
+
     out = []
-    for c in clusters.values():
-        srcs = {s for s in c["sources"] if s}
+    for member_keys in groups.values():
+        members = [clusters[k] for k in member_keys]
+        items_all = [it for c in members for it in c["items"]]
+        srcs = {s for c in members for s in c["sources"] if s}
         # independent corroboration = distinct NON-aggregator source FAMILIES (wire
         # re-syndication collapses to one family, so it is not counted as confirmation).
         fams = {source_family(s) for s in srcs}
@@ -352,16 +481,27 @@ def cluster_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         note = {"official": "公式ソースで確認",
                 "corroborated": "複数の独立系統で確認",
                 "single": "単一系統(同一ワイヤーの転載は独立確認ではない)"}[level]
-        out.append({
-            "storyClusterId": c["storyClusterId"], "count": len(c["items"]),
+        survivor = sorted(member_keys, key=lambda k: (meta[k]["ts"] or _MAX_DT, k))[0]
+        earliest, original = None, None
+        for it in items_all:
+            fd = it.get("firstDetectedAt")
+            if fd and (earliest is None or fd < earliest):
+                earliest, original = fd, it.get("sourceId")
+            it["storyClusterId"] = survivor
+        entry = {
+            "storyClusterId": survivor, "count": len(items_all),
             "sources": sorted(srcs), "independentSourceCount": len(srcs),
             "independentFamilyCount": independent_families,
             "corroborationLevel": level,
-            "syndicationCount": len(c["items"]) - 1,
-            "earliestDetectedAt": c["earliestDetectedAt"], "originalSourceId": c["originalSourceId"],
-            "items": c["items"],
+            "syndicationCount": len(items_all) - len(member_keys),
+            "earliestDetectedAt": earliest, "originalSourceId": original,
+            "items": items_all,
             "corroborationNote": note,
-        })
+        }
+        if len(member_keys) > 1:                 # additive audit fields for merged units
+            entry["mergedFrom"] = sorted(member_keys)
+            entry["mergeReason"] = f"{meta[survivor]['anchor']} · {meta[survivor]['bucket']}"
+        out.append(entry)
     return out
 
 

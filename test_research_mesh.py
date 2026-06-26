@@ -117,3 +117,75 @@ def test_cluster_emits_corroboration_level():
              M.normalize_item({"sourceId": "bloomberg_public", "title": "Fed signals rate cut path", "linkedAssets": ["_"]})]
     cl = M.cluster_items(items)
     assert len(cl) == 1 and cl[0]["corroborationLevel"] == "corroborated"
+
+
+# ── entity+event+time corroboration (§9b, v10.172) — adversarial set from the design workflow ──
+from datetime import datetime, timedelta, timezone
+
+_CORROB_BASE = datetime(2026, 6, 26, 18, 0, 0, tzinfo=timezone.utc)
+
+def _mk_news(title, source, asset, hours_ago):
+    fd = None if (hours_ago is None or hours_ago < 0) else (_CORROB_BASE - timedelta(hours=hours_ago)).isoformat()
+    return M.normalize_item({"sourceId": source, "title": title,
+                             "linkedAssets": [asset] if asset else [], "firstDetectedAt": fd})
+
+# (name, aTitle, aSrc, aAsset, aHrs, bTitle, bSrc, bAsset, bHrs, shouldCorroborate)
+_CORROB_CASES = [
+    ("fed_ratecut", "Fed signals rate cut path as inflation cools", "reuters", "SPY", 2,
+     "Powell hints at September easing after price data", "bloomberg", "SPY", 1.5, True),
+    ("micron_earnings", "Micron earnings beat on AI memory demand", "reuters", "MU", 5,
+     "Micron tops Wall Street estimates, lifted by HBM boom", "cnbc", "MU", 4, True),
+    ("nvidia_launch", "Nvidia unveils next-gen Blackwell chips at GTC", "bloomberg", "NVDA", 3,
+     "Jensen Huang debuts new AI accelerators at developer event", "marketwatch_public", "NVDA", 2.5, True),
+    ("boeing_ceo", "Boeing CEO Calhoun to step down amid safety crisis", "reuters", "BA", 6,
+     "Boeing chief exits as 737 Max troubles deepen", "bloomberg", "BA", 5.5, True),
+    ("toyota_guidance_en_jp", "Toyota raises full-year profit forecast on weak yen", "cnbc", "7203.T", 8,
+     "トヨタ、通期利益見通しを上方修正 円安追い風", "nikkei_web", "7203.T", 7, True),
+    ("payrolls", "US adds 250,000 jobs in May, beating expectations", "reuters", "SPY", 4,
+     "Hiring surges as payrolls top forecasts last month", "bloomberg", "SPY", 3.5, True),
+    ("disney_proxy", "Disney board defeats Peltz in proxy fight", "reuters", "DIS", 10,
+     "Iger prevails over activist Trian in shareholder vote", "bloomberg", "DIS", 9, True),
+    ("window_inside", "Fed signals rate-cut path as inflation cools", "reuters", "SPY", 0,
+     "Powell hints at September easing, markets cheer", "bloomberg_public", "SPY", 5.5, True),
+    ("official_single", "Federal Reserve issues FOMC statement, holds rates at 4.25%", "federal_reserve", "SPY", 1,
+     "Federal Reserve issues FOMC statement, holds rates at 4.25%", "federal_reserve", "SPY", 1, True),
+    ("window_outside", "Nvidia tops Q1 estimates on surging data-center demand", "reuters", "NVDA", 0,
+     "Nvidia beats forecasts as AI chip orders accelerate", "cnbc_public", "NVDA", 96, False),
+    ("nvidia_pt_polarity", "Nvidia price target raised to 200 at Morgan Stanley", "bloomberg_public", "NVDA", 6,
+     "Nvidia price target lowered to 120 at HSBC", "reuters", "NVDA", 5, False),
+    ("micron_earnings_vs_lawsuit", "Micron earnings beat as HBM demand surges", "reuters", "MU", 0,
+     "Micron sued by investor over alleged disclosure lapse", "bloomberg_public", "MU", 2, False),
+    ("visa_earnings_vs_antitrust", "Visa profit rises on resilient consumer spending", "reuters", "V", 8,
+     "Visa hit with antitrust suit over debit card fees", "bloomberg_public", "V", 7, False),
+    ("boeing_grounding_vs_order", "Boeing 737 Max grounded after door panel blows out mid-flight", "reuters", "BA", 30,
+     "Boeing wins record order from Emirates at Dubai Airshow", "cnbc_public", "BA", 3, False),
+    ("meta_earnings_vs_launch", "Meta shares slump as Reality Labs losses widen", "marketwatch_public", "META", 10,
+     "Meta unveils new Llama model at developer conference", "bloomberg_public", "META", 9, False),
+    ("tesla_deliveries_vs_recall", "Tesla deliveries miss estimates in second quarter", "reuters", "TSLA", 72,
+     "Tesla recalls Cybertruck over accelerator pedal issue", "cnbc_public", "TSLA", 2, False),
+    ("intel_dividend_vs_grant", "Intel cuts dividend to fund foundry buildout", "bloomberg_public", "INTC", 5,
+     "Intel awarded 8.5 billion in CHIPS Act grants", "reuters", "INTC", 5, False),
+    ("republic_name_collision", "First Republic Bank seized by regulators, sold to JPMorgan", "cnbc_public", "FRC", 4,
+     "Republic Services raises full-year guidance on pricing", "marketwatch_public", "RSG", 4, False),
+    ("aggregator_only", "Tesla deliveries miss as China demand softens", "yahoo_finance_public", "TSLA", 0.5,
+     "Tesla Q2 deliveries fall short on weak China sales", "nasdaq_public", "TSLA", 2, False),
+    ("same_wire_syndication", "Apple unveils M5 chip with on-device AI, shares rise", "reuters", "AAPL", 0,
+     "Apple unveils M5 chip with on-device AI, shares rise", "yahoo_finance_public", "AAPL", 0.3, False),
+    ("two_outlets_one_family", "Boeing wins $10B order from Emirates for 777X jets", "marketwatch_public", "BA", 0,
+     "Emirates places $10 billion Boeing 777X order", "barrons", "BA", 1.5, False),
+    ("missing_timestamp", "Intel cuts 2026 capex guidance amid foundry losses", "reuters", "INTC", 0,
+     "Intel slashes capital spending plan as foundry bleeds cash", "cnbc_public", "INTC", -1, False),
+]
+
+def test_corroboration_entity_event_time_clustering():
+    failures = []
+    for name, at, asrc, aa, ah, bt, bsrc, ba, bh, expect in _CORROB_CASES:
+        a = _mk_news(at, asrc, aa, ah)
+        b = _mk_news(bt, bsrc, ba, bh)
+        cl = M.cluster_items([a, b])
+        same = a["storyClusterId"] == b["storyClusterId"]
+        level = next((c["corroborationLevel"] for c in cl if c["storyClusterId"] == a["storyClusterId"]), "single")
+        corroborated = same and level in ("corroborated", "official")
+        if corroborated != expect:
+            failures.append(f"{name}: corroborated={corroborated} (same={same} level={level}) expected={expect}")
+    assert not failures, "CORROBORATION FAILURES:\n" + "\n".join(failures)
