@@ -6595,6 +6595,178 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
             f"symbols={len(labels)} oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
     return payload
 
+# ━━━ C.A.O.S. event lifecycle — pre-event scenarios + post-event analysis (v10.165) ━━━
+# Enriches the C.A.O.S. frame around scheduled macro events. PRE-event: what the market
+# has priced in, how big-money is positioned (reported VIEWS, not trades), and staged
+# scenarios so ARGUS reacts the instant the number drops. POST-event: the result (only
+# if it's in an official C.A.O.S. item — NEVER fabricated), how big-money + the market
+# took it (the realized regime/price reaction), and the read-through to the industry.
+# AI-generated (cron/admin), cached + /tmp-persisted; the public GET serves the cache.
+_EVENT_ANALYSIS = {"items": {}, "asOf": None}     # eventId -> analysis dict
+_EVENT_ANALYSIS_FILE = "/tmp/argus_event_analysis.json"
+_EVENT_ANALYSIS_TTL = 6 * 3600                    # regenerate at most ~every 6h per event
+
+_CAOS_EVENT_SYSTEM = (
+    "You are C.A.O.S. (Corroborated Analyst & Official Signals), ARGUS's research desk. "
+    "Write a SHORT Japanese prose analysis of one scheduled macro event for an individual "
+    "investor. HONESTY IS ABSOLUTE: never fabricate a result number, a consensus, or that an "
+    "institution traded — a public VIEW is not a trade; published-after-a-move is not the cause. "
+    "If the actual result isn't in the provided data, say it plainly and describe the market "
+    "REACTION + reported views instead. Tie it to the financial industry read-through. No "
+    "trade instructions (decision-support only). Return STRICT JSON: {\"headlineJa\": str, "
+    "\"bodyJa\": str (2-4 sentences), \"scenariosJa\": [str] (PRE only: if-hot / if-cool with the "
+    "asymmetric risk; [] for POST)}."
+)
+
+
+def _openai_prose(user, max_out=600):
+    """Generic GPT prose call (STRICT JSON). Returns dict or None. Used by the C.A.O.S.
+    event analyzer; separate from the judgment path."""
+    if not _OPENAI_API_KEY:
+        return None
+    try:
+        import openai
+        client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        try:
+            resp = client.responses.create(model=_OPENAI_MODEL, instructions=_CAOS_EVENT_SYSTEM,
+                                            input=user, timeout=60)
+            text = getattr(resp, "output_text", None)
+        except Exception:
+            resp = client.chat.completions.create(
+                model=_OPENAI_MODEL,
+                messages=[{"role": "system", "content": _CAOS_EVENT_SYSTEM}, {"role": "user", "content": user}],
+                response_format={"type": "json_object"}, timeout=60)
+            text = resp.choices[0].message.content
+        try:
+            _ai_record_cost(_ai_now_iso(), "live", "unavailable", False)  # bill GPT-only usage
+        except Exception:
+            pass
+        out = safe_json(text or "")
+        return out if isinstance(out, dict) and out.get("bodyJa") else None
+    except Exception as e:
+        add_log(f"[caos] event prose failed: {type(e).__name__}")
+        return None
+
+
+def _caos_event_inputs(ev):
+    """Assemble the (phase, prompt) for one important-event: linked C.A.O.S. items +
+    the current regime/rates reaction + linked-asset moves. phase = pre|post."""
+    days = ev.get("daysUntil")
+    phase = "post" if (isinstance(days, (int, float)) and days <= 0) else "pre"
+    assets = {str(a).upper() for a in (ev.get("linkedAssets") or [])}
+    caos = []
+    for it in _INTEL_STORE:
+        if it.get("institutionId") and (assets & {str(a).upper() for a in (it.get("linkedAssets") or [])}):
+            caos.append({"inst": it.get("institutionId"), "stance": it.get("stance"),
+                         "title": (it.get("titleJa") or it.get("title") or "")[:120]})
+        if len(caos) >= 5:
+            break
+    rates = get_rates_snapshot()
+    reaction = {k: (rates.get(k) or {}).get("latestValue") for k in ("usdJpy", "us10y", "vix")} if isinstance(rates, dict) else {}
+    reg = (_REGIME_CACHE.get("data") or {}).get("regime") if isinstance(_REGIME_CACHE.get("data"), dict) else None
+    payload = {"event": {k: ev.get(k) for k in ("eventCode", "displayImpact", "daysUntil", "countdown",
+                                                 "whyItMattersJa", "linkedAssets")},
+               "phase": phase, "institutionalViews": caos,
+               "marketReaction": reaction, "regime": (reg or {}).get("label") if isinstance(reg, dict) else reg}
+    instr = ("PRE-event: 市場の織り込み・大口の構え(見解であり建玉ではない)・サプライズ時のシナリオ(ホット/クール)を。"
+             if phase == "pre" else
+             "POST-event: 結果(公式データに無ければ無いと明記)・大口の捉え方・市場の捉え方(下のmarketReaction/regimeの実反応)・金融業界への影響を。")
+    return phase, instr + "\nData:\n" + json.dumps(payload, ensure_ascii=False)
+
+
+def _caos_event_generate(limit=5):
+    """Generate pre/post C.A.O.S. analyses for the top material events (admin/cron).
+    Cached per eventId for _EVENT_ANALYSIS_TTL; persisted to /tmp. Never raises."""
+    out = {}
+    try:
+        ev_snap = get_events_snapshot()
+        items = argus_important_events.build_important_events(
+            ev_snap.get("events", []) if isinstance(ev_snap, dict) else [],
+            owner_symbols=_owner_symbols_for_events())
+    except Exception:
+        items = []
+    material = [e for e in items if e.get("displayImpact") in ("critical", "high")][:limit]
+    now = time.time()
+    made = 0
+    for ev in material:
+        eid = ev.get("eventId") or ev.get("eventCode")
+        prev = _EVENT_ANALYSIS["items"].get(eid)
+        phase = "post" if (isinstance(ev.get("daysUntil"), (int, float)) and ev["daysUntil"] <= 0) else "pre"
+        # reuse cache if same phase + still fresh
+        if prev and prev.get("phase") == phase and now - prev.get("ts", 0) < _EVENT_ANALYSIS_TTL:
+            out[eid] = prev
+            continue
+        _, prompt = _caos_event_inputs(ev)
+        pr = _openai_prose(prompt)
+        if not pr:
+            if prev:
+                out[eid] = prev
+            continue
+        out[eid] = {"eventId": eid, "eventCode": ev.get("eventCode"), "phase": phase,
+                    "displayImpact": ev.get("displayImpact"), "daysUntil": ev.get("daysUntil"),
+                    "countdown": ev.get("countdown"),
+                    "headlineJa": str(pr.get("headlineJa") or "")[:120],
+                    "bodyJa": str(pr.get("bodyJa") or "")[:700],
+                    "scenariosJa": [str(s)[:160] for s in (pr.get("scenariosJa") or [])][:3],
+                    "ts": now, "generatedAt": _ai_now_iso()}
+        made += 1
+    _EVENT_ANALYSIS["items"] = out
+    _EVENT_ANALYSIS["asOf"] = _ai_now_iso()
+    _caos_event_persist()
+    return {"generated": made, "total": len(out)}
+
+
+def _caos_event_persist():
+    try:
+        tmp = f"{_EVENT_ANALYSIS_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(_EVENT_ANALYSIS, f, ensure_ascii=False, default=str)
+        os.replace(tmp, _EVENT_ANALYSIS_FILE)
+    except Exception:
+        pass
+
+
+def _caos_event_restore():
+    try:
+        with open(_EVENT_ANALYSIS_FILE) as f:
+            blob = json.load(f)
+        if isinstance(blob, dict) and isinstance(blob.get("items"), dict):
+            _EVENT_ANALYSIS["items"] = blob["items"]
+            _EVENT_ANALYSIS["asOf"] = blob.get("asOf")
+    except Exception:
+        pass
+
+
+def _owner_symbols_for_events():
+    try:
+        return sorted({x["symbol"].upper() for x in _JP_WATCHLIST} | {x["symbol"].upper() for x in _US_WATCHLIST}
+                      | set(_JP_SEEN_SYMBOLS.keys()))
+    except Exception:
+        return None
+
+
+@app.route("/api/argus/event-analysis")
+def api_argus_event_analysis():
+    """Public GET — C.A.O.S. pre/post event analyses (served from cache; no model call
+    here). Newest/most-imminent first."""
+    its = sorted(_EVENT_ANALYSIS["items"].values(),
+                 key=lambda x: (0 if x.get("phase") == "post" else 1, x.get("daysUntil") if x.get("daysUntil") is not None else 99))
+    return jsonify({"asOf": _EVENT_ANALYSIS.get("asOf"), "system": argus_research_mesh.SYSTEM_NAME,
+                    "items": its})
+
+
+@app.route("/api/argus/event-analysis/generate", methods=["POST"])
+def api_argus_event_analysis_generate():
+    """Admin/cron — generate the C.A.O.S. event analyses (the ONLY model-calling path)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_caos_event_generate())
+
+
+_caos_event_restore()    # reload persisted analyses at startup
+
+
 # ━━━ Security Gate v1 (protects future expensive AI runs) ━━━
 def _client_meta():
     """Best-effort client metadata from common proxy headers. No secrets."""

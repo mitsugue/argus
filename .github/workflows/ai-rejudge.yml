@@ -40,3 +40,9 @@ jobs:
           RESP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/ai-judgment/run?checker=flash" || echo '{"error":"unreachable"}')
           echo "ai-rejudge(flash): ${RESP:0:240}"
+          # C.A.O.S. event lifecycle — pre/post analyses. Self-limited (6h cache per
+          # event; regenerates only on a phase flip or staleness), so calling every
+          # 15 min mostly returns cached (made=0) and costs nothing.
+          EVT=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/event-analysis/generate" || echo '{"error":"unreachable"}')
+          echo "caos-events: ${EVT:0:200}"

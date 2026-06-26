@@ -1,0 +1,17 @@
+/* C.A.O.S. event lifecycle panel (v10.165) — matches the top-page card typography */
+.caose { margin: 10px 0; padding: 12px 14px; background: var(--surface-1, rgba(255,255,255,.03));
+  border: 1px solid var(--border-subtle, rgba(255,255,255,.07)); border-radius: 12px; }
+.caose-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.caose-title { font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--text-sub); }
+.caose-sub { font-size: 10px; color: var(--text-muted); }
+.caose-row { padding: 8px 0; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06)); }
+.caose-row:first-of-type { border-top: none; }
+.caose-l1 { display: flex; align-items: center; gap: 8px; }
+.caose-phase { font-size: 9px; font-weight: 800; letter-spacing: .04em; padding: 0 5px; border-radius: 5px; border: 1px solid currentColor; }
+.caose-code { font-size: 12px; font-weight: 700; color: var(--text-main); }
+.caose-impact { font-size: 10px; color: var(--text-muted); }
+.caose-headline { font-size: 12.5px; font-weight: 700; color: var(--text-main); margin-top: 3px; line-height: 1.4; }
+.caose-body { font-size: 12.5px; line-height: 1.7; color: var(--text-sub); margin: 3px 0 0; }
+.caose-scn { margin: 5px 0 0; padding-left: 16px; }
+.caose-scn li { font-size: 12px; line-height: 1.6; color: var(--text-sub); }
+.caose-foot { font-size: 10px; color: var(--text-muted); margin: 8px 0 0; }

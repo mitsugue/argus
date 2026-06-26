@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { LiveEventRow } from '../dashboard/LiveEventRow';
+import { CaosEvents } from '../dashboard/CaosEvents';
 import { useEventRadar } from '../../hooks/useEventRadar';
 import { useNewsRadar } from '../../hooks/useNewsRadar';
 import type { CalendarEvent, Escalation, EventSource } from '../../types/events';
@@ -104,6 +105,9 @@ export const MarketEventsSections: React.FC = () => {
 
   return (
     <>
+      {/* C.A.O.S. pre/post-event analysis — the prose read that sits with the calendar. */}
+      <CaosEvents />
+
       <section>
         <div className="section-head">
           <span className="section-head__title">Upcoming events</span>

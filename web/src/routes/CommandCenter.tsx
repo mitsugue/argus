@@ -5,6 +5,7 @@ import { MarketNewsCard } from '../components/dashboard/MarketNewsCard';
 import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
 import { FxMacroSection } from '../components/dashboard/FxMacroSection';
 import { MarketInstitutionalSection } from '../components/dashboard/MarketInstitutionalSection';
+import { CaosEvents } from '../components/dashboard/CaosEvents';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { useEventsActive } from '../hooks/useEventsActive';
 import { useImportantEvents } from '../hooks/useImportantEvents';
@@ -221,6 +222,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
       {/* #3 MARKET-WIDE INSTITUTIONAL INTELLIGENCE — max 3, only when material. */}
       <MarketInstitutionalSection />
+
+      {/* C.A.O.S. event lifecycle — pre/post-event analysis (織り込み・シナリオ・結果・反応). */}
+      <CaosEvents limit={3} />
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
       <AssetCategorySection title="JAPAN · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.jpEmerging} emptyJa="急浮上中の日本株はありません" />
