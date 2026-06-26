@@ -3,9 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Scale locked to 1.0 (maximum-scale + user-scalable=no): the page always
+         fits the window/device width exactly and reflows on resize. Removing this
+         (v10.163) let the view get trapped at a pinch-zoomed "app size" that no
+         longer followed window resizing — restored to the original behavior. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#0B1118" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
