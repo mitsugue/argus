@@ -6608,14 +6608,18 @@ _EVENT_ANALYSIS_TTL = 6 * 3600                    # regenerate at most ~every 6h
 
 _CAOS_EVENT_SYSTEM = (
     "You are C.A.O.S. (Corroborated Analyst & Official Signals), ARGUS's research desk. "
-    "Write a SHORT Japanese prose analysis of one scheduled macro event for an individual "
-    "investor. HONESTY IS ABSOLUTE: never fabricate a result number, a consensus, or that an "
-    "institution traded — a public VIEW is not a trade; published-after-a-move is not the cause. "
-    "If the actual result isn't in the provided data, say it plainly and describe the market "
-    "REACTION + reported views instead. Tie it to the financial industry read-through. No "
-    "trade instructions (decision-support only). Return STRICT JSON: {\"headlineJa\": str, "
-    "\"bodyJa\": str (2-4 sentences), \"scenariosJa\": [str] (PRE only: if-hot / if-cool with the "
-    "asymmetric risk; [] for POST)}."
+    "Give a COMPACT Japanese read of ONE scheduled macro event for an individual investor. "
+    "Each field is ONE short sentence (一言), NOT a paragraph. HONESTY IS ABSOLUTE: never "
+    "fabricate a result number, a consensus, or that an institution traded — a public VIEW is "
+    "not a trade; published-after-a-move is not the cause. If the actual result isn't in the "
+    "provided data, say so plainly. No trade instructions (decision-support only). "
+    "Return STRICT JSON with exactly these keys: {"
+    "\"summaryJa\": str — 概要: what this event is and why it matters to the portfolio (ALWAYS, one sentence); "
+    "\"preJa\": str — 事前予想: PRE phase ONLY — what the market has priced in and big-money posture "
+    "(a reported view, never a position) plus the asymmetric risk if it surprises; set \"\" when phase is POST; "
+    "\"postJa\": str — 事後: POST phase ONLY — the result (state plainly if it is not in the data), how "
+    "big-money and the market actually took it (use marketReaction/regime), and the financial-industry "
+    "read-through; set \"\" when phase is PRE}."
 )
 
 
@@ -6642,7 +6646,7 @@ def _openai_prose(user, max_out=600):
         except Exception:
             pass
         out = safe_json(text or "")
-        return out if isinstance(out, dict) and out.get("bodyJa") else None
+        return out if isinstance(out, dict) and (out.get("summaryJa") or out.get("bodyJa")) else None
     except Exception as e:
         add_log(f"[caos] event prose failed: {type(e).__name__}")
         return None
@@ -6668,9 +6672,9 @@ def _caos_event_inputs(ev):
                                                  "whyItMattersJa", "linkedAssets")},
                "phase": phase, "institutionalViews": caos,
                "marketReaction": reaction, "regime": (reg or {}).get("label") if isinstance(reg, dict) else reg}
-    instr = ("PRE-event: 市場の織り込み・大口の構え(見解であり建玉ではない)・サプライズ時のシナリオ(ホット/クール)を。"
+    instr = ("PRE-event: summaryJa=概要(このイベントとポートフォリオへの意味)、preJa=事前予想(市場の織り込み・大口の構え〔見解であり建玉ではない〕・サプライズ時の非対称リスク)。postJaは\"\"。各1文。"
              if phase == "pre" else
-             "POST-event: 結果(公式データに無ければ無いと明記)・大口の捉え方・市場の捉え方(下のmarketReaction/regimeの実反応)・金融業界への影響を。")
+             "POST-event: summaryJa=概要、postJa=事後(結果〔公式データに無ければ無いと明記〕・大口/市場の捉え方〔下のmarketReaction/regimeの実反応〕・金融業界への影響)。preJaは\"\"。各1文。")
     return phase, instr + "\nData:\n" + json.dumps(payload, ensure_ascii=False)
 
 
@@ -6702,12 +6706,15 @@ def _caos_event_generate(limit=5):
             if prev:
                 out[eid] = prev
             continue
+        # Headed one-liners (概要/事前予想/事後). Legacy bodyJa maps to 概要 if a model
+        # returns the old shape, so the panel never blanks during a schema transition.
+        summary = str(pr.get("summaryJa") or pr.get("headlineJa") or pr.get("bodyJa") or "")[:200]
+        pre = str(pr.get("preJa") or "")[:200] if phase == "pre" else ""
+        post = str(pr.get("postJa") or "")[:200] if phase == "post" else ""
         out[eid] = {"eventId": eid, "eventCode": ev.get("eventCode"), "phase": phase,
                     "displayImpact": ev.get("displayImpact"), "daysUntil": ev.get("daysUntil"),
                     "countdown": ev.get("countdown"),
-                    "headlineJa": str(pr.get("headlineJa") or "")[:120],
-                    "bodyJa": str(pr.get("bodyJa") or "")[:700],
-                    "scenariosJa": [str(s)[:160] for s in (pr.get("scenariosJa") or [])][:3],
+                    "summaryJa": summary, "preJa": pre, "postJa": post,
                     "ts": now, "generatedAt": _ai_now_iso()}
         made += 1
     _EVENT_ANALYSIS["items"] = out

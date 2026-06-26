@@ -10,8 +10,11 @@
 .caose-phase { font-size: 9px; font-weight: 800; letter-spacing: .04em; padding: 0 5px; border-radius: 5px; border: 1px solid currentColor; }
 .caose-code { font-size: 12px; font-weight: 700; color: var(--text-main); }
 .caose-impact { font-size: 10px; color: var(--text-muted); }
-.caose-headline { font-size: 12.5px; font-weight: 700; color: var(--text-main); margin-top: 3px; line-height: 1.4; }
-.caose-body { font-size: 12.5px; line-height: 1.7; color: var(--text-sub); margin: 3px 0 0; }
-.caose-scn { margin: 5px 0 0; padding-left: 16px; }
-.caose-scn li { font-size: 12px; line-height: 1.6; color: var(--text-sub); }
+/* Headed one-liners — 概要 / 事前予想 / 事後. Heading chip on the left, one line of text. */
+.caose-line { display: flex; gap: 9px; margin-top: 5px; align-items: baseline; }
+.caose-h { flex: none; min-width: 52px; font-size: 10px; font-weight: 800; letter-spacing: .04em;
+  color: var(--text-muted); padding-top: 1px; }
+.caose-h--pre { color: var(--event-high); }
+.caose-h--post { color: var(--event-medium); }
+.caose-t { font-size: 12.5px; line-height: 1.6; color: var(--text-sub); }
 .caose-foot { font-size: 10px; color: var(--text-muted); margin: 8px 0 0; }
