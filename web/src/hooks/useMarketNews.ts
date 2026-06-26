@@ -12,6 +12,10 @@ export interface MarketNewsItem {
   url: string;
   datetime: number | null;   // unix seconds
   major: boolean;
+  /** market/finance-relevant (v10.169) — noise (sports/unrelated) is false. */
+  relevant?: boolean;
+  /** source-trust tier (v10.169). */
+  tier?: 'wire' | 'aggregator' | 'official';
 }
 
 export interface MarketNews {

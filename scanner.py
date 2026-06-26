@@ -6186,10 +6186,15 @@ def _build_ai_snapshot():
     try:
         mn = get_market_news()
         if isinstance(mn, dict) and mn.get("status") == "live":
-            ranked = sorted(mn.get("items", []), key=lambda n: 0 if n.get("major") else 1)
-            for n in ranked[:8]:
+            # precision (v10.169): only MARKET-RELEVANT headlines reach the AI, wire
+            # sources first, major next — so irrelevant/clickbait headlines can't bias it.
+            _tier = {"official": 0, "wire": 1, "aggregator": 2}
+            relevant = [n for n in mn.get("items", []) if n.get("relevant")]
+            relevant.sort(key=lambda n: (_tier.get(n.get("tier"), 2), 0 if n.get("major") else 1))
+            for n in relevant[:6]:
                 news_digest.append({"headlineJa": (n.get("headlineJa") or n.get("headline") or "")[:140],
-                                    "source": n.get("source"), "major": bool(n.get("major"))})
+                                    "source": n.get("source"), "tier": n.get("tier"),
+                                    "major": bool(n.get("major"))})
     except Exception:
         news_digest = []
     snap = {
@@ -6217,9 +6222,12 @@ _OPENAI_SYSTEM = (
     "confidence: where past hitRate is low, LOWER confidence; only raise it where history supports it. "
     "You MAY reference `institutionalSignals` (public, reported institutional VIEWS — a view is NOT a "
     "trade, and published-after-a-move is not the cause); never assert an institution traded. "
-    "`marketNews` is UNCORROBORATED general news for AWARENESS only: never treat a headline as an "
-    "established fact or the cause of a move, never let news alone drive the call; cross-check it "
-    "against `institutionalSignals` and the price/rates data, and stay conservative when they conflict. "
+    "`marketNews` is a digest of UNVERIFIED news HEADLINES (NOT article bodies — the headline wording "
+    "often does not match the actual content). Treat each as an unconfirmed CLAIM, never an established "
+    "fact or the proven cause of a move; do NOT infer specifics beyond the headline text. Weight "
+    "`tier`=wire/official above aggregator. A headline may affect the call ONLY if the price/rates data "
+    "CONFIRM it; if news and the data conflict, trust the data and stay conservative. News alone NEVER "
+    "triggers ADD/BUY DIP/EXIT/TRIM. "
     "Each label may carry `rsi14`/`trend` (chart technicals) and `marginJa` (Japan 信用/JSF margin-balance "
     "signal) — factor them in (e.g. RSI extremes, margin short-cover fuel) but never treat them as certainty. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
@@ -7341,6 +7349,39 @@ _NEWS_MAJOR_RE = re.compile(
     # Geopolitics vocab (2026-06-12: "US will hit Iran" was not flagged):
     r"iran|israel|taiwan|north korea|nuclear|strikes?|attacks?|invasion|opec)\b", re.I)
 
+# Market-RELEVANCE gate (v10.169): the `major` regex over-flags raw geopolitics (a
+# headline like "Iran fires on cargo ship" or "FIFA rainbow flag" has no investing
+# relevance). A headline reaches the AI only if it is market/finance-relevant — this
+# is the precision lever: a misleading or irrelevant headline never enters judgment.
+_NEWS_RELEVANCE_RE = re.compile(
+    r"(stock|share|equit|market|index|nasdaq|s&p|dow jones|bond|yield|treasur|"
+    r"\brate(s)?\b|fed|fomc|ecb|boj|central bank|inflation|cpi|pce|gdp|jobs|payroll|"
+    r"unemploy|earning|revenue|profit|guidance|ipo|merger|acquisition|buyback|dividend|"
+    r"tariff|trade war|sanction|oil|crude|opec|energy|natural gas|dollar|\byen\b|euro|"
+    r"currency|forex|\bfx\b|gold|commodit|semiconductor|\bchip(s)?\b|nvidia|tsmc|"
+    r"\bbank(s|ing)?\b|lending|credit|\bdebt\b|default|downgrade|upgrade|recession|"
+    r"housing|retail sales|consumer|manufacturing|\bpmi\b|valuation|hedge fund|\betf\b|"
+    r"\bsec\b|regulat|antitrust|stimulus|\bboe\b|intervention|bankruptc|crash|"
+    # JA (headlineJa may carry these even when the EN is terse)
+    r"株|相場|市場|指数|金利|国債|利回り|日銀|インフレ|物価|雇用|決算|業績|増益|減益|"
+    r"関税|原油|ドル|為替|半導体|景気|銀行|融資|信用|格付|利下げ|利上げ|配当|自社株|"
+    r"買収|合併|上場|債務|不況|消費|製造|金融|証券|投資)", re.I)
+
+# Source-trust tier — news agencies/wires are weighted above aggregators by the AI.
+_NEWS_WIRE_SRC = ("reuters", "bloomberg", "associated press", "dow jones", "nikkei",
+                  "financial times", "wall street journal", "cnbc", "marketwatch", "barron")
+
+def _news_source_tier(src):
+    s = (src or "").lower()
+    return "wire" if any(k in s for k in _NEWS_WIRE_SRC) else "aggregator"
+
+def _news_relevant(headline, headline_ja=None):
+    # Relevance requires a genuine market/finance term — NOT the broad `major` geopolitics
+    # vocab (iran/israel/strikes…), which alone (e.g. "FIFA … Iran World Cup") is noise.
+    # Market-moving geopolitics still passes via its market term (oil/sanction/tariff/yen…).
+    txt = f"{headline or ''} {headline_ja or ''}"
+    return bool(_NEWS_RELEVANCE_RE.search(txt))
+
 def _translate_headlines_ja(headlines):
     """Batch-translate headlines via the cheap Gemini flash model. Best-effort:
     any failure returns {} and the UI falls back to English. Called at most
@@ -7379,12 +7420,14 @@ def get_market_news():
             h = str(n.get("headline") or "")[:200]
             if not h:
                 continue
+            src = str(n.get("source") or "")[:40]
             items.append({
                 "headline": h,
-                "source": str(n.get("source") or "")[:40],
+                "source": src,
                 "url": str(n.get("url") or "")[:300],
                 "datetime": n.get("datetime"),   # unix seconds
                 "major": bool(_NEWS_MAJOR_RE.search(h)),
+                "tier": _news_source_tier(src),   # wire | aggregator (source-trust)
             })
             if len(items) >= 14:
                 break
@@ -7393,8 +7436,12 @@ def get_market_news():
         for idx, item in enumerate(items):
             if idx in tr:
                 item["headlineJa"] = tr[idx]
+        # Market-relevance gate (v10.169): flag headlines that are actually about
+        # markets/finance (incl. the JA translation) so the UI + AI can drop noise.
+        for item in items:
+            item["relevant"] = _news_relevant(item["headline"], item.get("headlineJa"))
         out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
-               "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=金融政策/介入/地政学などの重要キーワード検出。判断エンジンには入力されない。"}
+               "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=金融政策/介入/地政学などの重要キーワード検出。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のもののみ・通信社優先で参考投入。"}
         _MARKET_NEWS_CACHE["data"] = out
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_TTL
         return out

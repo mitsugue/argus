@@ -73,7 +73,11 @@ export const CaosHub: React.FC = () => {
     [intel],
   );
   const evShown = events.slice(0, 3);
-  const news = (newsData?.items ?? []).slice(0, 6);
+  // precision (v10.169): show only market-relevant headlines (drop sports/unrelated
+  // noise); fall back to the raw list only if nothing is flagged, so it never empties.
+  const allNews = newsData?.items ?? [];
+  const relNews = allNews.filter((n) => n.relevant);
+  const news = (relNews.length ? relNews : allNews).slice(0, 6);
   const empty = material.length === 0 && evShown.length === 0 && news.length === 0;
 
   return (
@@ -154,6 +158,7 @@ export const CaosHub: React.FC = () => {
                 {it.major && <span className="caoshub-news-dot" />}
                 <span className="caoshub-news-time">{hhmm(it.datetime)}</span>
                 <span className="caoshub-news-src">{it.source}</span>
+                {it.tier === 'wire' && <span className="caoshub-news-wire">通信社</span>}
               </div>
               <div className={`caoshub-news-h${it.major ? ' caoshub-news-h--major' : ''}`}>
                 {it.headlineJa || it.headline}
