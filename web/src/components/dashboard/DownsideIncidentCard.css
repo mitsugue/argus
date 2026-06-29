@@ -55,3 +55,11 @@
 .dic-missing { color: var(--text-muted, #5F6B78); }
 
 .dic-foot { font-size: 10.5px; color: var(--text-muted, #5F6B78); margin: 10px 0 0; }
+
+/* C.A.O.S. source chip (v10.174) — marks a downside reason derived from a corroboration-
+   rated / relationship-linked news lead (·連想 = linked via an entity relationship). */
+.dic-caos { font-size: 9px; font-weight: 800; letter-spacing: .04em; padding: 0 5px;
+  border: 1px solid currentColor; border-radius: 5px; white-space: nowrap; opacity: .9; }
+.dic-caos--official { color: var(--cyan, #22d3ee); }
+.dic-caos--corroborated { color: var(--value-positive, #34d399); }
+.dic-caos--single { color: var(--text-muted); opacity: .7; }

@@ -4775,6 +4775,29 @@ def _entity_link(title):
     return out
 
 
+def _caos_catalyst_for(sym, news_items, intel_items):
+    """Best C.A.O.S./association-linked news for a symbol — the candidate LEAD behind a move,
+    derived from news + entity relationships instead of '原因未確認'. Corroborated preferred,
+    then an entity-relationship link (the non-obvious association). A candidate, not a cause."""
+    sym = str(sym).upper()
+    rank = {"official": 0, "corroborated": 1, "single": 2}
+    best = None
+    for n in list(news_items) + list(intel_items):
+        blob = (n.get("headline") or n.get("title") or "") + " " + (n.get("headlineJa") or n.get("titleJa") or "")
+        link = next((m for m in _entity_link(blob) if m["symbol"] == sym), None)
+        if not link:
+            continue
+        corr = n.get("corroboration") or "single"
+        cand = {"titleJa": (n.get("headlineJa") or n.get("titleJa") or n.get("headline") or n.get("title") or "")[:120],
+                "via": link.get("via"), "term": link.get("term"),
+                "relationJa": link.get("relationJa"), "corroboration": corr}
+        if (best is None or rank.get(corr, 2) < rank.get(best["corroboration"], 2)
+                or (rank.get(corr, 2) == rank.get(best["corroboration"], 2)
+                    and link.get("via") == "entity" and best.get("via") != "entity")):
+            best = cand
+    return best
+
+
 _ENTITY_PROFILE_SYSTEM = (
     "You build a compact profile for an investing ASSOCIATION engine: given a stock, list the "
     "EXTERNAL entities whose news would plausibly move it. HONESTY: only real, well-established, "
@@ -8198,6 +8221,24 @@ def get_downside_incidents():
 
     now_iso = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     incidents = argus_downside.classify_incidents(assets, market_ctx, now_iso=now_iso)
+    # C.A.O.S. reason lead (v10.174): the downside cause was rule-only, so a drop with no
+    # filing read as "原因未確認" for EVERY name (identical rows). Attach the actual linked
+    # news — by name OR entity RELATIONSHIP (OpenAI→9984) — as a corroboration-labeled
+    # CANDIDATE lead, so each row names its likely driver without asserting causation.
+    try:
+        _news_rel = [n for n in (get_market_news().get("items") or []) if n.get("relevant")]
+        _intel = list(_INTEL_STORE)[:60]
+        _corr_ja = {"official": "公式ソース", "corroborated": "複数系統で確認", "single": "単一ソース・要確認"}
+        for inc in incidents:
+            lead = _caos_catalyst_for(inc.get("symbol"), _news_rel, _intel)
+            if not lead:
+                continue
+            inc["caosLead"] = lead
+            rel = f"（{lead['relationJa']}）" if lead.get("relationJa") else ""
+            inc["reasonJa"] = (f"{inc.get('reasonJa', '')} ／ C.A.O.S.候補: 「{lead['titleJa']}」{rel}・"
+                               f"{_corr_ja.get(lead['corroboration'], lead['corroboration'])}").strip()
+    except Exception:
+        pass
     # Structured Action Level signal per incident (v10.124) — APIs/ledgers carry
     # {code, level, permissions, schemaVersion} instead of inferring from text.
     for _inc in incidents:

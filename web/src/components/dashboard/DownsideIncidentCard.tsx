@@ -54,6 +54,11 @@ export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
             {CAUSE_JA[top.cause] ?? top.cause} {Math.round(top.probability * 100)}%
           </span>
         )}
+        {inc.caosLead && (
+          <span className={`dic-caos dic-caos--${inc.caosLead.corroboration}`} title={inc.caosLead.relationJa || undefined}>
+            C.A.O.S.{inc.caosLead.via === 'entity' ? '·連想' : ''}
+          </span>
+        )}
       </div>
       <p className="dic-reason">{inc.reasonJa}</p>
       {open && (

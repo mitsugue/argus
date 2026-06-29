@@ -33,6 +33,9 @@ export interface DownsideIncident {
   priority?: string;         // low | normal | high
   status: 'live' | 'partial';
   dedupKey?: string;
+  /** C.A.O.S. candidate lead (v10.174): the linked news behind the move (by name OR entity
+   *  relationship), corroboration-labeled. A candidate, not an asserted cause. */
+  caosLead?: { titleJa: string; via: string; term?: string; relationJa?: string | null; corroboration: string };
 }
 
 export interface JpOverlay {
