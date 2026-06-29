@@ -1,41 +1,13 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { useAIJudgment } from '../../hooks/useAIJudgment';
-import { useAssets } from '../../hooks/useAssets';
-import type { AIJudgmentLabel } from '../../types/aiJudgment';
 
-// Second-opinion layer (OpenAI primary + Gemini double-check). Calm panel — it
-// never replaces the rule labels on the rows; it only adds context/caution.
-// Renders nothing when the layer is disabled or has no AI content yet.
-
-const VIEW_LABEL: Record<string, string> = {
-  confirm: 'AI confirmed',
-  caution: 'AI caution',
-  disagree: 'AI disagrees',
-  unavailable: '—',
-};
-const VIEW_COLOR: Record<string, string> = {
-  confirm: 'var(--green)',
-  caution: 'var(--amber)',
-  disagree: 'var(--red)',
-  unavailable: 'var(--text-muted)',
-};
-
-// Only surface rows where the AI adds something: a different final action, or a
-// caution/disagreement. Confirmations and unavailable rows stay quiet.
-function noteworthy(l: AIJudgmentLabel): boolean {
-  return l.aiView === 'caution' || l.aiView === 'disagree' || l.aiFinalAction !== l.ruleAction;
-}
+// Market-level second opinion (GPT primary + Gemini check). The page-2 header shows ONLY
+// the whole-market read — summary / risk / red flags. Per-stock AI notes used to be
+// duplicated here; they now live on the stock cards instead (v10.176), so this stays a
+// clean market overview. Renders nothing when disabled or there's no AI content yet.
 
 export const AIReview: React.FC = () => {
   const { data, phase } = useAIJudgment();
-  // Japanese company names (user request 2026-06-13): resolved from the
-  // user's own watchlist entries — the most reliable ja-name source on device.
-  const { assets } = useAssets();
-  const nameOf = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const a of assets) m.set(a.symbol, a.displayNameJa || a.displayName);
-    return m;
-  }, [assets]);
 
   // Disabled / mock / connecting → render nothing (keep the page calm).
   if (!data || phase === 'disabled' || phase === 'mock' || phase === 'connecting') return null;
@@ -49,6 +21,7 @@ export const AIReview: React.FC = () => {
       <section className="ai-review">
         <div className="ai-review__head">
           <span className="ai-review__title">AI Review</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>市場全体の見立て</span>
           <span className="watch-status watch-status--partial">no cached result</span>
           <span className="ai-review__models">{models || 'GPT-5.5 + Gemini'}</span>
         </div>
@@ -57,12 +30,12 @@ export const AIReview: React.FC = () => {
     );
   }
 
-  const notes = data.labels.filter(noteworthy);
   const flags = data.globalRedFlags ?? [];
   return (
     <section className="ai-review">
       <div className="ai-review__head">
         <span className="ai-review__title">AI Review</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>市場全体の見立て(個別銘柄は各カードに表示)</span>
         <span className={`watch-status watch-status--${phase}`}>{phase}</span>
         <span className="ai-review__models">{models || 'second opinion'}</span>
       </div>
@@ -70,25 +43,6 @@ export const AIReview: React.FC = () => {
       {data.marketRiskJa && <div className="ai-review__risk">リスク: {data.marketRiskJa}</div>}
       {flags.length > 0 && (
         <div className="ai-review__risk">⚑ {flags.join(' / ')}</div>
-      )}
-      {notes.length > 0 && (
-        <div className="ai-review__notes">
-          {notes.map((l) => (
-            <div className="ai-review__note" key={l.symbol}>
-              <span className="ai-review__sym">
-                {l.symbol}
-                {nameOf.get(l.symbol) && <span className="ai-review__name"> {nameOf.get(l.symbol)}</span>}
-              </span>
-              <span className="ai-review__flow">
-                {l.ruleAction}{l.aiFinalAction !== l.ruleAction ? ` → ${l.aiFinalAction}` : ''}
-              </span>
-              <span className="ai-review__view" style={{ color: VIEW_COLOR[l.aiView] }}>
-                {VIEW_LABEL[l.aiView] ?? l.aiView}
-              </span>
-              <span className="ai-review__reason">{l.reasonJa}</span>
-            </div>
-          ))}
-        </div>
       )}
     </section>
   );
