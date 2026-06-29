@@ -20,8 +20,16 @@
 .epe-src--ai { color: var(--value-positive, #34d399); }
 .epe-src--seed { color: var(--text-sub); }
 .epe-src--none { color: var(--text-muted); opacity: .6; }
-.epe-edit { margin-left: auto; font-size: 11px; padding: 3px 10px; border: 1px solid var(--line-strong, rgba(255,255,255,.14));
+.epe-btns { margin-left: auto; display: flex; gap: 6px; flex: none; }
+.epe-edit { font-size: 11px; padding: 3px 10px; border: 1px solid var(--line-strong, rgba(255,255,255,.14));
   border-radius: 7px; background: var(--surface-soft, #162231); color: var(--text-sub); cursor: pointer; }
+.epe-gen { font-size: 11px; padding: 3px 10px; border: 1px solid var(--value-positive, #34d399); border-radius: 7px;
+  background: rgba(52,211,153,.10); color: var(--value-positive, #34d399); cursor: pointer; }
+.epe-gen:disabled { opacity: .55; cursor: default; }
+.epe-genall-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.epe-genall { font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 8px; cursor: pointer;
+  background: var(--value-positive, #34d399); color: #06231a; border: none; }
+.epe-genall:disabled { opacity: .55; cursor: default; }
 .epe-biz { font-size: 12px; line-height: 1.55; color: var(--text-sub); margin: 4px 0 0; }
 .epe-kw { font-size: 10.5px; line-height: 1.5; color: var(--text-muted); margin: 3px 0 0; overflow-wrap: anywhere; }
 

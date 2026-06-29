@@ -36,6 +36,39 @@ export const EntityProfileEditor: React.FC = () => {
   const [token, setToken] = React.useState(() => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } });
   const [status, setStatus] = React.useState('');
   const [collapsed, setCollapsed] = React.useState(true);
+  const [busyGen, setBusyGen] = React.useState<string | null>(null);
+
+  const guessMarket = (s: string) => (/^\d/.test(s) ? 'JP' : 'US');   // JP tickers start with a digit
+
+  async function generate(sym: string, name: string): Promise<boolean> {
+    if (!backend) return false;
+    if (!token.trim()) { setStatus('生成には合言葉(オーナートークン)が必要です'); return false; }
+    setBusyGen(sym); setStatus(`${sym} を生成中…`);
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/entity-profiles/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerToken: token.trim(), symbol: sym, name, market: guessMarket(sym) }),
+      });
+      if (r.status === 401) { setStatus('合言葉が違います'); return false; }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) { setStatus(`${sym} の生成に失敗(AIキー/予算を確認)`); return false; }
+      try { localStorage.setItem(TOKEN_KEY, token.trim()); } catch { /* ignore */ }
+      setStatus(`${sym} を生成しました`);
+      load();
+      return true;
+    } catch { setStatus('生成に失敗(通信エラー)'); return false; }
+    finally { setBusyGen(null); }
+  }
+
+  async function generateMissing(missing: { symbol: string; name: string }[]) {
+    for (let i = 0; i < missing.length; i += 1) {
+      setStatus(`未生成を生成中… (${i + 1}/${missing.length})`);
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await generate(missing[i].symbol, missing[i].name);
+      if (!ok) return;   // stop on first failure (auth / key / budget)
+    }
+    setStatus('未生成の生成が完了しました');
+  }
 
   const load = React.useCallback(() => {
     if (!backend) return;
@@ -98,6 +131,17 @@ export const EntityProfileEditor: React.FC = () => {
           </p>
           <input className="epe-token" type="password" placeholder="合言葉(オーナートークン・この端末に保存)"
                  value={token} onChange={(e) => setToken(e.target.value)} />
+          {(() => {
+            const missing = watch.filter(({ symbol }) => !profiles[symbol]);
+            return missing.length > 0 ? (
+              <div className="epe-genall-row">
+                <button className="epe-genall" disabled={!!busyGen} onClick={() => generateMissing(missing)}>
+                  未生成をまとめて生成 ({missing.length}件)
+                </button>
+                {status && <span className="epe-status">{status}</span>}
+              </div>
+            ) : null;
+          })()}
           {watch.map(({ symbol, name }) => {
             const p = profiles[symbol];
             const editing = openSym === symbol;
@@ -107,9 +151,14 @@ export const EntityProfileEditor: React.FC = () => {
                   <span className="epe-sym">{symbol}</span>
                   <span className="epe-name">{name}</span>
                   <span className={`epe-src epe-src--${p?.source || 'none'}`}>{SOURCE_JA[p?.source || ''] ?? p?.source}</span>
-                  <button className="epe-edit" onClick={() => (editing ? (setOpenSym(null), setDraft(null)) : startEdit(symbol))}>
-                    {editing ? 'キャンセル' : '編集'}
-                  </button>
+                  <span className="epe-btns">
+                    <button className="epe-gen" disabled={busyGen === symbol} onClick={() => generate(symbol, name)}>
+                      {busyGen === symbol ? '生成中…' : (p ? '再生成' : '生成')}
+                    </button>
+                    <button className="epe-edit" onClick={() => (editing ? (setOpenSym(null), setDraft(null)) : startEdit(symbol))}>
+                      {editing ? 'キャンセル' : '編集'}
+                    </button>
+                  </span>
                 </div>
                 {!editing && p?.businessJa && <p className="epe-biz">{p.businessJa}</p>}
                 {!editing && (p?.keywords?.length ?? 0) > 0 && (

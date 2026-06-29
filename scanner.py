@@ -4824,35 +4824,54 @@ _ENTITY_PROFILE_SYSTEM = (
 )
 
 
+def _entity_profile_make(sym, name="", market=""):
+    """Generate ONE profile via GPT and store it (source='ai'). Returns the profile or None.
+    `market` (JP|US) sets the prompt context — needed for device-added stocks the backend
+    watchlist doesn't know. Never raises."""
+    sym = str(sym).strip().upper()
+    if not sym:
+        return None
+    m = str(market or "").upper()
+    if m in ("JP", "日本株"):
+        mkt = "日本株"
+    elif m in ("US", "米国株"):
+        mkt = "米国株"
+    else:
+        mkt = "日本株" if sym in {x["symbol"] for x in _JP_WATCHLIST} else "米国株"
+    pr = _openai_prose(f"銘柄: {sym} {name or sym}({mkt})。この銘柄の連想プロフィールをJSONで返せ。",
+                       max_out=700, system=_ENTITY_PROFILE_SYSTEM)
+    if not pr or not pr.get("businessJa"):
+        return None
+    prof = {
+        "symbol": sym, "name": str(name or sym)[:60],
+        "businessJa": str(pr.get("businessJa") or "")[:300], "sector": str(pr.get("sector") or "")[:60],
+        "themes": [str(t)[:40] for t in (pr.get("themes") or [])][:8],
+        "relatedEntities": [{"name": str(e.get("name") or "")[:60], "relationJa": str(e.get("relationJa") or "")[:140],
+                             "type": str(e.get("type") or "")[:30]}
+                            for e in (pr.get("relatedEntities") or []) if e.get("name")][:8],
+        "peers": [str(p)[:20] for p in (pr.get("peers") or [])][:6],
+        "keywords": [str(k)[:40] for k in (pr.get("keywords") or [])][:24],
+        "source": "ai", "ts": time.time(), "generatedAt": _ai_now_iso(),
+    }
+    _ENTITY_PROFILES[sym] = prof
+    _ENTITY_PROFILES_META["asOf"] = _ai_now_iso()
+    return prof
+
+
 def _entity_profile_generate(symbols=None):
-    """Admin/cron — AI-generate missing/stale watchlist profiles (skips hand seeds & fresh ones)."""
+    """Admin/cron — AI-generate missing/stale watchlist profiles (skips seeds/owner & fresh)."""
     wl = {x["symbol"]: x["name"] for x in (_JP_WATCHLIST + _US_WATCHLIST)}
     syms = symbols or list(wl.keys())
     now = time.time()
     made = 0
-    for sym in syms:
+    for sym in syms[:12]:
         prev = _ENTITY_PROFILES.get(sym)
         if prev and prev.get("source") in ("seed", "owner"):   # never overwrite hand seeds or owner edits
             continue
         if prev and (now - prev.get("ts", 0) < _ENTITY_PROFILE_TTL):
             continue
-        pr = _openai_prose(f"銘柄: {sym} {wl.get(sym, sym)}({'日本株' if sym in {x['symbol'] for x in _JP_WATCHLIST} else '米国株'})。"
-                           "この銘柄の連想プロフィールをJSONで返せ。", max_out=700, system=_ENTITY_PROFILE_SYSTEM)
-        if not pr or not pr.get("businessJa"):
-            continue
-        _ENTITY_PROFILES[sym] = {
-            "symbol": sym, "name": wl.get(sym, sym),
-            "businessJa": str(pr.get("businessJa") or "")[:300], "sector": str(pr.get("sector") or "")[:60],
-            "themes": [str(t)[:40] for t in (pr.get("themes") or [])][:8],
-            "relatedEntities": [{"name": str(e.get("name") or "")[:60], "relationJa": str(e.get("relationJa") or "")[:140],
-                                 "type": str(e.get("type") or "")[:30]}
-                                for e in (pr.get("relatedEntities") or []) if e.get("name")][:8],
-            "peers": [str(p)[:20] for p in (pr.get("peers") or [])][:6],
-            "keywords": [str(k)[:40] for k in (pr.get("keywords") or [])][:24],
-            "source": "ai", "ts": now, "generatedAt": _ai_now_iso(),
-        }
-        made += 1
-    _ENTITY_PROFILES_META["asOf"] = _ai_now_iso()
+        if _entity_profile_make(sym, wl.get(sym, sym)):
+            made += 1
     _entity_profile_persist()
     return {"generated": made, "total": len(_ENTITY_PROFILES)}
 
@@ -7150,10 +7169,21 @@ def api_argus_entity_profiles():
 
 @app.route("/api/argus/entity-profiles/generate", methods=["POST"])
 def api_argus_entity_profiles_generate():
-    """Admin/cron — AI-generate missing/stale watchlist profiles (skips hand/seed + fresh)."""
-    ok, err, code = _require_admin()
+    """Owner/admin — generate profiles. With `symbol` (+name/market) force-generates THAT one
+    on demand (for device-added stocks the cron doesn't know); otherwise bulk-generates the
+    backend watchlist (the cron path). Owner-sync token (header or body) accepted."""
+    body = request.get_json(silent=True) or {}
+    ok, err, code = _require_owner_sync(body_token=body.get("ownerToken"))
     if not ok:
         return jsonify(err), code
+    sym = str(body.get("symbol") or "").strip().upper()
+    if sym:
+        prev = _ENTITY_PROFILES.get(sym)
+        if prev and prev.get("source") == "owner" and not body.get("force"):
+            return jsonify({"ok": True, "skipped": "owner-edited", "symbol": sym, "profile": prev})
+        prof = _entity_profile_make(sym, str(body.get("name") or "")[:60], str(body.get("market") or ""))
+        _entity_profile_persist()
+        return jsonify({"ok": bool(prof), "symbol": sym, "profile": prof})
     return jsonify(_entity_profile_generate())
 
 
