@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { PageShell } from './PageShell';
 import { AlertCard } from '../components/dashboard/AlertCard';
-import { CoreRow } from '../components/dashboard/CoreRow';
 import { useActionAlerts } from '../hooks/useActionAlerts';
 import { useAssets } from '../hooks/useAssets';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';

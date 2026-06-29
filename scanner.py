@@ -6158,18 +6158,17 @@ def api_argus_action_labels():
     return jsonify(get_action_labels(jp_syms, us_syms))
 
 
-# ━━━ AI Judgment Layer (OpenAI primary + Gemini double-check) — DORMANT ━━━
-# NOTE: The OpenAI/Gemini judge functions below are kept for a FUTURE version
-# (GPT-5.5 API + Gemini double-check, v8.10.x+). They are NOT wired to any
-# endpoint in this version — no OpenAI/Gemini call is made. The live AI run path
-# is replaced by the Security Gate v1 placeholder + the manual GPT-5.5 Pro
-# handoff export below.
+# ━━━ AI Judgment Layer (OpenAI primary + Gemini double-check) — LIVE ━━━
+# This path IS live: _execute_ai_judgment runs it, /api/argus/ai-judgment/run triggers it
+# (ai-rejudge.yml every 15 min during sessions + prediction-ledger.yml daily scored run),
+# gated by the API keys + the AI run gate + the daily/monthly budget hard-stop. The separate
+# GPT-5.5 Pro Handoff export further below stays manual (copy-paste, no API call).
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
 _OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.5"
-_GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-2.5-flash"
-# Free-tier quota for the pro model is tiny (observed 429 RESOURCE_EXHAUSTED on
-# 2026-06-11) — on quota errors the checker falls back to this model once so
-# the double-check DEGRADES instead of disappearing.
+# Checker tiering: the DAILY SCORED run (checker=pro) uses the Pro model; the frequent 15-min
+# re-judges (checker=flash) and the 429-quota fallback use Flash, so the double-check DEGRADES
+# instead of disappearing. Both env-overridable.
+_GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-2.5-pro"
 _GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "") or "gemini-2.5-flash"
 _ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
 
@@ -6612,6 +6611,10 @@ _OPENAI_SYSTEM = (
     "Treat `relatedNews` as CANDIDATE associations: judge whether the "
     "relationship is MATERIAL to this stock today, and if so EXPLAIN it in reasonJa (e.g. 'OpenAIのIPO遅延→保有評価に影響'); "
     "never treat a candidate as confirmed causation, and a relatedNews item alone never fires ADD/BUY DIP/EXIT/TRIM. "
+    "`marketPosture` is the rule engine's current regime read — confirm or critique it, don't just echo it. "
+    "`urgentEvents` (and each label's `eventEscalation`) are imminent scheduled events at D/D-1/D-3 escalation: "
+    "when a material one is imminent, bias `modelPosture` toward EVENT_WAIT and say so in `marketRiskJa` "
+    "(avoid new-entry conviction right before the event). "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 

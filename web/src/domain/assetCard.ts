@@ -187,8 +187,8 @@ export interface GroupInputs {
   cryptoQuotes?: Record<string, { price?: number | null; changePct?: number | null }>;   // symbol(upper) -> quote
 }
 export interface AssetCardGroups {
-  jpWatch: AssetCardModel[]; jpEmerging: AssetCardModel[];
-  usWatch: AssetCardModel[]; usEmerging: AssetCardModel[];
+  jpWatch: AssetCardModel[];
+  usWatch: AssetCardModel[];
   crypto: AssetCardModel[];
 }
 
@@ -200,7 +200,6 @@ export function groupAssetCards(inp: GroupInputs): AssetCardGroups {
   const evBy = new Map<string, EventLike[]>();
   for (const e of inp.events) { const k = up(e.symbol); (evBy.get(k) ?? evBy.set(k, []).get(k)!).push(e); }
 
-  const watched = new Set(inp.assets.map((a) => up(a.symbol)));
   const mk = (a: AssetLike) => buildAssetCard(a, {
     label: labelBy.get(up(a.symbol)), incident: incBy.get(up(a.symbol)) ?? null,
     events: evBy.get(up(a.symbol)) ?? [], linked: inp.linked[up(a.symbol)] ?? [], aiFreshness: inp.aiFreshness,
@@ -211,25 +210,9 @@ export function groupAssetCards(inp: GroupInputs): AssetCardGroups {
   const usWatch = sortWatchlistCards(inp.assets.filter((a) => a.market === 'US').map(mk));
   const crypto = sortWatchlistCards(inp.assets.filter((a) => a.market === 'CRYPTO').map(mk));
 
-  // EMERGING = symbols with live activity (24/7 events) that the owner does NOT track.
-  const emerge = (market: 'JP' | 'US') => sortEmergingCards(
-    [...evBy.keys()]
-      .filter((sym) => !watched.has(sym) && (evBy.get(sym) ?? []).some((e) => e.market === market))
-      .map((sym) => {
-        const evs = evBy.get(sym) ?? [];
-        const nm = evs.find((e) => e.nameJa)?.nameJa ?? undefined;
-        return buildAssetCard({ id: `${market.toLowerCase()}-emg-${sym}`, symbol: sym, displayName: sym, displayNameJa: nm ?? undefined, market },
-          { label: labelBy.get(sym), incident: incBy.get(sym) ?? null, events: evs, linked: inp.linked[sym] ?? [], aiFreshness: inp.aiFreshness });
-      }));
-
-  return { jpWatch, jpEmerging: emerge('JP'), usWatch, usEmerging: emerge('US'), crypto };
-}
-
-// ── EMERGING sort (spec): 1 Critical/High, 2 (liquidity proxy: flow present),
-//    3 new events, 4 volume/turnover accel, 5 |move|. Simplified to available data. ──
-export function sortEmergingCards(cards: AssetCardModel[]): AssetCardModel[] {
-  return cards.slice().sort((a, b) =>
-    (b.severityRank - a.severityRank) || (Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0)));
+  // EMERGING (surge discovery) was retired in v10.180 — the discovery corner is now
+  // RECOMMEND (signal-driven buy candidates), so emerging cards are no longer computed.
+  return { jpWatch, usWatch, crypto };
 }
 
 // ── JAPAN WATCHLIST sort (spec): 1 held/protected, 2 REVIEW/DEFEND/EXIT,
