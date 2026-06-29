@@ -227,11 +227,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
       <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" />
 
-      {/* 本日の注目候補 — high-bar AI-screened buy candidates (watchlist外), above the raw
-          surge feed which is now clearly secondary ("急浮上 · 参考"). */}
+      {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
+          The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not
+          "what spiked". Watchlist-外の発掘。 */}
       <BuyCandidates />
-      <AssetCategorySection title="JAPAN · 急浮上(参考)" sub="ノーマークの上昇・要確認" cards={cardGroups.jpEmerging} emptyJa="急浮上中の日本株はありません" />
-      <AssetCategorySection title="US · 急浮上(参考)" sub="ノーマークの上昇・要確認" cards={cardGroups.usEmerging} emptyJa="急浮上中の米国株はありません" />
       <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" />
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}

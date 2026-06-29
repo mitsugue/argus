@@ -4897,11 +4897,13 @@ _BUY_CANDIDATES = {"items": [], "asOf": None}
 _BUY_CANDIDATES_FILE = "/tmp/argus_buy_candidates.json"
 
 _BUY_CANDIDATE_SYSTEM = (
-    "You screen TODAY's market movers for an individual investor and flag ONLY those with a genuine "
-    "constructive setup worth WATCHING as a buy candidate — never a pure momentum / blow-off spike. "
-    "This is DECISION-SUPPORT, NOT investment advice and NOT a guarantee. Be STRICT: most days only a "
-    "few or ZERO qualify; omit weak ones entirely. Prefer names with an identifiable catalyst/theme "
-    "driver (given as driverJa) over unexplained spikes. Return STRICT JSON: {\"candidates\": "
+    "You screen TODAY's market movers for an individual investor and flag ONLY names where NOW looks "
+    "like a genuinely GOOD ENTRY to BUY — a constructive, still-actionable setup (not a pure momentum / "
+    "blow-off / already-extended spike you'd be chasing). This is DECISION-SUPPORT, NOT investment "
+    "advice and NOT a guarantee. Be STRICT: most days only a few or ZERO qualify; omit weak ones "
+    "entirely. Prefer names with an identifiable catalyst/theme driver (given as driverJa) and where "
+    "the risk/reward of entering today is favorable. conviction = how strong a BUY-NOW this is (0..1). "
+    "Return STRICT JSON: {\"candidates\": "
     "[{\"symbol\": str, \"market\": str, \"thesisJa\": str (why constructive — read the driver), "
     "\"entryJa\": str (what to CONFIRM before buying: 押し目/出来高/地合い等), \"riskJa\": str (what "
     "kills the thesis), \"conviction\": number 0..1}]}. Use ONLY the given symbols; never invent one."
