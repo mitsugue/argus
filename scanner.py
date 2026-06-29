@@ -4832,7 +4832,7 @@ def _entity_profile_generate(symbols=None):
     made = 0
     for sym in syms:
         prev = _ENTITY_PROFILES.get(sym)
-        if prev and prev.get("source") == "seed":
+        if prev and prev.get("source") in ("seed", "owner"):   # never overwrite hand seeds or owner edits
             continue
         if prev and (now - prev.get("ts", 0) < _ENTITY_PROFILE_TTL):
             continue
@@ -4858,11 +4858,11 @@ def _entity_profile_generate(symbols=None):
 
 
 def _entity_profile_persist():
-    try:
-        ai_only = {k: v for k, v in _ENTITY_PROFILES.items() if v.get("source") == "ai"}
+    try:                                             # persist AI-generated + OWNER edits (survive restart)
+        keep = {k: v for k, v in _ENTITY_PROFILES.items() if v.get("source") in ("ai", "owner")}
         tmp = f"{_ENTITY_PROFILES_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
-            json.dump({"profiles": ai_only, "asOf": _ENTITY_PROFILES_META.get("asOf")}, f, ensure_ascii=False, default=str)
+            json.dump({"profiles": keep, "asOf": _ENTITY_PROFILES_META.get("asOf")}, f, ensure_ascii=False, default=str)
         os.replace(tmp, _ENTITY_PROFILES_FILE)
     except Exception:
         pass
@@ -4877,11 +4877,11 @@ def _entity_profile_restore():
                 _ENTITY_PROFILES[k] = dict(v, symbol=k, source="seed")
     except Exception:
         pass
-    try:                                             # AI-generated persisted (never overrides a seed)
+    try:                                             # persisted: OWNER edits override anything; AI only non-seed
         with open(_ENTITY_PROFILES_FILE) as f:
             blob = json.load(f)
         for k, v in (blob.get("profiles") or {}).items():
-            if _ENTITY_PROFILES.get(k, {}).get("source") != "seed":
+            if v.get("source") == "owner" or _ENTITY_PROFILES.get(k, {}).get("source") != "seed":
                 _ENTITY_PROFILES[k] = v
         _ENTITY_PROFILES_META["asOf"] = blob.get("asOf")
     except Exception:
@@ -7153,6 +7153,41 @@ def api_argus_entity_profiles_generate():
     if not ok:
         return jsonify(err), code
     return jsonify(_entity_profile_generate())
+
+
+@app.route("/api/argus/entity-profiles/edit", methods=["POST"])
+def api_argus_entity_profiles_edit():
+    """Owner-edited profile override (source='owner') — persists, TAKES PRECEDENCE over the
+    seed/AI, and is never overwritten by the AI generator. Gated by the owner-sync (or admin)
+    token (header or body). Lets the owner customize the association metadata from the UI."""
+    body = request.get_json(silent=True) or {}
+    ok, err, code = _require_owner_sync(body_token=body.get("ownerToken"))
+    if not ok:
+        return jsonify(err), code
+    sym = str(body.get("symbol") or "").strip().upper()
+    if not sym:
+        return jsonify({"error": "symbol_required"}), 400
+    prev = _ENTITY_PROFILES.get(sym, {})
+
+    def clip(v, n):
+        return str(v if v is not None else "")[:n]
+
+    prof = {
+        "symbol": sym, "name": clip(body.get("name") or prev.get("name") or sym, 60),
+        "businessJa": clip(body.get("businessJa"), 400), "sector": clip(body.get("sector"), 80),
+        "themes": [clip(t, 40) for t in (body.get("themes") or []) if str(t).strip()][:12],
+        "relatedEntities": [{"name": clip(e.get("name"), 80), "relationJa": clip(e.get("relationJa"), 160),
+                             "type": clip(e.get("type"), 30)}
+                            for e in (body.get("relatedEntities") or [])
+                            if isinstance(e, dict) and str(e.get("name") or "").strip()][:14],
+        "peers": [clip(p, 30) for p in (body.get("peers") or []) if str(p).strip()][:10],
+        "keywords": [clip(k, 40) for k in (body.get("keywords") or []) if str(k).strip()][:30],
+        "source": "owner", "ts": time.time(), "editedAt": _ai_now_iso(),
+    }
+    _ENTITY_PROFILES[sym] = prof
+    _ENTITY_PROFILES_META["asOf"] = _ai_now_iso()
+    _entity_profile_persist()
+    return jsonify({"ok": True, "symbol": sym, "profile": prof})
 
 
 @app.route("/api/argus/buy-candidates")

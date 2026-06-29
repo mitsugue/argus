@@ -1,0 +1,35 @@
+/* C.A.O.S. profile editor (v10.179) — page-2 owner customization of association metadata. */
+.epe { margin: 12px 0; border: 1px solid var(--line, rgba(255,255,255,.08)); border-radius: 12px;
+  background: var(--surface, #111a24); overflow: hidden; }
+.epe-head { width: 100%; display: flex; align-items: baseline; gap: 10px; padding: 11px 14px;
+  background: none; border: none; cursor: pointer; text-align: left; color: inherit; }
+.epe-title { font-size: 12px; font-weight: 800; letter-spacing: .06em; color: var(--text-main); }
+.epe-sub { font-size: 10px; color: var(--text-muted); }
+.epe-toggle { margin-left: auto; font-size: 11px; color: var(--text-sub); }
+.epe-body { padding: 0 14px 14px; }
+.epe-note { font-size: 11px; line-height: 1.6; color: var(--text-muted); margin: 0 0 8px; }
+.epe-token { width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 7px 9px; font-size: 12px;
+  background: var(--surface-soft, #162231); border: 1px solid var(--line); border-radius: 8px; color: var(--text-main); }
+
+.epe-row { padding: 8px 0; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06)); }
+.epe-row-head { display: flex; align-items: baseline; gap: 8px; }
+.epe-sym { font-size: 13px; font-weight: 800; color: var(--text-main); }
+.epe-name { font-size: 11px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.epe-src { font-size: 9px; font-weight: 700; padding: 0 5px; border: 1px solid currentColor; border-radius: 5px; opacity: .85; }
+.epe-src--owner { color: var(--cyan, #22d3ee); }
+.epe-src--ai { color: var(--value-positive, #34d399); }
+.epe-src--seed { color: var(--text-sub); }
+.epe-src--none { color: var(--text-muted); opacity: .6; }
+.epe-edit { margin-left: auto; font-size: 11px; padding: 3px 10px; border: 1px solid var(--line-strong, rgba(255,255,255,.14));
+  border-radius: 7px; background: var(--surface-soft, #162231); color: var(--text-sub); cursor: pointer; }
+.epe-biz { font-size: 12px; line-height: 1.55; color: var(--text-sub); margin: 4px 0 0; }
+.epe-kw { font-size: 10.5px; line-height: 1.5; color: var(--text-muted); margin: 3px 0 0; overflow-wrap: anywhere; }
+
+.epe-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.epe-form label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: var(--text-muted); }
+.epe-form textarea { font: inherit; font-size: 12px; line-height: 1.5; color: var(--text-main); resize: vertical;
+  background: var(--surface-soft, #162231); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+.epe-actions { display: flex; align-items: center; gap: 10px; }
+.epe-save { font-size: 12px; font-weight: 700; padding: 6px 16px; border-radius: 8px; cursor: pointer;
+  background: var(--value-positive, #34d399); color: #06231a; border: none; }
+.epe-status { font-size: 11px; color: var(--text-sub); }

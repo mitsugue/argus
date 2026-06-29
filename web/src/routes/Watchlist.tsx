@@ -4,6 +4,7 @@ import { AIReview } from '../components/dashboard/AIReview';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { AssetStrategySection } from '../components/dashboard/AssetStrategySection';
 import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
+import { EntityProfileEditor } from '../components/dashboard/EntityProfileEditor';
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
 import { useAssets } from '../hooks/useAssets';
@@ -61,6 +62,8 @@ export const Watchlist: React.FC = () => {
         onRemove={(id) => { setExpandedId((cur) => (cur === id ? null : cur)); remove(id); }}
         onUpdateHolding={updateHolding}
       />
+
+      <EntityProfileEditor />
 
       <TradeJournalCard assets={assets} />
 
