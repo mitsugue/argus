@@ -4702,17 +4702,169 @@ def _parse_news_sitemap(xml_text, source_id, now_iso, language="en", limit=60):
     return out
 
 
+# ── §x Entity profiles (v10.173) — the ASSOCIATION engine ────────────────────
+# Per-stock business + relationship metadata so a headline that names a RELATED entity
+# (an investee / holding / supplier / customer / peer / commodity) — not the stock itself —
+# still links to it ("OpenAI IPO delayed" → 9984; a big LNG plant order → 6330). The link
+# is a CANDIDATE only: it is handed to the AI WITH the relationship explained, and the AI
+# judges materiality — it never auto-fires a signal (same precision model as corroboration).
+_ENTITY_PROFILES = {}                 # symbol -> profile
+_ENTITY_PROFILES_META = {"asOf": None}
+_ENTITY_PROFILES_FILE = "/tmp/argus_entity_profiles.json"          # AI-generated (runtime)
+_ENTITY_PROFILE_SEED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "entity_profiles_seed.json")  # committed web-verified seed
+_ENTITY_PROFILE_TTL = 7 * 24 * 3600   # AI-generated profiles refresh weekly
+
+# Hand-seeded flagship anchors (guaranteed-correct; the AI generator fills/refreshes the
+# rest of the watchlist, and never overwrites a seed). 9984 + 6330 are the owner's examples.
+_ENTITY_PROFILE_SEED = {
+    "9984": {"businessJa": "投資持株会社。Vision Fund等を通じAI/テック企業に大型投資し、半導体IPのArmを連結子会社に持つ。",
+             "sector": "tech-investment", "themes": ["ai_compute", "semis", "ipo", "tech-valuations"],
+             "relatedEntities": [
+                 {"name": "OpenAI", "relationJa": "大型出資先。IPO・評価額の変化がSBGの保有評価損益に直結", "type": "investee"},
+                 {"name": "Arm", "relationJa": "連結子会社(半導体IP)。Arm株価・業績がSBGに反映", "type": "subsidiary"},
+                 {"name": "Nvidia", "relationJa": "AI半導体の象徴。AI投資テーマの地合いに連動", "type": "theme"},
+                 {"name": "TSMC", "relationJa": "Armエコシステム・半導体製造の代理", "type": "theme"},
+                 {"name": "Alibaba", "relationJa": "歴史的な大量保有先", "type": "holding"}],
+             "peers": [],
+             "keywords": ["softbank", "ソフトバンク", "9984", "openai", "オープンai", "chatgpt", "arm",
+                          "アーム", "vision fund", "ビジョンファンド", "alibaba", "アリババ", "孫正義", "masayoshi son"]},
+    "6330": {"businessJa": "総合エンジニアリング会社。石油・ガス・LNG・アンモニア・肥料などのプラントを設計・建設(EPC)。",
+             "sector": "plant-epc", "themes": ["energy-capex", "lng", "ammonia", "oil_gas", "脱炭素"],
+             "relatedEntities": [
+                 {"name": "LNG", "relationJa": "主要案件領域。LNG設備投資・大型受注が業績に直結", "type": "commodity"},
+                 {"name": "アンモニア", "relationJa": "脱炭素燃料プラントの需要テーマ", "type": "theme"},
+                 {"name": "日揮", "relationJa": "同業大手(JGC)。プラント受注環境の連想", "type": "peer"},
+                 {"name": "千代田化工", "relationJa": "同業。プラントEPC市況の連想", "type": "peer"}],
+             "peers": ["1963", "6366"],
+             "keywords": ["東洋エンジニアリング", "6330", "toyo engineering", "プラント", "epc", "lng",
+                          "アンモニア", "肥料", "脱炭素", "日揮", "jgc", "千代田化工", "プラント受注"]},
+}
+
+
+def _kw_match(k, t):
+    """Boundary-aware keyword match. ASCII terms (>=3 chars) need a word boundary so 'arm'
+    doesn't hit 'alarm' and 'meta' doesn't hit 'metal'; JP/mixed terms (>=2) use substring."""
+    k = (k or "").lower().strip()
+    if not k:
+        return False
+    if re.fullmatch(r"[a-z0-9 .&'-]+", k):
+        return len(k) >= 3 and re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", t) is not None
+    return len(k) >= 2 and k in t
+
+
+def _entity_alias_match(name, t):
+    """A relatedEntity name may pack aliases ("Berkshire Hathaway / バークシャー / バフェット") —
+    match ANY '/'-separated alias (but not '・', which is part of a single JP name)."""
+    return any(_kw_match(part.strip(), t) for part in re.split(r"[/／]", name or ""))
+
+
+def _entity_link(title):
+    """[{symbol, via, term, relationJa}] for watchlist stocks whose profile keywords appear
+    in the title. via='entity' (a related entity → carries relationJa) or 'name' (own name)."""
+    t = (title or "").lower()
+    out = []
+    for sym, prof in _ENTITY_PROFILES.items():
+        if not any(_kw_match(kw, t) for kw in (prof.get("keywords") or [])):
+            continue
+        rel = next((e for e in (prof.get("relatedEntities") or []) if _entity_alias_match(e.get("name"), t)), None)
+        if rel:
+            out.append({"symbol": sym, "via": "entity", "term": rel.get("name"), "relationJa": rel.get("relationJa")})
+        else:
+            out.append({"symbol": sym, "via": "name", "term": sym, "relationJa": None})
+    return out
+
+
+_ENTITY_PROFILE_SYSTEM = (
+    "You build a compact profile for an investing ASSOCIATION engine: given a stock, list the "
+    "EXTERNAL entities whose news would plausibly move it. HONESTY: only real, well-established, "
+    "MATERIAL relationships — never invent. Return STRICT JSON: {\"businessJa\": str (1-2 JP "
+    "sentences), \"sector\": str, \"themes\": [str], \"relatedEntities\": [{\"name\": str, "
+    "\"relationJa\": str (why its news moves the stock), \"type\": str}], \"peers\": [str], "
+    "\"keywords\": [str] (JP+EN headline-scan terms: name aliases + relatedEntity names + theme "
+    "terms; tight, NOT over-broad common words)}."
+)
+
+
+def _entity_profile_generate(symbols=None):
+    """Admin/cron — AI-generate missing/stale watchlist profiles (skips hand seeds & fresh ones)."""
+    wl = {x["symbol"]: x["name"] for x in (_JP_WATCHLIST + _US_WATCHLIST)}
+    syms = symbols or list(wl.keys())
+    now = time.time()
+    made = 0
+    for sym in syms:
+        prev = _ENTITY_PROFILES.get(sym)
+        if prev and prev.get("source") == "seed":
+            continue
+        if prev and (now - prev.get("ts", 0) < _ENTITY_PROFILE_TTL):
+            continue
+        pr = _openai_prose(f"銘柄: {sym} {wl.get(sym, sym)}({'日本株' if sym in {x['symbol'] for x in _JP_WATCHLIST} else '米国株'})。"
+                           "この銘柄の連想プロフィールをJSONで返せ。", max_out=700, system=_ENTITY_PROFILE_SYSTEM)
+        if not pr or not pr.get("businessJa"):
+            continue
+        _ENTITY_PROFILES[sym] = {
+            "symbol": sym, "name": wl.get(sym, sym),
+            "businessJa": str(pr.get("businessJa") or "")[:300], "sector": str(pr.get("sector") or "")[:60],
+            "themes": [str(t)[:40] for t in (pr.get("themes") or [])][:8],
+            "relatedEntities": [{"name": str(e.get("name") or "")[:60], "relationJa": str(e.get("relationJa") or "")[:140],
+                                 "type": str(e.get("type") or "")[:30]}
+                                for e in (pr.get("relatedEntities") or []) if e.get("name")][:8],
+            "peers": [str(p)[:20] for p in (pr.get("peers") or [])][:6],
+            "keywords": [str(k)[:40] for k in (pr.get("keywords") or [])][:24],
+            "source": "ai", "ts": now, "generatedAt": _ai_now_iso(),
+        }
+        made += 1
+    _ENTITY_PROFILES_META["asOf"] = _ai_now_iso()
+    _entity_profile_persist()
+    return {"generated": made, "total": len(_ENTITY_PROFILES)}
+
+
+def _entity_profile_persist():
+    try:
+        ai_only = {k: v for k, v in _ENTITY_PROFILES.items() if v.get("source") == "ai"}
+        tmp = f"{_ENTITY_PROFILES_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump({"profiles": ai_only, "asOf": _ENTITY_PROFILES_META.get("asOf")}, f, ensure_ascii=False, default=str)
+        os.replace(tmp, _ENTITY_PROFILES_FILE)
+    except Exception:
+        pass
+
+
+def _entity_profile_restore():
+    for k, v in _ENTITY_PROFILE_SEED.items():        # hand-seed fallback (always)
+        _ENTITY_PROFILES[k] = dict(v, symbol=k, source="seed")
+    try:                                             # committed web-verified seed (authoritative)
+        with open(_ENTITY_PROFILE_SEED_FILE) as f:
+            for k, v in (json.load(f).get("profiles") or {}).items():
+                _ENTITY_PROFILES[k] = dict(v, symbol=k, source="seed")
+    except Exception:
+        pass
+    try:                                             # AI-generated persisted (never overrides a seed)
+        with open(_ENTITY_PROFILES_FILE) as f:
+            blob = json.load(f)
+        for k, v in (blob.get("profiles") or {}).items():
+            if _ENTITY_PROFILES.get(k, {}).get("source") != "seed":
+                _ENTITY_PROFILES[k] = v
+        _ENTITY_PROFILES_META["asOf"] = blob.get("asOf")
+    except Exception:
+        pass
+
+
 def _intel_link_assets(title):
-    """Tag an item with owner symbols/themes mentioned in the public title."""
-    t = title.lower()
+    """Tag an item with watchlist symbols linked to the public title — by direct name/ticker
+    AND (v10.173) by entity-profile RELATIONSHIP (a headline naming a related entity)."""
+    t = (title or "").lower()
     assets = []
     for s in ({x["symbol"] for x in _JP_WATCHLIST} | {x["symbol"] for x in _US_WATCHLIST}):
-        if s.lower() in t:
+        if _kw_match(s, t) and s.upper() not in assets:
             assets.append(s.upper())
     for name, sym in [("nvidia", "NVDA"), ("micron", "MU"), ("apple", "AAPL"), ("tesla", "TSLA"),
                       ("meta", "META"), ("softbank", "9984"), ("mitsubishi", "8058")]:
-        if name in t and sym not in assets:
+        if _kw_match(name, t) and sym not in assets:
             assets.append(sym)
+    for m in _entity_link(t):
+        if m["symbol"] not in assets:
+            assets.append(m["symbol"])
     return assets
 
 
@@ -6159,6 +6311,31 @@ def _build_ai_snapshot():
                     x[k] = e[k]
     except Exception:
         pass
+    # (e) ASSOCIATION (v10.173): attach each stock's business profile + any news linked to it
+    # via a RELATED entity (not its own name) — candidate associations the AI judges materiality
+    # on. This is the "antenna" that lets it reason "OpenAI IPO delay → SoftBank exposure".
+    try:
+        _mn2 = get_market_news()
+        _news2 = _mn2.get("items", []) if isinstance(_mn2, dict) and _mn2.get("status") == "live" else []
+        by_sym = {}
+        for n in _news2:
+            blob = (n.get("headline") or "") + " " + (n.get("headlineJa") or "")
+            for m in _entity_link(blob):
+                if m["via"] != "entity":
+                    continue
+                lst = by_sym.setdefault(m["symbol"], [])
+                if len(lst) < 3:
+                    lst.append({"headlineJa": (n.get("headlineJa") or n.get("headline") or "")[:120],
+                                "via": m["term"], "relationJa": m.get("relationJa"),
+                                "corroboration": n.get("corroboration") or "single"})
+        for x in labels:
+            prof = _ENTITY_PROFILES.get(x["symbol"])
+            if prof and prof.get("businessJa"):
+                x["profileJa"] = prof["businessJa"]
+            if by_sym.get(x["symbol"]):
+                x["relatedNews"] = by_sym[x["symbol"]]
+    except Exception:
+        pass
     # CLOSE-THE-LOOP (v10.153): give the AI judges (a) the self-scoring ledger as a
     # "textbook" so they calibrate against ARGUS's own past accuracy, and (b) the
     # C.A.O.S. institutional signals so the decision reflects fresh institutional
@@ -6236,6 +6413,11 @@ _OPENAI_SYSTEM = (
     "News ALONE never triggers ADD/BUY DIP/EXIT/TRIM. "
     "Each label may carry `rsi14`/`trend` (chart technicals) and `marginJa` (Japan 信用/JSF margin-balance "
     "signal) — factor them in (e.g. RSI extremes, margin short-cover fuel) but never treat them as certainty. "
+    "A label may also carry `profileJa` (what the company does) and `relatedNews` — news linked to it NOT by "
+    "its own name but via a known RELATIONSHIP (`via`=the related entity, `relationJa`=why it matters; e.g. an "
+    "investee/holding/supplier/customer/peer). Treat `relatedNews` as CANDIDATE associations: judge whether the "
+    "relationship is MATERIAL to this stock today, and if so EXPLAIN it in reasonJa (e.g. 'OpenAIのIPO遅延→保有評価に影響'); "
+    "never treat a candidate as confirmed causation, and a relatedNews item alone never fires ADD/BUY DIP/EXIT/TRIM. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 
@@ -6654,22 +6836,23 @@ _CAOS_EVENT_SYSTEM = (
 )
 
 
-def _openai_prose(user, max_out=600):
-    """Generic GPT prose call (STRICT JSON). Returns dict or None. Used by the C.A.O.S.
-    event analyzer; separate from the judgment path."""
+def _openai_prose(user, max_out=600, system=None):
+    """Generic GPT STRICT-JSON call. Returns a non-empty dict or None. Used by the C.A.O.S.
+    event analyzer (default system) and the entity-profile generator (system= override)."""
     if not _OPENAI_API_KEY:
         return None
+    sys_prompt = system or _CAOS_EVENT_SYSTEM
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         try:
-            resp = client.responses.create(model=_OPENAI_MODEL, instructions=_CAOS_EVENT_SYSTEM,
+            resp = client.responses.create(model=_OPENAI_MODEL, instructions=sys_prompt,
                                             input=user, timeout=60)
             text = getattr(resp, "output_text", None)
         except Exception:
             resp = client.chat.completions.create(
                 model=_OPENAI_MODEL,
-                messages=[{"role": "system", "content": _CAOS_EVENT_SYSTEM}, {"role": "user", "content": user}],
+                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
                 response_format={"type": "json_object"}, timeout=60)
             text = resp.choices[0].message.content
         try:
@@ -6677,7 +6860,7 @@ def _openai_prose(user, max_out=600):
         except Exception:
             pass
         out = safe_json(text or "")
-        return out if isinstance(out, dict) and (out.get("summaryJa") or out.get("bodyJa")) else None
+        return out if isinstance(out, dict) and out else None
     except Exception as e:
         add_log(f"[caos] event prose failed: {type(e).__name__}")
         return None
@@ -6802,7 +6985,24 @@ def api_argus_event_analysis_generate():
     return jsonify(_caos_event_generate())
 
 
-_caos_event_restore()    # reload persisted analyses at startup
+@app.route("/api/argus/entity-profiles")
+def api_argus_entity_profiles():
+    """Public (cache-only): the association-engine profiles (business + relationships)."""
+    return jsonify({"asOf": _ENTITY_PROFILES_META.get("asOf"), "count": len(_ENTITY_PROFILES),
+                    "profiles": _ENTITY_PROFILES})
+
+
+@app.route("/api/argus/entity-profiles/generate", methods=["POST"])
+def api_argus_entity_profiles_generate():
+    """Admin/cron — AI-generate missing/stale watchlist profiles (skips hand/seed + fresh)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_entity_profile_generate())
+
+
+_caos_event_restore()       # reload persisted analyses at startup
+_entity_profile_restore()   # load entity profiles (seed + persisted) at startup
 
 
 # ━━━ Security Gate v1 (protects future expensive AI runs) ━━━
