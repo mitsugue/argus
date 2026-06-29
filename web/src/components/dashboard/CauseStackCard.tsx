@@ -29,6 +29,20 @@ const NEWS_CLS_JA: Record<string, string> = {
 
 export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ symbol, market = 'JP' }) => {
   const { data } = useCauseAttribution(symbol, market);
+  const [why, setWhy] = React.useState<{ loading: boolean; text: string | null }>({ loading: false, text: null });
+
+  async function research() {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+    if (!backend) return;
+    setWhy({ loading: true, text: null });
+    try {
+      const url = `${backend.replace(/\/$/, '')}/api/argus/cause-attribution?symbol=${encodeURIComponent(symbol)}&market=${market}&explain=1`;
+      const r = await fetch(url);
+      const d = await r.json();
+      setWhy({ loading: false, text: d.explanationJa || '提供データ・検索では明確な原因は見つかりませんでした(要確認)。' });
+    } catch { setWhy({ loading: false, text: '取得に失敗しました。' }); }
+  }
+
   if (!data) return null;
   const causes = Object.entries(data.causeProbabilities || {}).sort((a, b) => b[1] - a[1]).slice(0, 4);
   const posTop = Object.entries(data.positioning?.probabilities || {}).sort((a, b) => b[1] - a[1])[0];
@@ -39,6 +53,14 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
         <h2>原因の詳細</h2>
         <span className="csc-sym">{data.symbol}{typeof data.changePct === 'number' ? ` ${data.changePct.toFixed(1)}%` : ''}</span>
       </header>
+
+      <div className="csc-why">
+        <button className="csc-why-btn" disabled={why.loading} onClick={research}>
+          {why.loading ? '🔎 調べています…(数十秒)' : '🔎 なぜ動いた? ライブで調べる'}
+        </button>
+        {why.text && <p className="csc-why-text">{why.text}</p>}
+        {why.text && <p className="csc-why-note">最新ニュースをC.A.O.S.の関係性で連想・推定。要確認・投資助言ではありません。</p>}
+      </div>
 
       <div className="csc-trigger">
         <span className="csc-k">確定した即時引き金</span>
@@ -79,7 +101,10 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
           {data.news.slice(0, 5).map((n, i) => (
             <div className="csc-news-row" key={i}>
               <span className={`csc-news-cls csc-news-cls--${n.cls}`}>{NEWS_CLS_JA[n.cls] ?? n.cls}</span>
-              <span className="csc-news-title">{n.titleJa}</span>
+              <span className="csc-news-title">
+                {n.titleJa}
+                {n.assoc?.relationJa && <span className="csc-news-assoc">連想: {n.assoc.relationJa}</span>}
+              </span>
               <span className="csc-news-meta">{[n.source, n.time].filter(Boolean).join(' · ')}</span>
             </div>
           ))}

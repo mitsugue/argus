@@ -48,3 +48,13 @@
 .csc-news-cls--UNCONFIRMED { color: var(--text-muted); }
 .csc-news-title { flex: 1 1 auto; min-width: 0; color: var(--text-main); }
 .csc-news-meta { flex: none; font-size: 11px; color: var(--text-muted); }
+
+/* なぜ動いた? live research button + association relationship (v10.183) */
+.csc-why { margin: 8px 0 10px; }
+.csc-why-btn { font-size: 12px; font-weight: 700; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+  background: rgba(96,165,250,.12); color: var(--blue, #60a5fa); border: 1px solid var(--blue, #60a5fa); }
+.csc-why-btn:disabled { opacity: .6; cursor: default; }
+.csc-why-text { font-size: 12.5px; line-height: 1.7; color: var(--text-main); margin: 8px 0 0;
+  background: var(--surface-soft, #162231); border-radius: 8px; padding: 9px 11px; white-space: pre-wrap; }
+.csc-why-note { font-size: 10px; color: var(--text-muted); margin: 4px 0 0; line-height: 1.5; }
+.csc-news-assoc { display: block; font-size: 10.5px; color: var(--cyan, #22d3ee); margin-top: 2px; }

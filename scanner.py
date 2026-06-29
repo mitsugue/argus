@@ -8531,13 +8531,63 @@ def api_argus_downside_incidents():
 # integrity (no future-earnings-as-cause, no stale-report-as-trigger, no named
 # whale without a filing, short-volume ≠ short-interest). Reuses watchlists,
 # catalysts, TDnet, flow, and the contagion theme groups. Decision-support only.
-def get_cause_attribution(symbol, market="JP"):
+def _openai_research(user):
+    """GPT with LIVE web search (Responses API web_search tool) → plain-text answer. This is
+    what makes the なぜ動いた? button research today's cause (no new key — uses OPENAI_API_KEY).
+    Falls back through tool-name variants, then a no-tool call, then None. Bills usage."""
+    if not _OPENAI_API_KEY:
+        return None
+    try:
+        import openai
+    except Exception:
+        return None
+    client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+    sysmsg = ("あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
+              "出所のない断定はせず、不明なら正直に不明と言う。投資助言・利益保証はしない。")
+    for tools in ([{"type": "web_search"}], [{"type": "web_search_preview"}], None):
+        try:
+            kw = {"model": _OPENAI_MODEL, "instructions": sysmsg, "input": user, "timeout": 90}
+            if tools:
+                kw["tools"] = tools
+            resp = client.responses.create(**kw)
+            txt = getattr(resp, "output_text", None)
+            if txt:
+                try:
+                    _ai_record_cost(_ai_now_iso(), "live", "unavailable", False)
+                except Exception:
+                    pass
+                return txt
+        except Exception:
+            continue
+    return None
+
+
+def _cause_explain(sym, name, market, chg):
+    """Live 'why did it move' — uses the entity profile to connect INDIRECT causes
+    (OpenAI→9984, 南鳥島レアアース→6330) and web-searches today's news. Returns text or None."""
+    prof = _ENTITY_PROFILES.get(str(sym).upper(), {})
+    rels = "; ".join(f"{e.get('name')}({e.get('relationJa')})"
+                     for e in (prof.get("relatedEntities") or [])[:6] if e.get("name"))
+    pct = f"{chg:+.1f}%" if isinstance(chg, (int, float)) else "大きく"
+    user = (f"{name or sym}({sym}・{'日本株' if str(market).upper() == 'JP' else '米国株'})が本日{pct}動いた理由を、"
+            "最新ニュースを調べて日本語3〜4文で簡潔に説明して。\n"
+            f"この銘柄の事業: {prof.get('businessJa') or '(不明)'}\n"
+            f"間接的に効く関係先(ニュースが連想で効く): {rels or '(未登録)'}\n"
+            "社名が直接出ないニュースでも、上の関係性から連想して原因を推定してよい"
+            "(例: OpenAIのIPO遅延→ソフトバンク、南鳥島レアアース政策→東洋エンジニアリング)。"
+            "確かな出所があれば示し、推測は『可能性』と明示。憶測の断定・投資助言はしない。")
+    txt = _openai_research(user)
+    return (txt or "").strip()[:700] or None
+
+
+def get_cause_attribution(symbol, market="JP", explain=False):
     symu = str(symbol).upper()
     jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot()
     by = {str(s.get("symbol", "")).upper(): s for s in
           ((jp.get("stocks") or []) + (us.get("stocks") or [])) if isinstance(s, dict)}
     row = by.get(symu) or {}
+    name = row.get("nameJa") or row.get("name") or symu
     chg = row.get("changePct")
     flow = (row.get("flow") or {}).get("bigNetRatio")
 
@@ -8633,7 +8683,36 @@ def get_cause_attribution(symbol, market="JP"):
     stack["changePct"] = chg
     stack["asOf"] = _ai_now_iso()
     stack["positioningSources"] = argus_attribution.POSITIONING_SOURCES
+    # association-engine links (v10.183): news naming a RELATED entity/theme, not the stock's
+    # own name (OpenAI→9984, 南鳥島レアアース→6330) — surfaced in the cause stack when present.
+    try:
+        pool = []
+        _mn = get_market_news()
+        if isinstance(_mn, dict) and _mn.get("status") == "live":
+            for n in _mn.get("items", []):
+                if n.get("relevant"):
+                    pool.append((n.get("headline"), n.get("headlineJa"), n.get("source"), n.get("corroboration")))
+        for it in list(_INTEL_STORE)[:80]:
+            pool.append((it.get("title"), it.get("titleJa"), it.get("sourceId"), None))
+        seen_a = set()
+        for hl, hlja, src, corr in pool:
+            m = next((x for x in _entity_link((hl or "") + " " + (hlja or ""))
+                      if x["symbol"] == symu and x["via"] in ("entity", "theme")), None)
+            title = (hlja or hl or "")[:120]
+            if not m or not title or title in seen_a:
+                continue
+            seen_a.add(title)
+            news.append({"time": None, "titleJa": title, "source": src or "C.A.O.S.", "cls": "LIKELY_RELATED",
+                         "assoc": {"via": m["via"], "term": m.get("term"),
+                                   "relationJa": m.get("relationJa") or f"関連: {m.get('term')}",
+                                   "corroboration": corr or "single"}})
+            if len(seen_a) >= 4:
+                break
+    except Exception:
+        pass
     stack["news"] = news
+    if explain:
+        stack["explanationJa"] = _cause_explain(symu, name, market, chg)
     return stack
 
 
@@ -8643,8 +8722,9 @@ def api_argus_cause_attribution():
     if not sym:
         return jsonify({"error": "symbol required"}), 400
     mkt = (request.args.get("market") or "JP").upper()
+    explain = (request.args.get("explain") or "").lower() in ("1", "true", "yes")
     try:
-        return jsonify(get_cause_attribution(sym, mkt))
+        return jsonify(get_cause_attribution(sym, mkt, explain=explain))
     except Exception as e:
         return jsonify({"error": "attribution_failed", "message": str(e)[:120]}), 200
 

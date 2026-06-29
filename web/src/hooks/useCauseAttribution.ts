@@ -26,7 +26,11 @@ export interface CauseStack {
   };
   dataLimitations: string[];
   noteJa: string;
-  news?: { time?: string | null; titleJa: string; source?: string; cls: NewsClass; sentiment?: string | null }[];
+  news?: {
+    time?: string | null; titleJa: string; source?: string; cls: NewsClass; sentiment?: string | null;
+    assoc?: { via: string; term?: string; relationJa?: string; corroboration?: string };  // association link (v10.183)
+  }[];
+  explanationJa?: string;   // live web-researched "why did it move" (v10.183, on demand)
 }
 
 export type NewsClass = 'CONFIRMED' | 'LIKELY_RELATED' | 'BACKGROUND' | 'UNCONFIRMED';
