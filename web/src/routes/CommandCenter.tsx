@@ -4,6 +4,7 @@ import { HeroCard } from '../components/dashboard/HeroCard';
 import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
 import { FxMacroSection } from '../components/dashboard/FxMacroSection';
 import { CaosHub } from '../components/dashboard/CaosHub';
+import { BuyCandidates } from '../components/dashboard/BuyCandidates';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { useEventsActive } from '../hooks/useEventsActive';
 import { useImportantEvents } from '../hooks/useImportantEvents';
@@ -224,9 +225,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <CaosHub />
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
-      <AssetCategorySection title="JAPAN · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.jpEmerging} emptyJa="急浮上中の日本株はありません" />
       <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" />
-      <AssetCategorySection title="US · EMERGING" sub="ノーマークの急浮上" cards={cardGroups.usEmerging} emptyJa="急浮上中の米国株はありません" />
+
+      {/* 本日の注目候補 — high-bar AI-screened buy candidates (watchlist外), above the raw
+          surge feed which is now clearly secondary ("急浮上 · 参考"). */}
+      <BuyCandidates />
+      <AssetCategorySection title="JAPAN · 急浮上(参考)" sub="ノーマークの上昇・要確認" cards={cardGroups.jpEmerging} emptyJa="急浮上中の日本株はありません" />
+      <AssetCategorySection title="US · 急浮上(参考)" sub="ノーマークの上昇・要確認" cards={cardGroups.usEmerging} emptyJa="急浮上中の米国株はありません" />
       <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" />
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}

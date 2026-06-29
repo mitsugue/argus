@@ -4888,6 +4888,118 @@ def _entity_profile_restore():
         pass
 
 
+# ── §y Buy candidates (v10.177) — "本日の注目候補" ───────────────────────────
+# Elevate the raw surge feed into a HIGH-BAR, AI-screened watch list of non-watchlist
+# names with a genuine constructive setup (catalyst/theme-driven via the association
+# engine, not pure momentum). Decision-support only — never advice, never auto-trade;
+# most days few or zero qualify.
+_BUY_CANDIDATES = {"items": [], "asOf": None}
+_BUY_CANDIDATES_FILE = "/tmp/argus_buy_candidates.json"
+
+_BUY_CANDIDATE_SYSTEM = (
+    "You screen TODAY's market movers for an individual investor and flag ONLY those with a genuine "
+    "constructive setup worth WATCHING as a buy candidate — never a pure momentum / blow-off spike. "
+    "This is DECISION-SUPPORT, NOT investment advice and NOT a guarantee. Be STRICT: most days only a "
+    "few or ZERO qualify; omit weak ones entirely. Prefer names with an identifiable catalyst/theme "
+    "driver (given as driverJa) over unexplained spikes. Return STRICT JSON: {\"candidates\": "
+    "[{\"symbol\": str, \"market\": str, \"thesisJa\": str (why constructive — read the driver), "
+    "\"entryJa\": str (what to CONFIRM before buying: 押し目/出来高/地合い等), \"riskJa\": str (what "
+    "kills the thesis), \"conviction\": number 0..1}]}. Use ONLY the given symbols; never invent one."
+)
+
+
+def _mover_universe(cap=14):
+    """Today's gainers beyond the watchlist (JP + US), the candidate pool to screen."""
+    wl = {s["symbol"].upper() for s in (_JP_WATCHLIST + _US_WATCHLIST)}
+    out = []
+    try:
+        for m in (_jq_market_movers().get("gainers") or [])[:10]:
+            sym = str(m.get("symbol") or "").upper()
+            if sym and sym not in wl and (m.get("changePct") or 0) > 0:
+                out.append({"symbol": sym, "name": m.get("name") or sym, "market": "JP",
+                            "changePct": m.get("changePct")})
+    except Exception:
+        pass
+    try:
+        us = sorted([r for r in (_moomoo_us_movers() or []) if (r.get("changePct") or 0) > 0],
+                    key=lambda r: -(r.get("changePct") or 0))[:10]
+        for m in us:
+            sym = str(m.get("symbol") or "").upper()
+            if sym and sym not in wl:
+                out.append({"symbol": sym, "name": m.get("name") or sym, "market": "US",
+                            "changePct": m.get("changePct")})
+    except Exception:
+        pass
+    return out[:cap]
+
+
+def _buy_candidates_generate(limit=4):
+    """Admin/cron — screen today's movers into high-conviction buy candidates (>=0.6)."""
+    uni = _mover_universe()
+    if not uni:
+        return {"generated": 0, "total": len(_BUY_CANDIDATES["items"])}
+    try:
+        news_rel = [n for n in (get_market_news().get("items") or []) if n.get("relevant")]
+    except Exception:
+        news_rel = []
+    intel = list(_INTEL_STORE)[:60]
+    rows = []
+    for m in uni:
+        lead = _caos_catalyst_for(m["symbol"], news_rel, intel)   # the driver, via association
+        rows.append({"symbol": m["symbol"], "name": m.get("name"), "market": m.get("market"),
+                     "changePct": m.get("changePct"),
+                     "driverJa": (lead.get("titleJa") if lead else None)})
+    try:
+        posture = (get_action_labels().get("marketPosture") or {}).get("label")
+    except Exception:
+        posture = None
+    pr = _openai_prose(f"地合い: {posture}\n本日の上昇銘柄(候補母集団):\n"
+                       + json.dumps(rows, ensure_ascii=False)
+                       + "\nこの中から、買い候補として注目に値するものだけを厳選して返せ(無理に出さない)。",
+                       max_out=900, system=_BUY_CANDIDATE_SYSTEM)
+    by = {r["symbol"]: r for r in rows}
+    out = []
+    for c in ((pr or {}).get("candidates") or []):
+        sym = str(c.get("symbol") or "").upper()
+        if sym not in by:                                   # never accept an invented symbol
+            continue
+        conv = c.get("conviction")
+        if not isinstance(conv, (int, float)) or conv < 0.6:
+            continue
+        src = by[sym]
+        out.append({"symbol": sym, "name": src.get("name") or sym,
+                    "market": c.get("market") or src.get("market"), "changePct": src.get("changePct"),
+                    "thesisJa": str(c.get("thesisJa") or "")[:240], "entryJa": str(c.get("entryJa") or "")[:160],
+                    "riskJa": str(c.get("riskJa") or "")[:160], "conviction": round(float(conv), 2),
+                    "driverJa": src.get("driverJa")})
+    out.sort(key=lambda x: -x["conviction"])
+    _BUY_CANDIDATES["items"] = out[:limit]
+    _BUY_CANDIDATES["asOf"] = _ai_now_iso()
+    _buy_candidates_persist()
+    return {"generated": len(out[:limit]), "total": len(out)}
+
+
+def _buy_candidates_persist():
+    try:
+        tmp = f"{_BUY_CANDIDATES_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(_BUY_CANDIDATES, f, ensure_ascii=False, default=str)
+        os.replace(tmp, _BUY_CANDIDATES_FILE)
+    except Exception:
+        pass
+
+
+def _buy_candidates_restore():
+    try:
+        with open(_BUY_CANDIDATES_FILE) as f:
+            blob = json.load(f)
+        if isinstance(blob, dict) and isinstance(blob.get("items"), list):
+            _BUY_CANDIDATES["items"] = blob["items"]
+            _BUY_CANDIDATES["asOf"] = blob.get("asOf")
+    except Exception:
+        pass
+
+
 def _intel_link_assets(title):
     """Tag an item with watchlist symbols linked to the public title — by direct name/ticker
     AND (v10.173) by entity-profile RELATIONSHIP (a headline naming a related entity)."""
@@ -7043,8 +7155,24 @@ def api_argus_entity_profiles_generate():
     return jsonify(_entity_profile_generate())
 
 
+@app.route("/api/argus/buy-candidates")
+def api_argus_buy_candidates():
+    """Public (cache-only): high-bar screened buy candidates (本日の注目候補)."""
+    return jsonify({"asOf": _BUY_CANDIDATES.get("asOf"), "items": _BUY_CANDIDATES.get("items", [])})
+
+
+@app.route("/api/argus/buy-candidates/generate", methods=["POST"])
+def api_argus_buy_candidates_generate():
+    """Admin/cron — screen today's movers into high-conviction buy candidates."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_buy_candidates_generate())
+
+
 _caos_event_restore()       # reload persisted analyses at startup
 _entity_profile_restore()   # load entity profiles (seed + persisted) at startup
+_buy_candidates_restore()   # load persisted buy candidates at startup
 
 
 # ━━━ Security Gate v1 (protects future expensive AI runs) ━━━

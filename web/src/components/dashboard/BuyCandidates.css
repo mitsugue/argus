@@ -1,0 +1,24 @@
+/* 本日の注目候補 (v10.177) — high-bar buy-candidate corner. Matches top-page card type. */
+.buyc { margin: 10px 0; padding: 12px 14px; border-radius: 12px;
+  background: var(--surface-1, rgba(52,211,153,.05)); border: 1px solid rgba(52,211,153,.28); }
+.buyc-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.buyc-title { font-size: 12px; font-weight: 800; letter-spacing: .06em; color: var(--value-positive, #34d399); }
+.buyc-sub { font-size: 10px; color: var(--text-muted); }
+.buyc-empty { font-size: 12px; color: var(--text-muted); margin: 6px 0 2px; line-height: 1.6; }
+
+.buyc-row { padding: 8px 0; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.07)); }
+.buyc-row:first-of-type { border-top: none; }
+.buyc-l1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.buyc-sym { font-size: 13px; font-weight: 800; color: var(--text-main); }
+.buyc-name { font-size: 11px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.buyc-chg { font-size: 11px; font-variant-numeric: tabular-nums; }
+.buyc-chg--up { color: var(--value-positive, #34d399); }
+.buyc-chg--dn { color: var(--value-negative, #f87171); }
+.buyc-conv { margin-left: auto; font-size: 10px; font-weight: 700; color: var(--value-positive, #34d399);
+  border: 1px solid currentColor; border-radius: 5px; padding: 0 5px; opacity: .9; }
+.buyc-thesis { font-size: 12.5px; line-height: 1.6; color: var(--text-sub); margin: 3px 0 0; }
+.buyc-line { display: flex; gap: 8px; align-items: baseline; margin-top: 3px; }
+.buyc-h { flex: none; min-width: 78px; font-size: 10px; font-weight: 800; letter-spacing: .04em; color: var(--text-muted); }
+.buyc-h--risk { color: var(--amber, #fbbf24); }
+.buyc-t { font-size: 12px; line-height: 1.55; color: var(--text-sub); }
+.buyc-foot { font-size: 10px; color: var(--text-muted); margin: 9px 0 0; line-height: 1.5; }
