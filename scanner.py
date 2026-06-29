@@ -4753,10 +4753,20 @@ def _kw_match(k, t):
     return len(k) >= 2 and k in t
 
 
+def _kw_hit(kw, t):
+    """Match a keyword that may be MULTI-WORD. Japanese has no spaces, so a space-joined
+    term like '南鳥島 レアアース' can never substring-match '南鳥島沖のレアアース' — instead
+    require ALL parts to appear (AND), which catches the relationship without the join."""
+    parts = (kw or "").split()
+    if len(parts) <= 1:
+        return _kw_match(kw, t)
+    return all(_kw_match(p, t) for p in parts)
+
+
 def _entity_alias_match(name, t):
     """A relatedEntity name may pack aliases ("Berkshire Hathaway / バークシャー / バフェット") —
     match ANY '/'-separated alias (but not '・', which is part of a single JP name)."""
-    return any(_kw_match(part.strip(), t) for part in re.split(r"[/／]", name or ""))
+    return any(_kw_hit(part.strip(), t) for part in re.split(r"[/／]", name or ""))
 
 
 def _entity_link(title):
@@ -4765,13 +4775,18 @@ def _entity_link(title):
     t = (title or "").lower()
     out = []
     for sym, prof in _ENTITY_PROFILES.items():
-        if not any(_kw_match(kw, t) for kw in (prof.get("keywords") or [])):
+        matched = next((kw for kw in (prof.get("keywords") or []) if _kw_hit(kw, t)), None)
+        if not matched:
             continue
         rel = next((e for e in (prof.get("relatedEntities") or []) if _entity_alias_match(e.get("name"), t)), None)
-        if rel:
+        nm = (prof.get("name") or "").lower()
+        own = _kw_hit(sym, t) or sym.lower() in (matched or "").lower() or (matched or "").lower() in nm
+        if rel:                                   # a known related entity → carries the why
             out.append({"symbol": sym, "via": "entity", "term": rel.get("name"), "relationJa": rel.get("relationJa")})
-        else:
+        elif own:                                 # the stock's own name / ticker
             out.append({"symbol": sym, "via": "name", "term": sym, "relationJa": None})
+        else:                                     # a theme keyword (e.g. 南鳥島 レアアース → 6330)
+            out.append({"symbol": sym, "via": "theme", "term": matched, "relationJa": None})
     return out
 
 
@@ -6344,7 +6359,7 @@ def _build_ai_snapshot():
         for n in _news2:
             blob = (n.get("headline") or "") + " " + (n.get("headlineJa") or "")
             for m in _entity_link(blob):
-                if m["via"] != "entity":
+                if m["via"] not in ("entity", "theme"):   # non-obvious associations (not own name)
                     continue
                 lst = by_sym.setdefault(m["symbol"], [])
                 if len(lst) < 3:
@@ -6437,8 +6452,9 @@ _OPENAI_SYSTEM = (
     "Each label may carry `rsi14`/`trend` (chart technicals) and `marginJa` (Japan 信用/JSF margin-balance "
     "signal) — factor them in (e.g. RSI extremes, margin short-cover fuel) but never treat them as certainty. "
     "A label may also carry `profileJa` (what the company does) and `relatedNews` — news linked to it NOT by "
-    "its own name but via a known RELATIONSHIP (`via`=the related entity, `relationJa`=why it matters; e.g. an "
-    "investee/holding/supplier/customer/peer). Treat `relatedNews` as CANDIDATE associations: judge whether the "
+    "its own name but via a known RELATIONSHIP or THEME (`via`=entity|theme, `term`=the related entity/theme, "
+    "`relationJa`=why it matters; e.g. an investee/holding/supplier/peer, or a theme like a policy/commodity). "
+    "Treat `relatedNews` as CANDIDATE associations: judge whether the "
     "relationship is MATERIAL to this stock today, and if so EXPLAIN it in reasonJa (e.g. 'OpenAIのIPO遅延→保有評価に影響'); "
     "never treat a candidate as confirmed causation, and a relatedNews item alone never fires ADD/BUY DIP/EXIT/TRIM. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
