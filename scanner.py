@@ -4713,6 +4713,7 @@ _ENTITY_PROFILES_META = {"asOf": None}
 _ENTITY_PROFILES_FILE = "/tmp/argus_entity_profiles.json"          # AI-generated (runtime)
 _ENTITY_PROFILE_SEED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                          "entity_profiles_seed.json")  # committed web-verified seed
+_ENTITY_PROFILES_GH_PATH = "entity_profiles.json"  # durable store in the Layer-2B private repo
 _ENTITY_PROFILE_TTL = 7 * 24 * 3600   # AI-generated profiles refresh weekly
 
 # Hand-seeded flagship anchors (guaranteed-correct; the AI generator fills/refreshes the
@@ -4877,14 +4878,22 @@ def _entity_profile_generate(symbols=None):
 
 
 def _entity_profile_persist():
-    try:                                             # persist AI-generated + OWNER edits (survive restart)
-        keep = {k: v for k, v in _ENTITY_PROFILES.items() if v.get("source") in ("ai", "owner")}
+    # persist AI-generated + OWNER edits (seeds are committed, not persisted here)
+    keep = {k: v for k, v in _ENTITY_PROFILES.items() if v.get("source") in ("ai", "owner")}
+    blob = {"profiles": keep, "asOf": _ENTITY_PROFILES_META.get("asOf")}
+    try:                                             # /tmp = fast cache (survives restart)
         tmp = f"{_ENTITY_PROFILES_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
-            json.dump({"profiles": keep, "asOf": _ENTITY_PROFILES_META.get("asOf")}, f, ensure_ascii=False, default=str)
+            json.dump(blob, f, ensure_ascii=False, default=str)
         os.replace(tmp, _ENTITY_PROFILES_FILE)
     except Exception:
         pass
+    if _layer2b_store_configured():                  # private repo = DURABLE across redeploys
+        try:
+            _gh_private_put(_ENTITY_PROFILES_GH_PATH, json.dumps(blob, ensure_ascii=False, default=str),
+                            "argus: entity profiles (owner/ai overrides)")
+        except Exception:
+            pass
 
 
 def _entity_profile_restore():
@@ -4896,13 +4905,23 @@ def _entity_profile_restore():
                 _ENTITY_PROFILES[k] = dict(v, symbol=k, source="seed")
     except Exception:
         pass
-    try:                                             # persisted: OWNER edits override anything; AI only non-seed
-        with open(_ENTITY_PROFILES_FILE) as f:
-            blob = json.load(f)
+    def _apply(blob):
+        # OWNER edits override anything (incl. seed); AI overrides only non-seed.
         for k, v in (blob.get("profiles") or {}).items():
             if v.get("source") == "owner" or _ENTITY_PROFILES.get(k, {}).get("source") != "seed":
                 _ENTITY_PROFILES[k] = v
-        _ENTITY_PROFILES_META["asOf"] = blob.get("asOf")
+        if blob.get("asOf"):
+            _ENTITY_PROFILES_META["asOf"] = blob["asOf"]
+    if _layer2b_store_configured():                  # DURABLE store first (survives redeploys)
+        try:
+            content, _ = _gh_private_get(_ENTITY_PROFILES_GH_PATH)
+            if content:
+                _apply(json.loads(content))
+        except Exception:
+            pass
+    try:                                             # /tmp fast cache (empty after a redeploy)
+        with open(_ENTITY_PROFILES_FILE) as f:
+            _apply(json.load(f))
     except Exception:
         pass
 
