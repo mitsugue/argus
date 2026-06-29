@@ -1,43 +1,24 @@
 {
- "asOf": "2026-06-26T07:07:06Z",
+ "asOf": "2026-06-29T07:05:39Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-06-26",
- "dayRemainingUsd": 4.8776,
- "daySpentUsd": 0.1224,
+ "day": "2026-06-29",
+ "dayRemainingUsd": 5.0,
+ "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
  "lastRun": {
-  "at": "2026-06-26T07:06:57Z",
+  "at": "2026-06-29T02:33:33Z",
   "estimated": true,
-  "gemStatus": "live",
+  "gemStatus": "unavailable",
   "oaiStatus": "live",
-  "rows": [
-   {
-    "estUsd": 0.032931,
-    "fallbackUsed": false,
-    "grounding": false,
-    "inputTokens": 1905,
-    "model": "gpt-5.5",
-    "outputTokens": 3055,
-    "provider": "openai"
-   },
-   {
-    "estUsd": 0.089466,
-    "fallbackUsed": false,
-    "grounding": true,
-    "inputTokens": 3517,
-    "model": "gemini-2.5-pro",
-    "outputTokens": 5007,
-    "provider": "gemini"
-   }
-  ],
-  "runId": "2026-06-26T07:06:57Z",
-  "totalUsd": 0.122397
+  "rows": [],
+  "runId": "2026-06-29T02:33:33Z",
+  "totalUsd": 0.0
  },
- "lastRunCostUsd": 0.122397,
+ "lastRunCostUsd": 0.0,
  "month": "2026-06",
- "monthRemainingUsd": 79.8776,
+ "monthRemainingUsd": 80.0,
  "monthSpentUsd": 0.1224,
  "monthlyBudgetUsd": 80.0,
  "noteJa": "コストは推定値(プロバイダのトークン使用量×設定単価)。OpenAIの前払い残高ではなく、このARGUS側上限がハード停止。",
@@ -57,32 +38,139 @@
  },
  "recentRuns": [
   {
-   "at": "2026-06-26T07:06:57Z",
+   "at": "2026-06-29T02:33:33Z",
    "estimated": true,
-   "gemStatus": "live",
+   "gemStatus": "unavailable",
    "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.032931,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 1905,
-     "model": "gpt-5.5",
-     "outputTokens": 3055,
-     "provider": "openai"
-    },
-    {
-     "estUsd": 0.089466,
-     "fallbackUsed": false,
-     "grounding": true,
-     "inputTokens": 3517,
-     "model": "gemini-2.5-pro",
-     "outputTokens": 5007,
-     "provider": "gemini"
-    }
-   ],
-   "runId": "2026-06-26T07:06:57Z",
-   "totalUsd": 0.122397
+   "rows": [],
+   "runId": "2026-06-29T02:33:33Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-29T02:33:26Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-29T02:33:26Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-29T02:33:20Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-29T02:33:20Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-29T02:33:14Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-29T02:33:14Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-29T02:33:08Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-29T02:33:08Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T17:16:06Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T17:16:06Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T17:16:00Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T17:16:00Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T17:15:54Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T17:15:54Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T15:23:47Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T15:23:47Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T15:23:42Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T15:23:42Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T10:01:50Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T10:01:50Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T10:01:42Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T10:01:42Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T10:01:34Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T10:01:34Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T10:01:26Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T10:01:26Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-06-26T10:01:20Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-06-26T10:01:20Z",
+   "totalUsd": 0.0
   }
  ]
 }

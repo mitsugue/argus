@@ -1,0 +1,190 @@
+{
+ "date": "2026-06-26",
+ "engine": "ledger-v3",
+ "context": {
+  "aiStatus": "live",
+  "backdrop": "neutral",
+  "posture": "MIXED",
+  "regimeConfidence": 0.5,
+  "vixLevel": 18.6,
+  "vixZone": "normal"
+ },
+ "horizons": {
+  "1": {
+   "scoredOn": "2026-06-29",
+   "tradingAge": 1,
+   "layer1": {
+    "sensors": {
+     "n": 7,
+     "hits": 6,
+     "hitRate": 0.857,
+     "brierMean": 0.4507,
+     "rows": [
+      {
+       "sensor": "SMH",
+       "realizedPct": -3.97,
+       "bucket": "downside_continuation",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.875
+      },
+      {
+       "sensor": "XLF",
+       "realizedPct": 0.22,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "XLE",
+       "realizedPct": -0.46,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "TLT",
+       "realizedPct": 0.01,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "LQD",
+       "realizedPct": 0.0,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "GLD",
+       "realizedPct": 1.13,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "BTC",
+       "realizedPct": -0.56,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      }
+     ]
+    },
+    "stocks": {
+     "n": 0,
+     "hits": 0,
+     "hitRate": null,
+     "brierMean": null,
+     "rows": []
+    }
+   },
+   "layer2": {
+    "n": 4,
+    "hits": 3,
+    "hitRate": 0.75,
+    "brierMean": 0.525,
+    "rows": [
+     {
+      "symbol": "NVDA",
+      "realizedPct": -1.64,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "symbol": "AAPL",
+      "realizedPct": 3.14,
+      "bucket": "rebound_attempt",
+      "argmax": "downside_continuation",
+      "hit": false,
+      "brier": 0.96
+     },
+     {
+      "symbol": "TSLA",
+      "realizedPct": 1.22,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "symbol": "META",
+      "realizedPct": 1.36,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     }
+    ]
+   },
+   "layer3": {
+    "n": 0,
+    "hits": 0,
+    "hitRate": null,
+    "brierMean": null,
+    "rows": []
+   },
+   "classes": {
+    "n": 5,
+    "hits": 4,
+    "hitRate": 0.8,
+    "brierMean": 0.416,
+    "rows": [
+     {
+      "assetClass": "GOLD",
+      "realizedPct": 1.13,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "BOND",
+      "realizedPct": 0.01,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "REIT",
+      "realizedPct": 1.46,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "CRYPTO_BTC",
+      "realizedPct": -0.54,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "CRYPTO_ETH",
+      "realizedPct": 0.42,
+      "bucket": "sideways_stabilization",
+      "argmax": "downside_continuation",
+      "hit": false,
+      "brier": 0.56
+     }
+    ]
+   },
+   "aiDirectional": {
+    "n": 0,
+    "hits": 0
+   }
+  }
+ }
+}
