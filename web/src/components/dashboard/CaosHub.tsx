@@ -1,6 +1,8 @@
 import React from 'react';
 import { useMarketNews } from '../../hooks/useMarketNews';
 import { useImportantEvents } from '../../hooks/useImportantEvents';
+import { useDownsideIncidents } from '../../hooks/useDownsideIncidents';
+import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './CaosEvents.css';
 import './MarketInstitutionalSection.css';
 import './CaosHub.css';
@@ -60,6 +62,7 @@ export const CaosHub: React.FC = () => {
   const [events, setEvents] = React.useState<CaosEvent[]>([]);
   const { data: newsData } = useMarketNews();
   const { data: evData } = useImportantEvents();   // baseline events so the tier never vanishes
+  const { data: dsData } = useDownsideIncidents();  // active drops, surfaced in the hub (v10.178)
 
   React.useEffect(() => {
     if (!backend) return;
@@ -101,7 +104,14 @@ export const CaosHub: React.FC = () => {
   const allNews = newsData?.items ?? [];
   const relNews = allNews.filter((n) => n.relevant);
   const news = (relNews.length ? relNews : allNews).slice(0, 6);
-  const empty = material.length === 0 && materialEvents.length === 0 && news.length === 0;
+  // 急落注視 tier (v10.178): surface the most material active drops in the hub (summary;
+  // full per-incident detail stays on the Watchlist page). Sorted critical/high first.
+  const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const incidents = (dsData?.incidents ?? [])
+    .filter((i) => i.severity === 'critical' || i.severity === 'high' || i.isHeld)
+    .sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9))
+    .slice(0, 3);
+  const empty = material.length === 0 && materialEvents.length === 0 && news.length === 0 && incidents.length === 0;
 
   return (
     <section className="caoshub">
@@ -112,6 +122,26 @@ export const CaosHub: React.FC = () => {
 
       {empty && (
         <p className="caoshub-empty">機関の見解・公式シグナル・市場ニュースを継続収集しています…</p>
+      )}
+
+      {incidents.length > 0 && (
+        <div className="caoshub-tier">
+          <div className="caoshub-tierhead">急落注視 <span className="caoshub-tiernote">対応は2ページ目のDownside Watchに詳細</span></div>
+          {incidents.map((inc) => (
+            <div className="caoshub-ds" key={inc.incidentId}>
+              <div className="caoshub-ds-l1">
+                {inc.isHeld && <span className="caoshub-ds-held">保有</span>}
+                <span className="caoshub-ds-sym">{inc.symbol}</span>
+                <span className="caoshub-ds-name">{inc.assetName}</span>
+                {typeof inc.changePct === 'number' && (
+                  <span className="caoshub-ds-chg">{inc.changePct.toFixed(1)}%</span>
+                )}
+                <span className="caoshub-ds-ovr">{OVERRIDE_LABEL_JA[inc.actionOverride] ?? inc.actionOverride}</span>
+              </div>
+              <p className="caoshub-ds-reason">{inc.reasonJa}</p>
+            </div>
+          ))}
+        </div>
       )}
 
       {material.length > 0 && (
