@@ -754,12 +754,14 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
     return { quotes, labels, cats, downsideBySym };
   }, [jp.data, us.data, al.data, cat.data, crypto.byId, cryptoPairs, downside, navFunds, assets]);
 
-  // Portfolio exposure over LIVE prices only — shared by the Exposure card and
-  // the What-if panel. Kept ABOVE the empty-list early return (rules of hooks).
+  // Portfolio exposure — value holdings at the last known price (live OR delayed close),
+  // not just live. Otherwise a closed market (e.g. JP after 15:30) makes its holdings
+  // "unpriced" so its currency total vanishes — the bug where only USD showed until the
+  // JP session opened. Only MOCK prices are excluded. Shared by Exposure + What-if.
   const exp = useMemo(
     () => buildExposure(assets, (a) => {
       const q = maps.quotes.get(a.symbol);
-      return q && q.status === 'live' ? q.price : undefined;
+      return q && q.status !== 'mock' && Number.isFinite(q.price) ? q.price : undefined;
     }, usdJpy),
     [assets, maps.quotes, usdJpy],
   );

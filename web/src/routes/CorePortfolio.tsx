@@ -49,12 +49,15 @@ export const CorePortfolio: React.FC = () => {
   const crypto = useCryptoWatchlist(useMemo(() => cryptoPairs.map((p) => p.id), [cryptoPairs]));
 
   const priceOf = useMemo(() => {
+    // value at the last known price (live OR delayed close), not just live — so a closed
+    // market's holdings (e.g. JP after 15:30) still price and its currency total shows.
+    const ok = (st?: string) => st != null && st !== 'mock';
     const m = new Map<string, number>();
-    for (const s of jp.data?.stocks ?? []) if (s.status === 'live') m.set(s.symbol, s.price);
-    for (const s of us.data?.stocks ?? []) if (s.status === 'live') m.set(s.symbol, s.price);
+    for (const s of jp.data?.stocks ?? []) if (ok(s.status) && Number.isFinite(s.price)) m.set(s.symbol, s.price);
+    for (const s of us.data?.stocks ?? []) if (ok(s.status) && Number.isFinite(s.price)) m.set(s.symbol, s.price);
     for (const p of cryptoPairs) {
       const q = crypto.byId[p.id];
-      if (q && q.status === 'live') m.set(p.symbol, q.priceUsd);
+      if (q && ok(q.status) && Number.isFinite(q.priceUsd)) m.set(p.symbol, q.priceUsd);
     }
     return (a: { symbol: string }) => m.get(a.symbol);
   }, [jp.data, us.data, crypto.byId, cryptoPairs]);
