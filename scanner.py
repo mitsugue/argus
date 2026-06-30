@@ -2340,6 +2340,44 @@ def _yahoo_jp_row(code, name):
     _YF_JP_CACHE[code] = {"row": row, "ts": now}
     return row
 
+# JP sector rotation (v10.189): TOPIX-17 NEXT FUNDS sector ETFs, fetched keyless via Yahoo
+# (10-min per-code cache), shaped like the US rotationGroups so the UI renders the SAME
+# horizontal flow board for Japan instead of a bare text line.
+_JP_SECTORS = [
+    ("1622", "自動車・輸送機", "リスク"),
+    ("1625", "電機・精密",     "グロース"),
+    ("1631", "銀行",           "金利敏感"),
+    ("1629", "商社・卸売",     "バリュー"),
+    ("1626", "情報通信・サービス", "グロース"),
+    ("1621", "医薬品",         "ディフェンシブ"),
+    ("1627", "電力・ガス",     "ディフェンシブ"),
+    ("1633", "不動産",         "金利敏感"),
+]
+
+def _jp_sector_rotation():
+    """JP sector money-flow per TOPIX-17 ETF (1-day move → score -1..1), same shape as the
+    US rotationGroups. Best-effort/keyless; missing sectors come back available=False."""
+    flow_ja = {"inflow": "資金流入", "outflow": "資金流出", "neutral": "中立"}
+    groups = []
+    for code, label, role in _JP_SECTORS:
+        try:
+            row = _yahoo_jp_row(code, label)
+        except Exception:
+            row = None
+        pct = row.get("changePct") if isinstance(row, dict) else None
+        if not isinstance(pct, (int, float)):
+            groups.append({"id": f"jp-{code}", "label": label, "role": role, "assets": [f"{code}.T"],
+                           "score": 0.0, "status": "neutral", "momentum1d": None, "momentum5d": None,
+                           "momentum20d": None, "available": False, "rationaleJa": f"{label}: データ取得待ち。"})
+            continue
+        score = max(-1.0, min(1.0, pct / 3.0))   # ±3% ≈ full deflection (matches the US meter scale)
+        status = "inflow" if score >= 0.2 else ("outflow" if score <= -0.2 else "neutral")
+        groups.append({"id": f"jp-{code}", "label": label, "role": role, "assets": [f"{code}.T"],
+                       "score": round(score, 3), "status": status, "momentum1d": round(pct, 2),
+                       "momentum5d": None, "momentum20d": None, "available": True,
+                       "rationaleJa": f"{label}: 本日{pct:+.2f}%（{flow_ja[status]}）。"})
+    return groups
+
 def _q_close(q):
     # V2 abbreviated fields: C = close; fall back to AdjC (adjusted close).
     v = q.get("C")
@@ -5771,6 +5809,7 @@ def get_market_regime_snapshot():
         },
         "ratesBackdrop": backdrop,
         "rotationGroups": groups,
+        "jpRotationGroups": _jp_sector_rotation(),   # JP sector flow board (v10.189)
         "topRotations": top_rotations,
         "matrix": {
             "x": round(growth_value_axis, 3),

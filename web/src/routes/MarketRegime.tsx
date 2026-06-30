@@ -94,6 +94,7 @@ export const MarketRegime: React.FC = () => {
   }, []);
 
   const rows = useMemo(() => (data ? toRotationRows(data.rotationGroups) : []), [data]);
+  const jpRows = useMemo(() => (data?.jpRotationGroups ? toRotationRows(data.jpRotationGroups) : []), [data]);
   const matrix = useMemo(() => (data ? toMatrixState(data) : null), [data]);
 
   const labelEn = data ? (REGIME_LABEL_JA[data.regime.label] ?? data.regime.label) : '—';
@@ -147,21 +148,8 @@ export const MarketRegime: React.FC = () => {
       <section id="full-board" className="regime-anchor">
         <div className="section-head">
           <span className="section-head__title">Capital Rotation Board</span>
-          <span className="section-head__count">{rows.length} groups</span>
+          <span className="section-head__count">US · {rows.length} groups</span>
         </div>
-        {data && (() => {
-          const ov = data.jpIntradayOverlay;
-          const jpov = ov?.jpIntradayOverlay;
-          const tone = !jpov ? 'muted' : jpov === 'RISK_OFF_WATCH' ? 'red' : jpov === 'NORMAL' ? 'green' : 'amber';
-          return (
-            <div className="regime-jp-row">
-              <span className={`regime-jp-row__dot regime-jp-row__dot--${tone}`} />
-              <span className="regime-jp-row__label">日本(ザラ場の地合い)</span>
-              <span className="regime-jp-row__val">{jpov ? (ov.displayJa || jpIntradayJa(jpov)) : 'データ取得待ち'}</span>
-              <span className="regime-jp-row__note">米ETF中心のローテーションに対するJPオーバーレイ</span>
-            </div>
-          );
-        })()}
         {rows.length > 0 ? (
           <CapitalRotationBoard rows={rows} />
         ) : data && (data.rotationGroups?.length ?? 0) > 0 ? (
@@ -175,6 +163,34 @@ export const MarketRegime: React.FC = () => {
         ) : (
           <div className="card"><p style={{ fontSize: 13, color: 'var(--text-sub)' }}>
             connecting… 最新のローテーションを取得中
+          </p></div>
+        )}
+      </section>
+
+      {/* Japan sector rotation (v10.189) — same horizontal flow board as US (TOPIX-17 ETFs),
+          with the JP intraday-地合い overlay as its header chip. */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Japan Sector Rotation</span>
+          <span className="section-head__count">JP · {jpRows.length} sectors</span>
+        </div>
+        {data && (() => {
+          const ov = data.jpIntradayOverlay;
+          const jpov = ov?.jpIntradayOverlay;
+          const tone = !jpov ? 'muted' : jpov === 'RISK_OFF_WATCH' ? 'red' : jpov === 'NORMAL' ? 'green' : 'amber';
+          return (
+            <div className="regime-jp-row">
+              <span className={`regime-jp-row__dot regime-jp-row__dot--${tone}`} />
+              <span className="regime-jp-row__label">ザラ場の地合い</span>
+              <span className="regime-jp-row__val">{jpov ? jpIntradayJa(jpov) : 'データ取得待ち'}</span>
+            </div>
+          );
+        })()}
+        {jpRows.length > 0 ? (
+          <CapitalRotationBoard rows={jpRows} />
+        ) : (
+          <div className="card"><p style={{ fontSize: 13, color: 'var(--text-sub)' }}>
+            日本セクター(TOPIX-17 ETF)の資金フローを取得中…
           </p></div>
         )}
       </section>
