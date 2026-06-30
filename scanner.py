@@ -3886,6 +3886,8 @@ def _av_market_movers(force=False):
                     continue
                 if price < _MARKET_MOVER_MIN_PRICE:
                     continue
+                if abs(chg) > _MARKET_MOVER_MAX_PCT:   # drop pump/halt artifacts (e.g. +247%) — not a 1-day signal
+                    continue
                 rows.append({"symbol": x.get("ticker"), "price": round(price, 2),
                              "changePct": round(chg, 2)})
             return rows
@@ -3902,7 +3904,22 @@ def _av_market_movers(force=False):
 
 @app.route("/api/argus/market-movers")
 def api_argus_market_movers():
-    """Public: US whole-market top gainers/losers (cache only — never fetches)."""
+    """Public: US top gainers/losers (cache only). Prefer the CURATED liquid moomoo feed
+    (real 1-day quotes from the large-cap universe) when the bridge has pushed it; else fall
+    back to the (now MAX_PCT-filtered) Alpha Vantage feed. Both drop pump/halt artifacts."""
+    try:
+        rows = [r for r in (_moomoo_us_movers() or [])
+                if isinstance(r.get("changePct"), (int, float))
+                and abs(r["changePct"]) <= _MARKET_MOVER_MAX_PCT
+                and (r.get("price") or 0) >= _MARKET_MOVER_MIN_PRICE]
+    except Exception:
+        rows = []
+    if rows:
+        rows.sort(key=lambda r: r["changePct"], reverse=True)
+        gainers = [r for r in rows if r["changePct"] > 0][:8]
+        losers = sorted([r for r in rows if r["changePct"] < 0], key=lambda r: r["changePct"])[:8]
+        return jsonify({"status": "live", "source": "moomoo", "asOf": _MOOMOO_US_MOVERS.get("asOf"),
+                        "gainers": gainers, "losers": losers})
     return jsonify(_av_market_movers(force=False))
 
 # ━━━ moomoo realtime US movers (v10.146) ━━━
@@ -4092,9 +4109,12 @@ def _jq_market_movers():
                 continue
             if c < _JP_MOVER_MIN_PRICE or pr <= 0:
                 continue
+            chg = round((c / pr - 1) * 100, 2)
+            if abs(chg) > _MARKET_MOVER_MAX_PCT:   # drop limit-up/halt artifacts (not a clean 1-day signal)
+                continue
             s4 = str(code)[:4]
             rows.append({"symbol": s4, "name": _jq_name_for(s4) or s4,
-                         "price": round(c, 1), "changePct": round((c / pr - 1) * 100, 2)})
+                         "price": round(c, 1), "changePct": chg})
         if rows:
             out = {"status": "live", "asOf": latest_date, "universe": len(rows),
                    "gainers": sorted([r for r in rows if r["changePct"] > 0],

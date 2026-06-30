@@ -5,6 +5,7 @@ import { SignedValue } from '../components/common/SignedValue';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
+import { LedgerHistory } from '../components/regime/LedgerHistory';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useMarketMovers } from '../hooks/useMarketMovers';
 import type {
@@ -283,6 +284,10 @@ export const MarketRegime: React.FC = () => {
       {/* Forward-looking context: scheduled events + escalation + crisis news
           (merged from the old Event Radar page, v10.57). */}
       <MarketEventsSections />
+
+      {/* 履歴/台帳 read-back (v10.185): the daily ledgers (rotation Δ / downside / attribution)
+          were accumulating with no UI — surfaced here. */}
+      <LedgerHistory />
 
       {data && data.dataLimitations.length > 0 && (
         <section>

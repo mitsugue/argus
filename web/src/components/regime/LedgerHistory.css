@@ -1,0 +1,29 @@
+/* 履歴 / 台帳 (v10.185) — minimal, cool: only inflow/outflow get colour. */
+.lh { margin: 12px 0; border: 1px solid var(--line, rgba(255,255,255,.08)); border-radius: 12px;
+  background: var(--surface, #111a24); overflow: hidden; }
+.lh-head { width: 100%; display: flex; align-items: baseline; gap: 10px; padding: 11px 14px;
+  background: none; border: none; cursor: pointer; text-align: left; color: inherit; }
+.lh-title { font-size: 12px; font-weight: 800; letter-spacing: .06em; color: var(--text-main); }
+.lh-sub { font-size: 10px; color: var(--text-muted); }
+.lh-toggle { margin-left: auto; font-size: 11px; color: var(--text-sub); }
+.lh-body { padding: 0 14px 12px; }
+
+.lh-block { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06)); }
+.lh-bh { font-size: 10.5px; font-weight: 800; letter-spacing: .04em; color: var(--text-sub); margin-bottom: 4px; }
+.lh-dim { font-weight: 400; color: var(--text-muted); letter-spacing: 0; }
+.lh-empty { font-size: 11px; color: var(--text-muted); margin: 2px 0; }
+
+.lh-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 12px; }
+.lh-label, .lh-name { color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lh-label { min-width: 120px; }
+.lh-sym { font-weight: 800; color: var(--text-main); min-width: 48px; }
+.lh-score { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lh-delta { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; }
+.lh-delta--inflow { color: var(--value-positive, #34d399); }
+.lh-delta--outflow { color: var(--value-negative, #f87171); }
+.lh-delta--neutral { color: var(--text-muted); }
+.lh-ovr, .lh-cause { margin-left: auto; color: var(--text-sub); font-size: 11px; }
+.lh-chg { font-variant-numeric: tabular-nums; }
+.lh-chg.up { color: var(--value-positive, #34d399); }
+.lh-chg.dn { color: var(--value-negative, #f87171); }
+.lh-foot { font-size: 10px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }
