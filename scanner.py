@@ -6058,19 +6058,25 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     for meta in _action_metas(jp, us, jp_symbols, us_symbols):
         q   = quotes.get(meta["symbol"])
         esc = esc_by_market[meta["market"]]
-        if not q or q.get("status") != "live":
+        price = (q or {}).get("price")
+        qstatus = (q or {}).get("status")
+        # Judge on the last KNOWN price (live OR delayed close), not only live — a closed
+        # market (JP after 15:30) carries a real close, so it gets a real assessment instead
+        # of the "ライブデータ復帰後に…" placeholder. Only a genuinely price-less / mock quote
+        # falls through to neutral-hold.
+        if not q or qstatus in (None, "", "mock") or not isinstance(price, (int, float)):
             labels.append({
                 "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
                 "action": "HOLD", "confidence": 0.2, "risk": "low",
-                "reasonJa": "ライブ価格が未取得のため中立で保留。",
-                "supportingData": {"price": (q or {}).get("price"), "changePct": (q or {}).get("changePct", 0), "volume": (q or {}).get("volume", 0),
+                "reasonJa": "価格データが未取得のため中立で保留。",
+                "supportingData": {"price": price, "changePct": (q or {}).get("changePct", 0), "volume": (q or {}).get("volume", 0),
                                    "eventEscalation": esc or "normal", "ratesPosture": posture},
-                "nextConditionJa": "ライブデータ復帰後に再評価する。",
+                "nextConditionJa": "価格データの取得後に再評価する。",
                 "status": "mock",
                 "signal": argus_signal.resolve_signal("HOLD", data_quality="MOCK"),
             })
             continue
-        chg = float(q.get("changePct", 0))
+        chg = float(q.get("changePct", 0) or 0)
         changes.append(chg)
         action, risk, conf, reason, nxt = _classify_symbol(meta, chg, esc, posture)
         high_beta = meta["cls"] in ("us_growth", "jp_momentum")
@@ -6108,11 +6114,11 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                                "marketRegime": reg_label or "n/a",
                                "quoteDate": q.get("date"), "quoteLagDays": lag,
                                "bigFlowRatio": flow_ratio},
-            "nextConditionJa": nxt, "status": "live",
+            "nextConditionJa": nxt, "status": qstatus,
             # Structured Action Level signal per label (v10.136) so API/ledger
             # consumers get {code,level,permissions} without re-deriving from text.
             "signal": argus_signal.resolve_signal(
-                action, data_quality="LIVE" if lag in (0, None) else "DELAYED"),
+                action, data_quality=("LIVE" if qstatus == "live" and lag in (0, None) else "DELAYED")),
         })
 
     imminent_any = esc_by_market["US"] in ("D", "D-1") or esc_by_market["JP"] in ("D", "D-1")
@@ -8104,9 +8110,11 @@ def get_action_alerts():
 
     # ── JP / US stock aggregates (from the live label engine) ──
     for mkt, name in (("JP", "Japan Individual Stocks"), ("US", "US Individual Stocks")):
-        ls = [l for l in al.get("labels", []) if l["market"] == mkt and l.get("status") == "live"]
+        ls = [l for l in al.get("labels", []) if l["market"] == mkt
+              and l.get("status") in ("live", "delayed", "partial")]
         if ls:
             from collections import Counter
+            sstatus = "live" if all(l.get("status") == "live" for l in ls) else "partial"
             dominant, votes = Counter(l["action"] for l in ls).most_common(1)[0]
             chgs = [l["supportingData"]["changePct"] for l in ls]
             avg = sum(chgs) / len(chgs)
@@ -8119,7 +8127,7 @@ def get_action_alerts():
                 pts.append(f"大口フロー平均 {sum(flows)/len(flows):+.1%} ({len(flows)}銘柄)")
             add(f"{mkt}_STOCK", name, dominant, conf, risk,
                 f"ウォッチ銘柄の多数派は{dominant}。姿勢は{posture}。",
-                pts, "個別はWatchlistの戦略カードで確認。", "live")
+                pts, "個別はWatchlistの戦略カードで確認。", sstatus)
         else:
             add(f"{mkt}_STOCK", name, "WAIT", "low", "med",
                 "ライブ価格が未取得のため中立。", [], "データ復帰後に再評価。", "partial")
