@@ -1,19 +1,19 @@
 {
- "asOf": "2026-06-29T07:05:39Z",
+ "asOf": "2026-06-30T07:05:19Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-06-29",
+ "day": "2026-06-30",
  "dayRemainingUsd": 5.0,
  "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
  "lastRun": {
-  "at": "2026-06-29T02:33:33Z",
+  "at": "2026-06-30T06:37:26Z",
   "estimated": true,
   "gemStatus": "unavailable",
   "oaiStatus": "live",
   "rows": [],
-  "runId": "2026-06-29T02:33:33Z",
+  "runId": "2026-06-30T06:37:26Z",
   "totalUsd": 0.0
  },
  "lastRunCostUsd": 0.0,
@@ -38,138 +38,66 @@
  },
  "recentRuns": [
   {
-   "at": "2026-06-29T02:33:33Z",
+   "at": "2026-06-30T06:37:26Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-06-29T02:33:33Z",
+   "runId": "2026-06-30T06:37:26Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-06-29T02:33:26Z",
+   "at": "2026-06-30T02:28:24Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-06-29T02:33:26Z",
+   "runId": "2026-06-30T02:28:24Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-06-29T02:33:20Z",
+   "at": "2026-06-30T02:28:00Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-06-29T02:33:20Z",
+   "runId": "2026-06-30T02:28:00Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-06-29T02:33:14Z",
+   "at": "2026-06-30T02:27:51Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-06-29T02:33:14Z",
+   "runId": "2026-06-30T02:27:51Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-06-29T02:33:08Z",
+   "at": "2026-06-30T02:27:44Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-06-29T02:33:08Z",
+   "runId": "2026-06-30T02:27:44Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-06-26T17:16:06Z",
+   "at": "2026-06-30T02:27:34Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-06-26T17:16:06Z",
+   "runId": "2026-06-30T02:27:34Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-06-26T17:16:00Z",
+   "at": "2026-06-30T02:27:30Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-06-26T17:16:00Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T17:15:54Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T17:15:54Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T15:23:47Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T15:23:47Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T15:23:42Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T15:23:42Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T10:01:50Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T10:01:50Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T10:01:42Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T10:01:42Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T10:01:34Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T10:01:34Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T10:01:26Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T10:01:26Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-06-26T10:01:20Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-06-26T10:01:20Z",
+   "runId": "2026-06-30T02:27:30Z",
    "totalUsd": 0.0
   }
  ]

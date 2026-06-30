@@ -1,0 +1,278 @@
+{
+ "date": "2026-06-29",
+ "engine": "ledger-v3",
+ "context": {
+  "aiStatus": "live",
+  "backdrop": "neutral",
+  "posture": "CAUTIOUS",
+  "regimeConfidence": 0.87,
+  "vixLevel": 18.9,
+  "vixZone": "normal"
+ },
+ "horizons": {
+  "1": {
+   "scoredOn": "2026-06-30",
+   "tradingAge": 1,
+   "layer1": {
+    "sensors": {
+     "n": 12,
+     "hits": 10,
+     "hitRate": 0.833,
+     "brierMean": 0.4783,
+     "rows": [
+      {
+       "sensor": "SPY",
+       "realizedPct": 1.65,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "QQQ",
+       "realizedPct": 2.49,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.98
+      },
+      {
+       "sensor": "IWM",
+       "realizedPct": -0.29,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "SMH",
+       "realizedPct": 3.33,
+       "bucket": "rebound_attempt",
+       "argmax": "downside_continuation",
+       "hit": false,
+       "brier": 0.96
+      },
+      {
+       "sensor": "XLF",
+       "realizedPct": 0.28,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "XLE",
+       "realizedPct": -0.48,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "XLU",
+       "realizedPct": -0.39,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "TLT",
+       "realizedPct": 0.1,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "LQD",
+       "realizedPct": 0.18,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "HYG",
+       "realizedPct": 0.23,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "GLD",
+       "realizedPct": -1.35,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "BTC",
+       "realizedPct": -0.65,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      }
+     ]
+    },
+    "stocks": {
+     "n": 0,
+     "hits": 0,
+     "hitRate": null,
+     "brierMean": null,
+     "rows": []
+    }
+   },
+   "layer2": {
+    "n": 4,
+    "hits": 2,
+    "hitRate": 0.5,
+    "brierMean": 0.6788,
+    "rows": [
+     {
+      "symbol": "NVDA",
+      "realizedPct": 1.27,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "symbol": "AAPL",
+      "realizedPct": -0.72,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.375
+     },
+     {
+      "symbol": "TSLA",
+      "realizedPct": 8.46,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.98
+     },
+     {
+      "symbol": "META",
+      "realizedPct": 2.24,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.98
+     }
+    ]
+   },
+   "layer3": {
+    "n": 0,
+    "hits": 0,
+    "hitRate": null,
+    "brierMean": null,
+    "rows": []
+   },
+   "classes": {
+    "n": 11,
+    "hits": 9,
+    "hitRate": 0.818,
+    "brierMean": 0.4891,
+    "rows": [
+     {
+      "assetClass": "US_BROAD",
+      "realizedPct": 1.65,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "US_GROWTH",
+      "realizedPct": 2.49,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.98
+     },
+     {
+      "assetClass": "SMALL_CAPS",
+      "realizedPct": -0.29,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "TECH",
+      "realizedPct": 2.37,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.98
+     },
+     {
+      "assetClass": "DEFENSIVE",
+      "realizedPct": -0.39,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "GOLD",
+      "realizedPct": -1.35,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "BOND",
+      "realizedPct": 0.1,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "CREDIT",
+      "realizedPct": 0.23,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "REIT",
+      "realizedPct": -0.71,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "CRYPTO_BTC",
+      "realizedPct": -0.65,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     },
+     {
+      "assetClass": "CRYPTO_ETH",
+      "realizedPct": 0.95,
+      "bucket": "sideways_stabilization",
+      "argmax": "sideways_stabilization",
+      "hit": true,
+      "brier": 0.38
+     }
+    ]
+   },
+   "aiDirectional": {
+    "n": 0,
+    "hits": 0
+   }
+  }
+ }
+}

@@ -3,42 +3,60 @@
   "cohorts": {
     "tactical_benchmark_fixed": {
       "1d": {
-        "n": 14,
-        "hitRate": 0.6429,
+        "n": 21,
+        "hitRate": 0.6667,
         "brierMean": 0.1827,
-        "rpsMean": 0.154
+        "rpsMean": 0.1545
+      },
+      "3d": {
+        "n": 7,
+        "hitRate": 0.2857,
+        "brierMean": 0.241,
+        "rpsMean": 0.2364
       }
     },
     "experimental_cohort": {
       "1d": {
-        "n": 2,
-        "hitRate": 0.5,
-        "brierMean": 0.1933,
-        "rpsMean": 0.165
+        "n": 3,
+        "hitRate": 0.3333,
+        "brierMean": 0.2378,
+        "rpsMean": 0.2317
+      },
+      "3d": {
+        "n": 1,
+        "hitRate": 1.0,
+        "brierMean": 0.1267,
+        "rpsMean": 0.065
       }
     },
     "regime_sensor_fixed": {
       "1d": {
-        "n": 15,
-        "hitRate": 0.8667,
-        "brierMean": 0.1417,
-        "rpsMean": 0.0838
+        "n": 27,
+        "hitRate": 0.8519,
+        "brierMean": 0.1496,
+        "rpsMean": 0.099
       },
       "3d": {
-        "n": 2,
-        "hitRate": 1.0,
-        "brierMean": 0.1267,
-        "rpsMean": 0.065
+        "n": 9,
+        "hitRate": 0.8889,
+        "brierMean": 0.1333,
+        "rpsMean": 0.0689
+      },
+      "5d": {
+        "n": 1,
+        "hitRate": 0.0,
+        "brierMean": 0.26,
+        "rpsMean": 0.265
       }
     }
   },
   "epochId": "calibration_v1",
   "status": "dry_run",
-  "updated": "2026-06-29",
+  "updated": "2026-06-30",
   "recorded": 20,
-  "scored": 22,
+  "scored": 36,
   "held": 0,
-  "totalRows": 51,
-  "tradingDays": 3,
+  "totalRows": 71,
+  "tradingDays": 4,
   "noteJa": "v4のparallel dry-run(本番ヘッドラインではない)。v3とは別ディレクトリ。市場別クロックでJPを採点、US/cryptoは正しい時刻のジョブ実装まで保留。"
 }
