@@ -8101,6 +8101,12 @@ def get_action_alerts():
     posture  = (al.get("marketPosture", {}) or {}).get("label") or "CAUTIOUS"
     cautious = posture in ("EVENT_WAIT", "RISK_OFF")
     rb = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
+    # Rotation signal per ETF symbol — keeps an asset-class call DIFFERENTIATED (inflow/
+    # outflow/neutral) even when the raw ETF momentum is stale, instead of a flat WAIT.
+    rot_by_asset = {}
+    for g in (reg.get("rotationGroups", []) if isinstance(reg, dict) else []):
+        for a in (g.get("assets") or []):
+            rot_by_asset[str(a).upper()] = g
     cards = []
 
     def add(asset_class, name, action, conf, risk, reason, points, nxt, status):
@@ -8150,8 +8156,23 @@ def get_action_alerts():
                    else f"1d {m['momentum1d']}%"]
             add(cls, name, action, conf, risk, reason, pts, nxt, "live")
         else:
-            add(cls, name, "WAIT", "low", "med", "ETFデータ未取得のため中立。", [],
-                "データ取得後に再評価。", "partial")
+            g = rot_by_asset.get(sym.upper())
+            st = g.get("status") if g else None
+            if st == "inflow":
+                add(cls, name, "HOLD", "low", "med",
+                    g.get("rationaleJa") or f"{name}: 資金流入の傾向。{posture}局面では選好(新規は押し目で)。",
+                    ["資金フロー: 流入"], "流れの転換を確認。", "partial")
+            elif st == "outflow":
+                add(cls, name, "WAIT", "low", "med",
+                    g.get("rationaleJa") or f"{name}: 資金流出の傾向。新規は見送り・様子見。",
+                    ["資金フロー: 流出"], "下げ止まり/流入転換を確認。", "partial")
+            elif st == "neutral":
+                add(cls, name, "HOLD", "low", "med",
+                    g.get("rationaleJa") or f"{name}: 資金フローは中立。計画通り。",
+                    ["資金フロー: 中立"], "明確な方向感を確認。", "partial")
+            else:
+                add(cls, name, "WAIT", "low", "med", "ETFデータ未取得のため中立。", [],
+                    "データ取得後に再評価。", "partial")
 
     # ── Crypto (CoinGecko 24h) ──
     q = {x["id"]: x for x in (crypto.get("quotes") or []) if x.get("status") == "live"}

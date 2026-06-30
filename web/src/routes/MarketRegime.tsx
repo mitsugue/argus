@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { useLocale, t, tEn } from '../i18n';
 import { SignedValue } from '../components/common/SignedValue';
 import { CapitalRotationBoard } from '../components/regime/CapitalRotationBoard';
+import { jpIntradayJa } from '../lib/regimeLabels';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
 import { LedgerHistory } from '../components/regime/LedgerHistory';
@@ -148,6 +149,19 @@ export const MarketRegime: React.FC = () => {
           <span className="section-head__title">Capital Rotation Board</span>
           <span className="section-head__count">{rows.length} groups</span>
         </div>
+        {data && (() => {
+          const ov = data.jpIntradayOverlay;
+          const jpov = ov?.jpIntradayOverlay;
+          const tone = !jpov ? 'muted' : jpov === 'RISK_OFF_WATCH' ? 'red' : jpov === 'NORMAL' ? 'green' : 'amber';
+          return (
+            <div className="regime-jp-row">
+              <span className={`regime-jp-row__dot regime-jp-row__dot--${tone}`} />
+              <span className="regime-jp-row__label">日本(ザラ場の地合い)</span>
+              <span className="regime-jp-row__val">{jpov ? (ov.displayJa || jpIntradayJa(jpov)) : 'データ取得待ち'}</span>
+              <span className="regime-jp-row__note">米ETF中心のローテーションに対するJPオーバーレイ</span>
+            </div>
+          );
+        })()}
         {rows.length > 0 ? (
           <CapitalRotationBoard rows={rows} />
         ) : data && (data.rotationGroups?.length ?? 0) > 0 ? (
