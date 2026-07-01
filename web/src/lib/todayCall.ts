@@ -33,11 +33,15 @@ export function postureToCall(posture: string | undefined): { action: ActionKey;
   }
 }
 
-export type TodayPhase = 'connecting' | 'live' | 'partial' | 'mock';
+export type TodayPhase = 'connecting' | 'live' | 'partial' | 'mock' | 'mixed' | 'delayed';
 
 export function combinePhase(...phases: TodayPhase[]): TodayPhase {
   if (phases.some((p) => p === 'connecting')) return 'connecting';
-  if (phases.every((p) => p === 'live')) return 'live';
+  // v10.191: "mixed" (mostly live + a few delayed) and "delayed" (all real but
+  // off-hours/close) are live-enough — they must NOT drop the hero into 'partial'
+  // (which capped confidence to 60%). Only genuine mock/incomplete data does.
+  const liveEnough = (p: TodayPhase) => p === 'live' || p === 'mixed' || p === 'delayed';
+  if (phases.every(liveEnough)) return 'live';
   if (phases.every((p) => p === 'mock')) return 'mock';
   return 'partial';
 }

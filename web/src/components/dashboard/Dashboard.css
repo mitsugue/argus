@@ -251,6 +251,9 @@
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px;
 }
+/* Action-vocabulary legend for the class calls (v10.191) — clarifies WAIT. */
+.alert-legend { margin: 0 0 10px; font-size: 11px; line-height: 1.7; color: var(--text-muted); }
+.alert-legend b { color: var(--text-sub); font-weight: 700; }
 
 .alert-card {
   background: var(--surface);

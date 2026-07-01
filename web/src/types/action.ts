@@ -28,7 +28,8 @@ export type AssetClass =
   | 'BOND'
   | 'CRYPTO'
   | 'COMMODITY'
-  | 'USDJPY';
+  | 'USDJPY'
+  | 'CASH';
 
 export type Confidence = 'low' | 'med' | 'high';
 export type RiskLevel = 'low' | 'med' | 'high' | 'extreme';

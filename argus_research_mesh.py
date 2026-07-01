@@ -77,6 +77,10 @@ SOURCE_RIGHTS: Dict[str, Dict[str, Any]] = {
     # ── official / macro (public-domain gov; RSS validated) ──
     "federal_reserve":      {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "notes": "central bank press (macro)"},
     "sec_press":            {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "notes": "SEC press releases"},
+    # ── JP official + JP-language macro/markets (v10.191; RSS validated 200) ──
+    "boj_official":         {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "language": "ja", "notes": "日本銀行 公表資料 (金融政策・ETF/国債買入)"},
+    "meti_official":        {"accessClass": "PUBLIC_FULLTEXT", "kind": "official", "licenceStatus": "public", "collection": "rss", "language": "ja", "notes": "経済産業省 プレスリリース (国策: 半導体支援/インフラ等)"},
+    "reuters_jp":           {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "language": "ja", "notes": "ロイター日本語 (経済指標速報・地政学・要人発言; 公開RDFアグリゲータ)"},
     # ── rights-only news entries (no free public RSS → owner Share/Capture) ──
     "ft_public":            {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
     "wsj_public":           {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},

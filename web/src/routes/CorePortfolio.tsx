@@ -130,6 +130,13 @@ export const CorePortfolio: React.FC = () => {
           <span className="section-head__title">{t('cp.classCalls')}</span>
           <span className="section-head__count">{cards.length} classes</span>
         </div>
+        {/* Vocabulary legend (v10.191) — "待機/WAIT" was ambiguous ("do nothing?").
+            Spell out that holding is fine; only NEW entries wait. */}
+        <p className="alert-legend">
+          <b>WAIT</b>=新規エントリーは見送り(保有は継続でOK) ・ <b>HOLD</b>=保有継続 ・
+          <b>現金比率を上げる</b>=待機資金を厚くする ・ <b>TRIM/EXIT</b>=縮小/撤退。
+          「待機」は“何もするな”ではなく“今は新規を入れない・持ち高は維持”の意味です。
+        </p>
         <div className="alert-grid">
           {cards.map((c) => (
             <AlertCard key={c.assetClass} card={c} />

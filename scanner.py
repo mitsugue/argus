@@ -2495,10 +2495,30 @@ def _get_japan_watchlist_core(symbols=None):
             return row
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(syms))) as ex:
             stocks = [q for q in ex.map(fetch, syms) if q is not None]
-        live_n = sum(1 for q in stocks if q.get("status") == "live")
-        overall = "live" if live_n == len(syms) else ("partial" if stocks else "mock")
+        # v10.191: coverage-based status instead of all-or-nothing. A few names on
+        # delayed/close data (e.g. 6146/6758 not in the moomoo bridge push set) no
+        # longer drag the WHOLE watchlist to a scary "partial" — that state is now
+        # reserved for genuinely INCOMPLETE data (mock/missing mixed in). "mixed" =
+        # mostly-live + a few delayed (fine); "delayed" = all real but off-hours/T-1.
+        live_n    = sum(1 for q in stocks if q.get("status") == "live")
+        delayed_n = sum(1 for q in stocks if q.get("status") == "delayed")
+        mock_n    = sum(1 for q in stocks if q.get("status") == "mock")
+        total     = len(syms)
+        if not stocks:
+            overall = "mock"
+        elif live_n == total:
+            overall = "live"
+        elif mock_n == 0 and live_n == 0:
+            overall = "delayed"      # every name real, just delayed/close (not broken)
+        elif mock_n == 0:
+            overall = "mixed"        # mostly live + a few delayed (not broken)
+        else:
+            overall = "partial"      # genuinely incomplete — mock/missing present
         as_of   = max((q["date"] for q in stocks if q.get("date")), default=None)
-        snapshot = {"status": overall, "asOf": as_of, "stocks": stocks}
+        snapshot = {"status": overall, "asOf": as_of, "stocks": stocks,
+                    "coverage": {"live": live_n, "delayed": delayed_n, "mock": mock_n, "total": total},
+                    "liveSymbols": [q.get("symbol") for q in stocks if q.get("status") == "live"],
+                    "delayedSymbols": [q.get("symbol") for q in stocks if q.get("status") == "delayed"]}
         if stocks:
             if len(_JP_DYN_CACHE) >= _DYN_CACHE_MAX:
                 _JP_DYN_CACHE.clear()
@@ -4611,6 +4631,13 @@ _INTEL_FEEDS = [
     # Official / macro — central bank + regulator (public domain)
     ("federal_reserve",      "fed:press",        "https://www.federalreserve.gov/feeds/press_all.xml", "rss"),
     ("sec_press",            "sec:press",        "https://www.sec.gov/news/pressreleases.rss", "rss"),
+    # JP official + JP-language macro/markets (v10.191). Whale/大量保有 = EDINET (already
+    # integrated as official catalyst); TDnet/株探/みんかぶ/FISCO have no free public RSS
+    # (HTML/403) so they stay out of the allow-list. These four ARE public feeds (200):
+    ("boj_official",         "boj:whatsnew",     "https://www.boj.or.jp/rss/whatsnew.xml", "rss"),           # 日銀 公表資料
+    ("meti_official",        "meti:release",     "https://www.meti.go.jp/ml_index_release_atom.xml", "rss"), # 経産省 (Atom — _parse_rss handles <entry>)
+    ("reuters_jp",           "reuters:jp-top",   "https://assets.wor.jp/rss/rdf/reuters/top.rdf", "rss"),    # ロイター日本語 トップ
+    ("reuters_jp",           "reuters:jp-biz",   "https://assets.wor.jp/rss/rdf/reuters/business.rdf", "rss"),
 ]
 _INTEL_STORE = []                  # capped list of recent IntelligenceItems (metadata only)
 _INTEL_STORE_MAX = 400
@@ -6245,9 +6272,14 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     else:
         mp, mp_ja = "CAUTIOUS", "方向感は限定的で、慎重なスタンスを継続する。"
 
+    # v10.191: "mixed" (mostly live + a few delayed) and "delayed" (all real but
+    # off-hours/close) count as live-enough here — a couple of T-1 names no longer
+    # force the whole hero into a scary "partial" (which also capped confidence to
+    # 60%). "partial"/"mock" is reserved for genuinely incomplete/absent data.
+    _LIVE_ENOUGH = ("live", "mixed", "delayed")
     rates_live = isinstance(rates, dict) and rates.get("status") == "live"
-    jp_live    = isinstance(jp, dict) and jp.get("status") == "live"
-    us_live    = isinstance(us, dict) and us.get("status") == "live"
+    jp_live    = isinstance(jp, dict) and jp.get("status") in _LIVE_ENOUGH
+    us_live    = isinstance(us, dict) and us.get("status") in _LIVE_ENOUGH
     ev_ok      = isinstance(ev, dict) and ev.get("status") in ("live", "partial")
     if rates_live and jp_live and us_live and ev_ok:
         status = "live"
@@ -8060,6 +8092,37 @@ def get_market_news():
         # Corroboration rating (v10.170): cluster against the C.A.O.S. mesh so each
         # headline carries official/corroborated/single — single can't drive the AI.
         _annotate_news_corroboration(items)
+        # v10.191: fold in JP-language headlines from the intel mesh (Reuters JP /
+        # 日銀 / 経産省 / Bloomberg JP / 日経 / per-symbol Google News) so the JP owner
+        # actually SEES Japan news on the card, not just US wire. Newest first, capped.
+        try:
+            _JP_NEWS_SRC = {"reuters_jp", "boj_official", "meti_official", "nikkei_web", "bloomberg_jp", "google_news_jp"}
+            _seen_h = {i["headline"] for i in items}
+            jp_items = []
+            for it in reversed(list(_INTEL_STORE)):
+                sid = it.get("sourceId")
+                if it.get("lang") != "ja" and sid not in _JP_NEWS_SRC:
+                    continue
+                h = str(it.get("title") or it.get("headline") or "")[:200]
+                if not h or h in _seen_h:
+                    continue
+                _seen_h.add(h)
+                jp_items.append({
+                    "headline": h, "headlineJa": h,
+                    "source": str(sid or "JP")[:40],
+                    "url": str(it.get("canonicalUrl") or it.get("url") or "")[:300],
+                    "datetime": None,
+                    "major": bool(_NEWS_MAJOR_RE.search(h)),
+                    "tier": "wire" if sid in ("reuters_jp", "boj_official", "meti_official") else "aggregator",
+                    "relevant": _news_relevant(h, h),
+                    "corroboration": it.get("corroboration") or "single",
+                })
+                if len(jp_items) >= 6:
+                    break
+            if jp_items:
+                items = (jp_items + items)[:16]   # JP first for the JP owner
+        except Exception:
+            pass
         out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
                "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=重要キーワード。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のみ・裏取り(公式>複数系統>単一)で重み付けして参考投入。単一ソースは判断を動かさない。"}
         _MARKET_NEWS_CACHE["data"] = out
@@ -11452,6 +11515,36 @@ def scheduled_ph5():
     try: phase5_post_open()
     finally: SCHEDULED_RUN = False
 
+_LAST_INTEL_REFRESH = [0.0]
+
+def _residency_ai_tick():
+    """Resident replacement for the flaky GitHub */15 cron (v10.191). Keeps the
+    public-feed intel mesh warm and, during market hours, re-runs the AI judgment +
+    RECOMMEND — self-gated by the SAME budget / 14-min interval / daily cap as the
+    /ai-judgment/run route, so it's idempotent with any cron still firing (double
+    fire → the gate blocks the second). Never raises (that would kill the scheduler
+    thread). Decision-support only — no order/broker path is created here."""
+    try:
+        nowt = time.time()
+        if nowt - _LAST_INTEL_REFRESH[0] > 600:      # free public RSS; ≤ every 10 min
+            _LAST_INTEL_REFRESH[0] = nowt
+            try:
+                collect_institutional_intel()
+            except Exception:
+                pass
+        if not (_jp_market_open() or _us_market_open()):
+            return                                    # only spend AI budget in-session
+        allowed, _info, _code = _ai_run_gate(force=False)   # budget + interval + daily cap
+        if not allowed:
+            return
+        _execute_ai_judgment(run_mode="scheduled", checker="flash")
+        try:
+            _buy_candidates_generate()
+        except Exception:
+            pass
+    except Exception as e:
+        add_log(f"[residency] AI tick failed: {type(e).__name__}")
+
 def run_scheduler():
     add_log("⏰ Scheduler started (DST auto-detect)")
     sched = get_jst_schedule()
@@ -11471,6 +11564,11 @@ def run_scheduler():
         elif hhmm == sched["ph5_2"] and key not in ran_today:
             ran_today.add(key); add_log(f"🚀 Scheduled Ph.5 re-run ({hhmm} JST)")
             threading.Thread(target=scheduled_ph5, daemon=True).start()
+        # Resident AI + intel tick (v10.191) — replaces the unreliable GitHub */15
+        # cron. Spawn on 5-min boundaries; the tick self-throttles (intel ≤10min,
+        # AI via the run gate's 14-min interval), so a double spawn is harmless.
+        if now.minute % 5 == 0:
+            threading.Thread(target=_residency_ai_tick, daemon=True).start()
         time.sleep(30)
 
 if __name__ == "__main__":
