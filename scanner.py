@@ -41,6 +41,8 @@ import argus_daily_brief         # §21 owner daily institutional brief (pure, v
 import argus_visibility          # Visibility Risk Guard (aggregates data-visibility signals, pure, v10.195)
 import argus_market_depth         # Market Depth capability report (feeds the guard, pure, v10.196)
 import argus_mission_trigger       # §12 research-mission trigger gating (pure, v10.198)
+import argus_event_card            # EventCard v2 canonical research object (pure, ARGUS Pro v11)
+import argus_caos_audit            # CAOS association audit trail (pure, ARGUS Pro v11)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -3819,6 +3821,89 @@ def api_argus_events_active():
     return jsonify({"enabled": _EVENT_BACKBONE_ENABLED, "asOf": _ai_now_iso(),
                     "schemaVersion": argus_events.SCHEMA_VERSION,
                     "count": len(active), "events": active[:30]})
+
+def _event_card_context(active):
+    """Per-event corroboration context for EventCard v2 — reuses the mesh's own
+    corroboration_level over the event source + any IntelligenceItems linked to the
+    event's symbol. Two syndicated copies of one wire stay ONE family (mesh handles it)."""
+    ctx = {}
+    intel = list(_INTEL_STORE)
+    _PRICE_TYPES = {"PRICE_MOVE", "PRICE_SPIKE", "PRICE_CRASH", "LIMIT_UP", "LIMIT_DOWN",
+                    "GAP", "VOLUME_ANOMALY", "FLOW_ANOMALY"}
+    for e in active:
+        sym = e.get("symbol")
+        src_ids = [e.get("source")] if e.get("source") else []
+        tiers = []
+        for it in intel:
+            if sym and sym in (it.get("linkedAssets") or []):
+                if it.get("sourceId"):
+                    src_ids.append(it["sourceId"])
+                if it.get("sourceTier"):
+                    tiers.append(it["sourceTier"])
+        src_ids = [s for s in src_ids if s]
+        try:
+            corr = argus_research_mesh.corroboration_level(src_ids) if src_ids else "single"
+        except Exception:
+            corr = "single"
+        etype = str(e.get("eventType") or "").upper()
+        ctx[e.get("eventId")] = {
+            "source_ids": src_ids or None,
+            "independent_family_count": (2 if corr == "corroborated" else (1 if src_ids else 0)),
+            "has_official": corr == "official",
+            "theme_only": etype in ("THEME", "CAOS_CANDIDATE", "INSTITUTIONAL_VIEW"),
+            "market_confirmed": etype in _PRICE_TYPES,   # the observed move confirms itself
+            "source_tiers": sorted(set(tiers)),
+        }
+    return ctx
+
+
+@app.route("/api/argus/events/cards")
+@app.route("/api/argus/events/cards/<card_id>")
+def api_argus_event_cards(card_id=None):
+    """EventCard v2 — the canonical research object (ARGUS Pro v11). Folds active
+    events + corroboration context + the Visibility Guard into disciplined cards:
+    a single-source association is never a confirmed_cause, a theme-only link cannot
+    move the Today call, confidenceFinal = min(raw, cap), and every card states what
+    is missing. Public, secret-free."""
+    _events_restore_once()
+    try:
+        guard = _visibility_guard()
+    except Exception:
+        guard = {}
+    active = _events_active_list()
+    cards = argus_event_card.build_cards(active, guard=guard,
+                                         context_by_event=_event_card_context(active),
+                                         now_iso=_ai_now_iso())
+    if card_id:
+        card = next((c for c in cards if c.get("cardId") == card_id), None)
+        return (jsonify(card), 200) if card else (jsonify({"error": "not_found", "cardId": card_id}), 404)
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    etype = (request.args.get("type") or "").strip()
+    if symbol:
+        cards = [c for c in cards if symbol in (c.get("directAssets") or [])
+                 or symbol in (c.get("associatedAssets") or [])]
+    if etype:
+        cards = [c for c in cards if c.get("eventType") == etype]
+    try:
+        limit = max(1, min(60, int(request.args.get("limit", "30"))))
+    except Exception:
+        limit = 30
+    return jsonify({"asOf": _ai_now_iso(), "schemaVersion": argus_event_card.SCHEMA_VERSION,
+                    "count": len(cards), "items": cards[:limit]})
+
+
+@app.route("/api/argus/caos/audit")
+def api_argus_caos_audit():
+    """C.A.O.S. association audit trail (ARGUS Pro v11) — WHY each symbol↔event link
+    exists (matched terms, source family/tier, corroboration) with a permanent
+    non-causality caveat. Metadata only; never full text. Public, secret-free."""
+    symbol = (request.args.get("symbol") or "").strip().upper() or None
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", "100"))))
+    except Exception:
+        limit = 100
+    return jsonify({"asOf": _ai_now_iso(), **argus_caos_audit.snapshot(symbol=symbol, limit=limit)})
+
 
 @app.route("/api/argus/event-log")
 def api_argus_event_log():
@@ -10138,6 +10223,43 @@ def _source_registry():
 @app.route("/api/argus/source-registry")
 def api_argus_source_registry():
     return jsonify(_source_registry())
+
+
+@app.route("/api/argus/source-coverage")
+def api_argus_source_coverage():
+    """Source coverage by QUALITY TIER (ARGUS Pro v11). Honest: a source being listed
+    is not enough — zero items / no successful fetch ≠ live. Weak tiers (aggregator/
+    unknown/social) cannot ground judgment or confirm cause. Reuses the source registry
+    (configured≠live) + a tally of the live IntelligenceItem store by tier."""
+    reg = _source_registry() or {}
+    # Tally the actual collected items by tier (what's really flowing in).
+    tier_counts = {}
+    fam_seen = set()
+    for it in list(_INTEL_STORE):
+        tier = it.get("sourceTier") or argus_research_mesh.source_tier(it.get("sourceId"))
+        b = tier_counts.setdefault(tier, {"tier": tier, "itemCount": 0,
+                                          **argus_research_mesh.tier_grounding(tier)})
+        b["itemCount"] += 1
+        fam_seen.add(argus_research_mesh.source_family(it.get("sourceId")))
+    tiers = sorted(tier_counts.values(), key=lambda x: -x["itemCount"])
+    grounding_items = sum(b["itemCount"] for b in tiers if b["canGroundJudgment"])
+    weak_items = sum(b["itemCount"] for b in tiers if b["weakSignal"])
+    return jsonify({
+        "asOf": _ai_now_iso(),
+        "schemaVersion": "source-coverage-v1",
+        "tiers": tiers,
+        "independentFamiliesSeen": sorted(f for f in fam_seen if f and f != "unknown"),
+        "registry": {"confirmedLive": reg.get("confirmedLive"), "total": reg.get("total"),
+                     "note": "configured ≠ live: 実データが流れて初めてliveと数える。"},
+        "summary": {
+            "totalItems": sum(b["itemCount"] for b in tiers),
+            "canGroundJudgmentItems": grounding_items,
+            "weakSignalItems": weak_items,
+            "distinctTiers": len(tiers),
+        },
+        "noteJa": "弱いソース(アグリゲータ/不明/SNS)は単独で判断根拠にも原因確定にもできません。"
+                  "同一ワイヤの転載は1ファミリー=1確認です。",
+    })
 
 
 # ── Market Depth capability report (v10.196) ─────────────────────────────────

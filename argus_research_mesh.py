@@ -293,6 +293,11 @@ def normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
         "status": "new",
         "category": map_category(_ct, iid, INSTITUTIONS.get(iid, {}).get("institutionType")),
     }
+    # Source quality tier + what it may do (ARGUS Pro v11) — set at normalization so
+    # every downstream consumer (EventCard, coverage, judgment gating) agrees.
+    _tier = source_tier(source_id)
+    item["sourceTier"] = _tier
+    item.update(tier_grounding(_tier))
     return enforce_storage(source_id, item)
 
 
@@ -365,6 +370,47 @@ def source_family(source_id: Optional[str]) -> str:
 
 def is_official_source(source_id: Optional[str]) -> bool:
     return source_family(source_id).startswith("official:")
+
+
+# ── Source TIERS (ARGUS Pro v11) — quality gating over the existing family map ──
+# Weak sources cannot ground judgment or confirm cause; only official tiers confirm
+# cause; aggregators never count as an independent confirmation. Derived from the
+# EXISTING source_family map — not a parallel taxonomy.
+_TIER_CENTRAL_BANK_GOV = {"official:fed", "official:boj", "official:treasury",
+                          "official:bls", "official:ecb", "official:meti", "official:bea"}
+_TIER_EXCHANGE_VENUE = {"official:tdnet", "official:jpx", "official:edinet",
+                        "tdnet", "jpx", "edinet"}   # raw forms (not in the family key map)
+_TIER_REPUTABLE_MEDIA = {"reuters", "bloomberg", "nikkei", "cnbc", "dowjones", "ft",
+                         "cnn", "forbes", "insider", "ap", "kabutan", "minkabu", "fisco"}
+_OFFICIAL_TIERS = {"official_regulatory", "official_corporate",
+                   "exchange_or_listing_venue", "central_bank_or_government"}
+_GROUNDING_TIERS = _OFFICIAL_TIERS | {"reputable_financial_media"}
+
+
+def source_tier(source_id: Optional[str]) -> str:
+    """Map a source to its quality tier (ARGUS Pro vocabulary). Pure."""
+    fam = source_family(source_id)
+    if fam in _TIER_EXCHANGE_VENUE:
+        return "exchange_or_listing_venue"
+    if fam in _TIER_CENTRAL_BANK_GOV:
+        return "central_bank_or_government"
+    if fam.startswith("official:"):
+        return "official_regulatory"
+    if fam in _AGGREGATOR_FAMILIES:
+        return "aggregator"
+    if fam in _TIER_REPUTABLE_MEDIA:
+        return "reputable_financial_media"
+    return "unknown"
+
+
+def tier_grounding(tier: str) -> Dict[str, bool]:
+    """What a tier is ALLOWED to do. official → can confirm cause; reputable media →
+    can ground but not confirm cause alone; aggregator/unknown → weak signal only."""
+    return {
+        "canGroundJudgment": tier in _GROUNDING_TIERS,
+        "canConfirmCause": tier in _OFFICIAL_TIERS,
+        "weakSignal": tier not in _GROUNDING_TIERS,
+    }
 
 
 def corroboration_level(source_ids) -> str:
