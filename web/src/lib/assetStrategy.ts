@@ -206,8 +206,19 @@ export function deriveStrategy(
     dataLimitations.push('銘柄固有の材料(決算/開示/ニュース)は未取得。');
   }
 
+  // Row data quality. FIX (v10.209): only a genuine mock (or no quote) is 'mock'.
+  // A 'delayed'/'partial'/'mixed'/'stale' quote is REAL data — e.g. the J-Quants
+  // close when the realtime moomoo bridge is down — so it must show its price with
+  // a "delayed" freshness label, NOT be hidden as "MOCK / —". The old code collapsed
+  // everything != 'live' to 'mock', which is why Japanese rows showed MOCK. Crypto
+  // has no rule-label engine, so a live crypto price is 'live' (the missing label is
+  // about strategy depth, not price freshness — it was showing "PARTIAL").
+  const isCrypto = asset.market === 'CRYPTO';
+  const qs = quote?.status;
   const status: AssetStrategy['status'] =
-    !quote ? 'mock' : (quote.status === 'live' ? (label ? 'live' : 'partial') : 'mock');
+    (!quote || qs === 'mock') ? 'mock'
+      : qs === 'live' ? ((label || isCrypto) ? 'live' : 'partial')
+      : 'partial';
 
   return {
     action, risk, confidence,
