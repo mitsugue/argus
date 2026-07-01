@@ -2194,6 +2194,22 @@ def api_argus_watchlist_membership():
     snap = _layer2b_read_latest()
     if not snap:
         return jsonify({"status": "empty", "privateStoreConfigured": _layer2b_store_configured()})
+    # v10.204: enrich each member with a resolved company name so a restore shows
+    # 会社名, not just the 4-digit code (old syncs stored symbol-only). JP → J-Quants
+    # master; never invent — fall back to the symbol if unresolved.
+    try:
+        name_map = _symbol_name_map()   # SYMBOL→name from the JP/US watchlists (reliable)
+        for m in (snap.get("members") or []):
+            if m.get("name") and m["name"] != m.get("symbol"):
+                continue
+            sym = str(m.get("symbol") or "").upper()
+            nm = name_map.get(sym)
+            if not nm and str(m.get("market")) == "JP":
+                nm = _jq_name_for(sym)   # fall back to the J-Quants master for other JP codes
+            if nm and nm != sym:
+                m["name"] = nm
+    except Exception:
+        pass
     return jsonify({"status": "ok", "membership": snap})
 
 @app.route("/api/argus/calibration/layer2b-run", methods=["POST"])
