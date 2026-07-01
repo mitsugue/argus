@@ -2,63 +2,11 @@ import React, { useMemo } from 'react';
 import { LiveEventRow } from '../dashboard/LiveEventRow';
 import { CaosEvents } from '../dashboard/CaosEvents';
 import { useEventRadar } from '../../hooks/useEventRadar';
-import { useNewsRadar } from '../../hooks/useNewsRadar';
 import type { CalendarEvent, Escalation, EventSource } from '../../types/events';
 
-// Scheduled-event calendar + escalation policy + crisis news radar. Extracted from
-// the old Event Radar page (v10.57) so it lives on the unified Market Context page —
-// "what's coming" sits next to "where we are now" instead of in a separate tab.
-
-const NEWS_LEVEL_COLOR: Record<string, string> = {
-  calm: 'var(--text-muted)', elevated: 'var(--amber)', high: 'var(--red)', unknown: 'var(--text-muted)',
-};
-const NEWS_LEVEL_JA: Record<string, string> = {
-  calm: '平穏', elevated: 'やや増加', high: '高水準', unknown: '不明',
-};
-
-const NewsRadarSection: React.FC = () => {
-  const { data, loading } = useNewsRadar();
-  if (loading) return null;
-  if (!data || data.status !== 'live') {
-    return (
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">News Radar</span>
-          <span className="section-head__count">unavailable</span>
-        </div>
-        <div className="card"><p className="today-connecting">ニュースレーダーは現在取得できません(自動で再試行)。</p></div>
-      </section>
-    );
-  }
-  return (
-    <section>
-      <div className="section-head">
-        <span className="section-head__title">News Radar</span>
-        <span className="section-head__count" style={{ color: NEWS_LEVEL_COLOR[data.level] }}>
-          {NEWS_LEVEL_JA[data.level] ?? data.level}・直近6時間
-        </span>
-      </div>
-      <div className="card newsradar">
-        {data.themes.map((t) => (
-          <div className="newsradar__row" key={t.key}>
-            <span className="newsradar__label">{t.labelJa}</span>
-            <span className="newsradar__count" style={{ color: NEWS_LEVEL_COLOR[t.level] }}>
-              {t.count}件 {t.level !== 'calm' ? `(${NEWS_LEVEL_JA[t.level] ?? t.level})` : ''}
-            </span>
-            <span className="newsradar__heads">
-              {t.headlines.slice(0, 2).map((h) => (
-                <a key={h.url} href={h.url} target="_blank" rel="noreferrer" className="newsradar__link">
-                  {h.title.slice(0, 60)}<span className="newsradar__src">（{h.source}）</span>
-                </a>
-              ))}
-            </span>
-          </div>
-        ))}
-        <p className="newsradar__note">{data.noteJa}</p>
-      </div>
-    </section>
-  );
-};
+// Scheduled-event calendar + escalation policy. The crisis News Radar moved INTO the
+// C.A.O.S. hub (v10.192) — the owner noted crisis-theme detection IS a C.A.O.S. role —
+// so this page keeps "what's coming" next to "where we are now".
 
 // Plain-Japanese proximity labels (was D-7/D-3/D-1 jargon) — the escalation policy
 // itself is kept; only the cryptic window codes are made readable (v10.162).
@@ -142,8 +90,6 @@ export const MarketEventsSections: React.FC = () => {
           ))}
         </div>
       </section>
-
-      <NewsRadarSection />
     </>
   );
 };

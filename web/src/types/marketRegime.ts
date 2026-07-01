@@ -67,6 +67,7 @@ export interface MarketRegimeSnapshot {
   jpRotationGroups?: RotationGroup[];   // JP sector flow board (v10.189)
   topRotations: TopRotationItem[];
   matrix: RegimeMatrixData;
+  jpMatrix?: RegimeMatrixData & { available?: boolean };   // JP Regime Matrix (v10.192)
   supportingEvidence: string[];
   sourceStatuses: {
     fred: SourceStatus;

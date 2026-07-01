@@ -71,6 +71,22 @@ function toMatrixState(data: MarketRegimeSnapshot): RegimeMatrixState {
   };
 }
 
+// JP Regime Matrix state (v10.192) — same 2 axes as US, built from the JP sector
+// matrix the backend derives from TOPIX flows. No JP regime label yet, so the
+// quadrant/tags are read straight off the axes.
+function toJpMatrixState(m: NonNullable<MarketRegimeSnapshot['jpMatrix']>): RegimeMatrixState {
+  const risk = m.y >= 0.15 ? 'Risk On' : m.y <= -0.15 ? 'Risk Off' : 'Neutral';
+  return {
+    x: m.x,
+    y: m.y,
+    quadrantLabel: risk,
+    primaryRegime: risk,
+    secondaryRegime: `Growth ${m.x >= 0.1 ? '優位' : m.x <= -0.1 ? '劣位' : '中立'}`,
+    posture: m.rationaleJa,
+    assets: m.points,
+  };
+}
+
 // Order: Subtitle → status/regime header → Capital Rotation Board (primary) →
 // Regime Matrix (supporting) → Regime Summary → Rates backdrop → FRED snapshot
 // → Data limitations → Glossary. The bubble / SectorBlob viz stays retired.
@@ -96,6 +112,10 @@ export const MarketRegime: React.FC = () => {
   const rows = useMemo(() => (data ? toRotationRows(data.rotationGroups) : []), [data]);
   const jpRows = useMemo(() => (data?.jpRotationGroups ? toRotationRows(data.jpRotationGroups) : []), [data]);
   const matrix = useMemo(() => (data ? toMatrixState(data) : null), [data]);
+  const jpMatrix = useMemo(
+    () => (data?.jpMatrix && data.jpMatrix.available !== false ? toJpMatrixState(data.jpMatrix) : null),
+    [data],
+  );
 
   const labelEn = data ? (REGIME_LABEL_JA[data.regime.label] ?? data.regime.label) : '—';
   const confPct = data ? Math.round(data.regime.confidence * 100) : 0;
@@ -145,9 +165,24 @@ export const MarketRegime: React.FC = () => {
         )}
       </div>
 
-      <section id="full-board" className="regime-anchor">
+      {/* ── US block (v10.192): Regime Matrix (現在地) → Capital Rotation Board ── */}
+      {matrix && (
+        <section id="full-board" className="regime-anchor">
+          <div className="section-head">
+            <span className="section-head__title">US Regime Matrix</span>
+            <span className="section-head__count">市場全体の現在地</span>
+          </div>
+          <RegimeMatrix
+            state={matrix}
+            compact
+            axisLabels={{ xNeg: 'Defensive', xPos: 'Growth', yNeg: 'Duration', yPos: 'Risk' }}
+          />
+        </section>
+      )}
+
+      <section className={matrix ? undefined : 'regime-anchor'} id={matrix ? undefined : 'full-board'}>
         <div className="section-head">
-          <span className="section-head__title">Capital Rotation Board</span>
+          <span className="section-head__title">US Capital Rotation Board</span>
           <span className="section-head__count">US · {rows.length} groups</span>
         </div>
         {rows.length > 0 ? (
@@ -167,8 +202,22 @@ export const MarketRegime: React.FC = () => {
         )}
       </section>
 
-      {/* Japan sector rotation (v10.189) — same horizontal flow board as US (TOPIX-17 ETFs),
-          with the JP intraday-地合い overlay as its header chip. */}
+      {/* ── JP block (v10.192): JP Regime Matrix → Japan Sector Rotation board ──
+          Japan gets its OWN matrix (from TOPIX sector flows), same geometry as US. */}
+      {jpMatrix && (
+        <section>
+          <div className="section-head">
+            <span className="section-head__title">JP Regime Matrix</span>
+            <span className="section-head__count">日本セクターの現在地</span>
+          </div>
+          <RegimeMatrix
+            state={jpMatrix}
+            compact
+            axisLabels={{ xNeg: 'Defensive', xPos: 'Growth', yNeg: 'Duration', yPos: 'Risk' }}
+          />
+        </section>
+      )}
+
       <section>
         <div className="section-head">
           <span className="section-head__title">Japan Sector Rotation</span>
@@ -194,20 +243,6 @@ export const MarketRegime: React.FC = () => {
           </p></div>
         )}
       </section>
-
-      {matrix && (
-        <section>
-          <div className="section-head">
-            <span className="section-head__title">Regime Matrix</span>
-            <span className="section-head__count">supporting view</span>
-          </div>
-          <RegimeMatrix
-            state={matrix}
-            compact
-            axisLabels={{ xNeg: 'Defensive', xPos: 'Growth', yNeg: 'Duration', yPos: 'Risk' }}
-          />
-        </section>
-      )}
 
       {data && (
         <section>

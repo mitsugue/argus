@@ -2,6 +2,7 @@ import React from 'react';
 import { useMarketNews } from '../../hooks/useMarketNews';
 import { useImportantEvents } from '../../hooks/useImportantEvents';
 import { useDownsideIncidents } from '../../hooks/useDownsideIncidents';
+import { useNewsRadar } from '../../hooks/useNewsRadar';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './CaosEvents.css';
 import './MarketInstitutionalSection.css';
@@ -49,6 +50,12 @@ const PHASE: Record<string, { ja: string; tone: string }> = {
   pre: { ja: '発表前', tone: 'var(--event-high)' },
   post: { ja: '発表後', tone: 'var(--event-medium)' },
 };
+// Crisis-theme radar levels (folded into C.A.O.S. from the old News Radar, v10.192).
+const CRISIS_LVL: Record<string, { ja: string; tone: string }> = {
+  calm: { ja: '平常', tone: 'var(--text-muted)' },
+  elevated: { ja: 'やや増加', tone: 'var(--amber, #fbbf24)' },
+  high: { ja: '高水準', tone: 'var(--red, #f87171)' },
+};
 
 function hhmm(ts: number | null | undefined): string {
   if (!ts) return '';
@@ -63,6 +70,7 @@ export const CaosHub: React.FC = () => {
   const { data: newsData } = useMarketNews();
   const { data: evData } = useImportantEvents();   // baseline events so the tier never vanishes
   const { data: dsData } = useDownsideIncidents();  // active drops, surfaced in the hub (v10.178)
+  const { data: radarData } = useNewsRadar();       // crisis-theme radar, folded into C.A.O.S. (v10.192)
 
   React.useEffect(() => {
     if (!backend) return;
@@ -111,6 +119,10 @@ export const CaosHub: React.FC = () => {
     .filter((i) => i.severity === 'critical' || i.severity === 'high' || i.isHeld)
     .sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9))
     .slice(0, 3);
+  // Crisis-theme radar (v10.192) — moved INTO C.A.O.S. per the owner. Only shown when
+  // the radar has a read (GDELT or the intel-store fallback); one calm line otherwise.
+  const crisisThemes = radarData?.status === 'live' ? (radarData.themes ?? []) : [];
+  const crisisElevated = crisisThemes.filter((th) => th.level !== 'calm');
   const empty = material.length === 0 && materialEvents.length === 0 && news.length === 0 && incidents.length === 0;
 
   return (
@@ -120,8 +132,32 @@ export const CaosHub: React.FC = () => {
         <span className="caoshub-sub">Corroborated Analyst &amp; Official Signals</span>
       </div>
 
-      {empty && (
+      {empty && crisisThemes.length === 0 && (
         <p className="caoshub-empty">機関の見解・公式シグナル・市場ニュースを継続収集しています…</p>
+      )}
+
+      {crisisThemes.length > 0 && (
+        <div className="caoshub-tier">
+          <div className="caoshub-tierhead">
+            危機テーマ <span className="caoshub-tiernote">地政学/為替/金融システム/政変/災害 — ブラックスワン監視</span>
+          </div>
+          {crisisElevated.length > 0 ? crisisElevated.map((th) => (
+            <div className="caoshub-crisis" key={th.key}>
+              <span className="caoshub-crisis-lvl" style={{ color: (CRISIS_LVL[th.level] ?? CRISIS_LVL.calm).tone }}>
+                {(CRISIS_LVL[th.level] ?? CRISIS_LVL.calm).ja}
+              </span>
+              <span className="caoshub-crisis-label">{th.labelJa}</span>
+              <span className="caoshub-crisis-count">{th.count}件</span>
+              {th.headlines?.[0] && (
+                <a className="caoshub-crisis-head" href={th.headlines[0].url || '#'} target="_blank" rel="noreferrer">
+                  {th.headlines[0].title.slice(0, 52)}
+                </a>
+              )}
+            </div>
+          )) : (
+            <p className="caoshub-crisis-calm">危機テーマは平常。地政学・為替急変・金融システム・政変・災害いずれも顕著な増加なし。</p>
+          )}
+        </div>
       )}
 
       {incidents.length > 0 && (

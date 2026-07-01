@@ -2378,6 +2378,41 @@ def _jp_sector_rotation():
                        "rationaleJa": f"{label}: 本日{pct:+.2f}%（{flow_ja[status]}）。"})
     return groups
 
+# JP-specific role → matrix-coordinate maps (v10.192). Mirrors the US _ROLE_GROWTH/
+# _ROLE_RISK but for the TOPIX sector roles, so the JP Matrix uses the SAME geometry
+# as the US one (growth↔defensive × risk↔duration).
+_JP_ROLE_GROWTH = {"グロース": 0.6, "リスク": 0.4, "金利敏感": 0.0, "バリュー": -0.2, "ディフェンシブ": -0.55}
+_JP_ROLE_RISK   = {"リスク": 0.55, "グロース": 0.5, "金利敏感": 0.15, "バリュー": 0.05, "ディフェンシブ": -0.45}
+
+def _jp_regime_matrix(jp_groups):
+    """JP Regime Matrix from the TOPIX sector flows — same 2 axes/geometry as the US
+    matrix. Current location (blue) = the aggregate of the sector scores by role;
+    context dots = each available sector. ETF-flow proxy, not direct capital flow."""
+    def _c(v):
+        return max(-1.0, min(1.0, v))
+    avail = [g for g in (jp_groups or []) if g.get("available")]
+    def role_avg(roles):
+        vs = [g["score"] for g in avail if g.get("role") in roles]
+        return sum(vs) / len(vs) if vs else 0.0
+    growth_lead    = role_avg({"グロース", "リスク"})
+    defensive_lead = role_avg({"ディフェンシブ"})
+    risk_lead      = role_avg({"リスク", "グロース", "金利敏感", "バリュー"})
+    duration_lead  = role_avg({"ディフェンシブ", "金利敏感"})
+    x = _c(growth_lead - defensive_lead)
+    y = _c(risk_lead - duration_lead)
+    points = []
+    for g in avail:
+        px = _c(_JP_ROLE_GROWTH.get(g.get("role"), 0.0) * 0.6 + g["score"] * 0.5)
+        py = _c(_JP_ROLE_RISK.get(g.get("role"), 0.0) * 0.6 + g["score"] * 0.5)
+        points.append({"label": g["label"], "x": round(px, 2), "y": round(py, 2)})
+    n = len(avail)
+    ja = (f"日本株{n}セクターの資金フロー(TOPIX-17 ETF)から合成した現在地。"
+          f"グロース優位={x:+.2f} / リスク寄り={y:+.2f}。ETFフローのプロキシで直接の資金フローではない。"
+          if n else "日本株セクターのデータ取得待ち。")
+    return {"x": round(x, 3), "y": round(y, 3),
+            "xLabel": "Growth vs Defensive", "yLabel": "Risk vs Duration",
+            "points": points, "rationaleJa": ja, "available": n > 0}
+
 def _q_close(q):
     # V2 abbreviated fields: C = close; fall back to AdjC (adjusted close).
     v = q.get("C")
@@ -5883,6 +5918,8 @@ def get_market_regime_snapshot():
         "ownerAffected": False,   # owner-specific overlay is set in the downside endpoint
     }) if jp_live_stocks else None
 
+    _jp_groups = _jp_sector_rotation()   # computed ONCE — feeds both the JP board + JP matrix
+
     payload = {
         "status": status,
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -5896,7 +5933,8 @@ def get_market_regime_snapshot():
         },
         "ratesBackdrop": backdrop,
         "rotationGroups": groups,
-        "jpRotationGroups": _jp_sector_rotation(),   # JP sector flow board (v10.189)
+        "jpRotationGroups": _jp_groups,              # JP sector flow board (v10.189)
+        "jpMatrix": _jp_regime_matrix(_jp_groups),   # JP Regime Matrix (v10.192)
         "topRotations": top_rotations,
         "matrix": {
             "x": round(growth_value_axis, 3),
@@ -7934,15 +7972,20 @@ def api_argus_ai_provider_ping():
 _GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
 _NEWS_THEMES = [
     {"key": "geopolitics", "labelJa": "地政学(侵攻・攻撃)",
-     "phrases": ["invasion", "military strike", "missile attack", "declares war"]},
+     "phrases": ["invasion", "military strike", "missile attack", "declares war"],
+     "phrasesJa": ["侵攻", "軍事攻撃", "ミサイル", "宣戦", "空爆"]},
     {"key": "fx_policy", "labelJa": "為替・金融政策の急変",
-     "phrases": ["currency intervention", "yen intervention", "emergency rate cut"]},
+     "phrases": ["currency intervention", "yen intervention", "emergency rate cut"],
+     "phrasesJa": ["為替介入", "円買い介入", "緊急利下げ", "緊急利上げ"]},
     {"key": "financial_stress", "labelJa": "金融システム不安",
-     "phrases": ["bank collapse", "bank failure", "trading halted", "circuit breaker", "debt default"]},
+     "phrases": ["bank collapse", "bank failure", "trading halted", "circuit breaker", "debt default"],
+     "phrasesJa": ["銀行破綻", "取引停止", "サーキットブレーカー", "デフォルト", "債務不履行"]},
     {"key": "policy_shock", "labelJa": "緊急会見・政変",
-     "phrases": ["emergency press conference", "emergency meeting", "prime minister resigns"]},
+     "phrases": ["emergency press conference", "emergency meeting", "prime minister resigns"],
+     "phrasesJa": ["緊急会見", "緊急会合", "首相辞任", "内閣総辞職"]},
     {"key": "disaster", "labelJa": "災害・非常事態",
-     "phrases": ["state of emergency", "major earthquake"]},
+     "phrases": ["state of emergency", "major earthquake"],
+     "phrasesJa": ["非常事態", "大地震", "大規模停電"]},
 ]
 _NEWS_CACHE     = {"data": None, "expires": 0.0}
 _NEWS_TTL       = 1800   # 30 min — GDELT politeness
@@ -8174,9 +8217,30 @@ def get_news_radar():
             })
     except Exception:
         status = "unavailable"
+        themes_out = []
+
+    # v10.192: if GDELT is unreachable (or found nothing), fall back to the C.A.O.S.
+    # intel store — the public RSS mesh (Reuters JP / 日銀 / 経産省 / Bloomberg / CNBC)
+    # now feeds crisis-theme detection too, so the radar (now surfaced inside the
+    # C.A.O.S. hub) still works when GDELT is down. Phrase-match EN + JA titles.
+    if status != "live" or not any(t.get("count") for t in themes_out):
+        try:
+            titles = [str(it.get("title") or it.get("headline") or "").lower()
+                      for it in _INTEL_STORE]
+            titles = [x for x in titles if x]
+            fb = []
+            for t in _NEWS_THEMES:
+                pats = [p.lower() for p in (t["phrases"] + t.get("phrasesJa", []))]
+                cnt = sum(1 for x in titles if any(p in x for p in pats))
+                fb.append({"key": t["key"], "labelJa": t["labelJa"],
+                           "count": cnt, "level": _news_theme_level(cnt), "headlines": []})
+            if titles:
+                themes_out, status = fb, "live"   # intel-based read (headlines omitted)
+        except Exception:
+            pass
+    if not themes_out:
         themes_out = [{"key": t["key"], "labelJa": t["labelJa"],
-                       "count": 0, "level": "calm", "headlines": []}
-                      for t in _NEWS_THEMES]
+                       "count": 0, "level": "calm", "headlines": []} for t in _NEWS_THEMES]
 
     levels = [t["level"] for t in themes_out]
     overall = "high" if "high" in levels else "elevated" if "elevated" in levels else "calm"

@@ -47,6 +47,8 @@
 
 /* Always-visible health beacon on the logo (green / amber / red·pulse). */
 .shell__brand-beacon { align-self: center; width: 8px; height: 8px; }
+/* Monogram mark (v10.192) — eye-in-triangle, tracks the brand text color. */
+.shell__brand-mark { align-self: center; color: var(--text-main); flex: none; }
 
 .shell__brand-name {
   font-family: var(--font-sans);

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { RiskLevel } from '../types/action';
 import { useSystemHealth, type LampStatus } from '../hooks/useSystemHealth';
 import { SystemHealthPopover } from './dashboard/SystemHealthPopover';
+import { ArgusMark } from './ArgusMark';
 import './AppShell.css';
 
 const BRAND_DOT: Record<LampStatus, string> = {
@@ -220,6 +221,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
           aria-expanded={healthOpen}
           title="システム状態を表示"
         >
+          <ArgusMark size={20} className="shell__brand-mark" />
           <span className={`shell__brand-beacon shl-dot ${BRAND_DOT[health?.overall ?? 'off']}`} />
           <span className="shell__brand-name">A.R.G.U.S.</span>
           <span className="shell__brand-version">v{__APP_VERSION__}</span>
