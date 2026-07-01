@@ -44,6 +44,32 @@ export interface QuoteLite {
   date: string | null;
   status: string;
   flow?: { bigNetRatio: number } | null;
+  name?: string | null;   // live snapshot name (JP/US); crypto snapshot has none
+}
+
+/**
+ * Resolve the best display name for an asset row (v10.206).
+ * Order: stored name → live snapshot name → raw symbol.
+ * Load-bearing subtlety: a watchlist RESTORED from Layer 2B stores code-only
+ * assets where `displayName === symbol` (Layer2BSyncCard). A naive
+ * `displayName || liveName` would keep showing the 4-digit code, so we treat a
+ * displayName that merely equals the symbol as "no stored name" and let the live
+ * snapshot name (三菱商事 etc.) take over. Self-heals at render — no localStorage
+ * write, no re-add. Falls back to the code when no real name exists (delayed/mock
+ * snapshot, or crypto which has no name) — never renders an empty string.
+ */
+export function bestAssetName(
+  asset: { symbol: string; displayName: string; displayNameJa?: string },
+  liveName?: string | null,
+): string {
+  const sym = (asset.symbol || '').trim();
+  // A name that merely equals the symbol/code is NOT a real stored name — some
+  // restore paths write the code into displayName AND/OR displayNameJa.
+  const real = (s?: string | null) => {
+    const v = (s || '').trim();
+    return v && v.toUpperCase() !== sym.toUpperCase() ? v : '';
+  };
+  return real(asset.displayNameJa) || real(asset.displayName) || real(liveName) || sym;
 }
 
 const SCEN_JA: Record<string, string> = {

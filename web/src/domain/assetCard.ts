@@ -1,4 +1,5 @@
 import { resolveSignal, SIGNALS, OVERRIDE_LABEL_JA, type SignalCode, type OwnerState } from './actionLevel';
+import { bestAssetName } from '../lib/assetStrategy';
 
 // One unified per-stock card model (v10.140) — the Today page shows ONE card per
 // stock that merges everything ARGUS knows about it (action level, downside cause,
@@ -45,7 +46,7 @@ export interface AssetCardModel {
 }
 
 // ── inputs (loosely typed against the existing hook shapes) ──
-interface LabelLike { symbol: string; action: string; reasonJa?: string; nextConditionJa?: string;
+interface LabelLike { symbol: string; action: string; name?: string; reasonJa?: string; nextConditionJa?: string;
   supportingData?: { price?: number | null; changePct?: number; bigFlowRatio?: number | null; quoteDate?: string | null }; status?: string;
   judgmentSource?: 'ai' | 'rule'; }   // 'ai' = the displayed call is GPT+Gemini's; 'rule' = guardrail fallback
 interface IncidentLike { symbol: string; changePct?: number | null; causeBuckets?: { cause: string; probability: number }[];
@@ -142,7 +143,8 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
   return {
     id: asset.id,
     symbol: asset.symbol,
-    name: asset.displayNameJa || asset.displayName,
+    // Stored name → live action-label name (heals code-only restored rows) → symbol (v10.206).
+    name: bestAssetName(asset, label?.name),
     market: asset.market,
     held,
     ownerState: incident?.ownerState as OwnerState | undefined,

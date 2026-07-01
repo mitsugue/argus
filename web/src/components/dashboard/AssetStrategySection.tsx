@@ -21,7 +21,7 @@ import { useActionLabels } from '../../hooks/useActionLabels';
 import { useCatalysts } from '../../hooks/useCatalysts';
 import { useRatesSnapshot } from '../../hooks/useRatesSnapshot';
 import { useAIJudgment } from '../../hooks/useAIJudgment';
-import { deriveStrategy, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
+import { deriveStrategy, bestAssetName, type AssetStrategy, type QuoteLite } from '../../lib/assetStrategy';
 import { buildExposure, valueHolding, fmtMoney, fmtSigned, currencyOf, type ExposureSummary } from '../../lib/portfolio';
 import { simulateAdd } from '../../lib/whatif';
 import { getNote, saveNote } from '../../lib/researchNotes';
@@ -218,7 +218,7 @@ const WhatIfPanel: React.FC<{
                 <option value="">選択…</option>
                 {candidates.map((a) => (
                   <option key={a.id} value={a.symbol}>
-                    {a.symbol} {a.displayNameJa || a.displayName}
+                    {a.symbol} {bestAssetName(a, quotes.get(a.symbol)?.name)}
                   </option>
                 ))}
               </select>
@@ -282,12 +282,13 @@ const AI_VIEW_COLOR: Record<string, string> = {
 
 const SortableAssetRow: React.FC<{
   asset: AssetItem; strat: AssetStrategy; expanded: boolean;
+  liveName?: string | null;
   onToggleExpand: (id: string) => void; onRemove: (id: string) => void;
   onUpdateHolding: Props['onUpdateHolding'];
   aiLabel?: AIJudgmentLabel;
   aiAgeMin?: number | null;
   incident?: DownsideIncident;
-}> = ({ asset, strat, expanded, onToggleExpand, onRemove, onUpdateHolding, aiLabel, aiAgeMin, incident }) => {
+}> = ({ asset, strat, expanded, liveName, onToggleExpand, onRemove, onUpdateHolding, aiLabel, aiAgeMin, incident }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: asset.id });
   // Entry Scout (v10.15, user request 2026-06-13): on-demand 瞬間診断 for the
   // buy-entry moment — trend/overheat from 60d history + big-money flow +
@@ -343,7 +344,7 @@ const SortableAssetRow: React.FC<{
   const [note, setNote] = useState(() => getNote(asset.symbol)?.text ?? '');
   const [noteSaved, setNoteSaved] = useState(false);
   async function copyLlmConsult() {
-    const name0 = asset.displayNameJa || asset.displayName;
+    const name0 = bestAssetName(asset, liveName);
     const sc = (scout && typeof scout === 'object' && scout.status === 'live') ? scout : null;
     const L: string[] = [];
     L.push(`あなたは投資の専門家です。私の判断支援アプリARGUSが出した「${asset.symbol} ${name0}」(${asset.market})の診断を渡します。`);
@@ -386,7 +387,7 @@ const SortableAssetRow: React.FC<{
     }
   }
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
-  const name = asset.displayNameJa || asset.displayName;
+  const name = bestAssetName(asset, liveName);
   const fresh = freshnessOf(strat);
   const hp = holderPosture(asset, strat, incident);   // position-aware guidance (held only, v10.113)
   const HP_COLOR: Record<string, string> = { red: '#F87171', amber: '#FBBF24', green: '#34D399', neutral: 'var(--text-sub)' };
@@ -719,8 +720,9 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
 
   const maps = useMemo(() => {
     const quotes = new Map<string, QuoteLite>();
-    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null });
-    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null });
+    // Carry the live snapshot `name` (三菱商事 etc.) so code-only restored rows self-heal (v10.206).
+    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
+    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
     for (const p of cryptoPairs) {
       const q = crypto.byId[p.id];
       if (q) quotes.set(p.symbol, { price: q.priceUsd, changePct: q.changePct, volume: q.volume, date: q.date, status: q.status });
@@ -842,10 +844,11 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd(ids)}>
                 <SortableContext items={ids} strategy={verticalListSortingStrategy}>
                   {g.items.map((a) => {
-                    const strat = deriveStrategy(a, maps.labels.get(a.symbol), maps.quotes.get(a.symbol), maps.cats.get(a.symbol), mountTs);
+                    const q = maps.quotes.get(a.symbol);
+                    const strat = deriveStrategy(a, maps.labels.get(a.symbol), q, maps.cats.get(a.symbol), mountTs);
                     return (
                       <SortableAssetRow
-                        key={a.id} asset={a} strat={strat} expanded={expandedId === a.id}
+                        key={a.id} asset={a} strat={strat} liveName={q?.name ?? undefined} expanded={expandedId === a.id}
                         onToggleExpand={onToggleExpand} onRemove={onRemove}
                         onUpdateHolding={onUpdateHolding}
                         aiLabel={aiBySym.get(a.symbol)}
