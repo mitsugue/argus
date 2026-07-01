@@ -58,6 +58,14 @@
   color: var(--text-main);
 }
 
+/* "Pro" — a quiet luminous accent, in the same cyan family as the resting eye. */
+.shell__brand-pro {
+  color: var(--cyan, #22d3ee);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 6px color-mix(in srgb, var(--cyan, #22d3ee) 55%, transparent);
+}
+
 /* Tiny build version pill next to the brand — quiet, always visible
    (incl. mobile, where the sidebar footer collapses). */
 .shell__brand-version {

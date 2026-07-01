@@ -221,7 +221,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
               pulse reports system status, and the whole brand stays the button that
               opens the health popover. The old standalone green dot is retired. */}
           <ArgusMark size={22} className="shell__brand-mark" status={health?.overall ?? 'off'} />
-          <span className="shell__brand-name">A.R.G.U.S.</span>
+          <span className="shell__brand-name">A.R.G.U.S. <span className="shell__brand-pro">Pro</span></span>
           <span className="shell__brand-version">v{__APP_VERSION__}</span>
           <span className="shell__brand-tag">
             Autonomous Risk and Global Uncertainty Scanner

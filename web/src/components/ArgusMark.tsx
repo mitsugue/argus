@@ -21,22 +21,28 @@ export const ArgusMark: React.FC<{
   status?: MarkStatus;
 }> = ({ size = 22, className, status }) => {
   const iris = status ? STATUS_COLOR[status] : 'var(--cyan, #22D3EE)';
-  const pulsing = !!status && status !== 'off';
+  const live = !!status && status !== 'off';   // ok / warning / stopped → the eye is awake
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 48 48"
-      className={`argus-mark${className ? ` ${className}` : ''}`}
+      className={`argus-mark${live ? ' argus-mark--live' : ''}${className ? ` ${className}` : ''}`}
       style={{ ['--iris' as string]: iris }}
       fill="none"
       role="img"
-      aria-label="A.R.G.U.S."
+      aria-label="A.R.G.U.S. Pro"
     >
       <path d="M24 6 L6 40 L42 40 Z" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" />
       <path d="M14.5 30 Q24 22 33.5 30 Q24 38 14.5 30 Z" stroke="currentColor" strokeWidth="2" fill="none" />
-      {pulsing && <circle className="argus-mark__pulse" cx="24" cy="30" r="4" fill="none" stroke={iris} strokeWidth="2" />}
+      {/* radiating pulse ring — "the eye is watching" */}
+      {live && <circle className="argus-mark__pulse" cx="24" cy="30" r="4" fill="none" stroke={iris} strokeWidth="2" />}
+      {/* soft blurred bloom that breathes in the health color (sits behind the crisp iris) */}
+      <circle className="argus-mark__glow" cx="24" cy="30" r="4" fill={iris} />
+      {/* crisp iris core with a layered halo */}
       <circle className="argus-mark__iris" cx="24" cy="30" r="4" fill={iris} />
+      {/* tiny catch-light so the eye reads as glass, not a flat dot */}
+      <circle className="argus-mark__glint" cx="22.4" cy="28.4" r="1" fill="#ffffff" opacity="0.9" />
     </svg>
   );
 };

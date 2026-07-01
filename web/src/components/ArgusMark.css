@@ -1,24 +1,59 @@
-/* A.R.G.U.S. monogram — the eye doubles as the system-health beacon (v10.194). */
-.argus-mark { display: block; }
+/* A.R.G.U.S. Pro monogram — the eye is the system-health beacon (v11). The iris
+   glows in the health color (--iris: green ok / amber warning / red stopped / grey off),
+   so a warning doesn't just recolor the eye, it glows in that new color the same way. */
+.argus-mark { display: block; overflow: visible; }
 
-/* Iris glows in the health color so the status reads at a glance. */
+/* Crisp iris core + a layered halo so the eye looks luminous, not like a flat dot. */
 .argus-mark__iris {
-  filter: drop-shadow(0 0 2.5px var(--iris));
+  filter: drop-shadow(0 0 1.4px var(--iris)) drop-shadow(0 0 3.5px var(--iris));
 }
 
-/* Soft pulse ring radiating from the iris — "the eye is watching / notifying". */
+/* Soft blurred bloom around the iris (behind the crisp core). Static + dim when the
+   status is unknown ('off'); breathes brightly when the eye is awake. */
+.argus-mark__glow {
+  filter: blur(2.4px);
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0.35;
+}
+
+/* Tiny white catch-light — makes the iris read as glass/lens. */
+.argus-mark__glint { pointer-events: none; }
+
+/* AWAKE (ok/warning/stopped): the eye breathes — a gentle luminous swell. Transform +
+   opacity/filter driven off --iris, so warnings glow amber and stopped glows red the
+   same beautiful way. */
+.argus-mark--live .argus-mark__glow {
+  animation: argus-eye-breathe 3.2s ease-in-out infinite;
+}
+.argus-mark--live .argus-mark__iris {
+  animation: argus-eye-shimmer 3.2s ease-in-out infinite;
+}
+
+@keyframes argus-eye-breathe {
+  0%, 100% { opacity: 0.40; transform: scale(1.5); }
+  50%      { opacity: 0.95; transform: scale(2.2); }
+}
+/* Iris core brightens in step with the bloom for a cohesive "glow". */
+@keyframes argus-eye-shimmer {
+  0%, 100% { filter: drop-shadow(0 0 1.2px var(--iris)) drop-shadow(0 0 3px var(--iris)); }
+  50%      { filter: drop-shadow(0 0 2px var(--iris)) drop-shadow(0 0 7px var(--iris)) drop-shadow(0 0 11px var(--iris)); }
+}
+
+/* Radiating pulse ring — a slow ripple outward from the eye. */
 .argus-mark__pulse {
   transform-box: fill-box;
   transform-origin: center;
-  animation: argus-eye-pulse 2.4s ease-out infinite;
+  animation: argus-eye-pulse 3.2s ease-out infinite;
 }
-
 @keyframes argus-eye-pulse {
-  0%   { transform: scale(1);   opacity: 0.65; }
-  70%  { transform: scale(2.6); opacity: 0; }
-  100% { transform: scale(2.6); opacity: 0; }
+  0%   { transform: scale(1);   opacity: 0.55; }
+  70%  { transform: scale(3);   opacity: 0; }
+  100% { transform: scale(3);   opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .argus-mark__pulse { animation: none; opacity: 0; }
+  .argus-mark--live .argus-mark__glow { animation: none; opacity: 0.7; }
+  .argus-mark--live .argus-mark__iris { animation: none; }
 }
