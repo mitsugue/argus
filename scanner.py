@@ -12545,10 +12545,17 @@ def _search_jp(q):
         elif ql in jal or ql in enl:
             rank = 3                                   # name contains the query
         if rank is not None:
-            scored.append((rank, code, {"symbol": r["code4"], "name": en or ja, "nameJa": ja,
-                                        "exchange": r["mkt"], "type": "jp_equity"}))
-    scored.sort(key=lambda x: (x[0], x[1]))
-    out = [x[2] for x in scored[:_SEARCH_MAX]]
+            # Deprioritise ETFs/funds: a name query like "三菱" should surface 三菱商事,
+            # not the "三菱UFJ-MAXIS…" ETF family that also starts with 三菱. Exact/prefix
+            # CODE hits are unaffected (is_etf only breaks ties within a text rank).
+            is_etf = ("etf" in enl or "上場投信" in ja or "投信" in ja
+                      or "リート" in ja or "reit" in enl
+                      or str(r.get("mkt", "")).upper() in ("ETF", "REIT", "ETN"))
+            scored.append((rank, 1 if is_etf else 0, code,
+                           {"symbol": r["code4"], "name": en or ja, "nameJa": ja,
+                            "exchange": r["mkt"], "type": "jp_equity"}))
+    scored.sort(key=lambda x: (x[0], x[1], x[2]))
+    out = [x[3] for x in scored[:_SEARCH_MAX]]
     return out, ("live" if _jq_master() else "unavailable")
 
 def _search_us(q):
