@@ -205,7 +205,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   return (
     <PageShell
       title={tEn('page.today')}
-      subtitle={<span>{formatDate(judgment.date)}</span>}
+      subtitle={<span>{formatDate(judgment.date)} · <span style={{ color: 'var(--text-muted)' }}>時刻はすべてJST</span></span>}
     >
       <MarketSessionLamps />
 
