@@ -149,20 +149,43 @@ for n, a in [("JPMorgan", ["jpmorgan", "jp morgan", "jpm", "j.p. morgan"]), ("Go
              ("Citi", ["citi", "citigroup"]), ("UBS", ["ubs"]), ("Barclays", ["barclays"]), ("Deutsche Bank", ["deutsche", "deutsche bank"]),
              ("Jefferies", ["jefferies"]), ("Bernstein", ["bernstein", "alliancebernstein"]), ("Evercore ISI", ["evercore", "evercore isi"]),
              ("Wedbush", ["wedbush"]), ("Needham", ["needham"]), ("KeyBanc", ["keybanc"]), ("Wolfe Research", ["wolfe research", "wolfe"]),
-             ("Mizuho Americas", ["mizuho americas"]), ("Macquarie", ["macquarie"])]:
+             ("Mizuho Americas", ["mizuho americas"]), ("Macquarie", ["macquarie"]),
+             # v10.197 additions — full names only (resolve_institution is substring; short aliases false-match)
+             ("RBC Capital Markets", ["rbc capital", "rbc capital markets"]), ("TD Cowen", ["td cowen"]),
+             ("Piper Sandler", ["piper sandler"]), ("Raymond James", ["raymond james"]), ("Stifel", ["stifel"]),
+             ("HSBC", ["hsbc"]), ("BNP Paribas", ["bnp paribas"]), ("Societe Generale", ["societe generale", "socgen"])]:
     _inst(n.lower().replace(" ", "_"), n, "US/EU", "sell_side", a)
 for n, a in [("Nomura Securities", ["nomura", "野村"]), ("Daiwa Securities", ["daiwa", "大和"]), ("SMBC Nikko Securities", ["smbc nikko", "smbc日興", "日興"]),
              ("Mizuho Securities", ["mizuho securities", "みずほ証券"]), ("Mitsubishi UFJ Morgan Stanley Securities", ["mufg morgan stanley", "三菱ufjモルガン"]),
-             ("SBI Securities", ["sbi", "sbi証券"]), ("Okasan Securities", ["okasan", "岡三"])]:
+             ("SBI Securities", ["sbi", "sbi証券"]), ("Okasan Securities", ["okasan", "岡三"]),
+             ("Tokai Tokyo Securities", ["tokai tokyo", "東海東京"]), ("Rakuten Securities", ["rakuten securities", "楽天証券"]),
+             ("Monex Securities", ["monex", "マネックス"]), ("Ichiyoshi Securities", ["ichiyoshi", "いちよし"])]:
     _inst(n.split()[0].lower(), n, "JP", "sell_side", a)
 for n, a in [("BlackRock", ["blackrock"]), ("Vanguard", ["vanguard"]), ("Fidelity", ["fidelity"]), ("State Street", ["state street", "ssga"]),
              ("Citadel", ["citadel"]), ("Point72", ["point72", "point 72"]), ("Bridgewater", ["bridgewater"]), ("Elliott", ["elliott management", "elliott"]),
-             ("Coatue", ["coatue"]), ("Tiger Global", ["tiger global"])]:
+             ("Coatue", ["coatue"]), ("Tiger Global", ["tiger global"]),
+             # v10.197 additions
+             ("Millennium", ["millennium management"]), ("Two Sigma", ["two sigma"]), ("Renaissance Technologies", ["renaissance technologies", "rentech"]),
+             ("D.E. Shaw", ["d.e. shaw", "de shaw"]), ("Pershing Square", ["pershing square"]), ("Third Point", ["third point"]), ("Lone Pine", ["lone pine"])]:
     _inst(n.lower().replace(" ", "_"), n, "Global", "asset_manager", a, priority=2)
 
 # Asset managers / funds are tracked via DISCLOSED holdings/filings/letters, NOT
 # sell-side rating actions (§5).
 _BUY_SIDE = {iid for iid, v in INSTITUTIONS.items() if v["institutionType"] == "asset_manager"}
+
+
+def register_institution_alias(institution_id: str, alias: str) -> bool:
+    """Add an alias at runtime (§22 owner-approved overlay). Applied in memory over
+    the seed — the seed itself is never edited; the caller persists the overlay list
+    and re-applies it at load. Returns True if added. Rejects too-short aliases (they
+    substring-false-match)."""
+    iid = str(institution_id or "").strip().lower()
+    a = str(alias or "").strip().lower()
+    if not iid or iid not in INSTITUTIONS or len(a) < 4:
+        return False
+    if a not in INSTITUTIONS[iid]["aliases"]:
+        INSTITUTIONS[iid]["aliases"].append(a)
+    return True
 
 
 def resolve_institution(text: str) -> Optional[str]:
@@ -220,6 +243,28 @@ def _hash(*parts: str) -> str:
     return hashlib.sha256("|".join(p or "" for p in parts).encode("utf-8")).hexdigest()[:16]
 
 
+# §5 category separation — a sell-side VIEW is not a trade; an analyst rating action
+# is not a disclosed position. map from contentType (+ whether a named institution).
+_CAT_ANALYST_ACTION = {"ANALYST_UPGRADE", "ANALYST_DOWNGRADE", "PRICE_TARGET_CHANGE", "ESTIMATE_REVISION"}
+_CAT_DISCLOSED = {"REGULATORY_FILING", "POSITION_DISCLOSURE"}
+_CAT_VIEW = {"RESEARCH_NOTE", "STRATEGY_OUTLOOK", "EARNINGS_PREVIEW", "FUND_LETTER", "INTERVIEW", "CONFERENCE_COMMENT"}
+
+def map_category(content_type: Optional[str], institution_id: Optional[str] = None,
+                 institution_type: Optional[str] = None) -> str:
+    """contentType (+ named institution) → category. PROPRIETARY_TRADING is reserved
+    and NEVER inferred (§2: a reported view/rating is not the institution trading)."""
+    ct = content_type or ""
+    if ct in _CAT_ANALYST_ACTION:
+        return "ANALYST_ACTION"          # a rating action is not a "view" (peeled off)
+    if ct in _CAT_DISCLOSED:
+        return "DISCLOSED_POSITION"       # a filing is a disclosed position, not a view
+    if ct == "OFFICIAL_RELEASE":
+        return "OFFICIAL"
+    if institution_id:
+        return "INSTITUTIONAL_RESEARCH_VIEW"   # named institution commentary = a reported VIEW
+    return "MARKET_NEWS"
+
+
 def normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Raw collected record → IntelligenceItem (§8), rights-enforced."""
     source_id = raw.get("sourceId") or "unknown"
@@ -227,6 +272,7 @@ def normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
     snippet = (raw.get("publicSnippet") or "").strip()
     iid = resolve_institution(f"{title} {snippet} {raw.get('author', '')}")
     analyst = resolve_analyst(raw.get("author", ""), iid)
+    _ct = classify_content_type(title, snippet)
     chash = _hash(raw.get("canonicalUrl", ""), title)
     item = {
         "intelligenceId": _hash(source_id, raw.get("canonicalUrl", ""), title),
@@ -238,13 +284,14 @@ def normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
         "publishedAt": raw.get("publishedAt"), "updatedAt": raw.get("updatedAt"),
         "firstDetectedAt": raw.get("firstDetectedAt"), "fetchedAt": raw.get("fetchedAt"),
         "contentHash": chash, "storyClusterId": None,
-        "contentType": classify_content_type(title, snippet),
+        "contentType": _ct,
         "linkedAssets": [s.upper() for s in (raw.get("linkedAssets") or [])],
         "linkedThemes": raw.get("linkedThemes") or [],
         "stance": _stance(title, snippet), "timeHorizon": _horizon(title, snippet),
         "claims": [], "evidenceIds": raw.get("evidenceIds") or [],
         "sourceReliability": 0.0, "novelty": 0.0, "relevance": 0.0, "importance": 0.0,
-        "status": "new", "category": "INSTITUTIONAL_RESEARCH_VIEW" if iid else "MARKET_NEWS",
+        "status": "new",
+        "category": map_category(_ct, iid, INSTITUTIONS.get(iid, {}).get("institutionType")),
     }
     return enforce_storage(source_id, item)
 
@@ -391,6 +438,47 @@ def normalize_primary_asset(item: Dict[str, Any]) -> Optional[str]:
         return None
     s = str(a[0]).strip().upper()
     return s if (s and s != "_") else None
+
+
+def diagnose_miss(*, url: Optional[str] = None, title: Optional[str] = None,
+                  institution: Optional[str] = None, symbol: Optional[str] = None,
+                  known_symbol_names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Replay the detection pipeline on an item the owner says we MISSED, and report
+    the FIRST stage that would have dropped it (§22). Pure; suggests a fix but never
+    auto-applies it. known_symbol_names maps SYMBOL→display name so we can tell whether
+    the headline actually names the asset."""
+    text = f"{title or ''} {institution or ''}"
+    inst = resolve_institution(text)
+    ct = classify_content_type(title or "", "")
+    cat = map_category(ct, inst)
+    sym = (symbol or "").upper()
+    names = known_symbol_names or {}
+    tl = (title or "").lower()
+    asset_named = bool(sym) and (sym.lower() in tl or (names.get(sym, "").lower() in tl if names.get(sym) else False))
+
+    stages: List[Dict[str, str]] = []
+    if institution and not inst:
+        stages.append({"stage": "institution_alias",
+                       "detailJa": f"『{institution}』を機関として解決できません(エイリアス未登録)。"})
+    if sym and not asset_named:
+        stages.append({"stage": "asset_link",
+                       "detailJa": "見出しに対象銘柄の名称/コードが無く、銘柄に紐付けできません。"})
+    if not (title or "").strip():
+        stages.append({"stage": "no_title", "detailJa": "見出しテキストがありません。"})
+
+    likely = stages[0]["stage"] if stages else "passed_gates"
+    fix = None
+    if likely == "institution_alias":
+        fix = {"type": "add_institution_alias", "institution": institution,
+               "suggestedAlias": (institution or "").lower()}
+    elif likely == "asset_link":
+        fix = {"type": "add_symbol_alias", "symbol": sym}
+    return {
+        "institutionResolved": inst, "contentType": ct, "category": cat,
+        "assetNamed": asset_named, "stages": stages, "likelyCause": likely,
+        "suggestedFix": fix,
+        "noteJa": "検出ルールの再現結果です。修正は所有者承認のうえ手動で反映(自動再学習はしません)。",
+    }
 
 
 def event_bucket(title: str) -> Optional[str]:
@@ -612,20 +700,38 @@ def link_to_event(item: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]
     it_assets = {a.upper() for a in (item.get("linkedAssets") or [])}
     asset_match = bool(ev_assets & it_assets)
 
+    # Category clarity (§2): a named institutional VIEW is reported, never a trade —
+    # and (§11) a VIEW can NEVER be promoted to IMMEDIATE_TRIGGER, even with perfect
+    # timing. Compute it first so the trigger branch is hard-gated.
+    is_named_view = bool(item.get("institutionId")) and item.get("category") == "INSTITUTIONAL_RESEARCH_VIEW"
+    ct = item.get("contentType")
+    ev_dir = str(event.get("direction") or "").lower()   # 'up'|'down' when known
+    _HARD_NEWS = {"OFFICIAL_RELEASE", "ANALYST_DOWNGRADE", "ANALYST_UPGRADE",
+                  "PRICE_TARGET_CHANGE", "REGULATORY_FILING"}
+
     role, reason = "UNCONFIRMED", "時刻・資産関連が不十分"
     if not asset_match:
         role, reason = "BACKGROUND_ONLY", "対象資産との関連が弱い"
     elif not pub or not move:
         role, reason = "LIKELY_RELATED" if asset_match else "UNCONFIRMED", "時刻情報が不足し引き金と断定できない"
     elif pub > move:
-        role, reason = "AMPLIFIER", "動意の後に出た情報。元の引き金ではない(増幅/追認)"
-    elif item.get("contentType") in ("STRATEGY_OUTLOOK", "RESEARCH_NOTE") and item.get("timeHorizon") == "long_term":
+        # after the move — an official same-direction item is追認(CONFIRMATION), else増幅
+        role, reason = (("CONFIRMATION", "動意後の公式確認(追認)") if ct == "OFFICIAL_RELEASE"
+                        else ("AMPLIFIER", "動意の後に出た情報。元の引き金ではない(増幅)"))
+    elif ct in ("STRATEGY_OUTLOOK", "RESEARCH_NOTE") and item.get("timeHorizon") == "long_term":
         role, reason = "VULNERABILITY", "背景の脆弱性(長期見解)であり即時の引き金ではない"
+    elif (not is_named_view) and ct in _HARD_NEWS:
+        # timing-consistent + asset-matched HARD news (official/rating/filing) — but
+        # NEVER a named research VIEW.
+        role, reason = "IMMEDIATE_TRIGGER", "時刻整合・資産一致・ハードニュース(公式/格付/開示)"
     else:
         role, reason = "LIKELY_RELATED", "時刻整合・資産一致だが因果は断定しない"
 
-    # Category clarity (§2): a named institutional VIEW is reported, never a trade.
-    is_named_view = bool(item.get("institutionId")) and item.get("category") == "INSTITUTIONAL_RESEARCH_VIEW"
+    # CONTRADICTION overlay: a same-window item whose stance opposes the known move.
+    if role in ("LIKELY_RELATED", "AMPLIFIER", "CONFIRMATION") and ev_dir in ("up", "down"):
+        st = item.get("stance")
+        if (ev_dir == "down" and st == "constructive") or (ev_dir == "up" and st == "cautious"):
+            role, reason = "CONTRADICTION", "値動きと逆方向の見解(反証)"
     return {
         "eventId": event.get("eventId"), "intelligenceId": item.get("intelligenceId"),
         "causalRole": role, "reasonJa": reason, "assetMatch": asset_match,

@@ -189,3 +189,55 @@ def test_corroboration_entity_event_time_clustering():
         if corroborated != expect:
             failures.append(f"{name}: corroborated={corroborated} (same={same} level={level}) expected={expect}")
     assert not failures, "CORROBORATION FAILURES:\n" + "\n".join(failures)
+
+
+# ── §5 category separation + §11 trigger gating (Phase B, v10.197) ────────────
+def test_map_category_separates_action_disclosure_view():
+    assert M.map_category("ANALYST_DOWNGRADE", "goldman_sachs", "sell_side") == "ANALYST_ACTION"
+    assert M.map_category("PRICE_TARGET_CHANGE", "jpmorgan", "sell_side") == "ANALYST_ACTION"
+    assert M.map_category("REGULATORY_FILING", "blackrock", "asset_manager") == "DISCLOSED_POSITION"
+    assert M.map_category("STRATEGY_OUTLOOK", "goldman_sachs", "sell_side") == "INSTITUTIONAL_RESEARCH_VIEW"
+    assert M.map_category("MARKET_NEWS", None, None) == "MARKET_NEWS"
+
+def test_analyst_action_on_buyside_is_not_disclosed_position():
+    # a rating-action content type maps to ANALYST_ACTION regardless of institution type
+    assert M.map_category("ANALYST_UPGRADE", "blackrock", "asset_manager") == "ANALYST_ACTION"
+
+def test_immediate_trigger_only_for_hard_news_not_named_view():
+    # hard news (a downgrade), no named VIEW, asset-matched, published BEFORE the move → IMMEDIATE_TRIGGER
+    hard = M.normalize_item({"sourceId": "marketwatch_public", "title": "Micron downgraded to sell",
+                             "linkedAssets": ["MU"], "publishedAt": "2026-06-25T13:50:00Z"})
+    link_hard = M.link_to_event(hard, {"eventId": "e1", "linkedAssets": ["MU"], "moveStartedAt": "2026-06-25T14:00:00Z"})
+    assert link_hard["causalRole"] == "IMMEDIATE_TRIGGER"
+    # a NAMED institutional VIEW with identical perfect timing is NEVER a trigger
+    view = M.normalize_item({"sourceId": "marketwatch_public", "title": "JPMorgan cautious on Micron",
+                             "linkedAssets": ["MU"], "publishedAt": "2026-06-25T13:50:00Z"})
+    link_view = M.link_to_event(view, {"eventId": "e1", "linkedAssets": ["MU"], "moveStartedAt": "2026-06-25T14:00:00Z"})
+    assert link_view["isNamedView"] is True
+    assert link_view["causalRole"] != "IMMEDIATE_TRIGGER"
+
+def test_new_institution_aliases_resolve():
+    assert M.resolve_institution("RBC Capital Markets lifts target") == "rbc_capital_markets"
+    assert M.resolve_institution("Two Sigma builds stake") == "two_sigma"
+    assert M.resolve_institution("東海東京証券のレポート") == "tokai"
+    # a bare unrelated word must NOT false-match an institution
+    assert M.resolve_institution("the weather today is fine") is None
+
+
+# ── §22 missed-intelligence replay (Phase E, v10.198) ────────────────────────
+def test_diagnose_miss_unknown_institution():
+    d = M.diagnose_miss(title="SomeBoutique cuts Toyota target", institution="SomeBoutique Advisors", symbol="7203",
+                        known_symbol_names={"7203": "Toyota"})
+    assert d["likelyCause"] == "institution_alias"
+    assert d["suggestedFix"]["type"] == "add_institution_alias"
+
+def test_diagnose_miss_asset_not_named():
+    d = M.diagnose_miss(title="Goldman turns cautious on chip demand", institution="Goldman Sachs", symbol="5803",
+                        known_symbol_names={"5803": "Fujikura"})
+    assert d["likelyCause"] == "asset_link"
+
+def test_diagnose_miss_passes_when_resolvable():
+    d = M.diagnose_miss(title="Goldman Sachs downgrades Toyota", institution="Goldman Sachs", symbol="7203",
+                        known_symbol_names={"7203": "Toyota"})
+    assert d["likelyCause"] == "passed_gates"
+    assert d["institutionResolved"] == "goldman_sachs"

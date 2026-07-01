@@ -8,6 +8,7 @@ import { CalibrationCard } from '../components/guide/CalibrationCard';
 import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
 import { SourceRegistryCard } from '../components/guide/SourceRegistryCard';
 import { CalibrationOpsCard } from '../components/guide/CalibrationOpsCard';
+import { MarketDepthCard } from '../components/guide/MarketDepthCard';
 import { DecisionValueOpsCard } from '../components/guide/DecisionValueOpsCard';
 import '../components/dashboard/Dashboard.css';
 
@@ -75,6 +76,10 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.199.0', 'Research Desk Mode v1 — Phase C(イベント中心のToday・仕上げ) — トップのイベント中心構成の総点検と仕上げ。重要イベントは既にヒーロー直下(PRIMARY COMMANDの直後)に表示・1銘柄1カード(UnifiedAssetCard)・日本を米国より上、は達成済みであることを確認。今回の追加: ①タイムラインに生の内部enum(VOLUME_ANOMALY等)が漏れていたのを日本語表記(出来高異常/急落 等)に修正②トップに「時刻はすべてJST」の凡例を1箇所だけ表示(各行の重複タイムゾーン表記は不要に)。これでRIsk Desk Mode v1のPhase A〜Eが揃いました(A=可視性ガード/B=機関II/C=イベント中心Today/D=市場の深さ/E=調査ミッション+見逃し)。'],
+  ['v10.198.0', 'Research Desk Mode v1 — Phase E(調査ミッションの自動起動＋見逃しフィードバック) — ①保有×高severityの急落・原因未確認の下落・接近する重要イベント・監視銘柄への機関アクション/開示で、決定的な調査ミッション(LLM呼び出し0=無料)を自動起動(イベント毎にデバウンス・同時数上限)。潜在バグも修正: これまで全保有銘柄に「moveStartedAt=今・severity=high」を捏造していたのを、実際の急落インシデントから本物の時刻/深刻度を組み立てるように(link_to_eventが意味を持つ)。②「見逃した重要情報」フィードバックを本格化: URL/機関/銘柄/理由を投稿すると、検出ルールを再現して**なぜ見逃したか**(機関エイリアス未登録/銘柄名が見出しに無い等)を診断し、直近の根本イベントに紐付け。修正案(エイリアス追加)は所有者承認のうえ手動反映するオーバーレイ方式(シード改変なし・自動再学習なし)。/api/argus/research-missions・…/missed(GET一覧+原因別メトリクス)・…/missed/apply。注文/自動売買は一切なし。'],
+  ['v10.197.0', 'Research Desk Mode v1 — Phase B(機関インテリジェンスv1) — 機関の見解を種類で厳格に分離: 「見解(INSTITUTIONAL_RESEARCH_VIEW)」「アナリスト・アクション(格上げ/格下げ/目標株価/予想修正)」「開示ポジション(大量保有等)」を別カテゴリに。★見解≠建玉・格下げ≠その機関の売り を崩さない。因果ロールも厳格化: 時刻整合＋資産一致＋ハードニュース(公式/格付/開示)のみ「即時の引き金」に昇格し、名指しの見解は完璧な時刻でも絶対に引き金にしない。公式の追認(CONFIRMATION)・値動きと逆の見解(CONTRADICTION)も判定可能に。監視機関を拡充(RBC/TD Cowen/Piper/HSBC/BNP/SocGen、東海東京/楽天/マネックス/いちよし、Millennium/Two Sigma/RenTech/DE Shaw/Pershing/Third Point/Lone Pine 等・エイリアスは誤マッチ回避で厳密)。銘柄カードのINSTITUTIONAL VIEWにカテゴリ/種別/情報源クラスのバッジを表示。'],
+  ['v10.196.0', 'Research Desk Mode v1 — Phase D(市場の深さの能力テスト) — 「見えている深さ」を能力ごとに正直に判定する `argus_market_depth`(純)を追加し、Visibility Guardを**実測ドリブン**化。ブリッジ(心拍/遅延)・日本株現物・米レギュラー・PTS(夜間)・米時間外・VWAP・歩み値・板・オプションIV・貸株料・為替先物・TDnetを、live/遅延/検証中/要契約/未接続で表示(GuideのMarket Depth Status)。★「LIVE」は取引所タイムスタンプ等で実証できたものだけ——配信頻度では絶対にliveにしない。未接続の深さは「検知≠安全」として可視性ガードへ供給。/api/argus/market-depth(公開・GETのみ・秘密なし)。注文/自動売買は一切なし。'],
   ['v10.195.0', 'Research Desk Mode v1 — Phase A(可視性ガード＋校正/価値の運用状態) — プロの調査デスク化の第一歩。①Visibility Risk Guard: ARGUSが「見えていないもの」を集約し正直に表示。PTS・板・歩み値・VWAP・米時間外などの構造的な穴は常時ミュート表示(検知≠安全)、moomooブリッジの場中停滞・地合いの保持表示・AI予算停止などの一時的劣化のときだけ確信度を上限0.60〜0.55にクランプ＋ENTER抑制＋トップに警告バナー。校正がまだregime_level未満(=精度未証明)の間も確信度をキャップ。②Calibration Operations: v4記録が本当に取れているか(センサー被覆16、市場クロック、readinessチェック、活性化可否)をGuideに表示。「待てば良くなる」ではなく記録できている時だけ改善する、を明示。③Decision Value Shadow Operations: 「校正が良い≠儲かる」を測るシャドー台帳を開始(発注は一切なし・実価格/純Rはオーナー限定のprivate store・公開は件数とサンプル段階のみ)。毎営業日16:05に記録＋採点。自動売買/注文ルートは追加していません(決定支援のみ)。次段はPhase B(機関インテリジェンスv1)・C(イベント中心のトップ再編)。'],
   ['v10.194.2', 'アプリアイコン(favicon/PWA)も新ロゴに差し替え — ヘッダーのロゴだけ新「三角の眼」に変えていて、ブラウザのタブ・ホーム画面のインストールアイコン(favicon.svg / icon-192 / icon-512)が旧デザイン(同心円の眼)のままだったのを修正。3サイズすべて新モノグラムに統一。※インストール済みPWAのアイコンは端末が強くキャッシュするため、反映には一度アプリを削除→再追加(またはタブのハードリロード)が必要な場合があります。'],
   ['v10.194.0', 'ロゴの「眼」がシステム状態ランプに(緑丸を統合) — ヘッダーのロゴ(三角の眼)の瞳が、システム状態の色で光るように: 正常=緑/注意=琥珀/異常=赤/オフ=グレー。瞳はふわっとパルス発光して状態を知らせ、これまで横に別置きだった緑の丸は廃止(眼に一本化)。ロゴ(ブランド)全体は引き続きタップで「システム状態」ポップオーバーを開くボタン。'],
@@ -410,6 +415,8 @@ export const Guide: React.FC = () => {
         </div>
         <SourceRegistryCard />
       </section>
+
+      <MarketDepthCard />
 
       <section>
         <div className="section-head">

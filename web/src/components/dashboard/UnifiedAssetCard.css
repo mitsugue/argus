@@ -59,9 +59,13 @@
 /* INSTITUTIONAL VIEW (v10.147) — named view inside the asset card */
 .iv-row { padding: 6px 0; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06)); }
 .iv-row:first-of-type { border-top: none; }
-.iv-l1 { display: flex; align-items: baseline; gap: 8px; }
+.iv-l1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .iv-inst { font-weight: 700; font-size: 12px; letter-spacing: .02em; }
 .iv-rel { font-size: 10px; font-weight: 700; letter-spacing: .03em; }
+/* §5 category / contentType chips (v10.197) */
+.iv-cat { font-size: 9.5px; font-weight: 700; letter-spacing: .03em; padding: 1px 6px; border-radius: 4px;
+  background: var(--surface-soft, rgba(255,255,255,0.05)); color: var(--text-sub); }
+.iv-ct { font-size: 9.5px; color: var(--text-muted); }
 .iv-title { display: block; font-size: 12px; line-height: 1.4; margin-top: 2px; color: var(--text-main); text-decoration: none; }
 .iv-title:hover { text-decoration: underline; }
 .iv-nc { font-size: 10px; color: var(--text-muted); margin-top: 2px; }

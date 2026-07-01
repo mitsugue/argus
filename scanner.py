@@ -39,6 +39,8 @@ import argus_research_swarm      # §12 deterministic research-mission orchestra
 import argus_positioning         # §14 institutional positioning aggregator (pure, v10.150)
 import argus_daily_brief         # §21 owner daily institutional brief (pure, v10.150)
 import argus_visibility          # Visibility Risk Guard (aggregates data-visibility signals, pure, v10.195)
+import argus_market_depth         # Market Depth capability report (feeds the guard, pure, v10.196)
+import argus_mission_trigger       # §12 research-mission trigger gating (pure, v10.198)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -4977,7 +4979,9 @@ def _intel_persist():
     try:
         tmp = f"{_INTEL_STORE_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
-            json.dump({"store": _INTEL_STORE, "last": _INTEL_LAST}, f, ensure_ascii=False, default=str)
+            json.dump({"store": _INTEL_STORE, "last": _INTEL_LAST,
+                       "missed": _MISSED_INTEL[:200], "aliasOverlay": _INST_ALIAS_OVERLAY[:500]},
+                      f, ensure_ascii=False, default=str)
         os.replace(tmp, _INTEL_STORE_FILE)
     except Exception:
         pass
@@ -4994,6 +4998,19 @@ def _intel_restore():
             last = blob.get("last")
             if isinstance(last, dict):
                 _INTEL_LAST.update(last)
+        # v10.198: restore missed-intel log + re-apply the owner alias overlay (guard
+        # with .get defaults so older snapshots without these keys still load).
+        missed = blob.get("missed")
+        if isinstance(missed, list):
+            _MISSED_INTEL[:] = missed[:200]
+        overlay = blob.get("aliasOverlay")
+        if isinstance(overlay, list):
+            _INST_ALIAS_OVERLAY[:] = overlay[:500]
+            for e in overlay:
+                try:
+                    argus_research_mesh.register_institution_alias(e.get("institutionId"), e.get("alias"))
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -5617,6 +5634,7 @@ def api_argus_event_intel(symbol):
         link = argus_research_mesh.link_to_event(it, {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move})
         out.append({"title": it["title"], "titleJa": it.get("titleJa"),
                     "institutionId": it.get("institutionId"),
+                    "category": it.get("category"), "contentType": it.get("contentType"),
                     "publishedAt": it.get("publishedAt"), "accessClass": it["accessClass"],
                     "canonicalUrl": it.get("canonicalUrl"), "stance": it.get("stance"),
                     "relation": link["causalRole"], "relationLabelJa": link["relationLabelJa"],
@@ -5645,21 +5663,73 @@ def api_argus_intel_capture():
     return jsonify({"ok": True, "intelligenceId": item["intelligenceId"], "accessClass": item["accessClass"]})
 
 
+_MISSED_INTEL = []
+_INST_ALIAS_OVERLAY = []   # §22 owner-approved alias additions (persisted; re-applied at load)
+
+def _symbol_name_map():
+    """SYMBOL → display name, for the missed-intel replay (does the headline name it?)."""
+    out = {}
+    for x in (_JP_WATCHLIST + _US_WATCHLIST):
+        out[str(x["symbol"]).upper()] = x.get("name") or ""
+    return out
+
 @app.route("/api/argus/institutional-intelligence/missed", methods=["POST"])
 def api_argus_intel_missed():
-    """Owner 'missed important info' feedback (§22) — recorded, never auto-retrains."""
+    """Owner 'missed important info' feedback (§22) — replays the detection rules to
+    report WHY it was missed, links it to the nearest root event, and records it.
+    Never auto-retrains (a fix is suggested; applying it is a separate manual step)."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     b = request.get_json(silent=True) or {}
+    sym = (b.get("symbol") or "").upper()
+    diag = argus_research_mesh.diagnose_miss(
+        url=b.get("url"), title=b.get("title") or b.get("why"), institution=b.get("institution"),
+        symbol=sym, known_symbol_names=_symbol_name_map())
+    # nearest root event = an active downside incident on the same symbol, if any
+    root = None
+    try:
+        for inc in (get_downside_incidents().get("incidents") or []):
+            if str(inc.get("symbol")).upper() == sym:
+                root = {"eventId": sym, "incidentId": inc.get("incidentId"), "severity": inc.get("severity")}
+                break
+    except Exception:
+        pass
     rec = {"url": (b.get("url") or "")[:600], "institution": b.get("institution"),
-           "symbol": b.get("symbol"), "whyJa": (b.get("why") or "")[:400], "at": _ai_now_iso()}
+           "symbol": sym, "title": (b.get("title") or "")[:300], "whyJa": (b.get("why") or "")[:400],
+           "at": _ai_now_iso(), "diagnosis": diag, "rootEvent": root, "status": "recorded"}
     _MISSED_INTEL.insert(0, rec)
     del _MISSED_INTEL[200:]
+    _intel_persist()
     return jsonify({"ok": True, "recorded": rec})
 
+@app.route("/api/argus/institutional-intelligence/missed", methods=["GET"])
+def api_argus_intel_missed_list():
+    """Missed-intelligence log + metrics (count by likely cause). Public read-only."""
+    by_cause = {}
+    for m in _MISSED_INTEL:
+        c = ((m.get("diagnosis") or {}).get("likelyCause")) or "unknown"
+        by_cause[c] = by_cause.get(c, 0) + 1
+    return jsonify({"count": len(_MISSED_INTEL), "byCause": by_cause,
+                    "items": _MISSED_INTEL[:30], "aliasOverlaySize": len(_INST_ALIAS_OVERLAY)})
 
-_MISSED_INTEL = []
+@app.route("/api/argus/institutional-intelligence/missed/apply", methods=["POST"])
+def api_argus_intel_missed_apply():
+    """Admin: apply a suggested fix from a missed-intel diagnosis (§22 — MANUAL).
+    Currently supports adding an institution alias. Persisted as an OVERLAY over the
+    seed; re-applied at load. Never edits the seed, never auto-retrains."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    b = request.get_json(silent=True) or {}
+    iid, alias = b.get("institutionId"), b.get("alias")
+    if not argus_research_mesh.register_institution_alias(iid, alias):
+        return jsonify({"ok": False, "reason": "invalid_or_too_short_alias"}), 200
+    entry = {"institutionId": str(iid).lower(), "alias": str(alias).lower(), "at": _ai_now_iso()}
+    if entry not in _INST_ALIAS_OVERLAY:
+        _INST_ALIAS_OVERLAY.append(entry)
+        _intel_persist()
+    return jsonify({"ok": True, "applied": entry, "overlaySize": len(_INST_ALIAS_OVERLAY)})
 
 _intel_restore()        # §27 reload any persisted intel at startup (avoids WARMING)
 
@@ -5711,11 +5781,27 @@ def api_argus_research_mission(symbol):
     GET. Returns rolesRun + evidence + adversarialFlags + the gated ARGUS view."""
     symu = str(symbol).upper()
     held = symu in _intel_watchlist_symbols()
-    event = {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": _ai_now_iso(),
-             "severity": "high" if held else "normal"}
+    event = _real_event_for(symu, held)
     mission = argus_research_swarm.run_mission(
         event, list(_INTEL_STORE), context={"ownerRelevant": held})
     return jsonify({"symbol": symu, **mission})
+
+
+def _real_event_for(symu, held):
+    """Build a REAL event dict for a mission (v10.198 — fixes the latent bug where
+    every held symbol got moveStartedAt=now + severity=high, which made link_to_event
+    meaningless). Uses the actual downside incident when present; else moveStartedAt is
+    None (unknown timing → no fabricated trigger)."""
+    move_ts, severity = None, ("high" if held else "normal")
+    try:
+        for inc in (get_downside_incidents().get("incidents") or []):
+            if str(inc.get("symbol")).upper() == symu:
+                move_ts = inc.get("detectedAt") or inc.get("firstDetectedAt") or inc.get("asOf")
+                severity = str(inc.get("severity") or severity)
+                break
+    except Exception:
+        pass
+    return {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move_ts, "severity": severity}
 
 
 @app.route("/api/argus/institutional-intelligence/positioning/<symbol>")
@@ -9755,12 +9841,48 @@ def api_argus_source_registry():
     return jsonify(_source_registry())
 
 
+# ── Market Depth capability report (v10.196) ─────────────────────────────────
+# Honest per-capability depth status (bridge/JP cash/US regular/PTS/extended/VWAP/
+# tape/L2/options/borrow/FX/TDnet). Feeds the Visibility Guard REAL values instead of
+# hardcoded defaults. Pure logic in argus_market_depth; a capability is 'live' only on
+# venue-timestamp proof, never on push cadence.
+_MARKET_DEPTH_CACHE = {"data": None, "expires": 0.0}
+
+def _market_depth_report():
+    now = time.time()
+    if _MARKET_DEPTH_CACHE["data"] is not None and now < _MARKET_DEPTH_CACHE["expires"]:
+        return _MARKET_DEPTH_CACHE["data"]
+    try: mc = _moomoo_capability_report()
+    except Exception: mc = {}
+    try: rp = _MOOMOO_ALLMARKET_REPORT.get("realtimeProof") or {}
+    except Exception: rp = {}
+    try: reg = _source_registry()
+    except Exception: reg = {}
+    try:
+        rep = argus_market_depth.build_market_depth_report(
+            now_iso=_ai_now_iso(), bridge_age_sec=_push_last_age_sec(),
+            moomoo_capability=mc, realtime_proof=rp, source_registry=reg,
+            jp_open=_jp_market_open(), us_open=_us_market_open())
+    except Exception:
+        rep = None
+    _MARKET_DEPTH_CACHE["data"] = rep
+    _MARKET_DEPTH_CACHE["expires"] = now + 60
+    return rep
+
+@app.route("/api/argus/market-depth")
+def api_argus_market_depth():
+    rep = _market_depth_report()
+    return jsonify(rep or {"status": "unavailable", "engineVersion": "market-depth-v1",
+                           "capabilities": {}, "note": "depth report temporarily unavailable"})
+
+
 # ── Visibility Risk Guard (v10.195) ──────────────────────────────────────────
 # Aggregates every data-visibility signal ARGUS already exposes into one honest
 # verdict: what it can't see, whether to cap confidence / block ENTER, and a calm
 # "検知≠安全" coverage line. Structural gaps (PTS/L2/tape/VWAP/…) are context-only;
 # only SITUATIONAL degradation (bridge stale in session, held-stale regime, budget
 # stopped) drops the level / blocks / warns. Pure logic lives in argus_visibility.
+# v10.196: capabilities now come from the live Market Depth report (data-driven).
 _VISIBILITY_CACHE = {"data": None, "expires": 0.0}
 
 def _visibility_guard():
@@ -9781,10 +9903,12 @@ def _visibility_guard():
     except Exception: cal_stage = None
     try: dv_phase = _dv_shadow_phase()
     except Exception: dv_phase = "v1-phase1-engine-only"
+    try: caps = (_market_depth_report() or {}).get("capabilitiesForGuard")
+    except Exception: caps = None
     g = argus_visibility.build_visibility_guard(
         now_iso=_ai_now_iso(),
         system_health=sh,
-        capabilities=None,   # no market-depth capability proven yet (structural defaults)
+        capabilities=caps,   # data-driven from the Market Depth report (v10.196; None → defaults)
         bridge_age_sec=_push_last_age_sec(),
         jp_open=_jp_market_open(),
         us_open=_us_market_open(),
@@ -11903,6 +12027,53 @@ def scheduled_ph5():
     finally: SCHEDULED_RUN = False
 
 _LAST_INTEL_REFRESH = [0.0]
+_MISSION_STORE = {}        # eventId -> latest deterministic mission result
+_MISSION_DEBOUNCE = {}     # eventId -> last-run epoch (re-mission at most every TTL)
+_MISSION_TTL = 1800        # 30 min per event
+_MISSION_MAX_PER_TICK = 3
+
+def _dispatch_research_missions(nowt):
+    """Evaluate mission triggers and run the DETERMINISTIC swarm (LLM calls = 0, so no
+    budget) for the top few, debounced per event. Stores the gated ARGUS view. No LLM
+    escalation here (kept manual/gated) — this is the free, safe auto-dispatch."""
+    try:
+        held = list(_intel_watchlist_symbols())
+        ds = (get_downside_incidents().get("incidents") or [])
+        try: evs = get_events_snapshot().get("events") or []
+        except Exception: evs = []
+        intel = list(_INTEL_STORE)[:80]
+    except Exception:
+        return
+    triggers = argus_mission_trigger.plan_triggers(
+        downside_incidents=ds, important_events=evs, new_intel=intel,
+        held_symbols=held, watch_symbols=held)
+    ran = 0
+    for tr in triggers:
+        if ran >= _MISSION_MAX_PER_TICK:
+            break
+        eid = tr["eventId"]
+        if nowt - _MISSION_DEBOUNCE.get(eid, 0) < _MISSION_TTL:
+            continue                                   # debounce: don't re-mission each tick
+        _MISSION_DEBOUNCE[eid] = nowt
+        try:
+            ev = argus_mission_trigger.to_event(tr)
+            m = argus_research_swarm.run_mission(ev, intel, context={"ownerRelevant": tr["ownerRelevant"]})
+            _MISSION_STORE[eid] = {"trigger": tr, "argusView": m.get("argusView"),
+                                   "adversarialFlags": m.get("adversarialFlags"),
+                                   "confidence": m.get("confidence"), "at": _ai_now_iso()}
+            ran += 1
+        except Exception:
+            pass
+    # cap store size
+    if len(_MISSION_STORE) > 40:
+        for k in sorted(_MISSION_STORE, key=lambda x: _MISSION_STORE[x].get("at") or "")[:len(_MISSION_STORE) - 40]:
+            _MISSION_STORE.pop(k, None)
+
+@app.route("/api/argus/research-missions")
+def api_argus_research_missions():
+    """Recent deterministic research missions (auto-dispatched on triggers). Read-only."""
+    items = sorted(_MISSION_STORE.values(), key=lambda x: x.get("at") or "", reverse=True)[:20]
+    return jsonify({"count": len(_MISSION_STORE), "missions": items})
 
 def _residency_ai_tick():
     """Resident replacement for the flaky GitHub */15 cron (v10.191). Keeps the
@@ -11917,6 +12088,10 @@ def _residency_ai_tick():
             _LAST_INTEL_REFRESH[0] = nowt
             try:
                 collect_institutional_intel()
+            except Exception:
+                pass
+            try:
+                _dispatch_research_missions(nowt)     # deterministic (free) — runs off-hours too
             except Exception:
                 pass
         if not (_jp_market_open() or _us_market_open()):

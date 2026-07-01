@@ -67,6 +67,13 @@ const EV_TONE: Record<string, TimelineItem['tone']> = {
   VOLUME_ANOMALY: 'flow', FLOW_ANOMALY: 'flow', FLOW_REVERSAL: 'flow', VOLUME_ACCELERATION: 'flow',
   MARKET_MOVER: 'flat', CRYPTO_SHOCK: 'down',
 };
+// Readable JA for the timeline (v10.199) — never leak a raw enum like VOLUME_ANOMALY.
+const EVENT_TYPE_JA: Record<string, string> = {
+  LIMIT_UP: 'ストップ高', LIMIT_UP_PROXIMITY: 'ストップ高接近', PRICE_SPIKE: '急騰', MOMENTUM_ACCELERATION: '上昇加速',
+  LIMIT_DOWN: 'ストップ安', LIMIT_DOWN_PROXIMITY: 'ストップ安接近', PRICE_CRASH: '急落',
+  VOLUME_ANOMALY: '出来高異常', FLOW_ANOMALY: '資金フロー異常', FLOW_REVERSAL: 'フロー反転', VOLUME_ACCELERATION: '出来高急増',
+  MARKET_MOVER: '値動き上位', CRYPTO_SHOCK: '暗号資産ショック',
+};
 
 function hhmm(iso?: string | null): string {
   if (!iso) return '';
@@ -112,7 +119,7 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
   const tl: TimelineItem[] = events
     .slice()
     .sort((a, b) => new Date(a.detectedAt || 0).getTime() - new Date(b.detectedAt || 0).getTime())
-    .map((e) => ({ time: hhmm(e.detectedAt), textJa: e.reasonJa || e.eventType, tone: EV_TONE[e.eventType] ?? 'flat' }));
+    .map((e) => ({ time: hhmm(e.detectedAt), textJa: e.reasonJa || EVENT_TYPE_JA[e.eventType] || e.eventType, tone: EV_TONE[e.eventType] ?? 'flat' }));
 
   // ARGUS VIEW — one resolved line. When the call is AI-driven, lead with the AI's
   // own reasoning (the loop output); otherwise the rule label + permissions.
