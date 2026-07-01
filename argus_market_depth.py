@@ -62,6 +62,25 @@ def _to_guard_status(status: str) -> str:
     return "unavailable"       # requires_contract / unavailable
 
 
+def compute_vwap(bars) -> Optional[float]:
+    """Session VWAP from intraday OHLCV bars. bars = [{high,low,close,volume}, …].
+    Typical price = (H+L+C)/3, volume-weighted. None if no usable volume (pure)."""
+    num = 0.0
+    den = 0.0
+    for b in (bars or []):
+        try:
+            h = float(b.get("high")); l = float(b.get("low")); c = float(b.get("close")); v = float(b.get("volume"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if v <= 0:
+            continue
+        num += ((h + l + c) / 3.0) * v
+        den += v
+    if den <= 0:
+        return None
+    return round(num / den, 4)
+
+
 def _bridge_status(bridge_age_sec: Optional[float]) -> str:
     if bridge_age_sec is None:
         return "unavailable"
@@ -81,8 +100,12 @@ def build_market_depth_report(
     source_registry: Optional[Dict[str, Any]] = None,
     jp_open: bool = False,
     us_open: bool = False,
+    vwap_probe: Optional[Dict[str, Any]] = None,
+    us_extended_probe: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Per-capability depth report + a guard-status projection. Pure; never raises."""
+    """Per-capability depth report + a guard-status projection. Pure; never raises.
+    vwap_probe / us_extended_probe carry REAL measurement results (実測) when the
+    caller ran them; absent → the honest structural default, marked probed=False."""
     mc = moomoo_capability if isinstance(moomoo_capability, dict) else {}
     entitlement = str(mc.get("overallEntitlement") or "unknown")
     rp = realtime_proof if isinstance(realtime_proof, dict) else {}
@@ -97,14 +120,14 @@ def build_market_depth_report(
         "entitlement": entitlement,
         "latency": (round(bridge_age_sec, 1) if isinstance(bridge_age_sec, (int, float)) else None),
         "freshness": (f"{round(bridge_age_sec)}s" if isinstance(bridge_age_sec, (int, float)) else "never"),
-        "coverage": "swept universe ∪ watchlist",
+        "coverage": "swept universe ∪ watchlist", "probed": True,
         "limitations": "配信頻度≠データ鮮度。realtime性はexchangeTsで証明できるまでunknown。",
     }
 
     # JP cash: realtime ONLY on venue-timestamp proof, else delayed/close (partial).
     jp_cash = "live" if realtime_proven else "partial"
     raw["JP_CASH"] = {
-        "status": jp_cash, "entitlement": entitlement,
+        "status": jp_cash, "entitlement": entitlement, "probed": True,
         "latency": p95, "freshness": (f"p95 {p95}s" if p95 is not None else "delayed/close"),
         "coverage": "watchlist + swept", "limitations": ("" if realtime_proven else "遅延/終値ベース(realtime未証明)"),
     }
@@ -114,8 +137,22 @@ def build_market_depth_report(
         "limitations": "レギュラー時間のみ(時間外は別capability)",
     }
     raw["JP_PTS"] = {"status": "unavailable", "limitations": "PTS(夜間)配信の統合なし。夜間の日本株可視性は無い。"}
-    raw["US_EXTENDED"] = {"status": "testing", "limitations": "pre/after配信は未検証 — 時間外の可視性は主張しない。"}
-    raw["VWAP"] = {"status": "unavailable", "limitations": "十分なintraday tick/barが無いためVWAP未算出。"}
+
+    # US_EXTENDED — reflect a real entitlement probe when provided (実測)
+    _uxp = us_extended_probe if isinstance(us_extended_probe, dict) else {}
+    raw["US_EXTENDED"] = {"status": _uxp.get("status") or "testing", "probed": bool(_uxp.get("probed")),
+                          "limitations": _uxp.get("note") or "pre/after配信は未検証 — 時間外の可視性は主張しない。"}
+
+    # VWAP — genuinely COMPUTED from intraday bars when the probe succeeds (実測)
+    _vp = vwap_probe if isinstance(vwap_probe, dict) else {}
+    if _vp.get("computed"):
+        raw["VWAP"] = {"status": "live", "entitlement": "computed_from_intraday_bars",
+                       "coverage": f"{len(_vp.get('values') or {})} symbols", "probed": True,
+                       "sample": _vp.get("values"), "freshness": _vp.get("asOf"),
+                       "limitations": _vp.get("note") or "5分足のセッションVWAPを算出(算出値であり板約定VWAPではない)"}
+    else:
+        raw["VWAP"] = {"status": "unavailable", "probed": bool(_vp.get("probed")),
+                       "limitations": _vp.get("note") or "十分なintraday barが無く未算出(実測プローブ)。"}
     raw["TAPE"] = {"status": "requires_contract", "limitations": "歩み値フィード未契約。約定の質は推定しない。"}
     raw["L2"] = {"status": "requires_contract", "limitations": "板(Level 2)未契約。需給の確度は推定しない。"}
     raw["OPTIONS_IV"] = {"status": "unavailable", "limitations": "IV/スキューのプロバイダ未統合。"}
@@ -149,6 +186,8 @@ def build_market_depth_report(
             "lastSuccess": now_iso if st in ("live", "partial") else None,
             "limitations": r.get("limitations", ""),
             "affectsActionLevel": key in _ACTION_LEVEL_CAPS,
+            "probed": bool(r.get("probed")),   # True = backed by a real measurement (実測), not assumed
+            "sample": r.get("sample"),
         }
         guard[key] = _to_guard_status(st)
 

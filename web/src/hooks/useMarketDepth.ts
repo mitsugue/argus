@@ -12,6 +12,8 @@ export interface DepthCapability {
   lastSuccess?: string | null;
   limitations?: string;
   affectsActionLevel?: boolean;
+  probed?: boolean;                       // true = backed by a real measurement (実測)
+  sample?: Record<string, number> | null; // e.g. VWAP values per symbol
 }
 export interface MarketDepth {
   asOf: string;

@@ -1476,3 +1476,5 @@
 .mdepth__row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 2px 0; border-bottom: 1px solid var(--line); }
 .mdepth__label { color: var(--text-sub); min-width: 0; }
 .mdepth__status { font-weight: 700; font-size: 11px; letter-spacing: .03em; flex: none; }
+
+.mdepth__probed { font-size: 9px; font-weight: 700; color: var(--value-positive, #34d399); margin-left: 5px; padding: 0 4px; border:1px solid color-mix(in srgb, var(--value-positive,#34d399) 40%, transparent); border-radius: 4px; }
