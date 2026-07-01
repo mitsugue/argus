@@ -29,6 +29,7 @@ import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (
 import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist sync validation (pure, v10.74)
 import argus_downside  # Downside Incident Response + cause attribution (pure, decision-support only, v10.98)
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
+import argus_jquants_tdnet  # official J-Quants TDnet Add-on classify/map/status (pure, v11.1)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
@@ -2887,7 +2888,20 @@ def _jp_mock_snapshot():
 _JP_SYM_RE      = re.compile(r"^[0-9A-Z]{4}$")   # TSE 4-char codes incl. 285A
 _US_SYM_RE      = re.compile(r"^[A-Z][A-Z.\-]{0,9}$")
 _JP_DYN_MAX     = 20
-_US_DYN_MAX     = 8     # Twelve Data free tier: 8 credits/min — one batch stays safe
+# Twelve Data plan-aware caps (v11.1). Basic = free-tier conservatism; Grow raises the
+# quota so coverage can widen — but a quota bump NEVER proves L2/tape/options/borrow or
+# extended-hours live (those need real feeds + proof). Unknown plan → keep the old caps.
+_TWELVEDATA_PLAN = (os.environ.get("TWELVEDATA_PLAN", "") or "").strip().lower()
+def _td_int_env(name, default):
+    try:
+        return max(1, int(os.environ.get(name, "") or default))
+    except Exception:
+        return default
+_TD_GROW = _TWELVEDATA_PLAN in ("grow", "pro", "enterprise", "custom")
+_US_DYN_MAX     = _td_int_env("TWELVEDATA_DYNAMIC_MAX", 24 if _TD_GROW else 8)
+_TD_VWAP_MAX    = _td_int_env("TWELVEDATA_VWAP_SYMBOL_MAX", 12 if _TD_GROW else 6)
+_TD_REGIME_ETF_MAX = _td_int_env("TWELVEDATA_REGIME_ETF_MAX", 16 if _TD_GROW else 8)
+_TD_CREDIT_BUDGET_PER_MIN = _td_int_env("TWELVEDATA_CREDIT_BUDGET_PER_MIN", 55 if _TD_GROW else 8)
 _DYN_CACHE_MAX  = 16
 _JP_DYN_CACHE   = {}    # symbols-tuple -> {"data":..., "expires":...}
 _US_DYN_CACHE   = {}
@@ -3845,6 +3859,15 @@ def _event_card_context(active):
     intel = list(_INTEL_STORE)
     _PRICE_TYPES = {"PRICE_MOVE", "PRICE_SPIKE", "PRICE_CRASH", "LIMIT_UP", "LIMIT_DOWN",
                     "GAP", "VOLUME_ANOMALY", "FLOW_ANOMALY"}
+    # Official TDnet disclosures by symbol (v11.1) → an OFFICIAL confirmation on the
+    # EventCard. Cheap (cached in get_tdnet_recent). Prefers the official J-Quants Add-on;
+    # yanoshin fallback is non-official so it does NOT set has_official.
+    try:
+        _td = get_tdnet_recent(150)
+        _td_official = bool(_td.get("official"))
+        _td_by_sym = _td.get("bySymbol") or {}
+    except Exception:
+        _td_official, _td_by_sym = False, {}
     for e in active:
         sym = e.get("symbol")
         src_ids = [e.get("source")] if e.get("source") else []
@@ -3861,11 +3884,19 @@ def _event_card_context(active):
         except Exception:
             corr = "single"
         etype = str(e.get("eventType") or "").upper()
+        # Official TDnet disclosure for this symbol → official confirmation. A MATERIAL
+        # disclosure adds an official source id (so corroboration can reach 'official').
+        td_rows = _td_by_sym.get(str(sym)) if sym else None
+        td_material = bool(td_rows and any(r.get("material") for r in td_rows))
+        has_official = (corr == "official") or (_td_official and bool(td_rows))
+        if _td_official and td_rows:
+            src_ids = list(src_ids) + ["official:tdnet"]
+            tiers.append("exchange_or_listing_venue")
         ctx[e.get("eventId")] = {
             "source_ids": src_ids or None,
             "independent_family_count": (2 if corr == "corroborated" else (1 if src_ids else 0)),
-            "has_official": corr == "official",
-            "theme_only": etype in ("THEME", "CAOS_CANDIDATE", "INSTITUTIONAL_VIEW"),
+            "has_official": has_official,
+            "theme_only": etype in ("THEME", "CAOS_CANDIDATE", "INSTITUTIONAL_VIEW") and not td_material,
             "market_confirmed": etype in _PRICE_TYPES,   # the observed move confirms itself
             "source_tiers": sorted(set(tiers)),
         }
@@ -9310,16 +9341,81 @@ _TDNET_FEED_CACHE = {"data": None, "expires": 0.0}
 _TDNET_FEED_TTL = 600
 
 
-def get_tdnet_recent(limit=150):
-    """Recent TDnet (適時開示) disclosures via the free yanoshin TDnet API, mapped
-    to 4-digit codes and classified (category + sentiment). Cached 10m. This is
-    the FIRST real TDnet feed in ARGUS — best-effort, third-party wrapper, so it
-    degrades to 'unavailable' on any error (the layer then says 未接続)."""
+# ── Official J-Quants TDnet Document Add-on (v11.1) ──────────────────────────
+# Reuses the SAME J-Quants v2 auth (x-api-key). The exact add-on path can differ per
+# plan/release, so it is env-overridable and the fetch reports HTTP status HONESTLY
+# (entitlement_missing / endpoint_not_found / rate_limited) instead of guessing. A key
+# being present is NOT 'live' — only a 200 with rows is.
+_JQUANTS_TDNET_PATH  = os.environ.get("JQUANTS_TDNET_PATH", "/td/list")
+_TDNET_OFFICIAL_CACHE = {"data": None, "expires": 0.0}
+
+def _jquants_tdnet_fetch(limit=150):
+    """Official J-Quants TDnet Add-on snapshot + a bool 'usable'. Never exposes the key."""
+    if not _JQUANTS_API_KEY:
+        return argus_jquants_tdnet.build_snapshot(
+            [], status="not_configured", official=True, provider="jquants-tdnet",
+            entitlement="missing", as_of=_ai_now_iso(), note_ja="JQUANTS_API_KEY未設定。"), False
+    now = time.time()
+    c = _TDNET_OFFICIAL_CACHE
+    if c["data"] is not None and now < c["expires"]:
+        d = c["data"]
+        return d, (d.get("status") == "official_tdnet_live" and bool(d.get("items")))
+    http = None
+    try:
+        r = requests.get(f"{_JQUANTS_BASE}{_JQUANTS_TDNET_PATH}",
+                         headers={"x-api-key": _JQUANTS_API_KEY},
+                         params={"limit": limit}, timeout=12)
+        http = r.status_code
+        if r.status_code == 200:
+            body = r.json() if isinstance(r.json(), dict) else {}
+            rows = body.get("data") or body.get("td_list") or body.get("tdnet") or body.get("items") or []
+            items, by_sym = [], {}
+            for raw in (rows or [])[:200]:
+                n = argus_jquants_tdnet.normalize_row(raw, argus_tdnet.classify_disclosure)
+                if not n.get("symbol") or not n.get("title"):
+                    continue
+                it = {"code": n["symbol"], "name": n["company"], "title": n["title"],
+                      "time": n["disclosedAt"], "url": None, "documentId": n["documentId"],
+                      "category": n["category"], "categoryJa": n["categoryJa"],
+                      "sentiment": n["sentiment"], "material": n["material"],
+                      "provider": "jquants-tdnet", "official": True}
+                items.append(it)
+                by_sym.setdefault(n["symbol"], []).append(it)
+            snap = argus_jquants_tdnet.build_snapshot(
+                items, status=("official_tdnet_live" if items else "live"), official=True,
+                provider="jquants-tdnet", entitlement="tdnet_addon", as_of=_ai_now_iso(),
+                note_ja="公式 J-Quants TDnet Add-on から取得。")
+            snap["bySymbol"] = by_sym
+            snap["httpStatus"] = 200
+            c["data"] = snap
+            c["expires"] = now + _TDNET_FEED_TTL
+            return snap, bool(items)
+        st = argus_jquants_tdnet.status_from_http(r.status_code)
+        ent = "missing" if r.status_code in (401, 403) else "unknown"
+        snap = argus_jquants_tdnet.build_snapshot(
+            [], status=st, official=True, provider="jquants-tdnet", entitlement=ent,
+            as_of=_ai_now_iso(), note_ja=f"official TDnet HTTP {r.status_code}（キー値は出しません）。")
+        snap["httpStatus"] = r.status_code
+        # cache a non-200 briefly so a plan-gap/wrong-path isn't hammered
+        c["data"] = snap
+        c["expires"] = now + 900
+        return snap, False
+    except Exception:
+        snap = argus_jquants_tdnet.build_snapshot(
+            [], status="unavailable", official=True, provider="jquants-tdnet",
+            entitlement="unknown", as_of=_ai_now_iso(), note_ja="official TDnet 取得エラー。")
+        snap["httpStatus"] = http
+        return snap, False
+
+
+def _get_tdnet_yanoshin(limit=150):
+    """FALLBACK: recent TDnet via the free yanoshin third-party wrapper. official=False,
+    a LOWER-tier source than the official J-Quants Add-on. Cached 10m."""
     now = time.time()
     if _TDNET_FEED_CACHE["data"] is not None and now < _TDNET_FEED_CACHE["expires"]:
         return _TDNET_FEED_CACHE["data"]
     out = {"status": "unavailable", "asOf": _ai_now_iso(), "items": [], "bySymbol": {},
-           "provider": "yanoshin-tdnet"}
+           "provider": "yanoshin-tdnet", "official": False, "entitlement": "fallback"}
     try:
         r = requests.get(f"https://webapi.yanoshin.jp/webapi/tdnet/list/recent.json?limit={limit}",
                          timeout=12, headers={"User-Agent": "argus/1.0"})
@@ -9337,18 +9433,33 @@ def get_tdnet_recent(limit=150):
                 it = {"code": code, "name": td.get("company_name"), "title": title,
                       "time": td.get("pubdate"), "url": td.get("document_url"),
                       "category": cls["category"], "categoryJa": cls["categoryJa"],
-                      "sentiment": cls["sentiment"]}
+                      "sentiment": cls["sentiment"], "provider": "yanoshin-tdnet", "official": False}
                 items.append(it)
                 by_sym.setdefault(code, []).append(it)
             if items:
                 out = {"status": "live", "asOf": _ai_now_iso(), "items": items[:200],
-                       "bySymbol": by_sym, "provider": "yanoshin-tdnet"}
+                       "bySymbol": by_sym, "provider": "yanoshin-tdnet", "official": False,
+                       "entitlement": "fallback"}
     except Exception:
         pass
     if out["status"] == "live":
         _TDNET_FEED_CACHE["data"] = out
         _TDNET_FEED_CACHE["expires"] = now + _TDNET_FEED_TTL
     return out
+
+
+def get_tdnet_recent(limit=150):
+    """TDnet 適時開示. Prefers the OFFICIAL J-Quants TDnet Add-on (provider=jquants-tdnet,
+    official=true); falls back to the yanoshin third-party wrapper (official=false) ONLY
+    when the official feed is unavailable. The two are always distinguishable via
+    provider/official, and the official status (why it didn't win) is surfaced."""
+    official, usable = _jquants_tdnet_fetch(limit)
+    if usable and official.get("items"):
+        return official
+    fb = _get_tdnet_yanoshin(limit)
+    fb["officialStatus"] = official.get("status")     # e.g. entitlement_missing / endpoint_not_found
+    fb["officialHttpStatus"] = official.get("httpStatus")
+    return fb
 
 
 @app.route("/api/argus/tdnet-recent")
@@ -10222,6 +10333,24 @@ def _source_registry():
         return (prov.get(pid) or {}).get("runtimeStatus", "missing")
     bridge_live = rt("moomoo") == "live"
     jq, td, fred, cg = rt("jquants"), rt("twelvedata"), rt("fred"), rt("coingecko")
+    # Official J-Quants TDnet Add-on status (v11.1) — the registry must reflect the REAL
+    # probe, never stay 'paid_not_enabled' once contracted. Cheap (cached in the fetch).
+    try:
+        _td_off, _td_usable = _jquants_tdnet_fetch(20)
+    except Exception:
+        _td_off, _td_usable = {"status": "unavailable", "entitlement": "unknown"}, False
+    _td_off_status = _td_off.get("status")
+    if not _JQUANTS_API_KEY:
+        _td_reg_status, _td_ent, _td_note = "missing", "APIキー未設定", "JQUANTS_API_KEY未設定。"
+    elif _td_off_status == "official_tdnet_live":
+        _td_reg_status, _td_ent, _td_note = "confirmed_live", "tdnet_addon", "公式J-Quants TDnet Add-onがライブ(official confirmation)。"
+    elif _td_off_status in ("entitlement_missing",):
+        _td_reg_status, _td_ent, _td_note = "entitlement_missing", "addon未権限(401/403)", "キーはあるがTDnet Add-onの権限が無い(401/403)。"
+    elif _td_off_status in ("endpoint_not_found",):
+        # official path may differ per plan — fall back to yanoshin, honestly flagged
+        _td_reg_status, _td_ent, _td_note = "fallback_partial", "endpoint未確認(404)", "公式TDnetのパスが未確認(404)。yanoshinフォールバックで暫定運用。JQUANTS_TDNET_PATHで調整可。"
+    else:
+        _td_reg_status, _td_ent, _td_note = "requires_test", "未実証", "キーはあるが公式TDnetの成功プローブがまだ無い。"
     def S(cap, provider, market, status, entitlement, paid, licence, note):
         return {"capability": cap, "provider": provider, "market": market, "status": status,
                 "entitlement": entitlement, "paid": paid, "licence": licence, "notesJa": note}
@@ -10248,9 +10377,10 @@ def _source_registry():
         S("ニュース/材料", "Finnhub / GDELT / SEC EDGAR", "US/JP",
           "partial", "公開フィード", "free/optional", "ok",
           "二次媒体中心。一次の公式開示としては扱わない。"),
-        S("企業開示(TDnet)", "J-Quants TDnet add-on", "JP", "paid_not_enabled",
-          "有料アドオン未契約", "paid", "ok",
-          "未契約のため公式適時開示フィードは未接続(official_catalystは到達不可)。"),
+        S("企業開示(TDnet 公式)", "J-Quants TDnet Add-on" + ("" if _td_reg_status == "confirmed_live" else " / yanoshinフォールバック"),
+          "JP", _td_reg_status, _td_ent, "paid", "ok",
+          _td_note + " 公式=official confirmation。materialな開示のみofficial_catalyst候補、"
+          "曖昧な題目はofficial_fact(価格原因の確定にはmarket/timing確認が必要)。yanoshinは非公式の下位ティア。"),
         S("企業開示(EDINET)", "EDINET API v2", "JP",
           ("missing" if not _EDINET_API_KEY else
            "confirmed_live" if _EDINET_STATE["lastFetchOk"] else "requires_test"),
@@ -10320,6 +10450,187 @@ def api_argus_source_coverage():
     })
 
 
+# ── Provider diagnostics (v11.1) ─────────────────────────────────────────────
+# Safe, cached probes proving which CONTRACTED providers are actually returning data.
+# HARD rules: never return a key value / a URL containing a key / request headers / a raw
+# provider body. A key being present is NOT 'live' — only a 200 with sampleCount>0 is.
+_PROVIDER_DIAG_CACHE = {"data": None, "expires": 0.0}
+_PROVIDER_DIAG_TTL = 300          # 5 min — avoid quota drain on repeated admin calls
+_DIAG_TIMEOUT = 8
+
+def _diag_runtime(http, n):
+    if http == 200:
+        return ("live" if n > 0 else "partial")
+    if http == 401:
+        return "unauthorized"
+    if http == 403:
+        return "entitlement_missing"
+    if http == 404:
+        return "endpoint_not_found"
+    if http == 429:
+        return "rate_limited"
+    return "error"
+
+def _diag_probe(provider, configured, do_request, *, caps=None, limitations=""):
+    """do_request() → (http_status:int, sample_count:int). Returns the secret-safe row."""
+    now_iso = _ai_now_iso()
+    row = {"provider": provider, "configured": bool(configured), "ok": False,
+           "runtimeStatus": "missing", "httpStatus": None, "sampleCount": 0,
+           "lastSuccessAt": None, "capabilities": caps or [], "limitationsJa": limitations,
+           "errorType": None}
+    if not configured:
+        row.update(runtimeStatus="missing", errorType="not_configured",
+                   limitationsJa=(limitations or "APIキー未設定。"))
+        return row
+    try:
+        http, n = do_request()
+        rs = _diag_runtime(http, n)
+        ok = (http == 200 and n > 0)
+        row.update(ok=ok, runtimeStatus=rs, httpStatus=http, sampleCount=int(n),
+                   lastSuccessAt=(now_iso if ok else None), errorType=(None if ok else rs))
+    except requests.exceptions.HTTPError as e:
+        code = getattr(getattr(e, "response", None), "status_code", None)
+        row.update(runtimeStatus=_diag_runtime(code or 0, 0), httpStatus=code, errorType="http_error")
+    except Exception as e:
+        row.update(runtimeStatus="error", errorType=type(e).__name__)   # type name only, never the message
+    return row
+
+def _provider_diagnostics():
+    """Full admin diagnostics (cached). Secret-safe by construction."""
+    now = time.time()
+    c = _PROVIDER_DIAG_CACHE
+    if c["data"] is not None and now < c["expires"]:
+        return c["data"]
+
+    def _jq_core():
+        frm = (datetime.now(TZ_JST) - timedelta(days=150)).strftime("%Y-%m-%d")
+        r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
+                         headers={"x-api-key": _JQUANTS_API_KEY},
+                         params={"code": "7203", "from": frm}, timeout=_DIAG_TIMEOUT)
+        return r.status_code, len((r.json() or {}).get("data", []) if r.status_code == 200 else [])
+
+    def _jq_tdnet():
+        snap, _ = _jquants_tdnet_fetch(20)
+        http = snap.get("httpStatus") or (200 if snap.get("status") == "official_tdnet_live" else 0)
+        return (http or 0), len(snap.get("items") or [])
+
+    def _edinet():
+        r = requests.get("https://api.edinet-fsa.go.jp/api/v2/documents.json",
+                         params={"date": datetime.now(TZ_JST).strftime("%Y-%m-%d"), "type": 2,
+                                 "Subscription-Key": _EDINET_API_KEY}, timeout=_DIAG_TIMEOUT)
+        return r.status_code, len((r.json() or {}).get("results", []) if r.status_code == 200 else [])
+
+    def _td_quote():
+        r = requests.get(_TWELVEDATA_QUOTE, params={"symbol": "AAPL", "apikey": _TWELVEDATA_API_KEY},
+                         timeout=_DIAG_TIMEOUT)
+        j = r.json() if r.status_code == 200 else {}
+        return r.status_code, (1 if isinstance(j, dict) and j.get("symbol") else 0)
+
+    def _td_ts():
+        r = requests.get("https://api.twelvedata.com/time_series",
+                         params={"symbol": "SPY", "interval": "5min", "outputsize": 1,
+                                 "apikey": _TWELVEDATA_API_KEY}, timeout=_DIAG_TIMEOUT)
+        j = r.json() if r.status_code == 200 else {}
+        return r.status_code, len((j or {}).get("values", []) if isinstance(j, dict) else [])
+
+    def _fred():
+        r = requests.get("https://api.stlouisfed.org/fred/series/observations",
+                         params={"series_id": "DGS10", "api_key": _FRED_API_KEY, "file_type": "json",
+                                 "limit": 1, "sort_order": "desc"}, timeout=_DIAG_TIMEOUT)
+        return r.status_code, len((r.json() or {}).get("observations", []) if r.status_code == 200 else [])
+
+    def _finnhub():
+        r = requests.get("https://finnhub.io/api/v1/quote", params={"symbol": "AAPL", "token": FINNHUB_API_KEY},
+                         timeout=_DIAG_TIMEOUT)
+        j = r.json() if r.status_code == 200 else {}
+        return r.status_code, (1 if isinstance(j, dict) and j.get("c") else 0)
+
+    def _av():
+        r = requests.get("https://www.alphavantage.co/query",
+                         params={"function": "TOP_GAINERS_LOSERS", "apikey": _ALPHAVANTAGE_KEY},
+                         timeout=_DIAG_TIMEOUT)
+        j = r.json() if r.status_code == 200 else {}
+        return r.status_code, len((j or {}).get("top_gainers", []) if isinstance(j, dict) else [])
+
+    def _coingecko():
+        headers = {"User-Agent": "argus-research/1.0"}
+        if _COINGECKO_KEY:
+            headers["x-cg-demo-api-key"] = _COINGECKO_KEY
+        r = requests.get("https://api.coingecko.com/api/v3/simple/price",
+                         params={"ids": "bitcoin", "vs_currencies": "usd"}, headers=headers,
+                         timeout=_DIAG_TIMEOUT)
+        return r.status_code, (1 if r.status_code == 200 and (r.json() or {}).get("bitcoin") else 0)
+
+    items = [
+        _diag_probe("jquants-core", bool(_JQUANTS_API_KEY), _jq_core,
+                    caps=["equities_daily", "markets"], limitations="J-Quants Standard コア。"),
+        _diag_probe("jquants-tdnet", bool(_JQUANTS_API_KEY), _jq_tdnet,
+                    caps=["official_disclosure"],
+                    limitations="公式TDnet Add-on。404ならJQUANTS_TDNET_PATH要調整。official=confirmation。"),
+        _diag_probe("edinet", bool(_EDINET_API_KEY), _edinet, caps=["official_filings"],
+                    limitations="EDINET v2 公式開示。"),
+        _diag_probe("twelvedata-quote", bool(_TWELVEDATA_API_KEY), _td_quote, caps=["quote"],
+                    limitations="Twelve Data。Growはquota拡張であってL2/tape/options/borrowの代替ではない。"),
+        _diag_probe("twelvedata-timeseries", bool(_TWELVEDATA_API_KEY), _td_ts, caps=["time_series", "vwap_bars"],
+                    limitations="時間外liveは実証時のみ。"),
+        _diag_probe("fred", bool(_FRED_API_KEY), _fred, caps=["macro"], limitations="金利/VIX/HY OAS。"),
+        _diag_probe("finnhub", bool(FINNHUB_API_KEY), _finnhub, caps=["quote", "news"], limitations="二次媒体/相場。"),
+        _diag_probe("alphavantage", bool(_ALPHAVANTAGE_KEY), _av, caps=["us_movers"], limitations="米国ムーバー。"),
+        _diag_probe("coingecko", True, _coingecko, caps=["crypto_price"],
+                    limitations="キー任意。DC IPブロック時はCoinbaseフォールバック(価格側)。"),
+    ]
+    # AI providers: report configured only — do NOT ping (billable). Layer2B: config only.
+    items.append({"provider": "openai", "configured": bool(_OPENAI_API_KEY),
+                  "ok": bool(_OPENAI_API_KEY), "runtimeStatus": ("configured" if _OPENAI_API_KEY else "missing"),
+                  "httpStatus": None, "sampleCount": 0, "lastSuccessAt": None,
+                  "capabilities": ["ai_judge"], "limitationsJa": "課金回避のためここでは疎通しない。/ai-provider-status(admin)参照。",
+                  "errorType": None})
+    items.append({"provider": "gemini", "configured": bool(GEMINI_API_KEY),
+                  "ok": bool(GEMINI_API_KEY), "runtimeStatus": ("configured" if GEMINI_API_KEY else "missing"),
+                  "httpStatus": None, "sampleCount": 0, "lastSuccessAt": None,
+                  "capabilities": ["ai_check"], "limitationsJa": "同上(billable)。", "errorType": None})
+    items.append({"provider": "layer2b-private-store", "configured": _layer2b_store_configured(),
+                  "ok": _layer2b_store_configured(), "runtimeStatus": ("configured" if _layer2b_store_configured() else "missing"),
+                  "httpStatus": None, "sampleCount": 0, "lastSuccessAt": None,
+                  "capabilities": ["owner_private_records"], "limitationsJa": "private repo設定の有無のみ(内容は出さない)。",
+                  "errorType": None})
+
+    out = {"asOf": _ai_now_iso(), "schemaVersion": "provider-diagnostics-v1", "items": items,
+           "summary": {"live": sum(1 for i in items if i["runtimeStatus"] == "live"),
+                       "configured": sum(1 for i in items if i["configured"]),
+                       "total": len(items)},
+           "noteJa": "『設定済み』≠『ライブ』。liveはprovider 200応答+sampleCount>0+lastSuccessAtがある時のみ。"}
+    c["data"] = out
+    c["expires"] = now + _PROVIDER_DIAG_TTL
+    return out
+
+@app.route("/api/argus/admin/provider-diagnostics")
+def api_argus_admin_provider_diagnostics():
+    """ADMIN-ONLY full provider diagnostics (real probes). Secret-safe: no keys, no
+    URLs-with-keys, no request headers, no raw provider bodies. Cached 5m."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_provider_diagnostics())
+
+@app.route("/api/argus/provider-diagnostics/public")
+def api_argus_provider_diagnostics_public():
+    """PUBLIC-safe provider status: configured booleans + live/partial/missing ONLY.
+    No admin detail, no httpStatus, no sample counts, no messages."""
+    full = _provider_diagnostics()
+    pub = [{"provider": i["provider"], "configured": i["configured"],
+            "status": ("live" if i["runtimeStatus"] == "live" else
+                       "partial" if i["runtimeStatus"] == "partial" else
+                       "configured" if i["runtimeStatus"] == "configured" else
+                       ("missing" if not i["configured"] else "not_live"))}
+           for i in full["items"]]
+    return jsonify({"asOf": full["asOf"], "schemaVersion": "provider-diagnostics-public-v1",
+                    "providers": pub,
+                    "summary": {"live": sum(1 for p in pub if p["status"] == "live"),
+                                "configured": sum(1 for p in pub if p["configured"]), "total": len(pub)},
+                    "noteJa": "設定済み≠ライブ。詳細はadmin専用エンドポイントで。"})
+
+
 # ── Market Depth capability report (v10.196) ─────────────────────────────────
 # Honest per-capability depth status (bridge/JP cash/US regular/PTS/extended/VWAP/
 # tape/L2/options/borrow/FX/TDnet). Feeds the Visibility Guard REAL values instead of
@@ -10344,7 +10655,7 @@ def _vwap_probe():
         elif not _us_market_open():
             probe["note"] = "米レギュラー時間外のためintraday VWAPは算出しない"
         else:
-            syms = sorted({str(x["symbol"]).upper() for x in _US_WATCHLIST})[:6]
+            syms = sorted({str(x["symbol"]).upper() for x in _US_WATCHLIST})[:_TD_VWAP_MAX]
             if syms:
                 r = requests.get(_TWELVEDATA_TS, params={
                     "symbol": ",".join(syms), "interval": "5min", "outputsize": 96,
@@ -10564,7 +10875,11 @@ def get_runtime_manifest():
         "currentLimitations": [
             "calibration is burn-in — accuracy not proven (ARGUS classifies the present; it is not a profit guarantee)",
             "JP prices are J-Quants T-1 unless the moomoo bridge is live (then realtime)",
-            "TDnet via a third-party (yanoshin) wrapper; bad-news sentiment is title-only (要確認, not asserted)",
+            # v11.1: drop the third-party-wrapper caveat once the OFFICIAL J-Quants TDnet
+            # Add-on is live; keep it (fallback) otherwise.
+            ("TDnet: official J-Quants Add-on live (official confirmation; material titles → official_catalyst, ambiguous → official_fact)"
+             if td.get("official") else
+             "TDnet via a third-party (yanoshin) wrapper; bad-news sentiment is title-only (要確認, not asserted)"),
             "regime label may be held from the last full ETF coverage (shown as held/stale)",
         ],
     }

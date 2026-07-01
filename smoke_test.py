@@ -238,15 +238,32 @@ def v_no_order_routes():
     return True, "no order/execute routes (correct)"
 
 def v_tdnet_recent():
-    # TDnet feed (v10.101): public, read-only. Items (when present) carry a
-    # classified sentiment. Unavailable is acceptable (third-party wrapper).
+    # TDnet feed: must DISTINGUISH official (jquants-tdnet) from the yanoshin fallback
+    # (v11.1). Unavailable is acceptable. official is a bool.
     c, d = _get("/api/argus/tdnet-recent")
-    if d.get("status") not in ("live", "unavailable"):
+    if d.get("status") not in ("live", "official_tdnet_live", "unavailable"):
         return False, f"status={d.get('status')}"
+    prov = d.get("provider")
+    if prov not in ("jquants-tdnet", "yanoshin-tdnet", None):
+        return False, f"unexpected provider {prov}"
     for it in (d.get("items") or [])[:5]:
         if it.get("sentiment") not in ("negative", "positive", "neutral"):
             return False, f"bad sentiment {it.get('sentiment')}"
-    return True, f"status={d.get('status')} count={d.get('count')}"
+    return True, f"provider={prov} official={d.get('official')} status={d.get('status')}"
+
+
+def v_provider_diagnostics_public():
+    # v11.1: public-safe provider status. No secrets, no admin detail.
+    c, d = _get("/api/argus/provider-diagnostics/public")
+    if d.get("schemaVersion") != "provider-diagnostics-public-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    provs = d.get("providers") or []
+    if not any(p.get("provider") == "jquants-tdnet" for p in provs):
+        return False, "jquants-tdnet missing"
+    for p in provs:                                     # public rows carry ONLY these keys
+        if set(p) != {"provider", "configured", "status"}:
+            return False, f"leaky public row {list(p)}"
+    return True, f"live={(d.get('summary') or {}).get('live')} configured={(d.get('summary') or {}).get('configured')}"
 
 def v_closepin_phase():
     c, d = _get("/api/argus/closepin-snapshot")
@@ -434,6 +451,9 @@ CHECKS = [
     ("v11 market-depth/proof", v_market_depth_proof),
     ("v11 source-coverage", v_source_coverage),
     ("v11 caos/audit", v_caos_audit),
+    # ── V11.1 paid-source activation ──
+    ("v11.1 provider-diagnostics/public", v_provider_diagnostics_public),
+    ("v11.1 admin diagnostics gated", v_admin_gated_401("/api/argus/admin/provider-diagnostics")),
 ]
 
 

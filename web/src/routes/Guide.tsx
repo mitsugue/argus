@@ -13,6 +13,7 @@ import { DecisionValueOpsCard } from '../components/guide/DecisionValueOpsCard';
 import { ArgusProStatusCard } from '../components/guide/ArgusProStatusCard';
 import { EventCardsPanel } from '../components/guide/EventCardsPanel';
 import { ArgusProAboutCard } from '../components/guide/ArgusProAboutCard';
+import { PaidSourceStatusCard } from '../components/guide/PaidSourceStatusCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -79,6 +80,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v11.1.0', '有料ソースをEvent Intelligenceへ正式接続（Paid Source Activation Phase 1・追加契約なし） — ①公式J-Quants TDnet Document Add-onアダプタ(argus_jquants_tdnet)。get_tdnet_recentは公式(provider=jquants-tdnet, official=true)を優先し、失敗時のみyanoshin非公式フォールバック。materialな開示のみofficial_catalyst候補・曖昧な題目はofficial_fact・値動きより後の開示は引き金にしない②プロバイダ診断: GET /provider-diagnostics/public(公開safe=設定/live/未設定のみ) と /admin/provider-diagnostics(admin token必須・実プローブ・キー値/URL/ヘッダ/生bodyは絶対に出さない)③source-registryのTDnetをpaid_not_enabled固定から実プローブ連動へ(公式liveでconfirmed_live)④EventCard v2に公式TDnet開示をofficial confirmationとして接続⑤Twelve Data Grow対応(TWELVEDATA_PLAN=growでdynamic 8→24・VWAP 6→12等。unknownは従来維持。quota拡張でありL2/tape/options/borrowの代替ではない)⑥Guideに「有料データ接続状況」＝『設定済み≠ライブ取得成功』を明示。自動売買/注文ルートは追加なし。※本番の各プローブ結果はデプロイ後にprovider diagnostics+smokeで確認します。'],
   ['v11.0.5', '銘柄検索の不具合＋端末間同期の改善 — ①検索: 暗号資産の検索がCoinGeckoのデータセンターIPブロックで断続的に失敗していたのを修正(価格取得と同じUser-Agent/keyヘッダを付与)。日本株検索の関連度を改善(「8058」→三菱商事、「三菱」→三菱系が先頭に。以前はMAXIS ETF等が先に出ていた)。米国株の重複(同一銘柄の複数取引所)を排除。混雑(429)時は「候補なし」ではなく「混雑しています」と表示。②端末間同期: アプリ⇄ウェブの同期を高速化(編集から約7秒でクラウド送信・30秒間隔ポーリング＋タブ復帰で即時取得＝10〜40秒で反映。以前は最大2分)。Guideに「両端末で同じパスフレーズを有効化しないと同期しない」ことと現在の同期状態を明示。※同期はクラウド自動バックアップ(暗号化・パスフレーズ)が土台。'],
   ['v11.0.4', 'Free Phase Closure / Pro Quality Gate（有料連携の前に土台を締める） — ①銘柄ルートの締め: research-mission / event institutional-intelligence / positioning は全て `<symbol>` 形で正常、空白銘柄は400で弾く(公開GETはLLM・fetchを一切呼ばない)。回帰テスト追加(llmCalls=0・positioning確率合計=1・公開GETは_fetch_public_text非呼び出しを検証)②本番スモークにv11の9エンドポイント(events/cards・research-mission・event-intel・positioning・calibration v4 status・decision-value status・market-depth proof・source-coverage・caos audit)の形状チェックを追加(市場オープンや非空を要求しない)③Guide冒頭に「ARGUS Proとは何か」+フロー図(C.A.O.S.→ティア/権利→EventCard v2→可視性/深さ→GPT判断→Gemini反証→ARGUS View→台帳/Decision Value→採点→次回の教科書)+「やらないこと」を明記④Decision Value Opsをstatusエンドポイントに整合(記録が実在する時だけ「記録中」表示)⑤Calibrationのドライラン表記を「非本番の成果物」と明確化しv4/statusを正式表示に⑥「24/7イベント検知」を「市場セッション対応 Event Intelligence（暗号は24/7）」に正直化。有料フィード・自動売買・注文ルートは追加なし。'],
   ['v11.0.3', 'ヘッダーの「Pro」を白に統一（発光アクセントを削除）。光るのは三角ロゴの目だけ（状態色でグロー＋呼吸）に限定。'],
@@ -411,6 +413,8 @@ export const Guide: React.FC = () => {
       </section>
 
       <ArgusProStatusCard />
+
+      <PaidSourceStatusCard />
 
       <EventCardsPanel />
 
