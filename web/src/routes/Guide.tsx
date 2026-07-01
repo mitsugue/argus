@@ -11,6 +11,7 @@ import { CalibrationOpsCard } from '../components/guide/CalibrationOpsCard';
 import { MarketDepthCard } from '../components/guide/MarketDepthCard';
 import { DecisionValueOpsCard } from '../components/guide/DecisionValueOpsCard';
 import { ArgusProStatusCard } from '../components/guide/ArgusProStatusCard';
+import { EventCardsPanel } from '../components/guide/EventCardsPanel';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -77,6 +78,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v11.0.1', 'ARGUS Pro 仕上げ（配線を「本物」に） — 箱だけでなく実際に動く形へ。①C.A.O.S.監査を実データで記録開始（銘柄と出来事をなぜ紐付けたか＝一致語・情報源ファミリー/ティア・裏取り度を、重複を30分で抑えつつ記録。単一ソースは「引き金候補」止まりで原因確定にしない・非因果の但し書き付き）②Decision Valueのシャドー記録に可視性/姿勢の文脈を追加（降格前後の姿勢・確信度・ブロック内容を後から検証可能に。実P&Lは非公開のまま）③公式ソース（METI/EDINET/TDnet等）を正しい公式ティアに分類（Fed/SEC/BOJ/METI/ロイター日本語は既に取込済）④GuideにEventCard v2パネルを新設（各イベントの裏取り度・引き金の役割・不足を明示）⑤CaosHubの「ニュースは常にlive」という過大表現を修正、Decision Valueの見出しに「仮想・発注なし」を明示。単体テストはCI（ci.yml）で毎push自動実行済み。テスト573。'],
   ['v11.0.0', 'ARGUS Pro（Free-First Research Desk Build）の土台を投入 — メジャーアップデート。無料・非自動売買の範囲で「調査デスク化」を前進。①可視性ガードが警告だけでなく実際に判断を制約(確信度を上限化・劣化時は新規ENTERをWAITへ降格。理由をTodayに表示。killスイッチ有)②EventCard v2=イベントを正典オブジェクト化(単一ソースを原因確定にしない/テーマだけでは判断を動かさない/確信度=raw∧上限/不足を必ず明示)③Calibration v4状態・Decision Value状態を監査可能に(記録が実在する時だけ「稼働」表示・provenとは言わない・実P&Lは非公開)④市場の深さ「proof」化(exchangeTs等の実測=probedがある時だけLIVE・板/歩み値/オプションIV/貸株料は要契約のまま)⑤情報源に品質ティア(公式/主要メディア/アグリゲータ/不明)—弱いソースは単独で根拠にも原因確定にもできない⑥C.A.O.S.監査証跡(なぜ紐付けたか+非因果の但し書き)。GuideにARGUS Proパネルを新設。注文/ブローカー/自動売買ルートはゼロのまま。テスト+40。'],
   ['v10.209.0', 'Watchlist(2ページ目)で日本株が「MOCK・価格—」になり、仮想通貨が「PARTIAL」になる件を修正 — 原因は表示側のロジック: 各行の判定が「statusがちょうど"live"以外は全部mock」になっていた。日本株はmoomooブリッジが停止中(夜間/引け後)だとJ-Quantsの確定終値=status "delayed" になるが、これを"mock"扱いにして実価格まで隠していた(「—」表示)。修正後は delayed/partial/mixed など「リアルタイムではないが実データ」は price を表示し、鮮度は「delayed」等でamber表示(mockにしない)。仮想通貨はライブ価格があるのにルールラベルが無いため"partial"扱いだったのを、暗号資産はラベル体系が無いだけ(価格は実ライブ)なので"live"表示に。Todayページ(1枚目)は元から正しく処理できていた(今回はWatchlist側を同じ正しい挙動に合わせた)。※ブリッジ稼働中の日中は日本株は"live"に戻ります。'],
   ['v10.208.0', '暗号資産が本番でmock表示になっていた件を修正(実データに復帰) — 原因: CoinGeckoの無料APIはデータセンターIP(Renderサーバー)からのアクセスを遮断/強制レート制限するため、本番だけ取得に失敗し常にmock(BTC $68,200等の偽値)へフォールバックしていた(手元の一般回線では成功するので気づきにくい)。対策2段構え: ①CoinGeckoの無料Demoキー(環境変数 COINGECKO_API_KEY)に対応=キーを入れればクラウドからも安定取得。②キーが無くても/失敗しても、Coinbaseのキー不要・データセンター可のエンドポイントへ自動フォールバックし主要通貨(BTC/ETH/SOL等)は実価格を表示(24h変化は当日始値比)。地図に無いマイナー通貨のみ最終手段でmock。※日本株の「mock」表示は右側プレビュー特有(バックエンド未接続)で、実アプリ/ウェブでは「delayed」=J-Quantsの確定終値(実データ)です。'],
@@ -401,6 +403,8 @@ export const Guide: React.FC = () => {
       </section>
 
       <ArgusProStatusCard />
+
+      <EventCardsPanel />
 
       <section>
         <div className="section-head">

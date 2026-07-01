@@ -39,7 +39,7 @@ export const DecisionValueOpsCard: React.FC = () => {
   return (
     <section className="dvops">
       <div className="section-head">
-        <span className="section-head__title">Decision Value — Shadow Operations</span>
+        <span className="section-head__title">Decision Value — Shadow Operations（仮想・発注なし）</span>
         <span className="section-head__count">{STATUS_JA[d.status ?? ''] ?? d.status ?? '—'}</span>
       </div>
       <div className="card dvops__card">

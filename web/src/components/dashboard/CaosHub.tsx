@@ -10,10 +10,11 @@ import './CaosHub.css';
 
 // C.A.O.S. hub (v10.168) — the single intelligence card on Today, ALWAYS the 2nd card.
 // Folds three tiers under one roof: ① 機関シグナル (named-institution views) ② イベント分析
-// (概要/事前予想/事後) ③ ニュース (general market headlines). News is always live, so the
-// card never disappears (it used to vanish when institutional + event data were both empty).
-// Decision-support only; institutional items are reported views (never trades); news is
-// uncorroborated context (the same digest is fed to the AI as awareness-only input).
+// (概要/事前予想/事後) ③ ニュース (general market headlines).
+// HONESTY (v11): "always present" ≠ "live". News is polled metadata (title/link), NOT a
+// realtime feed, and a single headline is uncorroborated context — never a confirmed cause
+// (see EventCard v2 discipline + the CAOS audit trail /api/argus/caos/audit). Institutional
+// items are REPORTED VIEWS, never inferred trades. Decision-support only.
 
 interface IntelItem {
   title: string; titleJa?: string | null; institutionId?: string | null;
