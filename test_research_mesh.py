@@ -222,3 +222,22 @@ def test_new_institution_aliases_resolve():
     assert M.resolve_institution("東海東京証券のレポート") == "tokai"
     # a bare unrelated word must NOT false-match an institution
     assert M.resolve_institution("the weather today is fine") is None
+
+
+# ── §22 missed-intelligence replay (Phase E, v10.198) ────────────────────────
+def test_diagnose_miss_unknown_institution():
+    d = M.diagnose_miss(title="SomeBoutique cuts Toyota target", institution="SomeBoutique Advisors", symbol="7203",
+                        known_symbol_names={"7203": "Toyota"})
+    assert d["likelyCause"] == "institution_alias"
+    assert d["suggestedFix"]["type"] == "add_institution_alias"
+
+def test_diagnose_miss_asset_not_named():
+    d = M.diagnose_miss(title="Goldman turns cautious on chip demand", institution="Goldman Sachs", symbol="5803",
+                        known_symbol_names={"5803": "Fujikura"})
+    assert d["likelyCause"] == "asset_link"
+
+def test_diagnose_miss_passes_when_resolvable():
+    d = M.diagnose_miss(title="Goldman Sachs downgrades Toyota", institution="Goldman Sachs", symbol="7203",
+                        known_symbol_names={"7203": "Toyota"})
+    assert d["likelyCause"] == "passed_gates"
+    assert d["institutionResolved"] == "goldman_sachs"
