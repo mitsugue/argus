@@ -1,0 +1,1 @@
+{"eventId": "US:META:PRICE_SPIKE:2026-07-02:1#2026-07-01T15:36:09Z", "eventType": "PRICE_SPIKE", "symbol": "META", "market": "US", "severity": 3, "lifecycleState": "OBSERVING", "recommendedPosture": "AVOID_CHASING", "detectedAt": "2026-07-01T15:36:09Z", "reasonJa": "急騰 +10.74%(OVERNIGHT_GLOBAL閾値8.0%)"}
