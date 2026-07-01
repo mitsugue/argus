@@ -45,10 +45,10 @@
 }
 .shell__brand:hover { background: var(--surface-soft, rgba(255,255,255,0.04)); }
 
-/* Always-visible health beacon on the logo (green / amber / red·pulse). */
-.shell__brand-beacon { align-self: center; width: 8px; height: 8px; }
-/* Monogram mark (v10.192) — eye-in-triangle, tracks the brand text color. */
-.shell__brand-mark { align-self: center; color: var(--text-main); flex: none; }
+/* Monogram mark (v10.192) — eye-in-triangle, tracks the brand text color. The
+   negative right margin tightens the logo↔wordmark gap (the flex gap of 12px was
+   too wide once the standalone beacon dot was removed, v10.194.1). */
+.shell__brand-mark { align-self: center; color: var(--text-main); flex: none; margin-right: -6px; }
 
 .shell__brand-name {
   font-family: var(--font-sans);
