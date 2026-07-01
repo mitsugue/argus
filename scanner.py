@@ -39,6 +39,7 @@ import argus_research_swarm      # §12 deterministic research-mission orchestra
 import argus_positioning         # §14 institutional positioning aggregator (pure, v10.150)
 import argus_daily_brief         # §21 owner daily institutional brief (pure, v10.150)
 import argus_visibility          # Visibility Risk Guard (aggregates data-visibility signals, pure, v10.195)
+import argus_market_depth         # Market Depth capability report (feeds the guard, pure, v10.196)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -9755,12 +9756,48 @@ def api_argus_source_registry():
     return jsonify(_source_registry())
 
 
+# ── Market Depth capability report (v10.196) ─────────────────────────────────
+# Honest per-capability depth status (bridge/JP cash/US regular/PTS/extended/VWAP/
+# tape/L2/options/borrow/FX/TDnet). Feeds the Visibility Guard REAL values instead of
+# hardcoded defaults. Pure logic in argus_market_depth; a capability is 'live' only on
+# venue-timestamp proof, never on push cadence.
+_MARKET_DEPTH_CACHE = {"data": None, "expires": 0.0}
+
+def _market_depth_report():
+    now = time.time()
+    if _MARKET_DEPTH_CACHE["data"] is not None and now < _MARKET_DEPTH_CACHE["expires"]:
+        return _MARKET_DEPTH_CACHE["data"]
+    try: mc = _moomoo_capability_report()
+    except Exception: mc = {}
+    try: rp = _MOOMOO_ALLMARKET_REPORT.get("realtimeProof") or {}
+    except Exception: rp = {}
+    try: reg = _source_registry()
+    except Exception: reg = {}
+    try:
+        rep = argus_market_depth.build_market_depth_report(
+            now_iso=_ai_now_iso(), bridge_age_sec=_push_last_age_sec(),
+            moomoo_capability=mc, realtime_proof=rp, source_registry=reg,
+            jp_open=_jp_market_open(), us_open=_us_market_open())
+    except Exception:
+        rep = None
+    _MARKET_DEPTH_CACHE["data"] = rep
+    _MARKET_DEPTH_CACHE["expires"] = now + 60
+    return rep
+
+@app.route("/api/argus/market-depth")
+def api_argus_market_depth():
+    rep = _market_depth_report()
+    return jsonify(rep or {"status": "unavailable", "engineVersion": "market-depth-v1",
+                           "capabilities": {}, "note": "depth report temporarily unavailable"})
+
+
 # ── Visibility Risk Guard (v10.195) ──────────────────────────────────────────
 # Aggregates every data-visibility signal ARGUS already exposes into one honest
 # verdict: what it can't see, whether to cap confidence / block ENTER, and a calm
 # "検知≠安全" coverage line. Structural gaps (PTS/L2/tape/VWAP/…) are context-only;
 # only SITUATIONAL degradation (bridge stale in session, held-stale regime, budget
 # stopped) drops the level / blocks / warns. Pure logic lives in argus_visibility.
+# v10.196: capabilities now come from the live Market Depth report (data-driven).
 _VISIBILITY_CACHE = {"data": None, "expires": 0.0}
 
 def _visibility_guard():
@@ -9781,10 +9818,12 @@ def _visibility_guard():
     except Exception: cal_stage = None
     try: dv_phase = _dv_shadow_phase()
     except Exception: dv_phase = "v1-phase1-engine-only"
+    try: caps = (_market_depth_report() or {}).get("capabilitiesForGuard")
+    except Exception: caps = None
     g = argus_visibility.build_visibility_guard(
         now_iso=_ai_now_iso(),
         system_health=sh,
-        capabilities=None,   # no market-depth capability proven yet (structural defaults)
+        capabilities=caps,   # data-driven from the Market Depth report (v10.196; None → defaults)
         bridge_age_sec=_push_last_age_sec(),
         jp_open=_jp_market_open(),
         us_open=_us_market_open(),

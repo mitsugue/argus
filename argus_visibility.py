@@ -45,12 +45,19 @@ DEFAULT_CAPABILITIES: Dict[str, str] = {
     "VWAP": "unavailable",      # volume-weighted average price
     "FX_FUTURES": "unavailable",# FX / futures / commodities depth
     "TDNET": "unavailable",     # paid TDnet real-time disclosure feed
+    "OPTIONS_IV": "unavailable",# options IV / skew
+    "BORROW_FEE": "unavailable",# borrow fee / short availability
 }
+
+# Structural (depth) capabilities checked in the always-on context loop.
+_STRUCTURAL_CAPS = ("JP_PTS", "US_EXTENDED", "L2", "TAPE", "VWAP", "FX_FUTURES", "TDNET",
+                    "OPTIONS_IV", "BORROW_FEE")
 
 # Human labels (JP) for the structural coverage line — short, calm.
 _CAP_LABEL_JA: Dict[str, str] = {
     "JP_PTS": "PTS(夜間)", "US_EXTENDED": "米時間外", "L2": "板",
     "TAPE": "歩み値", "VWAP": "VWAP", "FX_FUTURES": "為替/先物", "TDNET": "TDnet速報",
+    "OPTIONS_IV": "オプションIV", "BORROW_FEE": "貸株料",
 }
 # Capabilities we surface in the muted "監視の穴" line when not live (the ones the
 # owner most plausibly assumes are covered). Ordered for a readable line.
@@ -102,7 +109,7 @@ def build_visibility_guard(
 
     # ── STRUCTURAL market-depth gaps (always-on context; never alarming) ──
     missing_depth: List[str] = []
-    for key in ("JP_PTS", "US_EXTENDED", "L2", "TAPE", "VWAP", "FX_FUTURES", "TDNET"):
+    for key in _STRUCTURAL_CAPS:
         st = _cap_status(capabilities, key)
         if st == "live":
             continue
