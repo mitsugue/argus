@@ -1715,6 +1715,46 @@ def api_argus_decision_value_shadow_summary():
         return jsonify({"status": "parse_error"})
 
 
+@app.route("/api/argus/decision-value/status")
+def api_argus_decision_value_status():
+    """PUBLIC-SAFE Decision Value status (ARGUS Pro v11). Auditable phase + per-policy
+    counts + sampleStage ONLY — never netR / prices / holdings (those stay owner-private).
+    phase can never claim recording/scoring unless records/scores actually exist."""
+    pub = _dv_shadow_public_summary()
+    shadow = pub.get("shadow") or {}
+    pol = shadow.get("policies") or {}
+    nt = shadow.get("noTrade") or {}
+    total = sum((v or {}).get("n", 0) for v in list(pol.values()) + list(nt.values()))
+    scored = shadow.get("scoredCount") or 0
+    configured = _layer2b_store_configured()
+    # phase is derived from what actually exists, never asserted.
+    if not configured:
+        phase = "not_configured"
+    elif total <= 0:
+        phase = "engine_ready_no_records_yet"
+    elif scored <= 0:
+        phase = "shadow_recording_active"
+    else:
+        phase = "scoring_active"
+    stages = [v.get("sampleStage") for v in list(pol.values()) + list(nt.values()) if v.get("sampleStage")]
+    sample_stage = "usable" if any(s in ("validation", "provisional") for s in stages) else (
+        "early_signal" if any(s == "exploratory" for s in stages) else ("burn_in" if stages else "none"))
+    return jsonify({
+        "schemaVersion": argus_decision_value.DECISION_VALUE_SCHEMA,
+        "phase": phase,
+        "privateStoreConfigured": configured,
+        "lastShadowRunAt": shadow.get("asOf"),
+        "totalRecords": total,
+        "scoredCount": scored,
+        "pendingOutcomeCount": max(0, total - scored),
+        "policyCounts": {pid: (v or {}).get("n", 0) for pid, v in pol.items()},
+        "noTradeCounts": {pid: (v or {}).get("n", 0) for pid, v in nt.items()},
+        "sampleStage": sample_stage,
+        "reasonJa": pub.get("blockersJa") or "",
+        "disclaimer": "Research simulation only. No order was or will be submitted.",
+    })
+
+
 # ── Calibration Operations (v10.195) — is v4 capture actually happening? ─────
 _CALIB_V4_CACHE = {"data": None, "expires": 0.0}
 
@@ -1805,6 +1845,57 @@ def api_argus_calibration_ops():
                       "per-sensorのローリング被覆率は履歴が必要 / 較正はburn-in中=精度は未証明。"),
         "noteJa": "校正は「ただ待てば良くなる」ものではありません。市場別クロックで正しい日付に、"
                   "被覆率と欠測を記録し、不変の予測を追記できている時だけ改善します。上記が現状の記録健全性です。",
+    })
+
+
+@app.route("/api/argus/calibration/v4/status")
+def api_argus_calibration_v4_status():
+    """PUBLIC-SAFE Calibration v4 status (ARGUS Pro v11) — auditable and HONESTLY
+    INACTIVE. isActive is true ONLY when the v4 artifact exists AND has records; it
+    never claims "proven". Reads the public ledger-branch v4 dry-run summary (no
+    owner data). reliabilityStage comes from the real trading-day count."""
+    C = argus_calibration
+    v4 = _calibration_v4_summary()   # ledger-branch calibration_v1/summary.json, or None
+    led = _ledger_summary() or {}
+    overall = led.get("overall") or {}
+    days = int(overall.get("days") or 0)
+    artifact = isinstance(v4, dict) and bool(v4)
+    # v4 summary field names vary; read defensively and never fabricate.
+    def _num(*keys):
+        for k in keys:
+            v = (v4 or {}).get(k)
+            if isinstance(v, (int, float)):
+                return int(v)
+        return 0
+    n_pred = _num("nPredictions", "n", "count", "records")
+    n_scored = _num("nScored", "scored", "scoredCount")
+    stage = C.reliability_stage(days)
+    is_active = bool(artifact and (n_pred > 0 or n_scored > 0))
+    if not artifact:
+        reason = ("v4ドライランのsummaryはまだ生成されていません（平日のワークフロー実行後に台帳ブランチへ書き込まれます）。"
+                  "現時点でクリーンなv4採点はinactiveです。")
+    elif n_pred <= 0:
+        reason = "v4アーティファクトはありますが記録がまだ0件です。inactive（精度は未実証）。"
+    elif stage == "burn_in":
+        reason = "記録は開始していますがburn-in段階です（精度は未実証・『実証済み』とは表示しません）。"
+    else:
+        reason = "v4記録が蓄積中です（それでも分類であり利益保証ではありません）。"
+    return jsonify({
+        "schemaVersion": C.SCHEMA_VERSION,          # "calibration-v4"
+        "engineVersion": C.SCHEMA_VERSION,
+        "asOf": _ai_now_iso(),
+        "artifactFound": artifact,
+        "lastRecordAt": (v4 or {}).get("updated") or (v4 or {}).get("asOf"),
+        "lastScoreAt": (v4 or {}).get("lastScoreAt") or (v4 or {}).get("updated"),
+        "nPredictions": n_pred,
+        "nScored": n_scored,
+        "cohortCounts": (v4 or {}).get("cohortCounts") or {},
+        "epoch": C.ACTIVE_EPOCH,
+        "reliabilityStage": stage,       # burn_in | early_signal | provisional | regime_level
+        "isActive": is_active,
+        "v3HeadlineDays": days,          # legacy v3 remains as burn-in history, not v4
+        "reasonJa": reason,
+        "noteJa": "v4はv3ヘッドラインと分離したクリーンepoch。『実証済み』表記はしません。",
     })
 
 
@@ -6661,6 +6752,31 @@ def _calibration_for(summary, posture):
         return {"factor": 1.0, "n": 0, "hitRate": None,
                 "basisJa": "校正不可(summary形式不明) — 確信度は未調整"}
 
+def _apply_visibility_guard(action, conf, reason, nxt, dq, vg_cap, vg_blocked, vg_reason):
+    """Apply the Visibility Guard to ONE label (ARGUS Pro v11). Pure given
+    argus_signal.resolve_signal — easy to unit-test. It can only make a label MORE
+    conservative:
+      1. confidenceCap lowers confidence (never raises it).
+      2. If ENTER is situationally blocked and the action would permit a new entry
+         (signal.permissions.newEntry == 'allowed'), downgrade the action to WAIT and
+         record WHY. High-conviction entry is never shown while entry precision is
+         untrustworthy.
+    Returns (action, conf, reason, nxt, signal, downgraded)."""
+    downgraded = False
+    if vg_cap is not None and conf > vg_cap:
+        conf = round(vg_cap, 2)
+    sig = argus_signal.resolve_signal(action, data_quality=dq)
+    if "ENTER" in (vg_blocked or set()) and (sig.get("permissions") or {}).get("newEntry") == "allowed":
+        action = "WAIT"
+        conf = round(min(conf, 0.5), 2)
+        reason = (reason + " 可視性ガードが新規エントリーを一時停止しました"
+                  + (f"（{vg_reason}）" if vg_reason else "（一時的な可視性の劣化）") + "。")
+        nxt = nxt or "リアルタイム配信の復帰・裏取り後に入りを再評価する。"
+        sig = argus_signal.resolve_signal(action, data_quality=dq)
+        downgraded = True
+    return action, conf, reason, nxt, sig, downgraded
+
+
 def get_action_labels(jp_symbols=None, us_symbols=None):
     """Rule-based action labels, aggregated server-side. Accepts the user's
     actual watchlist symbols (dynamic) — default is the curated list."""
@@ -6680,6 +6796,28 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     # calibration-v1: the ledger's scored track record for today's posture
     # adjusts label confidence (neutral 1.0 until enough evidence accumulates).
     cal = _calibration_for(_ledger_summary(), posture)
+
+    # ── Visibility Guard wiring (ARGUS Pro v11) ──────────────────────────────
+    # The guard was previously only a warning surface. It now ACTUALLY constrains
+    # judgment: (a) confidenceCap lowers every label's confidence (e.g. calibration
+    # burn-in caps at 0.60), and (b) a SITUATIONAL blockedActions=["ENTER"] (bridge
+    # stale in-session / prices stopped) downgrades any aggressive new-entry label to
+    # WAIT. Fail-open: if the guard errors, labels are unchanged. This can only make
+    # judgment MORE conservative, never more aggressive. See _apply_visibility_guard.
+    # Kill-switch: ARGUS_VISIBILITY_GATE=0 reverts to pre-v11 behaviour (warn-only,
+    # no cap/block) with no redeploy — the gate is the only change that alters what
+    # the user is told to DO, so it must be instantly reversible.
+    try:
+        _vg = _visibility_guard() if os.environ.get("ARGUS_VISIBILITY_GATE", "1") != "0" else {}
+    except Exception:
+        _vg = {}
+    _vg_cap = _vg.get("confidenceCap")
+    _vg_blocked = set(_vg.get("blockedActions") or [])
+    _vg_reason = ""
+    for _w in (_vg.get("warnings") or []):
+        if _w.get("code") in ("BRIDGE_STALE", "BRIDGE_NEVER", "REALTIME_UNPROVEN", "AI_BUDGET_STOPPED"):
+            _vg_reason = _w.get("messageJa") or ""
+            break
 
     quotes = {}
     for snap in (jp, us):
@@ -6706,6 +6844,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                 "nextConditionJa": "価格データの取得後に再評価する。",
                 "status": "mock",
                 "signal": argus_signal.resolve_signal("HOLD", data_quality="MOCK"),
+                "visibilityDowngraded": False,
             })
             continue
         chg = float(q.get("changePct", 0) or 0)
@@ -6738,6 +6877,10 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             reason = f"【価格データ{lag}日遅れ】" + reason
         if cal["factor"] != 1.0:
             conf = round(min(0.9, max(0.05, conf * cal["factor"])), 2)
+        # ── Visibility Guard: cap confidence, block aggressive entry (v11) ──
+        dq = ("LIVE" if qstatus == "live" and lag in (0, None) else "DELAYED")
+        action, conf, reason, nxt, sig, vg_downgraded = _apply_visibility_guard(
+            action, conf, reason, nxt, dq, _vg_cap, _vg_blocked, _vg_reason)
         labels.append({
             "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
             "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
@@ -6749,8 +6892,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             "nextConditionJa": nxt, "status": qstatus,
             # Structured Action Level signal per label (v10.136) so API/ledger
             # consumers get {code,level,permissions} without re-deriving from text.
-            "signal": argus_signal.resolve_signal(
-                action, data_quality=("LIVE" if qstatus == "live" and lag in (0, None) else "DELAYED")),
+            "signal": sig,
+            "visibilityDowngraded": vg_downgraded,
         })
 
     imminent_any = esc_by_market["US"] in ("D", "D-1") or esc_by_market["JP"] in ("D", "D-1")
@@ -6794,12 +6937,26 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     else:
         status = "mock"
 
+    # Visibility summary for the Today hero / TodayCall — so a downgrade is never
+    # silent. blockedEntry drives the "high-conviction entry is suspended" line.
+    _vg_entry_blocked = "ENTER" in _vg_blocked
+    _vg_downgrade_reason = (_vg_reason if (_vg_entry_blocked and _vg_reason) else "") or (
+        "自己採点がまだ精度未証明のため信頼度に上限をかけています。" if _vg_cap is not None else "")
     return {
         "status": status,
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "engineVersion": "action-v0",
         "signalSchemaVersion": argus_signal.SIGNAL_SCHEMA_VERSION,
         "marketPosture": {"label": mp, "rationaleJa": mp_ja},
+        "visibility": {
+            "visibilityLevel": _vg.get("visibilityLevel"),
+            "confidenceCap": _vg_cap,
+            "blockedActions": sorted(_vg_blocked),
+            "entryBlocked": _vg_entry_blocked,
+            "downgradeReasonJa": _vg_downgrade_reason,
+            "reasonCodes": _vg.get("reasonCodes", []),
+            "coverageLineJa": _vg.get("coverageLineJa"),
+        },
         "marketRegime": {
             "label": reg_label or "n/a",
             "confidence": reg_block.get("confidence"),
@@ -10060,6 +10217,67 @@ def api_argus_market_depth():
     rep = _market_depth_report()
     return jsonify(rep or {"status": "unavailable", "engineVersion": "market-depth-v1",
                            "capabilities": {}, "note": "depth report temporarily unavailable"})
+
+
+# Pure projection so the "proof" contract is unit-testable without Flask/network.
+def _market_depth_proof_items(capabilities):
+    """Project the depth report into per-capability PROOF rows. A capability marked
+    'live' but NOT probed (no exchange/venue timestamp) is honestly downgraded to
+    'unverified_live' — cadence is never proof. requires_contract/unavailable are
+    surfaced (not hidden) so the UI can't imply more coverage than exists."""
+    _PROOF_TYPE = {
+        "BRIDGE": "provider_timestamp", "JP_CASH": "exchange_timestamp",
+        "US_REGULAR": "provider_timestamp", "US_EXTENDED": "provider_timestamp",
+        "VWAP": "computed_from_bars", "PTS": "official_api", "TDNET": "official_api",
+    }
+    # True market DEPTH (order-book/tape) vs computed indicators — for the summary tally.
+    _TRUE_DEPTH = {"L2", "TAPE", "OPTIONS_IV", "BORROW_FEE"}
+    items = []
+    for cap, r in (capabilities or {}).items():
+        st = r.get("status")
+        probed = bool(r.get("probed"))
+        eff = st
+        if st == "live" and not probed:
+            eff = "unverified_live"       # live claim without a real measurement → honest downgrade
+        items.append({
+            "capability": cap,
+            "status": eff,
+            "rawStatus": st,
+            "probed": probed,
+            "proofType": (_PROOF_TYPE.get(cap, "provider_timestamp") if eff == "live" else
+                          ("none" if eff in ("unavailable", "requires_contract", "unverified_live", "testing") else "manual_config")),
+            "lastProofAt": r.get("lastSuccess") if eff == "live" else None,
+            "sampleCountToday": r.get("sample") if isinstance(r.get("sample"), (int, float)) else None,
+            "canAffectDecision": bool(r.get("affectsActionLevel")),
+            "isTrueDepth": cap in _TRUE_DEPTH,
+            "limitationsJa": r.get("limitations", ""),
+        })
+    return items
+
+
+@app.route("/api/argus/market-depth/proof")
+def api_argus_market_depth_proof():
+    """PROOF-level Market Depth (ARGUS Pro v11): 'live' only where a real measurement
+    (probed=true) backs it; otherwise 'unverified_live'. L2/TAPE/OPTIONS_IV/BORROW_FEE
+    remain unavailable/requires_contract until a real feed exists — cadence ≠ proof."""
+    rep = _market_depth_report() or {}
+    items = _market_depth_proof_items(rep.get("capabilities") or {})
+    true_live = sum(1 for i in items if i["status"] == "live" and i["isTrueDepth"])
+    computed_live = sum(1 for i in items if i["status"] == "live" and not i["isTrueDepth"])
+    return jsonify({
+        "asOf": rep.get("asOf") or _ai_now_iso(),
+        "schemaVersion": "market-depth-proof-v1",
+        "items": items,
+        "summary": {
+            "trueDepthLiveCount": true_live,
+            "computedIndicatorsLiveCount": computed_live,
+            "unverifiedLiveCount": sum(1 for i in items if i["status"] == "unverified_live"),
+            "requiresContractCount": sum(1 for i in items if i["status"] == "requires_contract"),
+            "unavailableCount": sum(1 for i in items if i["status"] == "unavailable"),
+        },
+        "proofNoteJa": "「LIVE」は取引所/提供元タイムスタンプ等の実測(probed=true)がある能力のみ。"
+                       "配信頻度は鮮度の証明ではありません。板/歩み値/オプションIV/貸株料は実データが無い限りunavailable/要契約。",
+    })
 
 
 # ── Visibility Risk Guard (v10.195) ──────────────────────────────────────────
