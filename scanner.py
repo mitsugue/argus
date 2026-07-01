@@ -1746,7 +1746,9 @@ def _calibration_coverage():
         return {"expected": 16, "recorded": 0, "missing": None, "layer1SessionCoverage": 0.0,
                 "contextVarsPresent": 0, "note": "snapshot unavailable"}
     expected = [t[0] for t in _L1_SENSORS_JP] + list(_L1_SENSORS_US) + ["BTC"]
-    recorded = {r.get("symbol") for r in (snap.get("sensors") or []) if isinstance(r, dict)}
+    # v10.203 fix: the snapshot's sensor rows key the ticker as "sensor" (not
+    # "symbol") — reading the wrong key made every row None → a false 0/16 coverage.
+    recorded = {(r.get("sensor") or r.get("symbol")) for r in (snap.get("sensors") or []) if isinstance(r, dict)}
     missing = sorted(set(expected) - recorded)
     return {"expected": len(expected), "recorded": len(recorded & set(expected)),
             "missing": missing, "layer1SessionCoverage": round((len(expected) - len(missing)) / len(expected), 4),
