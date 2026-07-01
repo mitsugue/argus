@@ -58,12 +58,9 @@
   color: var(--text-main);
 }
 
-/* "Pro" — a quiet luminous accent, in the same cyan family as the resting eye. */
+/* "Pro" — plain white, no glow. Only the eye glows. */
 .shell__brand-pro {
-  color: var(--cyan, #22d3ee);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-shadow: 0 0 6px color-mix(in srgb, var(--cyan, #22d3ee) 55%, transparent);
+  color: var(--text-main);
 }
 
 /* Tiny build version pill next to the brand — quiet, always visible
