@@ -241,3 +241,14 @@ def test_diagnose_miss_passes_when_resolvable():
                         known_symbol_names={"7203": "Toyota"})
     assert d["likelyCause"] == "passed_gates"
     assert d["institutionResolved"] == "goldman_sachs"
+
+
+# ── generate_queries prioritizes held/incident (Phase E wiring, v10.201) ─────
+def test_generate_queries_prioritizes_held_incident():
+    plan = M.generate_queries({"heldOrIncident": ["5803"], "watchlist": ["5803", "7203"], "themes": []}, max_queries=10)
+    assert plan, "expected query plans"
+    p1 = [q for q in plan if q.get("priority") == 1]
+    assert p1, "held/incident symbols must yield priority-1 queries"
+    assert all("asset" in q and "query" in q for q in plan)
+    # a held symbol appears in priority-1
+    assert any(q.get("asset") == "5803" for q in p1)
