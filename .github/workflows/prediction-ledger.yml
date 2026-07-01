@@ -125,6 +125,20 @@ jobs:
             "$BE/api/argus/calibration/layer2b-run" || echo '{"error":"unreachable"}')
           echo "🗂️ Layer 2B: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Decision Value shadow run (Phase 1 — private store, NO orders)
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip DV shadow"; exit 0; }
+          # Records today's shadow candidates + scores due horizons into the PRIVATE
+          # repo only (research simulation; no order/broker/execute — ever). No-op
+          # until the owner's Layer-2B private store is configured.
+          RESP=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/decision-value/shadow-run" || echo '{"error":"unreachable"}')
+          echo "🎛️ DV shadow: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout ledger branch
         if: github.event.inputs.mode != 'ai-only'
         uses: actions/checkout@v5

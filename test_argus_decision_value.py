@@ -177,3 +177,62 @@ def test_build_shadow_decision_eligible_and_rejected():
 def test_build_shadow_decision_unknown_policy():
     assert DV.build_shadow_decision(policy_id="nope", symbol="X", market="US",
                                     decision_price=1, decision_ts=1)["ok"] is False
+
+
+# ── shadow scoring (Phase 1 START, v10.195) ──────────────────────────────────
+def _cand(policy="daily_next_session_long_v1", price=100.0, ts=1000):
+    return DV.build_shadow_decision(policy_id=policy, symbol="7203", market="JP",
+                                    decision_price=price, decision_ts=ts)
+
+def test_score_shadow_fills_and_computes_net():
+    r = DV.score_shadow_record(record=_cand(), entry_price=100.0, entry_ts=2000,
+                               exit_price=105.0, invalidation=97.0)
+    assert r["fillStatus"] == "filled" and r["outcomeStatus"] == "scored"
+    assert r["grossReturnPct"] is not None and r["netReturnPct"] is not None
+    assert r["netReturnPct"] < r["grossReturnPct"]     # costs subtracted
+    assert r["netR"] is not None
+    assert "No order" in r["disclaimer"]
+
+def test_score_shadow_rejects_hindsight():
+    # entry BEFORE decision → hindsight, rejected, no P&L
+    r = DV.score_shadow_record(record=_cand(ts=5000), entry_price=100.0, entry_ts=4000,
+                               exit_price=110.0, invalidation=97.0)
+    assert r["fillStatus"] == "rejected_hindsight"
+    assert "grossReturnPct" not in r and "netR" not in r
+
+def test_score_shadow_no_trade_has_no_pnl():
+    r = DV.score_shadow_record(record=_cand(policy="no_trade_control_v1"),
+                               entry_price=None, entry_ts=2000, exit_price=95.0)
+    assert r["fillStatus"] == "no_trade"
+    assert r["realizedMovePct"] == -5.0
+    for k in ("grossReturnPct", "netReturnPct", "grossR", "netR"):
+        assert k not in r      # a no-trade control NEVER produces P&L
+
+def test_score_shadow_no_fill_on_missing_prices():
+    r = DV.score_shadow_record(record=_cand(), entry_price=100.0, entry_ts=2000, exit_price=None)
+    assert r["fillStatus"] == "no_fill"
+
+def test_aggregate_by_policy_separates_no_trade():
+    recs = [
+        DV.score_shadow_record(record=_cand(), entry_price=100, entry_ts=2000, exit_price=104, invalidation=97),
+        DV.score_shadow_record(record=_cand(), entry_price=100, entry_ts=2000, exit_price=96, invalidation=97),
+        DV.score_shadow_record(record=_cand(policy="no_trade_control_v1"), entry_price=None, entry_ts=2000, exit_price=90),
+    ]
+    agg = DV.aggregate_by_policy(recs)
+    assert "daily_next_session_long_v1" in agg["policies"]
+    assert agg["policies"]["daily_next_session_long_v1"]["n"] == 2
+    assert "no_trade_control_v1" in agg["noTrade"]          # separate bucket
+    assert "no_trade_control_v1" not in agg["policies"]     # never mixed with P&L
+
+def test_aggregate_sample_stage_never_proven():
+    recs = [DV.score_shadow_record(record=_cand(), entry_price=100, entry_ts=2000, exit_price=101, invalidation=97)
+            for _ in range(1000)]
+    agg = DV.aggregate_by_policy(recs)
+    stage = agg["policies"]["daily_next_session_long_v1"]["sampleStage"]
+    assert "proven" not in stage.lower()
+
+def test_shadow_functions_create_no_order_surface():
+    import inspect
+    src = inspect.getsource(DV.score_shadow_record) + inspect.getsource(DV.aggregate_by_policy)
+    for forbidden in ("place_order", "submit_order", "broker", "execute_trade", "buy(", "sell("):
+        assert forbidden not in src

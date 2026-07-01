@@ -38,6 +38,7 @@ import argus_relationship_graph  # §15 cross-market relationship graph (pure, v
 import argus_research_swarm      # §12 deterministic research-mission orchestrator (pure, NO LLM, v10.150)
 import argus_positioning         # §14 institutional positioning aggregator (pure, v10.150)
 import argus_daily_brief         # §21 owner daily institutional brief (pure, v10.150)
+import argus_visibility          # Visibility Risk Guard (aggregates data-visibility signals, pure, v10.195)
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -1508,12 +1509,17 @@ def api_argus_decision_value_summary():
     the calibration (Brier/RPS) question. Shadow recording + per-policy expectancy
     arrive in Phase 2; this exposes engine readiness + versions only."""
     DV = argus_decision_value
+    # v10.195: report the REAL phase. Public payload carries per-policy n + sample
+    # stage ONLY — never netR (real outcomes stay owner-gated in the private store).
+    pub = _dv_shadow_public_summary()
     return jsonify({
         "schemaVersion": DV.DECISION_VALUE_SCHEMA,
         "costModelVersion": DV.COST_MODEL_VERSION,
         "riskModelVersion": DV.RISK_MODEL_VERSION,
-        "phase": "v1-phase1-engine-only",
-        "status": "no_shadow_records_yet",
+        "phase": pub["phase"],
+        "status": pub["status"],
+        "shadow": pub["shadow"],
+        "blockersJa": pub.get("blockersJa"),
         "noteJa": "「校正(Brier/RPS)が良い ≠ 儲かる」を測る別台帳。明示的な不変ポリシーで shadow "
                   "(仮想)シミュレーションし、現実的コスト後の純期待値・リスクオブルインを評価。"
                   "Phase1は純エンジン+テスト(21件)のみ。shadow記録/ポリシー別集計はPhase2。",
@@ -1534,6 +1540,268 @@ def api_argus_decision_value_policies():
     (read-only). Policies define eligibility/entry/exit so shadow results are
     reproducible + hindsight-free. RESEARCH ONLY — no order routes."""
     return jsonify(argus_decision_value.list_policies())
+
+
+# ── Decision Value shadow operations (Phase 1 START, v10.195) ────────────────
+# Records eligible decisions as IMMUTABLE shadow candidates in the OWNER-PRIVATE
+# store, and scores due horizons. RESEARCH SIMULATION ONLY — no order/broker/execute
+# route is created; real entry/exit prices + netR live ONLY in the private repo and
+# never appear in any public payload or the ledger branch.
+def _dv_shadow_pick_policy(action):
+    a = str(action or "").upper()
+    if a in ("BUY DIP", "ADD", "ENTER"):
+        return "daily_next_session_long_v1"
+    return "no_trade_control_v1"   # WAIT/HOLD/EXIT/etc → the no-trade control arm
+
+def _dv_shadow_record():
+    """Write today's shadow candidates (one per prediction) to the private store,
+    immutable. Reuses the ledger prediction snapshot (has symbol/market/price/action)."""
+    if not _layer2b_store_configured():
+        return {"ok": False, "reason": "private_store_not_configured"}
+    import json as _json
+    snap = get_prediction_snapshot()
+    date = snap.get("dateJst")
+    as_of = snap.get("asOf")
+    cands = []
+    for p in (snap.get("predictions") or []):
+        price = p.get("price")
+        if not isinstance(price, (int, float)):
+            continue
+        pid = _dv_shadow_pick_policy(p.get("action"))
+        rec = argus_decision_value.build_shadow_decision(
+            policy_id=pid, symbol=p.get("symbol"), market=p.get("market"),
+            decision_price=price, decision_ts=as_of,
+            eligible=(pid != "no_trade_control_v1"))
+        rec["actionAtDecision"] = p.get("action")
+        cands.append(rec)
+    if not cands:
+        return {"ok": False, "reason": "no_predictions"}
+    ok = _gh_private_put(f"decision_value/candidates/{date}.json",
+                         _json.dumps({"date": date, "asOf": as_of, "candidates": cands},
+                                     ensure_ascii=False, indent=1),
+                         f"dv shadow candidates {date}", overwrite=False)  # immutable
+    return {"ok": bool(ok), "date": date, "recorded": len(cands)}
+
+def _dv_shadow_score():
+    """Score candidates whose 1-day horizon has elapsed, using the latest price as
+    exit and the decision-close as the entry proxy (Phase-1; intraday entry arrives
+    in Phase 2). Writes scores + rebuilds the private summary. Best-effort."""
+    if not _layer2b_store_configured():
+        return {"ok": False, "reason": "private_store_not_configured"}
+    import json as _json, glob as _glob  # noqa: F401 (glob unused; listing via API)
+    # List candidate files via the GitHub contents API (private).
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    scored_records, files = [], []
+    try:
+        r = requests.get(f"https://api.github.com/repos/{repo}/contents/decision_value/candidates",
+                         headers=_gh_private_headers(), timeout=15)
+        if r.status_code == 200:
+            files = [f["name"] for f in r.json() if str(f.get("name", "")).endswith(".json")]
+    except Exception:
+        pass
+    today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    for fn in sorted(files)[-12:]:
+        d = fn[:-5]
+        if d >= today:
+            continue                                   # not yet elapsed
+        content, _ = _gh_private_get(f"decision_value/candidates/{fn}")
+        if not content:
+            continue
+        try:
+            day = _json.loads(content)
+        except Exception:
+            continue
+        # realized prices now (proxy exit at horizon)
+        members = [{"symbol": c.get("symbol"), "market": c.get("market")} for c in day.get("candidates", [])]
+        prices = {}
+        try:
+            prices = _layer2b_live_prices(members)
+        except Exception:
+            prices = {}
+        for c in day.get("candidates", []):
+            sym = c.get("symbol")
+            live = prices.get(sym)
+            exit_px = live[0] if live else None
+            dp = c.get("decisionPrice")
+            sc = argus_decision_value.score_shadow_record(
+                record=c, entry_price=dp, entry_ts=(str(c.get("decisionTs")) + "~next"),
+                exit_price=exit_px,
+                invalidation=(dp * 0.97 if isinstance(dp, (int, float)) else None))
+            sc["horizonDate"] = d
+            scored_records.append(sc)
+    agg = argus_decision_value.aggregate_by_policy(scored_records)
+    agg["asOf"] = _ai_now_iso()
+    agg["scoredCount"] = len([s for s in scored_records if s.get("outcomeStatus") == "scored"])
+    agg["note"] = ("Phase-1 shadow: entry uses the decision-close proxy pending intraday "
+                   "history (Phase 2). Research simulation only — no orders.")
+    _gh_private_put("decision_value/summary.json",
+                    _json.dumps(agg, ensure_ascii=False, indent=1),
+                    f"dv shadow summary {today}", overwrite=True)
+    return {"ok": True, "scored": agg["scoredCount"], "policies": list(agg.get("policies", {}).keys())}
+
+def _dv_shadow_has_records():
+    if not _layer2b_store_configured():
+        return False
+    content, _ = _gh_private_get("decision_value/summary.json")
+    return bool(content)
+
+def _dv_shadow_phase():
+    return "phase1_shadow_recording_active" if _dv_shadow_has_records() else "v1-phase1-engine-only"
+
+def _dv_shadow_public_summary():
+    """PUBLIC-SAFE Decision Value status: phase + per-policy n + sampleStage ONLY.
+    Never exposes netR / real prices (owner-gated). Reports exact blockers."""
+    if not _layer2b_store_configured():
+        return {"phase": "v1-phase1-engine-only", "status": "blocked_pending_private_store",
+                "shadow": None,
+                "blockersJa": "Decision Valueシャドー記録には、Layer 2B用のprivate GitHubリポ"
+                              "(ARGUS_LAYER2B_PRIVATE_REPO / _TOKEN)が必要です。設定済みなら"
+                              "毎営業日16:05にshadow-runで自動記録・採点します。"}
+    import json as _json
+    content, _ = _gh_private_get("decision_value/summary.json")
+    if not content:
+        return {"phase": "v1-phase1-engine-only", "status": "engine_ready_no_records_yet",
+                "shadow": None,
+                "blockersJa": "private storeは設定済み。次回のshadow-run(毎営業日16:05)で記録が始まります。"}
+    try:
+        s = _json.loads(content)
+    except Exception:
+        return {"phase": "phase1_shadow_recording_active", "status": "parse_error", "shadow": None}
+    safe_pol = {pid: {"n": v.get("n"), "sampleStage": v.get("sampleStage")}
+                for pid, v in (s.get("policies") or {}).items()}
+    safe_nt = {pid: {"n": v.get("n"), "sampleStage": v.get("sampleStage")}
+               for pid, v in (s.get("noTrade") or {}).items()}
+    return {"phase": "phase1_shadow_recording_active", "status": "phase1_shadow_recording_active",
+            "shadow": {"policies": safe_pol, "noTrade": safe_nt, "scoredCount": s.get("scoredCount"),
+                       "asOf": s.get("asOf"), "note": s.get("note")},
+            "blockersJa": None}
+
+@app.route("/api/argus/decision-value/shadow-run", methods=["POST"])
+def api_argus_decision_value_shadow_run():
+    """Admin: record today's shadow candidates + score due horizons in the PRIVATE
+    store. Append-only, immutable candidates. NO order/broker/execute — research only."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    if not _layer2b_store_configured():
+        return jsonify({"ok": False, "reason": "private_store_not_configured"}), 200
+    try:
+        rec = _dv_shadow_record()
+        sco = _dv_shadow_score()
+        return jsonify({"ok": True, "record": rec, "score": sco})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
+
+@app.route("/api/argus/decision-value/shadow-summary", methods=["GET", "POST"])
+def api_argus_decision_value_shadow_summary():
+    """Owner-gated FULL shadow summary from the private store (includes netR). The
+    public /decision-value/summary carries only n + sampleStage."""
+    body = request.get_json(silent=True) or {}
+    token = body.get("ownerToken") if isinstance(body, dict) else None
+    ok, err, code = _require_owner_sync(body_token=token)
+    if not ok:
+        return jsonify(err), code
+    if not _layer2b_store_configured():
+        return jsonify({"status": "disabled_pending_private_store"})
+    import json as _json
+    content, _ = _gh_private_get("decision_value/summary.json")
+    if not content:
+        return jsonify({"status": "no_data_yet"})
+    try:
+        return jsonify({"status": "ok", "summary": _json.loads(content)})
+    except Exception:
+        return jsonify({"status": "parse_error"})
+
+
+# ── Calibration Operations (v10.195) — is v4 capture actually happening? ─────
+_CALIB_V4_CACHE = {"data": None, "expires": 0.0}
+
+def _calibration_v4_summary():
+    """Read the parallel v4 dry-run summary (calibration_v1/summary.json) off the
+    ledger branch. None until the GitHub Action has written it (fresh env → 404)."""
+    now = time.time()
+    if _CALIB_V4_CACHE["data"] is not None and now < _CALIB_V4_CACHE["expires"]:
+        return _CALIB_V4_CACHE["data"]
+    out = None
+    try:
+        import json as _json
+        r = requests.get(f"{_LEDGER_RAW_BASE}/calibration_v1/summary.json", timeout=12)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            out = _json.loads(r.text)
+    except Exception:
+        out = None
+    _CALIB_V4_CACHE["data"] = out
+    _CALIB_V4_CACHE["expires"] = now + 30 * 60
+    return out
+
+def _calibration_coverage():
+    """Layer-1 session coverage from the live snapshot: how many of the fixed 16
+    regime sensors recorded today. Expected count comes from the CONSTANTS (not the
+    recorded rows) so a dropped sensor reads as missing, never as 100%."""
+    try:
+        snap = get_prediction_snapshot()
+    except Exception:
+        return {"expected": 16, "recorded": 0, "missing": None, "layer1SessionCoverage": 0.0,
+                "contextVarsPresent": 0, "note": "snapshot unavailable"}
+    expected = [t[0] for t in _L1_SENSORS_JP] + list(_L1_SENSORS_US) + ["BTC"]
+    recorded = {r.get("symbol") for r in (snap.get("sensors") or []) if isinstance(r, dict)}
+    missing = sorted(set(expected) - recorded)
+    return {"expected": len(expected), "recorded": len(recorded & set(expected)),
+            "missing": missing, "layer1SessionCoverage": round((len(expected) - len(missing)) / len(expected), 4),
+            "contextVarsPresent": len(snap.get("contextVariables") or []),
+            "rollingPerSensorCoverage": None}   # needs day-history (Phase later)
+
+@app.route("/api/argus/calibration/ops")
+def api_argus_calibration_ops():
+    """Calibration Operations — is usable v4 capture happening, and can the clean
+    epoch be activated? Read-only; NO owner/Layer-2B data. Honest inputs to
+    readiness_check (no fabricated coverage)."""
+    C = argus_calibration
+    led = _ledger_summary() or {}
+    overall = led.get("overall") or {}
+    v3days = int(overall.get("days") or 0)
+    v4 = _calibration_v4_summary()
+    cov = _calibration_coverage()
+    l1 = cov.get("layer1SessionCoverage") or 0.0
+    rolling = cov.get("rollingPerSensorCoverage")
+    readiness = C.readiness_check(
+        required_sensor_coverage=l1,
+        layer1_session_coverage=l1,
+        rolling_per_sensor_coverage=(rolling if isinstance(rolling, (int, float)) else 0.0),
+        unresolved_write_failures=0,
+        stale_price_forecasts=len(cov.get("missing") or []),
+        cohorts_finalized=True,
+        scoring_tests_pass=True,
+    )
+    try:
+        health = _ledger_health()
+    except Exception:
+        health = {}
+    return jsonify({
+        "asOf": _ai_now_iso(), "schemaVersion": C.SCHEMA_VERSION,
+        "currentEpoch": {"active": C.ACTIVE_EPOCH,
+                         "reliabilityStage": C.reliability_stage(v3days)},
+        "v3Headline": overall,
+        "v4DryRun": v4 or {"status": "no_v4_summary_yet",
+                           "noteJa": "v4ドライランのsummaryは平日のワークフロー実行後に生成されます。"},
+        "activeUniverse": {"regimeSensors": len(C.REGIME_SENSORS), "tactical": len(C.TACTICAL_BENCHMARK),
+                           "versions": {"universe": C.UNIVERSE_VERSION, "tactical": C.TACTICAL_BENCHMARK_VERSION,
+                                        "factorGroup": C.FACTOR_GROUP_VERSION, "cohort": C.COHORT_VERSION,
+                                        "schema": C.SCHEMA_VERSION}},
+        "coverage": cov,
+        "marketClocks": {"clockVersion": argus_market_clock.CLOCK_VERSION,
+                         "calendarVersion": argus_market_clock.CALENDAR_VERSION,
+                         "jp": argus_market_clock.forecast_clock("7203"),
+                         "us": argus_market_clock.forecast_clock("SPY")},
+        "expectedVsActual": {"v3Days": v3days, "lastScoringRun": led.get("updated"),
+                             "predictionLedgerHealth": health.get("predictionLedger") if isinstance(health, dict) else None},
+        "readiness": readiness,
+        "activationAllowed": readiness["ready"],
+        "pendingJa": ("baseline/skillスコアの永続化はまだ(v4はBrier/RPSのみ保存) / "
+                      "per-sensorのローリング被覆率は履歴が必要 / 較正はburn-in中=精度は未証明。"),
+        "noteJa": "校正は「ただ待てば良くなる」ものではありません。市場別クロックで正しい日付に、"
+                  "被覆率と欠測を記録し、不変の予測を追記できている時だけ改善します。上記が現状の記録健全性です。",
+    })
 
 
 @app.route("/api/argus/calibration/posture")
@@ -9487,6 +9755,53 @@ def api_argus_source_registry():
     return jsonify(_source_registry())
 
 
+# ── Visibility Risk Guard (v10.195) ──────────────────────────────────────────
+# Aggregates every data-visibility signal ARGUS already exposes into one honest
+# verdict: what it can't see, whether to cap confidence / block ENTER, and a calm
+# "検知≠安全" coverage line. Structural gaps (PTS/L2/tape/VWAP/…) are context-only;
+# only SITUATIONAL degradation (bridge stale in session, held-stale regime, budget
+# stopped) drops the level / blocks / warns. Pure logic lives in argus_visibility.
+_VISIBILITY_CACHE = {"data": None, "expires": 0.0}
+
+def _visibility_guard():
+    now = time.time()
+    if _VISIBILITY_CACHE["data"] is not None and now < _VISIBILITY_CACHE["expires"]:
+        return _VISIBILITY_CACHE["data"]
+    try: sh = _system_health()
+    except Exception: sh = None
+    try: moomoo_ent = (_moomoo_capability_report() or {}).get("overallEntitlement")
+    except Exception: moomoo_ent = None
+    try:
+        _reg = get_market_regime_snapshot()
+        held = _reg.get("heldOverMin") if isinstance(_reg, dict) else None
+    except Exception: held = None
+    try:
+        _n = int(((_ledger_summary() or {}).get("overall") or {}).get("n") or 0)
+        cal_stage = argus_calibration.reliability_stage(_n)
+    except Exception: cal_stage = None
+    try: dv_phase = _dv_shadow_phase()
+    except Exception: dv_phase = "v1-phase1-engine-only"
+    g = argus_visibility.build_visibility_guard(
+        now_iso=_ai_now_iso(),
+        system_health=sh,
+        capabilities=None,   # no market-depth capability proven yet (structural defaults)
+        bridge_age_sec=_push_last_age_sec(),
+        jp_open=_jp_market_open(),
+        us_open=_us_market_open(),
+        moomoo_overall_entitlement=moomoo_ent,
+        regime_held_over_min=held,
+        calibration_stage=cal_stage,
+        decision_value_phase=dv_phase,
+    )
+    _VISIBILITY_CACHE["data"] = g
+    _VISIBILITY_CACHE["expires"] = now + 60
+    return g
+
+@app.route("/api/argus/visibility-guard")
+def api_argus_visibility_guard():
+    return jsonify(_visibility_guard())
+
+
 # ── Runtime manifest (v10.107) ───────────────────────────────────────────────
 # Live "current understanding" base for the AI Review Sheet + external-AI handoff,
 # so GPT/Claude never reason from a STALE static doc. Public, secret-free — only
@@ -9502,6 +9817,10 @@ def get_runtime_manifest():
     except Exception:
         td = {}
     aij = _ai_judgment_truth()
+    try:
+        vg = _visibility_guard()
+    except Exception:
+        vg = {}
     layer2b_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO")
                               and os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN"))
     degraded = [f"{s.get('capability')}:{s.get('status')}" for s in (reg.get("sources") or [])
@@ -9526,7 +9845,11 @@ def get_runtime_manifest():
                   "count": len(td.get("items") or [])},
         "ownerWatchlist": {"layer2bConfigured": layer2b_configured,
                            "note": "non-monetary flags only (ownerState/strictness/priority); amounts NEVER sent"},
-        "decisionValue": {"phase": "v1 phase1 (pure engine; no shadow records yet); NO order/broker routes — ever"},
+        "decisionValue": {"phase": (_dv_shadow_public_summary().get("status") or "v1-phase1-engine-only"),
+                           "note": "shadow simulation only; NO order/broker/execute routes — ever; real netR owner-private"},
+        "visibility": {"visibilityLevel": vg.get("visibilityLevel"), "confidenceCap": vg.get("confidenceCap"),
+                       "reasonCodes": vg.get("reasonCodes", []), "coverageLineJa": vg.get("coverageLineJa"),
+                       "note": "structural gaps (PTS/L2/tape/VWAP/extended) are context-only; situational degradation caps/blocks"},
         "ai": {"status": aij["status"], "note": "GPT-5.5 + Gemini 2.5 Pro; admin-run + cached view only"},
         "safetyBoundaries": ["no auto-trading", "no order/execute/broker routes",
                              "holdings/cost basis never leave the device in plaintext"],

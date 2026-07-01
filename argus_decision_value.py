@@ -374,3 +374,93 @@ def kelly_research(
         "note": "Research only. Never use full Kelly. Estimation error is large.",
         "disclaimer": DISCLAIMER,
     }
+
+
+# ── Shadow scoring + per-policy aggregation (Phase 1 START, v10.195) ──────────
+# Score an immutable shadow candidate AFTER the outcome window, and aggregate by
+# policy. RESEARCH SIMULATION ONLY — no order was or will be submitted. Real entry/
+# exit prices live only in the owner-private store; this math never fabricates fills.
+
+def score_shadow_record(*, record, entry_price, entry_ts, exit_price,
+                        invalidation=None, liquidity_bucket="unknown",
+                        cost_overrides=None):
+    """Fill + score one shadow_candidate. Enforces the no-hindsight timing guard
+    first; a no-trade control record is scored on avoided-loss/missed-upside only
+    (never P&L). Returns the SAME record dict, mutated with outcome fields."""
+    rec = dict(record or {})
+    direction = rec.get("direction") or "long"
+    decision_ts = rec.get("decisionTs")
+
+    # No-trade control: no position → measure only what price DID (for no_trade_value).
+    if direction == "none" or rec.get("kind") == "shadow_no_trade" or rec.get("policyId") == "no_trade_control_v1":
+        dp = rec.get("decisionPrice")
+        realized = None
+        if dp and exit_price is not None and dp > 0:
+            realized = round((exit_price / dp - 1.0) * 100.0, 4)
+        rec.update({"fillStatus": "no_trade", "outcomeStatus": "scored",
+                    "realizedMovePct": realized, "disclaimer": DISCLAIMER})
+        return rec
+
+    timing = validate_policy_timing(decision_ts=decision_ts, entry_ts=entry_ts, outcome_ts=None)
+    if not timing["ok"]:
+        rec.update({"fillStatus": "rejected_hindsight", "outcomeStatus": "rejected",
+                    "rejectionReason": timing["reason"], "disclaimer": DISCLAIMER})
+        return rec
+
+    if entry_price is None or exit_price is None or not entry_price:
+        rec.update({"fillStatus": "no_fill", "outcomeStatus": "no_fill",
+                    "reason": "missing_prices", "disclaimer": DISCLAIMER})
+        return rec
+
+    co = cost_overrides or {}
+    costs = estimate_costs(notional=entry_price, market=rec.get("market") or "",
+                           liquidity_bucket=liquidity_bucket, **co)
+    gross = gross_return_pct(entry_price, exit_price, direction)
+    net = net_return_pct(gross, costs["totalCostBps"])
+    rm = r_multiple(entry=entry_price, exit_=exit_price,
+                    invalidation=invalidation if invalidation is not None else entry_price * (0.97 if direction == "long" else 1.03),
+                    direction=direction, total_cost_bps=costs["totalCostBps"])
+    rec.update({
+        "fillStatus": "filled", "outcomeStatus": "scored",
+        "entryPrice": entry_price, "entryTs": entry_ts, "exitPrice": exit_price,
+        "grossReturnPct": gross, "netReturnPct": net,
+        "grossR": rm.get("grossR"), "netR": rm.get("netR"),
+        "costBps": costs["totalCostBps"], "costModelVersion": costs["costModelVersion"],
+        "disclaimer": DISCLAIMER,
+    })
+    return rec
+
+
+def aggregate_by_policy(records):
+    """Per-policy expectancy + risk-of-ruin + sample stage from scored records. The
+    no-trade control is aggregated SEPARATELY (never mixed with P&L). Never reports
+    'proven' — _sample_stage caps the vocabulary."""
+    trade_rs = {}          # policyId -> [netR,...]
+    no_trade_obs = {}      # policyId -> [{avoidedLoss/missedUpside}...]
+    for r in (records or []):
+        if not isinstance(r, dict):
+            continue
+        pid = r.get("policyId")
+        if not pid:
+            continue
+        if r.get("policyId") == "no_trade_control_v1" or r.get("direction") == "none":
+            mv = r.get("realizedMovePct")
+            if mv is not None:
+                no_trade_obs.setdefault(pid, []).append(
+                    {"avoidedLoss": max(0.0, -mv), "missedUpside": max(0.0, mv)})
+            continue
+        if r.get("outcomeStatus") == "scored" and r.get("netR") is not None:
+            trade_rs.setdefault(pid, []).append(float(r["netR"]))
+
+    out = {"policyRegistryVersion": POLICY_REGISTRY_VERSION, "policies": {}, "noTrade": {},
+           "disclaimer": DISCLAIMER}
+    for pid, rs in trade_rs.items():
+        exp = expectancy(rs)
+        out["policies"][pid] = {
+            "n": len(rs), "sampleStage": _sample_stage(len(rs)),
+            "expectancy": exp, "riskOfRuin": risk_of_ruin(rs),
+        }
+    for pid, obs in no_trade_obs.items():
+        out["noTrade"][pid] = {"n": len(obs), "sampleStage": _sample_stage(len(obs)),
+                               "value": no_trade_value(obs)}
+    return out
