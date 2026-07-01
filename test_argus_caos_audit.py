@@ -65,3 +65,22 @@ def test_caos_audit_endpoint_shape():
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/caos/audit").get_json()
     assert d["schemaVersion"] == "caos-link-v1" and "items" in d
+
+
+def test_live_association_populates_audit_and_dedups():
+    # the live association path must actually RECORD (not leave the trail empty),
+    # and a repeated identical lead must not flood the buffer.
+    CA.clear()
+    scanner._CAOS_AUDIT_SEEN.clear()
+    news = [{"title": "三菱商事、通期予想を上方修正", "sourceId": "reuters_public",
+             "symbolHint": "8058", "corroboration": "single"}]
+    best = scanner._caos_catalyst_for("8058", news, [])
+    assert best is not None
+    snap = CA.snapshot(symbol="8058")
+    assert snap["count"] == 1
+    e = snap["items"][0]
+    assert e["linkType"] == "direct_mention"
+    assert e["triggerRole"] == "candidate_catalyst"      # single source → never confirmed
+    assert e["sourceTier"] == "reputable_financial_media"
+    scanner._caos_catalyst_for("8058", news, [])          # same lead again
+    assert CA.snapshot(symbol="8058")["count"] == 1        # deduped

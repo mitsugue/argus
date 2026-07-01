@@ -18,6 +18,23 @@ def test_decision_value_status_shape_and_disclaimer():
     assert "No order" in d["disclaimer"]
 
 
+def test_decision_value_record_carries_visibility_context():
+    import argus_decision_value as DV
+    r = DV.build_shadow_decision(
+        policy_id="daily_next_session_long_v1", symbol="NVDA", market="US",
+        decision_price=195.0, decision_ts="2026-07-01T05:00:00Z", eligible=True,
+        posture_before="ENTER", posture_after="WAIT",
+        confidence_before=0.7, confidence_after=0.55,
+        blocked_actions=["ENTER"], visibility_downgraded=True)
+    assert r["postureBefore"] == "ENTER" and r["postureAfter"] == "WAIT"
+    assert r["confidenceBefore"] == 0.7 and r["confidenceAfter"] == 0.55
+    assert r["blockedActions"] == ["ENTER"] and r["visibilityDowngraded"] is True
+    assert r["realizedOutcomeStatus"] == "pending"
+    # a shadow record must never carry realized P&L
+    assert "netR" not in r and "realizedPnl" not in r
+    assert "No order" in r["disclaimer"]
+
+
 def test_decision_value_status_never_leaks_private_pnl():
     with scanner.app.test_client() as c:
         blob = json.dumps(c.get("/api/argus/decision-value/status").get_json()).lower()

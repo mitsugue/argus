@@ -346,6 +346,7 @@ _SOURCE_FAMILY_KEYS = (
     ("federal_reserve", "official:fed"), ("federalreserve", "official:fed"),
     ("sec_press", "official:sec"), ("sec.gov", "official:sec"),
     ("treasury", "official:treasury"), ("boj", "official:boj"), ("bls", "official:bls"),
+    ("meti", "official:meti"), ("edinet", "official:edinet"), ("tdnet", "official:tdnet"),
     ("reuters", "reuters"), ("bloomberg", "bloomberg"), ("nikkei", "nikkei"),
     ("cnbc", "cnbc"), ("marketwatch", "dowjones"), ("wall street", "dowjones"),
     ("dow jones", "dowjones"), ("barron", "dowjones"), ("nasdaq", "nasdaq"),

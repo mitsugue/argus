@@ -96,10 +96,14 @@ def validate_policy_timing(*, decision_ts, entry_ts, outcome_ts):
 
 def build_shadow_decision(*, policy_id, symbol, market, decision_price,
                           decision_ts, entry_ts=None, eligible=True,
-                          rejection_reason=None):
+                          rejection_reason=None, posture_before=None, posture_after=None,
+                          confidence_before=None, confidence_after=None,
+                          blocked_actions=None, visibility_downgraded=False):
     """Construct an IMMUTABLE shadow-decision skeleton at decision time (outcome
     filled later). Pins the policy version + identity; never invents an entry from
-    the best price. SHADOW/RESEARCH ONLY — no order is created."""
+    the best price. Now also captures the VISIBILITY/posture context at decision time
+    (v11) so a decision that was capped/blocked by the guard is auditable later.
+    SHADOW/RESEARCH ONLY — no order is created."""
     policy = POLICIES.get(policy_id)
     if not policy:
         return {"ok": False, "reason": "unknown_policy"}
@@ -111,7 +115,13 @@ def build_shadow_decision(*, policy_id, symbol, market, decision_price,
         "plannedEntryRule": policy["entryRule"], "plannedExits": policy.get("exits"),
         "eligibilityResult": "eligible" if eligible else "rejected",
         "rejectionReason": rejection_reason,
+        # Visibility / posture context at decision time (audit; v11).
+        "postureBefore": posture_before, "postureAfter": posture_after,
+        "confidenceBefore": confidence_before, "confidenceAfter": confidence_after,
+        "blockedActions": list(blocked_actions or []),
+        "visibilityDowngraded": bool(visibility_downgraded),
         "fillStatus": "pending", "outcomeStatus": "pending",
+        "realizedOutcomeStatus": "pending",
         "kind": "shadow_candidate" if eligible else "shadow_no_trade",
         "disclaimer": DISCLAIMER,
     }

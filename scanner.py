@@ -1566,17 +1566,32 @@ def _dv_shadow_record():
     snap = get_prediction_snapshot()
     date = snap.get("dateJst")
     as_of = snap.get("asOf")
+    # Capture the visibility state ONCE at decision time so each record is auditable.
+    try:
+        _vg = _visibility_guard()
+    except Exception:
+        _vg = {}
+    _cap = _vg.get("confidenceCap")
+    _blocked = list(_vg.get("blockedActions") or [])
     cands = []
     for p in (snap.get("predictions") or []):
         price = p.get("price")
         if not isinstance(price, (int, float)):
             continue
-        pid = _dv_shadow_pick_policy(p.get("action"))
+        action = p.get("action")
+        pid = _dv_shadow_pick_policy(action)
+        conf_b = p.get("confidence")
+        conf_a = (round(min(conf_b, _cap), 3) if isinstance(conf_b, (int, float)) and _cap is not None else conf_b)
+        # aggressive long entry that the guard situationally blocks = a downgraded decision
+        downgraded = ("ENTER" in _blocked) and (pid == "daily_next_session_long_v1")
         rec = argus_decision_value.build_shadow_decision(
             policy_id=pid, symbol=p.get("symbol"), market=p.get("market"),
             decision_price=price, decision_ts=as_of,
-            eligible=(pid != "no_trade_control_v1"))
-        rec["actionAtDecision"] = p.get("action")
+            eligible=(pid != "no_trade_control_v1"),
+            posture_before=action, posture_after=action,
+            confidence_before=conf_b, confidence_after=conf_a,
+            blocked_actions=_blocked, visibility_downgraded=downgraded)
+        rec["actionAtDecision"] = action
         cands.append(rec)
     if not cands:
         return {"ok": False, "reason": "no_predictions"}
@@ -5470,6 +5485,37 @@ def _entity_link(title):
     return out
 
 
+# CAOS association audit — dedup so the same lead isn't recorded on every refresh.
+_CAOS_AUDIT_SEEN = {}          # sym -> (signature, expires)
+_CAOS_AUDIT_DEDUP_SEC = 30 * 60
+
+def _caos_audit_maybe_record(sym, best, event_id=None, event_after_move=False):
+    """Record WHY this symbol was associated with a lead (metadata only), deduped per
+    symbol. A single-source association stays a candidate — argus_caos_audit enforces
+    that; here we only supply honest inputs (never fabricate timing)."""
+    if not best:
+        return
+    now = time.time()
+    sig = (best.get("via"), best.get("term"), best.get("corroboration"), (best.get("titleJa") or "")[:48])
+    hit = _CAOS_AUDIT_SEEN.get(sym)
+    if hit and hit[0] == sig and now < hit[1]:
+        return
+    _CAOS_AUDIT_SEEN[sym] = (sig, now + _CAOS_AUDIT_DEDUP_SEC)
+    link_type = {"name": "direct_mention", "entity": "entity_profile"}.get(best.get("via"), "theme")
+    sid = best.get("_sid")
+    try:
+        argus_caos_audit.record_association(
+            symbol=sym, event_id=event_id, link_type=link_type,
+            matched_terms=[best["term"]] if best.get("term") else [],
+            source_family=argus_research_mesh.source_family(sid),
+            source_tier=argus_research_mesh.source_tier(sid),
+            corroboration_level=best.get("corroboration") or "single",
+            why_ja=best.get("relationJa") or best.get("titleJa") or "",
+            event_after_move=event_after_move, now_iso=_ai_now_iso())
+    except Exception:
+        pass   # audit is best-effort; never breaks the association path
+
+
 def _caos_catalyst_for(sym, news_items, intel_items):
     """Best C.A.O.S./association-linked news for a symbol — the candidate LEAD behind a move,
     derived from news + entity relationships instead of '原因未確認'. Corroborated preferred,
@@ -5489,11 +5535,13 @@ def _caos_catalyst_for(sym, news_items, intel_items):
         corr = n.get("corroboration") or "single"
         cand = {"titleJa": (n.get("headlineJa") or n.get("titleJa") or n.get("headline") or n.get("title") or "")[:120],
                 "via": link.get("via"), "term": link.get("term"),
-                "relationJa": link.get("relationJa"), "corroboration": corr}
+                "relationJa": link.get("relationJa"), "corroboration": corr,
+                "_sid": n.get("sourceId") or n.get("source")}   # kept for the audit trail
         if (best is None or rank.get(corr, 2) < rank.get(best["corroboration"], 2)
                 or (rank.get(corr, 2) == rank.get(best["corroboration"], 2)
                     and link.get("via") == "entity" and best.get("via") != "entity")):
             best = cand
+    _caos_audit_maybe_record(sym, best)   # populate /caos/audit for real (deduped)
     return best
 
 
