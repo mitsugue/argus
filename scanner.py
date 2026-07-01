@@ -5961,8 +5961,12 @@ def api_argus_intel_source_health():
 @app.route("/api/argus/events/<symbol>/institutional-intelligence")
 def api_argus_event_intel(symbol):
     """Per-asset institutional intelligence (cheap) — items naming the symbol, with
-    causal role vs the symbol's recent move. Goes INSIDE the asset card."""
-    symu = str(symbol).upper()
+    causal role vs the symbol's recent move. Goes INSIDE the asset card. Public GET:
+    reads the already-collected intel store only (no fetch, no LLM)."""
+    symu = str(symbol).strip().upper()
+    if not symu:
+        return jsonify({"error": "symbol_required",
+                        "messageJa": "銘柄コードを指定してください。"}), 400
     reg = (_REGIME_CACHE.get("data") or {})
     move = _ai_now_iso()
     out = []

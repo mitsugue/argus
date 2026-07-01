@@ -12,6 +12,7 @@ import { MarketDepthCard } from '../components/guide/MarketDepthCard';
 import { DecisionValueOpsCard } from '../components/guide/DecisionValueOpsCard';
 import { ArgusProStatusCard } from '../components/guide/ArgusProStatusCard';
 import { EventCardsPanel } from '../components/guide/EventCardsPanel';
+import { ArgusProAboutCard } from '../components/guide/ArgusProAboutCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -23,7 +24,7 @@ const PAGE_GUIDE: { page: string; descJa: string }[] = [
   { page: '共通ヘッダー / ナビ',
     descJa: '左上の「A.R.G.U.S. Pro」をタップ → システム状態のポップアップ(AI予算・各データ源・通知などの健全性。緑=正常/橙=注意/赤=停止。外側タップで閉じる)。三角ロゴの目そのものが健康ビーコンで、状態色で美しく光ります(正常=緑・注意=橙・停止=赤)。左の縦ナビでページ移動(各ページは下端で強く引っ張ると次ページへも進める)。' },
   { page: '① Today(今日の判断)',
-    descJa: 'まずここを開く。市場ランプで今どの市場が開いているか→総合判断(HOLD等/リスク/理由/触る・避ける・次の条件)で今日の構え→24/7イベントでS高/急変の有無(タップで「何が起きた/原因/シナリオ/罠」)→判断ログで自己採点の成績。急落時は「Downside Watch」が原因推定と保有向けの対応(通常HOLDにしない)を表示。10秒で全体把握。' },
+    descJa: 'まずここを開く。市場ランプで今どの市場が開いているか→総合判断(HOLD等/リスク/理由/触る・避ける・次の条件)で今日の構え→イベント(市場セッション対応・暗号は24/7)でS高/急変の有無(タップで「何が起きた/原因/シナリオ/罠」)→判断ログで自己採点の成績。急落時は「Downside Watch」が原因推定と保有向けの対応(通常HOLDにしない)を表示。10秒で全体把握。' },
   { page: '② Watchlist(個別銘柄)',
     descJa: '日本株/米国株/投信/暗号資産を検索して追加・ドラッグ並べ替え。各行に行動ラベル+戦略カード(理由/次の条件/シナリオ確率)、日米株は「⚡エントリー診断」で入りの瞬間判断。保有数量・取得単価を入れると評価額/含み損益(端末内のみ)。「¥XをYに追加したら?」のWhat-if試算もここ。' },
   { page: '③ Market Context(地合い+予定)',
@@ -38,7 +39,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
   { area: 'アクションレベル(7段階・最重要)',
     descJa: 'シグナルは7段階で「資本投下の許可/守りの姿勢」を表す(モデルの信頼度や地合いとは別物)。1 EXIT(撤退)/2 DEFEND(防御)/3 REVIEW(再点検)/4 PAUSE(保留)/5 HOLD ONLY(保有のみ)/6 PREPARE(準備)/7 ENTER(エントリー可)。各シグナルには必ず権限を併記する: 新規購入・買い増し・既存ポジション。★HOLD ONLYは「既存ポジションの維持のみ」で、新規購入・買い増しは禁止です(緑にしないのはこのため。HOLDを単独表示しない理由)。ENTER=全力買いではなく、別途定めたリスク予算内での新規可。EXITは注文を出すのではなく撤退の構え(ARGUSは自動売買をしない)。データが不完全(PARTIAL/STALE)だとENTERは出ず信頼度の上限が下がる。急落+不完全データは最低REVIEWに格下げ。「公式材料が無い=安全」ではない。数値の色は 利益/上昇=緑・損失/下落=赤・ゼロ=中立・取得不可=グレー。ただしVIX上昇やHYスプレッド拡大は「プラスでも悪材料=赤」で表示(v10.119+)。★表示されるシグナルは、AI判定が最新の時はAI(GPT+Gemini)の裁定結果(カードに「AI」)、未更新時はルールエンジンの「ルール暫定」(ガードレール)(v10.160+)。' },
   { area: '今日の判断 (Today)',
-    descJa: '①市場セッションランプ(JP/US market・Crypto — 開場中は緑、引け後は消灯) ②総合判断(WAIT/HOLD等)・リスク・理由・触る/避ける/次に待つ条件を金利/レジーム/イベント/価格からライブ合成 ③24/7イベント(S高/急変・タップで調査ドシエ) ④判断ログ(自己採点)。各銘柄カードの判断はAIの裁定結果(「AI」バッジ・未更新時は「ルール暫定」)+ 現在値・7灯シグナル・関連イベント(日銀 · 影響:大 等)。市場横断の機関見解(C.A.O.S.)も上部に。開いて10秒で今日の構えが分かる。' },
+    descJa: '①市場セッションランプ(JP/US market・Crypto — 開場中は緑、引け後は消灯) ②総合判断(WAIT/HOLD等)・リスク・理由・触る/避ける/次に待つ条件を金利/レジーム/イベント/価格からライブ合成 ③イベント(市場セッション対応・暗号は24/7。S高/急変・タップで調査ドシエ) ④判断ログ(自己採点)。各銘柄カードの判断はAIの裁定結果(「AI」バッジ・未更新時は「ルール暫定」)+ 現在値・7灯シグナル・関連イベント(日銀 · 影響:大 等)。市場横断の機関見解(C.A.O.S.)も上部に。開いて10秒で今日の構えが分かる。' },
   { area: 'Watchlist',
     descJa: '銘柄を検索して追加(日本株/米国株/投信/暗号資産)・ドラッグ並べ替え。追加した銘柄には自動でライブ価格+ルールベースの行動ラベル+戦略カード(理由/次の条件/シナリオ確率)が付く。日米株はカード内の「⚡エントリー診断」で入りの瞬間判断(トレンド/過熱/大口フロー/イベント)を即取得(v10.15+)。' },
   { area: 'ダウンサイド対応 (急落の理由と対応)',
@@ -67,8 +68,8 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
     descJa: '毎営業日16:05に予測を記録し、1/3/5営業日後に実値と照合して自動採点。学習対象は3層構造(v10.9+): Layer1=固定16センサー(日本株6+米ETF7+BTC+USDJPY+VIX、局面校正の背骨)、Layer2=実戦銘柄(入替自由)、Layer3=高ノイズ実験枠(別集計)。姿勢の判断そのものもSPYの実際の動きで採点。蓄積した的中率は戦略ラベルの確信度に自動反映される(校正ループ、v10.8+)。さらに14:30の「引けピン」が同日15:30終値で即日採点される第二の台帳も稼働(v10.11+)。' },
   { area: 'AI予想',
     descJa: '毎日のGPT-5.5+Gemini Proの二重チェックが各銘柄の戦略カードに「AI予想」として表示(ルール判定への同意/注意/不同意+AI提案アクション+理由)。朝ダイジェストにもAI見解1行。' },
-  { area: '24/7イベント検知 (Event Intelligence)',
-    descJa: 'moomooブリッジの15秒pushをサーバー側で常時解析し、S高/S安(TSE制限値幅テーブルで正確に)・急騰/急落・大口フロー異常を決定論で検知(LLMなし)。さらに直近1分の「変化率」を見る早期警戒層で、日中変化が本格閾値に達する前の急加速・大口フロー反転も検知(v10.49+)。重要な変化(sev4+)だけスマホへ通知し、各イベントは事実/推論/欠損を区別した調査ドシエ付き。暗号資産は深夜・週末も常時。PTS/板(L2)/VWAPは未対応(capability-gated)。' },
+  { area: '市場セッション対応 Event Intelligence（暗号資産は24/7）',
+    descJa: '価格系イベント(S高/S安・急騰/急落・大口フロー異常)の検知は市場が開いている時間に対応(セッション対応)——引け後の古い値でS高を誤検知しないため。ニュース/公式開示の収集(C.A.O.S.)は専用cronで24時間・週末も走ります。暗号資産は24/7で常時。moomooブリッジの15秒pushをサーバー側で決定論解析(LLMなし)し、直近1分の変化率で急加速・大口フロー反転の早期警戒も(v10.49+)。重要な変化(sev4+)だけ通知し、各イベントは事実/推論/欠損を区別した調査ドシエ付き。PTS/板(L2)/歩み値/VWAPは未対応(要契約・未接続と正直表示)。' },
   { area: '通知 (エージェント)',
     descJa: '日本株の寄り前8:30と米国株の寄り前22:00にダイジェスト、市場時間中(7〜24時)は「姿勢の変化・イベント接近・ボラティリティの圏域上昇/VIX急騰(固定の閾値ではなく、速度と自身の60日分布で文脈判定)・信用ストレス」の時だけアラートをスマホへpush(ntfy設定時)。通知タップでアプリが開く。' },
   { area: 'AI(画面判断の主役・v10.160+)',
@@ -78,6 +79,8 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v11.0.4', 'Free Phase Closure / Pro Quality Gate（有料連携の前に土台を締める） — ①銘柄ルートの締め: research-mission / event institutional-intelligence / positioning は全て `<symbol>` 形で正常、空白銘柄は400で弾く(公開GETはLLM・fetchを一切呼ばない)。回帰テスト追加(llmCalls=0・positioning確率合計=1・公開GETは_fetch_public_text非呼び出しを検証)②本番スモークにv11の9エンドポイント(events/cards・research-mission・event-intel・positioning・calibration v4 status・decision-value status・market-depth proof・source-coverage・caos audit)の形状チェックを追加(市場オープンや非空を要求しない)③Guide冒頭に「ARGUS Proとは何か」+フロー図(C.A.O.S.→ティア/権利→EventCard v2→可視性/深さ→GPT判断→Gemini反証→ARGUS View→台帳/Decision Value→採点→次回の教科書)+「やらないこと」を明記④Decision Value Opsをstatusエンドポイントに整合(記録が実在する時だけ「記録中」表示)⑤Calibrationのドライラン表記を「非本番の成果物」と明確化しv4/statusを正式表示に⑥「24/7イベント検知」を「市場セッション対応 Event Intelligence（暗号は24/7）」に正直化。有料フィード・自動売買・注文ルートは追加なし。'],
+  ['v11.0.3', 'ヘッダーの「Pro」を白に統一（発光アクセントを削除）。光るのは三角ロゴの目だけ（状態色でグロー＋呼吸）に限定。'],
   ['v11.0.2', 'アプリ上部の名称を「A.R.G.U.S. Pro」に変更（"Pro"はシアンのアクセント）。左上の三角ロゴの目を美しく発光化 — 虹彩がシステム状態の色で多層グロー＋ゆっくり呼吸するように明滅（正常=緑・注意=橙・停止=赤・不明=控えめ）。警告で色が変わる時も同じ発光の仕方で色だけが変わります。動きを抑える設定(prefers-reduced-motion)では静かな発光に切替。'],
   ['v11.0.1', 'ARGUS Pro 仕上げ（配線を「本物」に） — 箱だけでなく実際に動く形へ。①C.A.O.S.監査を実データで記録開始（銘柄と出来事をなぜ紐付けたか＝一致語・情報源ファミリー/ティア・裏取り度を、重複を30分で抑えつつ記録。単一ソースは「引き金候補」止まりで原因確定にしない・非因果の但し書き付き）②Decision Valueのシャドー記録に可視性/姿勢の文脈を追加（降格前後の姿勢・確信度・ブロック内容を後から検証可能に。実P&Lは非公開のまま）③公式ソース（METI/EDINET/TDnet等）を正しい公式ティアに分類（Fed/SEC/BOJ/METI/ロイター日本語は既に取込済）④GuideにEventCard v2パネルを新設（各イベントの裏取り度・引き金の役割・不足を明示）⑤CaosHubの「ニュースは常にlive」という過大表現を修正、Decision Valueの見出しに「仮想・発注なし」を明示。単体テストはCI（ci.yml）で毎push自動実行済み。テスト573。'],
   ['v11.0.0', 'ARGUS Pro（Free-First Research Desk Build）の土台を投入 — メジャーアップデート。無料・非自動売買の範囲で「調査デスク化」を前進。①可視性ガードが警告だけでなく実際に判断を制約(確信度を上限化・劣化時は新規ENTERをWAITへ降格。理由をTodayに表示。killスイッチ有)②EventCard v2=イベントを正典オブジェクト化(単一ソースを原因確定にしない/テーマだけでは判断を動かさない/確信度=raw∧上限/不足を必ず明示)③Calibration v4状態・Decision Value状態を監査可能に(記録が実在する時だけ「稼働」表示・provenとは言わない・実P&Lは非公開)④市場の深さ「proof」化(exchangeTs等の実測=probedがある時だけLIVE・板/歩み値/オプションIV/貸株料は要契約のまま)⑤情報源に品質ティア(公式/主要メディア/アグリゲータ/不明)—弱いソースは単独で根拠にも原因確定にもできない⑥C.A.O.S.監査証跡(なぜ紐付けたか+非因果の但し書き)。GuideにARGUS Proパネルを新設。注文/ブローカー/自動売買ルートはゼロのまま。テスト+40。'],
@@ -339,6 +342,9 @@ export const Guide: React.FC = () => {
           {loc === 'ja' ? 'UIの言語(既定=日本語)。説明文は日本語、要所のアクション語(NO NEW ENTRY等)は英語固定。「English」で全面英語に切替。' : 'UI language (default Japanese). English here makes everything English; otherwise prose is Japanese with English action keywords.'}
         </span>
       </section>
+
+      <ArgusProAboutCard />
+
       <section>
         <div className="section-head">
           <span className="section-head__title">使い方 — ページ別ガイド</span>

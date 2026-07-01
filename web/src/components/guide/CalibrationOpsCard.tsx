@@ -57,8 +57,8 @@ export const CalibrationOpsCard: React.FC = () => {
           <div><span className="calops__k">v3 実績</span><span className="calops__v">
             {d.v3Headline ? `${d.v3Headline.days ?? '—'}営業日 / n=${d.v3Headline.n ?? '—'} · 的中${Math.round((d.v3Headline.hitRate ?? 0) * 100)}%` : '—'}
           </span></div>
-          <div><span className="calops__k">v4 ドライラン</span><span className="calops__v">
-            {v4has ? '記録中(calibration_v1)' : '生成前(平日ワークフロー後に出力)'}
+          <div><span className="calops__k">v4 ドライラン成果物</span><span className="calops__v">
+            {v4has ? 'あり(calibration_v1・ドライラン/非本番)' : '生成前(平日ワークフロー後に出力)'}
           </span></div>
           <div><span className="calops__k">Layer1 被覆</span><span className="calops__v">
             {cov.recorded ?? '—'}/{cov.expected ?? 16}{(cov.missing && cov.missing.length) ? ` · 欠測: ${cov.missing.join(',')}` : ''}
@@ -82,6 +82,11 @@ export const CalibrationOpsCard: React.FC = () => {
           </ul>
         </div>
         {d.pendingJa && <p className="calops__note">保留中: {d.pendingJa}</p>}
+        <p className="calops__note">
+          ユーザー向けの正式な稼働状態は上の「ARGUS Pro」パネルの Calibration v4（inactive / burn-in /
+          early / provisional / regime-level）を参照してください。記録が実在する時だけ active と表示します
+          （このカードのドライラン成果物は非本番の参考です）。
+        </p>
       </div>
     </section>
   );

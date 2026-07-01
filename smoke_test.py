@@ -320,6 +320,60 @@ def v_admin_gated_401(path):
     return fn
 
 
+# ── ARGUS Pro v11 endpoints — SHAPE-only (never require market-open / non-empty) ──
+def v_event_cards():
+    c, d = _get("/api/argus/events/cards")
+    return d.get("schemaVersion") == "event-card-v2" and isinstance(d.get("items"), list), \
+        f"count={d.get('count')}"
+
+def v_research_mission():
+    c, d = _get("/api/argus/events/MU/research-mission")
+    cost = d.get("cost") or {}
+    return d.get("symbol") == "MU" and cost.get("llmCalls") == 0, \
+        f"llmCalls={cost.get('llmCalls')} deterministic={cost.get('deterministic')}"
+
+def v_event_intel():
+    c, d = _get("/api/argus/events/MU/institutional-intelligence")
+    return d.get("symbol") == "MU" and isinstance(d.get("items"), list), f"count={d.get('count')}"
+
+def v_positioning():
+    c, d = _get("/api/argus/institutional-intelligence/positioning/MU")
+    probs = d.get("probabilities") or {}
+    ssum = sum(v for v in probs.values() if isinstance(v, (int, float)))
+    ok = d.get("symbol") == "MU" and (not probs or abs(ssum - 1.0) < 1e-6)
+    return ok, f"probsSum={round(ssum, 4)} calib={d.get('calibrationStatus')}"
+
+def v_calibration_v4_status():
+    c, d = _get("/api/argus/calibration/v4/status")
+    ok = d.get("schemaVersion") == "calibration-v4" and isinstance(d.get("isActive"), bool) \
+        and d.get("reliabilityStage") in ("burn_in", "early_signal", "provisional", "regime_level")
+    return ok and "proven" not in json.dumps(d).lower(), \
+        f"active={d.get('isActive')} stage={d.get('reliabilityStage')}"
+
+def v_decision_value_status():
+    c, d = _get("/api/argus/decision-value/status")
+    ok = d.get("schemaVersion") == "decision-value-v1" and d.get("phase") in (
+        "not_configured", "engine_ready_no_records_yet", "shadow_recording_active", "scoring_active")
+    leaks = any(k in json.dumps(d).lower() for k in ("netr", "realizedpnl", "costbasis", "holdings"))
+    return ok and not leaks and "No order" in (d.get("disclaimer") or ""), f"phase={d.get('phase')}"
+
+def v_market_depth_proof():
+    c, d = _get("/api/argus/market-depth/proof")
+    s = d.get("summary") or {}
+    return d.get("schemaVersion") == "market-depth-proof-v1" and isinstance(d.get("items"), list) \
+        and "trueDepthLiveCount" in s, f"trueLive={s.get('trueDepthLiveCount')} reqContract={s.get('requiresContractCount')}"
+
+def v_source_coverage():
+    c, d = _get("/api/argus/source-coverage")
+    return d.get("schemaVersion") == "source-coverage-v1" and isinstance(d.get("tiers"), list), \
+        f"items={(d.get('summary') or {}).get('totalItems')}"
+
+def v_caos_audit():
+    c, d = _get("/api/argus/caos/audit")
+    return d.get("schemaVersion") == "caos-link-v1" and isinstance(d.get("items"), list), \
+        f"count={d.get('count')}"
+
+
 CHECKS = [
     ("healthz", v_healthz),
     ("action-labels", v_action_labels),
@@ -364,6 +418,16 @@ CHECKS = [
     ("moomoo-capability 401", v_admin_gated_401("/api/argus/moomoo-capability")),
     ("jp-universe 401", v_admin_gated_401("/api/argus/jp-universe")),
     ("layer2b-summary 401", v_admin_gated_401("/api/argus/calibration/layer2b-summary")),
+    # ── ARGUS Pro v11 (shape-only) ──
+    ("v11 event-cards", v_event_cards),
+    ("v11 research-mission (llm=0)", v_research_mission),
+    ("v11 event institutional-intel", v_event_intel),
+    ("v11 positioning (probs=1)", v_positioning),
+    ("v11 calibration/v4/status", v_calibration_v4_status),
+    ("v11 decision-value/status", v_decision_value_status),
+    ("v11 market-depth/proof", v_market_depth_proof),
+    ("v11 source-coverage", v_source_coverage),
+    ("v11 caos/audit", v_caos_audit),
 ]
 
 
