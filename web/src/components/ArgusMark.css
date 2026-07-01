@@ -1,0 +1,24 @@
+/* A.R.G.U.S. monogram — the eye doubles as the system-health beacon (v10.194). */
+.argus-mark { display: block; }
+
+/* Iris glows in the health color so the status reads at a glance. */
+.argus-mark__iris {
+  filter: drop-shadow(0 0 2.5px var(--iris));
+}
+
+/* Soft pulse ring radiating from the iris — "the eye is watching / notifying". */
+.argus-mark__pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: argus-eye-pulse 2.4s ease-out infinite;
+}
+
+@keyframes argus-eye-pulse {
+  0%   { transform: scale(1);   opacity: 0.65; }
+  70%  { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .argus-mark__pulse { animation: none; opacity: 0; }
+}

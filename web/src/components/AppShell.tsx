@@ -5,10 +5,6 @@ import { SystemHealthPopover } from './dashboard/SystemHealthPopover';
 import { ArgusMark } from './ArgusMark';
 import './AppShell.css';
 
-const BRAND_DOT: Record<LampStatus, string> = {
-  ok: 'shl-dot--ok', warning: 'shl-dot--warn', stopped: 'shl-dot--stop', off: 'shl-dot--off',
-};
-
 // Overscroll-to-next (v10.15.1, user request): at the page bottom, one strong
 // extra pull (touch) or wheel burst advances to the next nav page. Deliberate
 // thresholds + a visible indicator prevent accidental jumps.
@@ -221,8 +217,10 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
           aria-expanded={healthOpen}
           title="システム状態を表示"
         >
-          <ArgusMark size={20} className="shell__brand-mark" />
-          <span className={`shell__brand-beacon shl-dot ${BRAND_DOT[health?.overall ?? 'off']}`} />
+          {/* The logo's eye IS the health beacon now (v10.194): the iris color +
+              pulse reports system status, and the whole brand stays the button that
+              opens the health popover. The old standalone green dot is retired. */}
+          <ArgusMark size={22} className="shell__brand-mark" status={health?.overall ?? 'off'} />
           <span className="shell__brand-name">A.R.G.U.S.</span>
           <span className="shell__brand-version">v{__APP_VERSION__}</span>
           <span className="shell__brand-tag">
