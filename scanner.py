@@ -4091,6 +4091,50 @@ _CRYPTO_MOCK = {
     "ethereum": {"price": 3_820.0,  "changePct": 0.8, "volume": 14_000_000_000},
 }
 
+# CoinGecko's keyless public API is rate-limited/blocked from datacenter IPs
+# (Render), so in production it silently fell to mock (v10.208 bug report). Two
+# fixes: (1) a free Demo API key (env COINGECKO_API_KEY, sent as the
+# x-cg-demo-api-key header) restores reliable cloud access; (2) if there's no key
+# OR CoinGecko still fails, fall back to Coinbase's keyless public stats endpoint
+# — datacenter-friendly — so crypto shows REAL prices, not mock, with zero setup.
+_COINGECKO_KEY = os.environ.get("COINGECKO_API_KEY") or os.environ.get("COINGECKO_DEMO_API_KEY")
+# coingecko id -> Coinbase product base (keyless fallback; major coins only).
+_CG_TO_COINBASE = {
+    "bitcoin": "BTC", "ethereum": "ETH", "solana": "SOL", "ripple": "XRP",
+    "cardano": "ADA", "dogecoin": "DOGE", "litecoin": "LTC", "polkadot": "DOT",
+    "avalanche-2": "AVAX", "chainlink": "LINK", "polygon": "MATIC", "matic-network": "MATIC",
+    "tron": "TRX", "stellar": "XLM", "bitcoin-cash": "BCH", "uniswap": "UNI",
+    "cosmos": "ATOM", "aptos": "APT", "arbitrum": "ARB", "optimism": "OP",
+    "shiba-inu": "SHIB", "near": "NEAR",
+}
+_COINBASE_STATS = "https://api.exchange.coinbase.com/products/{}-USD/stats"
+
+def _crypto_coinbase_fallback(ids):
+    """Keyless Coinbase stats (datacenter-friendly) for the major coins — used
+    ONLY when CoinGecko is unavailable. 24h change = (last-open)/open. status is a
+    real-time last-trade price, so 'live' is honest. Coins outside the map are
+    skipped (no fabricated numbers)."""
+    rows = []
+    for i in ids:
+        sym = _CG_TO_COINBASE.get(i)
+        if not sym:
+            continue
+        try:
+            r = requests.get(_COINBASE_STATS.format(sym), timeout=8,
+                             headers={"User-Agent": "argus-research/1.0"})
+            r.raise_for_status()
+            s = r.json()
+            last = float(s.get("last"))
+            openp = float(s.get("open") or last)
+            chg = ((last - openp) / openp * 100.0) if openp else 0.0
+            rows.append({"id": i, "priceUsd": round(last, 2),
+                         "changePct": round(chg, 2),
+                         "volume": int(float(s.get("volume") or 0)),  # base-ccy 24h vol
+                         "date": None, "status": "live"})
+        except Exception:
+            continue
+    return rows
+
 def get_crypto_watchlist_snapshot(ids):
     ids = tuple(sorted(set(i for i in ids if _CRYPTO_ID_RE.match(i)))[:_CRYPTO_MAX_IDS]) \
           or tuple(_CRYPTO_DEFAULT_IDS)
@@ -4103,12 +4147,28 @@ def get_crypto_watchlist_snapshot(ids):
         return [{"id": i, "priceUsd": m["price"], "changePct": m["changePct"],
                  "volume": int(m["volume"]), "date": None, "status": "mock"}
                 for i, m in ((i, _CRYPTO_MOCK[i]) for i in ids if i in _CRYPTO_MOCK)]
+
+    def _fallback_or_mock():
+        """CoinGecko unavailable → try keyless Coinbase (real), else mock."""
+        fb = _crypto_coinbase_fallback(ids)
+        if fb:
+            snap = {"status": ("live" if len(fb) == len(ids) else "partial"),
+                    "asOf": None, "provider": "coinbase", "quotes": fb}
+            if len(_CRYPTO_CACHE) >= _CRYPTO_CACHE_MAX:
+                _CRYPTO_CACHE.clear()
+            _CRYPTO_CACHE[ids] = {"data": snap, "expires": now + _CRYPTO_CACHE_TTL}
+            return snap
+        return {"status": "mock", "asOf": None, "provider": "coingecko", "quotes": _mock_rows()}
+
     try:
+        headers = {"User-Agent": "argus-research/1.0", "Accept": "application/json"}
+        if _COINGECKO_KEY:
+            headers["x-cg-demo-api-key"] = _COINGECKO_KEY   # free Demo plan: reliable from cloud
         r = requests.get(_COINGECKO_PRICE, params={
             "ids": ",".join(ids), "vs_currencies": "usd",
             "include_24hr_change": "true", "include_24hr_vol": "true",
             "include_last_updated_at": "true",
-        }, timeout=10)
+        }, headers=headers, timeout=10)
         r.raise_for_status()
         body = r.json() if isinstance(r.json(), dict) else {}
         rows = []
@@ -4126,7 +4186,7 @@ def get_crypto_watchlist_snapshot(ids):
                 "status": "live",
             })
         if not rows:
-            return {"status": "mock", "asOf": None, "provider": "coingecko", "quotes": _mock_rows()}
+            return _fallback_or_mock()
         status = "live" if len(rows) == len(ids) else "partial"
         as_of  = max((x["date"] for x in rows if x["date"]), default=None)
         snapshot = {"status": status, "asOf": as_of, "provider": "coingecko", "quotes": rows}
@@ -4135,7 +4195,7 @@ def get_crypto_watchlist_snapshot(ids):
         _CRYPTO_CACHE[ids] = {"data": snapshot, "expires": now + _CRYPTO_CACHE_TTL}
         return snapshot
     except Exception:
-        return {"status": "mock", "asOf": None, "provider": "coingecko", "quotes": _mock_rows()}
+        return _fallback_or_mock()
 
 def _crypto_last_status():
     """Last fetched crypto snapshot status for /integrations ('unknown' if none yet)."""
@@ -8106,7 +8166,7 @@ def _system_health():
       "J-Quants 設定済" if conf("jquants") else "要設定")
     L("prices_us", "米国株価格", "ok" if conf("twelvedata") else "warning",
       "Twelve Data 設定済" if conf("twelvedata") else "要設定")
-    L("crypto", "暗号資産", "ok" if conf("coingecko") else "ok", "CoinGecko(鍵不要)")
+    L("crypto", "暗号資産", "ok", "CoinGecko" + ("(Demo鍵)" if _COINGECKO_KEY else "(鍵なし)") + " + Coinbaseフォールバック")
     L("macro", "金利/VIX", "ok" if conf("fred") else "warning",
       "FRED 設定済" if conf("fred") else "要設定")
     # Key configured = green (the deep verified/last-fetch nuance lives in the
