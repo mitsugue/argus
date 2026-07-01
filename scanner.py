@@ -5618,6 +5618,7 @@ def api_argus_event_intel(symbol):
         link = argus_research_mesh.link_to_event(it, {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move})
         out.append({"title": it["title"], "titleJa": it.get("titleJa"),
                     "institutionId": it.get("institutionId"),
+                    "category": it.get("category"), "contentType": it.get("contentType"),
                     "publishedAt": it.get("publishedAt"), "accessClass": it["accessClass"],
                     "canonicalUrl": it.get("canonicalUrl"), "stance": it.get("stance"),
                     "relation": link["causalRole"], "relationLabelJa": link["relationLabelJa"],
