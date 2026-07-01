@@ -111,8 +111,12 @@ export async function maybeCloudBackup(): Promise<void> {
 // per-item merge is a later refinement). Ciphertext-only on the wire, as ever.
 const SYNC_KEY = 'argus.vaultSync.v1';        // {appliedExportedAt, pushedEditAt}
 const EDIT_KEY = 'argus.lastLocalEditAt.v1';
-const PUSH_DEBOUNCE_MS = 45_000;
-const SYNC_POLL_MS = 90_000;
+// v11.1: tightened so an edit on one device shows on the other in ~10-40s (was up to
+// ~2min). A change pushes ~7s after the last edit; the other device polls every 30s and
+// ALSO pulls immediately when its tab regains focus (visibilitychange), so switching from
+// the app to the web tab surfaces the change right away.
+const PUSH_DEBOUNCE_MS = 7_000;
+const SYNC_POLL_MS = 30_000;
 let pushTimer: number | null = null;
 let suppressEditsUntil = 0;
 let syncLoopStarted = false;

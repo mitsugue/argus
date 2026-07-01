@@ -12523,18 +12523,32 @@ def _jp_query_is_code(q):
     return bool(re.match(r"^[0-9][0-9A-Za-z]{0,3}$", q))
 
 def _search_jp(q):
+    """Relevance-ranked JP search. Previously it returned matches in raw master order,
+    so a name query like "三菱" surfaced MAXIS ETFs before 三菱商事. Now results are
+    ranked: exact code → code prefix → name STARTS-WITH → name substring, so the obvious
+    stock comes first (v11.1)."""
     ql = q.lower()
     qu = q.upper()
     code_like = _jp_query_is_code(q)
-    out = []
+    scored = []
     for r in _jq_master():
-        hit = (code_like and r["code4"].upper().startswith(qu)) \
-            or (ql in r["ja"].lower() or ql in r["en"].lower())
-        if hit:
-            out.append({"symbol": r["code4"], "name": r["en"] or r["ja"], "nameJa": r["ja"],
-                        "exchange": r["mkt"], "type": "jp_equity"})
-        if len(out) >= _SEARCH_MAX:
-            break
+        code = r["code4"].upper()
+        ja, en = (r["ja"] or ""), (r["en"] or "")
+        jal, enl = ja.lower(), en.lower()
+        rank = None
+        if code_like and code == qu:
+            rank = 0                                   # exact code
+        elif code_like and code.startswith(qu):
+            rank = 1                                   # code prefix
+        elif jal.startswith(ql) or enl.startswith(ql):
+            rank = 2                                   # name starts with the query
+        elif ql in jal or ql in enl:
+            rank = 3                                   # name contains the query
+        if rank is not None:
+            scored.append((rank, code, {"symbol": r["code4"], "name": en or ja, "nameJa": ja,
+                                        "exchange": r["mkt"], "type": "jp_equity"}))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    out = [x[2] for x in scored[:_SEARCH_MAX]]
     return out, ("live" if _jq_master() else "unavailable")
 
 def _search_us(q):
@@ -12545,12 +12559,16 @@ def _search_us(q):
                          params={"symbol": q, "outputsize": 20, "apikey": _TWELVEDATA_API_KEY}, timeout=10)
         r.raise_for_status()
         data = r.json().get("data", []) if isinstance(r.json(), dict) else []
-        out = []
+        out, seen = [], set()
         for x in data:
             t = (x.get("instrument_type") or "").lower()
             if "stock" not in t and "etf" not in t and t:   # prefer equities/ETFs
                 continue
-            out.append({"symbol": x.get("symbol", ""), "name": x.get("instrument_name", ""),
+            sym = x.get("symbol", "")
+            if not sym or sym in seen:                       # dedupe cross-exchange listings
+                continue
+            seen.add(sym)
+            out.append({"symbol": sym, "name": x.get("instrument_name", ""),
                         "nameJa": "", "exchange": x.get("exchange", ""), "type": "us_equity"})
             if len(out) >= _SEARCH_MAX:
                 break
@@ -12560,7 +12578,14 @@ def _search_us(q):
 
 def _search_crypto(q):
     try:
-        r = requests.get("https://api.coingecko.com/api/v3/search", params={"query": q}, timeout=10)
+        # CoinGecko blocks/limits datacenter IPs (Render) unless a real User-Agent +
+        # (optional) demo key are sent — the same fix as the price fetch. Without these
+        # the search silently 403/429'd and returned "error" from production. (v11.1)
+        headers = {"User-Agent": "argus-research/1.0", "Accept": "application/json"}
+        if _COINGECKO_KEY:
+            headers["x-cg-demo-api-key"] = _COINGECKO_KEY
+        r = requests.get("https://api.coingecko.com/api/v3/search",
+                         params={"query": q}, headers=headers, timeout=10)
         r.raise_for_status()
         coins = r.json().get("coins", []) if isinstance(r.json(), dict) else []
         out = []

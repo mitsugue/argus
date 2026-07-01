@@ -93,9 +93,15 @@ export const BackupCard: React.FC = () => {
 
       <div className="backup__cloud">
         <p className="backup__lead">
-          <b>☁️ クラウド自動バックアップ</b> — パスフレーズを決めて有効化すると、
-          以後は<b>毎日自動で暗号化バックアップがクラウド(GitHub)に保存</b>されます(完全に手放しでOK)。
-          新しい端末では同じパスフレーズを入れて「クラウドから復元」を押すだけです。
+          <b>☁️ クラウド自動バックアップ＋端末間同期</b> — パスフレーズを決めて有効化すると、
+          以後は<b>自動で暗号化バックアップがクラウド(GitHub)に保存</b>され、さらに
+          <b>同じパスフレーズを設定した端末どうしが自動で同期</b>します。
+        </p>
+        <p className="backup__note" style={{ borderLeft: '3px solid var(--amber,#fbbf24)', paddingLeft: 8 }}>
+          <b>⚠ アプリとウェブを常に同期させるには、両方で同じパスフレーズを「有効化」してください。</b>
+          片方だけだと同期しません。両方で有効化すれば、片方でウォッチリストを追加/削除すると
+          <b>約10〜40秒で</b>もう片方にも反映されます(タブに戻ると即時取得)。初回に既存データがある側は
+          一度「クラウドから復元」で同期グループに参加してください。
         </p>
         <div className="backup__actions">
           <input className="modal__input backup__pass" type="password" value={pass}
@@ -108,8 +114,8 @@ export const BackupCard: React.FC = () => {
         </div>
         <p className="backup__note">
           状態: {enabled
-            ? `有効(最終送信 ${lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '—'})。両端末を開いていれば数分で同期。恒久保存は1日6回(平日 9/12/16/19/22時・深夜2時)。`
-            : '未設定(上でパスフレーズを決めて有効化)。'}
+            ? `✅ この端末は同期 有効(最終送信 ${lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '—'})。両端末で有効化していれば約10〜40秒で同期。恒久保存は1日6回(平日 9/12/16/19/22時・深夜2時)。`
+            : '⚠ この端末は同期 未設定(上でパスフレーズを決めて有効化。もう片方の端末でも同じパスフレーズで有効化が必要)。'}
           データは端末上で暗号化され、サーバーとGitHubには<b>暗号文しか</b>渡りません。
           パスフレーズを忘れると誰にも復元できません(本人含む)。古い世代は自動削除(直近8世代保持)。
         </p>
