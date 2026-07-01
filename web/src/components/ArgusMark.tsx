@@ -1,5 +1,7 @@
 import React from 'react';
 import './ArgusMark.css';
+// (build marker) v11.0.4 Pages redeploy — prior deploy failed at the deploy step on a
+// Pages concurrency conflict from rapid version bumps; build itself was green.
 
 // A.R.G.U.S. monogram (v10.192) — "eye in a triangle". ARGUS is the hundred-eyed
 // watchman, so the mark is a single eye held inside an A-triangle. v10.194: the eye
