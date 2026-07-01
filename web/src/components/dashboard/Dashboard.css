@@ -1447,15 +1447,15 @@
 /* Calibration + Decision Value Operations panels (v10.195) */
 .calops__card, .dvops__card { display: flex; flex-direction: column; gap: 10px; }
 .calops__lead, .dvops__lead { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-sub); }
-.calops__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 16px; }
-.calops__grid > div { display: flex; flex-direction: column; gap: 2px; }
+.calops__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 6px 16px; }
+.calops__grid > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .calops__k, .dvops__pid { font-size: 10px; letter-spacing: .04em; color: var(--text-faint); text-transform: uppercase; }
 .calops__v { font-size: 12.5px; color: var(--text-main); }
 .calops__ready { border-top: 1px solid var(--line); padding-top: 8px; }
 .calops__ready-head { font-size: 12px; color: var(--text-sub); margin-bottom: 6px; }
 .calops__ok { color: var(--value-positive, #34d399); }
 .calops__no { color: var(--amber, #fbbf24); }
-.calops__checks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 3px 14px; }
+.calops__checks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 3px 14px; }
 .calops__checks li { font-size: 11.5px; }
 .calops__pass { color: var(--value-positive, #34d399); }
 .calops__fail { color: var(--text-muted); }
@@ -1472,7 +1472,8 @@
 .mdepth__card { display: flex; flex-direction: column; gap: 10px; }
 .mdepth__lead, .mdepth__note { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--text-sub); }
 .mdepth__note { font-size: 10.5px; color: var(--text-faint); }
-.mdepth__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 16px; }
+.mdepth__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 4px 16px; }
+.mdepth__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mdepth__row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 2px 0; border-bottom: 1px solid var(--line); }
 .mdepth__label { color: var(--text-sub); min-width: 0; }
 .mdepth__status { font-weight: 700; font-size: 11px; letter-spacing: .03em; flex: none; }

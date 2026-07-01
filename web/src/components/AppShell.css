@@ -157,6 +157,8 @@
 .shell__main {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;             /* v10.201: scroll is vertical-only — kills the left/right shake */
+  overscroll-behavior-x: none;
   position: relative;
   /* Respect the home-indicator inset so the last scroll line never sits
      underneath it. */

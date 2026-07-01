@@ -5556,8 +5556,31 @@ def collect_institutional_intel():
                          "new": new, "ok": bool(txt) and len(rows) > 0})
     del _INTEL_STORE[_INTEL_STORE_MAX:]
     _intel_translate_titles()                          # attach titleJa (cron-time only)
+    # v10.201: bias toward the owner's held/incident/watchlist names. generate_queries
+    # (previously unused) builds the targeted query PLAN, and matching collected intel
+    # gets an importance boost so those names surface first in the brief/rankings.
+    query_plan = []
+    try:
+        watch = _intel_watchlist_symbols()
+        incident = []
+        try:
+            incident = [str(i.get("symbol")).upper() for i in (get_downside_incidents().get("incidents") or [])]
+        except Exception:
+            incident = []
+        query_plan = argus_research_mesh.generate_queries(
+            {"heldOrIncident": incident + watch, "watchlist": watch, "themes": []}, max_queries=12)
+        inc_set, watch_set = set(incident), set(watch)
+        for it in _INTEL_STORE:
+            la = {str(a).upper() for a in (it.get("linkedAssets") or [])}
+            if la & inc_set:
+                it["importance"] = max(float(it.get("importance") or 0), 0.9)
+            elif la & watch_set:
+                it["importance"] = max(float(it.get("importance") or 0), 0.6)
+    except Exception:
+        pass
     _INTEL_LAST.update({"ts": time.time(), "collected": total_new,
-                        "perSource": per_source, "perFeed": per_feed})
+                        "perSource": per_source, "perFeed": per_feed,
+                        "queryPlan": query_plan[:12]})
     _intel_persist()                                   # §27 survive restarts
     # one-line, human-readable summary echoed by the cron (どのfeedから何件)
     summary = " | ".join(f"{f['feed']}:{f['fetched']}(+{f['new']})" for f in per_feed)
