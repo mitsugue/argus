@@ -1400,6 +1400,29 @@
 .hero__context-d .hero__overlay-row { border-bottom: 0; padding-bottom: 0; }
 
 /* OWNER CRITICAL banner (v10.145) — held position on EXIT/DEFEND, pinned at top. */
+/* Visibility Risk Guard (v10.195): a prominent situational banner + a muted
+   always-on coverage line (structural gaps never dominate but are never hidden). */
+.limited-visibility {
+  display: flex; gap: 10px; margin: 10px 0 0; padding: 9px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--amber, #fbbf24) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber, #fbbf24) 40%, transparent);
+}
+.limited-visibility--minimal {
+  background: color-mix(in srgb, var(--red, #f87171) 13%, transparent);
+  border-color: color-mix(in srgb, var(--red, #f87171) 42%, transparent);
+}
+.limited-visibility__tag {
+  flex: none; font-size: 11px; font-weight: 800; letter-spacing: .04em;
+  color: var(--amber, #fbbf24); align-self: flex-start; padding-top: 1px;
+}
+.limited-visibility--minimal .limited-visibility__tag { color: var(--red, #f87171); }
+.limited-visibility__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.limited-visibility__warn { margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-sub); }
+.limited-visibility__note { margin: 0; font-size: 11px; color: var(--text-muted); }
+.visibility-coverage {
+  margin: 8px 2px 0; font-size: 10.5px; line-height: 1.6; color: var(--text-muted);
+}
+
 .owner-critical {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: 10px 0 0; padding: 8px 12px; border-radius: 10px;
@@ -1420,3 +1443,27 @@
 .regime-jp-row__val { color: var(--text-main); }
 .regime-jp-row__note { margin-left: auto; color: var(--text-muted); font-size: 10px; }
 .regime-jp-row__dot--muted { background: var(--text-muted); }
+
+/* Calibration + Decision Value Operations panels (v10.195) */
+.calops__card, .dvops__card { display: flex; flex-direction: column; gap: 10px; }
+.calops__lead, .dvops__lead { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-sub); }
+.calops__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 16px; }
+.calops__grid > div { display: flex; flex-direction: column; gap: 2px; }
+.calops__k, .dvops__pid { font-size: 10px; letter-spacing: .04em; color: var(--text-faint); text-transform: uppercase; }
+.calops__v { font-size: 12.5px; color: var(--text-main); }
+.calops__ready { border-top: 1px solid var(--line); padding-top: 8px; }
+.calops__ready-head { font-size: 12px; color: var(--text-sub); margin-bottom: 6px; }
+.calops__ok { color: var(--value-positive, #34d399); }
+.calops__no { color: var(--amber, #fbbf24); }
+.calops__checks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 3px 14px; }
+.calops__checks li { font-size: 11.5px; }
+.calops__pass { color: var(--value-positive, #34d399); }
+.calops__fail { color: var(--text-muted); }
+.calops__note, .dvops__note { margin: 0; font-size: 10.5px; color: var(--text-faint); line-height: 1.6; }
+.dvops__blocker { margin: 0; font-size: 12px; color: var(--amber, #fbbf24); line-height: 1.6; }
+.dvops__policies { display: flex; flex-direction: column; gap: 4px; }
+.dvops__row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.dvops__row--nt { color: var(--text-muted); }
+.dvops__n { font-variant-numeric: tabular-nums; color: var(--text-sub); }
+.dvops__scored { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.dvops__pending { margin: 0; font-size: 12px; color: var(--text-muted); }

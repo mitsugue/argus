@@ -98,7 +98,8 @@ function runtimeBlock(m: any): string {
   - rule: ${d.rule ?? ''}
 - **TDnet (適時開示):** ${td.status ?? '—'}${td.count ? ` (${td.count})` : ''} via ${td.provider ?? '—'}
 - **Owner watchlist (Layer 2B):** configured=${m.ownerWatchlist?.layer2bConfigured} · ${m.ownerWatchlist?.note ?? ''}
-- **Decision Value:** ${m.decisionValue?.phase ?? '—'}
+- **Decision Value:** ${m.decisionValue?.phase ?? '—'} (shadow simulation only; no order/broker/execute routes)
+- **Visibility Risk:** ${m.visibility?.visibilityLevel ?? '—'}${m.visibility?.confidenceCap != null ? ` · confidence cap ${m.visibility.confidenceCap}` : ''} · codes: ${(m.visibility?.reasonCodes || []).join(', ') || '—'}
 - **AI judgment:** ${m.ai?.status ?? '—'} · ${m.ai?.note ?? ''}
 - **Safety:** ${(m.safetyBoundaries || []).join('; ')}
 - **Current limitations:** ${(m.currentLimitations || []).map((x: string) => `\n  - ${x}`).join('')}
@@ -298,6 +299,7 @@ export const AIReview: React.FC = () => {
               <tr><td className="dim">TDnet</td><td>{manifest.tdnet?.status}{manifest.tdnet?.count ? ` (${manifest.tdnet.count})` : ''} · {manifest.tdnet?.provider}</td></tr>
               <tr><td className="dim">Layer 2B</td><td>configured={String(manifest.ownerWatchlist?.layer2bConfigured)} — {manifest.ownerWatchlist?.note}</td></tr>
               <tr><td className="dim">Decision Value</td><td>{manifest.decisionValue?.phase}</td></tr>
+              <tr><td className="dim">Visibility</td><td>{manifest.visibility?.visibilityLevel ?? '—'}{manifest.visibility?.confidenceCap != null ? ` · cap ${manifest.visibility.confidenceCap}` : ''}{(manifest.visibility?.reasonCodes || []).length ? ` · ${(manifest.visibility.reasonCodes).slice(0, 6).join(', ')}` : ''}</td></tr>
               <tr><td className="dim">AI</td><td>{manifest.ai?.status} · {manifest.ai?.note}</td></tr>
               <tr><td className="dim">Safety</td><td>{(manifest.safetyBoundaries || []).join('; ')}</td></tr>
             </tbody>

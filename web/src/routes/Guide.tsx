@@ -7,6 +7,8 @@ import { LedgerHealthCard } from '../components/guide/LedgerHealthCard';
 import { CalibrationCard } from '../components/guide/CalibrationCard';
 import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
 import { SourceRegistryCard } from '../components/guide/SourceRegistryCard';
+import { CalibrationOpsCard } from '../components/guide/CalibrationOpsCard';
+import { DecisionValueOpsCard } from '../components/guide/DecisionValueOpsCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -73,6 +75,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v10.195.0', 'Research Desk Mode v1 — Phase A(可視性ガード＋校正/価値の運用状態) — プロの調査デスク化の第一歩。①Visibility Risk Guard: ARGUSが「見えていないもの」を集約し正直に表示。PTS・板・歩み値・VWAP・米時間外などの構造的な穴は常時ミュート表示(検知≠安全)、moomooブリッジの場中停滞・地合いの保持表示・AI予算停止などの一時的劣化のときだけ確信度を上限0.60〜0.55にクランプ＋ENTER抑制＋トップに警告バナー。校正がまだregime_level未満(=精度未証明)の間も確信度をキャップ。②Calibration Operations: v4記録が本当に取れているか(センサー被覆16、市場クロック、readinessチェック、活性化可否)をGuideに表示。「待てば良くなる」ではなく記録できている時だけ改善する、を明示。③Decision Value Shadow Operations: 「校正が良い≠儲かる」を測るシャドー台帳を開始(発注は一切なし・実価格/純Rはオーナー限定のprivate store・公開は件数とサンプル段階のみ)。毎営業日16:05に記録＋採点。自動売買/注文ルートは追加していません(決定支援のみ)。次段はPhase B(機関インテリジェンスv1)・C(イベント中心のトップ再編)。'],
   ['v10.194.2', 'アプリアイコン(favicon/PWA)も新ロゴに差し替え — ヘッダーのロゴだけ新「三角の眼」に変えていて、ブラウザのタブ・ホーム画面のインストールアイコン(favicon.svg / icon-192 / icon-512)が旧デザイン(同心円の眼)のままだったのを修正。3サイズすべて新モノグラムに統一。※インストール済みPWAのアイコンは端末が強くキャッシュするため、反映には一度アプリを削除→再追加(またはタブのハードリロード)が必要な場合があります。'],
   ['v10.194.0', 'ロゴの「眼」がシステム状態ランプに(緑丸を統合) — ヘッダーのロゴ(三角の眼)の瞳が、システム状態の色で光るように: 正常=緑/注意=琥珀/異常=赤/オフ=グレー。瞳はふわっとパルス発光して状態を知らせ、これまで横に別置きだった緑の丸は廃止(眼に一本化)。ロゴ(ブランド)全体は引き続きタップで「システム状態」ポップオーバーを開くボタン。'],
   ['v10.193.0', 'ロゴ刷新＋JP専用Matrix新設＋News RadarをC.A.O.S.に統合 — ①ロゴを新モノグラム「三角の眼」に刷新(ARGUS=百目の巨人アルゴス由来。Aの三角＋眼＋シアンの瞳・極シンプル・ヘッダー左上)。②Market Context(3ページ目)を再編: 「US Regime Matrix→US資金フロー盤」「JP Regime Matrix→JP資金フロー盤」の順に。日本専用のRegime MatrixをTOPIXセクターの資金フローから2軸(グロース↔ディフェンシブ×リスク↔デュレーション)で新設。③News Radar(危機テーマ検知)を独立セクションから撤去し、C.A.O.S.カード(Today2枚目)に「危機テーマ」tierとして統合(オーナー指摘: 危機検知は本来C.A.O.S.の役割)。GDELT不通時は追加した日銀/ロイター等のRSS(intelメッシュ)から地政学/為替/金融システム/政変/災害を検知するフォールバックも実装。'],
@@ -387,6 +390,10 @@ export const Guide: React.FC = () => {
         </div>
         <CalibrationCard />
       </section>
+
+      <CalibrationOpsCard />
+
+      <DecisionValueOpsCard />
 
       <section>
         <div className="section-head">

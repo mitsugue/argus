@@ -6,6 +6,7 @@ import { FxMacroSection } from '../components/dashboard/FxMacroSection';
 import { CaosHub } from '../components/dashboard/CaosHub';
 import { BuyCandidates } from '../components/dashboard/BuyCandidates';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
+import { useVisibilityGuard } from '../hooks/useVisibilityGuard';
 import { useEventsActive } from '../hooks/useEventsActive';
 import { useImportantEvents } from '../hooks/useImportantEvents';
 import { groupAssetCards, type LinkedEventTag, type AiFreshness } from '../domain/assetCard';
@@ -87,6 +88,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const regime = useMarketRegime();
   const ev = useEventRadar();
   const { data: downside } = useDownsideIncidents();
+  const guard = useVisibilityGuard();   // Visibility Risk Guard (v10.195)
   const { events: events247 } = useEventsActive();
   const { data: impEvents } = useImportantEvents();
 
@@ -157,7 +159,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   // flag PARTIAL so a HOLD never looks high-confidence on thin data.
   const isPartial = phase === 'partial';
   const baseConf = regime.data?.regime?.confidence ?? null;
-  const cappedConf = isPartial && baseConf != null ? Math.min(baseConf, 0.60) : baseConf;
+  // v10.195: fold the Visibility Risk Guard cap into the SAME confidence the hero +
+  // judgment log use. Intersect base, the partial-0.60, and the guard cap — ignoring
+  // nulls (a naive Math.min(...,undefined) would blank the hero as NaN).
+  const capCandidates = [baseConf, isPartial ? 0.60 : null, guard?.confidenceCap ?? null]
+    .filter((v): v is number => typeof v === 'number');
+  const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
+  const visLimited = !!guard && guard.visibilityLevel !== 'full';
 
   // ── Judgment log (device-local memory) ──
   // Record today's LIVE/PARTIAL call (mock is never logged — no fake history),
@@ -201,6 +209,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     >
       <MarketSessionLamps />
 
+      {/* LIMITED VISIBILITY (v10.195) — a PROMINENT banner only on situational
+          degradation (bridge stale in session / held-stale regime / budget stopped);
+          structural gaps (PTS/L2/tape/VWAP) live in the muted coverage line below so
+          the warning never dominates on normal days but is never absent either. */}
+      {visLimited && guard!.warnings.length > 0 && (
+        <div className={`limited-visibility limited-visibility--${guard!.visibilityLevel}`} role="status">
+          <span className="limited-visibility__tag">監視に穴があります</span>
+          <div className="limited-visibility__body">
+            {guard!.warnings.map((w) => <p key={w.code} className="limited-visibility__warn">{w.messageJa}</p>)}
+            <p className="limited-visibility__note">ARGUSが検知していないことは安全を意味しません。</p>
+          </div>
+        </div>
+      )}
+
       {/* OWNER CRITICAL — a held position on EXIT/DEFEND is surfaced at the very top
           (small), so a held emergency is never missed below the fold (v10.145). */}
       {ownerCritical.length > 0 && (
@@ -218,6 +240,12 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           EVENTS as its lower block) → per-stock category cards (JP first, watchlist
           before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} onNavigate={onNavigate} />
+
+      {/* Structural coverage line (v10.195) — always present but MUTED (not an alarm):
+          the owner is never falsely reassured that ARGUS sees everything. */}
+      {guard?.coverageLineJa && (
+        <p className="visibility-coverage">{guard.coverageLineJa}</p>
+      )}
 
       {/* C.A.O.S. — the 2nd card, ALWAYS present. One intelligence hub folding three tiers:
           機関シグナル (institutional views) + イベント分析 (pre/post) + ニュース (market news).
