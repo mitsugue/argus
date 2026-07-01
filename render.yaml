@@ -2,13 +2,17 @@ services:
   - type: web
     name: argus-backend
     runtime: python
-    plan: free
+    # Matches the live service (confirmed Standard in the Render dashboard,
+    # 2026-07-01). Standard has no spin-down — kept in sync so a future blueprint
+    # re-apply can't silently downgrade this to free.
+    plan: standard
     branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: python scanner.py
     autoDeploy: true
-    # Free plan disks are ephemeral. To persist the predictions ledger across
-    # deploys + sleeps, attach a Render Disk (1 GB / $1 mo) and set:
+    # The instance filesystem is ephemeral on every plan without an attached Disk.
+    # The predictions ledger already persists via the git `ledger` branch, so no
+    # Disk is required. To use a Disk instead, attach one (1 GB / $1 mo) and set:
     #   ARGUS_LEDGER_PATH=/var/data/predictions.jsonl
     # disk:
     #   name: argus-data
