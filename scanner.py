@@ -1970,7 +1970,15 @@ _L2B_CRYPTO_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana"}
 
 
 def _layer2b_live_prices(members):
-    """Current prices for owner symbols → {symbol: (price, changePct, market)}."""
+    """Current prices for owner symbols → {symbol: (price, changePct, market)}.
+
+    v10.205 FIX: the Layer-2B run fires at 16:05 JST (post-TSE-close), when JP quotes
+    are the day's CLOSE with status 'delayed' — not 'live'. The old 'status==live'
+    filter therefore dropped every JP name at run time, so JP was never recorded or
+    scored (perpetual 採点待ち). Accept any REAL price (live/delayed/partial/close),
+    exclude only mock/absent — the post-close close IS the correct daily anchor."""
+    def _real(st):
+        return str(st or "") not in ("", "mock", "unavailable")
     out = {}
     jp = [m["symbol"] for m in members if m.get("market") == "JP"]
     us = [m["symbol"] for m in members if m.get("market") == "US"]
@@ -1978,18 +1986,18 @@ def _layer2b_live_prices(members):
     try:
         if jp:
             for s in (get_japan_watchlist_snapshot(jp).get("stocks") or []):
-                if s.get("status") == "live" and s.get("price"):
+                if _real(s.get("status")) and s.get("price"):
                     out[s["symbol"]] = (s["price"], s.get("changePct"), "JP")
         if us:
             for s in (get_us_watchlist_snapshot(us).get("stocks") or []):
-                if s.get("status") == "live" and s.get("price"):
+                if _real(s.get("status")) and s.get("price"):
                     out[s["symbol"]] = (s["price"], s.get("changePct"), "US")
         if cr:
             ids = [_L2B_CRYPTO_IDS[s] for s in cr if s in _L2B_CRYPTO_IDS]
             idmap = {v: k for k, v in _L2B_CRYPTO_IDS.items()}
             if ids:
                 for q in (get_crypto_watchlist_snapshot(ids).get("quotes") or []):
-                    if q.get("status") == "live" and q.get("priceUsd"):
+                    if _real(q.get("status")) and q.get("priceUsd"):
                         out[idmap.get(q["id"], q["id"])] = (q["priceUsd"], q.get("changePct"), "CRYPTO")
     except Exception:
         pass
