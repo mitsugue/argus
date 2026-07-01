@@ -9847,6 +9847,47 @@ def api_argus_source_registry():
 # hardcoded defaults. Pure logic in argus_market_depth; a capability is 'live' only on
 # venue-timestamp proof, never on push cadence.
 _MARKET_DEPTH_CACHE = {"data": None, "expires": 0.0}
+_VWAP_CACHE = {"data": None, "expires": 0.0}
+
+def _vwap_probe():
+    """Real capability test (v10.200): compute session VWAP from Twelve Data 5-min
+    intraday bars for the US watchlist. US-session-gated, cached, quota-safe, guarded.
+    Returns {computed, values, asOf, note, probed:True}. VWAP becomes a LIVE capability
+    only when the bars actually compute — never assumed."""
+    now = time.time()
+    if _VWAP_CACHE["data"] is not None and now < _VWAP_CACHE["expires"]:
+        return _VWAP_CACHE["data"]
+    probe = {"computed": False, "values": {}, "probed": True, "asOf": _ai_now_iso(),
+             "note": "intraday barsから算出"}
+    try:
+        if not _TWELVEDATA_API_KEY:
+            probe["note"] = "TWELVEDATA_API_KEY未設定のため算出不可"
+        elif not _us_market_open():
+            probe["note"] = "米レギュラー時間外のためintraday VWAPは算出しない"
+        else:
+            syms = sorted({str(x["symbol"]).upper() for x in _US_WATCHLIST})[:6]
+            if syms:
+                r = requests.get(_TWELVEDATA_TS, params={
+                    "symbol": ",".join(syms), "interval": "5min", "outputsize": 96,
+                    "apikey": _TWELVEDATA_API_KEY}, timeout=15)
+                body = r.json() if r.ok else {}
+                if isinstance(body, dict) and str(body.get("status", "")).lower() != "error":
+                    vals = {}
+                    for sym in syms:
+                        node = body.get(sym) if len(syms) > 1 else body
+                        if not isinstance(node, dict):
+                            continue
+                        vw = argus_market_depth.compute_vwap(node.get("values") or [])
+                        if vw is not None:
+                            vals[sym] = vw
+                    if vals:
+                        probe.update({"computed": True, "values": vals,
+                                      "note": f"{len(vals)}銘柄のセッションVWAPを5分足から算出(算出値)"})
+    except Exception:
+        probe["note"] = "VWAPプローブ失敗(次回再試行)"
+    _VWAP_CACHE["data"] = probe
+    _VWAP_CACHE["expires"] = now + (1800 if probe["computed"] else 900)
+    return probe
 
 def _market_depth_report():
     now = time.time()
@@ -9858,11 +9899,14 @@ def _market_depth_report():
     except Exception: rp = {}
     try: reg = _source_registry()
     except Exception: reg = {}
+    try: vwap = _vwap_probe()
+    except Exception: vwap = None
     try:
         rep = argus_market_depth.build_market_depth_report(
             now_iso=_ai_now_iso(), bridge_age_sec=_push_last_age_sec(),
             moomoo_capability=mc, realtime_proof=rp, source_registry=reg,
-            jp_open=_jp_market_open(), us_open=_us_market_open())
+            jp_open=_jp_market_open(), us_open=_us_market_open(),
+            vwap_probe=vwap)
     except Exception:
         rep = None
     _MARKET_DEPTH_CACHE["data"] = rep

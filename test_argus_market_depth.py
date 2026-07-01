@@ -80,3 +80,40 @@ class MarketDepthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── VWAP computation + probe-driven capability (v10.200) ─────────────────────
+def test_compute_vwap_known_value():
+    bars = [{"high": 11, "low": 9, "close": 10, "volume": 100},   # tp=10
+            {"high": 22, "low": 18, "close": 20, "volume": 300}]  # tp=20
+    # vwap = (10*100 + 20*300)/400 = 7000/400 = 17.5
+    assert MD.compute_vwap(bars) == 17.5
+
+def test_compute_vwap_zero_volume_and_empty():
+    assert MD.compute_vwap([{"high": 1, "low": 1, "close": 1, "volume": 0}]) is None
+    assert MD.compute_vwap([]) is None
+    assert MD.compute_vwap(None) is None
+    assert MD.compute_vwap([{"high": "x", "low": 1, "close": 1, "volume": 5}]) is None
+
+def test_vwap_capability_live_when_probe_computed():
+    r = rpt(vwap_probe={"computed": True, "values": {"NVDA": 123.4}, "asOf": NOW})
+    v = r["capabilities"]["VWAP"]
+    assert v["status"] == "live" and v["probed"] is True
+    assert v["sample"] == {"NVDA": 123.4}
+    assert r["capabilitiesForGuard"]["VWAP"] == "live"
+
+def test_vwap_capability_unavailable_but_probed_when_no_bars():
+    r = rpt(vwap_probe={"computed": False, "probed": True, "note": "intraday bars empty"})
+    v = r["capabilities"]["VWAP"]
+    assert v["status"] == "unavailable" and v["probed"] is True
+
+def test_us_extended_probe_reflected():
+    r = rpt(us_extended_probe={"status": "requires_contract", "probed": True, "note": "Basic=regular only"})
+    assert r["capabilities"]["US_EXTENDED"]["status"] == "requires_contract"
+    assert r["capabilities"]["US_EXTENDED"]["probed"] is True
+
+def test_bridge_and_jpcash_marked_probed():
+    r = rpt(bridge_age_sec=30.0)
+    assert r["capabilities"]["BRIDGE"]["probed"] is True
+    assert r["capabilities"]["JP_CASH"]["probed"] is True
+    assert r["capabilities"]["JP_PTS"]["probed"] is False   # structural, not measured

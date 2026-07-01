@@ -32,8 +32,14 @@ export const MarketDepthCard: React.FC = () => {
             const s = STATUS[c.status] ?? STATUS.unavailable;
             return (
               <div className="mdepth__row" key={key} title={c.limitations || ''}>
-                <span className="mdepth__label">{c.labelJa ?? key}{c.affectsActionLevel ? ' ·判断に影響' : ''}</span>
-                <span className="mdepth__status" style={{ color: s.tone }}>{s.ja}</span>
+                <span className="mdepth__label">
+                  {c.labelJa ?? key}
+                  {c.probed ? <span className="mdepth__probed">実測</span> : null}
+                  {c.affectsActionLevel ? ' ·判断に影響' : ''}
+                </span>
+                <span className="mdepth__status" style={{ color: s.tone }}>
+                  {s.ja}{key === 'VWAP' && c.sample ? ` (${Object.keys(c.sample).length}銘柄)` : ''}
+                </span>
               </div>
             );
           })}
