@@ -209,19 +209,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     >
       <MarketSessionLamps />
 
-      {/* LIMITED VISIBILITY (v10.195) — a PROMINENT banner only on situational
-          degradation (bridge stale in session / held-stale regime / budget stopped);
-          structural gaps (PTS/L2/tape/VWAP) live in the muted coverage line below so
-          the warning never dominates on normal days but is never absent either. */}
-      {visLimited && guard!.warnings.length > 0 && (
-        <div className={`limited-visibility limited-visibility--${guard!.visibilityLevel}`} role="status">
-          <span className="limited-visibility__tag">監視に穴があります</span>
-          <div className="limited-visibility__body">
-            {guard!.warnings.map((w) => <p key={w.code} className="limited-visibility__warn">{w.messageJa}</p>)}
-            <p className="limited-visibility__note">ARGUSが検知していないことは安全を意味しません。</p>
-          </div>
-        </div>
-      )}
+      {/* LIMITED VISIBILITY (v10.207, owner request): the big yellow "監視に穴があります"
+          banner was removed — the owner wants only the plain "PARTIAL DATA" keyword in its
+          usual place (the hero status line). A situational degradation (visLimited) is now
+          folded into the hero's data-quality below, so it still surfaces as PARTIAL DATA
+          without a dominating card. The guard's confidence cap + ENTER suppression are
+          unchanged (they flow through cappedConf / the signal), and the muted structural
+          coverage line still sits below the hero — nothing loud, nothing lost. */}
 
       {/* OWNER CRITICAL — a held position on EXIT/DEFEND is surfaced at the very top
           (small), so a held emergency is never missed below the fold (v10.145). */}
@@ -239,7 +233,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* Top page = the main hub (v10.140). Order: PRIMARY COMMAND (+ IMPORTANT
           EVENTS as its lower block) → per-stock category cards (JP first, watchlist
           before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
-      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial} confidence={cappedConf} onNavigate={onNavigate} />
+      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial || visLimited} confidence={cappedConf} onNavigate={onNavigate} />
 
       {/* Structural coverage line (v10.195) — always present but MUTED (not an alarm):
           the owner is never falsely reassured that ARGUS sees everything. */}
