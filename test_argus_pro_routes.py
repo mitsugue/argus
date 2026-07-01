@@ -44,6 +44,15 @@ def test_positioning_returns_controlled_response_not_500():
             assert r.is_json
 
 
+def test_whitespace_symbol_rejected_not_200():
+    # a whitespace-only symbol must be a controlled 400, never a spurious 200
+    with scanner.app.test_client() as c:
+        r1 = c.get("/api/argus/events/%20/research-mission")
+        r2 = c.get("/api/argus/institutional-intelligence/positioning/%20")
+    assert r1.status_code == 400 and r1.get_json().get("error") == "symbol_required"
+    assert r2.status_code == 400 and r2.get_json().get("error") == "symbol_required"
+
+
 def test_no_malformed_double_slash_api_routes():
     # guard the whole /api/argus surface against '//' route typos
     for r in _rules():

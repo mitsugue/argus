@@ -6069,7 +6069,10 @@ def api_argus_research_mission(symbol):
     """§12 deterministic research mission for an asset — runs the analyst-role swarm
     over the collected evidence. NO LLM (cost.llmCalls=0), so it is safe as a public
     GET. Returns rolesRun + evidence + adversarialFlags + the gated ARGUS view."""
-    symu = str(symbol).upper()
+    symu = str(symbol).strip().upper()
+    if not symu:
+        return jsonify({"error": "symbol_required",
+                        "messageJa": "銘柄コードを指定してください。"}), 400
     held = symu in _intel_watchlist_symbols()
     event = _real_event_for(symu, held)
     mission = argus_research_swarm.run_mission(
@@ -6099,7 +6102,10 @@ def api_argus_positioning(symbol):
     """§14 institutional positioning read for an asset (uncalibrated). Uses the
     best-available FAST signal (realtime pushed quote); slow-positioning feeds
     (13F/FINRA/EDINET) are honestly absent until wired. Never names a trader."""
-    symu = str(symbol).upper()
+    symu = str(symbol).strip().upper()
+    if not symu:
+        return jsonify({"error": "symbol_required",
+                        "messageJa": "銘柄コードを指定してください。"}), 400
     sig = None
     for mkt in ("US", "JP"):
         q = (_PUSHED_QUOTES.get(mkt) or {}).get(symu)

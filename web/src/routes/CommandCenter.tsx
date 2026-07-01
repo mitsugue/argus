@@ -233,7 +233,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* Top page = the main hub (v10.140). Order: PRIMARY COMMAND (+ IMPORTANT
           EVENTS as its lower block) → per-stock category cards (JP first, watchlist
           before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
-      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial || visLimited} confidence={cappedConf} onNavigate={onNavigate} />
+      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial || visLimited} confidence={cappedConf} visibilityReasonJa={al.data?.visibility?.downgradeReasonJa} onNavigate={onNavigate} />
 
       {/* Structural coverage line (v10.195) — always present but MUTED (not an alarm):
           the owner is never falsely reassured that ARGUS sees everything. */}

@@ -41,11 +41,21 @@ export interface Calibration {
   hitRate: number | null;
 }
 
+export interface ActionVisibility {
+  visibilityLevel?: string | null;
+  confidenceCap?: number | null;
+  blockedActions?: string[];
+  entryBlocked?: boolean;
+  downgradeReasonJa?: string;
+  reasonCodes?: string[];
+  coverageLineJa?: string | null;
+}
 export interface ActionLabelsSnapshot {
   status: SnapshotStatus;
   asOf: string;
   engineVersion: string;
   marketPosture: MarketPosture;
   calibration?: Calibration;
+  visibility?: ActionVisibility;   // v11 — the guard's live effect on judgment
   labels: ActionLabel[];
 }

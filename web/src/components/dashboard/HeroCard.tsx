@@ -16,6 +16,7 @@ interface Props {
   overlay?: HeroOverlay | null;
   isPartialData?: boolean;
   confidence?: number | null;   // already capped by the caller when partial
+  visibilityReasonJa?: string;  // v11 — why the Visibility Guard downgraded (if it did)
   onNavigate?: (key: RouteKey) => void;
 }
 
@@ -39,7 +40,7 @@ const OWNER_DISPLAY: Record<string, string> = {
 // COMMAND-FIRST Today hero (v10.120): the actionable command (Action Level +
 // permissions) is the first thing; market context sits BELOW it; "Why" is the
 // detail. No ambiguous CLEAR; raw enums (EVENT_WAIT) are formatted for display.
-export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence, onNavigate }) => {
+export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence, visibilityReasonJa, onNavigate }) => {
   const ownerCode = overlay?.holderRiskOverlay;
   const ownerRisk = !!(ownerCode && ownerCode !== 'NONE');
   return (
@@ -55,6 +56,12 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
         confidence={confidence}
         nextConditionJa={judgment.nextCondition}
       />
+      {/* Visibility Guard live effect (v11): why judgment was downgraded, when it was. */}
+      {visibilityReasonJa ? (
+        <p className="hero__vis-reason" style={{
+          margin: '8px 2px 0', fontSize: 12, color: 'var(--amber, #fbbf24)', lineHeight: 1.5,
+        }}>⚠ {visibilityReasonJa}</p>
+      ) : null}
 
       {/* LOWER BLOCK (spec §2): IMPORTANT EVENTS inside the SAME command card,
           separated by a divider — so the owner learns why e.g. PCE matters right
