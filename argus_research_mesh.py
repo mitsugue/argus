@@ -353,9 +353,10 @@ _SOURCE_FAMILY_KEYS = (
     ("yahoo", "yahoo"), ("associated press", "ap"), (" ap ", "ap"),
     ("financial times", "ft"), ("cnn", "cnn"), ("forbes", "forbes"),
     ("business insider", "insider"), ("seeking alpha", "seekingalpha"),
+    ("google_news", "google"), ("google news", "google"), ("googlenews", "google"),
 )
 # Portals that mostly re-publish others — never counted as an INDEPENDENT family.
-_AGGREGATOR_FAMILIES = {"yahoo", "nasdaq", "seekingalpha"}
+_AGGREGATOR_FAMILIES = {"yahoo", "nasdaq", "seekingalpha", "google"}
 
 
 def source_family(source_id: Optional[str]) -> str:
