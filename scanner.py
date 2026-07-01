@@ -9580,8 +9580,23 @@ def api_argus_vault_push():
         oldest = min(_VAULT_SLOTS, key=lambda k: _VAULT_SLOTS[k]["ts"])
         del _VAULT_SLOTS[oldest]
     _VAULT_SLOTS[vid] = {"blob": blob, "ts": time.time()}
-    return jsonify({"ok": True, "queued": len(_VAULT_SLOTS),
-                    "noteJa": "受領。次回の台帳ラン(平日16:05)でクラウド(GitHub)に保存されます。"})
+    # v10.202 durability fix: persist the ciphertext IMMEDIATELY to the owner-private
+    # repo. The old design only held it in memory until a daily workflow drained it —
+    # but a deploy/restart wiped the slot first, so backups often never reached git
+    # (root cause of "no cloud backup found"). Ciphertext + passphrase-derived id →
+    # safe to store; the daily ledger commit still runs as a second copy.
+    durable = False
+    try:
+        if _layer2b_store_configured():
+            import json as _json
+            durable = bool(_gh_private_put(f"vault/{vid}.json",
+                                           _json.dumps({"blob": blob, "ts": time.time()}),
+                                           "vault backup (client-encrypted)", overwrite=True))
+    except Exception:
+        durable = False
+    return jsonify({"ok": True, "queued": len(_VAULT_SLOTS), "durable": durable,
+                    "noteJa": ("暗号化バックアップを保存しました(即時・端末退避でも復元可)。"
+                               if durable else "受領。次回の台帳ラン(平日16:05)でクラウドに保存されます。")})
 
 @app.route("/api/argus/vault-relay")
 def api_argus_vault_relay():
@@ -9593,9 +9608,22 @@ def api_argus_vault_relay():
     if not _VAULT_ID_RE.match(vid):
         return jsonify({"error": "bad_vault_id"}), 400
     s = _VAULT_SLOTS.get(vid)
-    if not s:
-        return jsonify({"error": "not_found"}), 404
-    return jsonify({"ts": s["ts"], "blob": s["blob"]})
+    if s:
+        return jsonify({"ts": s["ts"], "blob": s["blob"]})
+    # v10.202: fall back to the durable private-repo copy when the in-memory slot was
+    # lost to a restart. This is what makes "restore after the device was evicted"
+    # actually work. The vault id is passphrase-derived + unguessable; ciphertext only.
+    try:
+        if _layer2b_store_configured():
+            import json as _json
+            content, _sha = _gh_private_get(f"vault/{vid}.json")
+            if content:
+                d = _json.loads(content)
+                if d.get("blob"):
+                    return jsonify({"ts": d.get("ts"), "blob": d["blob"], "source": "durable"})
+    except Exception:
+        pass
+    return jsonify({"error": "not_found"}), 404
 
 @app.route("/api/argus/vault-pull", methods=["POST"])
 def api_argus_vault_pull():
