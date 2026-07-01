@@ -53,6 +53,33 @@ export const RegimeMatrix: React.FC<Props> = ({ state, compact = false, axisLabe
   const tintW = (W - PAD_L - PAD_R) / 2;
   const tintH = (H - PAD_T - PAD_B) / 2;
 
+  // v10.190: lay out asset labels with vertical de-collision + side flipping so
+  // clustered points (e.g. the US risk assets that pile up top-right) stay
+  // readable. Labels near the right edge flip to the LEFT of their dot; labels
+  // that would overlap are pushed apart and connected to their dot by a leader.
+  const MIN_GAP = 12;
+  const laidOut = React.useMemo(() => {
+    const pts = state.assets.map((a) => {
+      const dotX = plotX(a.x);
+      const dotY = plotY(a.y);
+      const estW = a.label.length * 5.2 + 8;
+      const toLeft = dotX + estW > W - PAD_R;
+      return { label: a.label, dotX, dotY, toLeft, labelY: dotY };
+    });
+    for (const side of [true, false]) {
+      const grp = pts.filter((p) => p.toLeft === side).sort((p, q) => p.dotY - q.dotY);
+      let lastY = -Infinity;
+      for (const p of grp) {
+        p.labelY = Math.max(p.dotY, lastY + MIN_GAP);
+        lastY = p.labelY;
+      }
+      const last = grp[grp.length - 1];
+      const overflow = last ? last.labelY - (H - PAD_B - 4) : 0;
+      if (overflow > 0) for (const p of grp) p.labelY -= overflow;
+    }
+    return pts;
+  }, [state.assets]);
+
   return (
     <div className={`matrix${compact ? ' matrix--compact' : ''}`}>
       <div className="matrix__plot">
@@ -100,13 +127,18 @@ export const RegimeMatrix: React.FC<Props> = ({ state, compact = false, axisLabe
           <text className="matrix__axis-label"
             x={plotX(0) + 6} y={H - PAD_B - 6} textAnchor="start">{axisLabels.yNeg}</text>
 
-          {/* Asset class context dots */}
-          {state.assets.map((a) => (
-            <g key={a.label}>
-              <circle className="matrix__asset-dot"
-                cx={plotX(a.x)} cy={plotY(a.y)} r={3} />
+          {/* Asset class context dots (de-collided labels + leader lines) */}
+          {laidOut.map((p) => (
+            <g key={p.label}>
+              <circle className="matrix__asset-dot" cx={p.dotX} cy={p.dotY} r={3} />
+              {Math.abs(p.labelY - p.dotY) > 2 && (
+                <line className="matrix__asset-leader"
+                  x1={p.dotX} y1={p.dotY}
+                  x2={p.toLeft ? p.dotX - 5 : p.dotX + 5} y2={p.labelY - 3} />
+              )}
               <text className="matrix__asset-label"
-                x={plotX(a.x) + 6} y={plotY(a.y) + 3}>{a.label}</text>
+                x={p.toLeft ? p.dotX - 6 : p.dotX + 6} y={p.labelY}
+                textAnchor={p.toLeft ? 'end' : 'start'}>{p.label}</text>
             </g>
           ))}
 
@@ -115,11 +147,18 @@ export const RegimeMatrix: React.FC<Props> = ({ state, compact = false, axisLabe
           <circle className="matrix__current-ring"  cx={cx} cy={cy} r={11} />
           <circle className="matrix__current-dot"   cx={cx} cy={cy} r={5.5} />
         </svg>
+        {/* Legend — the blue marker is the MARKET's current location, not your
+            position. Grey dots are asset classes (also not holdings). */}
+        <p className="matrix__legend">
+          <span className="matrix__legend-key"><i className="matrix__legend-dot matrix__legend-dot--current" />市場全体の現在地</span>
+          <span className="matrix__legend-key"><i className="matrix__legend-dot matrix__legend-dot--asset" />各資産クラス</span>
+          <span className="matrix__legend-note">※保有ポジションではありません</span>
+        </p>
       </div>
 
       <aside className="matrix__sidebar">
         <div className="matrix__sidebar-row">
-          <span className="matrix__sidebar-label">Current location</span>
+          <span className="matrix__sidebar-label">Current location · 現在地(市場全体)</span>
           <span className="matrix__sidebar-value">{state.quadrantLabel}</span>
         </div>
         <div className="matrix__sidebar-row">

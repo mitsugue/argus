@@ -4203,8 +4203,15 @@ def _yahoo_jp_movers():
     if _YAHOO_MOVERS_CACHE["data"] is not None and now < _YAHOO_MOVERS_CACHE["expires"]:
         return _YAHOO_MOVERS_CACHE["data"]
     g, l = _yahoo_rank("up"), _yahoo_rank("down")
+    # Yahoo's all-market ranking is ~20min delayed. Stamp the effective DATA time
+    # (fetch − delay), not just the fetch time, so the UI can't imply realtime
+    # (v10.190 honesty fix — the change% itself is a correct 1-day move vs prev
+    # close; only the freshness label was misleading).
+    delay_min = 20
+    data_iso = datetime.fromtimestamp(now - delay_min * 60, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     out = {"status": "live" if (g or l) else "unavailable",
            "provider": "Yahoo!ファイナンス(約20分遅延・全市場)", "asOf": _ai_now_iso(),
+           "dataAsOf": data_iso, "delayMin": delay_min,
            "gainers": g[:15], "losers": l[:15]}
     _YAHOO_MOVERS_CACHE["data"] = out
     _YAHOO_MOVERS_CACHE["expires"] = now + (_YAHOO_MOVERS_TTL if out["status"] == "live" else 600)
@@ -4859,6 +4866,10 @@ def _caos_catalyst_for(sym, news_items, intel_items):
     for n in list(news_items) + list(intel_items):
         blob = (n.get("headline") or n.get("title") or "") + " " + (n.get("headlineJa") or n.get("titleJa") or "")
         link = next((m for m in _entity_link(blob) if m["symbol"] == sym), None)
+        # v10.190: a JP per-symbol headline (fetched by company name) carries a
+        # symbolHint — treat it as a direct name link even if the alias table misses.
+        if not link and str(n.get("symbolHint") or "").upper() == sym:
+            link = {"via": "name", "term": None, "relationJa": None}
         if not link:
             continue
         corr = n.get("corroboration") or "single"
@@ -4870,6 +4881,55 @@ def _caos_catalyst_for(sym, news_items, intel_items):
                     and link.get("via") == "entity" and best.get("via") != "entity")):
             best = cand
     return best
+
+
+# ── JP single-stock Japanese-language headlines (v10.190) ─────────────────────
+# The intel allow-list is macro/global (Bloomberg/CNBC/Nikkei-markets); it rarely
+# NAMES an individual JP company, so the downside association ("なぜ落ちた?") had no
+# Japanese headline to match and every drop read as "原因未確認". This targeted fetch
+# pulls per-symbol JP headlines from Google News' public RSS search (a company-name
+# query), normalized through the same _parse_rss path (titles/links/dates only;
+# content is DATA, not instructions §23). Cached per symbol; best-effort; never raises.
+_JP_STOCK_NEWS_CACHE = {}          # sym -> {"expires": float}
+_JP_STOCK_NEWS_TTL   = 30 * 60
+
+def _google_news_jp_rss(query):
+    try:
+        from urllib.parse import quote
+        url = ("https://news.google.com/rss/search?q=" + quote(query)
+               + "&hl=ja&gl=JP&ceid=JP:ja")
+        xml = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8).text
+        return _parse_rss(xml, "google_news_jp", _ai_now_iso())
+    except Exception:
+        return []
+
+def _jp_stock_news_intel(pairs):
+    """For (symbol, jp_name) pairs, fetch Japanese headlines that NAME the company
+    and push them into _INTEL_STORE so the C.A.O.S. association can find a lead.
+    Returns count pushed. Cached per symbol (30 min)."""
+    now = time.time()
+    pushed = 0
+    seen = {(it.get("title") or "") for it in _INTEL_STORE}
+    for sym, name in pairs:
+        sym = str(sym).upper()
+        nm = (name or "").strip()
+        if not sym or not nm:
+            continue
+        c = _JP_STOCK_NEWS_CACHE.get(sym)
+        if c and now < c["expires"]:
+            continue
+        _JP_STOCK_NEWS_CACHE[sym] = {"expires": now + _JP_STOCK_NEWS_TTL}
+        for r in _google_news_jp_rss(f'"{nm}" (株価 OR 決算 OR 業績 OR 急落 OR 下落 OR 材料)')[:6]:
+            t = r.get("title") or ""
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            r = dict(r); r["symbolHint"] = sym; r["lang"] = "ja"; r["corroboration"] = "single"
+            _INTEL_STORE.append(r)
+            pushed += 1
+    if len(_INTEL_STORE) > _INTEL_STORE_MAX:
+        del _INTEL_STORE[:len(_INTEL_STORE) - _INTEL_STORE_MAX]
+    return pushed
 
 
 _ENTITY_PROFILE_SYSTEM = (
@@ -8116,7 +8176,15 @@ def _alert_action_for_etf(m, cautious):
                 f"緩やかな上昇トレンド(スコア{s:+.2f})。",
                 "トレンドの継続と地合いの変化を確認する。")
     if s > -0.15:
-        return (("WAIT" if cautious else "HOLD"), "low", "low",
+        # Neutral band. v10.190: under a cautious posture (EVENT_WAIT/RISK_OFF) we
+        # no longer collapse this to a flat WAIT — that made the whole page read as
+        # "do nothing". Existing positions can be HELD; only NEW entries wait for the
+        # event to pass. HOLD(保有継続) ≠ WAIT(新規待ち) — the distinction is the point.
+        if cautious:
+            return ("HOLD", "low", "med",
+                    f"方向感は限定的(スコア{s:+.2f})。重要イベント接近のため新規は様子見だが、既存の保有は継続でよい。",
+                    "イベント通過と明確なトレンドの発生を待って新規を検討する。")
+        return ("HOLD", "low", "low",
                 f"方向感は限定的(スコア{s:+.2f})。",
                 "明確なトレンド発生か地合いの改善を待つ。")
     if s > -0.4:
@@ -8551,11 +8619,28 @@ def get_downside_incidents():
     # CANDIDATE lead, so each row names its likely driver without asserting causation.
     try:
         _news_rel = [n for n in (get_market_news().get("items") or []) if n.get("relevant")]
-        _intel = list(_INTEL_STORE)[:60]
+        # v10.190: the macro intel feeds rarely name an individual JP stock, so a
+        # JP single-name drop had nothing to associate with. Pull per-symbol JP
+        # headlines (by company name) for the actual incident symbols before matching.
+        try:
+            _name_by_sym = {str(a.get("symbol")).upper(): a.get("name") for a in assets}
+            _pairs = [(str(inc.get("symbol")).upper(),
+                       _name_by_sym.get(str(inc.get("symbol")).upper())
+                       or (_ENTITY_PROFILES.get(str(inc.get("symbol")).upper()) or {}).get("name"))
+                      for inc in incidents if str(inc.get("market") or "JP").upper() == "JP"]
+            _jp_stock_news_intel(_pairs)
+        except Exception:
+            pass
+        _intel = list(_INTEL_STORE)[:80]
         _corr_ja = {"official": "公式ソース", "corroborated": "複数系統で確認", "single": "単一ソース・要確認"}
         for inc in incidents:
             lead = _caos_catalyst_for(inc.get("symbol"), _news_rel, _intel)
             if not lead:
+                # Honesty (v10.190): don't leave a silent "原因未確認" — say WHY there's
+                # no lead (no JP news/disclosure found yet), so it reads as "未取得・要確認"
+                # rather than "no cause exists". Proactively flag broken/empty states.
+                inc["reasonJa"] = (f"{inc.get('reasonJa', '')} ／ C.A.O.S.候補: 該当銘柄の日本語ニュース"
+                                   f"・開示が未取得のため連想リードなし(要手動確認)").strip()
                 continue
             inc["caosLead"] = lead
             rel = f"（{lead['relationJa']}）" if lead.get("relationJa") else ""

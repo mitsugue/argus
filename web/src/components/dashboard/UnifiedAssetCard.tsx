@@ -124,14 +124,14 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
               A reported view, never a trading position; renders nothing when none. */}
           <InstitutionalView symbol={c.symbol} />
 
-          {/* Deep cause attribution — the full 原因スタック (immediate trigger /
-              distribution / contagion / positioning / what-would-change / data
-              limits). Same depth as the old standalone card; nothing stripped. */}
-          {c.hasIncident && (
-            <div className="uac-sec uac-deep">
-              <CauseStackCard symbol={c.symbol} market={c.market} />
-            </div>
-          )}
+          {/* Cause attribution + the "なぜ動いた? ライブで調べる" button. v10.190:
+              rendered on EVERY expanded stock (owner: 全銘柄で押せるように), not just
+              incident stocks. The button is always available; the full 原因スタック
+              (immediate trigger / distribution / contagion / positioning / what-would-
+              change) renders inside only when attribution data exists. */}
+          <div className="uac-sec uac-deep">
+            <CauseStackCard symbol={c.symbol} market={c.market} />
+          </div>
         </div>
       )}
     </div>

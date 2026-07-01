@@ -281,7 +281,9 @@ export const MarketRegime: React.FC = () => {
         <div className="section-head">
           <span className="section-head__title">JP Market Movers</span>
           <span className="section-head__count">
-            {jpMovers?.status === 'live' ? (jpMovers.provider ?? `as of ${jpMovers.asOf ?? ''}`) : jpMovers?.status ?? '…'}
+            {jpMovers?.status === 'live'
+              ? `${jpMovers.provider ?? 'JP'}${jpMovers.dataAsOf ? ` · データ ${jpMovers.dataAsOf.slice(11, 16)}Z時点` : ''}`
+              : jpMovers?.status ?? '…'}
           </span>
         </div>
         <div className="card">

@@ -252,6 +252,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               📊 自己採点(予測台帳・{ledger.data.overall.days}営業日 / {ledger.data.overall.n}件):
               シナリオ的中率 <b>{Math.round((ledger.data.overall.hitRate ?? 0) * 100)}%</b>
               ・Brier <b>{ledger.data.overall.brierMean?.toFixed(3) ?? '—'}</b>
+              {typeof ledger.data.overall.brierMean === 'number' && (
+                <span className="jlog__brier-hint">（3択の予報精度: 0=完璧 / 0.67=あてずっぽう / 低いほど良い{ledger.data.overall.brierMean < 0.667 ? ' → 情報あり◎' : ' → 無情報以下△'}）</span>
+              )}
               {ledger.data.aiDirectional.hitRate != null && (
                 <> ・AI方向的中 <b>{Math.round(ledger.data.aiDirectional.hitRate * 100)}%</b>({ledger.data.aiDirectional.n}件)</>
               )}
@@ -278,6 +281,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               🎯 引けピン(14:30→同日終値・{ledger.closepin.overall.days}日 / {ledger.closepin.overall.n}件):
               的中率 <b>{Math.round((ledger.closepin.overall.hitRate ?? 0) * 100)}%</b>
               ・Brier <b>{ledger.closepin.overall.brierMean?.toFixed(3) ?? '—'}</b>
+              {typeof ledger.closepin.overall.brierMean === 'number' && (
+                <span className="jlog__brier-hint">（0=完璧 / 0.67=あてずっぽう / 低いほど良い{ledger.closepin.overall.brierMean < 0.667 ? ' → 情報あり◎' : ' → 無情報以下△'}）</span>
+              )}
               <div className="jlog__acc-note">
                 ※「その日の終値が上/下/横ばいのどれか」をARGUSが当てられたかの自己採点(短期判断の校正)。
                 銘柄横断の集計値で、個別銘柄の売買シグナルでも翌日の上昇予測でもありません。

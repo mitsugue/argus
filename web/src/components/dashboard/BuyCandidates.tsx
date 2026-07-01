@@ -13,26 +13,36 @@ interface BuyCandidate {
 
 export const BuyCandidates: React.FC = () => {
   const [items, setItems] = React.useState<BuyCandidate[] | null>(null);
+  const [asOf, setAsOf] = React.useState<string | null>(null);
   React.useEffect(() => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) return;
     let alive = true;
     const url = backend.replace(/\/$/, '') + '/api/argus/buy-candidates';
-    const load = () => fetch(url).then((r) => r.json()).then((j) => { if (alive) setItems(j.items || []); }).catch(() => {});
+    const load = () => fetch(url).then((r) => r.json()).then((j) => { if (alive) { setItems(j.items || []); setAsOf(j.asOf || null); } }).catch(() => {});
     load();
     const iv = setInterval(load, 5 * 60_000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
   if (items === null) return null;
+  // Freshness (v10.190): distinguish "ran and found nothing" from "hasn't run".
+  const ageMin = asOf ? Math.max(0, Math.round((Date.now() - Date.parse(asOf)) / 60000)) : null;
+  const screenedAt = asOf ? asOf.slice(11, 16) + 'Z' : null;
+  const stale = ageMin != null && ageMin > 120;
   return (
     <section className="buyc">
       <div className="buyc-head">
         <span className="buyc-title">RECOMMEND</span>
         <span className="buyc-sub">ARGUSが「今が買い時」と判断(watchlist外・高確信のみ・要確認)</span>
+        {screenedAt && <span className="buyc-asof">最終選別 {screenedAt}{stale ? '・更新待ち' : ''}</span>}
       </div>
       {items.length === 0 ? (
-        <p className="buyc-empty">今は「買い時」と判断できる銘柄はありません(無理に出しません)。</p>
+        <p className="buyc-empty">
+          {stale
+            ? `更新待ちです(最終選別 ${screenedAt} から時間が経過)。次の場中スクリーニングで更新されます。`
+            : `本日は「買い時」と判断できる銘柄はありませんでした(${screenedAt ? `最終選別 ${screenedAt}・` : ''}無理に出しません)。機能は正常です。`}
+        </p>
       ) : items.map((c) => (
         <div className="buyc-row" key={`${c.market}:${c.symbol}`}>
           <div className="buyc-l1">

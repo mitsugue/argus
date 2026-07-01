@@ -43,15 +43,18 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
     } catch { setWhy({ loading: false, text: '取得に失敗しました。' }); }
   }
 
-  if (!data) return null;
-  const causes = Object.entries(data.causeProbabilities || {}).sort((a, b) => b[1] - a[1]).slice(0, 4);
-  const posTop = Object.entries(data.positioning?.probabilities || {}).sort((a, b) => b[1] - a[1])[0];
+  // v10.190: no longer early-returns on missing data. The "なぜ動いた?" button is
+  // ALWAYS available on every expanded stock (owner asked: 全銘柄で押せるように),
+  // and the detailed cause stack renders only when attribution data is present.
+  const causes = data ? Object.entries(data.causeProbabilities || {}).sort((a, b) => b[1] - a[1]).slice(0, 4) : [];
+  const posTop = data ? Object.entries(data.positioning?.probabilities || {}).sort((a, b) => b[1] - a[1])[0] : undefined;
+  const material = !!data && typeof data.changePct === 'number' && Math.abs(data.changePct) >= 2;
 
   return (
     <section className="csc-card">
       <header className="csc-head">
-        <h2>原因の詳細</h2>
-        <span className="csc-sym">{data.symbol}{typeof data.changePct === 'number' ? ` ${data.changePct.toFixed(1)}%` : ''}</span>
+        <h2>{material ? '原因の詳細' : '値動きの背景'}</h2>
+        {data && <span className="csc-sym">{data.symbol}{typeof data.changePct === 'number' ? ` ${data.changePct.toFixed(1)}%` : ''}</span>}
       </header>
 
       <div className="csc-why">
@@ -62,6 +65,7 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
         {why.text && <p className="csc-why-note">最新ニュースをC.A.O.S.の関係性で連想・推定。要確認・投資助言ではありません。</p>}
       </div>
 
+      {data && (<>
       <div className="csc-trigger">
         <span className="csc-k">確定した即時引き金</span>
         {data.immediateTrigger ? (
@@ -110,6 +114,7 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
           ))}
         </div>
       )}
+      </>)}
       <p className="csc-foot">決定支援のみ・原因の断定や機関名の名指しはしません。</p>
     </section>
   );

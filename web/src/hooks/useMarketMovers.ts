@@ -7,6 +7,9 @@ export interface MoverRow { symbol: string; price: number; changePct: number; na
 export interface MarketMovers {
   status: 'live' | 'missing_key' | 'unavailable' | 'warming';
   asOf: string | null;
+  /** Effective data timestamp (fetch − delay) for delayed feeds (v10.190). */
+  dataAsOf?: string | null;
+  delayMin?: number;
   provider?: string;
   gainers: MoverRow[];
   losers: MoverRow[];

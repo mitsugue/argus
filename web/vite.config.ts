@@ -80,6 +80,21 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: { cacheName: 'fonts-cache', expiration: { maxEntries: 20 } },
           },
+          {
+            // ARGUS backend GETs — StaleWhileRevalidate (v10.190). On launch the SW
+            // serves the LAST cached snapshot INSTANTLY (so the screen is populated
+            // even while the free-plan dyno cold-starts / the fetches are in flight),
+            // then revalidates in the background. Directly targets the "画面が整うのに
+            // 時間がかかる" complaint without any extra API spend. All /api/argus/*
+            // responses already carry asOf/status, so a brief stale paint is honest.
+            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/.*/i,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'argus-api',
+              expiration: { maxEntries: 80, maxAgeSeconds: 60 * 60 * 12 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
         ],
       },
     }),

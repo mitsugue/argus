@@ -286,11 +286,16 @@ def test_alert_etf_strong_momentum_is_pullback_wait():
     assert action == "WAIT FOR PULLBACK"
 
 
-def test_alert_etf_neutral_goes_wait_when_cautious():
+def test_alert_etf_neutral_holds_even_when_cautious():
+    # v10.190: a neutral-band asset class is HELD (保有継続) in both postures — under
+    # a cautious posture only NEW entries wait; we no longer collapse it to a flat
+    # WAIT (that made the whole page read as "do nothing"). The cautious nuance lives
+    # in the reason ("新規は様子見だが既存の保有は継続でよい"), not in a downgraded action.
     m = {"score": 0.0, "momentum1d": 0.0, "momentum5d": 0.1, "momentum20d": 0.2}
-    a1, *_ = scanner._alert_action_for_etf(m, cautious=True)
+    a1, _c1, _r1, reason1, _n1 = scanner._alert_action_for_etf(m, cautious=True)
     a2, *_ = scanner._alert_action_for_etf(m, cautious=False)
-    assert a1 == "WAIT" and a2 == "HOLD"
+    assert a1 == "HOLD" and a2 == "HOLD"
+    assert "新規" in reason1  # cautious posture is surfaced in the reason, not the action
 
 
 def test_alert_etf_deep_selloff_is_high_risk_wait():
