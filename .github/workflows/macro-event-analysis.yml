@@ -10,6 +10,11 @@ name: macro-event-analysis
 on:
   schedule:
     - cron: '35 0,2,4,6,8,10,12,14,16,18,20,22 * * 1-5'
+    # V11.4.1 hot-refresh minutes after the 08:30 ET (12:30 UTC) US releases so the
+    # dashboard never shows a stale "pre" card once NFP/CPI/etc. have printed.
+    - cron: '35 12 * * 1-5'
+    - cron: '45 12 * * 1-5'
+    - cron: '30 13 * * 1-5'
   workflow_dispatch: {}
 
 permissions:
@@ -40,6 +45,11 @@ jobs:
             GEN=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "$BE/api/argus/admin/macro-event-analysis/generate" || echo '{"error":"unreachable"}')
             echo "generate: ${GEN:0:200}"
+            # V11.4.1: repair stuck post-release displays (fetch result, recompute phase,
+            # generate/repair the answer-check where actual+pre exist). Preserves pre.
+            REP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/macro-event-analysis/repair-post-release" || echo '{"error":"unreachable"}')
+            echo "repair-post-release: ${REP:0:200}"
           fi
 
       - name: Fetch the public-safe analysis snapshot

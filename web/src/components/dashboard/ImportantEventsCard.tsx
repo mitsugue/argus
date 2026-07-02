@@ -1,9 +1,25 @@
 import React from 'react';
 import { useImportantEvents, type ImportantEvent, type EventImpact } from '../../hooks/useImportantEvents';
 import { useMacroEventAnalysis, type MacroAnalysis } from '../../hooks/useMacroEventAnalysis';
+import { useDashboardEvents } from '../../hooks/useDashboardEvents';
+import { deriveDashboardEventDisplayState, type DashboardEvent } from '../../lib/dashboardEventState';
 import { useLocale, t, pick } from '../../i18n';
 import type { RouteKey } from '../NavRail';
 import './ImportantEventsCard.css';
+
+// v11.4.1 tone → color for the unified state badge.
+const STATE_TONE_COLOR: Record<string, string> = {
+  pre: 'var(--event-high, #8b5cf6)', pending: 'var(--amber, #fbbf24)',
+  post: 'var(--value-positive, #34d399)', checked: 'var(--value-positive, #34d399)',
+  warning: 'var(--amber, #fbbf24)', neutral: 'var(--text-muted)',
+};
+
+function jstFromUtc(utc?: string | null): string {
+  if (!utc) return '';
+  const d = new Date(utc);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' }) + ' JST';
+}
 
 // IMPORTANT EVENTS — teaches the owner WHY a macro event matters before they look
 // at individual assets (v10.138). Compact rows, top event expanded. Impact = how
@@ -106,14 +122,101 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
   );
 };
 
+// v11.4.1 UNIFIED ROW — the single event surface. After release, official result +
+// impact lead; the pre view drops to a collapsed "事前シナリオ（当時）". Released-pending
+// shows "発表済み・公式結果取得中" (never a countdown). The pre scenario is ARGUS's own
+// read — never called "consensus".
+const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh?: string }>
+  = ({ ev, open, lastRefresh }) => {
+  const ds = deriveDashboardEventDisplayState(ev);
+  const color = STATE_TONE_COLOR[ds.tone] ?? STATE_TONE_COLOR.neutral;
+  const c = ev.caos || {};
+  const when = [ev.eventDate, jstFromUtc(ev.eventTimeUtc)].filter(Boolean).join(' · ');
+  const vColor = (VERDICT_JA[c.verdict || 'not_available'] || VERDICT_JA.not_available).tone;
+  const preHistorical = (c.preScenarioJa || c.summaryJa) && ds.showPreAsHistorical ? (
+    <details className="ie-hist">
+      <summary style={{ color: 'var(--text-faint)', fontSize: 12, cursor: 'pointer' }}>事前シナリオ（当時）</summary>
+      <p className="ie-line" style={{ color: 'var(--text-sub)' }}>{c.preScenarioJa || c.summaryJa}</p>
+    </details>
+  ) : null;
+
+  return (
+    <details className="ie-row" open={open}>
+      <summary aria-label={`${ev.eventCode}, ${ev.stateLabelJa}, ${when}`}>
+        <span className="ie-when">{when}</span>
+        <span className="ie-code">{ev.eventCode}</span>
+        <span className="ie-impact" style={{ color, fontWeight: 700 }} aria-hidden>{ev.stateLabelJa}</span>
+      </summary>
+      <div className="ie-body">
+        {ds.showActualFirst && (
+          <>
+            <p className="ie-line"><span className="ie-k">公式結果</span><b>{ev.officialResult.headlineJa || '取得済み'}</b></p>
+            {ds.showImpact && <p className="ie-line"><span className="ie-k">影響コメント</span>{c.impactCommentJa}</p>}
+            {c.marketReactionJa && <p className="ie-line"><span className="ie-k">市場反応</span>{c.marketReactionJa}</p>}
+            {ds.showAnswerCheck && (
+              <p className="ie-line"><span className="ie-k">答え合わせ</span>
+                <b style={{ color: vColor }}>{c.verdictJa}</b>{c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</p>
+            )}
+            {!ds.showAnswerCheck && <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">答え合わせ</span>答え合わせ生成待ち</p>}
+            {preHistorical}
+          </>
+        )}
+        {ds.showPendingResult && (
+          <>
+            <p className="ie-line">発表時刻は通過。公式結果の取得待ち。</p>
+            {(ev.officialResult.limitationsJa || []).length > 0 && (
+              <p className="ie-data">{(ev.officialResult.limitationsJa || []).join(' / ')}</p>
+            )}
+            {preHistorical}
+            <p className="ie-data">次回更新: 定期リフレッシュ{lastRefresh ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</p>
+          </>
+        )}
+        {ds.showPreProminently && (
+          <>
+            {(c.preScenarioJa || c.summaryJa)
+              ? <p className="ie-line"><span className="ie-k">AIシナリオ</span>{c.preScenarioJa || c.summaryJa}</p>
+              : <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">AIシナリオ</span>生成待ち…</p>}
+            {c.marketPricingJa && <p className="ie-line"><span className="ie-k">市場の織り込み</span>{c.marketPricingJa}</p>}
+            {c.whatWouldSurpriseJa && <p className="ie-line"><span className="ie-k">サプライズ時</span>{c.whatWouldSurpriseJa}</p>}
+            {(c.assetsToWatch || []).length > 0 && (
+              <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
+            )}
+          </>
+        )}
+      </div>
+    </details>
+  );
+};
+
 interface Props { onNavigate?: (key: RouteKey) => void; embedded?: boolean; }
 
 // `embedded` = the lower block of the top command card (divider only, no card
 // chrome) per spec §2. Standalone = its own card (used elsewhere).
 export const ImportantEventsCard: React.FC<Props> = ({ onNavigate, embedded }) => {
   useLocale();
+  const dash = useDashboardEvents();             // v11.4.1: unified event feed (preferred)
   const { data } = useImportantEvents();
-  const analysis = useMacroEventAnalysis();      // v11.3.2: C.A.O.S. pre/post overlay
+  const analysis = useMacroEventAnalysis();      // v11.3.2: C.A.O.S. pre/post overlay (fallback)
+
+  // Preferred path: the unified dashboard-events surface (single source of truth).
+  if (dash && dash.items.length > 0) {
+    const shown = dash.items.slice(0, 5);
+    const lastRefresh = (dash.status?.lastHotRefreshAt as string) || undefined;
+    return (
+      <section id="important-events" className={embedded ? 'ie-embed' : 'ie-card'} aria-label="Important events">
+        <div className="ie-head">
+          <span className="ie-title">{t('ie.title')}</span>
+          <button className="ie-viewall" onClick={() => onNavigate?.('regime')}>{t('ie.viewAll')} →</button>
+        </div>
+        <div className="ie-rows">
+          {shown.map((ev, i) => <UnifiedEventRow key={ev.displayEventId} ev={ev} open={i === 0} lastRefresh={lastRefresh} />)}
+        </div>
+        <p className="ie-note">{t('ie.impactNote')}</p>
+      </section>
+    );
+  }
+
+  // Fallback: legacy important-events + macro overlay (if /dashboard-events is unavailable).
   const events = data?.events ?? [];
   if (events.length === 0) return null;          // calm: nothing shown when no high/critical events
   const shown = events.slice(0, 5);              // desktop ≤5; CSS hides beyond 3 on mobile

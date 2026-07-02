@@ -35,6 +35,7 @@ import argus_official_event_lifecycle  # official disclosures as lifecycle-track
 import argus_official_event_store  # durable official-event serialize/merge/restore (pure, v11.3.1)
 import argus_macro_event_analysis  # C.A.O.S. macro pre/post: phase resolver + prompts (pure, v11.3.2)
 import argus_macro_event_store  # durable macro-analysis merge/serialize (pure, v11.3.2)
+import argus_dashboard_event_summary  # unified top-card event model + de-dup (pure, v11.4.1)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -8969,6 +8970,99 @@ def api_argus_admin_macro_refresh_results():
     if not ok:
         return jsonify(err), code
     return jsonify(_refresh_macro_results())
+
+
+# ── V11.4.1 Unified dashboard event summary ──────────────────────────────────
+def _build_dashboard_events(limit=8, importance=None):
+    """Merge cached important events + macro analysis records into the unified
+    display model. Cache-only: reads the in-memory macro store + the (public-safe)
+    important-events snapshot; never calls an LLM, never fetches an official result."""
+    _macro_analysis_restore_once()
+    now_iso = _ai_now_iso()
+    try:
+        ie = _macro_important_events(12)
+    except Exception:
+        ie = []
+    recs = list(_MACRO_ANALYSIS.values())
+    summ = argus_dashboard_event_summary.build_summary(
+        important_events=ie, macro_records=recs, now_iso=now_iso, limit=20)
+    items = summ["items"]
+    if importance in ("critical", "high"):
+        items = [it for it in items if it.get("importance") == importance]
+    items = items[:max(1, min(20, int(limit or 8)))]
+    return summ, items, now_iso
+
+
+@app.route("/api/argus/dashboard-events")
+def api_argus_dashboard_events():
+    """Public cache-only: the single unified event surface for the top dashboard
+    card. Merges ImportantEvents + macro pre/actual/post, RE-RESOLVES the display
+    state from the real release clock (so a record generated pre-release flips to
+    post/pending after release), and de-duplicates. No LLM, no provider fetch."""
+    try:
+        limit = int(request.args.get("limit", "8"))
+    except Exception:
+        limit = 8
+    importance = (request.args.get("importance") or "").strip().lower()
+    include_details = (request.args.get("includeDetails") or "").lower() in ("1", "true", "yes")
+    summ, items, now_iso = _build_dashboard_events(limit, importance)
+    st = argus_dashboard_event_summary.status_counts({"items": items})
+    dedupe = dict(summ["dedupe"])
+    dedupe["mergedCount"] = len(items)
+    if not include_details:
+        dedupe["detailsJa"] = []
+    return jsonify({
+        "schemaVersion": argus_dashboard_event_summary.SCHEMA_VERSION,
+        "asOf": now_iso, "items": items, "dedupe": dedupe,
+        "status": {**st,
+                   "lastMacroAnalysisAt": _MACRO_ANALYSIS_STATE.get("lastGenerateAt"),
+                   "lastHotRefreshAt": _MACRO_ANALYSIS_STATE.get("lastResultsAt")},
+    })
+
+
+def _repair_post_release():
+    """Admin/cron: repair stuck displays after a major release — fetch official
+    results, recompute phase, generate/repair the post answer-check where the
+    result is available and the pre was preserved. Uses the existing budgeted
+    refresh+generate; never fabricates a result, never touches future pre records."""
+    _macro_analysis_restore_once()
+    before_actual = {eid: bool((r.get("actual") or {}).get("available"))
+                     for eid, r in _MACRO_ANALYSIS.items()}
+    before_post = {eid: bool((r.get("post") or {}).get("generatedAt"))
+                   for eid, r in _MACRO_ANALYSIS.items()}
+    _refresh_macro_results()                 # official results for released events
+    _generate_macro_event_analysis()         # post answer-check where actual + pre exist
+    now_iso = _ai_now_iso()
+    checked = actual_updated = post_generated = 0
+    items = []
+    for eid, r in _MACRO_ANALYSIS.items():
+        aa = bool((r.get("actual") or {}).get("available"))
+        pg = bool((r.get("post") or {}).get("generatedAt"))
+        phase = argus_macro_event_analysis.resolve_macro_event_phase(
+            r.get("eventTimeUtc"), now_iso, actual_available=aa, event_date=r.get("eventDate"))
+        if phase in ("released_pending_result", "post_result"):
+            checked += 1
+        if aa and not before_actual.get(eid):
+            actual_updated += 1
+        if pg and not before_post.get(eid):
+            post_generated += 1
+        items.append({"eventCode": r.get("eventCode"), "phase": phase,
+                      "actualAvailable": aa, "postGenerated": pg})
+    _macro_analysis_persist()
+    return {"ok": True, "checked": checked, "actualUpdated": actual_updated,
+            "postGenerated": post_generated, "displayUpdated": len(items),
+            "items": items[:20], "asOf": now_iso}
+
+
+@app.route("/api/argus/admin/macro-event-analysis/repair-post-release", methods=["POST"])
+def api_argus_admin_macro_repair_post_release():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        return jsonify(_repair_post_release())
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
 
 @app.route("/api/argus/event-analysis")

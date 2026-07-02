@@ -376,6 +376,72 @@ def v_official_admin_gated():
     return True, "snapshot/restore admin-gated"
 
 
+def v_dashboard_events():
+    # v11.4.1: the unified top-card event feed. Shape + no-leak; state must be valid.
+    c, d = _get("/api/argus/dashboard-events")
+    if d.get("schemaVersion") != "dashboard-event-summary-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if not isinstance(d.get("items"), list) or "dedupe" not in d or "status" not in d:
+        return False, "items/dedupe/status missing"
+    valid = {"pre", "imminent", "released_pending_result", "post_result",
+             "post_answer_checked", "stale", "not_scoreable"}
+    for it in d["items"]:
+        for k in ("displayEventId", "eventCode", "state", "stateLabelJa", "display",
+                  "officialResult", "caos", "dedupeKey"):
+            if k not in it:
+                return False, f"missing {k}"
+        if it["state"] not in valid:
+            return False, f"bad state {it['state']}"
+        if not isinstance(it["officialResult"].get("available"), bool):
+            return False, "officialResult.available not bool"
+    blob = json.dumps(d).lower()
+    for bad in ('"prompt":', '"messages":', '"rawproviderbody":', '"holdings":',
+                '"pnl":', '"costbasis":', '"apikey":'):
+        if bad in blob:
+            return False, f"leak {bad}"
+    return True, f"items={len(d['items'])} hiddenDup={d['dedupe'].get('hiddenDuplicateCount')}"
+
+
+def v_dashboard_events_nfp():
+    # If NFP's official result is available, the unified card MUST be post (never pre),
+    # show actual first, and carry a non-empty impact comment. If not yet available,
+    # this is a soft pass (nothing to assert about a pre/pending NFP).
+    c, m = _get("/api/argus/macro-event-analysis?eventCode=NFP")
+    nfp_macro = next((it for it in (m.get("items") or []) if it.get("eventCode") == "NFP"), None)
+    actual_avail = bool((nfp_macro or {}).get("actual", {}).get("available")) if nfp_macro else False
+    c, d = _get("/api/argus/dashboard-events?eventCode=NFP")
+    # dashboard-events importance filter isn't code-based, so scan all items for NFP
+    _, dall = _get("/api/argus/dashboard-events?limit=20")
+    nfp = next((it for it in (dall.get("items") or []) if it.get("eventCode") == "NFP"), None)
+    if not actual_avail:
+        return True, f"NFP actual not yet available (soft pass; card state={nfp.get('state') if nfp else 'n/a'})"
+    if not nfp:
+        return False, "NFP actual available but missing from dashboard-events"
+    if nfp["state"] == "pre":
+        return False, "NFP released but state=pre!"
+    if not nfp["display"].get("showActualFirst"):
+        return False, "NFP post but showActualFirst=false"
+    facts = nfp["officialResult"].get("headlineJa") or nfp["display"].get("primaryLineJa")
+    if not facts:
+        return False, "NFP post but no official facts shown"
+    if not (nfp["caos"].get("impactCommentJa") or "").strip():
+        return False, "NFP post but impact comment empty"
+    return True, f"NFP state={nfp['state']} actualFirst=True impact✓"
+
+
+def v_macro_repair_admin_gated():
+    import urllib.error
+    req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/repair-post-release",
+                                 method="POST", headers={"User-Agent": "argus-smoke"})
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            return False, "repair returned 200 without token!"
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 503, 429):
+            return False, f"repair returned {e.code}"
+    return True, "repair-post-release admin-gated"
+
+
 def v_macro_event_analysis():
     # v11.3.2: durable macro pre/post analyses. Shape-only; the release-day invariant:
     # an event whose eventTimeUtc is in the future must NOT be phase=post_result.
@@ -954,6 +1020,10 @@ CHECKS = [
     ("v11.4.0 learning-memory status", v_learning_memory_status),
     ("v11.4.0 evidence-pack learningMemory", v_evidence_pack_has_learning_memory),
     ("v11.4.0 learning admin gated", v_learning_memory_admin_gated),
+    # ── V11.4.1 Unified dashboard events ──
+    ("v11.4.1 dashboard-events", v_dashboard_events),
+    ("v11.4.1 dashboard-events NFP state", v_dashboard_events_nfp),
+    ("v11.4.1 macro repair admin gated", v_macro_repair_admin_gated),
 ]
 
 

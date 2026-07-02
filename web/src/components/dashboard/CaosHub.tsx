@@ -3,6 +3,8 @@ import { useMarketNews } from '../../hooks/useMarketNews';
 import { useImportantEvents } from '../../hooks/useImportantEvents';
 import { useDownsideIncidents } from '../../hooks/useDownsideIncidents';
 import { useNewsRadar } from '../../hooks/useNewsRadar';
+import { useDashboardEvents } from '../../hooks/useDashboardEvents';
+import { dashboardDedupeKey } from '../../lib/dashboardEventState';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './CaosEvents.css';
 import './MarketInstitutionalSection.css';
@@ -72,6 +74,7 @@ export const CaosHub: React.FC = () => {
   const { data: evData } = useImportantEvents();   // baseline events so the tier never vanishes
   const { data: dsData } = useDownsideIncidents();  // active drops, surfaced in the hub (v10.178)
   const { data: radarData } = useNewsRadar();       // crisis-theme radar, folded into C.A.O.S. (v10.192)
+  const dash = useDashboardEvents();                // v11.4.1: dedupe vs the unified top card
 
   React.useEffect(() => {
     if (!backend) return;
@@ -102,11 +105,25 @@ export const CaosHub: React.FC = () => {
     for (const e of events) m[e.eventCode] = e;
     return m;
   }, [events]);
-  const materialEvents = React.useMemo(
+  // v11.4.1: events already shown in the unified top card must NOT be repeated here.
+  // When /dashboard-events is live, collapse duplicated scheduled-event narratives into
+  // a single "統合済み" note and only render event rows NOT covered by the top card.
+  const dashActive = !!(dash && dash.items.length > 0);
+  const coveredKeys = React.useMemo(
+    () => new Set((dash?.items ?? []).map((it) => it.dedupeKey)),
+    [dash],
+  );
+  const allMaterialEvents = React.useMemo(
     () => (evData?.events ?? [])
       .filter((e) => e.displayImpact === 'critical' || e.displayImpact === 'high')
       .slice(0, 3),
     [evData],
+  );
+  const materialEvents = React.useMemo(
+    () => (dashActive
+      ? allMaterialEvents.filter((e) => !coveredKeys.has(dashboardDedupeKey(e.eventCode, e.date)))
+      : allMaterialEvents),
+    [allMaterialEvents, dashActive, coveredKeys],
   );
   // precision (v10.169): show only market-relevant headlines (drop sports/unrelated
   // noise); fall back to the raw list only if nothing is flagged, so it never empties.
@@ -124,7 +141,8 @@ export const CaosHub: React.FC = () => {
   // the radar has a read (GDELT or the intel-store fallback); one calm line otherwise.
   const crisisThemes = radarData?.status === 'live' ? (radarData.themes ?? []) : [];
   const crisisElevated = crisisThemes.filter((th) => th.level !== 'calm');
-  const empty = material.length === 0 && materialEvents.length === 0 && news.length === 0 && incidents.length === 0;
+  const empty = material.length === 0 && allMaterialEvents.length === 0 && news.length === 0 && incidents.length === 0;
+  const hiddenEventCount = dashActive ? allMaterialEvents.length - materialEvents.length : 0;
 
   return (
     <section className="caoshub">
@@ -205,11 +223,19 @@ export const CaosHub: React.FC = () => {
         </div>
       )}
 
-      {materialEvents.length > 0 && (
+      {(materialEvents.length > 0 || hiddenEventCount > 0) && (
         <div className="caoshub-tier">
           <div className="caoshub-tierhead">
             イベント評価 <span className="caoshub-tiernote">発表前=織り込み/シナリオ · 発表後=結果/受け止め</span>
           </div>
+          {/* v11.4.1: scheduled-event analysis lives in the top card now — here we
+              only note that it's unified (no duplicated NFP/CPI/FOMC paragraph). */}
+          {hiddenEventCount > 0 && (
+            <a href="#important-events" className="caose-merged"
+               style={{ display: 'block', fontSize: 12, color: 'var(--text-faint)', padding: '2px 0', textDecoration: 'none' }}>
+              📎 予定イベント{hiddenEventCount}件の詳細分析はトップのイベントカードに統合済み — 詳細を見る →
+            </a>
+          )}
           {materialEvents.map((ev) => {
             const ai = aiByCode[ev.eventCode];
             const isPost = ev.daysUntil != null && ev.daysUntil <= 0;

@@ -189,6 +189,23 @@ export const DecisionSpineCard: React.FC = () => {
         )}
       </div>
 
+      {/* イベント表示はトップカードに統合 (v11.4.1) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>イベント表示はトップカードに統合</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUS Proでは、NFP/CPI/FOMC/日銀などの予定イベントは<b>トップのイベントカードに集約</b>されます。
+          C.A.O.S.は別カードで同じ文章を繰り返すのではなく、トップカードへ<b>事前シナリオ・公式結果・答え合わせ・
+          影響コメント</b>を供給する分析レイヤーとして扱います。発表後は<b>公式結果と影響を先に表示</b>し、
+          事前シナリオは「当時の見方」として下段に保存します。これにより、
+          <b>発表前・発表済み・結果取得中・答え合わせ済み</b>の状態を一目で区別できます。
+        </p>
+        <ul style={{ margin: '6px 0 0', paddingLeft: 18, color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.7 }}>
+          <li>公式結果が取れない場合は「公式結果取得中」と表示（捏造しない）。</li>
+          <li>事前シナリオはコンセンサスではない（ARGUS自身の読み）。</li>
+          <li>C.A.O.S.の下部欄は重複表示を避け、未統合シグナルや詳細ログに限定。</li>
+        </ul>
+      </div>
+
       {/* ARGUSはどう成長するのか (v11.4.0 Learning Memory) */}
       <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
         <span className="mdepth__label" style={{ fontWeight: 600 }}>ARGUSはどう成長するのか</span>
