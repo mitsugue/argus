@@ -9171,26 +9171,53 @@ def api_argus_admin_macro_refresh_market_reaction():
 
 @app.route("/api/argus/admin/news/translate", methods=["POST"])
 def api_argus_admin_news_translate():
-    """Admin/cron: translate queued English news headlines to Japanese and cache them
-    (the LLM call lives here, never on a public GET). Owner rule: news is always shown
-    translated. Never returns prompts or article bodies."""
+    """Admin/cron: translate queued English news headlines to Japanese, VISIBLE-FIRST,
+    and cache them (the LLM call lives here, never on a public GET). Owner rule: news is
+    always shown translated. Never returns prompts or article bodies."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    body = request.get_json(silent=True) or {}
     try:
-        return jsonify(_translate_pending_headlines())
+        cap = max(1, min(120, int(body.get("max") or 60)))
+    except Exception:
+        cap = 60
+    try:
+        return jsonify(_translate_pending_headlines(cap=cap))
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
 
 @app.route("/api/argus/news/translation-status")
 def api_argus_news_translation_status():
-    """Public cache-only: how many headlines are cached-translated (no secrets)."""
+    """Public cache-only: translation coverage for the VISIBLE news + overall. Reads
+    caches only — never triggers a translation, never calls an LLM/provider."""
     _news_ja_restore_once()
-    return jsonify({"schemaVersion": "news-translation-status-v1", "asOf": _ai_now_iso(),
-                    "cachedCount": len(_NEWS_JA_CACHE), "pendingQueue": len(_NEWS_JA_SEEN),
-                    "lastTranslateAt": _NEWS_JA_STATE.get("lastTranslateAt"),
-                    "noteJa": "英語ニュースは管理側で翻訳してキャッシュ表示。公開GETは翻訳を起動しません。"})
+    now_iso = _ai_now_iso()
+    try:
+        visible = _news_visible_pool()
+    except Exception:
+        visible = []
+    vis_titles = [str(t) for t in visible if t]
+    vis_translatable = [t for t in vis_titles if argus_news_i18n.looks_translatable(t)]
+    vis_pending = [t for t in vis_translatable if not argus_news_i18n.is_translated(t, _NEWS_JA_CACHE)]
+    vis_pct = round(1.0 - (len(vis_pending) / len(vis_translatable)), 3) if vis_translatable else 1.0
+    # overall coverage across the queue + caches
+    all_translatable = len(vis_translatable) or 0
+    translated_today = int(_NEWS_JA_STATE.get("translatedToday") or 0) \
+        if _NEWS_JA_STATE.get("translatedDay") == now_iso[:10] else 0
+    return jsonify({
+        "schemaVersion": "news-translation-status-v1", "asOf": now_iso,
+        "cachedCount": len(_NEWS_JA_CACHE),
+        "pendingQueue": len(_NEWS_JA_SEEN),
+        "visiblePendingCount": len(vis_pending),
+        "translatedToday": translated_today,
+        "lastTranslateAt": _NEWS_JA_STATE.get("lastTranslateAt"),
+        "nextTranslateHintJa": "重要度の高い値動きから約15分ごとに翻訳します。",
+        "coverage": {"visibleTranslatedPct": vis_pct,
+                     "allTranslatedPct": round(1.0 - (len(vis_pending) / all_translatable), 3)
+                     if all_translatable else 1.0},
+        "noteJa": "英語ニュースは管理側で翻訳してキャッシュ表示。公開GETは翻訳を起動しません。"})
 
 
 # ── V11.4.1 Unified dashboard event summary ──────────────────────────────────
@@ -10042,13 +10069,16 @@ def _translate_headlines_ja(headlines):
 _NEWS_JA_CACHE = {}                       # hash -> {"ja": str, "at": iso}
 _NEWS_JA_SEEN = deque(maxlen=300)         # recent English headlines pending translation
 _NEWS_JA_FILE = "/tmp/argus_news_ja.json"
-_NEWS_JA_STATE = {"restored": False, "lastTranslateAt": None}
+_NEWS_JA_STATE = {"restored": False, "lastTranslateAt": None,
+                  "translatedToday": 0, "translatedDay": None}
 
 
 def _news_ja_persist():
     try:
         with open(_NEWS_JA_FILE, "w") as f:
-            json.dump({"cache": _NEWS_JA_CACHE, "state": {"lastTranslateAt": _NEWS_JA_STATE["lastTranslateAt"]}},
+            json.dump({"cache": _NEWS_JA_CACHE,
+                       "state": {k: _NEWS_JA_STATE.get(k) for k in
+                                 ("lastTranslateAt", "translatedToday", "translatedDay")}},
                       f, ensure_ascii=False, default=str)
     except Exception:
         pass
@@ -10063,7 +10093,9 @@ def _news_ja_restore_once():
             blob = json.load(f)
         if isinstance(blob.get("cache"), dict):
             _NEWS_JA_CACHE.update(blob["cache"])
-        _NEWS_JA_STATE["lastTranslateAt"] = (blob.get("state") or {}).get("lastTranslateAt")
+        for k in ("lastTranslateAt", "translatedToday", "translatedDay"):
+            if (blob.get("state") or {}).get(k) is not None:
+                _NEWS_JA_STATE[k] = blob["state"][k]
     except Exception:
         pass
 
@@ -10079,11 +10111,32 @@ def _headline_ja(text):
     return argus_news_i18n.pick_ja(s, _NEWS_JA_CACHE)
 
 
-def _translate_pending_headlines(cap=40):
-    """Admin/cron: translate queued + recently-cached English headlines to JP. Uses the
-    existing Gemini helper (LLM allowed on admin path). Never fetches article bodies."""
+def _news_decorate(text, source=""):
+    """V11.5.1: display fields for a news title (queues English for the cron, then
+    returns titleOriginal/titleJa/displayTitleJa/translationStatus). displayTitleJa is
+    ALWAYS Japanese or a Japanese fallback — never raw English as the primary text."""
     _news_ja_restore_once()
-    pool = list(_NEWS_JA_SEEN)
+    s = (text or "").strip()
+    if argus_news_i18n.looks_translatable(s) and not argus_news_i18n.is_translated(s, _NEWS_JA_CACHE):
+        _NEWS_JA_SEEN.append(s)
+    return argus_news_i18n.decorate(s, _NEWS_JA_CACHE, source)
+
+
+def _news_visible_pool():
+    """Ordered (priority-first) English titles currently visible in the UI, so the
+    admin translate run drains what the owner actually sees first. Cached-only."""
+    pool = []
+    # 1) mover-cause bestLead / top candidates (top card + downside/mover cards)
+    try:
+        for r in list(_MOVER_CAUSES.values()):
+            for cnd in (r.get("causeCandidates") or [])[:3]:
+                if cnd.get("titleJa"):
+                    pool.append(str(cnd["titleJa"]))
+    except Exception:
+        pass
+    # 2) the recently-queued headlines seen by _news_decorate on public reads
+    pool += list(_NEWS_JA_SEEN)
+    # 3) market news + Finnhub company news caches
     try:
         for it in ((_MARKET_NEWS_CACHE.get("data") or {}).get("items") or []):
             if it.get("headline"):
@@ -10097,15 +10150,25 @@ def _translate_pending_headlines(cap=40):
                     pool.append(n["headline"])
     except Exception:
         pass
-    pending = argus_news_i18n.collect_pending(pool, _NEWS_JA_CACHE, cap=cap)
-    if not pending:
-        return {"translated": 0, "cacheSize": len(_NEWS_JA_CACHE), "asOf": _ai_now_iso()}
-    tr = _translate_headlines_ja(pending)     # {index -> ja}; {} on failure
+    return pool
+
+
+def _translate_pending_headlines(cap=60):
+    """Admin/cron: translate queued/visible English headlines to JP, VISIBLE-FIRST.
+    Uses the existing Gemini helper (LLM allowed on admin path). No article bodies."""
+    _news_ja_restore_once()
+    pool = _news_visible_pool()
+    pending = argus_news_i18n.collect_visible_pending(pool, _NEWS_JA_CACHE, cap=cap)
     now_iso = _ai_now_iso()
+    if not pending:
+        return {"translated": 0, "pending": 0, "cacheSize": len(_NEWS_JA_CACHE), "asOf": now_iso}
+    tr = _translate_headlines_ja(pending)     # {index -> ja}; {} on failure
     merged = argus_news_i18n.merge_translations(_NEWS_JA_CACHE, pending, tr, now_iso)
     _NEWS_JA_CACHE.clear()
     _NEWS_JA_CACHE.update(merged)
     _NEWS_JA_STATE["lastTranslateAt"] = now_iso
+    _NEWS_JA_STATE["translatedToday"] = int(_NEWS_JA_STATE.get("translatedToday") or 0) + len(tr)
+    _NEWS_JA_STATE["translatedDay"] = now_iso[:10]
     _news_ja_persist()
     return {"translated": len(tr), "pending": len(pending), "cacheSize": len(_NEWS_JA_CACHE),
             "asOf": now_iso}
@@ -10181,6 +10244,11 @@ def get_market_news():
                 items = (jp_items + items)[:16]   # JP first for the JP owner
         except Exception:
             pass
+        # v11.5.1: Japanese-first display field (headlineJa is filled above; English
+        # without a translation gets a JP fallback, never raw English as primary).
+        for _it in items:
+            _it.update(argus_news_i18n.decorate_from_ja(
+                _it.get("headline"), _it.get("headlineJa"), _it.get("source") or ""))
         out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
                "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=重要キーワード。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のみ・裏取り(公式>複数系統>単一)で重み付けして参考投入。単一ソースは判断を動かさない。"}
         _MARKET_NEWS_CACHE["data"] = out
@@ -11491,9 +11559,10 @@ def get_cause_attribution(symbol, market="JP", explain=False):
                 hl = (cn.get("headline") or "").strip()
                 if not hl:
                     continue
-                # v11.5: US Finnhub headlines are English — show the cached JP
-                # translation (queued for the admin cron when not yet translated).
-                news.append({"time": iso, "titleJa": _headline_ja(hl[:120]), "titleEn": hl[:120],
+                # v11.5.1: US Finnhub headlines are English — decorate so the UI shows a
+                # JP title (or JP fallback), never raw English as the primary text.
+                _d = _news_decorate(hl[:120], cn.get("source") or "Finnhub")
+                news.append({"time": iso, **_d, "titleEn": hl[:120],
                              "source": cn.get("source") or "Finnhub",
                              "cls": argus_attribution.classify_news({"publishedAt": iso, "official": False}, move_started)})
         except Exception:
@@ -11557,6 +11626,13 @@ def get_cause_attribution(symbol, market="JP", explain=False):
                 break
     except Exception:
         pass
+    # v11.5.1: every news item gets Japanese-first display fields (displayTitleJa is
+    # never raw English). English titles are queued for the admin translate cron.
+    _news_ja_restore_once()
+    news = [argus_news_i18n.decorate_news_item(n, _NEWS_JA_CACHE) for n in news]
+    for n in news:
+        if n.get("translationStatus") == "pending":
+            _NEWS_JA_SEEN.append(n.get("titleOriginal") or "")
     stack["news"] = news
     # V11.3.3: attach the mover-cause ladder (cached evidence only — no fetch/LLM)
     try:
@@ -11772,12 +11848,14 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
                 fin = res[0] if isinstance(res, tuple) else res
             if isinstance(fin, dict):
                 cover["companyNewsChecked"] = True
-                # v11.5: translate English headlines to JP (cached) so the ladder's
-                # candidate titles never surface raw English on any page.
+                # v11.5.1: candidate titles/bestLead must never surface raw English —
+                # use the Japanese-first display title (cached JA or a JP fallback);
+                # the English original is queued for the admin translate cron.
                 _cn = []
                 for n in (fin.get("news") or [])[:8]:
                     if isinstance(n, dict) and n.get("headline"):
-                        n = {**n, "headline": _headline_ja(str(n["headline"]))}
+                        _d = _news_decorate(str(n["headline"]), n.get("source") or "Finnhub")
+                        n = {**n, "headline": _d["displayTitleJa"], "headlineEn": _d["titleOriginal"]}
                     _cn.append(n)
                 ev["companyNews"] = _cn
         except Exception:

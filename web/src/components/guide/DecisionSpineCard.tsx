@@ -189,6 +189,24 @@ export const DecisionSpineCard: React.FC = () => {
         )}
       </div>
 
+      {/* ニュース日本語化・AI解説 (v11.5.1) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>ニュースはなぜ日本語で表示されるのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUS Proでは、英語ニュースも主表示では日本語で読めるようにします。翻訳は公開画面の表示時にAIを
+          起動するのではなく、<b>管理側の定期実行でキャッシュ</b>します。翻訳がまだの場合は、英語タイトルを
+          そのまま主表示せず、<b>「翻訳待ちの関連ニュース」</b>として表示し、必要な場合だけ原文を「原文を見る」で
+          確認できます。
+        </p>
+        <span className="mdepth__label" style={{ fontWeight: 600, display: 'block', marginTop: 10 }}>AI解説はなぜすぐ出ないことがあるのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          公開画面のクリックでAI検索やAI生成を<b>直接起動しません</b>。コスト事故と安全性を避けるため、重要度の
+          高い値動きから管理側の定期実行でAI解説を生成し、<b>キャッシュ済みの解説だけを表示</b>します。解説がまだ
+          ない場合でも、<b>原因候補・確認済み範囲・次に確認すること</b>は表示されます（押しても何も起きないボタンは
+          出しません）。
+        </p>
+      </div>
+
       {/* 発表後の市場反応はどう測るのか (v11.5) */}
       <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
         <span className="mdepth__label" style={{ fontWeight: 600 }}>発表後の市場反応はどう測るのか</span>

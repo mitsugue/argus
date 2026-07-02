@@ -400,7 +400,37 @@ def v_news_translation_status():
         return False, f"schema={d.get('schemaVersion')}"
     if not isinstance(d.get("cachedCount"), int):
         return False, "cachedCount missing"
-    return True, f"cached={d.get('cachedCount')} pending={d.get('pendingQueue')}"
+    # v11.5.1: visible-pending + coverage drive the "why still English" UI note.
+    if not isinstance(d.get("visiblePendingCount"), int):
+        return False, "visiblePendingCount missing"
+    cov = d.get("coverage") or {}
+    if "visibleTranslatedPct" not in cov or "allTranslatedPct" not in cov:
+        return False, "coverage.*TranslatedPct missing"
+    if not d.get("nextTranslateHintJa"):
+        return False, "nextTranslateHintJa missing"
+    return True, (f"cached={d.get('cachedCount')} pending={d.get('pendingQueue')} "
+                  f"visPending={d.get('visiblePendingCount')} visPct={cov.get('visibleTranslatedPct')}")
+
+
+def v_news_japanese_first():
+    # v11.5.1: a US cause-attribution news item must never surface raw English as its
+    # primary display title — displayTitleJa is Japanese or a JP fallback, and any
+    # English original is confined to titleOriginal/titleEn (the 原文を見る disclosure).
+    import re as _re
+    en = _re.compile(r"[A-Za-z]")
+    jp = _re.compile(r"[぀-ヿ㐀-䶵一-鿋]")
+    for sym in ("NVDA", "AAPL", "TSLA"):
+        c, d = _get(f"/api/argus/cause-attribution?symbol={sym}&market=US", timeout=40)
+        if c == 429:
+            return True, f"{sym}: 429 pre-routing (skip)"
+        news = (d or {}).get("news") or []
+        for n in news:
+            title = n.get("displayTitleJa") or ""
+            if en.search(title) and not jp.search(title):
+                return False, f"{sym}: raw English primary title: {title[:60]!r}"
+        if news:
+            return True, f"{sym}: {len(news)} news, no raw-English primary"
+    return True, "no US media headlines available (ok)"
 
 
 def v_macro_reaction_admin_gated():
@@ -1079,6 +1109,7 @@ CHECKS = [
     # ── V11.5 macro coverage + reaction + news translation ──
     ("v11.5 macro result-status multi", v_macro_result_status_multi),
     ("v11.5 news translation status", v_news_translation_status),
+    ("v11.5.1 news japanese-first", v_news_japanese_first),
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),
     ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]

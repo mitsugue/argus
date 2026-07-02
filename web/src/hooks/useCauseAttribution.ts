@@ -28,10 +28,17 @@ export interface CauseStack {
   noteJa: string;
   news?: {
     time?: string | null; titleJa: string; source?: string; cls: NewsClass; sentiment?: string | null;
+    // v11.5.1: Japanese-first display fields (displayTitleJa is never raw English).
+    displayTitleJa?: string; titleOriginal?: string;
+    translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
     assoc?: { via: string; term?: string; relationJa?: string; corroboration?: string };  // association link (v10.183)
   }[];
   explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
-  explanationStatus?: 'cached' | 'not_generated';
+  explanationStatus?: 'cached' | 'not_generated' | 'pending' | 'disabled' | 'budget_limited' | 'error';
+  explanationGeneratedAt?: string | null;
+  unverifiedAssumptions?: string[];
+  whatWouldConfirmJa?: string;
+  whatWouldRefuteJa?: string;
   explanationNoteJa?: string;
   /** Mover Cause ladder (v11.3.3; freshness/marketConfirmation added v11.3.4). */
   moverCause?: {

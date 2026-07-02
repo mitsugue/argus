@@ -5,6 +5,7 @@ import { useDownsideIncidents } from '../../hooks/useDownsideIncidents';
 import { useNewsRadar } from '../../hooks/useNewsRadar';
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { dashboardDedupeKey } from '../../lib/dashboardEventState';
+import { newsDisplayTitleJa } from '../../lib/aiExplanationState';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './CaosEvents.css';
 import './MarketInstitutionalSection.css';
@@ -295,7 +296,7 @@ export const CaosHub: React.FC = () => {
                 )}
               </div>
               <div className={`caoshub-news-h${it.major ? ' caoshub-news-h--major' : ''}`}>
-                {it.headlineJa || it.headline}
+                {newsDisplayTitleJa(it)}
               </div>
             </a>
           ))}

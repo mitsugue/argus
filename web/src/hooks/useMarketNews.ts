@@ -8,6 +8,10 @@ export interface MarketNewsItem {
   headline: string;
   /** Auto-translated headline (Gemini flash, v10.14) — absent on failure. */
   headlineJa?: string;
+  /** v11.5.1: Japanese-first display title (never raw English) + status. */
+  displayTitleJa?: string;
+  titleOriginal?: string;
+  translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
   source: string;
   url: string;
   datetime: number | null;   // unix seconds
