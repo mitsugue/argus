@@ -9346,7 +9346,11 @@ _TDNET_FEED_TTL = 600
 # plan/release, so it is env-overridable and the fetch reports HTTP status HONESTLY
 # (entitlement_missing / endpoint_not_found / rate_limited) instead of guessing. A key
 # being present is NOT 'live' — only a 200 with rows is.
-_JQUANTS_TDNET_PATH  = os.environ.get("JQUANTS_TDNET_PATH", "/td/list")
+# The exact J-Quants v2 TDnet Add-on path isn't publicly fixed, so try a few candidates
+# (env override wins) and report the BEST honest status. First 200 wins; a 403 anywhere =
+# entitlement_missing; else endpoint_not_found. Set JQUANTS_TDNET_PATH to pin the real one.
+_JQUANTS_TDNET_PATHS = ([os.environ["JQUANTS_TDNET_PATH"]] if os.environ.get("JQUANTS_TDNET_PATH")
+                        else ["/td/list", "/markets/tdnet", "/tdnet/list", "/fins/tdnet", "/markets/tdnet_documents"])
 _TDNET_OFFICIAL_CACHE = {"data": None, "expires": 0.0}
 
 def _jquants_tdnet_fetch(limit=150):
@@ -9360,11 +9364,35 @@ def _jquants_tdnet_fetch(limit=150):
     if c["data"] is not None and now < c["expires"]:
         d = c["data"]
         return d, (d.get("status") == "official_tdnet_live" and bool(d.get("items")))
+    # Probe candidate paths; remember the worst-but-informative status if none 200.
+    r = None
+    best_code = None
+    for _path in _JQUANTS_TDNET_PATHS:
+        try:
+            rr = requests.get(f"{_JQUANTS_BASE}{_path}", headers={"x-api-key": _JQUANTS_API_KEY},
+                              params={"limit": limit}, timeout=10)
+        except Exception:
+            continue
+        if rr.status_code == 200:
+            r = rr
+            break
+        # 403 (entitlement) is more informative than 404 (wrong path) — keep it.
+        if best_code is None or rr.status_code == 403:
+            best_code = rr.status_code
     http = None
     try:
-        r = requests.get(f"{_JQUANTS_BASE}{_JQUANTS_TDNET_PATH}",
-                         headers={"x-api-key": _JQUANTS_API_KEY},
-                         params={"limit": limit}, timeout=12)
+        if r is None:
+            st = argus_jquants_tdnet.status_from_http(best_code or 404)
+            ent = "missing" if best_code in (401, 403) else "unknown"
+            snap = argus_jquants_tdnet.build_snapshot(
+                [], status=st, official=True, provider="jquants-tdnet", entitlement=ent,
+                as_of=_ai_now_iso(),
+                note_ja=(f"official TDnet 候補パスすべてHTTP {best_code}（キー値は出しません）。"
+                         "JQUANTS_TDNET_PATHで正しいパスを指定可。"))
+            snap["httpStatus"] = best_code
+            c["data"] = snap
+            c["expires"] = now + 900
+            return snap, False
         http = r.status_code
         if r.status_code == 200:
             body = r.json() if isinstance(r.json(), dict) else {}
@@ -9465,8 +9493,12 @@ def get_tdnet_recent(limit=150):
 @app.route("/api/argus/tdnet-recent")
 def api_argus_tdnet_recent():
     d = get_tdnet_recent()
-    # public, read-only: trim the heavy bySymbol map for the wire
+    # public, read-only: trim the heavy bySymbol map for the wire. EXPLICITLY expose whether
+    # this is the OFFICIAL J-Quants Add-on or the yanoshin fallback (v11.1 merge condition),
+    # and — when it's the fallback — WHY official didn't win (officialStatus).
     return jsonify({"status": d["status"], "asOf": d["asOf"], "provider": d.get("provider"),
+                    "official": bool(d.get("official")), "entitlement": d.get("entitlement"),
+                    "officialStatus": d.get("officialStatus"),
                     "count": len(d.get("items") or []), "items": (d.get("items") or [])[:80]})
 
 
