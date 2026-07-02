@@ -30,6 +30,7 @@ import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist s
 import argus_downside  # Downside Incident Response + cause attribution (pure, decision-support only, v10.98)
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
 import argus_jquants_tdnet  # official J-Quants TDnet Add-on classify/map/status (pure, v11.1)
+import argus_evidence_pack  # canonical Evidence Pack — the decision spine's input (pure, v11.2)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
@@ -1733,11 +1734,8 @@ def api_argus_decision_value_shadow_summary():
         return jsonify({"status": "parse_error"})
 
 
-@app.route("/api/argus/decision-value/status")
-def api_argus_decision_value_status():
-    """PUBLIC-SAFE Decision Value status (ARGUS Pro v11). Auditable phase + per-policy
-    counts + sampleStage ONLY — never netR / prices / holdings (those stay owner-private).
-    phase can never claim recording/scoring unless records/scores actually exist."""
+def _dv_status_public_dict():
+    """PUBLIC-SAFE Decision Value status dict (route + Evidence Pack both read this)."""
     pub = _dv_shadow_public_summary()
     shadow = pub.get("shadow") or {}
     pol = shadow.get("policies") or {}
@@ -1757,7 +1755,7 @@ def api_argus_decision_value_status():
     stages = [v.get("sampleStage") for v in list(pol.values()) + list(nt.values()) if v.get("sampleStage")]
     sample_stage = "usable" if any(s in ("validation", "provisional") for s in stages) else (
         "early_signal" if any(s == "exploratory" for s in stages) else ("burn_in" if stages else "none"))
-    return jsonify({
+    return {
         "schemaVersion": argus_decision_value.DECISION_VALUE_SCHEMA,
         "phase": phase,
         "privateStoreConfigured": configured,
@@ -1770,7 +1768,15 @@ def api_argus_decision_value_status():
         "sampleStage": sample_stage,
         "reasonJa": pub.get("blockersJa") or "",
         "disclaimer": "Research simulation only. No order was or will be submitted.",
-    })
+    }
+
+
+@app.route("/api/argus/decision-value/status")
+def api_argus_decision_value_status():
+    """PUBLIC-SAFE Decision Value status (ARGUS Pro v11). Auditable phase + per-policy
+    counts + sampleStage ONLY — never netR / prices / holdings (those stay owner-private).
+    phase can never claim recording/scoring unless records/scores actually exist."""
+    return jsonify(_dv_status_public_dict())
 
 
 # ── Calibration Operations (v10.195) — is v4 capture actually happening? ─────
@@ -3949,6 +3955,102 @@ def api_argus_caos_audit():
     except Exception:
         limit = 100
     return jsonify({"asOf": _ai_now_iso(), **argus_caos_audit.snapshot(symbol=symbol, limit=limit)})
+
+
+# ── Evidence Pack — the decision spine's canonical input (v11.2) ─────────────
+def _build_evidence_pack(symbol, market=None):
+    """Assemble the canonical Evidence Pack for ONE symbol from ALREADY-CACHED data.
+    No LLM calls; only the same cached accessors the public endpoints already use.
+    The fold itself is pure (argus_evidence_pack); this wires real inputs."""
+    sym = str(symbol).strip().upper()
+    as_of = _ai_now_iso()
+    mkt = argus_evidence_pack.infer_market(sym, market)
+    quote = None
+    try:
+        if mkt == "JP":
+            for s in (get_japan_watchlist_snapshot([sym]).get("stocks") or []):
+                if str(s.get("symbol")).upper() == sym:
+                    quote = s
+                    break
+        elif mkt == "US":
+            for s in (get_us_watchlist_snapshot([sym]).get("stocks") or []):
+                if str(s.get("symbol")).upper() == sym:
+                    quote = s
+                    break
+    except Exception:
+        quote = None
+    try:
+        guard = _visibility_guard()
+    except Exception:
+        guard = {}
+    try:
+        _events_restore_once()
+        active = [e for e in _events_active_list() if str(e.get("symbol") or "").upper() == sym]
+        cards = argus_event_card.build_cards(active, guard=guard,
+                                             context_by_event=_event_card_context(active),
+                                             now_iso=as_of)
+    except Exception:
+        cards = []
+    try:
+        discs = (get_tdnet_recent(150).get("bySymbol") or {}).get(sym[:4], [])
+    except Exception:
+        discs = []
+    try:
+        caos = argus_caos_audit.snapshot(symbol=sym, limit=6).get("items") or []
+    except Exception:
+        caos = []
+    try:
+        views = [it for it in list(_INTEL_STORE) if sym in (it.get("linkedAssets") or [])][:6]
+    except Exception:
+        views = []
+    try:
+        cov = {"summary": {
+            "totalItems": len(_INTEL_STORE),
+            "canGroundJudgmentItems": sum(1 for it in _INTEL_STORE if it.get("canGroundJudgment")),
+            "weakSignalItems": sum(1 for it in _INTEL_STORE if it.get("weakSignal")),
+        }}
+    except Exception:
+        cov = None
+    try:
+        _dpi = _market_depth_proof_items((_market_depth_report() or {}).get("capabilities") or {})
+        dp = {"summary": {
+            "trueDepthLiveCount": sum(1 for i in _dpi if i["status"] == "live" and i["isTrueDepth"]),
+            "computedIndicatorsLiveCount": sum(1 for i in _dpi if i["status"] == "live" and not i["isTrueDepth"]),
+            "requiresContractCount": sum(1 for i in _dpi if i["status"] == "requires_contract"),
+        }}
+    except Exception:
+        dp = None
+    try:
+        _days = int((((_ledger_summary() or {}).get("overall")) or {}).get("days") or 0)
+        _v4 = _calibration_v4_summary()
+        cal = {"isActive": bool(_v4) and any(isinstance(_v4.get(k), (int, float)) and _v4.get(k) > 0
+                                             for k in ("nPredictions", "n", "count", "records")),
+               "reliabilityStage": argus_calibration.reliability_stage(_days)}
+    except Exception:
+        cal = None
+    try:
+        _dv = _dv_status_public_dict()
+        dvd = {"phase": _dv.get("phase"), "sampleStage": _dv.get("sampleStage")}
+    except Exception:
+        dvd = None
+    return argus_evidence_pack.build_pack(
+        symbol=sym, as_of=as_of, market=mkt, quote=quote, event_cards=cards,
+        official_disclosures=discs, filings=[], caos_links=caos, institutional_views=views,
+        source_coverage=cov, market_depth_proof=dp, visibility_guard=guard,
+        calibration_status=cal, decision_value_status=dvd, past_failure_patterns=[])
+
+
+@app.route("/api/argus/evidence-pack")
+def api_argus_evidence_pack():
+    """The canonical Evidence Pack for one symbol (ARGUS Pro v11.2) — what every judge
+    (rules / GPT / Gemini / TodayCall) reads. Public GET: cached data only, no LLM calls,
+    no public-text fetches, no private holdings/P&L. Empty arrays when nothing collected."""
+    sym = (request.args.get("symbol") or "").strip()
+    if not sym:
+        return jsonify({"error": "symbol_required",
+                        "messageJa": "銘柄コードを指定してください（例 ?symbol=8058&market=JP）。"}), 400
+    market = (request.args.get("market") or "").strip().upper() or None
+    return jsonify(_build_evidence_pack(sym, market))
 
 
 @app.route("/api/argus/event-log")
@@ -6992,6 +7094,17 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         if _w.get("code") in ("BRIDGE_STALE", "BRIDGE_NEVER", "REALTIME_UNPROVEN", "AI_BUDGET_STOPPED"):
             _vg_reason = _w.get("messageJa") or ""
             break
+    # Decision spine (v11.2): per-symbol active-event ids + today's evidence-pack date,
+    # so every label can reference its pack deterministically. Cheap in-memory walk.
+    _now_utc_date = datetime.now(pytz.utc).strftime("%Y-%m-%d")
+    _ev_ids_by_sym = {}
+    try:
+        for _e in _events_active_list():
+            _s = str(_e.get("symbol") or "").upper()
+            if _s:
+                _ev_ids_by_sym.setdefault(_s, []).append(_e.get("eventId"))
+    except Exception:
+        pass
 
     quotes = {}
     for snap in (jp, us):
@@ -7052,6 +7165,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         if cal["factor"] != 1.0:
             conf = round(min(0.9, max(0.05, conf * cal["factor"])), 2)
         # ── Visibility Guard: cap confidence, block aggressive entry (v11) ──
+        conf_before = conf                     # decision spine: confidence BEFORE the guard
         dq = ("LIVE" if qstatus == "live" and lag in (0, None) else "DELAYED")
         action, conf, reason, nxt, sig, vg_downgraded = _apply_visibility_guard(
             action, conf, reason, nxt, dq, _vg_cap, _vg_blocked, _vg_reason)
@@ -7068,6 +7182,18 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             # consumers get {code,level,permissions} without re-deriving from text.
             "signal": sig,
             "visibilityDowngraded": vg_downgraded,
+            # Decision spine (v11.2): every label states WHICH evidence pack it belongs
+            # to and how the guard/calibration memory shaped it — auditable later.
+            "decisionRefs": {
+                "evidencePackId": argus_evidence_pack.pack_id(meta["symbol"], _now_utc_date),
+                "eventIds": _ev_ids_by_sym.get(str(meta["symbol"]).upper(), []),
+                "visibilityDowngraded": vg_downgraded,
+                "confidenceBefore": conf_before,
+                "confidenceAfter": conf,
+                "calibrationMemoryUsed": cal.get("factor", 1.0) != 1.0,
+                "decisionValueMemoryUsed": False,   # DV scoring not yet feeding judgment — honest
+                "missingData": list(_vg.get("reasonCodes") or []),
+            },
         })
 
     imminent_any = esc_by_market["US"] in ("D", "D-1") or esc_by_market["JP"] in ("D", "D-1")
@@ -7479,7 +7605,10 @@ def _build_ai_snapshot():
                "ruleAction": l["action"], "risk": l["risk"], "confidence": l["confidence"],
                "changePct": l["supportingData"]["changePct"], "volume": l["supportingData"]["volume"],
                "eventEscalation": l["supportingData"]["eventEscalation"],
-               "reasonJa": l["reasonJa"], "nextConditionJa": l["nextConditionJa"]}
+               "reasonJa": l["reasonJa"], "nextConditionJa": l["nextConditionJa"],
+               # decision spine (v11.2): the judges reference the SAME evidence pack
+               "evidencePackId": (l.get("decisionRefs") or {}).get("evidencePackId"),
+               "visibilityDowngraded": bool(l.get("visibilityDowngraded"))}
               for l in al.get("labels", [])]
     # (b) enrich each stock with CHART (rsi14/trend) + 日証金/信用 margin so the AI
     # judges WITH them. Concurrent + 30-min cached (bounded API load on 15-min runs).
@@ -7561,6 +7690,60 @@ def _build_ai_snapshot():
                                     "major": bool(n.get("major"))})
     except Exception:
         news_digest = []
+    # ── DECISION SPINE (v11.2): the judges see the SAME evidence context the rule
+    # labels used — visibility guard, market-depth proof, calibration stage, DV phase,
+    # missing data + per-symbol official disclosures / CAOS candidates. Compact
+    # (token-bounded), never raw article text, never key material.
+    try:
+        _vg2 = _visibility_guard()
+    except Exception:
+        _vg2 = {}
+    try:
+        _dpi2 = _market_depth_proof_items((_market_depth_report() or {}).get("capabilities") or {})
+        _depth2 = {"trueDepthLiveCount": sum(1 for i in _dpi2 if i["status"] == "live" and i["isTrueDepth"]),
+                   "requiresContractCount": sum(1 for i in _dpi2 if i["status"] == "requires_contract")}
+    except Exception:
+        _depth2 = {}
+    try:
+        _cal_stage = argus_calibration.reliability_stage(
+            int((((led or {}).get("overall")) or {}).get("days") or 0))
+    except Exception:
+        _cal_stage = None
+    try:
+        _dv_phase = _dv_status_public_dict().get("phase")
+    except Exception:
+        _dv_phase = None
+    try:
+        _td2 = get_tdnet_recent(150)
+        _td_by2 = _td2.get("bySymbol") or {}
+        _td_official2 = bool(_td2.get("official"))
+    except Exception:
+        _td_by2, _td_official2 = {}, False
+    for x in labels:
+        rows = _td_by2.get(str(x["symbol"])[:4]) or []
+        if rows:
+            x["officialDisclosures"] = {"count": len(rows),
+                                        "material": sum(1 for r in rows if r.get("material")),
+                                        "official": _td_official2}
+        try:
+            _ca2 = argus_caos_audit.snapshot(symbol=x["symbol"], limit=2).get("items") or []
+            if _ca2:
+                x["caosCandidates"] = [{"linkType": c.get("linkType"),
+                                        "triggerRole": c.get("triggerRole"),
+                                        "whyJa": (c.get("whyJa") or "")[:60]} for c in _ca2]
+        except Exception:
+            pass
+    evidence_context = {
+        "visibilityGuard": {"visibilityLevel": _vg2.get("visibilityLevel"),
+                            "confidenceCap": _vg2.get("confidenceCap"),
+                            "blockedActions": list(_vg2.get("blockedActions") or []),
+                            "reasonCodes": list(_vg2.get("reasonCodes") or [])},
+        "marketDepthProof": _depth2,
+        "calibrationStage": _cal_stage,
+        "decisionValuePhase": _dv_phase,
+        "missingData": list(_vg2.get("reasonCodes") or []),
+        "disciplineJa": argus_evidence_pack.DISCIPLINE_JA,
+    }
     snap = {
         "marketPosture": al.get("marketPosture"),
         "rates": {k: rates.get(k) for k in ("ratesPressure", "riskVolatility", "summary")} if isinstance(rates, dict) else {},
@@ -7569,6 +7752,7 @@ def _build_ai_snapshot():
         "selfScoring": self_scoring,            # the learning "textbook" (close-the-loop)
         "institutionalSignals": caos,           # C.A.O.S. — reported views, not trades
         "marketNews": news_digest,              # C.A.O.S. — uncorroborated general news (awareness only)
+        "evidenceContext": evidence_context,    # decision spine (v11.2) — same evidence as the rules
     }
     return snap, al
 
@@ -7609,6 +7793,20 @@ _OPENAI_SYSTEM = (
     "`urgentEvents` (and each label's `eventEscalation`) are imminent scheduled events at D/D-1/D-3 escalation: "
     "when a material one is imminent, bias `modelPosture` toward EVENT_WAIT and say so in `marketRiskJa` "
     "(avoid new-entry conviction right before the event). "
+    # EVIDENCE DISCIPLINE (decision spine, v11.2) — the judges read the same Evidence
+    # Pack context as the rule engine, and these gates are NON-NEGOTIABLE.
+    "EVIDENCE DISCIPLINE: the snapshot carries `evidenceContext` (visibility guard, market-depth proof, "
+    "calibration stage, decision-value phase, missingData, disciplineJa) and per-label `evidencePackId`/"
+    "`officialDisclosures`/`caosCandidates`. You MUST obey: "
+    "(1) a single-source C.A.O.S. association is a CANDIDATE only — never a confirmed cause; "
+    "(2) an official disclosure (TDnet/EDINET) confirms the FACT, not necessarily the PRICE CAUSE — do not "
+    "assert causation without market/timing confirmation; "
+    "(3) theme-only links can NEVER justify ADD/BUY DIP unless independently corroborated; "
+    "(4) if `evidenceContext.visibilityGuard.blockedActions` contains ENTER, do NOT suggest ADD/BUY DIP; "
+    "(5) if `evidenceContext.marketDepthProof.trueDepthLiveCount` is 0, LOWER confidence on any intraday/"
+    "microstructure claim (no L2/tape proof exists); "
+    "(6) while `evidenceContext.calibrationStage` is burn_in, do not overstate confidence. "
+    "State in dataLimitations which evidence was missing when it constrained you. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 
@@ -7681,6 +7879,50 @@ def _gemini_usage_tokens(resp):
     out = _g("candidates_token_count") + _g("thoughts_token_count")
     return inp, out
 
+def _gemini_prompt(snapshot, openai_out):
+    """PURE Gemini challenge prompt (v11.2: evidence-aware). Kept as a separate
+    function so tests can assert it carries missingData / visibilityGuard / the
+    challenge keys without any API call."""
+    return (
+        "あなたはARGUSの独立検証役です。以下の市場スナップショット・ルールラベル・GPTの提案を検証し、"
+        "(1)裏付けのない主張、(2)直近の重大リスク(web情報があれば反映)、(3)GPT提案が強気/積極的すぎないか、"
+        "(4)注意すべき銘柄、(5)最終アクションを引き下げるべきか、を点検してください。捏造は禁止。"
+        "SNAPSHOT内の evidenceContext（可視性ガード・市場深さの実証・校正段階・missingData・disciplineJa）を必ず参照: "
+        "単一ソース連想は候補止まり・公式開示は事実確認であって価格原因の確定ではない・"
+        "可視性がENTERをブロック中の新規提案は不可・欠けている証拠(missingData)は弱点として明示。"
+        "STRICT JSONのみを返す。キー: status, model, summaryJa, agreement(confirm|caution|disagree), "
+        "mainWeaknessJa, whatWouldChangeJa, unverifiedAssumptions[], disagreements[] "
+        "(symbol, issueJa, severity(low|medium|high), recommendedConservativeAction(WAIT|HOLD|WAIT FOR PULLBACK)), "
+        "globalRedFlags[], groundingSources[] (title,url)。\n"
+        "SNAPSHOT:\n" + json.dumps(snapshot, ensure_ascii=False) +
+        "\nGPT:\n" + json.dumps(openai_out or {}, ensure_ascii=False))
+
+
+def _build_gemini_challenge(openai_out, gemini_out):
+    """PURE: fold the GPT view + Gemini checker output into the structured challenge
+    record (decision spine v11.2). Defensive: works with partial/missing outputs and
+    derives `agreement` from disagreements severity when Gemini didn't state one."""
+    o = openai_out if isinstance(openai_out, dict) else {}
+    g = gemini_out if isinstance(gemini_out, dict) else {}
+    dis = [d for d in (g.get("disagreements") or []) if isinstance(d, dict)]
+    agreement = g.get("agreement")
+    if agreement not in ("confirm", "caution", "disagree"):
+        agreement = ("disagree" if any(d.get("severity") == "high" for d in dis)
+                     else "caution" if (dis or g.get("globalRedFlags")) else
+                     ("confirm" if g else "unavailable"))
+    weakness = (g.get("mainWeaknessJa")
+                or (dis[0].get("issueJa") if dis else "")
+                or (str((g.get("globalRedFlags") or [""])[0]) if g.get("globalRedFlags") else ""))
+    return {
+        "gptView": (o.get("summaryJa") or "")[:300],
+        "geminiChallenge": (g.get("summaryJa") or "")[:300],
+        "agreement": agreement,
+        "mainWeaknessJa": (weakness or "")[:200],
+        "whatWouldChangeJa": (g.get("whatWouldChangeJa") or "")[:200],
+        "unverifiedAssumptions": [str(x)[:120] for x in (g.get("unverifiedAssumptions") or [])][:5],
+    }
+
+
 def _gemini_check(snapshot, openai_out, checker_model=None):
     """Returns (out|None, status, grounding_enabled)."""
     _AI_LAST_RUN["gemUsage"] = None
@@ -7689,15 +7931,7 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
     grounding_enabled = False
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
-        prompt = (
-            "あなたはARGUSの独立検証役です。以下の市場スナップショット・ルールラベル・GPTの提案を検証し、"
-            "(1)裏付けのない主張、(2)直近の重大リスク(web情報があれば反映)、(3)GPT提案が強気/積極的すぎないか、"
-            "(4)注意すべき銘柄、(5)最終アクションを引き下げるべきか、を点検してください。捏造は禁止。"
-            "STRICT JSONのみを返す。キー: status, model, summaryJa, disagreements[] "
-            "(symbol, issueJa, severity(low|medium|high), recommendedConservativeAction(WAIT|HOLD|WAIT FOR PULLBACK)), "
-            "globalRedFlags[], groundingSources[] (title,url)。\n"
-            "SNAPSHOT:\n" + json.dumps(snapshot, ensure_ascii=False) +
-            "\nGPT:\n" + json.dumps(openai_out or {}, ensure_ascii=False))
+        prompt = _gemini_prompt(snapshot, openai_out)
         cfg = None
         try:
             from google.genai import types as _gt
@@ -7821,6 +8055,9 @@ def _arbitrate_ai(al, openai_out, gemini_out):
             "openaiReasonJa": oai_reason, "geminiCheckJa": gem_check,
             "redFlags": redflags, "dataLimitations": datalim,
             "status": rl.get("status", "live"),
+            # decision spine (v11.2): the arbitrated view keeps the SAME evidence refs
+            # the rule label carried, so ARGUS View is auditable end-to-end.
+            "decisionRefs": rl.get("decisionRefs"),
         })
     return labels
 
@@ -7977,6 +8214,9 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
                                if gem_status == "live" else None)},
         "summaryJa": summary[:400], "marketRiskJa": market_risk[:400], "labels": labels,
         "globalRedFlags": global_flags, "groundingSources": grounding,
+        # decision spine (v11.2): the structured GPT-vs-Gemini challenge record — what
+        # the checker disputed, its main weakness, and unverified assumptions.
+        "geminiChallenge": _build_gemini_challenge(openai_out, gemini_out),
     }
     if status != "mock":
         _AI_RESULT_CACHE["data"] = payload

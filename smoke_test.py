@@ -252,6 +252,49 @@ def v_tdnet_recent():
     return True, f"provider={prov} official={d.get('official')} status={d.get('status')}"
 
 
+def v_evidence_pack(symbol, market=None):
+    # v11.2 decision spine: the canonical Evidence Pack. Shape-only (empty arrays OK).
+    def fn():
+        q = f"/api/argus/evidence-pack?symbol={symbol}" + (f"&market={market}" if market else "")
+        c, d = _get(q)
+        if d.get("schemaVersion") != "evidence-pack-v1":
+            return False, f"schema={d.get('schemaVersion')}"
+        if not str(d.get("evidencePackId", "")).startswith(f"ep-{symbol}-"):
+            return False, f"packId={d.get('evidencePackId')}"
+        au = d.get("allowedUse") or {}
+        if not isinstance(d.get("missingConfirmations"), list) or "canConfirmCause" not in au:
+            return False, "missing allowedUse/missingConfirmations"
+        return True, (f"id={d.get('evidencePackId')} cards={len(d.get('eventCards') or [])} "
+                      f"missing={len(d.get('missingConfirmations') or [])}")
+    return fn
+
+
+def v_action_labels_have_evidence_refs():
+    # every non-mock label must reference its evidence pack (decision spine).
+    c, d = _get("/api/argus/action-labels")
+    for l in (d.get("labels") or []):
+        if l.get("status") == "mock":
+            continue
+        refs = l.get("decisionRefs") or {}
+        if not str(refs.get("evidencePackId", "")).startswith("ep-"):
+            return False, f"{l.get('symbol')} missing evidencePackId"
+        if "confidenceBefore" not in refs or "confidenceAfter" not in refs:
+            return False, f"{l.get('symbol')} missing confidence before/after"
+    return True, "all live labels carry decisionRefs"
+
+
+def v_ai_judgment_evidence_refs_safe():
+    # if an AI judgment is cached, its labels may carry decisionRefs — and the payload
+    # must never contain secret material. (Older cached payloads without refs pass.)
+    c, d = _get("/api/argus/ai-judgment")
+    blob = json.dumps(d).lower()
+    for bad in ("apikey", "x-api-key", "subscription-key"):
+        if bad in blob:
+            return False, f"secret-ish '{bad}' in ai-judgment payload"
+    n_refs = sum(1 for l in (d.get("labels") or []) if (l.get("decisionRefs") or {}).get("evidencePackId"))
+    return True, f"freshness={d.get('freshness')} labelsWithRefs={n_refs}"
+
+
 def v_provider_diagnostics_public():
     # v11.1: public-safe provider status. No secrets, no admin detail.
     c, d = _get("/api/argus/provider-diagnostics/public")
@@ -454,6 +497,11 @@ CHECKS = [
     # ── V11.1 paid-source activation ──
     ("v11.1 provider-diagnostics/public", v_provider_diagnostics_public),
     ("v11.1 admin diagnostics gated", v_admin_gated_401("/api/argus/admin/provider-diagnostics")),
+    # ── V11.2 decision spine ──
+    ("v11.2 evidence-pack MU", v_evidence_pack("MU")),
+    ("v11.2 evidence-pack 8058 JP", v_evidence_pack("8058", "JP")),
+    ("v11.2 labels carry evidence refs", v_action_labels_have_evidence_refs),
+    ("v11.2 ai-judgment refs safe", v_ai_judgment_evidence_refs_safe),
 ]
 
 

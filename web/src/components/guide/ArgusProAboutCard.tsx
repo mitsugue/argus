@@ -54,6 +54,18 @@ export const ArgusProAboutCard: React.FC = () => (
           {NOT.map((n) => <li key={n}>{n}</li>)}
         </ul>
       </div>
+
+      {/* 判断は何を読んでいるのか (v11.2 decision spine) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>判断は何を読んでいるのか（Evidence Pack）</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUS Proは、GPT/Geminiに<b>生の見出しから判断させません</b>。まずEventCard・公式開示（TDnet/EDINET）・
+          C.A.O.S.連想・情報源ティア・市場の深さの実証・可視性の制約・校正状態・Decision Value状態から
+          <b>証拠パック（Evidence Pack）</b>を組み立てます。GPTが主判断を行い、Geminiがそれに反証（チャレンジ）し、
+          最終のARGUS Viewは<b>どの証拠を使ったか</b>（evidencePackId・確信度の前後・欠けていたデータ）を記録します。
+          各銘柄の証拠パックは <code style={{ fontSize: 11 }}>/api/argus/evidence-pack?symbol=銘柄</code> で誰でも監査できます。
+        </p>
+      </div>
     </div>
   </section>
 );
