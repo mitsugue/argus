@@ -10565,7 +10565,7 @@ def api_argus_source_coverage():
 # provider body. A key being present is NOT 'live' — only a 200 with sampleCount>0 is.
 _PROVIDER_DIAG_CACHE = {"data": None, "expires": 0.0}
 _PROVIDER_DIAG_TTL = 300          # 5 min — avoid quota drain on repeated admin calls
-_DIAG_TIMEOUT = 8
+_DIAG_TIMEOUT = 12   # J-Quants cold endpoints can take >8s; the real fetchers use 10-12s
 
 def _diag_runtime(http, n):
     if http == 200:
