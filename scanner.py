@@ -10449,7 +10449,7 @@ def _source_registry():
                 return i.get("runtimeStatus")
         return None
     _jq_ds = {p: _dc_rt(p) for p in ("jquants-trading-calendar", "jquants-earnings-calendar",
-                                     "jquants-margin-interest", "jquants-short-selling",
+                                     "jquants-margin-interest", "jquants-short-ratio",
                                      "jquants-investor-types")}
     _jq_live_n = sum(1 for v in _jq_ds.values() if v == "live")
     _jq_known = any(v for v in _jq_ds.values())
@@ -10702,28 +10702,30 @@ def _provider_diagnostics():
         _diag_probe("jquants-tdnet", bool(_JQUANTS_API_KEY), _jq_tdnet,
                     caps=["official_disclosure"],
                     limitations="公式TDnet Add-on。404ならJQUANTS_TDNET_PATH要調整。official=confirmation。"),
+        # v2 paths per the official migration table (jpx-jquants.com/ja/spec/migration-v1-v2):
+        # trading_calendar→/markets/calendar, weekly_margin_interest→/markets/margin-interest,
+        # short_selling→/markets/short-ratio, trades_spec→/equities/investor-types. All rows
+        # live under the top-level "data" key in v2.
         _diag_probe("jquants-trading-calendar", bool(_JQUANTS_API_KEY),
-                    _jq_probe("/markets/trading_calendar", {"from": _jq_7d, "to": _jq_today},
-                              ("trading_calendar",)),
+                    _jq_probe("/markets/calendar", {"from": _jq_7d, "to": _jq_today}),
                     caps=["trading_calendar"],
-                    limitations="Standard。市場クロック照合用（現在は静的カレンダー併用）。"),
+                    limitations="Freeプラン以上。市場クロック照合用（現在は静的カレンダー併用）。"),
         _diag_probe("jquants-earnings-calendar", bool(_JQUANTS_API_KEY),
                     _jq_probe("/equities/earnings-calendar", {}),
                     caps=["earnings_calendar"], limitations="決算発表予定。catalystで使用中。"),
         _diag_probe("jquants-margin-interest", bool(_JQUANTS_API_KEY),
-                    _jq_probe("/markets/weekly_margin_interest", {"code": "7203", "from": _jq_90d}),
-                    caps=["margin_interest"], limitations="信用残(週次)。entry-scoutで使用中。"),
-        _diag_probe("jquants-short-selling", bool(_JQUANTS_API_KEY),
-                    _jq_probe("/markets/short_selling", {"from": _jq_7d, "to": _jq_today},
-                              ("short_selling",)),
+                    _jq_probe("/markets/margin-interest", {"code": "7203", "from": _jq_90d}),
+                    caps=["margin_interest"], limitations="信用残(週次)。entry-scoutで使用中。Standard。"),
+        _diag_probe("jquants-short-ratio", bool(_JQUANTS_API_KEY),
+                    _jq_probe("/markets/short-ratio", {"s33": "0050", "from": _jq_7d, "to": _jq_today}),
                     caps=["short_ratio"],
-                    limitations="業種別空売り比率。判断には未接続（状態可視化のみ・文脈データ）。"),
+                    limitations="業種別空売り比率。判断には未接続（状態可視化のみ・文脈データ）。Standard。"),
         _diag_probe("jquants-investor-types", bool(_JQUANTS_API_KEY),
-                    _jq_probe("/markets/trades_spec",
+                    _jq_probe("/equities/investor-types",
                               {"from": (datetime.now(TZ_JST) - timedelta(days=30)).strftime("%Y-%m-%d"),
-                               "to": _jq_today}, ("trades_spec",)),
+                               "to": _jq_today}),
                     caps=["investor_types"],
-                    limitations="投資部門別売買。判断には未接続（状態可視化のみ・文脈データ）。"),
+                    limitations="投資部門別売買。判断には未接続（状態可視化のみ・文脈データ）。Light以上。"),
         _diag_probe("edinet", bool(_EDINET_API_KEY), _edinet, caps=["official_filings"],
                     limitations="EDINET v2 公式開示。"),
         _diag_probe("twelvedata-quote", bool(_TWELVEDATA_API_KEY), _td_quote, caps=["quote"],
@@ -11278,9 +11280,12 @@ def _jq_price_history(code):
 def _jq_weekly_margin(code):
     """Latest two weekly margin-interest rows for one TSE code, newest-first.
     Returns a list of normalized dicts {date, longVol, shortVol} or None if the
-    J-Quants plan does not include this endpoint (403/404) or it is empty. The
-    documented v2 fields are LongMarginTradeVolume (信用買い残) and
-    ShortMarginTradeVolume (信用売り残); missing fields → row skipped, never faked."""
+    J-Quants plan does not include this endpoint (403/404) or it is empty.
+    v11.1.2 FIX: the endpoint was RENAMED in v2 (migration table): the old
+    /markets/weekly_margin_interest with LongMarginTradeVolume/ShortMarginTradeVolume
+    fields is DEAD — v2 is /markets/margin-interest with ShrtVol/LongVol. The old
+    path had silently broken this feature since the v2 migration (the provider
+    diagnostics probe surfaced it). Old field names kept as a defensive fallback."""
     now = time.time()
     c = _JQ_MARGIN_CACHE.get(code)
     if c and now < c["expires"]:
@@ -11290,14 +11295,14 @@ def _jq_weekly_margin(code):
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
             frm = (datetime.now(TZ_JST) - timedelta(days=90)).strftime("%Y-%m-%d")
-            r = requests.get(f"{_JQUANTS_BASE}/markets/weekly_margin_interest",
+            r = requests.get(f"{_JQUANTS_BASE}/markets/margin-interest",
                              headers=headers, params={"code": code, "from": frm}, timeout=10)
             if r.status_code == 200:
                 rows = (r.json() or {}).get("data", []) or []
                 norm = []
                 for q in rows:
-                    lv = q.get("LongMarginTradeVolume")
-                    sv = q.get("ShortMarginTradeVolume")
+                    lv = q.get("LongVol", q.get("LongMarginTradeVolume"))
+                    sv = q.get("ShrtVol", q.get("ShortMarginTradeVolume"))
                     if lv is None or sv is None:
                         continue
                     norm.append({"date": q.get("Date"), "longVol": float(lv), "shortVol": float(sv)})
