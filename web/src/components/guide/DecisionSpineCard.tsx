@@ -22,6 +22,33 @@ function useOfficialDurability(): Durability | null {
   return d;
 }
 
+interface LearningStatus {
+  status?: string; sampleStage?: string; lastBuildAt?: string | null;
+  counts?: { lessons?: number; usableLessons?: number; burnInLessons?: number };
+  ledger?: { restoreAvailable?: boolean; latestDate?: string | null; latestCount?: number };
+  limitationsJa?: string[];
+}
+
+// v11.4.0 — live Learning Memory status (public cache-only; none/burn_in/ready).
+function useLearningStatus(): LearningStatus | null {
+  const [d, setD] = React.useState<LearningStatus | null>(null);
+  React.useEffect(() => {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+    if (!backend) return;
+    let alive = true;
+    fetch(backend.replace(/\/$/, '') + '/api/argus/learning-memory/status')
+      .then((r) => r.json()).then((j) => { if (alive && j && j.schemaVersion) setD(j); })
+      .catch(() => { /* keep null */ });
+    return () => { alive = false; };
+  }, []);
+  return d;
+}
+
+const STAGE_JA: Record<string, string> = {
+  none: 'まだ空(none)', burn_in: 'burn-in(サンプル不足)', early_signal: '初期シグナル',
+  usable: '利用可能', mature: '成熟',
+};
+
 // 判断は何を読んでいるのか (v11.2.1) — the dedicated Decision Spine explainer.
 // Static + honest: describes what the judges actually read (the Evidence Pack) and the
 // hard limitations. No overclaims; the flow mirrors the real pipeline.
@@ -42,6 +69,7 @@ const LIMITS = [
 
 export const DecisionSpineCard: React.FC = () => {
   const dur = useOfficialDurability();
+  const learn = useLearningStatus();
   return (
   <section className="mdepth">
     <div className="section-head">
@@ -157,6 +185,28 @@ export const DecisionSpineCard: React.FC = () => {
               ? `あり（最新 ${dur.durableStore?.latestLedgerDate ?? '—'} / ${dur.durableStore?.latestCount ?? 0}件）`
               : 'まだ（初回は16:05のワークフロー後に生成）'}
             {(dur.limitationsJa || []).length > 0 ? ` ・注: ${(dur.limitationsJa || [])[0]}` : ''}
+          </p>
+        )}
+      </div>
+
+      {/* ARGUSはどう成長するのか (v11.4.0 Learning Memory) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>ARGUSはどう成長するのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUS Proの「成長」は、GPT/Geminiの重みを勝手に変えることでは<b>ありません</b>。公式イベント、
+          C.A.O.S.イベント、急落・急騰の原因候補、Visibility Guard、Calibration、Decision Valueの結果を
+          <b>public-safeなLearning Memory</b>として集計し、次回判断の証拠パックに<b>参考情報</b>として戻します。
+          サンプルが少ない間はburn-inとして表示し、<b>判断を強制しません</b>。十分な件数が集まった場合だけ、
+          確信度の上限・注意喚起・AIプロンプトの補助情報として使います。<b>現在の公式証拠・市場確認は
+          履歴パターンより常に優先</b>し、Learning Memory単独でBUY/SELLを作ることはありません。
+        </p>
+        {learn && (
+          <p style={{ margin: '6px 0 0', color: 'var(--text-faint)', fontSize: 11, lineHeight: 1.7 }}>
+            実測: 状態 {learn.status ?? '—'} ・段階 {STAGE_JA[learn.sampleStage ?? 'none'] ?? learn.sampleStage}
+            ・教訓 {learn.counts?.lessons ?? 0}件（利用可能 {learn.counts?.usableLessons ?? 0}
+            {learn.counts?.burnInLessons ? ` / burn-in ${learn.counts.burnInLessons}` : ''}）
+            ・最終ビルド {learn.lastBuildAt ? String(learn.lastBuildAt).slice(0, 16).replace('T', ' ') : 'まだ（初回は21:30 JSTのワークフロー後）'}
+            {learn.ledger?.restoreAvailable ? ` ・恒久保存あり（最新 ${learn.ledger.latestDate ?? '—'}）` : ''}
           </p>
         )}
       </div>

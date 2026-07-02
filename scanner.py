@@ -39,6 +39,8 @@ import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
 import argus_market_confirmation  # Market Confirmation v1.5 from existing data (pure, v11.3.4)
+import argus_learning_memory  # Learning Memory: public-safe history → cohort lessons (pure, v11.4.0)
+import argus_learning_memory_store  # durable learning-memory merge/serialize (pure, v11.4.0)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
@@ -4119,6 +4121,15 @@ def _build_evidence_pack(symbol, market=None):
         official_event_refs=oe_refs)
     if cache_missing:
         pack["missingConfirmations"] = sorted(set(pack["missingConfirmations"]) | cache_missing)
+    # v11.4: Learning Memory (compact, symbol-relevant, CAUTION-ONLY). Cache-only
+    # read of ARGUS's own aggregated history — never grounds/confirms/forces a
+    # decision, only caps confidence / adds caution.
+    try:
+        lm = _learning_memory_compact_for_symbol(sym, mkt)
+        if lm:
+            pack["learningMemory"] = lm
+    except Exception:
+        pass
     # build stats for /decision-spine/status (public-watchlist-scope symbol only)
     _today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
     if _EVIDENCE_PACK_STATE.get("day") != _today:
@@ -7343,6 +7354,22 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             reason = f"【価格データ{lag}日遅れ】" + reason
         if cal["factor"] != 1.0:
             conf = round(min(0.9, max(0.05, conf * cal["factor"])), 2)
+        # ── Learning Memory: caution-only confidence cap (v11.4). A usable/mature
+        #    NEGATIVE lesson for this symbol/market/source can only LOWER confidence
+        #    — it can never create ADD/BUY DIP or raise confidence. Current official
+        #    evidence still governs the ACTION; memory only tempers certainty. ──
+        lm_used = False
+        try:
+            _lm = _learning_memory_compact_for_symbol(meta["symbol"], meta["market"])
+            if _lm:
+                lm_used = any(L.get("stage") in ("early_signal", "usable", "mature")
+                              for L in (_lm.get("lessons") or []))
+                _lm_caps = [c.get("cap") for c in (_lm.get("confidenceCaps") or [])
+                            if isinstance(c.get("cap"), (int, float))]
+                if _lm_caps:
+                    conf = round(min(conf, min(_lm_caps)), 2)
+        except Exception:
+            pass
         # ── Visibility Guard: cap confidence, block aggressive entry (v11) ──
         conf_before = conf                     # decision spine: confidence BEFORE the guard
         dq = ("LIVE" if qstatus == "live" and lag in (0, None) else "DELAYED")
@@ -7371,6 +7398,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                 "confidenceAfter": conf,
                 "calibrationMemoryUsed": cal.get("factor", 1.0) != 1.0,
                 "decisionValueMemoryUsed": False,   # DV scoring not yet feeding judgment — honest
+                "learningMemoryUsed": lm_used,      # v11.4: usable/early lesson included (caution-only)
                 "missingData": list(_vg.get("reasonCodes") or []),
             },
         })
@@ -7912,6 +7940,22 @@ def _build_ai_snapshot():
                                         "whyJa": (c.get("whyJa") or "")[:60]} for c in _ca2]
         except Exception:
             pass
+    # v11.4: Learning Memory as prompt caution/context (NOT a fresh fact). Global
+    # top lessons + caps + hints; the AI must treat it as caution, never overriding
+    # official disclosure or fresh market confirmation.
+    try:
+        _lm_doc = _learning_memory_doc()
+        _lm_ch = _lm_doc.get("capsAndHints") or {}
+        learning_memory_ctx = {
+            "sampleStage": _lm_doc.get("sampleStage"),
+            "promptHints": list(_lm_ch.get("promptHints") or [])[:6],
+            "confidenceCaps": [{"cohortType": c.get("cohortType"), "cohortKey": c.get("cohortKey"),
+                                "cap": c.get("cap")} for c in (_lm_ch.get("confidenceCaps") or [])[:8]],
+            "limitationsJa": list(_lm_doc.get("limitationsJa") or [])[:4],
+            "cautionOnly": True,
+        }
+    except Exception:
+        learning_memory_ctx = {"sampleStage": "none", "cautionOnly": True}
     evidence_context = {
         "visibilityGuard": {"visibilityLevel": _vg2.get("visibilityLevel"),
                             "confidenceCap": _vg2.get("confidenceCap"),
@@ -7920,6 +7964,7 @@ def _build_ai_snapshot():
         "marketDepthProof": _depth2,
         "calibrationStage": _cal_stage,
         "decisionValuePhase": _dv_phase,
+        "learningMemory": learning_memory_ctx,
         "missingData": list(_vg2.get("reasonCodes") or []),
         "disciplineJa": argus_evidence_pack.DISCIPLINE_JA,
     }
@@ -7985,6 +8030,12 @@ _OPENAI_SYSTEM = (
     "(5) if `evidenceContext.marketDepthProof.trueDepthLiveCount` is 0, LOWER confidence on any intraday/"
     "microstructure claim (no L2/tape proof exists); "
     "(6) while `evidenceContext.calibrationStage` is burn_in, do not overstate confidence. "
+    "(7) `evidenceContext.learningMemory` is ARGUS's OWN past-outcome history (cohort lessons + "
+    "confidenceCaps + promptHints) — treat it as CAUTION/CONTEXT ONLY, never as a current fact: it can lower "
+    "your confidence or flag a repeatedly-wrong pattern, but it must NEVER override a fresh official disclosure "
+    "or fresh market confirmation, and it can NEVER by itself create ADD/BUY DIP. If its `sampleStage` is "
+    "none/burn_in, do not lean on it (sample too small); if a `confidenceCaps` entry applies to a label, keep "
+    "that label's confidence at or below the cap. Model weights are NOT updated — this is aggregated history. "
     "State in dataLimitations which evidence was missing when it constrained you. "
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
@@ -11932,6 +11983,363 @@ def api_argus_admin_mover_causes_explain():
     _MOVER_REFRESH_QUEUE["data"] = None
     return jsonify({"ok": True, "generated": generated, "skipped": skipped,
                     "budgetMax": mx, "asOf": now_iso})
+
+
+# ━━━ V11.4.0 Learning Memory ━━━
+# ARGUS's own public-safe history → small auditable cohort lessons that flow back
+# into the Evidence Pack / AI prompt as CAUTION/CONTEXT. Not fine-tuning, not
+# auto-trading. Public GET reads only cached/ledger-derived memory (no LLM, no
+# provider fetch). Admin build reads public-safe ledger snapshots (no LLM in v1).
+_LEARNING_MEMORY = {"doc": None}                # single aggregate document
+_LEARNING_MEMORY_FILE = "/tmp/argus_learning_memory.json"
+_LEARNING_MEMORY_STATE = {"restored": False, "lastBuildAt": None, "lastRestoreAt": None,
+                          "status": "not_ready", "pathType": "ephemeral_tmp"}
+
+
+def _learning_memory_persist():
+    try:
+        with open(_LEARNING_MEMORY_FILE, "w") as f:
+            json.dump({"doc": _LEARNING_MEMORY["doc"],
+                       "state": {k: _LEARNING_MEMORY_STATE[k]
+                                 for k in ("lastBuildAt", "lastRestoreAt", "status")}},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _learning_memory_restore_once():
+    """tmp → ledger latest (merge; counts never shrink) → empty."""
+    if _LEARNING_MEMORY_STATE["restored"]:
+        return
+    _LEARNING_MEMORY_STATE["restored"] = True
+    try:
+        with open(_LEARNING_MEMORY_FILE) as f:
+            blob = json.load(f)
+        _LEARNING_MEMORY_STATE.update({k: v for k, v in (blob.get("state") or {}).items()
+                                       if k in ("lastBuildAt", "lastRestoreAt", "status")})
+        if isinstance(blob.get("doc"), dict):
+            _LEARNING_MEMORY["doc"] = blob["doc"]
+            _LEARNING_MEMORY_STATE["pathType"] = "durable_restored"
+            return
+    except Exception:
+        pass
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/learning-memory/latest.json?cb={int(time.time())}",
+                         timeout=6)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            restored = argus_learning_memory_store.restore_from_snapshot(json.loads(r.text))
+            if restored:
+                _LEARNING_MEMORY["doc"] = argus_learning_memory_store.merge_memory(
+                    _LEARNING_MEMORY["doc"], restored, now_iso=_ai_now_iso())
+                _LEARNING_MEMORY_STATE["pathType"] = "ledger_restored"
+                _LEARNING_MEMORY_STATE["lastRestoreAt"] = _ai_now_iso()
+    except Exception:
+        pass
+
+
+def _lm_official_event_observations():
+    """Official events → outcome observations. Resolution is decided ONLY by the
+    lifecycle's TERMINAL causeStatus (argus_official_event_lifecycle):
+      confirmed_cause = hit; not_cause = miss (reaction observed but causation
+      disproved); everything else — including probable_catalyst — is STILL PENDING
+      (the lifecycle's own 'unknown is acceptable' state) and must never be scored.
+    Non-material (fact_only) disclosures are context, not scored."""
+    obs = []
+    try:
+        _official_events_restore_once()
+        for r in list(_OFFICIAL_EVENTS.values()):
+            if not r.get("material"):
+                continue
+            mkt = str(r.get("market") or "").upper() or None
+            cat = r.get("category") or "other"
+            cause = str(r.get("causeStatus") or "")
+            if cause == "confirmed_cause":
+                outcome, pending = "hit", False
+            elif cause == "not_cause":
+                outcome, pending = "miss", False
+            else:
+                outcome, pending = None, True     # probable_catalyst / classified = pending
+            for ct, ck in (("eventType", cat), ("market", mkt)):
+                if ck:
+                    obs.append({"cohortType": ct, "cohortKey": ck,
+                                "outcome": outcome, "pending": pending})
+    except Exception:
+        pass
+    return obs
+
+
+def _lm_macro_observations():
+    """Macro pre/post → macroEventCode outcome. Scored only when post.verdict is
+    hit/partial/miss; not_scoreable / no post = pending."""
+    obs = []
+    try:
+        for r in list(_MACRO_ANALYSIS.values()):
+            code = r.get("eventCode")
+            if not code:
+                continue
+            verdict = str((r.get("post") or {}).get("verdict") or "")
+            if verdict in ("hit", "partial", "miss"):
+                obs.append({"cohortType": "macroEventCode", "cohortKey": code,
+                            "outcome": verdict, "pending": False})
+            else:
+                obs.append({"cohortType": "macroEventCode", "cohortKey": code,
+                            "outcome": None, "pending": True})
+    except Exception:
+        pass
+    return obs
+
+
+def _lm_mover_cause_observations():
+    """Mover causes → sourceFamily / sourceTier / causeCategory outcomes for the TOP
+    candidate. A resolved mover (confirmed_cause + market-confirmed) = hit for its top
+    candidate's family; a stale unresolved candidate/no_lead = miss; still fresh = pending.
+    Conservative: only the top candidate contributes (no per-candidate double counting)."""
+    obs = []
+    try:
+        _mover_causes_restore_once()
+        for r in list(_MOVER_CAUSES.values()):
+            cands = r.get("causeCandidates") or []
+            if not cands:
+                continue
+            top = cands[0]
+            status = str(r.get("causeStatus") or "")
+            mc = (r.get("marketConfirmation") or {}).get("status")
+            stale = bool((r.get("freshness") or {}).get("isStale"))
+            if status == "confirmed_cause" and mc == "confirmed":
+                outcome, pending = "hit", False
+            elif status in ("candidate_catalyst", "no_lead_yet") and stale:
+                outcome, pending = "miss", False
+            else:
+                outcome, pending = None, True
+            keys = [("causeCategory", top.get("category")),
+                    ("sourceFamily", top.get("sourceFamily")),
+                    ("sourceTier", top.get("sourceTier"))]
+            for ct, ck in keys:
+                if ck:
+                    obs.append({"cohortType": ct, "cohortKey": str(ck),
+                                "outcome": outcome, "pending": pending})
+    except Exception:
+        pass
+    return obs
+
+
+def _lm_visibility_observations():
+    """Visibility downgrade reason codes → visibilityReason cohort. Without Decision
+    Value outcome linkage these stay pending (recorded, not scored) — honest: we
+    don't yet know if a downgrade was 'useful'."""
+    obs = []
+    try:
+        vg = _visibility_guard_cached_only() or {}
+        for code in (vg.get("reasonCodes") or []):
+            obs.append({"cohortType": "visibilityReason", "cohortKey": str(code),
+                        "outcome": None, "pending": True})
+    except Exception:
+        pass
+    return obs
+
+
+def _build_learning_memory_inputs(cached_only=True):
+    """Assemble public-safe observations + context from cached/ledger data ONLY.
+    Reads only public stores/ledger artifacts — never private Layer2B raw records,
+    never a paid provider, never an LLM."""
+    official = _lm_official_event_observations()
+    macro = _lm_macro_observations()
+    mover = _lm_mover_cause_observations()
+    visibility = _lm_visibility_observations()
+    observations = official + macro + mover + visibility
+
+    def _scored(lst):
+        return sum(1 for o in lst if not o.get("pending")
+                   and o.get("outcome") in ("hit", "partial", "miss"))
+
+    # context (calibration / decision-value stages — hints only, never outcome cohorts)
+    try:
+        dv = _dv_status_public_dict()
+    except Exception:
+        dv = {}
+    try:
+        v4 = _calibration_v4_summary() or {}
+        cal = {"nScored": v4.get("nScored") or v4.get("scored") or 0,
+               "nPredictions": v4.get("nPredictions") or v4.get("n") or 0}
+    except Exception:
+        cal = {}
+    counts = {
+        "officialEvents": _scored(official),
+        "macroEvents": _scored(macro),
+        "moverCauses": _scored(mover),
+        "decisionValue": int(dv.get("scoredCount") or 0),
+        "calibration": int(cal.get("nScored") or 0),
+    }
+    context = {"decisionValue": {"phase": dv.get("phase"), "sampleStage": dv.get("sampleStage"),
+                                 "totalRecords": dv.get("totalRecords")},
+               "calibration": cal, "sampleCounts": counts}
+    return observations, context
+
+
+def _learning_memory_build(persist=True):
+    """Admin/cron: rebuild the aggregate from public-safe snapshots. No LLM."""
+    _learning_memory_restore_once()
+    now_iso = _ai_now_iso()
+    observations, context = _build_learning_memory_inputs(cached_only=True)
+    doc = argus_learning_memory.build_memory(observations, context=context, now_iso=now_iso)
+    # merge so a sparse rebuild never shrinks accumulated counts
+    _LEARNING_MEMORY["doc"] = argus_learning_memory_store.merge_memory(
+        _LEARNING_MEMORY["doc"], doc, now_iso=now_iso)
+    _LEARNING_MEMORY_STATE.update(lastBuildAt=now_iso, status="ready")
+    if persist:
+        _learning_memory_persist()
+    return _LEARNING_MEMORY["doc"]
+
+
+def _learning_memory_doc():
+    """The current memory doc (restore-once; empty-none if never built)."""
+    _learning_memory_restore_once()
+    return _LEARNING_MEMORY["doc"] or argus_learning_memory.build_memory([], now_iso=_ai_now_iso())
+
+
+def _learning_memory_compact_for_symbol(symbol, market):
+    """Compact, symbol/context-relevant memory slice for the Evidence Pack. Pure
+    read of the in-memory doc — cached-only, never triggers a build."""
+    try:
+        doc = _learning_memory_doc()
+        cause_cats, src_families = set(), set()
+        today = _ai_now_iso()[:10].replace("-", "")
+        rec = _MOVER_CAUSES.get(f"mc-{str(market).upper()}-{str(symbol).upper()}-{today}")
+        for c in ((rec or {}).get("causeCandidates") or [])[:3]:
+            if c.get("category"):
+                cause_cats.add(str(c["category"]))
+            if c.get("sourceFamily"):
+                src_families.add(str(c["sourceFamily"]))
+        macro_codes = {r.get("eventCode") for r in list(_MACRO_ANALYSIS.values())
+                       if r.get("eventCode")}
+        return argus_learning_memory.compact_for_evidence(
+            doc, symbol=str(symbol).upper(), market=str(market).upper(),
+            cause_categories=cause_cats, macro_codes=macro_codes,
+            source_families=src_families)
+    except Exception:
+        return None
+
+
+@app.route("/api/argus/learning-memory")
+def api_argus_learning_memory():
+    """Public cache-only: ARGUS's auditable Learning Memory. Never calls LLM,
+    never fetches a provider — reads the in-memory / ledger-restored doc only."""
+    doc = _learning_memory_doc()
+    cohort_type = (request.args.get("cohortType") or "").strip()
+    market = (request.args.get("market") or "").strip().upper()
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    try:
+        limit = int(request.args.get("limit") or 60)
+    except Exception:
+        limit = 60
+    lessons = list(doc.get("lessons") or [])
+    if cohort_type:
+        lessons = [L for L in lessons if L.get("cohortType") == cohort_type]
+    if market:
+        lessons = [L for L in lessons if not (L.get("cohortType") == "market")
+                   or L.get("cohortKey") == market]
+    if symbol:
+        lessons = [L for L in lessons if not (L.get("cohortType") == "symbol")
+                   or str(L.get("cohortKey")).upper() == symbol]
+    out = dict(doc)
+    out["lessons"] = lessons[:max(1, min(limit, 120))]
+    out["status"] = _LEARNING_MEMORY_STATE.get("status", "ready" if doc.get("lessons") else "not_ready")
+    return jsonify(out)
+
+
+@app.route("/api/argus/learning-memory/status")
+def api_argus_learning_memory_status():
+    doc = _learning_memory_doc()
+    counts = doc.get("counts") or {}
+    stage = doc.get("sampleStage") or "none"
+    status = _LEARNING_MEMORY_STATE.get("status")
+    if not status or status == "not_ready":
+        status = "ready" if doc.get("lessons") else "not_ready"
+    # ledger meta (restore availability) — cached-only read of ARGUS's own artifact
+    ledger = {"restoreAvailable": False, "latestDate": None, "latestCount": 0}
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/learning-memory/latest.json?cb={int(time.time())}",
+                         timeout=6)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            snap = json.loads(r.text)
+            ledger = {"restoreAvailable": True, "latestDate": str(snap.get("asOf") or "")[:10],
+                      "latestCount": int((snap.get("summary") or {}).get("lessons", 0))}
+    except Exception:
+        pass
+    return jsonify({
+        "schemaVersion": "learning-memory-status-v1",
+        "asOf": _ai_now_iso(),
+        "status": status,
+        "sampleStage": stage,
+        "counts": {
+            "lessons": int(counts.get("lessons", 0)),
+            "usableLessons": int(counts.get("usableLessons", 0)),
+            "burnInLessons": int(counts.get("burnInLessons", 0)),
+            "officialEventSamples": int(counts.get("officialEventSamples", 0)),
+            "macroEventSamples": int(counts.get("macroEventSamples", 0)),
+            "moverCauseSamples": int(counts.get("moverCauseSamples", 0)),
+            "decisionValueSamples": int(counts.get("decisionValueSamples", 0)),
+            "calibrationSamples": int(counts.get("calibrationSamples", 0)),
+        },
+        "lastBuildAt": _LEARNING_MEMORY_STATE.get("lastBuildAt"),
+        "lastRestoreAt": _LEARNING_MEMORY_STATE.get("lastRestoreAt"),
+        "ledger": ledger,
+        "pathType": _LEARNING_MEMORY_STATE.get("pathType"),
+        "limitationsJa": doc.get("limitationsJa") or [],
+    })
+
+
+@app.route("/api/argus/learning-memory/lesson/<lesson_id>")
+def api_argus_learning_memory_lesson(lesson_id):
+    doc = _learning_memory_doc()
+    for L in (doc.get("lessons") or []):
+        if str(L.get("lessonId")) == str(lesson_id):
+            return jsonify(L)
+    return jsonify({"error": "not_found", "lessonId": lesson_id}), 404
+
+
+@app.route("/api/argus/learning-memory/snapshot")
+def api_argus_learning_memory_snapshot():
+    """Public-safe snapshot for the ledger workflow (metadata only, no secrets)."""
+    return jsonify(argus_learning_memory_store.serialize_snapshot(
+        _learning_memory_doc(), as_of=_ai_now_iso()))
+
+
+@app.route("/api/argus/admin/learning-memory/build", methods=["POST"])
+def api_argus_admin_learning_memory_build():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        doc = _learning_memory_build()
+        return jsonify({"ok": True, "sampleStage": doc.get("sampleStage"),
+                        "counts": doc.get("counts"), "asOf": _ai_now_iso()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
+
+
+@app.route("/api/argus/admin/learning-memory/restore", methods=["POST"])
+def api_argus_admin_learning_memory_restore():
+    """Admin: force a merge-restore from the ledger snapshot (never wipes)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/learning-memory/latest.json?cb={int(time.time())}",
+                         timeout=8)
+        restored = None
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            restored = argus_learning_memory_store.restore_from_snapshot(json.loads(r.text))
+        if restored:
+            _LEARNING_MEMORY["doc"] = argus_learning_memory_store.merge_memory(
+                _LEARNING_MEMORY["doc"], restored, now_iso=_ai_now_iso())
+            _LEARNING_MEMORY_STATE.update(lastRestoreAt=_ai_now_iso(), status="ready")
+            _learning_memory_persist()
+            return jsonify({"ok": True, "restored": True,
+                            "sampleStage": _LEARNING_MEMORY["doc"].get("sampleStage")})
+        return jsonify({"ok": True, "restored": False, "reason": "no_ledger_snapshot"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
 
 _ATTRIB_HIST_CACHE = {"data": None, "expires": 0.0}

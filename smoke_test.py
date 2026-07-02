@@ -573,6 +573,91 @@ def v_mover_items_freshness():
     return True, f"count={d.get('count')} all carry freshness"
 
 
+_LM_FORBIDDEN = ('"prompt":', '"messages":', '"holdings":', '"pnl":', '"netr":',
+                 '"costbasis":', '"quantity":', '"apikey":', '"api_key":', '"token":',
+                 '"authorization":', '"rawproviderbody":', '"privaterepo":')
+
+
+def _no_forbidden(d):
+    blob = json.dumps(d, ensure_ascii=False).lower()
+    for bad in _LM_FORBIDDEN:
+        if bad in blob:
+            return bad
+    return None
+
+
+def v_learning_memory():
+    # v11.4.0: public cache-only Learning Memory. Shape + honesty: burn_in/none is
+    # fine, but the schema must be present and it must never overclaim mature with
+    # a tiny sample. No forbidden keys.
+    c, d = _get("/api/argus/learning-memory")
+    if d.get("schemaVersion") != "learning-memory-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    stage = d.get("sampleStage")
+    if stage not in ("none", "burn_in", "early_signal", "usable", "mature"):
+        return False, f"bad sampleStage {stage}"
+    if not isinstance(d.get("lessons"), list) or not isinstance(d.get("cohorts"), dict):
+        return False, "lessons/cohorts missing"
+    total = int((d.get("counts") or {}).get("totalScoredSamples", 0))
+    if stage == "mature" and total < 100:
+        return False, f"overclaim mature with n={total}"
+    for L in (d.get("lessons") or []):
+        if L.get("stage") == "mature" and int(L.get("sampleSize", 0)) < 100:
+            return False, f"lesson overclaims mature n={L.get('sampleSize')}"
+        if L.get("stage") == "burn_in" and float(L.get("confidence", 0)) > 0.0:
+            return False, "burn_in lesson has nonzero confidence"
+    bad = _no_forbidden(d)
+    if bad:
+        return False, f"forbidden key {bad}"
+    return True, f"stage={stage} lessons={len(d.get('lessons') or [])} scored={total}"
+
+
+def v_learning_memory_status():
+    c, d = _get("/api/argus/learning-memory/status")
+    if d.get("schemaVersion") != "learning-memory-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("status") not in ("not_ready", "building", "ready", "stale", "error"):
+        return False, f"bad status {d.get('status')}"
+    cn = d.get("counts") or {}
+    for k in ("lessons", "usableLessons", "officialEventSamples", "macroEventSamples",
+              "moverCauseSamples", "decisionValueSamples", "calibrationSamples"):
+        if not isinstance(cn.get(k), int):
+            return False, f"counts.{k} missing"
+    return True, (f"status={d.get('status')} stage={d.get('sampleStage')} "
+                  f"lessons={cn.get('lessons')} usable={cn.get('usableLessons')} "
+                  f"ledger={bool((d.get('ledger') or {}).get('restoreAvailable'))}")
+
+
+def v_evidence_pack_has_learning_memory():
+    c, d = _get("/api/argus/evidence-pack?symbol=9984&market=JP")
+    lm = d.get("learningMemory")
+    if not isinstance(lm, dict):
+        return False, "evidence-pack missing learningMemory"
+    if lm.get("schemaVersion") != "learning-memory-compact-v1":
+        return False, f"bad compact schema {lm.get('schemaVersion')}"
+    if lm.get("cautionOnly") is not True:
+        return False, "learningMemory must be cautionOnly"
+    bad = _no_forbidden(d)
+    if bad:
+        return False, f"forbidden key {bad}"
+    return True, f"stage={lm.get('sampleStage')} lessons={len(lm.get('lessons') or [])}"
+
+
+def v_learning_memory_admin_gated():
+    import urllib.error
+    for path in ("/api/argus/admin/learning-memory/build",
+                 "/api/argus/admin/learning-memory/restore"):
+        req = urllib.request.Request(BASE + path, method="POST",
+                                     headers={"User-Agent": "argus-smoke"})
+        try:
+            with urllib.request.urlopen(req, timeout=30):
+                return False, f"{path} returned 200 without token!"
+        except urllib.error.HTTPError as e:
+            if e.code not in (401, 503, 429):
+                return False, f"{path} returned {e.code}"
+    return True, "build/restore admin-gated"
+
+
 def v_public_explain_cached_only():
     # explain=1 must return cached text or not_generated — never a live AI run.
     t0 = time.time()
@@ -864,6 +949,11 @@ CHECKS = [
     ("v11.3.4 market-confirmation JP", v_market_confirmation_jp),
     ("v11.3.4 market-confirmation US", v_market_confirmation_us),
     ("v11.3.4 mover freshness", v_mover_items_freshness),
+    # ── V11.4.0 Learning Memory ──
+    ("v11.4.0 learning-memory", v_learning_memory),
+    ("v11.4.0 learning-memory status", v_learning_memory_status),
+    ("v11.4.0 evidence-pack learningMemory", v_evidence_pack_has_learning_memory),
+    ("v11.4.0 learning admin gated", v_learning_memory_admin_gated),
 ]
 
 

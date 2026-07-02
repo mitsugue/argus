@@ -1,0 +1,85 @@
+# Learning Memory ledger (v11.4.0) — after the daily prediction / official-event /
+# mover-cause / macro snapshots land, aggregate ARGUS's OWN public-safe history into
+# auditable cohort lessons and persist a public-safe snapshot:
+#   ledger/learning-memory/YYYY-MM-DD.json  (append-only per day)
+#   ledger/learning-memory/latest.json      (overwritten)
+# NO LLM calls here (v1 build is deterministic). Secrets are never logged.
+name: learning-memory
+on:
+  schedule:
+    - cron: '30 12 * * 1-5'      # 21:30 JST weekdays — after the daily snapshots
+  workflow_dispatch: {}
+permissions:
+  contents: write
+# Serialize with every other ledger-branch writer.
+concurrency:
+  group: ledger-branch-writer
+  cancel-in-progress: false
+
+jobs:
+  persist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Build learning memory (admin, no LLM)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "::warning::ARGUS_ADMIN_TOKEN not set — skipping build (snapshot only)"
+          else
+            curl -s --max-time 60 "$BE/healthz" > /dev/null || true
+            RES=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/learning-memory/build" || echo '{"error":"unreachable"}')
+            echo "build: ${RES:0:200}"
+          fi
+
+      - name: Fetch public-safe snapshot
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4; do
+            curl -sf --max-time 60 "$BE/api/argus/learning-memory/snapshot" \
+              -o "$RUNNER_TEMP/learning-memory.json" && break
+            echo "retry $i"; sleep 15
+          done
+          test -s "$RUNNER_TEMP/learning-memory.json"
+          # Always persist (even sampleStage=none) so the artifact exists; count is informational.
+          N=$(python3 -c "import json,sys; d=json.load(open('$RUNNER_TEMP/learning-memory.json')); print((d.get('summary') or {}).get('lessons', 0))")
+          echo "lessons: $N"
+
+      - name: Checkout (main)
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Commit snapshot to ledger branch
+        run: |
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          fi
+          mkdir -p ledger/learning-memory
+          DAY=$(TZ=Asia/Tokyo date +%F)
+          cp "$RUNNER_TEMP/learning-memory.json" ledger/learning-memory/latest.json
+          if [ ! -f "ledger/learning-memory/$DAY.json" ]; then
+            cp "$RUNNER_TEMP/learning-memory.json" "ledger/learning-memory/$DAY.json"
+          fi
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          # Stage ONLY our own path so other writers' files are never wiped.
+          git add ledger/learning-memory/
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "learning-memory: $(date -u +%FT%TZ) snapshot"
+            git push origin HEAD:ledger
+          fi
