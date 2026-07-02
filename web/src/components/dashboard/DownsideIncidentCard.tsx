@@ -2,7 +2,7 @@ import React from 'react';
 import { jpIntradayJa } from '../../lib/regimeLabels';
 import { useDownsideIncidents, type DownsideIncident, type MoverCauseCompact } from '../../hooks/useDownsideIncidents';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
-import { aiExplanationDisplay } from '../../lib/aiExplanationState';
+import { AiExplanationBlock } from './AiExplanationBlock';
 import './DownsideIncidentCard.css';
 
 // v11.3.4 — freshness + market-confirmation one-liners shared by the cause blocks.
@@ -138,16 +138,14 @@ export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
               {marketConfLineJa(inc.moverCause) && (
                 <p className="dic-line" style={{ margin: 0 }}>{marketConfLineJa(inc.moverCause)}</p>
               )}
-              {(() => {
-                const ai = aiExplanationDisplay(inc.moverCause?.explanationJa, inc.moverCause?.explanationStatus);
-                if (ai.mode === 'expandable') {
-                  return <p className="dic-line" style={{ margin: 0 }}><b>AI解説:</b> {inc.moverCause?.explanationJa}</p>;
-                }
-                if (ai.mode === 'chip') {
-                  return <p className="dic-line" style={{ margin: 0, color: 'var(--text-faint)', fontSize: 11 }}>⏳ {ai.labelJa}</p>;
-                }
-                return <p className="dic-line" style={{ margin: 0, color: 'var(--text-faint)', fontSize: 11 }}>{ai.labelJa}</p>;
-              })()}
+              <AiExplanationBlock
+                explanationJa={inc.moverCause?.explanationJa}
+                explanationStatus={inc.moverCause?.explanationStatus}
+                symbol={inc.symbol}
+                market={inc.market}
+                context="downside-card"
+                dense
+              />
               {(freshnessLineJa(inc.moverCause) || inc.moverCause.checkedJa) && (
                 <p className="dic-line" style={{ margin: 0, color: 'var(--text-faint)', fontSize: 11 }}>
                   {[freshnessLineJa(inc.moverCause), inc.moverCause.checkedJa && `確認済み: ${inc.moverCause.checkedJa}`]

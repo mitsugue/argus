@@ -17,6 +17,15 @@ def _reset_rate_limit_buckets():
         import scanner
         with scanner._RL_LOCK:
             scanner._RL_BUCKETS.clear()
+        # V11.5.2: the explain-request / translation-request queues + their per-IP+symbol
+        # throttles are module state too. The test client is one IP, so leftover throttle
+        # stamps or queued entries would leak between tests (a later test posting the same
+        # symbol reads `rate_limited`/`already_queued` unexpectedly). Clear them per test.
+        for name in ("_MC_EXPLAIN_REQUESTS", "_MC_EXPLAIN_REQ_RL", "_NEWS_JA_VQUEUE",
+                     "_NEWS_JA_VQUEUE_RL"):
+            d = getattr(scanner, name, None)
+            if isinstance(d, dict):
+                d.clear()
     except Exception:
         pass
     yield

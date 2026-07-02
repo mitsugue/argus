@@ -113,7 +113,8 @@ def display_title_ja(text: Optional[str], cache: Dict[str, Dict[str, Any]],
 
 def decorate(text: Optional[str], cache: Dict[str, Dict[str, Any]], source: str = "") -> Dict[str, Any]:
     """Display fields for one news title string. `titleOriginal` (may be English) is for
-    a collapsible '原文を見る'; `displayTitleJa` is always Japanese (or a JP fallback)."""
+    a collapsible '原文を見る'; `displayTitleJa` is always Japanese (or a JP fallback).
+    `translationQueueEligible` marks an untranslated English title the UI should enqueue."""
     s = (text or "").strip()
     st = translation_status(s, cache)
     return {
@@ -121,6 +122,7 @@ def decorate(text: Optional[str], cache: Dict[str, Dict[str, Any]], source: str 
         "titleJa": pick_ja(s, cache),            # backward-compat (cached JA or original)
         "displayTitleJa": display_title_ja(s, cache, source, st),
         "translationStatus": st,
+        "translationQueueEligible": st == "pending",   # V11.5.2: UI auto-queues these
     }
 
 
@@ -164,8 +166,102 @@ def decorate_from_ja(original: Optional[str], ja: Optional[str], source: str = "
                 "translationStatus": "not_needed"}
     if ja and str(ja).strip() and str(ja).strip() != orig:
         return {"titleOriginal": orig, "displayTitleJa": str(ja),
-                "translationStatus": "translated"}
+                "translationStatus": "translated", "translationQueueEligible": False}
     src = (source or "").strip()
     return {"titleOriginal": orig,
             "displayTitleJa": f"翻訳待ち: {src + 'の' if src else ''}関連ニュース",
-            "translationStatus": "pending"}
+            "translationStatus": "pending", "translationQueueEligible": True}
+
+
+# ── V11.5.2: visible-news translation request queue (bounded, dedupe by title hash) ──
+# The public POST endpoint enqueues on-screen English titles; the admin/cron
+# translate-visible run drains this FIRST. Only titleOriginal/source/publishedAt/hash/
+# context/symbol are stored — never article bodies, prompts, secrets, or provider blobs.
+
+def queue_key_for_title(title_original: Optional[str], source: str = "") -> str:
+    """Stable dedupe key for a queued title (same hash the translation cache uses, so a
+    title translated via any path is recognised as already-done)."""
+    return text_hash(title_original or "")
+
+
+def visible_queue_add(queue: Dict[str, Dict[str, Any]], items: List[Any],
+                      cache: Dict[str, Dict[str, Any]], *, context: str = "",
+                      symbol: str = "", market: str = "", now_iso: str = "",
+                      max_len: int = 200) -> Dict[str, int]:
+    """Enqueue on-screen English news titles for the admin translate-visible run.
+    Skips Japanese titles, already-translated titles, and duplicates. Mutates `queue`
+    (hash → minimal entry) in place, bounded to max_len (oldest dropped). Returns stats."""
+    stats = {"queued": 0, "alreadyTranslated": 0, "alreadyQueued": 0, "ignored": 0}
+    for it in (items or []):
+        if isinstance(it, dict):
+            title = str(it.get("titleOriginal") or it.get("title") or it.get("headline") or "").strip()
+            src = str(it.get("source") or source or "")
+            pub = str(it.get("publishedAt") or it.get("datetime") or "")
+        else:
+            title, src, pub = str(it or "").strip(), "", ""
+        title = title[:200]
+        if not looks_translatable(title):
+            stats["ignored"] += 1                 # Japanese / too short → nothing to queue
+            continue
+        if is_translated(title, cache):
+            stats["alreadyTranslated"] += 1
+            continue
+        h = text_hash(title)
+        if h in queue:
+            stats["alreadyQueued"] += 1
+            queue[h]["lastSeenAt"] = now_iso
+            continue
+        queue[h] = {
+            "hash": h, "titleOriginal": title, "source": src[:40],
+            "publishedAt": pub[:40], "context": str(context or "")[:40],
+            "symbol": str(symbol or "")[:16].upper(), "market": str(market or "")[:4].upper(),
+            "queuedAt": now_iso,
+        }
+        stats["queued"] += 1
+    if len(queue) > max_len:                       # bound: drop oldest by queuedAt
+        for k in sorted(queue, key=lambda k: str(queue[k].get("queuedAt")))[:len(queue) - max_len]:
+            queue.pop(k, None)
+    return stats
+
+
+def visible_queue_drain(queue: Dict[str, Dict[str, Any]], cache: Dict[str, Dict[str, Any]],
+                        max_items: int = 60) -> List[str]:
+    """Oldest-first titleOriginal strings still needing translation (peek — does NOT
+    mutate; the caller prunes after a successful translate/merge)."""
+    out = []
+    for k in sorted(queue, key=lambda k: str(queue[k].get("queuedAt"))):
+        title = queue[k].get("titleOriginal") or ""
+        if is_translated(title, cache):
+            continue
+        out.append(title)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def visible_queue_prune(queue: Dict[str, Dict[str, Any]], cache: Dict[str, Dict[str, Any]]) -> int:
+    """Drop entries whose translation is now in the cache. Returns removed count."""
+    stale = [k for k in queue if is_translated(queue[k].get("titleOriginal") or "", cache)]
+    for k in stale:
+        queue.pop(k, None)
+    return len(stale)
+
+
+def translation_queue_status(queue: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Public-safe queue summary (counts + timestamps only — no article bodies)."""
+    ats = sorted(str(e.get("queuedAt")) for e in queue.values() if e.get("queuedAt"))
+    return {"queuedCount": len(queue),
+            "oldestQueuedAt": ats[0] if ats else None,
+            "lastQueuedAt": ats[-1] if ats else None}
+
+
+def queue_samples(queue: Dict[str, Dict[str, Any]], cap: int = 5) -> List[Dict[str, Any]]:
+    """Public-safe samples of what's pending: source + short title hash + a truncated
+    PUBLIC headline (news headlines are public; no article body). Oldest-first."""
+    out = []
+    for k in sorted(queue, key=lambda k: str(queue[k].get("queuedAt")))[:cap]:
+        e = queue[k]
+        out.append({"hash": e.get("hash"), "source": e.get("source"),
+                    "symbol": e.get("symbol"), "context": e.get("context"),
+                    "titlePreview": str(e.get("titleOriginal") or "")[:80]})
+    return out

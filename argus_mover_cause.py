@@ -659,7 +659,8 @@ def compact(record: Dict[str, Any]) -> Dict[str, Any]:
                                                       "relativeToIndexPct", "peerBasketMovePct",
                                                       "vwapDistancePct", "window")},
         "topCandidates": [
-            {k: c.get(k) for k in ("titleJa", "category", "timingRelation",
+            {k: c.get(k) for k in ("titleJa", "titleOriginal", "translationStatus",
+                                   "category", "timingRelation",
                                    "corroborationLevel", "confidence", "source")}
             for c in (record.get("causeCandidates") or [])[:3]
         ],

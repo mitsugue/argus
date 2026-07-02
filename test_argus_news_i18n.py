@@ -63,3 +63,67 @@ def test_collect_visible_pending_priority_order():
     pool = ["Fed holds rates steady", "already done", JA, "CPI comes in hot"]
     out = NI.collect_visible_pending(pool, c, cap=10)
     assert out == ["Fed holds rates steady", "CPI comes in hot"]   # JA + cached excluded, order kept
+
+
+# ── V11.5.2: translationQueueEligible + visible translation queue ──
+
+def test_decorate_marks_queue_eligible():
+    c = _cache((EN, "エヌビディアがAI需要で急伸"))
+    assert NI.decorate(EN, c)["translationQueueEligible"] is False        # translated
+    assert NI.decorate("Apple beats earnings", c)["translationQueueEligible"] is True
+    assert NI.decorate(JA, c)["translationQueueEligible"] is False        # not_needed
+
+
+def test_visible_queue_add_skips_japanese_and_translated():
+    c = _cache((EN, "エヌビディアがAI需要で急伸"))
+    q = {}
+    items = [
+        {"titleOriginal": EN, "source": "Finnhub"},                # already translated → skip
+        {"titleOriginal": "Tesla recalls cars", "source": "Reuters", "publishedAt": "2026-07-03"},
+        {"titleOriginal": JA, "source": "Nikkei"},                 # Japanese → ignore
+        {"titleOriginal": "Tesla recalls cars", "source": "Reuters"},  # dupe
+    ]
+    stats = NI.visible_queue_add(q, items, c, context="mover-card", symbol="tsla",
+                                 market="us", now_iso="2026-07-03T00:00:00Z")
+    assert stats == {"queued": 1, "alreadyTranslated": 1, "alreadyQueued": 1, "ignored": 1}
+    assert len(q) == 1
+    entry = next(iter(q.values()))
+    assert entry["titleOriginal"] == "Tesla recalls cars"
+    assert entry["symbol"] == "TSLA" and entry["market"] == "US" and entry["context"] == "mover-card"
+    # queue stores ONLY minimal fields — never an article body / prompt
+    assert set(entry) <= {"hash", "titleOriginal", "source", "publishedAt", "context",
+                          "symbol", "market", "queuedAt", "lastSeenAt"}
+
+
+def test_visible_queue_drain_and_prune():
+    q = {}
+    NI.visible_queue_add(q, ["Fed holds rates steady", "CPI comes in hot"], {},
+                         now_iso="2026-07-03T00:00:00Z")
+    drained = NI.visible_queue_drain(q, {}, max_items=10)
+    assert drained == ["Fed holds rates steady", "CPI comes in hot"]      # oldest-first
+    # after translation lands in the cache, prune drops the finished entry
+    c = _cache(("Fed holds rates steady", "FRBが金利を据え置き"))
+    assert NI.visible_queue_prune(q, c) == 1
+    assert NI.visible_queue_drain(q, c, 10) == ["CPI comes in hot"]
+
+
+def test_visible_queue_bounded():
+    q = {}
+    for i in range(210):
+        NI.visible_queue_add(q, [f"Headline number {i} about markets"], {},
+                             now_iso="2026-07-03T00:%02d:00Z" % (i % 60))
+    assert len(q) <= 200
+
+
+def test_translation_queue_status_and_samples():
+    q = {}
+    NI.visible_queue_add(q, [{"titleOriginal": "Fed holds rates steady", "source": "AP"}], {},
+                         now_iso="2026-07-03T00:00:00Z")
+    NI.visible_queue_add(q, [{"titleOriginal": "CPI comes in hot", "source": "Reuters"}], {},
+                         now_iso="2026-07-03T00:05:00Z")
+    st = NI.translation_queue_status(q)
+    assert st["queuedCount"] == 2
+    assert st["oldestQueuedAt"] == "2026-07-03T00:00:00Z"
+    assert st["lastQueuedAt"] == "2026-07-03T00:05:00Z"
+    s = NI.queue_samples(q, cap=5)
+    assert s[0]["source"] == "AP" and "hash" in s[0]

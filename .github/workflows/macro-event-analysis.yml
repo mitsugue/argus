@@ -58,10 +58,21 @@ jobs:
             REP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "$BE/api/argus/admin/macro-event-analysis/repair-post-release" || echo '{"error":"unreachable"}')
             echo "repair-post-release: ${REP:0:200}"
-            # V11.5: translate any queued English news headlines to Japanese (owner rule).
+            # V11.5.2: drain the on-screen translation request queue FIRST (what the owner
+            # actually sees), then the inferred visible pool. Enqueue-only public POSTs feed
+            # this queue; the LLM call lives here. No article bodies / prompts persisted.
+            TRV=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/news/translate-visible" || echo '{"error":"unreachable"}')
+            echo "news-translate-visible: ${TRV:0:200}"
+            # V11.5: then translate any remaining queued English headlines (owner rule).
             TR=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "$BE/api/argus/admin/news/translate" || echo '{"error":"unreachable"}')
             echo "news-translate: ${TR:0:200}"
+            # V11.5.2: drain owner AI-explanation requests ("理由を詳しく調べる"), then the
+            # priority queue's budgeted top-unresolved movers. Cooldown/budget-guarded.
+            EXR=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/mover-causes/explain/run" || echo '{"error":"unreachable"}')
+            echo "mover-explain-run: ${EXR:0:200}"
           fi
 
       - name: Fetch the public-safe analysis snapshot

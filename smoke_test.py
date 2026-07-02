@@ -28,6 +28,22 @@ def _get(path, timeout=45):
         return r.getcode(), json.loads(r.read().decode("utf-8"))
 
 
+def _post_json(path, body, timeout=30):
+    """POST a JSON body (no admin token). Returns (code, dict). HTTPError → (code, {})."""
+    import urllib.error
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(BASE + path, data=data, method="POST",
+                                 headers={"User-Agent": "argus-smoke", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.getcode(), json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return e.code, {}
+
+
 def check(name, fn):
     """Run a validator with up to 5 attempts + increasing backoff. fn returns
     (ok, detail) or raises. A persistent HTTP 429 is an upstream RATE LIMIT
@@ -431,6 +447,89 @@ def v_news_japanese_first():
         if news:
             return True, f"{sym}: {len(news)} news, no raw-English primary"
     return True, "no US media headlines available (ok)"
+
+
+def v_explain_request_public():
+    # v11.5.2: public enqueue-only. A harmless test symbol returns a valid status,
+    # never a 500. It must NOT start AI (we can only observe the shape here).
+    code, d = _post_json("/api/argus/mover-causes/explain-request",
+                         {"symbol": "IONQ", "market": "US", "context": "cause-stack"})
+    if code == 429:
+        return True, "429 pre-routing (skip)"
+    if code >= 500:
+        return False, f"explain-request 5xx: {code}"
+    if d.get("schemaVersion") != "mover-explain-request-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("status") not in ("queued", "already_queued", "cached_available", "rate_limited", "invalid"):
+        return False, f"bad status {d.get('status')}"
+    return True, f"status={d.get('status')}"
+
+
+def v_translation_request_public():
+    # v11.5.2: public enqueue-only translation request returns a valid shape, never 500.
+    code, d = _post_json("/api/argus/news/translation-request",
+                         {"context": "cause-stack", "symbol": "IONQ", "market": "US",
+                          "items": [{"titleOriginal": "IonQ smoke-test headline about markets",
+                                     "source": "smoke"}]})
+    if code == 429:
+        return True, "429 pre-routing (skip)"
+    if code >= 500:
+        return False, f"translation-request 5xx: {code}"
+    if d.get("schemaVersion") != "news-translation-request-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    for k in ("queued", "alreadyTranslated", "alreadyQueued"):
+        if not isinstance(d.get(k), int):
+            return False, f"missing {k}"
+    return True, f"queued={d.get('queued')} remaining={d.get('queueRemaining')}"
+
+
+def v_queue_admin_gated():
+    # v11.5.2: translate-visible + explain/run reject a token-less POST (401/503).
+    import urllib.error
+    for path in ("/api/argus/admin/news/translate-visible",
+                 "/api/argus/admin/mover-causes/explain/run"):
+        req = urllib.request.Request(BASE + path, method="POST", headers={"User-Agent": "argus-smoke"})
+        try:
+            with urllib.request.urlopen(req, timeout=30):
+                return False, f"{path} returned 200 without token!"
+        except urllib.error.HTTPError as e:
+            if e.code not in (401, 503, 429):
+                return False, f"{path} returned {e.code}"
+    return True, "translate-visible + explain/run admin-gated"
+
+
+def v_translation_status_visible_queue():
+    # v11.5.2: status exposes the visible-translation queue + coverage + samples.
+    c, d = _get("/api/argus/news/translation-status")
+    if d.get("schemaVersion") != "news-translation-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    vq = d.get("visibleQueue")
+    if not isinstance(vq, dict) or "queuedCount" not in vq or "durable" not in vq:
+        return False, "visibleQueue missing/short"
+    if "visibleQueuedPct" not in (d.get("coverage") or {}):
+        return False, "coverage.visibleQueuedPct missing"
+    s = d.get("samples") or {}
+    if "pendingVisible" not in s or "translatedRecent" not in s:
+        return False, "samples missing"
+    return True, f"queued={vq.get('queuedCount')} durable={vq.get('durable')}"
+
+
+def v_cause_attribution_ionq_displaytitle():
+    # v11.5.2 IONQ regression: visible cause-attribution news carries displayTitleJa +
+    # translationStatus, and no raw-English primary title leaks through.
+    import re as _re
+    en = _re.compile(r"[A-Za-z]"); jp = _re.compile(r"[぀-ヿ㐀-䶵一-鿋]")
+    c, d = _get("/api/argus/cause-attribution?symbol=IONQ&market=US", timeout=40)
+    if c == 429:
+        return True, "429 pre-routing (skip)"
+    news = (d or {}).get("news") or []
+    for n in news:
+        if "displayTitleJa" not in n or "translationStatus" not in n:
+            return False, "news item missing displayTitleJa/translationStatus"
+        title = n.get("displayTitleJa") or ""
+        if en.search(title) and not jp.search(title):
+            return False, f"raw English primary: {title[:50]!r}"
+    return True, f"IONQ: {len(news)} news, displayTitleJa present, no raw-English"
 
 
 def v_macro_reaction_admin_gated():
@@ -1110,6 +1209,11 @@ CHECKS = [
     ("v11.5 macro result-status multi", v_macro_result_status_multi),
     ("v11.5 news translation status", v_news_translation_status),
     ("v11.5.1 news japanese-first", v_news_japanese_first),
+    ("v11.5.2 explain-request public", v_explain_request_public),
+    ("v11.5.2 translation-request public", v_translation_request_public),
+    ("v11.5.2 queue admin gated", v_queue_admin_gated),
+    ("v11.5.2 translation-status visibleQueue", v_translation_status_visible_queue),
+    ("v11.5.2 cause-attribution IONQ displayTitle", v_cause_attribution_ionq_displaytitle),
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),
     ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]

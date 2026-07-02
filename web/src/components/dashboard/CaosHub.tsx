@@ -6,6 +6,7 @@ import { useNewsRadar } from '../../hooks/useNewsRadar';
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { dashboardDedupeKey } from '../../lib/dashboardEventState';
 import { newsDisplayTitleJa } from '../../lib/aiExplanationState';
+import { autoQueueTranslations } from '../../lib/queueRequests';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './CaosEvents.css';
 import './MarketInstitutionalSection.css';
@@ -131,6 +132,14 @@ export const CaosHub: React.FC = () => {
   const allNews = newsData?.items ?? [];
   const relNews = allNews.filter((n) => n.relevant);
   const news = (relNews.length ? relNews : allNews).slice(0, 6);
+  // v11.5.2: guarantee the on-screen market headlines enter the translation queue
+  // (once per session). Never blocks render; never starts translation on the client.
+  React.useEffect(() => {
+    const pend = news
+      .filter((n) => (n.translationStatus === 'pending' || n.translationStatus === 'failed') && n.titleOriginal)
+      .map((n) => ({ titleOriginal: String(n.titleOriginal), source: n.source }));
+    if (pend.length) autoQueueTranslations('caos-market-news', 'dashboard-events', '', '', pend);
+  }, [news]);
   // 急落注視 tier (v10.178): surface the most material active drops in the hub (summary;
   // full per-incident detail stays on the Watchlist page). Sorted critical/high first.
   const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };

@@ -52,7 +52,9 @@ export interface CauseStack {
     marketConfirmation?: { status?: string; volumeRatio?: number | null;
                            relativeToIndexPct?: number | null; peerBasketMovePct?: number | null;
                            vwapDistancePct?: number | null; window?: string };
-    topCandidates?: { titleJa?: string; category?: string; timingRelation?: string;
+    topCandidates?: { titleJa?: string; titleOriginal?: string;
+                      translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
+                      category?: string; timingRelation?: string;
                       corroborationLevel?: string; confidence?: number; source?: string }[];
   };
 }

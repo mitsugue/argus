@@ -43,6 +43,8 @@ export interface DownsideIncident {
 
 export interface MoverCauseCandidate {
   titleJa?: string; category?: string; timingRelation?: string;
+  /** v11.5.2: English original + status when titleJa was a translated headline. */
+  titleOriginal?: string; translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
   corroborationLevel?: string; confidence?: number; source?: string;
 }
 export interface MoverCauseFreshness {

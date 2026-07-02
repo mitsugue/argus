@@ -2,6 +2,8 @@ import React from 'react';
 import { useCauseAttribution } from '../../hooks/useCauseAttribution';
 import { freshnessLineJa, marketConfLineJa } from './DownsideIncidentCard';
 import { aiExplanationDisplay, newsDisplayTitleJa } from '../../lib/aiExplanationState';
+import { AiExplanationBlock } from './AiExplanationBlock';
+import { autoQueueTranslations } from '../../lib/queueRequests';
 import './CauseStackCard.css';
 
 // Cause-stack card (v10.117) — the integrity view for a material move: what is
@@ -73,6 +75,18 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
   }, [symbol, market]);
   const ai = aiExplanationDisplay(expl?.text, expl?.status);
 
+  // v11.5.2: guarantee visible English news enters the translation queue. Once per
+  // (symbol, session): POST the pending titles, then flip the chip to 翻訳リクエスト済み.
+  const [newsRequested, setNewsRequested] = React.useState(false);
+  React.useEffect(() => {
+    const pend = (data?.news || [])
+      .filter((n) => (n.translationStatus === 'pending' || n.translationStatus === 'failed') && n.titleOriginal)
+      .map((n) => ({ titleOriginal: String(n.titleOriginal), source: n.source, publishedAt: n.time ?? undefined }));
+    if (!pend.length) return;
+    autoQueueTranslations(`cause-stack|${market}:${symbol}`, 'cause-stack', symbol, market, pend);
+    setNewsRequested(true);
+  }, [data, symbol, market]);
+
   // v10.190: no longer early-returns on missing data. The "なぜ動いた?" button is
   // ALWAYS available on every expanded stock (owner asked: 全銘柄で押せるように),
   // and the detailed cause stack renders only when attribution data is present.
@@ -101,19 +115,16 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
             {expl?.whatRefute && <p className="csc-why-note">否定条件: {expl.whatRefute}</p>}
             <p className="csc-why-note">要確認・投資助言ではありません。</p>
           </details>
-        ) : ai.mode === 'chip' ? (
-          <div>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)',
-              border: '1px solid var(--line)', borderRadius: 999, padding: '2px 10px', display: 'inline-block' }}>
-              ⏳ {ai.labelJa}
-            </span>
-            <p className="csc-why-note">{ai.noteJa}</p>
-          </div>
         ) : (
-          <div>
-            <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: 0 }}>{ai.labelJa}</p>
-            <p className="csc-why-note">{ai.noteJa}</p>
-          </div>
+          // v11.5.2: not_generated → clickable「理由を詳しく調べる」(enqueues only);
+          // queued/pending/… → non-clickable chip. Never a dead button.
+          <AiExplanationBlock
+            explanationJa={expl?.text}
+            explanationStatus={expl?.status}
+            symbol={data?.symbol || symbol}
+            market={market}
+            context="cause-stack"
+          />
         )}
       </div>
 
@@ -134,6 +145,12 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
             <p key={i} style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
               ・{c.titleJa} <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                 ({TIMING_JA[c.timingRelation ?? 'unknown']}・{CORRO_JA[c.corroborationLevel ?? 'none']})</span>
+              {c.translationStatus === 'pending' && c.titleOriginal && (
+                <details style={{ display: 'inline' }}>
+                  <summary style={{ display: 'inline', cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>原文を見る</summary>
+                  <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> {c.titleOriginal}</span>
+                </details>
+              )}
             </p>
           ))}
           {data.moverCause.whyNotConfirmedJa && (
@@ -211,7 +228,7 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
                 <span className={`csc-news-cls csc-news-cls--${n.cls}`}>{NEWS_CLS_JA[n.cls] ?? n.cls}</span>
                 <span className="csc-news-title">
                   {newsDisplayTitleJa(n)}
-                  {pending && <span className="csc-dim" style={{ marginLeft: 6, fontSize: 10 }}>翻訳待ち</span>}
+                  {pending && <span className="csc-dim" style={{ marginLeft: 6, fontSize: 10 }}>{newsRequested ? '翻訳リクエスト済み' : '翻訳取得中'}</span>}
                   {n.assoc?.relationJa && <span className="csc-news-assoc">連想: {n.assoc.relationJa}</span>}
                   {pending && original && (
                     <details style={{ display: 'inline' }}>

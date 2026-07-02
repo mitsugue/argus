@@ -9188,6 +9188,64 @@ def api_argus_admin_news_translate():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
 
+@app.route("/api/argus/news/translation-request", methods=["POST"])
+def api_argus_news_translation_request():
+    """PUBLIC, enqueue-only. The UI posts on-screen English news titles so they are
+    guaranteed to enter the visible-first translation queue. NEVER calls an LLM or a
+    provider. Ignores Japanese titles + already-translated titles; dedupes by title
+    hash; throttled per IP+context. Stores only titleOriginal/source/publishedAt."""
+    _news_ja_restore_once()
+    body = request.get_json(silent=True) or {}
+    ctx = str(body.get("context") or "")[:40]
+    sym = str(body.get("symbol") or "")[:16]
+    mkt = str(body.get("market") or "")[:4]
+    items = body.get("items") if isinstance(body.get("items"), list) else []
+    now_iso = _ai_now_iso()
+    base = {"schemaVersion": "news-translation-request-v1"}
+    # per-IP+context throttle (the global before_request limiter also applies)
+    ip = _client_meta().get("ip") or ""
+    rlk = f"{ip}|{ctx}"
+    nowt = time.time()
+    if nowt - float(_NEWS_JA_VQUEUE_RL.get(rlk, 0.0)) < _NEWS_JA_VQUEUE_RL_SEC:
+        st = argus_news_i18n.translation_queue_status(_NEWS_JA_VQUEUE)
+        return jsonify({**base, "ok": True, "queued": 0, "alreadyTranslated": 0,
+                        "alreadyQueued": 0, "rateLimited": True,
+                        "queueRemaining": st["queuedCount"],
+                        "nextRunHintJa": "次回の翻訳処理で反映されます。"}), 200
+    _NEWS_JA_VQUEUE_RL[rlk] = nowt
+    if len(_NEWS_JA_VQUEUE_RL) > 2000:
+        _NEWS_JA_VQUEUE_RL.clear()
+    stats = argus_news_i18n.visible_queue_add(
+        _NEWS_JA_VQUEUE, items[:40], _NEWS_JA_CACHE, context=ctx, symbol=sym,
+        market=mkt, now_iso=now_iso)
+    if stats["queued"]:
+        _news_ja_persist()
+    st = argus_news_i18n.translation_queue_status(_NEWS_JA_VQUEUE)
+    return jsonify({**base, "ok": True, "queued": stats["queued"],
+                    "alreadyTranslated": stats["alreadyTranslated"],
+                    "alreadyQueued": stats["alreadyQueued"], "ignored": stats["ignored"],
+                    "rateLimited": False, "queueRemaining": st["queuedCount"],
+                    "nextRunHintJa": "次回の翻訳処理で反映されます。"}), 200
+
+
+@app.route("/api/argus/admin/news/translate-visible", methods=["POST"])
+def api_argus_admin_news_translate_visible():
+    """Admin/cron: translate the VISIBLE queue first, then the inferred visible pool.
+    The LLM call lives here — never on a public GET/POST. No prompts/bodies stored."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    try:
+        cap = max(1, min(120, int(body.get("max") or 60)))
+    except Exception:
+        cap = 60
+    try:
+        return jsonify(_translate_pending_headlines(cap=cap, queue_first=True))
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
+
+
 @app.route("/api/argus/news/translation-status")
 def api_argus_news_translation_status():
     """Public cache-only: translation coverage for the VISIBLE news + overall. Reads
@@ -9202,10 +9260,16 @@ def api_argus_news_translation_status():
     vis_translatable = [t for t in vis_titles if argus_news_i18n.looks_translatable(t)]
     vis_pending = [t for t in vis_translatable if not argus_news_i18n.is_translated(t, _NEWS_JA_CACHE)]
     vis_pct = round(1.0 - (len(vis_pending) / len(vis_translatable)), 3) if vis_translatable else 1.0
-    # overall coverage across the queue + caches
+    # how many of the still-pending visible titles are already in the explicit queue
+    vis_queued = [t for t in vis_pending
+                  if argus_news_i18n.text_hash(t) in _NEWS_JA_VQUEUE]
+    vis_queued_pct = round(len(vis_queued) / len(vis_translatable), 3) if vis_translatable else 0.0
     all_translatable = len(vis_translatable) or 0
     translated_today = int(_NEWS_JA_STATE.get("translatedToday") or 0) \
         if _NEWS_JA_STATE.get("translatedDay") == now_iso[:10] else 0
+    qstat = argus_news_i18n.translation_queue_status(_NEWS_JA_VQUEUE)
+    # translatedRecent samples: most-recent cache entries (JA is a public headline; no body)
+    recent = sorted(_NEWS_JA_CACHE.values(), key=lambda e: str(e.get("at")), reverse=True)[:5]
     return jsonify({
         "schemaVersion": "news-translation-status-v1", "asOf": now_iso,
         "cachedCount": len(_NEWS_JA_CACHE),
@@ -9214,9 +9278,21 @@ def api_argus_news_translation_status():
         "translatedToday": translated_today,
         "lastTranslateAt": _NEWS_JA_STATE.get("lastTranslateAt"),
         "nextTranslateHintJa": "重要度の高い値動きから約15分ごとに翻訳します。",
+        "visibleQueue": {
+            "queuedCount": qstat["queuedCount"],
+            "oldestQueuedAt": qstat["oldestQueuedAt"],
+            "lastQueuedAt": qstat["lastQueuedAt"],
+            "lastDrainAt": _NEWS_JA_VQUEUE_STATE.get("lastDrainAt"),
+            "lastDrainCount": _NEWS_JA_VQUEUE_STATE.get("lastDrainCount"),
+            "durable": _NEWS_JA_QUEUE_DURABLE},
         "coverage": {"visibleTranslatedPct": vis_pct,
+                     "visibleQueuedPct": vis_queued_pct,
                      "allTranslatedPct": round(1.0 - (len(vis_pending) / all_translatable), 3)
                      if all_translatable else 1.0},
+        "samples": {
+            "pendingVisible": argus_news_i18n.queue_samples(_NEWS_JA_VQUEUE, cap=5),
+            "translatedRecent": [{"titlePreview": str(e.get("ja") or "")[:60],
+                                  "at": e.get("at")} for e in recent]},
         "noteJa": "英語ニュースは管理側で翻訳してキャッシュ表示。公開GETは翻訳を起動しません。"})
 
 
@@ -10071,12 +10147,23 @@ _NEWS_JA_SEEN = deque(maxlen=300)         # recent English headlines pending tra
 _NEWS_JA_FILE = "/tmp/argus_news_ja.json"
 _NEWS_JA_STATE = {"restored": False, "lastTranslateAt": None,
                   "translatedToday": 0, "translatedDay": None}
+# V11.5.2: explicit visible-translation request queue (hash -> minimal entry). The public
+# translation-request POST enqueues on-screen English titles here; translate-visible drains
+# it FIRST. Only titleOriginal/source/publishedAt/hash/context/symbol stored — no bodies.
+# Persisted alongside the cache in /tmp (ephemeral on Render → status reports durable:false).
+_NEWS_JA_VQUEUE = {}                       # hash -> {titleOriginal, source, publishedAt, ...}
+_NEWS_JA_VQUEUE_RL = {}                    # "ip|context" -> last epoch (per-IP+context throttle)
+_NEWS_JA_VQUEUE_RL_SEC = 5
+_NEWS_JA_VQUEUE_STATE = {"lastDrainAt": None, "lastDrainCount": 0}
+_NEWS_JA_QUEUE_DURABLE = False             # /tmp only → non-durable (survives within a dyno)
 
 
 def _news_ja_persist():
     try:
         with open(_NEWS_JA_FILE, "w") as f:
             json.dump({"cache": _NEWS_JA_CACHE,
+                       "vqueue": _NEWS_JA_VQUEUE,
+                       "vqueueState": _NEWS_JA_VQUEUE_STATE,
                        "state": {k: _NEWS_JA_STATE.get(k) for k in
                                  ("lastTranslateAt", "translatedToday", "translatedDay")}},
                       f, ensure_ascii=False, default=str)
@@ -10093,6 +10180,11 @@ def _news_ja_restore_once():
             blob = json.load(f)
         if isinstance(blob.get("cache"), dict):
             _NEWS_JA_CACHE.update(blob["cache"])
+        if isinstance(blob.get("vqueue"), dict):
+            _NEWS_JA_VQUEUE.update(blob["vqueue"])
+        for k in ("lastDrainAt", "lastDrainCount"):
+            if (blob.get("vqueueState") or {}).get(k) is not None:
+                _NEWS_JA_VQUEUE_STATE[k] = blob["vqueueState"][k]
         for k in ("lastTranslateAt", "translatedToday", "translatedDay"):
             if (blob.get("state") or {}).get(k) is not None:
                 _NEWS_JA_STATE[k] = blob["state"][k]
@@ -10153,25 +10245,46 @@ def _news_visible_pool():
     return pool
 
 
-def _translate_pending_headlines(cap=60):
+def _translate_pending_headlines(cap=60, queue_first=False):
     """Admin/cron: translate queued/visible English headlines to JP, VISIBLE-FIRST.
-    Uses the existing Gemini helper (LLM allowed on admin path). No article bodies."""
+    Uses the existing Gemini helper (LLM allowed on admin path). No article bodies.
+    queue_first=True drains the explicit visible-translation request queue before the
+    inferred visible pool, then prunes any queue entries that got translated."""
     _news_ja_restore_once()
-    pool = _news_visible_pool()
-    pending = argus_news_i18n.collect_visible_pending(pool, _NEWS_JA_CACHE, cap=cap)
     now_iso = _ai_now_iso()
+    ordered = []
+    queued_n = 0
+    if queue_first:
+        q_titles = argus_news_i18n.visible_queue_drain(_NEWS_JA_VQUEUE, _NEWS_JA_CACHE, max_items=cap)
+        ordered.extend(q_titles)
+        queued_n = len(q_titles)
+    ordered.extend(_news_visible_pool())          # inferred on-screen titles (priority-first)
+    pending = argus_news_i18n.collect_visible_pending(ordered, _NEWS_JA_CACHE, cap=cap)
     if not pending:
-        return {"translated": 0, "pending": 0, "cacheSize": len(_NEWS_JA_CACHE), "asOf": now_iso}
+        drained = argus_news_i18n.visible_queue_prune(_NEWS_JA_VQUEUE, _NEWS_JA_CACHE) if queue_first else 0
+        if queue_first:
+            _NEWS_JA_VQUEUE_STATE["lastDrainAt"] = now_iso
+            _NEWS_JA_VQUEUE_STATE["lastDrainCount"] = drained
+            _news_ja_persist()
+        return {"translated": 0, "pending": 0, "fromQueue": queued_n,
+                "cacheSize": len(_NEWS_JA_CACHE), "queueRemaining": len(_NEWS_JA_VQUEUE),
+                "asOf": now_iso}
     tr = _translate_headlines_ja(pending)     # {index -> ja}; {} on failure
     merged = argus_news_i18n.merge_translations(_NEWS_JA_CACHE, pending, tr, now_iso)
     _NEWS_JA_CACHE.clear()
     _NEWS_JA_CACHE.update(merged)
+    # drop queue entries now covered by the cache
+    pruned = argus_news_i18n.visible_queue_prune(_NEWS_JA_VQUEUE, _NEWS_JA_CACHE)
     _NEWS_JA_STATE["lastTranslateAt"] = now_iso
     _NEWS_JA_STATE["translatedToday"] = int(_NEWS_JA_STATE.get("translatedToday") or 0) + len(tr)
     _NEWS_JA_STATE["translatedDay"] = now_iso[:10]
+    if queue_first:
+        _NEWS_JA_VQUEUE_STATE["lastDrainAt"] = now_iso
+        _NEWS_JA_VQUEUE_STATE["lastDrainCount"] = pruned
     _news_ja_persist()
-    return {"translated": len(tr), "pending": len(pending), "cacheSize": len(_NEWS_JA_CACHE),
-            "asOf": now_iso}
+    return {"translated": len(tr), "pending": len(pending), "fromQueue": queued_n,
+            "cacheSize": len(_NEWS_JA_CACHE), "queuePruned": pruned,
+            "queueRemaining": len(_NEWS_JA_VQUEUE), "asOf": now_iso}
 
 
 def get_market_news():
@@ -11651,9 +11764,15 @@ def get_cause_attribution(symbol, market="JP", explain=False):
                 stack["explanationStatus"] = "cached"
                 stack["explanationGeneratedAt"] = mc.get("explanationGeneratedAt")
             else:
-                stack["explanationStatus"] = "not_generated"
-                stack["explanationNoteJa"] = ("AI解説はまだ生成されていません(管理側の定期生成のみ・"
-                                              "公開アクセスからのAI起動は廃止)。")
+                # V11.5.2: a pending owner request reads as "queued" (the 「理由を詳しく調べる」
+                # button was pressed); otherwise not_generated. Public GET never starts AI.
+                _mc_explain_req_restore_once()
+                queued = _mc_has_explain_request(symu, market)
+                stack["explanationStatus"] = "queued" if queued else "not_generated"
+                stack["explanationNoteJa"] = (
+                    "調査リクエスト受付済み。次回の管理側定期生成で反映されます。" if queued else
+                    "AI解説は未生成です。「理由を詳しく調べる」で調査キューに追加できます"
+                    "(公開画面からAIは起動しません)。")
     except Exception:
         if explain:
             stack["explanationStatus"] = "not_generated"
@@ -11721,6 +11840,77 @@ _MC_AI_ENABLED = (os.environ.get("MOVER_CAUSE_AI_EXPLAIN_ENABLED",
                                  os.environ.get("AI_JUDGE_ENABLED", "1")).lower()
                   not in ("0", "false", "no"))
 _MOVER_REFRESH_QUEUE = {"data": None, "expires": 0.0}   # cached queue (5-min TTL)
+
+# ── V11.5.2 explanation request queue ────────────────────────────────────────
+# The owner clicks 「理由を詳しく調べる」. That PUBLIC POST enqueues a request here —
+# it NEVER calls an LLM or a provider. The admin/cron explain run drains this queue
+# FIRST (still cooldown/budget-guarded). Only symbol/market/context/timestamps are
+# stored — never prompts, holdings, P&L, or provider bodies. Bounded + deduped.
+_MC_EXPLAIN_REQUESTS = {}               # "MKT:SYM" -> {symbol, market, context, count, firstAt, lastAt}
+_MC_EXPLAIN_REQ_FILE = "/tmp/argus_mc_explain_requests.json"
+_MC_EXPLAIN_REQ_STATE = {"restored": False, "lastDrainAt": None, "lastDrainCount": 0}
+_MC_EXPLAIN_REQ_MAX = 100               # bounded (oldest dropped)
+_MC_EXPLAIN_REQ_RL = {}                 # "ip|MKT:SYM" -> last epoch (per-IP+symbol throttle)
+_MC_EXPLAIN_REQ_RL_SEC = 30
+
+
+def _mc_explain_key(symbol, market):
+    return f"{str(market).upper()}:{str(symbol).upper()}"
+
+
+def _mc_explain_req_persist():
+    try:
+        with open(_MC_EXPLAIN_REQ_FILE, "w") as f:
+            json.dump({"requests": _MC_EXPLAIN_REQUESTS,
+                       "state": {k: _MC_EXPLAIN_REQ_STATE[k]
+                                 for k in ("lastDrainAt", "lastDrainCount")}},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _mc_explain_req_restore_once():
+    if _MC_EXPLAIN_REQ_STATE["restored"]:
+        return
+    _MC_EXPLAIN_REQ_STATE["restored"] = True
+    try:
+        with open(_MC_EXPLAIN_REQ_FILE) as f:
+            blob = json.load(f)
+        if isinstance(blob.get("requests"), dict):
+            _MC_EXPLAIN_REQUESTS.update(blob["requests"])
+        for k in ("lastDrainAt", "lastDrainCount"):
+            if (blob.get("state") or {}).get(k) is not None:
+                _MC_EXPLAIN_REQ_STATE[k] = blob["state"][k]
+    except Exception:
+        pass
+
+
+def _mc_explain_req_add(symbol, market, context, now_iso):
+    """Enqueue/refresh a request. Bounded + deduped by symbol+market. No LLM/provider."""
+    key = _mc_explain_key(symbol, market)
+    e = _MC_EXPLAIN_REQUESTS.get(key)
+    if e:
+        e["count"] = int(e.get("count") or 1) + 1
+        e["lastAt"] = now_iso
+        if context:
+            e["context"] = str(context)[:40]
+        status = "already_queued"
+    else:
+        _MC_EXPLAIN_REQUESTS[key] = {
+            "symbol": str(symbol).upper()[:16], "market": str(market).upper()[:4],
+            "context": str(context or "")[:40], "count": 1,
+            "firstAt": now_iso, "lastAt": now_iso}
+        status = "queued"
+    if len(_MC_EXPLAIN_REQUESTS) > _MC_EXPLAIN_REQ_MAX:
+        for k in sorted(_MC_EXPLAIN_REQUESTS,
+                        key=lambda k: str(_MC_EXPLAIN_REQUESTS[k].get("firstAt"))
+                        )[:len(_MC_EXPLAIN_REQUESTS) - _MC_EXPLAIN_REQ_MAX]:
+            _MC_EXPLAIN_REQUESTS.pop(k, None)
+    return status
+
+
+def _mc_has_explain_request(symbol, market):
+    return _mc_explain_key(symbol, market) in _MC_EXPLAIN_REQUESTS
 
 
 def _mover_causes_persist():
@@ -12102,6 +12292,30 @@ def _refresh_mover_causes(limit=14):
     return {"refreshed": built, "total": len(_MOVER_CAUSES), "asOf": now_iso}
 
 
+def _mover_cause_decorate_candidates(out):
+    """V11.5.2: a candidate's titleJa can be a raw ENGLISH news headline (US Finnhub).
+    Rewrite it to Japanese-first for display — cached JA if we have it, else a JP
+    fallback — keeping the English original in titleOriginal and queuing it for the
+    next translate run. Mutates the (already-copied) served record only."""
+    changed_lead = None
+    for c in (out.get("causeCandidates") or []):
+        t = str(c.get("titleJa") or "")
+        if not argus_news_i18n.looks_translatable(t):
+            continue
+        src = str(c.get("source") or "")
+        d = _news_decorate(t, src)                       # queues + cached-only decorate
+        c["titleOriginal"] = d["titleOriginal"]
+        c["translationStatus"] = d["translationStatus"]
+        c["titleJa"] = d["displayTitleJa"]               # JA (cached) or JP fallback
+        if changed_lead is None:
+            changed_lead = d["displayTitleJa"]
+    # keep bestLeadJa consistent if it echoed a now-rewritten English lead
+    bl = str(out.get("bestLeadJa") or "")
+    if bl and argus_news_i18n.looks_translatable(bl):
+        out["bestLeadJa"] = _news_decorate(bl, "")["displayTitleJa"]
+    return out
+
+
 def _mover_cause_serve(rec, now_iso):
     """Read-time annotation on a COPY: freshness/staleness recomputed, market
     confirmation stale-stamped, explanation state resolved (cached/pending/
@@ -12113,8 +12327,14 @@ def _mover_cause_serve(rec, now_iso):
                 out["marketConfirmation"], now_iso)
     except Exception:
         pass
+    try:
+        _mover_cause_decorate_candidates(out)            # Japanese-first candidate titles
+    except Exception:
+        pass
     if out.get("explanationJa"):
         out["explanationStatus"] = "cached"
+    elif _mc_has_explain_request(out.get("symbol"), out.get("market")):
+        out["explanationStatus"] = "queued"          # V11.5.2: owner requested, awaiting cron
     else:
         out["explanationStatus"] = ("pending" if (out.get("refreshPolicy") or {}).get("eligibleForAiExplain")
                                     and _MC_AI_ENABLED else "not_generated")
@@ -12463,6 +12683,122 @@ def api_argus_admin_mover_causes_explain():
     _MOVER_REFRESH_QUEUE["data"] = None
     return jsonify({"ok": True, "generated": generated, "skipped": skipped,
                     "budgetMax": mx, "asOf": now_iso})
+
+
+@app.route("/api/argus/mover-causes/explain-request", methods=["POST"])
+def api_argus_mover_causes_explain_request():
+    """PUBLIC, enqueue-only. The owner clicks 「理由を詳しく調べる」 → this records a
+    request the admin/cron explain run drains. It NEVER calls an LLM or a provider.
+    Deduped by symbol+market; throttled per IP+symbol. Returns cached_available when a
+    cached explanation already exists (nothing to queue)."""
+    _mover_causes_restore_once()
+    _mc_explain_req_restore_once()
+    body = request.get_json(silent=True) or {}
+    sym = (str(body.get("symbol") or "").strip().upper())[:16]
+    mkt = (str(body.get("market") or "JP").strip().upper())[:4]
+    ctx = str(body.get("context") or "")[:40]
+    now_iso = _ai_now_iso()
+    base = {"schemaVersion": "mover-explain-request-v1", "symbol": sym, "market": mkt}
+    if not sym or mkt not in ("JP", "US") or not re.match(r"^[A-Z0-9._-]{1,10}$", sym):
+        return jsonify({**base, "ok": False, "status": "invalid", "queuedAt": None,
+                        "nextRunHintJa": "", "messageJa": "銘柄コードまたは市場が不正です。"}), 200
+    # already cached → no need to queue
+    today = now_iso[:10].replace("-", "")
+    mc = _MOVER_CAUSES.get(f"mc-{mkt}-{sym}-{today}")
+    if mc and mc.get("explanationJa"):
+        return jsonify({**base, "ok": True, "status": "cached_available", "queuedAt": None,
+                        "nextRunHintJa": "既にAI解説があります。",
+                        "messageJa": "この銘柄のAI解説は生成済みです。カードで開けます。"}), 200
+    # dedupe first (idempotent — cheap, no LLM), so a re-click reads already_queued
+    if _mc_has_explain_request(sym, mkt):
+        _mc_explain_req_add(sym, mkt, ctx, now_iso)     # bump count/lastAt
+        _mc_explain_req_persist()
+        return jsonify({**base, "ok": True, "status": "already_queued", "queuedAt": now_iso,
+                        "nextRunHintJa": "次回の自動生成(約15分間隔)で反映されます。",
+                        "messageJa": "既に調査リクエスト済みです。"}), 200
+    # per-IP+symbol throttle for genuinely new requests (global limiter also applies)
+    ip = _client_meta().get("ip") or ""
+    rlk = f"{ip}|{mkt}:{sym}"
+    nowt = time.time()
+    if nowt - float(_MC_EXPLAIN_REQ_RL.get(rlk, 0.0)) < _MC_EXPLAIN_REQ_RL_SEC:
+        return jsonify({**base, "ok": True, "status": "rate_limited", "queuedAt": None,
+                        "nextRunHintJa": "少し待って再度お試しください。",
+                        "messageJa": "リクエストが多すぎます。少し待ってから再度お試しください。"}), 200
+    _MC_EXPLAIN_REQ_RL[rlk] = nowt
+    if len(_MC_EXPLAIN_REQ_RL) > 2000:
+        _MC_EXPLAIN_REQ_RL.clear()
+    status = _mc_explain_req_add(sym, mkt, ctx, now_iso)
+    _mc_explain_req_persist()
+    return jsonify({**base, "ok": True, "status": status, "queuedAt": now_iso,
+                    "nextRunHintJa": "次回の自動生成(約15分間隔)で反映されます。",
+                    "messageJa": "調査リクエストを受け付けました。公開画面からAIは起動せず、"
+                                 "管理側の定期生成で処理します。"}), 200
+
+
+@app.route("/api/argus/admin/mover-causes/explain/run", methods=["POST"])
+def api_argus_admin_mover_causes_explain_run():
+    """Admin/cron: drain owner explanation requests FIRST, then the priority queue's
+    budgeted top-unresolved movers. Respects the existing max-per-run + cooldown.
+    May call AI. Stores explanationJa safely — no prompts/search traces persisted."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    _mover_causes_restore_once()
+    _mc_explain_req_restore_once()
+    now_iso = _ai_now_iso()
+    body = request.get_json(silent=True) or {}
+    mx = min(int(body.get("max") or _MC_AI_MAX_PER_RUN), _MC_AI_MAX_PER_RUN)
+    force_req = bool(body.get("force"))            # owner-requested items may bypass cooldown
+    generated, skipped, drained_reqs = [], [], []
+    # 1) owner requests first (oldest first), within budget
+    req_keys = sorted(_MC_EXPLAIN_REQUESTS,
+                      key=lambda k: str(_MC_EXPLAIN_REQUESTS[k].get("firstAt")))
+    for key in req_keys:
+        if len(generated) >= mx:
+            break
+        e = _MC_EXPLAIN_REQUESTS.get(key) or {}
+        sym, mkt = e.get("symbol"), e.get("market")
+        if not sym or not mkt:
+            _MC_EXPLAIN_REQUESTS.pop(key, None)
+            continue
+        try:
+            done = _mover_ai_explain(sym, mkt, now_iso, force=force_req)
+        except Exception:
+            done = False
+        (generated if done else skipped).append(sym)
+        # drain the request once it's generated (or already cached); leave it queued only
+        # if it was skipped purely by cooldown so the next run retries it.
+        mc = _MOVER_CAUSES.get(f"mc-{mkt}-{sym}-{now_iso[:10].replace('-', '')}")
+        if done or (mc and mc.get("explanationJa")):
+            _MC_EXPLAIN_REQUESTS.pop(key, None)
+            drained_reqs.append(sym)
+    # 2) then the standard priority queue for remaining budget
+    if len(generated) < mx:
+        queue = argus_mover_cause_refresh.build_queue(
+            _mover_causes_today(), now_iso, max_ai_explain=mx,
+            ai_cooldown_min=_MC_AI_COOLDOWN_MIN, ai_min_abs_move=_MC_AI_MIN_ABS_MOVE,
+            ai_enabled=_MC_AI_ENABLED)
+        for q in queue["queue"]:
+            if len(generated) >= mx:
+                break
+            if not q.get("aiExplainNeeded"):
+                continue
+            s, m = q["symbol"], q["market"]
+            if s in generated or s in skipped:
+                continue
+            try:
+                (generated if _mover_ai_explain(s, m, now_iso) else skipped).append(s)
+            except Exception:
+                skipped.append(s)
+    _MC_EXPLAIN_REQ_STATE["lastDrainAt"] = now_iso
+    _MC_EXPLAIN_REQ_STATE["lastDrainCount"] = len(drained_reqs)
+    _mover_causes_persist()
+    _mc_explain_req_persist()
+    _MOVER_REFRESH_QUEUE["data"] = None
+    return jsonify({"ok": True, "schemaVersion": "mover-explain-run-v1",
+                    "generated": generated, "skipped": skipped,
+                    "drainedRequests": drained_reqs, "budgetMax": mx,
+                    "requestsRemaining": len(_MC_EXPLAIN_REQUESTS), "asOf": now_iso})
 
 
 # ━━━ V11.4.0 Learning Memory ━━━
