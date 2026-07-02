@@ -90,6 +90,24 @@ export const DecisionSpineCard: React.FC = () => {
         </p>
       </div>
 
+      {/* C.A.O.S.イベント分析とは (v11.3.2 macro pre/post) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>C.A.O.S.イベント分析とは</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          NFP/CPI/FOMC/日銀などの予定イベントについて、<b>発表前にARGUSの事前シナリオを保存</b>し、
+          <b>発表後に公式結果と市場反応を確認して答え合わせ</b>する機能です。これはコンセンサス予想の捏造では
+          ありません — 公式コンセンサスが取れない場合は「AIシナリオ・市場の織り込み・サプライズ時の確認項目」として
+          表示します。発表後は、事前に保存された見方と実際の結果を比較し、
+          <b>当たり/部分的/外れ/採点不可</b>を表示します。
+        </p>
+        <ul style={{ margin: '6px 0 0', paddingLeft: 18, color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.7 }}>
+          <li>公式結果が取れない場合は答え合わせしない（「公式結果待ち」）。</li>
+          <li>事前予想が保存されていない場合は採点不可にする。</li>
+          <li>AIシナリオは売買指示ではない。</li>
+          <li>機関投資家の「見解」と「実際の売買」は区別する。</li>
+        </ul>
+      </div>
+
       {/* 公式イベント履歴は消えないのか (v11.3.1 durability) */}
       <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
         <span className="mdepth__label" style={{ fontWeight: 600 }}>公式イベント履歴は消えないのか</span>

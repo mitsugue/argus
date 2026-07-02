@@ -33,6 +33,8 @@ import argus_jquants_tdnet  # official J-Quants TDnet Add-on classify/map/status
 import argus_evidence_pack  # canonical Evidence Pack — the decision spine's input (pure, v11.2)
 import argus_official_event_lifecycle  # official disclosures as lifecycle-tracked events (pure, v11.3)
 import argus_official_event_store  # durable official-event serialize/merge/restore (pure, v11.3.1)
+import argus_macro_event_analysis  # C.A.O.S. macro pre/post: phase resolver + prompts (pure, v11.3.2)
+import argus_macro_event_store  # durable macro-analysis merge/serialize (pure, v11.3.2)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
@@ -8548,10 +8550,349 @@ def _owner_symbols_for_events():
         return None
 
 
+# ━━━ C.A.O.S. Macro Event Pre/Post Intelligence (v11.3.2) ━━━━━━━━━━━━━━━━━━━
+# Replaces the fragile daysUntil<=0 pre/post split with the canonical eventTimeUtc
+# phase resolver (release-day-before-release = still PRE), a DURABLE store (pre views
+# survive redeploys so post can answer-check against them), and an official-result
+# adapter (BLS NFP first — never fabricated).
+_MACRO_ANALYSIS = {}                  # eventId -> analysis record
+_MACRO_ANALYSIS_FILE = "/tmp/argus_macro_analysis.json"
+_MACRO_ANALYSIS_STATE = {"restored": False, "lastGenerateAt": None, "lastResultsAt": None,
+                         "pathType": "ephemeral_tmp"}
+_MACRO_RESULT_STATE = {"NFP": {"provider": "BLS", "status": "not_run", "lastSuccessAt": None,
+                               "sampleEventId": None}}
+_MACRO_NOT_IMPLEMENTED = ("CPI", "PPI", "FOMC", "BOJ", "PCE", "GDP", "JOLTS",
+                          "TREASURY_AUCTION", "AUCTION")
+
+
+def _macro_analysis_persist():
+    try:
+        with open(_MACRO_ANALYSIS_FILE, "w") as f:
+            json.dump({"items": _MACRO_ANALYSIS,
+                       "state": {k: _MACRO_ANALYSIS_STATE[k]
+                                 for k in ("lastGenerateAt", "lastResultsAt")}},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _macro_analysis_restore_once():
+    """tmp → ledger latest (short timeout, merge — an old snapshot can't wipe newer) → empty."""
+    if _MACRO_ANALYSIS_STATE["restored"]:
+        return
+    _MACRO_ANALYSIS_STATE["restored"] = True
+    try:
+        with open(_MACRO_ANALYSIS_FILE, "r") as f:
+            blob = json.load(f)
+        if isinstance(blob.get("items"), dict):
+            _MACRO_ANALYSIS.update(blob["items"])
+            _MACRO_ANALYSIS_STATE["pathType"] = "durable_restored"
+        _MACRO_ANALYSIS_STATE.update({k: v for k, v in (blob.get("state") or {}).items()
+                                      if k in ("lastGenerateAt", "lastResultsAt")})
+    except Exception:
+        pass
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/macro-events/analysis/latest.json?cb={int(time.time())}",
+                         timeout=6)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            merged = argus_macro_event_store.merge_records(
+                _MACRO_ANALYSIS,
+                list(argus_macro_event_store.restore_from_snapshot(json.loads(r.text)).values()),
+                now_iso=_ai_now_iso())
+            _MACRO_ANALYSIS.clear()
+            _MACRO_ANALYSIS.update(merged)
+            _MACRO_ANALYSIS_STATE["pathType"] = "ledger_restored"
+    except Exception:
+        pass
+
+
+def _macro_market_context_ja():
+    """Short REAL market context for the prompts (measured values only)."""
+    bits = []
+    try:
+        rates = get_rates_snapshot()
+        if isinstance(rates, dict):
+            for k, lab in (("us10y", "US10Y"), ("usdJpy", "ドル円"), ("vix", "VIX")):
+                v = (rates.get(k) or {}).get("latestValue")
+                if v is not None:
+                    bits.append(f"{lab}={v}")
+    except Exception:
+        pass
+    try:
+        reg = (_REGIME_CACHE.get("data") or {}).get("regime") or {}
+        if reg.get("label"):
+            bits.append(f"regime={reg['label']}")
+    except Exception:
+        pass
+    return " / ".join(bits)
+
+
+def _bls_nfp_result(event):
+    """OFFICIAL NFP result from the BLS public API (no key needed; free). available=True
+    ONLY when the latest published month equals the release's reference month — never
+    fabricated. Admin/cron path only."""
+    now_iso = _ai_now_iso()
+    out = {"available": False, "source": "BLS", "releasedAt": None, "headline": None,
+           "metrics": {}, "limitationsJa": ["公式結果未取得"]}
+    try:
+        yr = datetime.now(pytz.utc).year
+        r = requests.post("https://api.bls.gov/publicAPI/v2/timeseries/data/",
+                          json={"seriesid": ["CES0000000001", "LNS14000000"],
+                                "startyear": str(yr - 1), "endyear": str(yr)},
+                          headers={"Content-Type": "application/json",
+                                   "User-Agent": "argus-research/1.0"}, timeout=15)
+        if r.status_code != 200:
+            _MACRO_RESULT_STATE["NFP"].update(status=("rate_limited" if r.status_code == 429 else "error"))
+            out["limitationsJa"] = [f"BLS HTTP {r.status_code}"]
+            return out
+        series = {s.get("seriesID"): s.get("data") or []
+                  for s in (((r.json() or {}).get("Results") or {}).get("series") or [])}
+        ces = sorted(series.get("CES0000000001") or [],
+                     key=lambda d: (d.get("year"), d.get("period")), reverse=True)
+        lns = sorted(series.get("LNS14000000") or [],
+                     key=lambda d: (d.get("year"), d.get("period")), reverse=True)
+        if len(ces) < 2:
+            out["limitationsJa"] = ["BLS系列が空"]
+            _MACRO_RESULT_STATE["NFP"].update(status="partial")
+            return out
+        latest, prior = ces[0], ces[1]
+        latest_month = f"{latest.get('year')}-{str(latest.get('period') or '').replace('M', '')}"
+        # reference month of THIS release = the month before the event date
+        ev_d = str(event.get("eventDate") or event.get("eventTimeUtc") or "")[:10]
+        try:
+            evdt = datetime.strptime(ev_d, "%Y-%m-%d")
+            ref = (evdt.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+        except Exception:
+            ref = None
+        chg_k = round(float(latest.get("value", 0)) - float(prior.get("value", 0)))
+        ur = (lns[0].get("value") if lns else None)
+        if ref and latest_month != ref:
+            out["limitationsJa"] = [f"公式結果未反映（BLS最新は{latest_month}・今回の対象月は{ref}）"]
+            _MACRO_RESULT_STATE["NFP"].update(status="live", lastSuccessAt=now_iso)
+            return out
+        out.update(available=True, releasedAt=now_iso,
+                   headline=f"非農業部門雇用者数 {chg_k:+,}千人 / 失業率 {ur}%",
+                   metrics={"nfpChangeK": chg_k, "unemploymentRate": ur,
+                            "referenceMonth": latest_month},
+                   limitationsJa=[])
+        out["sourceUrl"] = "https://www.bls.gov/news.release/empsit.nr0.htm"
+        _MACRO_RESULT_STATE["NFP"].update(status="live", lastSuccessAt=now_iso,
+                                          sampleEventId=event.get("id") or event.get("eventId"))
+    except Exception as e:
+        _MACRO_RESULT_STATE["NFP"].update(status="error")
+        out["limitationsJa"] = [f"BLS取得エラー({type(e).__name__})"]
+    return out
+
+
+def _macro_result_fetch(event):
+    """Dispatch official-result fetch by eventCode. NFP=BLS live; the rest are honest
+    not_implemented placeholders (never fabricated)."""
+    code = str(event.get("eventCode") or "").upper()
+    if code == "NFP":
+        return _bls_nfp_result(event)
+    return {"available": False, "source": None, "releasedAt": None, "headline": None,
+            "metrics": {}, "limitationsJa": [f"{code or '不明'}の公式結果アダプタは未実装"]}
+
+
+def _macro_important_events(limit=8):
+    try:
+        ev_snap = get_events_snapshot()
+        items = argus_important_events.build_important_events(
+            ev_snap.get("events", []) if isinstance(ev_snap, dict) else [],
+            owner_symbols=_owner_symbols_for_events())
+    except Exception:
+        items = []
+    sel = [e for e in items if e.get("displayImpact") in ("critical", "high")
+           and isinstance(e.get("daysUntil"), (int, float)) and -2 <= e["daysUntil"] <= 7]
+    return sel[:limit]
+
+
+def _refresh_macro_results():
+    """Admin/cron: fetch official results for events past their release time."""
+    _macro_analysis_restore_once()
+    now_iso = _ai_now_iso()
+    checked = updated = 0
+    for ev in _macro_important_events(10):
+        eid = str(ev.get("eventId") or ev.get("eventCode") or "")
+        rec = _MACRO_ANALYSIS.get(eid) or argus_macro_event_analysis.new_record(
+            {**ev, "id": eid}, now_iso=now_iso)
+        phase = argus_macro_event_analysis.resolve_macro_event_phase(
+            rec.get("eventTimeUtc") or ev.get("eventTimeUtc"), now_iso,
+            actual_available=bool((rec.get("actual") or {}).get("available")),
+            event_date=rec.get("eventDate") or ev.get("eventDate"))
+        if phase not in ("released_pending_result", "post_result"):
+            continue
+        checked += 1
+        if (rec.get("actual") or {}).get("available"):
+            continue
+        actual = _macro_result_fetch(ev)
+        if actual.get("available"):
+            rec["actual"] = actual
+            updated += 1
+        else:
+            rec.setdefault("actual", {}).update(limitationsJa=actual.get("limitationsJa", []))
+        rec["updatedAt"] = now_iso
+        _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
+            _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+    _MACRO_ANALYSIS_STATE["lastResultsAt"] = now_iso
+    _macro_analysis_persist()
+    return {"checked": checked, "resultsFetched": updated, "asOf": now_iso}
+
+
+def _generate_macro_event_analysis(limit=8):
+    """Admin/cron: the ONLY model-calling path for macro pre/post analysis.
+    PRE is refreshed only on checkpoint/TTL; POST runs only with a real official
+    result + the PRESERVED pre; released_pending stays '公式結果待ち'."""
+    _macro_analysis_restore_once()
+    now_iso = _ai_now_iso()
+    ctx = _macro_market_context_ja()
+    made_pre = made_post = 0
+    for ev in _macro_important_events(limit):
+        eid = str(ev.get("eventId") or ev.get("eventCode") or "")
+        rec = _MACRO_ANALYSIS.get(eid) or argus_macro_event_analysis.new_record(
+            {**ev, "id": eid}, now_iso=now_iso)
+        rec["eventTimeUtc"] = rec.get("eventTimeUtc") or ev.get("eventTimeUtc")
+        rec["eventDate"] = rec.get("eventDate") or ev.get("eventDate")
+        phase = argus_macro_event_analysis.resolve_macro_event_phase(
+            rec.get("eventTimeUtc"), now_iso,
+            actual_available=bool((rec.get("actual") or {}).get("available")),
+            event_date=rec.get("eventDate"))
+        rec["phase"] = phase
+        rec["daysUntil"] = ev.get("daysUntil")
+        rec["displayImpact"] = ev.get("displayImpact")
+        if argus_macro_event_analysis.should_refresh_pre(rec, phase, now_iso=now_iso):
+            out = _openai_prose(argus_macro_event_analysis.build_pre_prompt(ev, ctx), max_out=700)
+            pre = argus_macro_event_analysis.parse_pre(out, phase=phase, now_iso=now_iso)
+            if pre:
+                rec["pre"] = pre
+                made_pre += 1
+        if phase == "post_result":
+            post = rec.get("post") or {}
+            if post.get("verdict") in (None, "", "not_available", "not_scoreable") or not post.get("generatedAt"):
+                pre_exists = bool((rec.get("pre") or {}).get("argusScenarioJa")
+                                  or (rec.get("pre") or {}).get("summaryJa"))
+                out = _openai_prose(argus_macro_event_analysis.build_post_prompt(
+                    ev, rec.get("pre") or {}, rec.get("actual") or {}, ctx), max_out=700)
+                rec["post"] = argus_macro_event_analysis.parse_post(
+                    out or {}, now_iso=now_iso, pre_exists=pre_exists,
+                    actual_available=bool((rec.get("actual") or {}).get("available")))
+                made_post += 1
+        rec["updatedAt"] = now_iso
+        _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
+            _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+    _MACRO_ANALYSIS_STATE["lastGenerateAt"] = now_iso
+    _macro_analysis_persist()
+    return {"pre": made_pre, "post": made_post, "total": len(_MACRO_ANALYSIS), "asOf": now_iso}
+
+
+def _macro_compat_item(rec):
+    """Backward-compatible projection (the legacy /event-analysis shape CaosHub reads)."""
+    pre, post, actual = rec.get("pre") or {}, rec.get("post") or {}, rec.get("actual") or {}
+    phase = rec.get("phase") or ""
+    legacy_phase = "post" if phase.startswith(("released", "post")) else "pre"
+    post_ja = post.get("answerCheckJa") or ""
+    if legacy_phase == "post" and not post_ja:
+        post_ja = ("公式結果待ち" if not actual.get("available") else "答え合わせ生成待ち…")
+    return {"eventId": rec.get("eventId"), "eventCode": rec.get("eventCode"),
+            "phase": legacy_phase, "phaseDetail": phase,
+            "displayImpact": rec.get("displayImpact"), "daysUntil": rec.get("daysUntil"),
+            "summaryJa": pre.get("summaryJa") or "",
+            "preJa": pre.get("argusScenarioJa") or "",
+            "postJa": post_ja,
+            "generatedAt": pre.get("generatedAt") or post.get("generatedAt"),
+            "actualAvailable": bool(actual.get("available")),
+            "verdict": post.get("verdict")}
+
+
+@app.route("/api/argus/macro-event-analysis")
+def api_argus_macro_event_analysis():
+    """Public cache-only: durable macro-event pre/post analyses. Never calls an LLM,
+    never fetches an official result."""
+    _macro_analysis_restore_once()
+    rows = list(_MACRO_ANALYSIS.values())
+    code = (request.args.get("eventCode") or "").strip().upper()
+    phase = (request.args.get("phase") or "").strip()
+    if code:
+        rows = [r for r in rows if str(r.get("eventCode") or "").upper() == code]
+    if phase:
+        rows = [r for r in rows if r.get("phase") == phase]
+    rows.sort(key=lambda r: str(r.get("eventTimeUtc") or r.get("eventDate") or ""))
+    try:
+        limit = max(1, min(50, int(request.args.get("limit", "20"))))
+    except Exception:
+        limit = 20
+    return jsonify({"asOf": _ai_now_iso(), "schemaVersion": argus_macro_event_store.SCHEMA_VERSION,
+                    "count": len(rows), "items": rows[:limit]})
+
+
+@app.route("/api/argus/macro-event-analysis/status")
+def api_argus_macro_event_analysis_status():
+    _macro_analysis_restore_once()
+    rows = list(_MACRO_ANALYSIS.values())
+    by_phase = {}
+    for r in rows:
+        by_phase[r.get("phase")] = by_phase.get(r.get("phase"), 0) + 1
+    return jsonify({"asOf": _ai_now_iso(), "schemaVersion": argus_macro_event_store.SCHEMA_VERSION,
+                    "total": len(rows), "byPhase": by_phase,
+                    "withPre": sum(1 for r in rows if (r.get("pre") or {}).get("argusScenarioJa")),
+                    "withActual": sum(1 for r in rows if (r.get("actual") or {}).get("available")),
+                    "lastGenerateAt": _MACRO_ANALYSIS_STATE.get("lastGenerateAt"),
+                    "lastResultsAt": _MACRO_ANALYSIS_STATE.get("lastResultsAt"),
+                    "pathType": _MACRO_ANALYSIS_STATE.get("pathType"),
+                    "noteJa": "発表前の予想を保存し、発表後に公式結果と照合して答え合わせ。結果もコンセンサスも捏造しない。"})
+
+
+@app.route("/api/argus/macro-event-analysis/<eid>")
+def api_argus_macro_event_analysis_one(eid):
+    _macro_analysis_restore_once()
+    r = _MACRO_ANALYSIS.get(str(eid))
+    if not r:
+        return jsonify({"error": "not_found", "eventId": eid}), 404
+    return jsonify(r)
+
+
+@app.route("/api/argus/macro-events/result-status")
+def api_argus_macro_result_status():
+    srcs = [{"eventCode": "NFP", "provider": "BLS",
+             "status": _MACRO_RESULT_STATE["NFP"]["status"],
+             "lastSuccessAt": _MACRO_RESULT_STATE["NFP"]["lastSuccessAt"],
+             "sampleEventId": _MACRO_RESULT_STATE["NFP"]["sampleEventId"],
+             "limitationsJa": []}]
+    srcs += [{"eventCode": c, "provider": None, "status": "not_implemented",
+              "lastSuccessAt": None, "sampleEventId": None,
+              "limitationsJa": ["公式結果アダプタ未実装（結果は捏造しない）"]}
+             for c in _MACRO_NOT_IMPLEMENTED]
+    return jsonify({"schemaVersion": "macro-result-status-v1", "asOf": _ai_now_iso(),
+                    "sources": srcs})
+
+
+@app.route("/api/argus/admin/macro-event-analysis/generate", methods=["POST"])
+def api_argus_admin_macro_generate():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_generate_macro_event_analysis())
+
+
+@app.route("/api/argus/admin/macro-event-analysis/refresh-results", methods=["POST"])
+def api_argus_admin_macro_refresh_results():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_refresh_macro_results())
+
+
 @app.route("/api/argus/event-analysis")
 def api_argus_event_analysis():
-    """Public GET — C.A.O.S. pre/post event analyses (served from cache; no model call
-    here). Newest/most-imminent first."""
+    """Public GET — backward-compatible projection of the NEW durable macro analysis
+    (v11.3.2). Falls back to the legacy /tmp store until the first generation runs."""
+    _macro_analysis_restore_once()
+    if _MACRO_ANALYSIS:
+        its = [_macro_compat_item(r) for r in _MACRO_ANALYSIS.values()]
+        its.sort(key=lambda x: (0 if x.get("phase") == "post" else 1,
+                                x.get("daysUntil") if x.get("daysUntil") is not None else 99))
+        return jsonify({"asOf": _MACRO_ANALYSIS_STATE.get("lastGenerateAt") or _ai_now_iso(),
+                        "system": argus_research_mesh.SYSTEM_NAME, "items": its})
     its = sorted(_EVENT_ANALYSIS["items"].values(),
                  key=lambda x: (0 if x.get("phase") == "post" else 1, x.get("daysUntil") if x.get("daysUntil") is not None else 99))
     return jsonify({"asOf": _EVENT_ANALYSIS.get("asOf"), "system": argus_research_mesh.SYSTEM_NAME,
@@ -8560,11 +8901,14 @@ def api_argus_event_analysis():
 
 @app.route("/api/argus/event-analysis/generate", methods=["POST"])
 def api_argus_event_analysis_generate():
-    """Admin/cron — generate the C.A.O.S. event analyses (the ONLY model-calling path)."""
+    """Admin/cron — repointed to the NEW macro analysis (v11.3.2): refresh official
+    results first, then generate pre/post. Keeps the existing ai-rejudge cron working."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(_caos_event_generate())
+    res = _refresh_macro_results()
+    gen = _generate_macro_event_analysis()
+    return jsonify({"results": res, "generated": gen})
 
 
 @app.route("/api/argus/entity-profiles")

@@ -374,6 +374,66 @@ def v_official_admin_gated():
     return True, "snapshot/restore admin-gated"
 
 
+def v_macro_event_analysis():
+    # v11.3.2: durable macro pre/post analyses. Shape-only; the release-day invariant:
+    # an event whose eventTimeUtc is in the future must NOT be phase=post_result.
+    from datetime import datetime, timezone
+    c, d = _get("/api/argus/macro-event-analysis?limit=10")
+    if d.get("schemaVersion") != "macro-event-analysis-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for it in (d.get("items") or []):
+        for k in ("eventId", "eventCode", "phase"):
+            if k not in it:
+                return False, f"missing {k}"
+        if not isinstance((it.get("actual") or {}).get("available"), bool):
+            return False, "actual.available not bool"
+        etu = it.get("eventTimeUtc")
+        if etu and str(etu) > now and it.get("phase") in ("post_result", "released_pending_result"):
+            return False, f"{it.get('eventCode')} unreleased but phase={it.get('phase')}!"
+    blob = json.dumps(d).lower()
+    for bad in ("apikey", "x-api-key", "holdings", "costbasis"):
+        if bad in blob:
+            return False, f"leak {bad}"
+    return True, f"count={d.get('count')}"
+
+
+def v_macro_analysis_status():
+    c, d = _get("/api/argus/macro-event-analysis/status")
+    ok = d.get("schemaVersion") == "macro-event-analysis-v1" and isinstance(d.get("byPhase"), dict)
+    return ok, f"total={d.get('total')} withPre={d.get('withPre')} withActual={d.get('withActual')} gen={d.get('lastGenerateAt')}"
+
+
+def v_event_analysis_compat():
+    # backward-compatible projection must keep the legacy keys CaosHub reads.
+    c, d = _get("/api/argus/event-analysis")
+    items = d.get("items")
+    if not isinstance(items, list):
+        return False, "items not a list"
+    for it in items[:3]:
+        for k in ("eventId", "phase", "summaryJa", "preJa", "postJa"):
+            if k not in it:
+                return False, f"compat missing {k}"
+        if it.get("phase") not in ("pre", "post"):
+            return False, f"bad legacy phase {it.get('phase')}"
+    return True, f"items={len(items)}"
+
+
+def v_macro_admin_gated():
+    import urllib.error
+    for path in ("/api/argus/admin/macro-event-analysis/generate",
+                 "/api/argus/admin/macro-event-analysis/refresh-results"):
+        req = urllib.request.Request(BASE + path, method="POST",
+                                     headers={"User-Agent": "argus-smoke"})
+        try:
+            with urllib.request.urlopen(req, timeout=30):
+                return False, f"{path} returned 200 without token!"
+        except urllib.error.HTTPError as e:
+            if e.code not in (401, 503):
+                return False, f"{path} returned {e.code}"
+    return True, "generate/refresh-results admin-gated"
+
+
 def v_decision_spine_status():
     # v11.2.1: the spine's own status — cached-only evidence pack + wiring booleans.
     c, d = _get("/api/argus/decision-spine/status")
@@ -634,6 +694,11 @@ CHECKS = [
     ("v11.3.1 official durability", v_official_events_durability),
     ("v11.3.1 official sample lifecycle", v_official_event_sample_lifecycle),
     ("v11.3.1 official admin gated", v_official_admin_gated),
+    # ── V11.3.2 macro pre/post ──
+    ("v11.3.2 macro-event-analysis", v_macro_event_analysis),
+    ("v11.3.2 macro analysis status", v_macro_analysis_status),
+    ("v11.3.2 event-analysis compat", v_event_analysis_compat),
+    ("v11.3.2 macro admin gated", v_macro_admin_gated),
 ]
 
 

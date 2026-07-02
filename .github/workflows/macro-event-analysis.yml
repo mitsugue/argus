@@ -1,0 +1,95 @@
+# ARGUS C.A.O.S. Macro Event Pre/Post Intelligence (v11.3.2).
+# NFP/CPI/FOMC etc. are NOT aligned with the 16:05 JST ledger run, so this dedicated
+# cron (every 2h at :35 on weekdays — includes 12:35 UTC, minutes after the 08:30 ET
+# releases) refreshes official results, generates/refreshes the pre/post analyses
+# (admin path = the only LLM caller), and persists the public-safe snapshot to the
+# ledger branch so pre-event views survive redeploys for the post answer-check.
+
+name: macro-event-analysis
+
+on:
+  schedule:
+    - cron: '35 0,2,4,6,8,10,12,14,16,18,20,22 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Serialize with every other ledger-branch writer.
+concurrency:
+  group: ledger-branch-writer
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Refresh official results + generate analyses (admin; token never logged)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "::warning::ARGUS_ADMIN_TOKEN missing — skipping generation (snapshot only)"
+          else
+            BE="https://argus-backend-3j2m.onrender.com"
+            curl -s --max-time 60 "$BE/healthz" > /dev/null || true    # warm dyno
+            RES=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/macro-event-analysis/refresh-results" || echo '{"error":"unreachable"}')
+            echo "refresh-results: ${RES:0:200}"
+            GEN=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/macro-event-analysis/generate" || echo '{"error":"unreachable"}')
+            echo "generate: ${GEN:0:200}"
+          fi
+
+      - name: Fetch the public-safe analysis snapshot
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4; do
+            curl -sf --max-time 60 "$BE/api/argus/macro-event-analysis?limit=50" \
+              -o "$RUNNER_TEMP/macro.json" && break
+            echo "retry $i"; sleep 15
+          done
+          test -s "$RUNNER_TEMP/macro.json"
+          N=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/macro.json')).get('count',0))")
+          echo "items=$N"
+          echo "ITEMS=$N" >> "$GITHUB_ENV"
+
+      - name: Checkout repo
+        if: env.ITEMS != '0'
+        uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Commit snapshot to ledger branch
+        if: env.ITEMS != '0'
+        run: |
+          # Safe ledger checkout (mirrors event-ledger.yml): full history, stage ONLY
+          # our own path so other writers' files are never wiped.
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          fi
+          mkdir -p ledger/macro-events/analysis
+          DAY=$(TZ=Asia/Tokyo date +%F)
+          cp "$RUNNER_TEMP/macro.json" "ledger/macro-events/analysis/latest.json"
+          # day files are append-only: first write of the day wins, later runs only latest
+          if [ ! -f "ledger/macro-events/analysis/$DAY.json" ]; then
+            cp "$RUNNER_TEMP/macro.json" "ledger/macro-events/analysis/$DAY.json"
+          fi
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/macro-events/
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "macro-events: $(date -u +%FT%TZ) analysis snapshot ($ITEMS items)"
+            git push origin HEAD:ledger
+          fi
