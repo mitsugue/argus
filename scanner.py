@@ -32,6 +32,7 @@ import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v1
 import argus_jquants_tdnet  # official J-Quants TDnet Add-on classify/map/status (pure, v11.1)
 import argus_evidence_pack  # canonical Evidence Pack — the decision spine's input (pure, v11.2)
 import argus_official_event_lifecycle  # official disclosures as lifecycle-tracked events (pure, v11.3)
+import argus_official_event_store  # durable official-event serialize/merge/restore (pure, v11.3.1)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
@@ -9941,7 +9942,9 @@ def get_tdnet_recent(limit=150):
 _OFFICIAL_EVENTS = {}                 # officialEventId -> lifecycle record
 _OFFICIAL_EVENTS_MAX = 600
 _OFFICIAL_EVENTS_FILE = "/tmp/argus_official_events.json"
-_OFFICIAL_EVENTS_STATE = {"lastIngestAt": None, "lastTrackAt": None, "restored": False}
+_OFFICIAL_EVENTS_STATE = {"lastIngestAt": None, "lastTrackAt": None, "restored": False,
+                          "pathType": "ephemeral_tmp", "restoreStatus": "not_attempted"}
+_OFFICIAL_LEDGER_CACHE = {"data": None, "expires": 0.0}   # ledger latest.json meta (10-min)
 
 
 def _official_events_persist():
@@ -9955,17 +9958,46 @@ def _official_events_persist():
 
 
 def _official_events_restore_once():
+    """Restore order (v11.3.1): /tmp runtime cache → ledger-branch latest.json (ARGUS's
+    own public artifact; short timeout, never blocks on failure) → empty. MERGES via the
+    pure store module so an older snapshot can never wipe newer runtime progress.
+    Never fetches a provider, never calls an LLM."""
     if _OFFICIAL_EVENTS_STATE["restored"]:
         return
     _OFFICIAL_EVENTS_STATE["restored"] = True
+    restored_from = []
     try:
         with open(_OFFICIAL_EVENTS_FILE, "r") as f:
             blob = json.load(f)
         if isinstance(blob.get("items"), dict):
             _OFFICIAL_EVENTS.update(blob["items"])
-        _OFFICIAL_EVENTS_STATE.update(blob.get("state") or {})
+            restored_from.append("tmp")
+        _OFFICIAL_EVENTS_STATE.update({k: v for k, v in (blob.get("state") or {}).items()
+                                       if k in ("lastIngestAt", "lastTrackAt")})
     except Exception:
         pass
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/official-events/latest.json?cb={int(time.time())}",
+                         timeout=6)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            snap = json.loads(r.text)
+            merged = argus_official_event_store.merge_records(
+                _OFFICIAL_EVENTS, list(argus_official_event_store.restore_from_snapshot(snap).values()),
+                now_iso=_ai_now_iso())
+            _OFFICIAL_EVENTS.clear()
+            _OFFICIAL_EVENTS.update(merged)
+            restored_from.append("ledger")
+    except Exception:
+        pass
+    if "ledger" in restored_from:
+        _OFFICIAL_EVENTS_STATE["pathType"] = "ledger_restored"
+        _OFFICIAL_EVENTS_STATE["restoreStatus"] = "ok"
+    elif "tmp" in restored_from:
+        _OFFICIAL_EVENTS_STATE["pathType"] = "durable_restored"
+        _OFFICIAL_EVENTS_STATE["restoreStatus"] = "tmp_only"
+    else:
+        _OFFICIAL_EVENTS_STATE["pathType"] = "ephemeral_tmp"
+        _OFFICIAL_EVENTS_STATE["restoreStatus"] = "restore_failed_or_empty"
 
 
 def _official_lifecycle_ingest(td_snapshot):
@@ -10136,6 +10168,121 @@ def api_argus_official_events_track():
     if not ok:
         return jsonify(err), code
     return jsonify(_official_events_track())
+
+
+@app.route("/api/argus/official-events/snapshot")
+def api_argus_official_events_snapshot():
+    """PUBLIC-SAFE durable snapshot (v11.3.1) — what the ledger workflow commits to
+    ledger/official-events/. Sanitized metadata only (no PDFs/full text/portfolio),
+    deterministic ordering, store-only read (no provider fetch)."""
+    _official_events_restore_once()
+    return jsonify(argus_official_event_store.serialize_snapshot(
+        list(_OFFICIAL_EVENTS.values()), as_of=_ai_now_iso(),
+        date_jst=datetime.now(TZ_JST).strftime("%Y-%m-%d"), source="tdnet"))
+
+
+def _official_ledger_latest_cached():
+    """Meta of ledger/official-events/latest.json (ARGUS's own public artifact),
+    10-min cached so the durability endpoint stays cheap. Never raises."""
+    now = time.time()
+    c = _OFFICIAL_LEDGER_CACHE
+    if c["data"] is not None and now < c["expires"]:
+        return c["data"]
+    out = {"configured": True, "reachable": False, "latestLedgerDate": None,
+           "latestCount": 0, "lastPersistAt": None}
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/official-events/latest.json?cb={int(now)}",
+                         timeout=6)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            snap = json.loads(r.text)
+            out.update(reachable=True, latestLedgerDate=snap.get("dateJst"),
+                       latestCount=(snap.get("summary") or {}).get("total", 0),
+                       lastPersistAt=snap.get("asOf"))
+    except Exception:
+        pass
+    c["data"] = out
+    c["expires"] = now + 600
+    return out
+
+
+@app.route("/api/argus/official-events/durability")
+def api_argus_official_events_durability():
+    """Durability status (v11.3.1): is the official-event research history surviving
+    restarts? Public-safe; reads the runtime store + ARGUS's own ledger artifact only."""
+    _official_events_restore_once()
+    led = _official_ledger_latest_cached()
+    lims = []
+    if not led.get("reachable"):
+        lims.append("ledgerブランチのofficial-events/latest.jsonがまだ存在しないか到達不可（初回は16:05のワークフロー後に生成）。")
+    if _OFFICIAL_EVENTS_STATE.get("pathType") == "ephemeral_tmp":
+        lims.append("現在の実行はledger/tmpどちらからも復元していません（新規デプロイ直後の空ストアの可能性）。")
+    return jsonify({
+        "schemaVersion": "official-event-durability-v1",
+        "asOf": _ai_now_iso(),
+        "runtimeStore": {
+            "count": len(_OFFICIAL_EVENTS),
+            "max": _OFFICIAL_EVENTS_MAX,
+            "pathType": _OFFICIAL_EVENTS_STATE.get("pathType"),
+            "restoreStatus": _OFFICIAL_EVENTS_STATE.get("restoreStatus"),
+            "lastIngestAt": _OFFICIAL_EVENTS_STATE.get("lastIngestAt"),
+            "lastTrackAt": _OFFICIAL_EVENTS_STATE.get("lastTrackAt"),
+        },
+        "durableStore": {
+            "configured": True,
+            "lastPersistAt": led.get("lastPersistAt"),
+            "latestLedgerDate": led.get("latestLedgerDate"),
+            "latestCount": led.get("latestCount"),
+            "restoreAvailable": bool(led.get("reachable")),
+        },
+        "safety": {
+            "publicGetFetchesProvider": False,
+            "storesFullText": False,
+            "storesPrivatePortfolio": False,
+        },
+        "limitationsJa": lims,
+    })
+
+
+@app.route("/api/argus/admin/official-events/snapshot", methods=["POST"])
+def api_argus_admin_official_events_snapshot():
+    """ADMIN: force-persist the runtime store to /tmp and return the durable snapshot
+    summary (the ledger commit itself is the workflow's job)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    _official_events_restore_once()
+    _official_events_persist()
+    snap = argus_official_event_store.serialize_snapshot(
+        list(_OFFICIAL_EVENTS.values()), as_of=_ai_now_iso(),
+        date_jst=datetime.now(TZ_JST).strftime("%Y-%m-%d"))
+    return jsonify({"ok": True, "summary": snap["summary"], "asOf": snap["asOf"]})
+
+
+@app.route("/api/argus/admin/official-events/restore", methods=["POST"])
+def api_argus_admin_official_events_restore():
+    """ADMIN: restore from the ledger-branch snapshot, MERGING (an older snapshot can
+    never wipe newer runtime records — store-module merge policy)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    _official_events_restore_once()
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/official-events/latest.json?cb={int(time.time())}",
+                         timeout=10)
+        if r.status_code != 200:
+            return jsonify({"ok": False, "reason": f"ledger_http_{r.status_code}"})
+        snap = json.loads(r.text)
+    except Exception as e:
+        return jsonify({"ok": False, "reason": f"fetch_{type(e).__name__}"})
+    before = len(_OFFICIAL_EVENTS)
+    merged = argus_official_event_store.merge_records(
+        _OFFICIAL_EVENTS, list(argus_official_event_store.restore_from_snapshot(snap).values()),
+        now_iso=_ai_now_iso())
+    _OFFICIAL_EVENTS.clear()
+    _OFFICIAL_EVENTS.update(merged)
+    _official_events_persist()
+    return jsonify({"ok": True, "before": before, "after": len(_OFFICIAL_EVENTS),
+                    "ledgerDate": snap.get("dateJst")})
 
 
 @app.route("/api/argus/tdnet-recent")

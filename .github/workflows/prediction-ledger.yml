@@ -222,6 +222,35 @@ jobs:
               print(f'no live AI judgment to persist (status={s}) — previous file kept')
           PY
 
+      # official-event-ledger-v1 (v11.3.1): official-disclosure lifecycle history is
+      # the foundation of future scoring — persist the public-safe snapshot (metadata
+      # only, no PDFs/full text/portfolio) so redeploys can't erase it. Day file is
+      # append-only (never overwritten); latest.json updates every run.
+      - name: Persist official event lifecycle records
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 60 "$BE/api/argus/official-events/snapshot" -o oe.json || echo '{}' > oe.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('oe.json'))
+          except Exception:
+              d = {}
+          items = d.get('items') if isinstance(d, dict) else None
+          if d.get('schemaVersion') == 'official-event-ledger-v1' and isinstance(items, list) and items:
+              os.makedirs('ledger/official-events', exist_ok=True)
+              day = f'ledger/official-events/{today}.json'
+              if not os.path.exists(day):                       # append-only day files
+                  json.dump(d, open(day, 'w'), ensure_ascii=False)
+              json.dump(d, open('ledger/official-events/latest.json', 'w'), ensure_ascii=False)
+              print('official events persisted:', len(items), 'items,', d.get('summary'))
+          else:
+              print('no official events to persist (empty/invalid snapshot) — previous files kept')
+          PY
+
       # incident-replay-v1 (v10.108): snapshot the day's downside incidents to the
       # ledger branch so a sharp-drop day can be reviewed later (postmortem). Append-
       # only per date; calm days (no incidents) are skipped. Outcome scoring is a

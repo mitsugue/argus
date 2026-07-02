@@ -320,6 +320,60 @@ def v_evidence_pack_official_refs():
     return True, f"refs={len(refs)}"
 
 
+def v_official_events_durability():
+    # v11.3.1: research history must survive restarts — and the safety contract holds.
+    c, d = _get("/api/argus/official-events/durability")
+    if d.get("schemaVersion") != "official-event-durability-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    s = d.get("safety") or {}
+    if s.get("publicGetFetchesProvider") is not False:
+        return False, "publicGetFetchesProvider must be false"
+    if s.get("storesFullText") is not False or s.get("storesPrivatePortfolio") is not False:
+        return False, "full-text/portfolio safety flags wrong"
+    blob = json.dumps(d).lower()
+    for bad in ("apikey", "x-api-key", "holdings", "costbasis"):
+        if bad in blob:
+            return False, f"leak {bad}"
+    rt, du = d.get("runtimeStore") or {}, d.get("durableStore") or {}
+    return True, (f"runtime={rt.get('count')}({rt.get('pathType')}) "
+                  f"ledger={du.get('latestLedgerDate')}/{du.get('latestCount')} restore={du.get('restoreAvailable')}")
+
+
+def v_official_event_sample_lifecycle():
+    # if a sample exists, its detail + lifecycle views must resolve (never 500) and a
+    # confirmed_cause must carry market confirmation.
+    c, d = _get("/api/argus/official-events?limit=1")
+    items = d.get("items") or []
+    if not items:
+        return True, "store empty (fills as the official feed is read)"
+    oid = items[0].get("officialEventId")
+    c2, one = _get(f"/api/argus/official-events/{oid}")
+    if one.get("officialEventId") != oid:
+        return False, f"detail mismatch {oid}"
+    c3, lc = _get(f"/api/argus/official-events/{oid}/lifecycle")
+    if lc.get("causeStatus") == "confirmed_cause":
+        mr = lc.get("marketReaction") or {}
+        if not any((mr.get(k) or {}).get("marketConfirmed") for k in mr):
+            return False, "confirmed_cause without market confirmation!"
+    return True, f"{oid} stage={lc.get('lifecycleStage')} cause={lc.get('causeStatus')}"
+
+
+def v_official_admin_gated():
+    # POST-only admin endpoints: no token → 401 (or 503 if unconfigured), never 200.
+    import urllib.error
+    for path in ("/api/argus/admin/official-events/snapshot",
+                 "/api/argus/admin/official-events/restore"):
+        req = urllib.request.Request(BASE + path, method="POST",
+                                     headers={"User-Agent": "argus-smoke"})
+        try:
+            with urllib.request.urlopen(req, timeout=30):
+                return False, f"{path} returned 200 without token!"
+        except urllib.error.HTTPError as e:
+            if e.code not in (401, 503):
+                return False, f"{path} returned {e.code}, expected 401/503"
+    return True, "snapshot/restore admin-gated"
+
+
 def v_decision_spine_status():
     # v11.2.1: the spine's own status — cached-only evidence pack + wiring booleans.
     c, d = _get("/api/argus/decision-spine/status")
@@ -576,6 +630,10 @@ CHECKS = [
     ("v11.3 official-events", v_official_events),
     ("v11.3 official-events/status", v_official_events_status),
     ("v11.3 evidence-pack official refs", v_evidence_pack_official_refs),
+    # ── V11.3.1 durability ──
+    ("v11.3.1 official durability", v_official_events_durability),
+    ("v11.3.1 official sample lifecycle", v_official_event_sample_lifecycle),
+    ("v11.3.1 official admin gated", v_official_admin_gated),
 ]
 
 

@@ -147,6 +147,13 @@
     justify-content: center;
     font-size: 0;
     padding: 10px 0;
+    /* v11.3.1 (owner): the 10px dot↔label gap counted toward centering even though the
+       label is invisible (font-size:0 keeps a 0-width flex item), pushing the dot ~5px
+       left of true center. Kill the gap on mobile so the dot is dead-center. */
+    gap: 0;
+  }
+  .nav__today {
+    gap: 0;
   }
   .nav__dot {
     width: 7px;

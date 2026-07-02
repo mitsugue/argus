@@ -1,6 +1,27 @@
 import '../dashboard/Dashboard.css';
 import React from 'react';
 
+interface Durability {
+  runtimeStore?: { count?: number; pathType?: string; restoreStatus?: string };
+  durableStore?: { configured?: boolean; latestLedgerDate?: string | null;
+                   latestCount?: number; restoreAvailable?: boolean };
+  limitationsJa?: string[];
+}
+
+function useOfficialDurability(): Durability | null {
+  const [d, setD] = React.useState<Durability | null>(null);
+  React.useEffect(() => {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+    if (!backend) return;
+    let alive = true;
+    fetch(backend.replace(/\/$/, '') + '/api/argus/official-events/durability')
+      .then((r) => r.json()).then((j) => { if (alive && j && j.schemaVersion) setD(j); })
+      .catch(() => { /* keep null */ });
+    return () => { alive = false; };
+  }, []);
+  return d;
+}
+
 // 判断は何を読んでいるのか (v11.2.1) — the dedicated Decision Spine explainer.
 // Static + honest: describes what the judges actually read (the Evidence Pack) and the
 // hard limitations. No overclaims; the flow mirrors the real pipeline.
@@ -19,7 +40,9 @@ const LIMITS = [
   'Public endpointはcached-onlyで、取得更新はscheduled/admin refreshが行う。',
 ];
 
-export const DecisionSpineCard: React.FC = () => (
+export const DecisionSpineCard: React.FC = () => {
+  const dur = useOfficialDurability();
+  return (
   <section className="mdepth">
     <div className="section-head">
       <span className="section-head__title">判断は何を読んでいるのか</span>
@@ -66,6 +89,26 @@ export const DecisionSpineCard: React.FC = () => (
           追跡状況は <code style={{ fontSize: 11 }}>/api/argus/official-events</code> で監査できます。
         </p>
       </div>
+
+      {/* 公式イベント履歴は消えないのか (v11.3.1 durability) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>公式イベント履歴は消えないのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          公式イベントは一時キャッシュだけでなく<b>ledgerブランチへpublic-safeなメタデータとして毎営業日保存</b>され、
+          再起動後も復元されます。保存するのは開示タイトル・分類・時刻・EventCard/Evidence Pack参照・市場反応・
+          未確認項目のみで、<b>PDF本文・秘密情報・保有/損益は保存しません</b>。
+        </p>
+        {dur && (
+          <p style={{ margin: '6px 0 0', color: 'var(--text-faint)', fontSize: 11, lineHeight: 1.7 }}>
+            実測: 実行中ストア {dur.runtimeStore?.count ?? 0}件（{dur.runtimeStore?.pathType ?? '—'}）
+            ・恒久保存 {dur.durableStore?.restoreAvailable
+              ? `あり（最新 ${dur.durableStore?.latestLedgerDate ?? '—'} / ${dur.durableStore?.latestCount ?? 0}件）`
+              : 'まだ（初回は16:05のワークフロー後に生成）'}
+            {(dur.limitationsJa || []).length > 0 ? ` ・注: ${(dur.limitationsJa || [])[0]}` : ''}
+          </p>
+        )}
+      </div>
     </div>
   </section>
-);
+  );
+};
