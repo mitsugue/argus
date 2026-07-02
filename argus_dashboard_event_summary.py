@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import argus_macro_event_analysis as _MA
+import argus_macro_market_reaction as _RX
 
 SCHEMA_VERSION = "dashboard-event-summary-v1"
 
@@ -140,13 +141,22 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
     show_actual_first = state in ("post_result", "post_answer_checked")
     show_pending = state in ("released_pending_result", "stale")
 
-    # impact comment: AI post impact, else a deterministic metric-aware fallback
+    # impact comment: AI post impact, else a deterministic EVENT-TYPE-aware fallback
     # (ONLY when the official result is actually available — never fabricated).
     impact = str(post.get("portfolioImpactJa") or "")
     if actual_avail and not impact:
-        impact = (_nfp_impact_fallback(actual.get("metrics") or {})
-                  if event_code == "NFP" else
-                  "公式結果を踏まえ、金利・ドル・株式の初動を確認する局面。判断は市場反応の確認待ち。")
+        impact = (_nfp_impact_fallback(actual.get("metrics") or {}) if event_code == "NFP"
+                  else _RX.impact_fallback(event_code, actual.get("metrics") or {}, mr))
+
+    # market reaction text: AI post, else the deterministic quantitative summary
+    reaction_ja = str(post.get("marketReactionJa") or mr.get("summaryJa") or "")
+    # whatChanged: name the variable that moved (from the reaction) if AI didn't
+    what_changed = str(post.get("whatChangedJa") or "")
+    if not what_changed and mr.get("riskTone") and mr.get("riskTone") != "unknown":
+        _tone = {"risk_on": "リスクオン", "risk_off": "リスクオフ", "rates_up": "金利上昇",
+                 "rates_down": "金利低下", "mixed": "まちまち"}.get(mr.get("riskTone"), "")
+        if _tone:
+            what_changed = f"発表後の地合いは{_tone}方向。"
 
     verdict = str(post.get("verdict") or ("not_available" if not released else "not_available"))
     answer_check = str(post.get("answerCheckJa") or "")
@@ -172,11 +182,16 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         "answerCheckJa": answer_check,
         "verdict": verdict,
         "verdictJa": _VERDICT_JA.get(verdict, "未確認"),
-        "marketReactionJa": str(post.get("marketReactionJa") or ""),
+        "marketReactionJa": reaction_ja,
         "impactCommentJa": impact,
-        "whatChangedJa": str(post.get("whatChangedJa") or ""),
+        "whatChangedJa": what_changed,
         "limitationsJa": list(post.get("limitationsJa") or pre.get("limitationsJa") or [])[:5],
     }
+    # honest: released with an official result but NO quantitative reaction yet
+    if actual_avail and not reaction_ja and not any(
+            mr.get(k) is not None for k in ("us10yMoveBp", "usdJpyMovePct", "spyMovePct",
+                                            "qqqMovePct", "vixMovePct")):
+        caos["limitationsJa"] = (caos["limitationsJa"] + ["市場反応データ未取得"])[:6]
     official = {
         "available": actual_avail,
         "headlineJa": str(actual.get("headline") or "") if actual_avail else "",
@@ -225,7 +240,9 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         },
         "marketReaction": {k: mr.get(k) for k in
                            ("us10yMoveBp", "usdJpyMovePct", "spyMovePct", "qqqMovePct",
-                            "vixMovePct", "window", "limitationsJa")},
+                            "iwmMovePct", "vixMovePct", "goldMovePct", "btcMovePct",
+                            "window", "riskTone", "marketConfirmed", "summaryJa",
+                            "limitationsJa")},
         "dedupeKey": _dedupe_key(event_code, event_date, title, event_time),
         "recordRefs": {
             "macroAnalysisId": rec.get("analysisId"),

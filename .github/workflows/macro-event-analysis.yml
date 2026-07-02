@@ -15,6 +15,9 @@ on:
     - cron: '35 12 * * 1-5'
     - cron: '45 12 * * 1-5'
     - cron: '30 13 * * 1-5'
+    # V11.5 later follow-ups to capture the market REACTION after the US cash open.
+    - cron: '30 14 * * 1-5'
+    - cron: '30 20 * * 1-5'
   workflow_dispatch: {}
 
 permissions:
@@ -45,11 +48,20 @@ jobs:
             GEN=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "$BE/api/argus/admin/macro-event-analysis/generate" || echo '{"error":"unreachable"}')
             echo "generate: ${GEN:0:200}"
+            # V11.5: quantify the post-release market reaction (rates/FX/indices/VIX/BTC).
+            # No LLM; baseline captured on first observation, reaction merged into the store.
+            RX=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/macro-event-analysis/refresh-market-reaction" || echo '{"error":"unreachable"}')
+            echo "refresh-market-reaction: ${RX:0:200}"
             # V11.4.1: repair stuck post-release displays (fetch result, recompute phase,
             # generate/repair the answer-check where actual+pre exist). Preserves pre.
             REP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "$BE/api/argus/admin/macro-event-analysis/repair-post-release" || echo '{"error":"unreachable"}')
             echo "repair-post-release: ${REP:0:200}"
+            # V11.5: translate any queued English news headlines to Japanese (owner rule).
+            TR=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/news/translate" || echo '{"error":"unreachable"}')
+            echo "news-translate: ${TR:0:200}"
           fi
 
       - name: Fetch the public-safe analysis snapshot

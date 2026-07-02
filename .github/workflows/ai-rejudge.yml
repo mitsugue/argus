@@ -67,3 +67,8 @@ jobs:
           BUY=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/buy-candidates/generate" || echo '{"error":"unreachable"}')
           echo "buy-candidates: ${BUY:0:200}"
+          # V11.5: translate queued English news headlines to JP (every 15 min so any
+          # page's news is shown translated). Cheap Gemini call; no article bodies.
+          TR=$(curl -s --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/admin/news/translate" || echo '{"error":"unreachable"}')
+          echo "news-translate: ${TR:0:120}"

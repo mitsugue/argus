@@ -2,7 +2,7 @@ import React from 'react';
 import { useImportantEvents, type ImportantEvent, type EventImpact } from '../../hooks/useImportantEvents';
 import { useMacroEventAnalysis, type MacroAnalysis } from '../../hooks/useMacroEventAnalysis';
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
-import { deriveDashboardEventDisplayState, type DashboardEvent } from '../../lib/dashboardEventState';
+import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEventReaction } from '../../lib/dashboardEventState';
 import { useLocale, t, pick } from '../../i18n';
 import type { RouteKey } from '../NavRail';
 import './ImportantEventsCard.css';
@@ -19,6 +19,29 @@ function jstFromUtc(utc?: string | null): string {
   const d = new Date(utc);
   if (isNaN(d.getTime())) return '';
   return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' }) + ' JST';
+}
+
+const RISK_TONE_JA: Record<string, string> = {
+  risk_on: 'リスクオン', risk_off: 'リスクオフ', rates_up: '金利上昇', rates_down: '金利低下',
+  mixed: 'まちまち', unknown: '方向感不明',
+};
+
+// v11.5: quantitative reaction fields (US10Y/USDJPY/SPY/QQQ/VIX/…). Null fields are
+// omitted; if nothing is populated we show 市場反応データ未取得 (never fake numbers).
+function reactionChips(mr?: DashboardEventReaction): { chips: string[]; tone: string | null } {
+  if (!mr) return { chips: [], tone: null };
+  const chips: string[] = [];
+  const pushPct = (label: string, v?: number | null) => {
+    if (typeof v === 'number') chips.push(`${label} ${v >= 0 ? '+' : ''}${v.toFixed(1)}%`);
+  };
+  if (typeof mr.us10yMoveBp === 'number') chips.push(`US10Y ${mr.us10yMoveBp >= 0 ? '+' : ''}${mr.us10yMoveBp.toFixed(0)}bp`);
+  pushPct('USDJPY', mr.usdJpyMovePct);
+  pushPct('SPY', mr.spyMovePct);
+  pushPct('QQQ', mr.qqqMovePct);
+  pushPct('VIX', mr.vixMovePct);
+  pushPct('BTC', mr.btcMovePct);
+  const tone = mr.riskTone && mr.riskTone !== 'unknown' ? (RISK_TONE_JA[mr.riskTone] || null) : null;
+  return { chips, tone };
 }
 
 // IMPORTANT EVENTS — teaches the owner WHY a macro event matters before they look
@@ -142,10 +165,19 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
 
   return (
     <details className="ie-row" open={open}>
-      <summary aria-label={`${ev.eventCode}, ${ev.stateLabelJa}, ${when}`}>
+      <summary aria-label={`${ev.eventCode}, ${ds.released ? '発表済' : ev.stateLabelJa}, ${when}`}>
         <span className="ie-when">{when}</span>
         <span className="ie-code">{ev.eventCode}</span>
-        <span className="ie-impact" style={{ color, fontWeight: 700 }} aria-hidden>{ev.stateLabelJa}</span>
+        {ds.stampBoxed ? (
+          // v11.5: clear boxed "発表済" stamp so it's obvious the event has printed.
+          <span className="ie-stamp" style={{
+            color, borderColor: color, fontWeight: 700, fontSize: 12,
+            border: `1.5px solid ${color}`, borderRadius: 4, padding: '1px 6px',
+            letterSpacing: '0.05em', whiteSpace: 'nowrap',
+          }} aria-hidden>{ds.stampJa}</span>
+        ) : (
+          <span className="ie-impact" style={{ color, fontWeight: 700 }} aria-hidden>{ds.stampJa}</span>
+        )}
       </summary>
       <div className="ie-body">
         {ds.showActualFirst && (
@@ -153,6 +185,14 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
             <p className="ie-line"><span className="ie-k">公式結果</span><b>{ev.officialResult.headlineJa || '取得済み'}</b></p>
             {ds.showImpact && <p className="ie-line"><span className="ie-k">影響コメント</span>{c.impactCommentJa}</p>}
             {c.marketReactionJa && <p className="ie-line"><span className="ie-k">市場反応</span>{c.marketReactionJa}</p>}
+            {(() => {
+              const { chips, tone } = reactionChips(ev.marketReaction);
+              if (chips.length > 0) {
+                return <p className="ie-data">反応: {chips.join(' · ')}{tone ? ` ・ ${tone}` : ''}</p>;
+              }
+              // released with an official result but no quantitative reaction yet
+              return <p className="ie-data" style={{ color: 'var(--text-faint)' }}>市場反応データ未取得</p>;
+            })()}
             {ds.showAnswerCheck && (
               <p className="ie-line"><span className="ie-k">答え合わせ</span>
                 <b style={{ color: vColor }}>{c.verdictJa}</b>{c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</p>

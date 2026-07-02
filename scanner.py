@@ -36,6 +36,9 @@ import argus_official_event_store  # durable official-event serialize/merge/rest
 import argus_macro_event_analysis  # C.A.O.S. macro pre/post: phase resolver + prompts (pure, v11.3.2)
 import argus_macro_event_store  # durable macro-analysis merge/serialize (pure, v11.3.2)
 import argus_dashboard_event_summary  # unified top-card event model + de-dup (pure, v11.4.1)
+import argus_macro_results  # official macro-result parsers (CPI/PPI/FOMC/PCE/GDP/JOLTS, pure, v11.5)
+import argus_macro_market_reaction  # macro market-reaction windows + impact fallbacks (pure, v11.5)
+import argus_news_i18n  # news headline JP-translation cache helpers (pure, v11.5)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -8647,10 +8650,12 @@ _MACRO_ANALYSIS = {}                  # eventId -> analysis record
 _MACRO_ANALYSIS_FILE = "/tmp/argus_macro_analysis.json"
 _MACRO_ANALYSIS_STATE = {"restored": False, "lastGenerateAt": None, "lastResultsAt": None,
                          "pathType": "ephemeral_tmp"}
-_MACRO_RESULT_STATE = {"NFP": {"provider": "BLS", "status": "not_run", "lastSuccessAt": None,
-                               "sampleEventId": None}}
-_MACRO_NOT_IMPLEMENTED = ("CPI", "PPI", "FOMC", "BOJ", "PCE", "GDP", "JOLTS",
-                          "TREASURY_AUCTION", "AUCTION")
+# V11.5: per-event-code result adapter state (metricsAvailable filled on success).
+_MACRO_RESULT_STATE = {code: {"provider": argus_macro_results.PROVIDER.get(code), "status": "not_run",
+                              "lastSuccessAt": None, "sampleEventId": None, "metricsAvailable": []}
+                       for code in ("NFP", "CPI", "PPI", "FOMC", "PCE", "GDP", "JOLTS")}
+# adapters returning honest partial/not_implemented (no reliable free numeric source)
+_MACRO_NOT_IMPLEMENTED = ("BOJ", "TREASURY_AUCTION", "AUCTION")
 
 
 def _macro_analysis_persist():
@@ -8772,14 +8777,80 @@ def _bls_nfp_result(event):
     return out
 
 
+def _bls_fetch(series_ids, years_back=2):
+    """POST the BLS public API for the given series (admin/cron path). Returns the
+    parsed JSON or None. No key needed (free tier)."""
+    yr = datetime.now(pytz.utc).year
+    r = requests.post("https://api.bls.gov/publicAPI/v2/timeseries/data/",
+                      json={"seriesid": list(series_ids), "startyear": str(yr - years_back),
+                            "endyear": str(yr)},
+                      headers={"Content-Type": "application/json",
+                               "User-Agent": "argus-research/1.0"}, timeout=15)
+    if r.status_code != 200:
+        return None, r.status_code
+    return r.json(), 200
+
+
+def _fred_raw(series_id, limit=16):
+    """Raw FRED observations dict for a series (admin/cron path). None on failure/no-key."""
+    if not _FRED_API_KEY:
+        return None
+    try:
+        r = requests.get(_FRED_BASE, params={"series_id": series_id, "api_key": _FRED_API_KEY,
+                         "file_type": "json", "sort_order": "desc", "limit": limit}, timeout=8)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
+
+
 def _macro_result_fetch(event):
-    """Dispatch official-result fetch by eventCode. NFP=BLS live; the rest are honest
-    not_implemented placeholders (never fabricated)."""
+    """Dispatch official-result fetch by eventCode (admin/cron only). Each adapter
+    returns a normalized result via the pure parsers; missing data → partial/
+    not_implemented, never fabricated."""
     code = str(event.get("eventCode") or "").upper()
-    if code == "NFP":
-        return _bls_nfp_result(event)
-    return {"available": False, "source": None, "releasedAt": None, "headline": None,
-            "metrics": {}, "limitationsJa": [f"{code or '不明'}の公式結果アダプタは未実装"]}
+    now_iso = _ai_now_iso()
+    MR = argus_macro_results
+    try:
+        if code == "NFP":
+            return _bls_nfp_result(event)
+        if code == "CPI":
+            raw, st = _bls_fetch(["CUSR0000SA0", "CUSR0000SA0L1E"])
+            if raw is None:
+                return MR._empty("rate_limited" if st == 429 else "source_unreachable",
+                                 [f"BLS HTTP {st}"], "BLS")
+            return MR.parse_cpi(raw, event, now_iso)
+        if code == "PPI":
+            raw, st = _bls_fetch(["WPSFD4", "WPSFD49104"])
+            if raw is None:
+                return MR._empty("source_unreachable", [f"BLS HTTP {st}"], "BLS")
+            return MR.parse_ppi(raw, event, now_iso)
+        if code == "JOLTS":
+            raw, st = _bls_fetch(["JTS000000000000000JOL"])
+            if raw is None:
+                return MR._empty("source_unreachable", [f"BLS HTTP {st}"], "BLS")
+            return MR.parse_jolts(raw, event, now_iso)
+        if code == "PCE":
+            h, c = _fred_raw("PCEPI"), _fred_raw("PCEPILFE")
+            if h is None and c is None:
+                return MR._empty("source_unreachable", ["FRED未取得（キー未設定または通信失敗）"], "FRED/BEA")
+            return MR.parse_pce(h or {}, c or {}, event, now_iso)
+        if code == "GDP":
+            g = _fred_raw("A191RL1Q225SBEA")
+            if g is None:
+                return MR._empty("source_unreachable", ["FRED未取得"], "FRED/BEA")
+            return MR.parse_gdp(g, event, now_iso)
+        if code == "FOMC":
+            up, lo = _fred_raw("DFEDTARU"), _fred_raw("DFEDTARL")
+            if up is None and lo is None:
+                return MR._empty("source_unreachable", ["FRED未取得"], "FRED/Fed")
+            return MR.parse_fomc(up or {}, lo or {}, event, now_iso)
+        if code == "BOJ":
+            return MR.boj_partial(event, now_iso)
+        return MR.not_implemented(code or "UNKNOWN", now_iso)
+    except Exception as e:
+        return MR._empty("parse_error", [f"取得エラー({type(e).__name__})"], MR.PROVIDER.get(code))
 
 
 def _macro_important_events(limit=8):
@@ -8814,17 +8885,124 @@ def _refresh_macro_results():
         if (rec.get("actual") or {}).get("available"):
             continue
         actual = _macro_result_fetch(ev)
+        # V11.5: record per-code adapter status for the result-status endpoint.
+        _code = str(ev.get("eventCode") or "").upper()
+        if _code in _MACRO_RESULT_STATE:
+            _MACRO_RESULT_STATE[_code].update(
+                status=actual.get("status") or ("live" if actual.get("available") else "partial"),
+                metricsAvailable=argus_macro_results.metrics_available(actual))
+            if actual.get("available"):
+                _MACRO_RESULT_STATE[_code].update(lastSuccessAt=now_iso,
+                                                  sampleEventId=ev.get("eventId"))
         if actual.get("available"):
             rec["actual"] = actual
             updated += 1
         else:
-            rec.setdefault("actual", {}).update(limitationsJa=actual.get("limitationsJa", []))
+            rec.setdefault("actual", {}).update(limitationsJa=actual.get("limitationsJa", []),
+                                                status=actual.get("status"))
         rec["updatedAt"] = now_iso
         _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
             _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
     _MACRO_ANALYSIS_STATE["lastResultsAt"] = now_iso
     _macro_analysis_persist()
     return {"checked": checked, "resultsFetched": updated, "asOf": now_iso}
+
+
+def _market_snapshot_values(cached_only=True):
+    """Current market LEVELS for the reaction diff (rates yields, USDJPY, VIX, ETF
+    prices, BTC). cached_only=True (public) reads caches; admin refresh may fetch."""
+    vals = {}
+    try:
+        rs = (_RATES_CACHE.get("data") if cached_only else get_rates_snapshot()) or {}
+        for k in ("us10y", "usdJpy", "vix"):
+            v = ((rs.get(k) or {}).get("latestValue"))
+            if isinstance(v, (int, float)):
+                vals[k] = v
+    except Exception:
+        pass
+    for k, sym in (("spy", "SPY"), ("qqq", "QQQ"), ("iwm", "IWM"), ("gold", "GLD")):
+        try:
+            q = _quote_cached_only(sym, "US") or {}
+            p = q.get("price")
+            if isinstance(p, (int, float)):
+                vals[k] = p
+        except Exception:
+            pass
+    try:
+        cs = get_crypto_watchlist_snapshot(("bitcoin",)) if not cached_only else \
+            (_CRYPTO_CACHE.get(("bitcoin",)) or {}).get("data")
+        for q in ((cs or {}).get("quotes") or []):
+            if q.get("id") == "bitcoin" and isinstance(q.get("priceUsd"), (int, float)):
+                vals["btc"] = q["priceUsd"]
+    except Exception:
+        pass
+    return vals
+
+
+def _refresh_macro_market_reaction():
+    """Admin/cron: for events released in the last 48h, capture a baseline on first
+    observation, then compute the reaction (baseline → now) and merge it in. No LLM.
+    If post.marketReactionJa is empty, fill a deterministic summary."""
+    _macro_analysis_restore_once()
+    now_iso = _ai_now_iso()
+    now_vals = _market_snapshot_values(cached_only=False)
+    checked = updated = 0
+    items = []
+    for eid, rec in list(_MACRO_ANALYSIS.items()):
+        phase = argus_macro_event_analysis.resolve_macro_event_phase(
+            rec.get("eventTimeUtc"), now_iso,
+            actual_available=bool((rec.get("actual") or {}).get("available")),
+            event_date=rec.get("eventDate"))
+        if phase not in ("released_pending_result", "post_result"):
+            continue
+        rel_hrs = None
+        try:
+            a = argus_macro_event_analysis._parse_utc(rec.get("eventTimeUtc"))
+            b = argus_macro_event_analysis._parse_utc(now_iso)
+            rel_hrs = (b - a).total_seconds() / 3600.0 if (a and b) else None
+        except Exception:
+            rel_hrs = None
+        if rel_hrs is not None and rel_hrs > 48:
+            continue
+        checked += 1
+        mr = dict(rec.get("marketReaction") or {})
+        baseline = mr.get("baseline")
+        if not baseline:
+            # first observation: capture the baseline (honest "初回観測時点", not 発表直前)
+            mr["baseline"] = {**now_vals, "capturedAt": now_iso}
+            rec["marketReaction"] = mr
+            rec["updatedAt"] = now_iso
+            _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
+                _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+            items.append({"eventId": eid, "eventCode": rec.get("eventCode"),
+                          "windowsUpdated": [], "summaryJa": "",
+                          "limitationsJa": ["初回観測でベースラインを取得（次回以降に反応を算出）"]})
+            continue
+        reaction = argus_macro_market_reaction.build_reaction(
+            event_id=eid, event_code=str(rec.get("eventCode") or ""),
+            windows_io=[{"window": "same_day", "before": baseline, "after": now_vals}],
+            now_iso=now_iso)
+        compact = argus_macro_market_reaction.compact_for_store(reaction)
+        compact["baseline"] = baseline
+        rec["marketReaction"] = compact
+        # fill a deterministic market-reaction summary if the AI post didn't
+        post = dict(rec.get("post") or {})
+        if not post.get("marketReactionJa") and compact.get("summaryJa"):
+            post["marketReactionJa"] = compact["summaryJa"]
+            rec["post"] = post
+        rec["updatedAt"] = now_iso
+        _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
+            _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+        wins = [w["window"] for w in (compact.get("windows") or [])
+                if any(w.get(k) is not None for k in argus_macro_market_reaction._ASSET_KEYS)]
+        updated += 1
+        items.append({"eventId": eid, "eventCode": rec.get("eventCode"),
+                      "windowsUpdated": wins, "summaryJa": compact.get("summaryJa", ""),
+                      "limitationsJa": compact.get("limitationsJa", [])})
+    _MACRO_ANALYSIS_STATE["lastReactionAt"] = now_iso
+    _macro_analysis_persist()
+    return {"schemaVersion": "macro-reaction-refresh-v1", "asOf": now_iso,
+            "checked": checked, "updated": updated, "items": items[:20]}
 
 
 def _generate_macro_event_analysis(limit=8):
@@ -8943,15 +9121,21 @@ def api_argus_macro_event_analysis_one(eid):
 
 @app.route("/api/argus/macro-events/result-status")
 def api_argus_macro_result_status():
-    srcs = [{"eventCode": "NFP", "provider": "BLS",
-             "status": _MACRO_RESULT_STATE["NFP"]["status"],
-             "lastSuccessAt": _MACRO_RESULT_STATE["NFP"]["lastSuccessAt"],
-             "sampleEventId": _MACRO_RESULT_STATE["NFP"]["sampleEventId"],
-             "limitationsJa": []}]
-    srcs += [{"eventCode": c, "provider": None, "status": "not_implemented",
-              "lastSuccessAt": None, "sampleEventId": None,
-              "limitationsJa": ["公式結果アダプタ未実装（結果は捏造しない）"]}
+    """Public cache-only: one row per event code with its adapter status. Reports
+    cached/probed status only — never fetches a provider on this GET."""
+    srcs = []
+    for code, st in _MACRO_RESULT_STATE.items():
+        srcs.append({"eventCode": code, "provider": st.get("provider"),
+                     "status": st.get("status"), "lastSuccessAt": st.get("lastSuccessAt"),
+                     "sampleEventId": st.get("sampleEventId"),
+                     "metricsAvailable": list(st.get("metricsAvailable") or []),
+                     "limitationsJa": []})
+    srcs += [{"eventCode": c, "provider": argus_macro_results.PROVIDER.get(c),
+              "status": ("partial" if c == "BOJ" else "not_implemented"),
+              "lastSuccessAt": None, "sampleEventId": None, "metricsAvailable": [],
+              "limitationsJa": ["公式結果アダプタ未実装/部分実装（結果は捏造しない）"]}
              for c in _MACRO_NOT_IMPLEMENTED]
+    srcs.sort(key=lambda s: s["eventCode"])
     return jsonify({"schemaVersion": "macro-result-status-v1", "asOf": _ai_now_iso(),
                     "sources": srcs})
 
@@ -8970,6 +9154,43 @@ def api_argus_admin_macro_refresh_results():
     if not ok:
         return jsonify(err), code
     return jsonify(_refresh_macro_results())
+
+
+@app.route("/api/argus/admin/macro-event-analysis/refresh-market-reaction", methods=["POST"])
+def api_argus_admin_macro_refresh_market_reaction():
+    """Admin/cron: compute market-reaction windows for recently-released events
+    (no LLM). Baseline captured on first observation; reaction merged into the store."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        return jsonify(_refresh_macro_market_reaction())
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
+
+
+@app.route("/api/argus/admin/news/translate", methods=["POST"])
+def api_argus_admin_news_translate():
+    """Admin/cron: translate queued English news headlines to Japanese and cache them
+    (the LLM call lives here, never on a public GET). Owner rule: news is always shown
+    translated. Never returns prompts or article bodies."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        return jsonify(_translate_pending_headlines())
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
+
+
+@app.route("/api/argus/news/translation-status")
+def api_argus_news_translation_status():
+    """Public cache-only: how many headlines are cached-translated (no secrets)."""
+    _news_ja_restore_once()
+    return jsonify({"schemaVersion": "news-translation-status-v1", "asOf": _ai_now_iso(),
+                    "cachedCount": len(_NEWS_JA_CACHE), "pendingQueue": len(_NEWS_JA_SEEN),
+                    "lastTranslateAt": _NEWS_JA_STATE.get("lastTranslateAt"),
+                    "noteJa": "英語ニュースは管理側で翻訳してキャッシュ表示。公開GETは翻訳を起動しません。"})
 
 
 # ── V11.4.1 Unified dashboard event summary ──────────────────────────────────
@@ -9812,6 +10033,83 @@ def _translate_headlines_ja(headlines):
     except Exception as e:
         add_log(f"[news] headline translate failed: {type(e).__name__}")
     return {}
+
+
+# ── V11.5 news headline translation cache (owner: always show JP, never raw English) ──
+# Public GETs can't call an LLM, so translation happens on the admin/cron path and is
+# cached by content hash. Any English headline shown anywhere is queued into _SEEN;
+# the admin translate run drains it via the Gemini helper and fills _NEWS_JA_CACHE.
+_NEWS_JA_CACHE = {}                       # hash -> {"ja": str, "at": iso}
+_NEWS_JA_SEEN = deque(maxlen=300)         # recent English headlines pending translation
+_NEWS_JA_FILE = "/tmp/argus_news_ja.json"
+_NEWS_JA_STATE = {"restored": False, "lastTranslateAt": None}
+
+
+def _news_ja_persist():
+    try:
+        with open(_NEWS_JA_FILE, "w") as f:
+            json.dump({"cache": _NEWS_JA_CACHE, "state": {"lastTranslateAt": _NEWS_JA_STATE["lastTranslateAt"]}},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _news_ja_restore_once():
+    if _NEWS_JA_STATE["restored"]:
+        return
+    _NEWS_JA_STATE["restored"] = True
+    try:
+        with open(_NEWS_JA_FILE) as f:
+            blob = json.load(f)
+        if isinstance(blob.get("cache"), dict):
+            _NEWS_JA_CACHE.update(blob["cache"])
+        _NEWS_JA_STATE["lastTranslateAt"] = (blob.get("state") or {}).get("lastTranslateAt")
+    except Exception:
+        pass
+
+
+def _headline_ja(text):
+    """Japanese headline for display (cached-only, safe on public GET). Japanese text
+    passes through; English returns its cached translation, else the original English
+    (queued for the next admin translate run)."""
+    _news_ja_restore_once()
+    s = (text or "").strip()
+    if argus_news_i18n.looks_translatable(s) and not argus_news_i18n.is_translated(s, _NEWS_JA_CACHE):
+        _NEWS_JA_SEEN.append(s)
+    return argus_news_i18n.pick_ja(s, _NEWS_JA_CACHE)
+
+
+def _translate_pending_headlines(cap=40):
+    """Admin/cron: translate queued + recently-cached English headlines to JP. Uses the
+    existing Gemini helper (LLM allowed on admin path). Never fetches article bodies."""
+    _news_ja_restore_once()
+    pool = list(_NEWS_JA_SEEN)
+    try:
+        for it in ((_MARKET_NEWS_CACHE.get("data") or {}).get("items") or []):
+            if it.get("headline"):
+                pool.append(it["headline"])
+    except Exception:
+        pass
+    try:
+        for ent in list(_FINN_CACHE.values()):
+            for n in ((ent.get("data") or {}).get("news") or []):
+                if n.get("headline"):
+                    pool.append(n["headline"])
+    except Exception:
+        pass
+    pending = argus_news_i18n.collect_pending(pool, _NEWS_JA_CACHE, cap=cap)
+    if not pending:
+        return {"translated": 0, "cacheSize": len(_NEWS_JA_CACHE), "asOf": _ai_now_iso()}
+    tr = _translate_headlines_ja(pending)     # {index -> ja}; {} on failure
+    now_iso = _ai_now_iso()
+    merged = argus_news_i18n.merge_translations(_NEWS_JA_CACHE, pending, tr, now_iso)
+    _NEWS_JA_CACHE.clear()
+    _NEWS_JA_CACHE.update(merged)
+    _NEWS_JA_STATE["lastTranslateAt"] = now_iso
+    _news_ja_persist()
+    return {"translated": len(tr), "pending": len(pending), "cacheSize": len(_NEWS_JA_CACHE),
+            "asOf": now_iso}
+
 
 def get_market_news():
     if not FINNHUB_API_KEY:
@@ -11193,7 +11491,10 @@ def get_cause_attribution(symbol, market="JP", explain=False):
                 hl = (cn.get("headline") or "").strip()
                 if not hl:
                     continue
-                news.append({"time": iso, "titleJa": hl[:120], "source": cn.get("source") or "Finnhub",
+                # v11.5: US Finnhub headlines are English — show the cached JP
+                # translation (queued for the admin cron when not yet translated).
+                news.append({"time": iso, "titleJa": _headline_ja(hl[:120]), "titleEn": hl[:120],
+                             "source": cn.get("source") or "Finnhub",
                              "cls": argus_attribution.classify_news({"publishedAt": iso, "official": False}, move_started)})
         except Exception:
             pass
@@ -11244,7 +11545,7 @@ def get_cause_attribution(symbol, market="JP", explain=False):
         for hl, hlja, src, corr in pool:
             m = next((x for x in _entity_link((hl or "") + " " + (hlja or ""))
                       if x["symbol"] == symu and x["via"] in ("entity", "theme")), None)
-            title = (hlja or hl or "")[:120]
+            title = (hlja or _headline_ja(hl or "") or "")[:120]     # prefer JP; translate English
             if not m or not title or title in seen_a:
                 continue
             seen_a.add(title)
@@ -11471,7 +11772,14 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
                 fin = res[0] if isinstance(res, tuple) else res
             if isinstance(fin, dict):
                 cover["companyNewsChecked"] = True
-                ev["companyNews"] = (fin.get("news") or [])[:8]
+                # v11.5: translate English headlines to JP (cached) so the ladder's
+                # candidate titles never surface raw English on any page.
+                _cn = []
+                for n in (fin.get("news") or [])[:8]:
+                    if isinstance(n, dict) and n.get("headline"):
+                        n = {**n, "headline": _headline_ja(str(n["headline"]))}
+                    _cn.append(n)
+                ev["companyNews"] = _cn
         except Exception:
             pass
     else:

@@ -189,6 +189,23 @@ export const DecisionSpineCard: React.FC = () => {
         )}
       </div>
 
+      {/* 発表後の市場反応はどう測るのか (v11.5) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>発表後の市場反応はどう測るのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUS Proでは、公式結果を表示するだけでなく、発表後の<b>金利・為替・株式指数・VIX</b>などの反応を
+          可能な範囲で測定します。市場反応が取得できない場合は、空欄や推測ではなく
+          <b>「市場反応データ未取得」</b>と表示します。市場反応は原因確認や影響コメントの補助であり、
+          それ単独で売買判断を作るものではありません。CPI/FOMC/日銀などの公式結果アダプタは段階的に拡張され、
+          未実装のものは<b>not_implemented/partial</b>として正直に表示します。コンセンサス（市場予想）は捏造しません。
+        </p>
+        <ul style={{ margin: '6px 0 0', paddingLeft: 18, color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.7 }}>
+          <li>公式結果: NFP/CPI/PPI/JOLTS(BLS)・PCE/GDP/FOMC(FRED)。日銀は公式声明URLのみ(数値未実装)。</li>
+          <li>市場反応: 発表後の初回観測を基準に金利/為替/指数の変化を算出(板/歩み値ではない)。</li>
+          <li>英語ニュースは管理側で日本語に翻訳してキャッシュ表示(公開GETは翻訳を起動しない)。</li>
+        </ul>
+      </div>
+
       {/* イベント表示はトップカードに統合 (v11.4.1) */}
       <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
         <span className="mdepth__label" style={{ fontWeight: 600 }}>イベント表示はトップカードに統合</span>

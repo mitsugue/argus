@@ -376,6 +376,58 @@ def v_official_admin_gated():
     return True, "snapshot/restore admin-gated"
 
 
+def v_macro_result_status_multi():
+    # v11.5: one row per event code, valid statuses, no secrets.
+    c, d = _get("/api/argus/macro-events/result-status")
+    if d.get("schemaVersion") != "macro-result-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    codes = {s.get("eventCode"): s for s in (d.get("sources") or [])}
+    valid = {"live", "partial", "not_implemented", "unavailable", "parse_error",
+             "source_unreachable", "not_run", "rate_limited", "error"}
+    for want in ("NFP", "CPI", "FOMC", "BOJ"):
+        if want not in codes:
+            return False, f"missing {want}"
+        if codes[want].get("status") not in valid:
+            return False, f"{want} bad status {codes[want].get('status')}"
+        if "metricsAvailable" not in codes[want]:
+            return False, f"{want} missing metricsAvailable"
+    return True, f"codes={len(codes)} NFP={codes['NFP'].get('status')} CPI={codes['CPI'].get('status')}"
+
+
+def v_news_translation_status():
+    c, d = _get("/api/argus/news/translation-status")
+    if d.get("schemaVersion") != "news-translation-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if not isinstance(d.get("cachedCount"), int):
+        return False, "cachedCount missing"
+    return True, f"cached={d.get('cachedCount')} pending={d.get('pendingQueue')}"
+
+
+def v_macro_reaction_admin_gated():
+    import urllib.error
+    req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/refresh-market-reaction",
+                                 method="POST", headers={"User-Agent": "argus-smoke"})
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            return False, "returned 200 without token!"
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 503, 429):
+            return False, f"returned {e.code}"
+    return True, "refresh-market-reaction admin-gated"
+
+
+def v_dashboard_events_reaction_shape():
+    # v11.5: released items with an official result must carry a marketReaction block
+    # (numeric fields or an honest 未取得), never fake numbers.
+    c, d = _get("/api/argus/dashboard-events?limit=10")
+    for it in (d.get("items") or []):
+        if it.get("state") in ("post_result", "post_answer_checked"):
+            mr = it.get("marketReaction")
+            if not isinstance(mr, dict):
+                return False, f"{it.get('eventCode')} missing marketReaction"
+    return True, f"items={len(d.get('items') or [])}"
+
+
 def v_dashboard_events():
     # v11.4.1: the unified top-card event feed. Shape + no-leak; state must be valid.
     c, d = _get("/api/argus/dashboard-events")
@@ -1024,6 +1076,11 @@ CHECKS = [
     ("v11.4.1 dashboard-events", v_dashboard_events),
     ("v11.4.1 dashboard-events NFP state", v_dashboard_events_nfp),
     ("v11.4.1 macro repair admin gated", v_macro_repair_admin_gated),
+    # ── V11.5 macro coverage + reaction + news translation ──
+    ("v11.5 macro result-status multi", v_macro_result_status_multi),
+    ("v11.5 news translation status", v_news_translation_status),
+    ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),
+    ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]
 
 

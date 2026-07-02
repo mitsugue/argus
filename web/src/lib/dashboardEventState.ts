@@ -19,6 +19,13 @@ export interface DashboardEventOfficial {
   source?: string | null; sourceUrl?: string | null; releasedAt?: string | null;
   limitationsJa?: string[];
 }
+export interface DashboardEventReaction {
+  us10yMoveBp?: number | null; usdJpyMovePct?: number | null;
+  spyMovePct?: number | null; qqqMovePct?: number | null; iwmMovePct?: number | null;
+  vixMovePct?: number | null; goldMovePct?: number | null; btcMovePct?: number | null;
+  window?: string | null; riskTone?: string | null; marketConfirmed?: boolean;
+  summaryJa?: string; limitationsJa?: string[];
+}
 export interface DashboardEvent {
   displayEventId: string; eventId: string; eventCode: string; title: string;
   eventTimeUtc?: string | null; eventDate?: string | null;
@@ -26,6 +33,7 @@ export interface DashboardEvent {
   state: DashboardEventState; stateLabelJa: string; stateTone: string;
   officialResult: DashboardEventOfficial;
   caos: DashboardEventCaos;
+  marketReaction?: DashboardEventReaction;
   display: {
     primaryLineJa: string; secondaryLineJa: string;
     showActualFirst: boolean; showPreProminently: boolean; showPreAsHistorical: boolean;
@@ -56,6 +64,11 @@ export interface DashboardEventDisplayState {
   mode: DashboardEventState;
   badgeJa: string;
   tone: string;
+  // v11.5: the owner-facing header stamp. Once an event has printed we show a
+  // clear boxed "発表済" (released) stamp — never the confusing "答え合わせ済み".
+  stampJa: string;
+  stampBoxed: boolean;
+  released: boolean;
   showActualFirst: boolean;
   showPreProminently: boolean;
   showPreAsHistorical: boolean;
@@ -63,6 +76,18 @@ export interface DashboardEventDisplayState {
   showImpact: boolean;
   showAnswerCheck: boolean;
 }
+
+// Header stamp per state: released states read "発表済" prominently so it's obvious
+// at a glance whether the event has printed; the finer sub-status stays in the body.
+const STAMP: Record<DashboardEventState, { ja: string; boxed: boolean }> = {
+  pre: { ja: '発表前', boxed: false },
+  imminent: { ja: 'まもなく', boxed: false },
+  released_pending_result: { ja: '発表済', boxed: true },
+  post_result: { ja: '発表済', boxed: true },
+  post_answer_checked: { ja: '発表済', boxed: true },
+  stale: { ja: '更新遅延', boxed: false },
+  not_scoreable: { ja: '発表済', boxed: true },
+};
 
 /** Derive UI display flags from an event summary's authoritative state. `now` is
  *  accepted for API symmetry/future use; the backend has already re-resolved state. */
@@ -75,10 +100,14 @@ export function deriveDashboardEventDisplayState(
     || state === 'post_answer_checked' || state === 'stale';
   const post = state === 'post_result' || state === 'post_answer_checked';
   const actualAvail = !!summary.officialResult?.available;
+  const stamp = STAMP[state] ?? { ja: BADGE_JA[state] ?? state, boxed: false };
   return {
     mode: state,
     badgeJa: BADGE_JA[state] ?? state,
     tone: TONE[state] ?? 'neutral',
+    stampJa: stamp.ja,
+    stampBoxed: stamp.boxed,
+    released,
     showActualFirst: post,
     showPreProminently: state === 'pre' || state === 'imminent',
     showPreAsHistorical: released,
