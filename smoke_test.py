@@ -283,6 +283,36 @@ def v_action_labels_have_evidence_refs():
     return True, "all live labels carry decisionRefs"
 
 
+def v_decision_spine_status():
+    # v11.2.1: the spine's own status — cached-only evidence pack + wiring booleans.
+    c, d = _get("/api/argus/decision-spine/status")
+    if d.get("schemaVersion") != "decision-spine-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    ep = d.get("evidencePack") or {}
+    if not (ep.get("endpointAvailable") and ep.get("publicReadCachedOnly")):
+        return False, "evidence pack not cached-only/available"
+    if not all((d.get("safety") or {}).values()):
+        return False, "safety flags not all true"
+    al = d.get("actionLabels") or {}
+    return True, f"labelsWithRefs={al.get('labelsWithEvidenceRefs')}/{al.get('totalLabels')} aiChallenge={((d.get('aiJudgment') or {}).get('geminiChallengeIncluded'))}"
+
+
+def v_ai_judgment_gemini_challenge_shape():
+    # v11.2.1: when the cached AI payload is post-v11.2 it must carry the structured
+    # challenge; a pre-v11.2 cache (no key) soft-passes until the next scheduled run.
+    c, d = _get("/api/argus/ai-judgment")
+    ch = d.get("geminiChallenge")
+    if ch is None:
+        return True, f"pre-v11.2 cache (freshness={d.get('freshness')}) — next run adds it"
+    for k in ("gptView", "geminiChallenge", "agreement", "mainWeaknessJa",
+              "whatWouldChangeJa", "unverifiedAssumptions"):
+        if k not in ch:
+            return False, f"challenge missing {k}"
+    if ch.get("agreement") not in ("confirm", "caution", "disagree", "unavailable"):
+        return False, f"bad agreement {ch.get('agreement')}"
+    return True, f"agreement={ch.get('agreement')}"
+
+
 def v_ai_judgment_evidence_refs_safe():
     # if an AI judgment is cached, its labels may carry decisionRefs — and the payload
     # must never contain secret material. (Older cached payloads without refs pass.)
@@ -502,6 +532,9 @@ CHECKS = [
     ("v11.2 evidence-pack 8058 JP", v_evidence_pack("8058", "JP")),
     ("v11.2 labels carry evidence refs", v_action_labels_have_evidence_refs),
     ("v11.2 ai-judgment refs safe", v_ai_judgment_evidence_refs_safe),
+    # ── V11.2.1 quality gate ──
+    ("v11.2.1 decision-spine/status", v_decision_spine_status),
+    ("v11.2.1 gemini challenge shape", v_ai_judgment_gemini_challenge_shape),
 ]
 
 

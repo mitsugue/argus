@@ -227,14 +227,25 @@ export const CaosHub: React.FC = () => {
                 {summary && (
                   <div className="caose-line"><span className="caose-h">概要</span><span className="caose-t">{summary}</span></div>
                 )}
-                {pre && (
-                  <div className="caose-line"><span className="caose-h caose-h--pre">事前予想</span><span className="caose-t">{pre}</span></div>
+                {/* v11.2.1 (owner request): the 事前予想/事後の答え合わせ rows are ALWAYS
+                    visible for their phase — a placeholder shows while the AI hasn't
+                    generated yet, so the structure is never reduced to 概要 alone. For
+                    POST events the pre-event prediction (preserved by the backend) is
+                    shown alongside the answer-check. */}
+                {!isPost && (
+                  <div className="caose-line"><span className="caose-h caose-h--pre">事前予想(AI)</span>
+                    <span className="caose-t" style={pre ? undefined : { color: 'var(--text-faint)' }}>
+                      {pre || 'AI生成待ち…（市場の織り込み・大口の構え・サプライズ時のシナリオ）'}
+                    </span></div>
                 )}
-                {post && (
-                  <div className="caose-line"><span className="caose-h caose-h--post">事後</span><span className="caose-t">{post}</span></div>
+                {isPost && pre && (
+                  <div className="caose-line"><span className="caose-h caose-h--pre">事前予想(当時)</span><span className="caose-t">{pre}</span></div>
                 )}
-                {!ai && (
-                  <div className="caoshub-pending">AI評価は生成中…(発表前=織り込み・シナリオ / 発表後=結果・大口と市場の受け止め)</div>
+                {isPost && (
+                  <div className="caose-line"><span className="caose-h caose-h--post">事後の答え合わせ(AI)</span>
+                    <span className="caose-t" style={post ? undefined : { color: 'var(--text-faint)' }}>
+                      {post || 'AI生成待ち…（結果・事前予想との照合・市場の受け止め）'}
+                    </span></div>
                 )}
               </div>
             );

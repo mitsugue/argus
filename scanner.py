@@ -3857,19 +3857,27 @@ def api_argus_events_active():
                     "schemaVersion": argus_events.SCHEMA_VERSION,
                     "count": len(active), "events": active[:30]})
 
-def _event_card_context(active):
+_CTX_FETCH = object()   # sentinel: fetch-allowed default for _event_card_context
+
+def _event_card_context_cached(active):
+    """CACHED-ONLY variant for the public evidence-pack GET (v11.2.1)."""
+    return _event_card_context(active, tdnet_snapshot=_tdnet_recent_cached_only())
+
+
+def _event_card_context(active, tdnet_snapshot=_CTX_FETCH):
     """Per-event corroboration context for EventCard v2 — reuses the mesh's own
     corroboration_level over the event source + any IntelligenceItems linked to the
-    event's symbol. Two syndicated copies of one wire stay ONE family (mesh handles it)."""
+    event's symbol. Two syndicated copies of one wire stay ONE family (mesh handles it).
+    `tdnet_snapshot`: pass a cached snapshot (or None) to forbid fetching (v11.2.1)."""
     ctx = {}
     intel = list(_INTEL_STORE)
     _PRICE_TYPES = {"PRICE_MOVE", "PRICE_SPIKE", "PRICE_CRASH", "LIMIT_UP", "LIMIT_DOWN",
                     "GAP", "VOLUME_ANOMALY", "FLOW_ANOMALY"}
     # Official TDnet disclosures by symbol (v11.1) → an OFFICIAL confirmation on the
-    # EventCard. Cheap (cached in get_tdnet_recent). Prefers the official J-Quants Add-on;
-    # yanoshin fallback is non-official so it does NOT set has_official.
+    # EventCard. Prefers the official J-Quants Add-on; yanoshin fallback is non-official
+    # so it does NOT set has_official.
     try:
-        _td = get_tdnet_recent(150)
+        _td = get_tdnet_recent(150) if tdnet_snapshot is _CTX_FETCH else (tdnet_snapshot or {})
         _td_official = bool(_td.get("official"))
         _td_by_sym = _td.get("bySymbol") or {}
     except Exception:
@@ -3958,43 +3966,95 @@ def api_argus_caos_audit():
 
 
 # ── Evidence Pack — the decision spine's canonical input (v11.2) ─────────────
+# CACHED-ONLY accessors (v11.2.1): the PUBLIC evidence-pack GET must never trigger a
+# paid provider fetch, an LLM call, or a public-text fetch — not even on a cold cache.
+# These read the in-process caches AS-IS (stale is fine, honest) and return None/{} on
+# a miss; the scheduled/cron/other endpoints keep refreshing those caches.
+def _tdnet_recent_cached_only():
+    d = _TDNET_OFFICIAL_CACHE.get("data")
+    if d and d.get("items"):
+        return d
+    return _TDNET_FEED_CACHE.get("data")            # yanoshin cache, may be None
+
+def _quote_cached_only(sym, market):
+    """Cached quote for one symbol: bridge push → dynamic snapshot caches → curated
+    cache. NEVER fetches."""
+    q = (_PUSHED_QUOTES.get(market) or {}).get(sym)
+    if q and isinstance(q.get("row"), dict):
+        return dict(q["row"], status="live")
+    dyn = _JP_DYN_CACHE if market == "JP" else _US_DYN_CACHE
+    try:
+        for ent in list(dyn.values()):
+            for s in ((ent.get("data") or {}).get("stocks") or []):
+                if str(s.get("symbol")).upper() == sym:
+                    return s
+    except Exception:
+        pass
+    cur = (_JP_CACHE if market == "JP" else _US_CACHE).get("data") or {}
+    for s in (cur.get("stocks") or []):
+        if str(s.get("symbol")).upper() == sym:
+            return s
+    return None
+
+def _visibility_guard_cached_only():
+    return _VISIBILITY_CACHE.get("data") or {}
+
+def _market_depth_proof_cached_only():
+    """Depth-proof summary from the CACHED depth report only (a cold _market_depth_report
+    can reach the paid TDnet probe via _source_registry — so never trigger it here)."""
+    rep = _MARKET_DEPTH_CACHE.get("data")
+    if not rep:
+        return None
+    items = _market_depth_proof_items(rep.get("capabilities") or {})
+    return {"summary": {
+        "trueDepthLiveCount": sum(1 for i in items if i["status"] == "live" and i["isTrueDepth"]),
+        "computedIndicatorsLiveCount": sum(1 for i in items if i["status"] == "live" and not i["isTrueDepth"]),
+        "requiresContractCount": sum(1 for i in items if i["status"] == "requires_contract"),
+    }}
+
+def _source_coverage_cached_only():
+    """In-memory tally of the intel store (no network by construction)."""
+    try:
+        return {"summary": {
+            "totalItems": len(_INTEL_STORE),
+            "canGroundJudgmentItems": sum(1 for it in _INTEL_STORE if it.get("canGroundJudgment")),
+            "weakSignalItems": sum(1 for it in _INTEL_STORE if it.get("weakSignal")),
+        }}
+    except Exception:
+        return None
+
+# Build stats for /decision-spine/status (secret-free; symbol is public-watchlist scope).
+_EVIDENCE_PACK_STATE = {"lastBuildAt": None, "lastSymbol": None,
+                        "cacheMissCountToday": 0, "day": None}
+
+
 def _build_evidence_pack(symbol, market=None):
-    """Assemble the canonical Evidence Pack for ONE symbol from ALREADY-CACHED data.
-    No LLM calls; only the same cached accessors the public endpoints already use.
-    The fold itself is pure (argus_evidence_pack); this wires real inputs."""
+    """Assemble the canonical Evidence Pack for ONE symbol from ALREADY-CACHED data
+    ONLY (v11.2.1). A cache miss yields empty fields + an explicit cache:* marker in
+    missingConfirmations — never a live fetch. The fold itself is pure."""
     sym = str(symbol).strip().upper()
     as_of = _ai_now_iso()
     mkt = argus_evidence_pack.infer_market(sym, market)
-    quote = None
+    cache_missing = set()
+    quote = _quote_cached_only(sym, mkt) if mkt in ("JP", "US") else None
+    if mkt in ("JP", "US") and quote is None:
+        cache_missing.add("cache:quote")
+    guard = _visibility_guard_cached_only()
+    if not guard:
+        cache_missing.add("cache:visibility_guard")
     try:
-        if mkt == "JP":
-            for s in (get_japan_watchlist_snapshot([sym]).get("stocks") or []):
-                if str(s.get("symbol")).upper() == sym:
-                    quote = s
-                    break
-        elif mkt == "US":
-            for s in (get_us_watchlist_snapshot([sym]).get("stocks") or []):
-                if str(s.get("symbol")).upper() == sym:
-                    quote = s
-                    break
-    except Exception:
-        quote = None
-    try:
-        guard = _visibility_guard()
-    except Exception:
-        guard = {}
-    try:
-        _events_restore_once()
         active = [e for e in _events_active_list() if str(e.get("symbol") or "").upper() == sym]
         cards = argus_event_card.build_cards(active, guard=guard,
-                                             context_by_event=_event_card_context(active),
+                                             context_by_event=_event_card_context_cached(active),
                                              now_iso=as_of)
     except Exception:
         cards = []
-    try:
-        discs = (get_tdnet_recent(150).get("bySymbol") or {}).get(sym[:4], [])
-    except Exception:
+    td = _tdnet_recent_cached_only()
+    if td is None:
         discs = []
+        cache_missing.add("cache:tdnet")
+    else:
+        discs = (td.get("bySymbol") or {}).get(sym[:4], [])
     try:
         caos = argus_caos_audit.snapshot(symbol=sym, limit=6).get("items") or []
     except Exception:
@@ -4003,27 +4063,19 @@ def _build_evidence_pack(symbol, market=None):
         views = [it for it in list(_INTEL_STORE) if sym in (it.get("linkedAssets") or [])][:6]
     except Exception:
         views = []
+    cov = _source_coverage_cached_only()
+    if cov is None:
+        cache_missing.add("cache:source_coverage")
+    dp = _market_depth_proof_cached_only()
+    if dp is None:
+        cache_missing.add("cache:market_depth")
+    # Calibration/DV: read ARGUS's OWN cached summaries (the ledger is ARGUS's own free
+    # public artifact — no paid provider, no LLM, no article text). Cold cache → honest
+    # cache marker instead of a fetch.
     try:
-        cov = {"summary": {
-            "totalItems": len(_INTEL_STORE),
-            "canGroundJudgmentItems": sum(1 for it in _INTEL_STORE if it.get("canGroundJudgment")),
-            "weakSignalItems": sum(1 for it in _INTEL_STORE if it.get("weakSignal")),
-        }}
-    except Exception:
-        cov = None
-    try:
-        _dpi = _market_depth_proof_items((_market_depth_report() or {}).get("capabilities") or {})
-        dp = {"summary": {
-            "trueDepthLiveCount": sum(1 for i in _dpi if i["status"] == "live" and i["isTrueDepth"]),
-            "computedIndicatorsLiveCount": sum(1 for i in _dpi if i["status"] == "live" and not i["isTrueDepth"]),
-            "requiresContractCount": sum(1 for i in _dpi if i["status"] == "requires_contract"),
-        }}
-    except Exception:
-        dp = None
-    try:
+        _v4 = _CALIB_V4_CACHE.get("data")
         _days = int((((_ledger_summary() or {}).get("overall")) or {}).get("days") or 0)
-        _v4 = _calibration_v4_summary()
-        cal = {"isActive": bool(_v4) and any(isinstance(_v4.get(k), (int, float)) and _v4.get(k) > 0
+        cal = {"isActive": bool(_v4) and any(isinstance((_v4 or {}).get(k), (int, float)) and (_v4 or {}).get(k) > 0
                                              for k in ("nPredictions", "n", "count", "records")),
                "reliabilityStage": argus_calibration.reliability_stage(_days)}
     except Exception:
@@ -4033,11 +4085,21 @@ def _build_evidence_pack(symbol, market=None):
         dvd = {"phase": _dv.get("phase"), "sampleStage": _dv.get("sampleStage")}
     except Exception:
         dvd = None
-    return argus_evidence_pack.build_pack(
+    pack = argus_evidence_pack.build_pack(
         symbol=sym, as_of=as_of, market=mkt, quote=quote, event_cards=cards,
         official_disclosures=discs, filings=[], caos_links=caos, institutional_views=views,
         source_coverage=cov, market_depth_proof=dp, visibility_guard=guard,
         calibration_status=cal, decision_value_status=dvd, past_failure_patterns=[])
+    if cache_missing:
+        pack["missingConfirmations"] = sorted(set(pack["missingConfirmations"]) | cache_missing)
+    # build stats for /decision-spine/status (public-watchlist-scope symbol only)
+    _today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    if _EVIDENCE_PACK_STATE.get("day") != _today:
+        _EVIDENCE_PACK_STATE.update(day=_today, cacheMissCountToday=0)
+    _EVIDENCE_PACK_STATE.update(lastBuildAt=as_of, lastSymbol=sym)
+    if cache_missing:
+        _EVIDENCE_PACK_STATE["cacheMissCountToday"] += 1
+    return pack
 
 
 @app.route("/api/argus/evidence-pack")
@@ -4051,6 +4113,65 @@ def api_argus_evidence_pack():
                         "messageJa": "銘柄コードを指定してください（例 ?symbol=8058&market=JP）。"}), 400
     market = (request.args.get("market") or "").strip().upper() or None
     return jsonify(_build_evidence_pack(sym, market))
+
+
+@app.route("/api/argus/decision-spine/status")
+def api_argus_decision_spine_status():
+    """Decision Spine status (v11.2.1) — is the spine actually wired end-to-end?
+    Public-safe: no keys/headers/provider URLs, no private holdings/P&L; the last-built
+    symbol is public-watchlist scope by construction."""
+    limitations = []
+    # action labels: same cached composition the public /action-labels endpoint serves
+    try:
+        al = get_action_labels()
+        labs = al.get("labels") or []
+        with_refs = sum(1 for l in labs
+                        if str(((l.get("decisionRefs") or {}).get("evidencePackId")) or "").startswith("ep-"))
+        al_stats = {"decisionRefsAttached": bool(labs) and with_refs == sum(
+                        1 for l in labs if l.get("status") != "mock"),
+                    "labelsWithEvidenceRefs": with_refs, "totalLabels": len(labs)}
+    except Exception:
+        al_stats = {"decisionRefsAttached": False, "labelsWithEvidenceRefs": 0, "totalLabels": 0}
+        limitations.append("action-labelsの取得に失敗（一時的）。")
+    # AI judgment: cached payload only (never triggers a run)
+    ai_payload = _AI_RESULT_CACHE.get("data")
+    if not ai_payload:
+        try:
+            with open(_AI_LATEST_FILE, "r") as f:
+                ai_payload = json.load(f)
+        except Exception:
+            ai_payload = None
+    gem_included = bool((ai_payload or {}).get("geminiChallenge"))
+    ai_refs = any((l.get("decisionRefs") or {}).get("evidencePackId")
+                  for l in ((ai_payload or {}).get("labels") or []))
+    if ai_payload and not gem_included:
+        limitations.append("AI判定キャッシュがv11.2以前の実行分のため、geminiChallenge/evidence refsは次回実行から付きます。")
+    if not ai_payload:
+        limitations.append("AI判定はまだ実行されていません（キャッシュなし）。")
+    return jsonify({
+        "schemaVersion": "decision-spine-v1",
+        "asOf": _ai_now_iso(),
+        "evidencePack": {
+            "endpointAvailable": True,
+            "publicReadCachedOnly": True,          # enforced by cached-only accessors + tests
+            "lastBuildAt": _EVIDENCE_PACK_STATE.get("lastBuildAt"),
+            "lastSymbol": _EVIDENCE_PACK_STATE.get("lastSymbol"),
+            "cacheMissCountToday": _EVIDENCE_PACK_STATE.get("cacheMissCountToday", 0),
+        },
+        "actionLabels": al_stats,
+        "aiJudgment": {
+            "evidenceContextIncluded": True,       # _build_ai_snapshot attaches evidenceContext (v11.2)
+            "geminiChallengeIncluded": gem_included,
+            "aiLabelsCarryEvidenceRefs": ai_refs,
+            "lastRunAt": (ai_payload or {}).get("asOf"),
+        },
+        "safety": {
+            "publicFetchBlocked": True,
+            "llmOnPublicGetBlocked": True,
+            "paidFetchOnPublicGetBlocked": True,
+        },
+        "limitationsJa": limitations,
+    })
 
 
 @app.route("/api/argus/event-log")
@@ -8346,6 +8467,14 @@ def _caos_event_generate(limit=5):
             out[eid] = prev
             continue
         _, prompt = _caos_event_inputs(ev)
+        # v11.2.1 (owner request — 答え合わせ): when the event flips PRE→POST, the
+        # pre-event prediction must SURVIVE so the post analysis can be checked
+        # against it. Feed the preserved prediction into the post prompt and ask for
+        # an explicit 当たり/外れ verdict — a real answer-check, not a fresh take.
+        prev_pre = str((prev or {}).get("preJa") or "")[:200]
+        if phase == "post" and prev_pre:
+            prompt += ("\n発表前のARGUS事前予想: " + prev_pre +
+                       "\npostJaでは必ずこの事前予想との答え合わせ（概ね当たり/部分的/外れ＋一言の理由）を含めること。")
         pr = _openai_prose(prompt)
         if not pr:
             if prev:
@@ -8354,7 +8483,9 @@ def _caos_event_generate(limit=5):
         # Headed one-liners (概要/事前予想/事後). Legacy bodyJa maps to 概要 if a model
         # returns the old shape, so the panel never blanks during a schema transition.
         summary = str(pr.get("summaryJa") or pr.get("headlineJa") or pr.get("bodyJa") or "")[:200]
-        pre = str(pr.get("preJa") or "")[:200] if phase == "pre" else ""
+        # POST phase carries the preserved pre-event prediction (read-only) so the UI
+        # can show 事前予想(当時) next to 事後の答え合わせ.
+        pre = (str(pr.get("preJa") or "")[:200] if phase == "pre" else prev_pre)
         post = str(pr.get("postJa") or "")[:200] if phase == "post" else ""
         out[eid] = {"eventId": eid, "eventCode": ev.get("eventCode"), "phase": phase,
                     "displayImpact": ev.get("displayImpact"), "daysUntil": ev.get("daysUntil"),

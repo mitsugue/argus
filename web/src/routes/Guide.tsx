@@ -14,6 +14,7 @@ import { ArgusProStatusCard } from '../components/guide/ArgusProStatusCard';
 import { EventCardsPanel } from '../components/guide/EventCardsPanel';
 import { ArgusProAboutCard } from '../components/guide/ArgusProAboutCard';
 import { PaidSourceStatusCard } from '../components/guide/PaidSourceStatusCard';
+import { DecisionSpineCard } from '../components/guide/DecisionSpineCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -80,6 +81,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v11.2.1', 'Evidence Pack品質ゲート＋オーナー修正2点 — ①Evidence Packの公開GETを完全cached-only化（キャッシュ切れでも有料プロバイダ/LLM/記事本文を絶対に叩かない。全fetch関数を差し替えても200を返すことをテストで担保。不足は cache:tdnet 等のマーカーで正直表示）②GET /api/argus/decision-spine/status 新設（背骨の配線状態: evidence pack稼働・decisionRefs付与率・geminiChallenge有無・安全フラグ）③Guideに専用カード「判断は何を読んでいるのか」（フロー図＋重要な制限5項目）④Todayの「時刻はすべてJST」表記を削除（オーナー要望）⑤C.A.O.S.イベント評価: 事前予想(AI)と事後の答え合わせ(AI)の欄を常時表示（生成待ちでも枠が見える）。さらに発表前の予想を発表後も保存し、事後分析は「事前予想との答え合わせ（当たり/部分的/外れ＋理由）」を明示的に行うように。smokeにdecision-spine/status＋geminiChallenge形状チェック追加。'],
   ['v11.2.0', 'Decision Spine — 全ての判断が同じ「証拠パック」を読む一本の背骨に（V11.2） — ①argus_evidence_pack（純・決定論）: EventCard・公式開示・C.A.O.S.連想・機関見解・情報源カバレッジ・市場深さの実証・可視性・校正・Decision Value状態を1銘柄1パックに正規化。単一ソース連想は原因確定にできない/公式開示は事実確認≠価格原因/不足データを必ず明示、をパック自体が強制。GET /api/argus/evidence-pack?symbol=◯（公開・LLM/有料フェッチなし・秘密なし）②Action Labelに decisionRefs（evidencePackId・関連イベントID・確信度の前後・可視性降格・欠損データ）を付与=判断の出所が後から監査可能に③GPT主判断のシステムプロンプトに証拠規律6箇条を明記（可視性がENTERブロック中はADD/BUY DIP提案禁止・深さ実証ゼロならintraday主張の確信度を下げる・burn-in中は過大確信禁止 等）④Geminiチャレンジを構造化（agreement=confirm/caution/disagree・主な弱点・何が変われば判断が変わるか・未検証の仮定）してai-judgmentに保存⑤Guideに「判断は何を読んでいるのか」を追加。自動売買・注文ルートなし。'],
   ['v11.1.2', '🎉公式TDnet Add-on接続成功＋隠れたv1パス切れを発見・修正 — ①v11.1.1のプローブ修正により公式TDnetがLIVEに（provider=jquants-tdnet・実開示96件取得。「権限なし」は誤診で、権限は最初から有効だった）。source-registryもconfirmed_liveに自動反映、EventCardへofficial confirmation接続。②プロバイダ診断が本物のバグを発見: J-Quants v2移行で4エンドポイントが改名されており（trading_calendar→calendar / weekly_margin_interest→margin-interest / short_selling→short-ratio / trades_spec→equities/investor-types）、entry-scoutの信用残取得が死んだv1パスで静かに壊れていた→v2パス＋新フィールド名(ShrtVol/LongVol)に修正。診断プローブも全て正式v2パスに更新。③AlphaVantage=無料枠回復でlive確認（partialの正体は25回/日の上限と確定）。'],
   ['v11.1.1', '有料ソース有効化の総点検（公式ドキュメント照合） — ①TDnetプローブを公式仕様(jpx-jquants.com/spec/td-list)に修正: 正式パスは /v2/td/list で date/codeパラメータ必須（従来のプローブは無効なlimitパラメータを送っていた）。J-Quantsの403は「プラン外・誤キー・誤パス」全てで返る仕様のため、ボディのメッセージで判別するように（"Missing Authentication Token"=パス未解決≠権限なし）。パラメータ無し400=権限あり証明。②TDnet Add-onはStandardとは別の追加購入（月額）— 権限なし時はダッシュボードの[ご利用中]バッジ確認を案内。③AlphaVantageの"partial"の正体=無料枠25回/日の上限（HTTP200+Informationボディ）と判明→rate_limitedとして正直表示。④J-Quants Standardの5データセット（取引カレンダー/決算予定/信用残/空売り比率/投資部門別）の実測プローブをadmin診断に追加し、source-registryにも状態行を追加（公開GETはキャッシュのみ読む=課金プローブを起こさない）。⑤TDnet→EventCardの統合テスト追加（公式開示のみofficial confirmation・yanoshinでは付与しない）。OpenAI/Gemini/Layer2Bの「configured」表示は課金回避の設計どおり（AI判定はlive稼働を別途確認済み）。'],
@@ -350,6 +352,8 @@ export const Guide: React.FC = () => {
       </section>
 
       <ArgusProAboutCard />
+
+      <DecisionSpineCard />
 
       <section>
         <div className="section-head">
