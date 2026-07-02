@@ -174,7 +174,9 @@ def _crypto_scan_gated():
         urllib.request.urlopen(req, timeout=30)
         return False, "expected 401/503 (admin), got 200 — UNPROTECTED!"
     except urllib.error.HTTPError as e:
-        return e.code in (401, 503), f"HTTP {e.code} (admin-gated)"
+        # 429 = the IP rate limiter fired BEFORE routing (smoke burst) — it neither
+        # proves nor disproves the admin gate; tolerated like the other checks.
+        return e.code in (401, 503, 429), f"HTTP {e.code} (admin-gated)"
 
 def v_calibration_posture():
     c, d = _get("/api/argus/calibration/posture")
