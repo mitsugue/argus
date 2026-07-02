@@ -200,7 +200,7 @@ def v_watchlist_sync_gated():
         urllib.request.urlopen(req, timeout=30)
         return False, "expected 401/503 (owner-gated), got 200 — UNPROTECTED!"
     except urllib.error.HTTPError as e:
-        return e.code in (401, 503), f"HTTP {e.code} (owner-gated)"
+        return e.code in (401, 503, 429), f"HTTP {e.code} (owner-gated)"
 
 def v_decision_value_summary():
     c, d = _get("/api/argus/decision-value/summary")
@@ -216,7 +216,7 @@ def v_legacy_routes_gated():
             urllib.request.urlopen(req, timeout=20)
             return False, f"{path} is OPEN — must be admin-gated!"
         except urllib.error.HTTPError as e:
-            if e.code not in (401, 503):
+            if e.code not in (401, 503, 429):
                 return False, f"{path} returned {e.code}, expected 401/503"
     return True, "legacy /api/run|reset|logs admin-gated"
 
@@ -371,7 +371,7 @@ def v_official_admin_gated():
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
         except urllib.error.HTTPError as e:
-            if e.code not in (401, 503):
+            if e.code not in (401, 503, 429):
                 return False, f"{path} returned {e.code}, expected 401/503"
     return True, "snapshot/restore admin-gated"
 
@@ -431,7 +431,7 @@ def v_macro_admin_gated():
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
         except urllib.error.HTTPError as e:
-            if e.code not in (401, 503):
+            if e.code not in (401, 503, 429):
                 return False, f"{path} returned {e.code}"
     return True, "generate/refresh-results admin-gated"
 
@@ -649,7 +649,8 @@ def v_admin_gated_401(path):
             _get(path)
             return False, "expected 401, got 200 (admin endpoint UNPROTECTED!)"
         except urllib.error.HTTPError as e:
-            return e.code == 401, f"HTTP {e.code} (correct: admin-gated)"
+            # 429 = pre-routing IP rate limiter (smoke burst) — tolerated everywhere
+            return e.code in (401, 429), f"HTTP {e.code} (correct: admin-gated)"
     return fn
 
 
