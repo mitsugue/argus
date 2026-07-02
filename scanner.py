@@ -8761,7 +8761,8 @@ def _generate_macro_event_analysis(limit=8):
         rec["daysUntil"] = ev.get("daysUntil")
         rec["displayImpact"] = ev.get("displayImpact")
         if argus_macro_event_analysis.should_refresh_pre(rec, phase, now_iso=now_iso):
-            out = _openai_prose(argus_macro_event_analysis.build_pre_prompt(ev, ctx), max_out=700)
+            out = _openai_prose(argus_macro_event_analysis.build_pre_prompt(ev, ctx), max_out=700,
+                                system=argus_macro_event_analysis.MACRO_EVENT_SYSTEM_JA)
             pre = argus_macro_event_analysis.parse_pre(out, phase=phase, now_iso=now_iso)
             if pre:
                 rec["pre"] = pre
@@ -8772,7 +8773,8 @@ def _generate_macro_event_analysis(limit=8):
                 pre_exists = bool((rec.get("pre") or {}).get("argusScenarioJa")
                                   or (rec.get("pre") or {}).get("summaryJa"))
                 out = _openai_prose(argus_macro_event_analysis.build_post_prompt(
-                    ev, rec.get("pre") or {}, rec.get("actual") or {}, ctx), max_out=700)
+                    ev, rec.get("pre") or {}, rec.get("actual") or {}, ctx), max_out=700,
+                    system=argus_macro_event_analysis.MACRO_EVENT_SYSTEM_JA)
                 rec["post"] = argus_macro_event_analysis.parse_post(
                     out or {}, now_iso=now_iso, pre_exists=pre_exists,
                     actual_available=bool((rec.get("actual") or {}).get("available")))

@@ -109,8 +109,8 @@ def should_refresh_pre(record: Dict[str, Any], phase: str, *, now_iso: str,
     if not is_pre_phase(phase):
         return False
     pre = record.get("pre") or {}
-    if not pre.get("argusScenarioJa") and not pre.get("summaryJa"):
-        return True
+    if not pre.get("argusScenarioJa"):
+        return True    # no scenario = missing or incomplete (e.g. summary-only legacy salvage)
     if _PHASE_CHECKPOINT.get(phase, 0) > _PHASE_CHECKPOINT.get(pre.get("phaseAtGeneration"), -1):
         return True
     gen, now = _parse_utc(pre.get("generatedAt")), _parse_utc(now_iso)
@@ -124,6 +124,16 @@ _NO_FABRICATION = (
     "禁止事項: 公式結果を捏造しない。コンセンサス数値を捏造しない（出典付きコンセンサスが与えられて"
     "いない限り数値予想を作らない — 定性シナリオのみ）。機関投資家が売買したと断定しない（公開見解は"
     "見解であって売買ではない）。実データが無い項目は『未取得』と明記する。STRICT JSONのみを返す。")
+
+# System prompt for macro pre/post calls. The scanner's default C.A.O.S. system
+# prompt pins an OLD 3-key schema ("exactly these keys: summaryJa/preJa/postJa")
+# which overrides the user-prompt keys and blanks the whole pre view — always
+# pass THIS system with build_pre_prompt/build_post_prompt.
+MACRO_EVENT_SYSTEM_JA = (
+    "あなたはARGUSのマクロイベント調査デスクです。個人投資家向けに、指定された1つの予定イベントを"
+    "日本語で簡潔に分析します。正直さは絶対: 結果・コンセンサス・機関売買を捏造しない。売買指示は"
+    "出さない（判断支援のみ）。出力はSTRICT JSONのみで、キーはユーザーメッセージで指定されたものを"
+    "正確に使うこと（別のキー名に置き換えない）。")
 
 
 def build_pre_prompt(event: Dict[str, Any], market_context_ja: str = "") -> str:
@@ -170,7 +180,9 @@ def parse_pre(out: Any, *, phase: str, now_iso: str) -> Optional[Dict[str, Any]]
     """Defensive normalizer for the pre-LLM output. None if unusable (caller keeps old)."""
     if not isinstance(out, dict):
         return None
-    scenario = str(out.get("argusScenarioJa") or "")[:300]
+    # legacy-shape salvage: a model pinned to the old {summaryJa, preJa, postJa}
+    # schema puts the whole pre view in preJa — recover it instead of dropping it
+    scenario = str(out.get("argusScenarioJa") or out.get("preJa") or "")[:300]
     summary = str(out.get("summaryJa") or "")[:300]
     if not scenario and not summary:
         return None                                   # blank must never overwrite a real pre
@@ -203,7 +215,8 @@ def parse_post(out: Any, *, now_iso: str, pre_exists: bool,
         lims.append("公式結果未取得")
     return {
         "generatedAt": now_iso, "verdict": verdict,
-        "answerCheckJa": str(o.get("answerCheckJa") or "")[:300],
+        # postJa = legacy-shape salvage (see parse_pre)
+        "answerCheckJa": str(o.get("answerCheckJa") or o.get("postJa") or "")[:300],
         "marketReactionJa": str(o.get("marketReactionJa") or "")[:300],
         "portfolioImpactJa": str(o.get("portfolioImpactJa") or "")[:300],
         "whatChangedJa": str(o.get("whatChangedJa") or "")[:300],

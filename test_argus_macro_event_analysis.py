@@ -64,6 +64,22 @@ def test_parse_pre_rejects_blank():
     assert MA.parse_pre("not a dict", phase="imminent", now_iso=NOW) is None
 
 
+def test_legacy_shape_salvage_and_regen():
+    # prod bug (v11.3.2): default C.A.O.S. system prompt pinned the OLD
+    # {summaryJa, preJa, postJa} schema — the whole pre view landed in preJa.
+    p = MA.parse_pre({"summaryJa": "重要", "preJa": "強ければ金利上・株安方向", "postJa": ""},
+                     phase="pre_final", now_iso=NOW)
+    assert p["argusScenarioJa"] == "強ければ金利上・株安方向"
+    po = MA.parse_post({"verdict": "hit", "postJa": "概ね想定通り"}, now_iso=NOW,
+                       pre_exists=True, actual_available=True)
+    assert po["answerCheckJa"] == "概ね想定通り"
+    # a summary-only pre (incomplete) must be regenerated, not treated as done
+    rec = MA.new_record(EVENT, now_iso=NOW)
+    rec["pre"] = MA.parse_pre({"summaryJa": "概要だけ"}, phase="pre_final", now_iso=NOW)
+    assert MA.should_refresh_pre(rec, "pre_final", now_iso=NOW) is True
+    assert "MACRO_EVENT_SYSTEM_JA" in dir(MA) and "指定されたもの" in MA.MACRO_EVENT_SYSTEM_JA
+
+
 def test_parse_post_gates_verdict():
     # model claims hit, but no pre → forced not_scoreable
     p = MA.parse_post({"verdict": "hit", "answerCheckJa": "当たり"}, now_iso=NOW,
