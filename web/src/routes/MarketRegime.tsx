@@ -289,13 +289,20 @@ export const MarketRegime: React.FC = () => {
               {[...movers.gainers.slice(0, 5), ...movers.losers.slice(0, 5)]
                 .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 8)
                 .map((m) => (
-                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, minWidth: 0 }}>
-                    <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
-                    </span>
-                    <span style={{ flex: 'none', whiteSpace: 'nowrap' }}>
-                      <SignedValue value={m.changePct} suffix="%" arrow={false} /> (${m.price})
-                    </span>
+                  <div key={m.symbol} style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, minWidth: 0 }}>
+                      <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
+                      </span>
+                      <span style={{ flex: 'none', whiteSpace: 'nowrap' }}>
+                        <SignedValue value={m.changePct} suffix="%" arrow={false} /> (${m.price})
+                      </span>
+                    </div>
+                    {m.cause?.causeStatusJa && (
+                      <div style={{ fontSize: 11, color: 'var(--text-sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <b>{m.cause.causeStatusJa}</b>{m.cause.bestLeadJa ? ` — ${m.cause.bestLeadJa}` : ''}
+                      </div>
+                    )}
                   </div>
                 ))}
             </div>
@@ -327,13 +334,20 @@ export const MarketRegime: React.FC = () => {
               {[...jpMovers.gainers.slice(0, 5), ...jpMovers.losers.slice(0, 5)]
                 .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 8)
                 .map((m) => (
-                  <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, gap: 8, minWidth: 0 }}>
-                    <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
-                    </span>
-                    <span style={{ flex: 'none', whiteSpace: 'nowrap' }}>
-                      <SignedValue value={m.changePct} suffix="%" arrow={false} /> (¥{Math.round(m.price).toLocaleString('en-US')})
-                    </span>
+                  <div key={m.symbol} style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, gap: 8, minWidth: 0 }}>
+                      <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <b>{m.symbol}</b> {(m as { name?: string }).name ?? ''}
+                      </span>
+                      <span style={{ flex: 'none', whiteSpace: 'nowrap' }}>
+                        <SignedValue value={m.changePct} suffix="%" arrow={false} /> (¥{Math.round(m.price).toLocaleString('en-US')})
+                      </span>
+                    </div>
+                    {m.cause?.causeStatusJa && (
+                      <div style={{ fontSize: 11, color: 'var(--text-sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <b>{m.cause.causeStatusJa}</b>{m.cause.bestLeadJa ? ` — ${m.cause.bestLeadJa}` : ''}
+                      </div>
+                    )}
                   </div>
                 ))}
               <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>

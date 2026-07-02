@@ -1,3 +1,4 @@
+import { markLocalEdit } from './vault';
 // My Trade Journal (trade-journal-v1, v10.23) — the user's OWN decisions,
 // recorded WITH their rationale, so ARGUS can eventually score "your intuition
 // vs the tool" (born from the 9984 @6450 trade, 2026-06-13). Device-local
@@ -35,7 +36,7 @@ export function readTrades(): TradeEntry[] {
 }
 
 function persist(list: TradeEntry[]): void {
-  try { localStorage.setItem(KEY, JSON.stringify(list.slice(-MAX))); } catch { /* ignore */ }
+  try { localStorage.setItem(KEY, JSON.stringify(list.slice(-MAX))); markLocalEdit(); } catch { /* ignore */ }
 }
 
 export function addTrade(t: Omit<TradeEntry, 'id' | 'createdAt' | 'status'>): TradeEntry {

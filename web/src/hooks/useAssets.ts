@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AssetItem, AssetMarket, AssetType, AssetSource } from '../types/assetItem';
 import { markLocalEdit } from '../lib/vault';
+import { recordTombstone } from '../lib/assetMerge';
 
 const STORAGE_KEY = 'argus.assets.v1';
 const MAX_ASSETS = 50;
@@ -23,6 +24,14 @@ function mk(
 }
 
 // Default seed. JP names in Japanese (8058 = 三菱商事, verified — NOT 三菱重工).
+// SYNC SAFETY (v11.3.3): a fresh/evicted device seeds these with updatedAt=0 so
+// the per-item merge NEVER lets a factory copy beat another device's real item,
+// holdings, or deletion tombstone. reset() alone stamps fresh times (it must win
+// over the tombstones it just recorded).
+function seedZero(items: AssetItem[]): AssetItem[] {
+  return items.map((a) => ({ ...a, createdAt: 0, updatedAt: 0 }));
+}
+
 function defaults(): AssetItem[] {
   return [
     mk('JP', 'jp_equity', 'jquants', '8058', '三菱商事', '三菱商事'),
@@ -46,13 +55,13 @@ function defaults(): AssetItem[] {
 function load(): AssetItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaults();
+    if (!raw) return seedZero(defaults());
     const parsed = JSON.parse(raw) as AssetItem[];
-    if (!Array.isArray(parsed) || parsed.length === 0) return defaults();
+    if (!Array.isArray(parsed) || parsed.length === 0) return seedZero(defaults());
     _seq = Math.max(_seq, ...parsed.map((a) => a.sortOrder + 1));
     return parsed;
   } catch {
-    return defaults();
+    return seedZero(defaults());
   }
 }
 
@@ -114,7 +123,10 @@ export function useAssets(): UseAssets {
     return created;
   }, []);
 
-  const remove = useCallback((id: string) => setAssets((cur) => cur.filter((x) => x.id !== id)), []);
+  const remove = useCallback((id: string) => {
+    recordTombstone(id);   // deletion must propagate to other devices (sync-v2)
+    setAssets((cur) => cur.filter((x) => x.id !== id));
+  }, []);
 
   // Reassign sortOrder for a genre's items in the given new order, reusing that
   // genre's existing sortOrder slots so other genres stay put.
@@ -144,7 +156,13 @@ export function useAssets(): UseAssets {
       return next;
     })), []);
 
-  const reset = useCallback(() => setAssets(defaults()), []);
+  const reset = useCallback(() => setAssets((cur) => {
+    // reset = deliberate wipe: tombstone everything current so the old items
+    // don't resurrect from another device. defaults() are created AFTER the
+    // tombstones (newer updatedAt), so the seed list itself survives merges.
+    cur.forEach((x) => recordTombstone(x.id));
+    return defaults();
+  }), []);
 
   return { assets, add, remove, reorderGenre, toggle, updateHolding, reset };
 }

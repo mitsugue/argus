@@ -36,6 +36,20 @@ export interface DownsideIncident {
   /** C.A.O.S. candidate lead (v10.174): the linked news behind the move (by name OR entity
    *  relationship), corroboration-labeled. A candidate, not an asserted cause. */
   caosLead?: { titleJa: string; via: string; term?: string; relationJa?: string | null; corroboration: string };
+  /** Mover Cause ladder (v11.3.3): 原因確認/有力材料/候補/有力候補なし — a bare 原因未確認 is banned. */
+  causeStatus?: 'confirmed_cause' | 'probable_catalyst' | 'candidate_catalyst' | 'no_lead_yet' | 'not_scoreable';
+  moverCause?: MoverCauseCompact;
+}
+
+export interface MoverCauseCandidate {
+  titleJa?: string; category?: string; timingRelation?: string;
+  corroborationLevel?: string; confidence?: number; source?: string;
+}
+export interface MoverCauseCompact {
+  causeStatus?: string; causeStatusJa?: string;
+  bestLeadJa?: string; whyNotConfirmedJa?: string; checkedJa?: string;
+  nextChecksJa?: string[]; impactCommentJa?: string; confidence?: number;
+  topCandidates?: MoverCauseCandidate[];
 }
 
 export interface JpOverlay {

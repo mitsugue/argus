@@ -17,6 +17,15 @@ const CAUSE_JA: Record<string, string> = {
   CAUSE_UNKNOWN_DOWNSIDE: '原因未確認', DATA_QUALITY_LIMITED: 'データ不足',
 };
 
+// Mover Cause ladder chip (v11.3.3): 原因確定と候補を分離 — never a bare 原因未確認.
+const LADDER_TONE: Record<string, string> = {
+  confirmed_cause: 'var(--value-negative, #f87171)',
+  probable_catalyst: 'var(--amber, #fbbf24)',
+  candidate_catalyst: 'var(--text-sub)',
+  no_lead_yet: 'var(--text-faint)',
+  not_scoreable: 'var(--text-faint)',
+};
+
 function overrideTone(o: string): 'red' | 'amber' {
   return o === 'EXIT_WATCH' || o === 'TRIM_WATCH' ? 'red' : 'amber';
 }
@@ -59,6 +68,12 @@ export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
             C.A.O.S.{inc.caosLead.via === 'entity' ? '·連想' : ''}
           </span>
         )}
+        {inc.moverCause?.causeStatusJa && (
+          <span className="dic-why" style={{ color: LADDER_TONE[inc.moverCause.causeStatus ?? ''] || 'var(--text-sub)', fontWeight: 600 }}
+                title={inc.moverCause.whyNotConfirmedJa || undefined}>
+            {inc.moverCause.causeStatusJa}
+          </span>
+        )}
       </div>
       <p className="dic-reason">{inc.reasonJa}</p>
       {open && (
@@ -72,6 +87,30 @@ export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
               </div>
             ))}
           </div>
+          {inc.moverCause && (
+            <div className="dic-line" style={{ borderLeft: '2px solid var(--line)', paddingLeft: 8, margin: '6px 0' }}>
+              {inc.moverCause.bestLeadJa && <p className="dic-line" style={{ margin: 0 }}><b>最有力:</b> {inc.moverCause.bestLeadJa}</p>}
+              {(inc.moverCause.topCandidates ?? [])
+                .filter((c) => !c.titleJa || !(inc.moverCause?.bestLeadJa || '').includes(c.titleJa))
+                .slice(0, 2).map((c, i) => (
+                <p className="dic-line" style={{ margin: 0, color: 'var(--text-sub)' }} key={i}>
+                  ・{c.titleJa} <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+                    ({c.timingRelation === 'after_move' ? '値動き後' : c.timingRelation === 'before_move' ? '値動き前' : c.timingRelation === 'during_move' ? '値動き中' : '時刻未確認'}
+                    ・{c.corroborationLevel === 'official' ? '公式' : c.corroborationLevel === 'multi_source' ? '複数ソース' : c.corroborationLevel === 'market_confirmed' ? '市場確認' : c.corroborationLevel === 'single_source' ? '単一ソース' : '未裏取り'})
+                  </span>
+                </p>
+              ))}
+              {inc.moverCause.whyNotConfirmedJa && (
+                <p className="dic-line dic-missing" style={{ margin: 0 }}><b>確定できない理由:</b> {inc.moverCause.whyNotConfirmedJa}</p>
+              )}
+              {(inc.moverCause.nextChecksJa ?? []).length > 0 && (
+                <p className="dic-line" style={{ margin: 0 }}><b>次に確認:</b> {(inc.moverCause.nextChecksJa ?? []).join(' / ')}</p>
+              )}
+              {inc.moverCause.checkedJa && (
+                <p className="dic-line" style={{ margin: 0, color: 'var(--text-faint)', fontSize: 11 }}>確認済み: {inc.moverCause.checkedJa}</p>
+              )}
+            </div>
+          )}
           <p className="dic-line"><b>やってはいけない:</b> {inc.doNotDoJa}</p>
           <p className="dic-line"><b>次の確認条件:</b> {inc.nextConditionJa}</p>
           {inc.missingData.length > 0 && (

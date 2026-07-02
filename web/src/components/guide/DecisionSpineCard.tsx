@@ -108,6 +108,26 @@ export const DecisionSpineCard: React.FC = () => {
         </ul>
       </div>
 
+      {/* 急落・急騰の原因判定 (v11.3.3 mover cause ladder) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>急落・急騰の「原因」はどう判定しているのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUS Proは、急落・急騰を見つけた時に<b>原因確定と原因候補を分けて</b>表示します。
+          公式開示・複数ソース・市場反応が揃えば<b>原因確認</b>、公式開示や直接ニュースは<b>有力材料</b>、
+          単一ニュースや関連企業/テーマ連想は<b>候補</b>として扱います。確定できない場合でも、
+          <b>何を確認済みで、何が不足し、次に何を見ればよいか</b>を表示します。
+          単に「原因未確認」で終わらせないことがARGUS Proの方針です。急騰も同じ仕組みで判定し、
+          材料候補があっても高値追いの推奨には変換しません。
+        </p>
+        <ul style={{ margin: '6px 0 0', paddingLeft: 18, color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.7 }}>
+          <li>公式開示がない値動きは確定原因を出せないことがある。</li>
+          <li>単一ニュースは候補止まり。連想ニュースは原因ではない。</li>
+          <li>値動きより後の記事は引き金にしない。</li>
+          <li>板/歩み値/borrow/options未取得時は需給原因の確度を下げる。</li>
+          <li>AI解説はcached/admin-generated only(公開アクセスからのAI起動なし)。</li>
+        </ul>
+      </div>
+
       {/* 公式イベント履歴は消えないのか (v11.3.1 durability) */}
       <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
         <span className="mdepth__label" style={{ fontWeight: 600 }}>公式イベント履歴は消えないのか</span>

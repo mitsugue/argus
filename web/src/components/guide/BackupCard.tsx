@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
-import { cloudBackupNow, cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt } from '../../lib/vault';
+import { cloudBackupNow, cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
 
 // Device-data backup UI (v10.3.2; auto-weekly added in v10.3.3 — see
 // lib/backup.ts). Export/restore the only two device-local keys.
@@ -99,9 +99,11 @@ export const BackupCard: React.FC = () => {
         </p>
         <p className="backup__note" style={{ borderLeft: '3px solid var(--amber,#fbbf24)', paddingLeft: 8 }}>
           <b>⚠ アプリとウェブを常に同期させるには、両方で同じパスフレーズを「有効化」してください。</b>
-          片方だけだと同期しません。両方で有効化すれば、片方でウォッチリストを追加/削除すると
-          <b>約10〜40秒で</b>もう片方にも反映されます(タブに戻ると即時取得)。初回に既存データがある側は
-          一度「クラウドから復元」で同期グループに参加してください。
+          片方だけだと同期しません。両方で有効化すれば、<b>ウォッチリストは銘柄ごとにマージ同期</b>されます:
+          どちらで追加しても両方に現れ、削除も両方に反映され、丸ごと上書きで消えることはありません
+          (約5〜20秒・タブ/アプリに戻ると即時取得。ウォッチリストは初回の「クラウドから復元」不要)。
+          判断ログ・取引記録・リサーチノートは「新しい方を丸ごと採用」のため、
+          <b>それらのデータが既にある端末では初回のみ「クラウドから復元」を推奨</b>します。
         </p>
         <div className="backup__actions">
           <input className="modal__input backup__pass" type="password" value={pass}
@@ -114,7 +116,7 @@ export const BackupCard: React.FC = () => {
         </div>
         <p className="backup__note">
           状態: {enabled
-            ? `✅ この端末は同期 有効(最終送信 ${lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '—'})。両端末で有効化していれば約10〜40秒で同期。恒久保存は1日6回(平日 9/12/16/19/22時・深夜2時)。`
+            ? `✅ この端末は同期 有効(最終送信 ${lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '—'}・最終同期チェック ${(() => { const s = lastSyncInfo(); return s ? `${new Date(s.at).toLocaleTimeString('ja-JP')} ${s.outcome === 'applied' ? '=取込あり' : s.outcome === 'pushed' ? '=送信' : s.merged ? '=一致' : ''}` : '—'; })()})。両端末で有効化していれば約5〜20秒で同期。恒久保存は1日6回(平日 9/12/16/19/22時・深夜2時)。`
             : '⚠ この端末は同期 未設定(上でパスフレーズを決めて有効化。もう片方の端末でも同じパスフレーズで有効化が必要)。'}
           データは端末上で暗号化され、サーバーとGitHubには<b>暗号文しか</b>渡りません。
           パスフレーズを忘れると誰にも復元できません(本人含む)。古い世代は自動削除(直近8世代保持)。

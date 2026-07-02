@@ -434,6 +434,90 @@ def v_macro_admin_gated():
     return True, "generate/refresh-results admin-gated"
 
 
+# ── V11.3.3 Mover Cause Engine ──
+def v_mover_causes():
+    # attribution ladder for sharp movers. Shape + discipline: no secrets,
+    # every item carries a status + coverage; empty store = honest not_ready.
+    c, d = _get("/api/argus/mover-causes?limit=20")
+    if d.get("schemaVersion") != "mover-cause-v2":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("status") not in ("live", "not_ready"):
+        return False, f"status={d.get('status')}"
+    for it in (d.get("items") or []):
+        for k in ("moverCauseId", "causeStatus", "causeStatusJa", "direction",
+                  "evidenceCoverage", "nextChecksJa", "whyNotConfirmedJa"):
+            if k not in it:
+                return False, f"missing {k}"
+        if it["causeStatus"] not in ("confirmed_cause", "probable_catalyst",
+                                     "candidate_catalyst", "no_lead_yet", "not_scoreable"):
+            return False, f"bad status {it['causeStatus']}"
+        if it["causeStatus"] == "no_lead_yet" and not it.get("nextChecksJa"):
+            return False, "no_lead without nextChecks"
+    blob = json.dumps(d).lower()
+    # JSON-KEY form ("holdings":) — company names like "XYZ Holdings" legitimately
+    # appear in titles and must not false-alarm the secret scan.
+    for bad in ("apikey", "x-api-key", '"holdings":', '"costbasis":', '"prompt":', '"messages":'):
+        if bad in blob:
+            return False, f"leak {bad}"
+    return True, f"status={d.get('status')} count={d.get('count')}"
+
+
+def v_mover_causes_status():
+    c, d = _get("/api/argus/mover-causes/status")
+    if d.get("schemaVersion") != "mover-cause-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    cn = d.get("counts") or {}
+    for k in ("totalMovers", "confirmedCause", "probableCatalyst", "candidateCatalyst", "noLeadYet"):
+        if not isinstance(cn.get(k), int):
+            return False, f"counts.{k} missing"
+    if not isinstance(d.get("coverage"), dict):
+        return False, "coverage missing"
+    deg = " DEGRADED(coverage failure suspected)" if d.get("degradedIfAllUnknown") else ""
+    return True, (f"movers={cn['totalMovers']} 確認{cn['confirmedCause']}/材料{cn['probableCatalyst']}"
+                  f"/候補{cn['candidateCatalyst']}/no_lead{cn['noLeadYet']}{deg}")
+
+
+def v_mover_cause_upside():
+    c, d = _get("/api/argus/mover-causes?direction=up&limit=10")
+    if d.get("schemaVersion") != "mover-cause-v2":
+        return False, "bad schema"
+    for it in (d.get("items") or []):
+        if it.get("direction") != "up":
+            return False, "direction filter broken"
+    return True, f"up count={d.get('count')}"
+
+
+def v_downside_carries_mover_cause():
+    c, d = _get("/api/argus/downside-incidents")
+    incs = d.get("incidents") or []
+    if not incs:
+        return True, "no active incidents (shape n/a)"
+    for inc in incs:
+        mc = inc.get("moverCause") or {}
+        if not mc.get("causeStatus"):
+            return False, f"{inc.get('symbol')} missing moverCause"
+        if mc["causeStatus"] != "not_scoreable" and not (mc.get("bestLeadJa") or mc.get("nextChecksJa")):
+            return False, f"{inc.get('symbol')} no lead AND no next checks"
+        reason = inc.get("reasonJa") or ""
+        if "原因未確認" in reason and ("候補" not in reason and "確認済み" not in reason
+                                    and "有力材料" not in reason and "原因確認" not in reason):
+            return False, f"{inc.get('symbol')} bare 原因未確認 without ladder text"
+    return True, f"incidents={len(incs)} all carry causeStatus"
+
+
+def v_public_explain_cached_only():
+    # explain=1 must return cached text or not_generated — never a live AI run.
+    t0 = time.time()
+    c, d = _get("/api/argus/cause-attribution?symbol=8058&market=JP&explain=1", timeout=40)
+    took = time.time() - t0
+    st = d.get("explanationStatus")
+    if st not in ("cached", "not_generated"):
+        return False, f"explanationStatus={st} (live-LLM path suspected)"
+    if "moverCause" not in d:
+        return False, "cause-attribution missing moverCause ladder"
+    return True, f"explanationStatus={st} in {took:.1f}s"
+
+
 def v_decision_spine_status():
     # v11.2.1: the spine's own status — cached-only evidence pack + wiring booleans.
     c, d = _get("/api/argus/decision-spine/status")
@@ -699,6 +783,12 @@ CHECKS = [
     ("v11.3.2 macro analysis status", v_macro_analysis_status),
     ("v11.3.2 event-analysis compat", v_event_analysis_compat),
     ("v11.3.2 macro admin gated", v_macro_admin_gated),
+    # ── V11.3.3 Mover Cause Engine ──
+    ("v11.3.3 mover-causes", v_mover_causes),
+    ("v11.3.3 mover-causes status", v_mover_causes_status),
+    ("v11.3.3 upside direction", v_mover_cause_upside),
+    ("v11.3.3 downside carries cause", v_downside_carries_mover_cause),
+    ("v11.3.3 explain cached-only", v_public_explain_cached_only),
 ]
 
 

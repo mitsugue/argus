@@ -51,7 +51,8 @@ interface LabelLike { symbol: string; action: string; name?: string; reasonJa?: 
   judgmentSource?: 'ai' | 'rule'; }   // 'ai' = the displayed call is GPT+Gemini's; 'rule' = guardrail fallback
 interface IncidentLike { symbol: string; changePct?: number | null; causeBuckets?: { cause: string; probability: number }[];
   actionOverride?: string; reasonJa?: string; nextConditionJa?: string; severity?: string; isHeld?: boolean; ownerState?: string;
-  currentAction?: string; }
+  currentAction?: string;
+  moverCause?: { causeStatus?: string; causeStatusJa?: string; bestLeadJa?: string }; }
 interface EventLike { symbol: string; market?: string; eventType: string; severity: number; detectedAt?: string | null;
   reasonJa?: string | null; recommendedPosture?: string; nameJa?: string | null; }
 interface AssetLike { id: string; symbol: string; displayName: string; displayNameJa?: string; market: string; quantity?: number; }
@@ -111,10 +112,19 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
   });
   const def = SIGNALS[sig.code];
 
-  // Cause (downside buckets → slices + one-liner).
+  // Cause (downside buckets → slices + one-liner). v11.3.3: when the mover-cause
+  // ladder is present, the one-liner separates 原因確定なし from 有力候補なし instead
+  // of a bare 原因未確認.
   const buckets = (incident?.causeBuckets ?? []).slice(0, 3)
     .map((b) => ({ labelJa: CAUSE_JA[b.cause] ?? b.cause, pct: Math.round((b.probability ?? 0) * 100) }));
-  const causeOneLineJa = buckets.length ? `${buckets[0].labelJa}${buckets.length > 1 ? ' · ' + buckets[1].labelJa : ''}` : null;
+  const mc = incident?.moverCause;
+  const causeOneLineJa = mc?.causeStatusJa
+    ? (mc.causeStatus === 'confirmed_cause'
+        ? `原因確認: ${(mc.bestLeadJa || '').slice(0, 40)}`
+        : mc.causeStatus === 'no_lead_yet'
+        ? '原因確定なし・有力候補なし(確認済み範囲あり)'
+        : `原因確定なし・${mc.causeStatusJa}: ${(mc.bestLeadJa || '').slice(0, 40)}`)
+    : buckets.length ? `${buckets[0].labelJa}${buckets.length > 1 ? ' · ' + buckets[1].labelJa : ''}` : null;
 
   // Timeline: this symbol's 24/7 events + the incident, newest-last for reading.
   const tl: TimelineItem[] = events
@@ -232,7 +242,9 @@ export function sortWatchlistCards(cards: AssetCardModel[]): AssetCardModel[] {
     if (a.held !== b.held) return a.held ? -1 : 1;
     const ad = defensive.has(a.signalCode), bd = defensive.has(b.signalCode);
     if (ad !== bd) return ad ? -1 : 1;
-    const au = a.causeOneLineJa?.includes('原因未確認') ? 1 : 0, bu = b.causeOneLineJa?.includes('原因未確認') ? 1 : 0;
+    // unresolved-cause names float up (v11.3.3: ladder wording is 原因確定なし/有力候補なし)
+    const unres = (s?: string | null) => (s && (s.includes('原因未確認') || s.includes('有力候補なし') || s.includes('原因確定なし')) ? 1 : 0);
+    const au = unres(a.causeOneLineJa), bu = unres(b.causeOneLineJa);
     if (au !== bu) return bu - au;
     if (b.severityRank !== a.severityRank) return b.severityRank - a.severityRank;
     return Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0);

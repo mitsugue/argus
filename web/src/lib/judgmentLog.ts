@@ -5,6 +5,7 @@
 // localStorage only: per device, no cross-device sync (honest limitation).
 
 import type { ActionKey, RiskLevel } from '../types/action';
+import { markLocalEdit } from './vault';
 
 export interface JudgmentLogEntry {
   date: string;              // JST YYYY-MM-DD
@@ -37,6 +38,7 @@ export function recordJudgment(entry: JudgmentLogEntry): void {
     log.push(entry);
     log.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     localStorage.setItem(KEY, JSON.stringify(log.slice(-MAX_ENTRIES)));
+    markLocalEdit();   // device-data edit → cloud-sync push (v11.3.3)
   } catch {
     /* quota / private mode — memory is best-effort */
   }

@@ -26,7 +26,7 @@ concurrency:
 jobs:
   rejudge:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 10
     steps:
       - name: Trigger AI re-judgment (admin-gated; bounded by the AI budget)
         env:
@@ -57,6 +57,12 @@ jobs:
           PROF=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/entity-profiles/generate" || echo '{"error":"unreachable"}')
           echo "entity-profiles: ${PROF:0:200}"
+          # Mover-cause ladder (v11.3.3): deterministic evidence refresh for today's sharp
+          # movers (both directions) — no LLM, cheap, and placed BEFORE the LLM-heavy
+          # buy-candidates call so a slow AI run can't starve it of the job timeout.
+          MCR=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/admin/mover-causes/refresh" || echo '{"error":"unreachable"}')
+          echo "mover-causes: ${MCR:0:200}"
           # Buy candidates (本日の注目候補): screens today's movers into a high-bar watch list.
           BUY=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/buy-candidates/generate" || echo '{"error":"unreachable"}')

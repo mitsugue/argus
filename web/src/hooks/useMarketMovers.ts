@@ -3,7 +3,11 @@ import { useEffect, useState } from 'react';
 // US whole-market movers (v10.62) — top gainers/losers beyond the watchlist,
 // from Alpha Vantage (free, price-filtered). status=missing_key until the owner
 // sets ALPHAVANTAGE_API_KEY on Render.
-export interface MoverRow { symbol: string; price: number; changePct: number; name?: string; }
+export interface MoverRow {
+  symbol: string; price: number; changePct: number; name?: string;
+  /** Mover Cause ladder chip (v11.3.3) — attached from the cause store when available. */
+  cause?: { causeStatus?: string; causeStatusJa?: string; bestLeadJa?: string };
+}
 export interface MarketMovers {
   status: 'live' | 'missing_key' | 'unavailable' | 'warming';
   asOf: string | null;

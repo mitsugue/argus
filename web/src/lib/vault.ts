@@ -11,7 +11,9 @@
 // Honest limits: a WEAK passphrase can be brute-forced offline because the
 // ciphertext is public — use a long one. Losing the passphrase = no restore.
 
-import { buildBackupPayload, restoreBackup, type BackupFile } from './backup';
+import { buildBackupPayload, restoreBackup, BACKUP_KEYS, type BackupFile } from './backup';
+import { mergeAssets, loadTombstones, saveTombstones, type Tombstones } from './assetMerge';
+import type { AssetItem } from '../types/assetItem';
 
 const PASS_KEY = 'argus.vaultPass.v1';
 const LAST_KEY = 'argus.lastCloudBackup.v1';
@@ -111,12 +113,11 @@ export async function maybeCloudBackup(): Promise<void> {
 // per-item merge is a later refinement). Ciphertext-only on the wire, as ever.
 const SYNC_KEY = 'argus.vaultSync.v1';        // {appliedExportedAt, pushedEditAt}
 const EDIT_KEY = 'argus.lastLocalEditAt.v1';
-// v11.1: tightened so an edit on one device shows on the other in ~10-40s (was up to
-// ~2min). A change pushes ~7s after the last edit; the other device polls every 30s and
-// ALSO pulls immediately when its tab regains focus (visibilitychange), so switching from
-// the app to the web tab surfaces the change right away.
-const PUSH_DEBOUNCE_MS = 7_000;
-const SYNC_POLL_MS = 30_000;
+// v11.3.3 (sync-v2): an edit pushes ~3s after the last change; the other device
+// polls every 15s and ALSO pulls immediately on visibilitychange, so switching
+// from the app to the web tab surfaces the change right away (~5-20s worst case).
+const PUSH_DEBOUNCE_MS = 3_000;
+const SYNC_POLL_MS = 15_000;
 let pushTimer: number | null = null;
 let suppressEditsUntil = 0;
 let syncLoopStarted = false;
@@ -169,7 +170,24 @@ async function fetchRemoteEnvelope(vaultId: string, rawFallback: boolean): Promi
   return null;
 }
 
-/** One sync cycle: pull-and-apply if the cloud is newer, push if we are. */
+// Sync status surfaced to the Guide backup card (診断: なぜ同期しないのか).
+const SYNC_INFO_KEY = 'argus.lastSyncInfo.v1';
+export interface SyncInfo { at: number; outcome: 'applied' | 'pushed' | 'noop'; merged?: boolean }
+function recordSyncTick(outcome: SyncInfo['outcome'], merged: boolean): void {
+  try { localStorage.setItem(SYNC_INFO_KEY, JSON.stringify({ at: Date.now(), outcome, merged })); }
+  catch { /* ignore */ }
+}
+export function lastSyncInfo(): SyncInfo | null {
+  try { return JSON.parse(localStorage.getItem(SYNC_INFO_KEY) || 'null') as SyncInfo | null; }
+  catch { return null; }
+}
+
+/** One sync cycle (sync-v2, v11.3.3).
+    WATCHLIST (`argus.assets.v1`) is merged PER-ITEM: union by id, newer
+    updatedAt wins, deletions propagate via tombstones. Both devices converge
+    to the same list — an add on either side survives, no join gate needed,
+    nothing is clobbered. Other keys (journal/trades/research) keep the v1
+    whole-key LWW with the never-synced-device safety gate. */
 export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promise<'applied' | 'pushed' | 'noop'> {
   const pass = getVaultPass();
   if (!pass) return 'noop';
@@ -177,37 +195,68 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
   const env = await fetchRemoteEnvelope(vaultId, opts.rawFallback ?? false);
   const st = syncState();
   const localEdit = lastLocalEditAt();
+  let outcome: 'applied' | 'pushed' | 'noop' = 'noop';
+  let needPush = false;
+  let mergedTick = false;
   if (env) {
     let payload: BackupFile | null = null;
     try { payload = await decryptBackup(pass, env); } catch { payload = null; }
-    if (payload?.exportedAt && payload.exportedAt !== st.appliedExportedAt) {
-      const remoteTs = Date.parse(payload.exportedAt) || 0;
-      // Safety gate: a device that HAS data but has never synced nor edited
-      // since sync-v1 (e.g. the phone right after this release) must not be
-      // silently overwritten by another device's push — its data's age is
-      // unknown to us. Such a device joins the sync group via an explicit
-      // 復元 (or by its own next edit, whose push then wins as newest).
-      let hasLocalData = false;
-      try { hasLocalData = !!localStorage.getItem('argus.assets.v1'); } catch { /* ignore */ }
-      const everSynced = st.appliedExportedAt !== '' || localEdit > 0;
-      if (remoteTs > localEdit && (everSynced || !hasLocalData)) {
-        suppressEditsUntil = Date.now() + 3_000;
-        restoreBackup(payload);
-        setSyncState({ appliedExportedAt: payload.exportedAt });
-        window.dispatchEvent(new CustomEvent('argus:data-synced'));
-        return 'applied';
+    if (payload?.data) {
+      // 1) watchlist: per-item merge — always safe, runs on every cycle.
+      const rawRemote = payload.data['argus.assets.v1'];
+      const remoteAssets = Array.isArray(rawRemote) ? (rawRemote as AssetItem[]) : [];
+      const rawTombs = payload.data['argus.assetTombstones.v1'];
+      const remoteTombs = (rawTombs && typeof rawTombs === 'object' ? rawTombs : {}) as Tombstones;
+      if (remoteAssets.length > 0 || Object.keys(remoteTombs).length > 0) {
+        let localAssets: AssetItem[] = [];
+        try { localAssets = JSON.parse(localStorage.getItem('argus.assets.v1') || '[]') as AssetItem[]; }
+        catch { localAssets = []; }
+        if (!Array.isArray(localAssets)) localAssets = [];
+        const m = mergeAssets(localAssets, remoteAssets, loadTombstones(), remoteTombs);
+        saveTombstones(m.tombstones);
+        mergedTick = true;
+        if (m.localChanged) {
+          suppressEditsUntil = Date.now() + 3_000;
+          try { localStorage.setItem('argus.assets.v1', JSON.stringify(m.items)); } catch { /* ignore */ }
+          window.dispatchEvent(new CustomEvent('argus:data-synced'));
+          outcome = 'applied';
+        }
+        if (m.remoteChanged) needPush = true;  // we hold items/deletions the cloud lacks
       }
-      // Both sides changed and local is newer → fall through to push (LWW).
+      // 2) other keys: v1 whole-key LWW + safety gate (assets excluded — merged above).
+      if (payload.exportedAt && payload.exportedAt !== st.appliedExportedAt) {
+        const remoteTs = Date.parse(payload.exportedAt) || 0;
+        let hasLocalData = false;
+        try { hasLocalData = !!localStorage.getItem('argus.assets.v1'); } catch { /* ignore */ }
+        const everSynced = st.appliedExportedAt !== '' || localEdit > 0;
+        if (remoteTs > localEdit && (everSynced || !hasLocalData)) {
+          let applied = 0;
+          for (const k of BACKUP_KEYS) {
+            if (k === 'argus.assets.v1' || k === 'argus.assetTombstones.v1') continue;
+            if (payload.data[k] != null) {
+              try { localStorage.setItem(k, JSON.stringify(payload.data[k])); applied++; }
+              catch { /* ignore */ }
+            }
+          }
+          setSyncState({ appliedExportedAt: payload.exportedAt });
+          if (applied > 0) {
+            suppressEditsUntil = Date.now() + 3_000;
+            window.dispatchEvent(new CustomEvent('argus:data-synced'));
+            outcome = 'applied';
+          }
+        }
+      }
     }
   }
-  if (localEdit > st.pushedEditAt) {
+  if (needPush || localEdit > st.pushedEditAt) {
     try {
       await cloudBackupNow(pass);
-      setSyncState({ pushedEditAt: localEdit });
-      return 'pushed';
+      setSyncState({ pushedEditAt: lastLocalEditAt() });
+      if (outcome === 'noop') outcome = 'pushed';
     } catch { /* next tick */ }
   }
-  return 'noop';
+  recordSyncTick(outcome, mergedTick);
+  return outcome;
 }
 
 /** App-start hook: initial sync (with one GitHub-raw fallback), then a gentle

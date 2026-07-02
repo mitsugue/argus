@@ -3,7 +3,9 @@
 // v10.3.3 adds a weekly AUTO-export on app open so a dying SSD or a new Mac
 // never costs more than the last 7 days of holdings edits.
 
-export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.trades.v1', 'argus.research.v1'] as const;
+// v11.3.3: assetTombstones ride along so deletions propagate across devices
+// (the assets key itself is merged per-item by the sync loop, not replaced).
+export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.trades.v1', 'argus.research.v1', 'argus.assetTombstones.v1'] as const;
 const LAST_AUTO_KEY = 'argus.lastAutoBackup.v1';
 const AUTO_INTERVAL_MS = 7 * 86_400_000; // weekly
 
@@ -63,11 +65,31 @@ export function maybeAutoBackup(): boolean {
 export function restoreBackup(parsed: BackupFile): number {
   if (parsed.app !== 'argus' || !parsed.data) return 0;
   let n = 0;
+  const now = Date.now();
   for (const k of BACKUP_KEYS) {
-    if (parsed.data[k] != null) {
-      localStorage.setItem(k, JSON.stringify(parsed.data[k]));
-      n++;
+    if (parsed.data[k] == null) continue;
+    let value = parsed.data[k];
+    // Explicit restore = newest user intent (v11.3.3). Restored watchlist items
+    // get updatedAt=now and their tombstones are cleared — otherwise the sync
+    // merge would silently revert the restore within one poll tick (an old
+    // backup item always loses to a newer cloud copy / deletion tombstone).
+    if (k === 'argus.assets.v1' && Array.isArray(value)) {
+      value = (value as { id?: string }[]).map((a) => ({ ...a, updatedAt: now }));
+      try {
+        const tombRaw = localStorage.getItem('argus.assetTombstones.v1');
+        const tombs = tombRaw ? (JSON.parse(tombRaw) as Record<string, number>) : {};
+        for (const a of value as { id?: string }[]) {
+          if (a.id) delete tombs[a.id];
+        }
+        localStorage.setItem('argus.assetTombstones.v1', JSON.stringify(tombs));
+      } catch { /* ignore */ }
     }
+    localStorage.setItem(k, JSON.stringify(value));
+    n++;
   }
+  // stamp the edit time so the restored state wins the next sync cycle and is
+  // pushed as the new cloud copy (direct key write — vault.ts owns the constant
+  // but importing it here would be circular).
+  try { localStorage.setItem('argus.lastLocalEditAt.v1', String(now)); } catch { /* ignore */ }
   return n;
 }

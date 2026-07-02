@@ -30,7 +30,17 @@ export interface CauseStack {
     time?: string | null; titleJa: string; source?: string; cls: NewsClass; sentiment?: string | null;
     assoc?: { via: string; term?: string; relationJa?: string; corroboration?: string };  // association link (v10.183)
   }[];
-  explanationJa?: string;   // live web-researched "why did it move" (v10.183, on demand)
+  explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
+  explanationStatus?: 'cached' | 'not_generated';
+  explanationNoteJa?: string;
+  /** Mover Cause ladder (v11.3.3): 原因確認/有力材料/候補/有力候補なし. */
+  moverCause?: {
+    causeStatus?: string; causeStatusJa?: string;
+    bestLeadJa?: string; whyNotConfirmedJa?: string; checkedJa?: string;
+    nextChecksJa?: string[]; impactCommentJa?: string; confidence?: number;
+    topCandidates?: { titleJa?: string; category?: string; timingRelation?: string;
+                      corroborationLevel?: string; confidence?: number; source?: string }[];
+  };
 }
 
 export type NewsClass = 'CONFIRMED' | 'LIKELY_RELATED' | 'BACKGROUND' | 'UNCONFIRMED';
