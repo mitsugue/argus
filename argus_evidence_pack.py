@@ -96,7 +96,8 @@ def build_pack(*, symbol: str, as_of: str, market: Optional[str] = None,
                visibility_guard: Optional[Dict[str, Any]] = None,
                calibration_status: Optional[Dict[str, Any]] = None,
                decision_value_status: Optional[Dict[str, Any]] = None,
-               past_failure_patterns: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+               past_failure_patterns: Optional[List[Dict[str, Any]]] = None,
+               official_event_refs: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Fold already-collected inputs into the canonical Evidence Pack. Pure +
     deterministic: same inputs → byte-identical output. Lists are sorted/capped."""
     sym = str(symbol or "").strip().upper()
@@ -181,6 +182,10 @@ def build_pack(*, symbol: str, as_of: str, market: Optional[str] = None,
             "sampleStage": (decision_value_status or {}).get("sampleStage"),
         } if decision_value_status else {},
         "pastFailurePatterns": list(past_failure_patterns or [])[:5],
+        # v11.3: lifecycle-tracked official disclosures (compact refs — the full records
+        # live at /api/argus/official-events). Sorted for determinism.
+        "officialEventRefs": sorted((official_event_refs or []),
+                                    key=lambda r: str(r.get("officialEventId") or ""))[:5],
         "allowedUse": {
             "canGroundJudgment": bool(groundable),
             "canConfirmCause": bool(confirmed_cause),   # CAOS candidates can NEVER set this

@@ -98,7 +98,8 @@ def build_shadow_decision(*, policy_id, symbol, market, decision_price,
                           decision_ts, entry_ts=None, eligible=True,
                           rejection_reason=None, posture_before=None, posture_after=None,
                           confidence_before=None, confidence_after=None,
-                          blocked_actions=None, visibility_downgraded=False):
+                          blocked_actions=None, visibility_downgraded=False,
+                          official_event=None):
     """Construct an IMMUTABLE shadow-decision skeleton at decision time (outcome
     filled later). Pins the policy version + identity; never invents an entry from
     the best price. Now also captures the VISIBILITY/posture context at decision time
@@ -120,6 +121,13 @@ def build_shadow_decision(*, policy_id, symbol, market, decision_price,
         "confidenceBefore": confidence_before, "confidenceAfter": confidence_after,
         "blockedActions": list(blocked_actions or []),
         "visibilityDowngraded": bool(visibility_downgraded),
+        # Official-event context at decision time (v11.3) — what the desk KNEW about the
+        # disclosure lifecycle when it decided. None when no official event was linked.
+        "officialEventId": (official_event or {}).get("officialEventId"),
+        "lifecycleStageAtDecision": (official_event or {}).get("lifecycleStage"),
+        "causeStatusAtDecision": (official_event or {}).get("causeStatus"),
+        "marketReactionKnownAtDecision": bool((official_event or {}).get("marketConfirmed")),
+        "missingConfirmationsAtDecision": list((official_event or {}).get("missingConfirmations") or [])[:6],
         "fillStatus": "pending", "outcomeStatus": "pending",
         "realizedOutcomeStatus": "pending",
         "kind": "shadow_candidate" if eligible else "shadow_no_trade",

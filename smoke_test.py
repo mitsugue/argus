@@ -283,6 +283,43 @@ def v_action_labels_have_evidence_refs():
     return True, "all live labels carry decisionRefs"
 
 
+def v_official_events():
+    # v11.3: lifecycle-tracked official disclosures. Shape-only (empty store OK —
+    # it fills as the official TDnet feed is read).
+    c, d = _get("/api/argus/official-events?limit=5")
+    if d.get("schemaVersion") != "official-event-lifecycle-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if not isinstance(d.get("items"), list):
+        return False, "items not a list"
+    for it in (d.get("items") or [])[:3]:
+        if it.get("causeStatus") not in ("fact_only", "probable_catalyst", "confirmed_cause",
+                                         "not_cause", "unknown"):
+            return False, f"bad causeStatus {it.get('causeStatus')}"
+        if it.get("causeStatus") == "confirmed_cause":
+            mr = it.get("marketReaction") or {}
+            if not any((mr.get(k) or {}).get("marketConfirmed") for k in mr):
+                return False, "confirmed_cause without market confirmation!"
+    return True, f"count={d.get('count')}"
+
+
+def v_official_events_status():
+    c, d = _get("/api/argus/official-events/status")
+    ok = (d.get("schemaVersion") == "official-event-lifecycle-v1"
+          and isinstance(d.get("byStage"), dict))
+    return ok, f"total={d.get('total')} material={d.get('material')} lastIngest={d.get('lastIngestAt')}"
+
+
+def v_evidence_pack_official_refs():
+    c, d = _get("/api/argus/evidence-pack?symbol=8058&market=JP")
+    refs = d.get("officialEventRefs")
+    if not isinstance(refs, list):
+        return False, "officialEventRefs missing/not a list"
+    for r in refs[:3]:
+        if not str(r.get("officialEventId", "")).startswith("oe-"):
+            return False, f"bad ref id {r.get('officialEventId')}"
+    return True, f"refs={len(refs)}"
+
+
 def v_decision_spine_status():
     # v11.2.1: the spine's own status — cached-only evidence pack + wiring booleans.
     c, d = _get("/api/argus/decision-spine/status")
@@ -535,6 +572,10 @@ CHECKS = [
     # ── V11.2.1 quality gate ──
     ("v11.2.1 decision-spine/status", v_decision_spine_status),
     ("v11.2.1 gemini challenge shape", v_ai_judgment_gemini_challenge_shape),
+    # ── V11.3 official event lifecycle ──
+    ("v11.3 official-events", v_official_events),
+    ("v11.3 official-events/status", v_official_events_status),
+    ("v11.3 evidence-pack official refs", v_evidence_pack_official_refs),
 ]
 
 

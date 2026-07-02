@@ -54,6 +54,18 @@ export const DecisionSpineCard: React.FC = () => (
           {LIMITS.map((l) => <li key={l}>{l}</li>)}
         </ul>
       </div>
+
+      {/* 公式イベントはどう追跡されるのか (v11.3 official event lifecycle) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>公式イベントはどう追跡されるのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          TDnet/EDINET/SECなどの<b>公式開示は、一度表示して終わりではありません</b>。各開示はライフサイクルとして
+          追跡されます: 開示 → EventCard → Evidence Pack → AI判断 → <b>翌日/3日/5日後の市場反応</b> →
+          Decision Value採点。<b>公式開示は事実確認</b>ですが、<b>価格原因の確定には市場反応と時刻整合が必要</b>で、
+          反応が観測されるまでは「引き金候補」に留まります（値動きより後の開示は引き金にしません）。
+          追跡状況は <code style={{ fontSize: 11 }}>/api/argus/official-events</code> で監査できます。
+        </p>
+      </div>
     </div>
   </section>
 );

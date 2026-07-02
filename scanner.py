@@ -31,6 +31,7 @@ import argus_downside  # Downside Incident Response + cause attribution (pure, d
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
 import argus_jquants_tdnet  # official J-Quants TDnet Add-on classify/map/status (pure, v11.1)
 import argus_evidence_pack  # canonical Evidence Pack — the decision spine's input (pure, v11.2)
+import argus_official_event_lifecycle  # official disclosures as lifecycle-tracked events (pure, v11.3)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
@@ -1586,13 +1587,23 @@ def _dv_shadow_record():
         conf_a = (round(min(conf_b, _cap), 3) if isinstance(conf_b, (int, float)) and _cap is not None else conf_b)
         # aggressive long entry that the guard situationally blocks = a downgraded decision
         downgraded = ("ENTER" in _blocked) and (pid == "daily_next_session_long_v1")
+        # v11.3: what the desk KNEW about this symbol's official-disclosure lifecycle at
+        # decision time (latest MATERIAL event; in-memory store, no fetch).
+        try:
+            _oe = _official_events_by_symbol(p.get("symbol"), material_only=True)
+            _oe_ctx = argus_official_event_lifecycle.evidence_ref(_oe[0]) if _oe else None
+            if _oe_ctx:
+                _oe_ctx["missingConfirmations"] = (_oe[0].get("missingConfirmations") or [])
+        except Exception:
+            _oe_ctx = None
         rec = argus_decision_value.build_shadow_decision(
             policy_id=pid, symbol=p.get("symbol"), market=p.get("market"),
             decision_price=price, decision_ts=as_of,
             eligible=(pid != "no_trade_control_v1"),
             posture_before=action, posture_after=action,
             confidence_before=conf_b, confidence_after=conf_a,
-            blocked_actions=_blocked, visibility_downgraded=downgraded)
+            blocked_actions=_blocked, visibility_downgraded=downgraded,
+            official_event=_oe_ctx)
         rec["actionAtDecision"] = action
         cands.append(rec)
     if not cands:
@@ -4085,11 +4096,19 @@ def _build_evidence_pack(symbol, market=None):
         dvd = {"phase": _dv.get("phase"), "sampleStage": _dv.get("sampleStage")}
     except Exception:
         dvd = None
+    # v11.3: lifecycle-tracked official events for this symbol (in-memory store =
+    # cached-only compliant).
+    try:
+        oe_refs = [argus_official_event_lifecycle.evidence_ref(r)
+                   for r in _official_events_by_symbol(sym)[:5]]
+    except Exception:
+        oe_refs = []
     pack = argus_evidence_pack.build_pack(
         symbol=sym, as_of=as_of, market=mkt, quote=quote, event_cards=cards,
         official_disclosures=discs, filings=[], caos_links=caos, institutional_views=views,
         source_coverage=cov, market_depth_proof=dp, visibility_guard=guard,
-        calibration_status=cal, decision_value_status=dvd, past_failure_patterns=[])
+        calibration_status=cal, decision_value_status=dvd, past_failure_patterns=[],
+        official_event_refs=oe_refs)
     if cache_missing:
         pack["missingConfirmations"] = sorted(set(pack["missingConfirmations"]) | cache_missing)
     # build stats for /decision-spine/status (public-watchlist-scope symbol only)
@@ -9907,11 +9926,216 @@ def get_tdnet_recent(limit=150):
     provider/official, and the official status (why it didn't win) is surfaced."""
     official, usable = _jquants_tdnet_fetch(limit)
     if usable and official.get("items"):
+        _official_lifecycle_ingest(official)          # v11.3: lifecycle-track official items
         return official
     fb = _get_tdnet_yanoshin(limit)
     fb["officialStatus"] = official.get("status")     # e.g. entitlement_missing / endpoint_not_found
     fb["officialHttpStatus"] = official.get("httpStatus")
     return fb
+
+
+# ── Official Event Lifecycle store (v11.3) ───────────────────────────────────
+# Official disclosures become lifecycle-tracked research events (discovered→…→scored).
+# In-memory + /tmp persisted (public-safe metadata only, no PDFs/full text). Ingest is
+# pure in-memory processing of an ALREADY-FETCHED snapshot — no extra provider calls.
+_OFFICIAL_EVENTS = {}                 # officialEventId -> lifecycle record
+_OFFICIAL_EVENTS_MAX = 600
+_OFFICIAL_EVENTS_FILE = "/tmp/argus_official_events.json"
+_OFFICIAL_EVENTS_STATE = {"lastIngestAt": None, "lastTrackAt": None, "restored": False}
+
+
+def _official_events_persist():
+    try:
+        with open(_OFFICIAL_EVENTS_FILE, "w") as f:
+            json.dump({"items": _OFFICIAL_EVENTS, "state": {k: _OFFICIAL_EVENTS_STATE[k]
+                                                            for k in ("lastIngestAt", "lastTrackAt")}},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _official_events_restore_once():
+    if _OFFICIAL_EVENTS_STATE["restored"]:
+        return
+    _OFFICIAL_EVENTS_STATE["restored"] = True
+    try:
+        with open(_OFFICIAL_EVENTS_FILE, "r") as f:
+            blob = json.load(f)
+        if isinstance(blob.get("items"), dict):
+            _OFFICIAL_EVENTS.update(blob["items"])
+        _OFFICIAL_EVENTS_STATE.update(blob.get("state") or {})
+    except Exception:
+        pass
+
+
+def _official_lifecycle_ingest(td_snapshot):
+    """Upsert OFFICIAL disclosures into the lifecycle store (dedup by id; append-only —
+    existing records keep their reaction/lifecycle progress)."""
+    try:
+        _official_events_restore_once()
+        now_iso = _ai_now_iso()
+        added = 0
+        for it in (td_snapshot.get("items") or []):
+            if not it.get("official"):
+                continue
+            rec = argus_official_event_lifecycle.from_disclosure(
+                it, source="tdnet", provider="jquants-tdnet", market="JP",
+                first_seen_at=now_iso,
+                evidence_pack_id=argus_evidence_pack.pack_id(
+                    it.get("code") or "", now_iso))
+            oid = rec["officialEventId"]
+            if oid not in _OFFICIAL_EVENTS:
+                _OFFICIAL_EVENTS[oid] = rec
+                added += 1
+        if len(_OFFICIAL_EVENTS) > _OFFICIAL_EVENTS_MAX:
+            # keep the newest by firstSeenAt
+            keep = sorted(_OFFICIAL_EVENTS.values(),
+                          key=lambda r: str(r.get("firstSeenAt") or ""), reverse=True)[:_OFFICIAL_EVENTS_MAX]
+            _OFFICIAL_EVENTS.clear()
+            _OFFICIAL_EVENTS.update({r["officialEventId"]: r for r in keep})
+        if added:
+            _OFFICIAL_EVENTS_STATE["lastIngestAt"] = now_iso
+            _official_events_persist()
+    except Exception:
+        pass                                        # ingest is best-effort, never breaks the feed
+
+
+def _official_events_by_symbol(sym, material_only=False):
+    _official_events_restore_once()
+    sym = str(sym or "").upper()
+    out = [r for r in _OFFICIAL_EVENTS.values()
+           if r.get("symbol") == sym and (r.get("material") or not material_only)]
+    return sorted(out, key=lambda r: str(r.get("disclosedAt") or ""), reverse=True)
+
+
+def _official_events_track():
+    """Scheduled/admin refresh: fill pending market-reaction windows from CACHED/cheap
+    daily bars (_jq_price_history — 6h cached). No L2/tape required; missing stays
+    missing. Never called from a public GET."""
+    _official_events_restore_once()
+    now_iso = _ai_now_iso()
+    updated = 0
+    for oid, rec in list(_OFFICIAL_EVENTS.items()):
+        try:
+            d0 = str(rec.get("disclosedAt") or "")[:10]
+            if not d0 or not rec.get("symbol"):
+                continue
+            mr = rec.get("marketReaction") or {}
+            pending = [w for w, k in (("same_day", "sameDay"), ("next_session", "nextSession"),
+                                      ("day3", "day3"), ("day5", "day5")) if not mr.get(k)]
+            if not pending:
+                continue
+            hist = _jq_price_history(rec["symbol"])
+            if not hist:
+                continue
+            dates, closes, vols = hist.get("dates") or [], hist.get("closes") or [], hist.get("volumes") or []
+            if d0 not in dates:
+                continue
+            i0 = dates.index(d0)                       # newest-first
+            def _pct(i_new, i_old):
+                try:
+                    return round((closes[i_new] - closes[i_old]) / closes[i_old] * 100.0, 2)
+                except Exception:
+                    return None
+            def _volr():
+                try:
+                    base = vols[i0 + 1: i0 + 21]
+                    avg = (sum(base) / len(base)) if base else None
+                    return round(vols[i0] / avg, 2) if avg else None
+                except Exception:
+                    return None
+            offsets = {"same_day": (i0, i0 + 1), "next_session": (i0 - 1, i0),
+                       "day3": (i0 - 3, i0), "day5": (i0 - 5, i0)}
+            new_rec = rec
+            for w in pending:
+                i_new, i_old = offsets[w]
+                if i_new < 0 or i_old >= len(closes):
+                    continue                            # window not elapsed / out of history
+                reaction = argus_official_event_lifecycle.build_market_reaction(
+                    window=w, observed_at=now_iso, price_move_pct=_pct(i_new, i_old),
+                    volume_ratio=(_volr() if w == "same_day" else None))
+                new_rec = argus_official_event_lifecycle.apply_market_reaction(new_rec, reaction)
+            if new_rec is not rec:
+                _OFFICIAL_EVENTS[oid] = new_rec
+                updated += 1
+        except Exception:
+            continue
+    if updated:
+        _OFFICIAL_EVENTS_STATE["lastTrackAt"] = now_iso
+        _official_events_persist()
+    return {"updated": updated, "total": len(_OFFICIAL_EVENTS), "asOf": now_iso}
+
+
+@app.route("/api/argus/official-events")
+def api_argus_official_events():
+    """Lifecycle-tracked official disclosures (v11.3). Store-only read — never fetches."""
+    _official_events_restore_once()
+    rows = list(_OFFICIAL_EVENTS.values())
+    sym = (request.args.get("symbol") or "").strip().upper()
+    src = (request.args.get("source") or "").strip().lower()
+    cat = (request.args.get("category") or "").strip().lower()
+    mat = (request.args.get("material") or "").strip().lower()
+    if sym:
+        rows = [r for r in rows if r.get("symbol") == sym]
+    if src:
+        rows = [r for r in rows if r.get("source") == src]
+    if cat:
+        rows = [r for r in rows if r.get("category") == cat]
+    if mat in ("1", "true", "yes"):
+        rows = [r for r in rows if r.get("material")]
+    rows.sort(key=lambda r: str(r.get("disclosedAt") or ""), reverse=True)
+    try:
+        limit = max(1, min(100, int(request.args.get("limit", "50"))))
+    except Exception:
+        limit = 50
+    return jsonify({"asOf": _ai_now_iso(), "schemaVersion": argus_official_event_lifecycle.SCHEMA_VERSION,
+                    "count": len(rows), "items": rows[:limit]})
+
+
+@app.route("/api/argus/official-events/status")
+def api_argus_official_events_status():
+    _official_events_restore_once()
+    rows = list(_OFFICIAL_EVENTS.values())
+    by_stage, by_cat = {}, {}
+    for r in rows:
+        by_stage[r.get("lifecycleStage")] = by_stage.get(r.get("lifecycleStage"), 0) + 1
+        by_cat[r.get("category")] = by_cat.get(r.get("category"), 0) + 1
+    return jsonify({"asOf": _ai_now_iso(), "schemaVersion": argus_official_event_lifecycle.SCHEMA_VERSION,
+                    "total": len(rows), "material": sum(1 for r in rows if r.get("material")),
+                    "byStage": by_stage, "byCategory": by_cat,
+                    "lastIngestAt": _OFFICIAL_EVENTS_STATE.get("lastIngestAt"),
+                    "lastTrackAt": _OFFICIAL_EVENTS_STATE.get("lastTrackAt"),
+                    "noteJa": "公式開示のライフサイクル追跡。開示=事実確認であり、価格原因の確定には市場反応と時刻整合が必要。"})
+
+
+@app.route("/api/argus/official-events/<oid>")
+def api_argus_official_event_one(oid):
+    _official_events_restore_once()
+    r = _OFFICIAL_EVENTS.get(str(oid))
+    if not r:
+        return jsonify({"error": "not_found", "officialEventId": oid}), 404
+    return jsonify(r)
+
+
+@app.route("/api/argus/official-events/<oid>/lifecycle")
+def api_argus_official_event_lifecycle_view(oid):
+    _official_events_restore_once()
+    r = _OFFICIAL_EVENTS.get(str(oid))
+    if not r:
+        return jsonify({"error": "not_found", "officialEventId": oid}), 404
+    return jsonify({"officialEventId": oid, "lifecycleStage": r.get("lifecycleStage"),
+                    "causeStatus": r.get("causeStatus"), "marketReaction": r.get("marketReaction"),
+                    "missingConfirmations": r.get("missingConfirmations"),
+                    "evidenceRef": argus_official_event_lifecycle.evidence_ref(r)})
+
+
+@app.route("/api/argus/official-events/track", methods=["POST"])
+def api_argus_official_events_track():
+    """ADMIN/cron: fill pending market-reaction windows from cached daily bars."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_official_events_track())
 
 
 @app.route("/api/argus/tdnet-recent")

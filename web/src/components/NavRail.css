@@ -127,9 +127,12 @@
 }
 
 @media (max-width: 720px) {
+  /* v11.3 (owner request): the dots-only rail was wider than it needs to be on
+     phones — shrink 64→44px and give the space to the main page. Tap targets stay
+     full-rail-width; the footer text drops a point so v-numbers still fit. */
   .nav {
-    width: 64px;
-    padding: 10px 6px;
+    width: 44px;
+    padding: 10px 3px;
   }
   .nav__group-label,
   .nav__today-label {
@@ -156,7 +159,7 @@
     align-items: center;
     gap: 6px;
     padding: 10px 0 max(4px, env(safe-area-inset-bottom));
-    font-size: 9px;
+    font-size: 8px;
   }
   .nav__footer-dot {
     display: none;

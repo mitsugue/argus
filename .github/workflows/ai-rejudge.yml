@@ -46,6 +46,11 @@ jobs:
           EVT=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/event-analysis/generate" || echo '{"error":"unreachable"}')
           echo "caos-events: ${EVT:0:200}"
+          # Official-event lifecycle (v11.3): fill pending market-reaction windows from
+          # cached daily bars. No LLM, cheap; most calls update 0 records.
+          OFE=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/official-events/track" || echo '{"error":"unreachable"}')
+          echo "official-events-track: ${OFE:0:160}"
           # Entity profiles (association engine): generates only missing/stale watchlist
           # profiles (seeds + fresh ones skipped), so this is near-free until a NEW stock
           # is added — then it auto-profiles it for relationship-aware news linking.
