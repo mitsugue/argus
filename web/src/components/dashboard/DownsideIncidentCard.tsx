@@ -1,8 +1,31 @@
 import React from 'react';
 import { jpIntradayJa } from '../../lib/regimeLabels';
-import { useDownsideIncidents, type DownsideIncident } from '../../hooks/useDownsideIncidents';
+import { useDownsideIncidents, type DownsideIncident, type MoverCauseCompact } from '../../hooks/useDownsideIncidents';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './DownsideIncidentCard.css';
+
+// v11.3.4 — freshness + market-confirmation one-liners shared by the cause blocks.
+export function freshnessLineJa(mc?: MoverCauseCompact): string | null {
+  const fr = mc?.freshness;
+  if (!fr?.lastEvidenceRefreshAt) return null;
+  const ageMin = Math.round((fr.evidenceAgeSec ?? 0) / 60);
+  const next = fr.nextAutoCheckAt
+    ? new Date(fr.nextAutoCheckAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    : '—';
+  return `最終確認 ${ageMin}分前 · 次回自動確認 ${next}`;
+}
+export function marketConfLineJa(mc?: MoverCauseCompact): string | null {
+  const m = mc?.marketConfirmation;
+  if (!m?.status || m.status === 'missing') return null;
+  const parts: string[] = [];
+  if (typeof m.volumeRatio === 'number') parts.push(`出来高比 x${m.volumeRatio.toFixed(1)}`);
+  if (typeof m.relativeToIndexPct === 'number') parts.push(`指数相対 ${m.relativeToIndexPct >= 0 ? '+' : ''}${m.relativeToIndexPct.toFixed(1)}%`);
+  if (typeof m.peerBasketMovePct === 'number') parts.push(`同業 ${m.peerBasketMovePct >= 0 ? '+' : ''}${m.peerBasketMovePct.toFixed(1)}%`);
+  if (typeof m.vwapDistancePct === 'number') parts.push(`VWAP比 ${m.vwapDistancePct >= 0 ? '+' : ''}${m.vwapDistancePct.toFixed(1)}%`);
+  if (parts.length === 0) return null;
+  const label = m.status === 'confirmed' ? '市場確認' : m.status === 'partial' ? '市場確認(一部)' : '市場確認対象外';
+  return `${label}: ${parts.join(' · ')}${m.stale ? '(45分以上前の計算・確定には使わない)' : ''}`;
+}
 
 // Downside Incident Response card (v10.98). Renders only when there is an active
 // incident or a JP intraday overlay that differs from the global regime — so on a
@@ -106,8 +129,24 @@ export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
               {(inc.moverCause.nextChecksJa ?? []).length > 0 && (
                 <p className="dic-line" style={{ margin: 0 }}><b>次に確認:</b> {(inc.moverCause.nextChecksJa ?? []).join(' / ')}</p>
               )}
-              {inc.moverCause.checkedJa && (
-                <p className="dic-line" style={{ margin: 0, color: 'var(--text-faint)', fontSize: 11 }}>確認済み: {inc.moverCause.checkedJa}</p>
+              {inc.moverCause.freshness?.isStale && (
+                <p className="dic-line" style={{ margin: 0, color: 'var(--amber, #fbbf24)' }}>
+                  ⚠ 原因候補の鮮度低下 — {inc.moverCause.freshness.staleReasonJa}
+                </p>
+              )}
+              {marketConfLineJa(inc.moverCause) && (
+                <p className="dic-line" style={{ margin: 0 }}>{marketConfLineJa(inc.moverCause)}</p>
+              )}
+              {inc.moverCause.explanationJa
+                ? <p className="dic-line" style={{ margin: 0 }}><b>AI解説:</b> {inc.moverCause.explanationJa}</p>
+                : inc.moverCause.explanationStatus === 'pending' && (
+                    <p className="dic-line" style={{ margin: 0, color: 'var(--text-faint)', fontSize: 11 }}>AI解説: 生成待ち(定期実行の予算内で自動生成)</p>
+                  )}
+              {(freshnessLineJa(inc.moverCause) || inc.moverCause.checkedJa) && (
+                <p className="dic-line" style={{ margin: 0, color: 'var(--text-faint)', fontSize: 11 }}>
+                  {[freshnessLineJa(inc.moverCause), inc.moverCause.checkedJa && `確認済み: ${inc.moverCause.checkedJa}`]
+                    .filter(Boolean).join(' · ')}
+                </p>
               )}
             </div>
           )}

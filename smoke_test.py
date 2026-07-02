@@ -507,6 +507,72 @@ def v_downside_carries_mover_cause():
     return True, f"incidents={len(incs)} all carry causeStatus"
 
 
+def v_mover_status_quality_sla():
+    # v11.3.4: stricter diagnostics — quality + SLA blocks must exist with real types.
+    c, d = _get("/api/argus/mover-causes/status")
+    q, s = d.get("quality"), d.get("sla")
+    if not isinstance(q, dict) or not isinstance(s, dict):
+        return False, "quality/sla missing"
+    for k in ("staleCount", "missingMarketConfirmationCount", "aiExplainPendingCount",
+              "noFreshEvidenceCount"):
+        if not isinstance(q.get(k), int):
+            return False, f"quality.{k} missing"
+    if not isinstance(s.get("breaches"), list) or s.get("urgentMaxAgeMin") != 15:
+        return False, "sla shape wrong"
+    return True, (f"stale={q['staleCount']} mcMissing={q['missingMarketConfirmationCount']} "
+                  f"aiPending={q['aiExplainPendingCount']} breaches={len(s['breaches'])}")
+
+
+def v_mover_refresh_queue():
+    c, d = _get("/api/argus/mover-causes/refresh-queue")
+    if d.get("schemaVersion") != "mover-cause-refresh-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if not isinstance(d.get("queue"), list) or not isinstance(d.get("budget"), dict):
+        return False, "queue/budget missing"
+    for it in d["queue"]:
+        for k in ("symbol", "priority", "refreshNeeded", "aiExplainNeeded", "reasonJa"):
+            if k not in it:
+                return False, f"queue item missing {k}"
+        if it["priority"] not in ("urgent", "high", "normal", "low"):
+            return False, f"bad priority {it['priority']}"
+    return True, f"queued={len(d['queue'])} aiBudget={d['budget'].get('maxAiExplainPerRun')}"
+
+
+def _v_market_confirmation(sym, mkt):
+    c, d = _get(f"/api/argus/market-confirmation?symbol={sym}&market={mkt}")
+    if d.get("schemaVersion") != "market-confirmation-v1.5":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("status") not in ("confirmed", "partial", "missing", "not_applicable"):
+        return False, f"status={d.get('status')}"
+    # partial/missing due to missing bars is fine — absent FIELDS are not.
+    for k in ("priceMovePct", "volumeRatio", "relativeToIndexPct", "peerBasketMovePct",
+              "vwapDistancePct", "limitationsJa", "window"):
+        if k not in d:
+            return False, f"missing field {k}"
+    return True, f"{sym}: status={d.get('status')} rel={d.get('relativeToIndexPct')}"
+
+
+def v_market_confirmation_jp():
+    return _v_market_confirmation("9984", "JP")
+
+
+def v_market_confirmation_us():
+    return _v_market_confirmation("META", "US")
+
+
+def v_mover_items_freshness():
+    c, d = _get("/api/argus/mover-causes?limit=20")
+    for it in (d.get("items") or []):
+        fr = it.get("freshness")
+        if not isinstance(fr, dict) or "isStale" not in fr:
+            return False, f"{it.get('symbol')} missing freshness"
+        if (it.get("refreshPolicy") or {}).get("priority") == "urgent" and not fr.get("nextAutoCheckAt"):
+            return False, f"{it.get('symbol')} urgent without nextAutoCheckAt"
+        if it.get("explanationStatus") not in ("cached", "pending", "not_generated"):
+            return False, f"bad explanationStatus {it.get('explanationStatus')}"
+    return True, f"count={d.get('count')} all carry freshness"
+
+
 def v_public_explain_cached_only():
     # explain=1 must return cached text or not_generated — never a live AI run.
     t0 = time.time()
@@ -792,6 +858,12 @@ CHECKS = [
     ("v11.3.3 upside direction", v_mover_cause_upside),
     ("v11.3.3 downside carries cause", v_downside_carries_mover_cause),
     ("v11.3.3 explain cached-only", v_public_explain_cached_only),
+    # ── V11.3.4 freshness / queue / market confirmation ──
+    ("v11.3.4 status quality+sla", v_mover_status_quality_sla),
+    ("v11.3.4 refresh-queue", v_mover_refresh_queue),
+    ("v11.3.4 market-confirmation JP", v_market_confirmation_jp),
+    ("v11.3.4 market-confirmation US", v_market_confirmation_us),
+    ("v11.3.4 mover freshness", v_mover_items_freshness),
 ]
 
 

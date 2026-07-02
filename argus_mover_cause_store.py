@@ -17,7 +17,9 @@ SCHEMA_VERSION = "mover-cause-ledger-v1"
 
 FORBIDDEN_KEYS = {"fullText", "pdf", "body", "holdings", "pnl", "netR", "costBasis",
                   "quantity", "avgCost", "apiKey", "api_key", "headers", "token",
-                  "requestBody", "prompt", "prompts", "messages", "searchTrace"}
+                  "requestBody", "prompt", "prompts", "messages", "searchTrace",
+                  "rawProviderBody", "rawBody", "searchTraces",
+                  "ownerRelevant", "ownerState"}   # owner data never leaves private paths
 
 
 def sanitize(obj: Any) -> Any:
@@ -57,8 +59,23 @@ def merge_record(existing: Optional[Dict[str, Any]], incoming: Optional[Dict[str
             base[k] = other.get(k)
     # admin-generated explanation survives refreshes that lack one
     if not base.get("explanationJa") and other.get("explanationJa"):
-        base["explanationJa"] = other.get("explanationJa")
-        base["explanationGeneratedAt"] = other.get("explanationGeneratedAt")
+        for k in ("explanationJa", "explanationGeneratedAt", "explanationStatus",
+                  "unverifiedAssumptions", "whatWouldConfirmJa", "whatWouldRefuteJa"):
+            if other.get(k) is not None:
+                base[k] = other.get(k)
+    # freshness bookkeeping (v11.3.4): the ORIGINAL createdAt survives; the AI
+    # explain timestamps/cooldown survive a refresh that didn't run the AI
+    bf, of = base.get("freshness") or {}, other.get("freshness") or {}
+    if of.get("createdAt") and (not bf.get("createdAt") or str(of["createdAt"]) < str(bf.get("createdAt"))):
+        bf["createdAt"] = of["createdAt"]
+    if not bf.get("lastAiExplainAt") and of.get("lastAiExplainAt"):
+        bf["lastAiExplainAt"] = of["lastAiExplainAt"]
+    if bf:
+        base["freshness"] = bf
+    brp, orp = base.get("refreshPolicy") or {}, other.get("refreshPolicy") or {}
+    if not brp.get("aiExplainCooldownUntil") and orp.get("aiExplainCooldownUntil"):
+        brp["aiExplainCooldownUntil"] = orp["aiExplainCooldownUntil"]
+        base["refreshPolicy"] = brp
     return sanitize(base)
 
 

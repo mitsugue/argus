@@ -33,11 +33,18 @@ export interface CauseStack {
   explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
   explanationStatus?: 'cached' | 'not_generated';
   explanationNoteJa?: string;
-  /** Mover Cause ladder (v11.3.3): 原因確認/有力材料/候補/有力候補なし. */
+  /** Mover Cause ladder (v11.3.3; freshness/marketConfirmation added v11.3.4). */
   moverCause?: {
     causeStatus?: string; causeStatusJa?: string;
     bestLeadJa?: string; whyNotConfirmedJa?: string; checkedJa?: string;
     nextChecksJa?: string[]; impactCommentJa?: string; confidence?: number;
+    explanationJa?: string | null;
+    explanationStatus?: 'cached' | 'pending' | 'not_generated';
+    freshness?: { lastEvidenceRefreshAt?: string; evidenceAgeSec?: number; isStale?: boolean;
+                  staleReasonJa?: string; nextAutoCheckAt?: string | null };
+    marketConfirmation?: { status?: string; volumeRatio?: number | null;
+                           relativeToIndexPct?: number | null; peerBasketMovePct?: number | null;
+                           vwapDistancePct?: number | null; window?: string };
     topCandidates?: { titleJa?: string; category?: string; timingRelation?: string;
                       corroborationLevel?: string; confidence?: number; source?: string }[];
   };

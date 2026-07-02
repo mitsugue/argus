@@ -14,7 +14,25 @@ export interface BackupFile {
   exportedAt: string;
   version: string;
   auto?: boolean;
+  /** sync-v2 metadata (v11.3.4): protocol 2 = per-item watchlist merge with
+      tombstones. Absent = legacy v1 client (whole-payload LWW). */
+  syncProtocolVersion?: number;
+  deviceId?: string;
   data: Record<string, unknown>;
+}
+
+export const SYNC_PROTOCOL_VERSION = 2;
+const DEVICE_ID_KEY = 'argus.deviceId.v1';
+
+export function deviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch { return 'unknown'; }
 }
 
 export function buildBackupPayload(auto = false): BackupFile {
@@ -25,7 +43,8 @@ export function buildBackupPayload(auto = false): BackupFile {
       if (raw) data[k] = JSON.parse(raw);
     } catch { /* skip unreadable key */ }
   }
-  return { app: 'argus', exportedAt: new Date().toISOString(), version: __APP_VERSION__, auto, data };
+  return { app: 'argus', exportedAt: new Date().toISOString(), version: __APP_VERSION__,
+           syncProtocolVersion: SYNC_PROTOCOL_VERSION, deviceId: deviceId(), auto, data };
 }
 
 export function downloadBackup(auto = false): number {

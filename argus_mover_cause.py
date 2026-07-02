@@ -166,6 +166,12 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
     chg = mover.get("changePct")
     move_start = mover.get("moveStartedAt")
     big_move = isinstance(chg, (int, float)) and abs(chg) >= 2.0
+    # v11.3.4: quantitative market confirmation (when computed) replaces the raw
+    # |move|>=2% proxy in every confirmation gate. A STALE confirmation never
+    # confirms. Without the block, fall back to the magnitude proxy.
+    _mc = evidence.get("marketConfirmation") if isinstance(evidence.get("marketConfirmation"), dict) else None
+    if _mc and _mc.get("status"):
+        big_move = _mc.get("status") in ("confirmed", "partial") and not _mc.get("stale")
     # naive timestamps from JP feeds (TDnet/yanoshin) are JST — never server-local
     naive_off = 9.0 if str(mover.get("market") or "JP").upper() == "JP" else 0.0
     out: List[Dict[str, Any]] = []
@@ -467,8 +473,54 @@ def _next_checks(coverage: Dict[str, Any], candidates: List[Dict[str, Any]],
     return checks[:4]
 
 
+# ── freshness / SLA (v11.3.4) ────────────────────────────────────────────────
+# Per-priority evidence TTL in minutes. A record older than its TTL is STALE:
+# it keeps its ladder status but must carry a visible caveat and a refresh need.
+PRIORITY_TTL_MIN = {"urgent": 15, "high": 30, "normal": 120, "low": 1440}
+
+
+def derive_priority(status: str, change_pct: Any, *, owner_relevant: bool = False,
+                    is_stale: bool = False, mc_status: str = "") -> (str, str):
+    """(priority, reasonJa) — deterministic, mirrors the refresh-queue rules."""
+    chg = abs(change_pct) if isinstance(change_pct, (int, float)) else 0.0
+    unresolved = status in ("candidate_catalyst", "no_lead_yet")
+    if chg >= 7 or (owner_relevant and unresolved):
+        return "urgent", ("±7%超の急変" if chg >= 7 else "保有/高関連銘柄が原因未解決")
+    if chg >= 4 and (unresolved or is_stale):
+        return "high", "±4%超で原因未解決または証拠が古い"
+    if status == "probable_catalyst" and mc_status not in ("confirmed",):
+        return "normal", "有力材料はあるが市場確認が未完"
+    return "low", "原因確認済みまたは小さい変動"
+
+
+def annotate_freshness(record: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
+    """Recompute age/staleness/nextAutoCheckAt AT READ TIME (records are static
+    JSON — served freshness must not freeze at build time). Mutates and returns
+    the record. Stale probable/candidate must never read as fresh 有力材料."""
+    fr = record.get("freshness") or {}
+    rp = record.get("refreshPolicy") or {}
+    last = _epoch(fr.get("lastEvidenceRefreshAt") or record.get("asOf"))
+    now = _epoch(now_iso)
+    ttl_min = PRIORITY_TTL_MIN.get(rp.get("priority") or "normal", 120)
+    if last and now:
+        age = max(0, int(now - last))
+        fr["evidenceAgeSec"] = age
+        fr["isStale"] = age > ttl_min * 60
+        fr["staleReasonJa"] = (f"証拠が{age // 60}分前のもの(優先度{rp.get('priority') or 'normal'}"
+                               f"のTTL {ttl_min}分を超過)。再確認待ち。") if fr["isStale"] else ""
+        nxt = last + ttl_min * 60
+        fr["nextAutoCheckAt"] = datetime.fromtimestamp(nxt, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    record["freshness"] = fr
+    # a stale probable/candidate becomes AI-explain eligible again
+    if fr.get("isStale") and record.get("causeStatus") in ("probable_catalyst",
+                                                           "candidate_catalyst", "no_lead_yet"):
+        rp["eligibleForAiExplain"] = True
+        record["refreshPolicy"] = rp
+    return record
+
+
 def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
-            now_iso: str) -> Dict[str, Any]:
+            now_iso: str, *, ai_min_abs_move: float = 3.0) -> Dict[str, Any]:
     """Build the full mover-cause record. Pure — the scanner supplies evidence."""
     symbol = str(mover.get("symbol") or "").upper()
     market = str(mover.get("market") or "JP").upper()
@@ -523,7 +575,28 @@ def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
             impact = "急騰の追随買いは高値掴みリスク。材料候補があっても高値追い注意。" \
                 if abs(chg) >= 8 else "上昇理由が確認できるまで新規追加は慎重に。"
 
-    return {
+    # market confirmation v1.5 (existing data — argus_market_confirmation output)
+    mc = evidence.get("marketConfirmation") if isinstance(evidence.get("marketConfirmation"), dict) else None
+    mc_block = mc or {"status": "missing", "priceMovePct": None, "volumeRatio": None,
+                      "relativeToIndexPct": None, "peerBasketMovePct": None,
+                      "vwapDistancePct": None, "vwapReclaim": None, "window": "same_day",
+                      "limitationsJa": ["市場確認データ未計算(次回refreshで計算)"]}
+    why = _why_not_confirmed(status, top)
+    if status == "probable_catalyst" and mc_block.get("status") in ("missing", "partial") \
+            and "市場" not in why:
+        why = (why + " 定量的な市場確認(出来高比/指数相対)が未完。").strip()
+
+    # PRIVACY: owner relevance is NEVER stored or served — records/snapshots go to
+    # public GETs and the public ledger, and an owner-boosted priority or a
+    # 「保有」reason string would let anyone enumerate the owner's holdings.
+    # The owner boost is applied transiently on ADMIN paths only (owner_map in
+    # argus_mover_cause_refresh.build_queue).
+    priority, prio_reason = derive_priority(status, chg, owner_relevant=False,
+                                            mc_status=str(mc_block.get("status") or ""))
+    eligible_ai = (status in ("candidate_catalyst", "no_lead_yet")
+                   and isinstance(chg, (int, float)) and abs(chg) >= ai_min_abs_move)
+
+    rec = {
         "schemaVersion": SCHEMA_VERSION,
         "moverCauseId": f"mc-{market}-{symbol}-{day}",
         "symbol": symbol, "market": market, "direction": direction,
@@ -534,7 +607,7 @@ def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
         "bestLeadJa": best[:200],
         "confidence": conf,
         "unknownShare": unknown,
-        "whyNotConfirmedJa": _why_not_confirmed(status, top),
+        "whyNotConfirmedJa": why,
         "causeCandidates": candidates,
         "evidenceCoverage": coverage,
         "checkedJa": checked_ja,
@@ -542,15 +615,33 @@ def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
         "nextChecksJa": _next_checks(coverage, candidates, market),
         "impactCommentJa": impact,
         "explanationJa": None, "explanationGeneratedAt": None,
+        "explanationStatus": "not_generated",
+        "marketConfirmation": mc_block,
+        "freshness": {
+            "createdAt": now_iso,                 # store merge keeps the ORIGINAL createdAt
+            "updatedAt": now_iso,
+            "lastEvidenceRefreshAt": now_iso,
+            "lastAiExplainAt": None,
+            "evidenceAgeSec": 0, "isStale": False, "staleReasonJa": "",
+            "nextAutoCheckAt": None,              # filled by annotate_freshness at read time
+        },
+        "refreshPolicy": {
+            "priority": priority, "reasonJa": prio_reason,
+            "eligibleForAiExplain": eligible_ai,
+            "aiExplainCooldownUntil": None,       # set by the admin explain route
+        },
         "recordRefs": {"eventCardId": None, "evidencePackId": None,
                        "officialEventId": (evidence.get("officialEvents") or [{}])[0].get("officialEventId")
                        if evidence.get("officialEvents") else None,
                        "caosAuditIds": []},
     }
+    return annotate_freshness(rec, now_iso)
 
 
 def compact(record: Dict[str, Any]) -> Dict[str, Any]:
     """Small projection embedded into downside incidents / mover rows."""
+    fr = record.get("freshness") or {}
+    mc = record.get("marketConfirmation") or {}
     return {
         "causeStatus": record.get("causeStatus"),
         "causeStatusJa": record.get("causeStatusJa"),
@@ -560,6 +651,13 @@ def compact(record: Dict[str, Any]) -> Dict[str, Any]:
         "nextChecksJa": (record.get("nextChecksJa") or [])[:2],
         "impactCommentJa": record.get("impactCommentJa"),
         "confidence": record.get("confidence"),
+        "explanationJa": record.get("explanationJa"),
+        "explanationStatus": record.get("explanationStatus"),
+        "freshness": {k: fr.get(k) for k in ("lastEvidenceRefreshAt", "evidenceAgeSec",
+                                             "isStale", "staleReasonJa", "nextAutoCheckAt")},
+        "marketConfirmation": {k: mc.get(k) for k in ("status", "stale", "volumeRatio",
+                                                      "relativeToIndexPct", "peerBasketMovePct",
+                                                      "vwapDistancePct", "window")},
         "topCandidates": [
             {k: c.get(k) for k in ("titleJa", "category", "timingRelation",
                                    "corroborationLevel", "confidence", "source")}

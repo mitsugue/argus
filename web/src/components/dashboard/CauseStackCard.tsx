@@ -1,5 +1,6 @@
 import React from 'react';
 import { useCauseAttribution } from '../../hooks/useCauseAttribution';
+import { freshnessLineJa, marketConfLineJa } from './DownsideIncidentCard';
 import './CauseStackCard.css';
 
 // Cause-stack card (v10.117) — the integrity view for a material move: what is
@@ -56,11 +57,14 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
       const url = `${backend.replace(/\/$/, '')}/api/argus/cause-attribution?symbol=${encodeURIComponent(symbol)}&market=${market}&explain=1`;
       const r = await fetch(url);
       const d = await r.json();
+      const mcState = d.moverCause?.explanationStatus;
       setWhy({
         loading: false,
         text: d.explanationJa
-          || d.explanationNoteJa
-          || 'AI解説はまだ生成されていません(急落・急騰の大きい銘柄から定期生成されます)。下の原因ラダーが現時点の判定です。',
+          || (mcState === 'pending'
+              ? 'AI解説は生成待ちです(重要度の高い未解決moverから定期実行の予算内で自動生成)。下の原因ラダーが現時点の判定です。'
+              : d.explanationNoteJa
+                || 'AI解説はまだ生成されていません(急落・急騰の大きい銘柄から定期生成されます)。下の原因ラダーが現時点の判定です。'),
       });
     } catch { setWhy({ loading: false, text: '取得に失敗しました。' }); }
   }
@@ -116,9 +120,20 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
               次に確認: {(data.moverCause.nextChecksJa ?? []).join(' / ')}
             </p>
           )}
-          {data.moverCause.checkedJa && (
+          {data.moverCause.freshness?.isStale && (
+            <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--amber, #fbbf24)' }}>
+              ⚠ 原因候補の鮮度低下 — {data.moverCause.freshness.staleReasonJa}
+            </p>
+          )}
+          {marketConfLineJa(data.moverCause) && (
+            <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
+              {marketConfLineJa(data.moverCause)}
+            </p>
+          )}
+          {(freshnessLineJa(data.moverCause) || data.moverCause.checkedJa) && (
             <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-faint)' }}>
-              確認済み: {data.moverCause.checkedJa}
+              {[freshnessLineJa(data.moverCause), data.moverCause.checkedJa && `確認済み: ${data.moverCause.checkedJa}`]
+                .filter(Boolean).join(' · ')}
             </p>
           )}
         </div>

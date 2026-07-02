@@ -128,6 +128,20 @@ export const DecisionSpineCard: React.FC = () => {
         </ul>
       </div>
 
+      {/* 原因候補の鮮度 (v11.3.4 freshness + market confirmation v1.5) */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <span className="mdepth__label" style={{ fontWeight: 600 }}>原因候補はどれくらい新しいのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUS Proでは、急落・急騰の原因を<b>一度推定して終わりにせず</b>、証拠の鮮度・次回自動確認・
+          市場確認の有無を表示します。有力材料や候補は時間が経つと古くなり、再確認が必要になります
+          (優先度別SLA: urgent 15分/high 30分/normal 2時間)。AI解説は公開ボタンで即時課金起動せず、
+          <b>重要度の高い未解決moverだけを管理側の予算内で生成</b>し、キャッシュ表示します。
+          市場確認v1.5は既存データのみ(出来高比・指数相対・同業バスケット・VWAP近似)で、
+          <b>板・歩み値・貸株(borrow)ではありません</b> — 本物の板/テープ確認は将来の有料データ
+          (Databento等は後日のPoC対象で、現在は未接続・未課金)。市場確認単独では原因を確定しません。
+        </p>
+      </div>
+
       {/* 公式イベント履歴は消えないのか (v11.3.1 durability) */}
       <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
         <span className="mdepth__label" style={{ fontWeight: 600 }}>公式イベント履歴は消えないのか</span>

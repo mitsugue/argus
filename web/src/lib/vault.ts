@@ -172,10 +172,17 @@ async function fetchRemoteEnvelope(vaultId: string, rawFallback: boolean): Promi
 
 // Sync status surfaced to the Guide backup card (診断: なぜ同期しないのか).
 const SYNC_INFO_KEY = 'argus.lastSyncInfo.v1';
-export interface SyncInfo { at: number; outcome: 'applied' | 'pushed' | 'noop'; merged?: boolean }
-function recordSyncTick(outcome: SyncInfo['outcome'], merged: boolean): void {
-  try { localStorage.setItem(SYNC_INFO_KEY, JSON.stringify({ at: Date.now(), outcome, merged })); }
-  catch { /* ignore */ }
+export interface SyncInfo {
+  at: number; outcome: 'applied' | 'pushed' | 'noop'; merged?: boolean;
+  /** v11.3.4 diagnostics */
+  lastPullAppliedAt?: number; lastPushAt?: number;
+  remoteProtocol?: number; legacyClientDetected?: boolean;
+}
+function recordSyncTick(patch: Partial<SyncInfo> & { outcome: SyncInfo['outcome'] }): void {
+  try {
+    const prev = lastSyncInfo() || ({} as SyncInfo);
+    localStorage.setItem(SYNC_INFO_KEY, JSON.stringify({ ...prev, ...patch, at: Date.now() }));
+  } catch { /* ignore */ }
 }
 export function lastSyncInfo(): SyncInfo | null {
   try { return JSON.parse(localStorage.getItem(SYNC_INFO_KEY) || 'null') as SyncInfo | null; }
@@ -198,10 +205,19 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
   let outcome: 'applied' | 'pushed' | 'noop' = 'noop';
   let needPush = false;
   let mergedTick = false;
+  let remoteProto: number | undefined;
+  let legacy = false;
   if (env) {
     let payload: BackupFile | null = null;
     try { payload = await decryptBackup(pass, env); } catch { payload = null; }
     if (payload?.data) {
+      // v11.3.4 migration guard: a RECENT envelope without syncProtocolVersion
+      // means another device still runs pre-sync-v2 code (whole-payload LWW,
+      // no tombstones). The merge below stays safe on THIS device; the UI
+      // warns the owner to reload the old app/tab.
+      remoteProto = payload.syncProtocolVersion ?? 1;
+      const remoteTsRaw = Date.parse(payload.exportedAt || '') || 0;
+      legacy = remoteProto < 2 && remoteTsRaw > Date.now() - 48 * 3600_000;
       // 1) watchlist: per-item merge — always safe, runs on every cycle.
       const rawRemote = payload.data['argus.assets.v1'];
       const remoteAssets = Array.isArray(rawRemote) ? (rawRemote as AssetItem[]) : [];
@@ -248,14 +264,21 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
       }
     }
   }
+  let pushedNow = false;
   if (needPush || localEdit > st.pushedEditAt) {
     try {
       await cloudBackupNow(pass);
       setSyncState({ pushedEditAt: lastLocalEditAt() });
+      pushedNow = true;
       if (outcome === 'noop') outcome = 'pushed';
     } catch { /* next tick */ }
   }
-  recordSyncTick(outcome, mergedTick);
+  recordSyncTick({
+    outcome, merged: mergedTick,
+    ...(outcome === 'applied' ? { lastPullAppliedAt: Date.now() } : {}),
+    ...(pushedNow ? { lastPushAt: Date.now() } : {}),
+    ...(remoteProto !== undefined ? { remoteProtocol: remoteProto, legacyClientDetected: legacy } : {}),
+  });
   return outcome;
 }
 

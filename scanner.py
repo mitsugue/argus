@@ -37,6 +37,8 @@ import argus_macro_event_analysis  # C.A.O.S. macro pre/post: phase resolver + p
 import argus_macro_event_store  # durable macro-analysis merge/serialize (pure, v11.3.2)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
+import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
+import argus_market_confirmation  # Market Confirmation v1.5 from existing data (pure, v11.3.4)
 import argus_attribution  # Cause Attribution Integrity: trigger/vulnerability/amplifier/unknown (pure, v10.116)
 import argus_signal  # Action Level signal resolver (structured signal for APIs/ledgers, pure, v10.124)
 import argus_important_events  # Novice event explanations + owner-relevance priority (pure, v10.138)
@@ -3499,6 +3501,7 @@ def api_argus_quote_push():
             if hist is None:
                 hist = _PUSH_HISTORY[market][sym] = deque(maxlen=_PUSH_HIST_MAX)
             hist.append({"ts": now, "price": row["price"],
+                         "volume": row.get("volume"),   # cumulative — VWAP needs Δvolume (v11.3.4)
                          "flowRatio": (row.get("flow") or {}).get("bigNetRatio")})
             _pushed_now.setdefault(market, []).append(row)
             accepted += 1
@@ -10861,7 +10864,7 @@ def get_downside_incidents():
                     rec = _mover_cause_for(inc.get("symbol"), inc.get("market", "JP"),
                                            inc.get("changePct"), name=inc.get("assetName"),
                                            direction="down", cached_only=True, caos_lead=lead)
-                inc["moverCause"] = argus_mover_cause.compact(rec)
+                inc["moverCause"] = argus_mover_cause.compact(_mover_cause_serve(rec, now_iso))
                 inc["causeStatus"] = rec.get("causeStatus")
                 suffix = argus_mover_cause.reason_suffix_ja(rec)
                 if suffix:
@@ -11116,7 +11119,7 @@ def get_cause_attribution(symbol, market="JP", explain=False):
         mc = _MOVER_CAUSES.get(f"mc-{str(market).upper()}-{symu}-{today}")
         if mc is None:
             mc = _mover_cause_for(symu, market, chg, name=name, cached_only=True)
-        stack["moverCause"] = argus_mover_cause.compact(mc)
+        stack["moverCause"] = argus_mover_cause.compact(_mover_cause_serve(mc, _ai_now_iso()))
         # explain=true is now CACHED-ONLY (the old path fired a billed OpenAI
         # web_search from an unauthenticated public GET). Generation moved to
         # POST /api/argus/admin/mover-causes/explain.
@@ -11188,6 +11191,14 @@ _MOVER_CAUSES = {}                      # moverCauseId -> record
 _MOVER_CAUSES_FILE = "/tmp/argus_mover_causes.json"
 _MOVER_CAUSES_STATE = {"restored": False, "lastRefreshAt": None,
                        "lastExplainAt": None, "pathType": "ephemeral_tmp"}
+# v11.3.4 AI-explain budget knobs (env-tunable; admin/cron paths only)
+_MC_AI_MAX_PER_RUN = int(os.environ.get("MOVER_CAUSE_AI_EXPLAIN_MAX_PER_RUN", "5"))
+_MC_AI_COOLDOWN_MIN = int(os.environ.get("MOVER_CAUSE_AI_EXPLAIN_COOLDOWN_MIN", "30"))
+_MC_AI_MIN_ABS_MOVE = float(os.environ.get("MOVER_CAUSE_AI_EXPLAIN_MIN_ABS_MOVE", "3.0"))
+_MC_AI_ENABLED = (os.environ.get("MOVER_CAUSE_AI_EXPLAIN_ENABLED",
+                                 os.environ.get("AI_JUDGE_ENABLED", "1")).lower()
+                  not in ("0", "false", "no"))
+_MOVER_REFRESH_QUEUE = {"data": None, "expires": 0.0}   # cached queue (5-min TTL)
 
 
 def _mover_causes_persist():
@@ -11420,14 +11431,74 @@ def _MOVER_MACRO_VIEW():
     return list(_MACRO_ANALYSIS.values())
 
 
+def _market_confirmation_inputs(symbol, market, change_pct):
+    """Cached-only inputs for Market Confirmation v1.5 — quote caches, push
+    history, JQ daily bars, theme peers. Never fetches (public-path safe)."""
+    symu, mkt = str(symbol).upper(), str(market).upper()
+    inputs = {"changePct": change_pct}
+    try:                                        # index proxy (relative move)
+        idx_sym, idx_name = ("1306", "TOPIX ETF(1306)") if mkt == "JP" else ("SPY", "SPY")
+        q = _quote_cached_only(idx_sym, mkt) or {}
+        if isinstance(q.get("changePct"), (int, float)):
+            inputs["indexMovePct"] = q["changePct"]
+            inputs["indexName"] = idx_name
+    except Exception:
+        pass
+    try:                                        # theme-peer basket
+        for members in _DOWNSIDE_THEMES.values():
+            if symu not in members:
+                continue
+            moves = []
+            for m in members:
+                if m == symu:
+                    continue
+                pq = _quote_cached_only(m, "JP" if m[:1].isdigit() else "US") or {}
+                if isinstance(pq.get("changePct"), (int, float)):
+                    moves.append(pq["changePct"])
+            inputs["peerMoves"] = moves
+            break
+    except Exception:
+        pass
+    try:                                        # volume ratio (JP daily bars)
+        q = _quote_cached_only(symu, mkt) or {}
+        tv = q.get("volume")
+        if isinstance(tv, (int, float)) and tv > 0:
+            inputs["todayVolume"] = tv
+        if mkt == "JP":
+            h = (_JQ_HISTORY_CACHE.get(symu[:4]) or {}).get("data") or {}
+            vols = [v for v in (h.get("volumes") or [])[1:21] if isinstance(v, (int, float)) and v > 0]
+            if len(vols) >= 5:
+                inputs["avgVolume"] = sum(vols) / len(vols)
+    except Exception:
+        pass
+    try:                                        # intraday push points (15m/1h moves)
+        hist = (_PUSH_HISTORY.get(mkt) or {}).get(symu)
+        if hist:
+            inputs["pushPoints"] = [{"ts": p.get("ts"), "price": p.get("price"),
+                                     "volume": p.get("volume")} for p in list(hist)]
+    except Exception:
+        pass
+    return inputs
+
+
 def _mover_cause_for(symbol, market, change_pct, name=None, direction=None,
                      cached_only=True, caos_lead=None):
     ev = _build_mover_cause_inputs(symbol, market, change_pct, name=name,
                                    cached_only=cached_only, caos_lead=caos_lead)
+    now_iso = _ai_now_iso()
+    try:
+        ev["marketConfirmation"] = argus_market_confirmation.compute(
+            {"symbol": symbol, "market": market, "changePct": change_pct},
+            _market_confirmation_inputs(symbol, market, change_pct), now_iso)
+    except Exception:
+        pass
+    # PRIVACY: no owner data goes into the record — records reach public GETs
+    # and the public ledger. Owner priority boost is transient (admin queue only).
     mover = {"symbol": symbol, "market": market, "changePct": change_pct,
-             "direction": direction, "name": name, "asOf": _ai_now_iso(),
+             "direction": direction, "name": name, "asOf": now_iso,
              "moveStartedAt": _mover_move_started_iso(market)}
-    return argus_mover_cause.resolve(mover, ev, _ai_now_iso())
+    return argus_mover_cause.resolve(mover, ev, now_iso,
+                                     ai_min_abs_move=_MC_AI_MIN_ABS_MOVE)
 
 
 def _collect_active_movers():
@@ -11500,15 +11571,41 @@ def _refresh_mover_causes(limit=14):
     return {"refreshed": built, "total": len(_MOVER_CAUSES), "asOf": now_iso}
 
 
+def _mover_cause_serve(rec, now_iso):
+    """Read-time annotation on a COPY: freshness/staleness recomputed, market
+    confirmation stale-stamped, explanation state resolved (cached/pending/
+    not_generated). The store itself is never mutated by serving."""
+    out = argus_mover_cause.annotate_freshness(json.loads(json.dumps(rec)), now_iso)
+    try:
+        if isinstance(out.get("marketConfirmation"), dict):
+            out["marketConfirmation"] = argus_market_confirmation.annotate(
+                out["marketConfirmation"], now_iso)
+    except Exception:
+        pass
+    if out.get("explanationJa"):
+        out["explanationStatus"] = "cached"
+    else:
+        out["explanationStatus"] = ("pending" if (out.get("refreshPolicy") or {}).get("eligibleForAiExplain")
+                                    and _MC_AI_ENABLED else "not_generated")
+    return out
+
+
 def _mover_cause_items(direction="both", market="ALL", limit=30):
     _mover_causes_restore_once()
+    now_iso = _ai_now_iso()
     # list() first: the cron refresh mutates the dict from another thread
     items = sorted(list(_MOVER_CAUSES.values()), key=lambda r: str(r.get("asOf")), reverse=True)
     if direction in ("up", "down"):
         items = [r for r in items if r.get("direction") == direction]
     if market in ("JP", "US"):
         items = [r for r in items if r.get("market") == market]
-    return items[:max(1, min(int(limit or 30), 100))]
+    return [_mover_cause_serve(r, now_iso) for r in items[:max(1, min(int(limit or 30), 100))]]
+
+
+def _mover_causes_today():
+    today = _ai_now_iso()[:10].replace("-", "")
+    return [r for r in list(_MOVER_CAUSES.values())
+            if str(r.get("moverCauseId", "")).endswith(today)]
 
 
 @app.route("/api/argus/mover-causes")
@@ -11532,8 +11629,7 @@ def api_argus_mover_causes():
 @app.route("/api/argus/mover-causes/status")
 def api_argus_mover_causes_status():
     _mover_causes_restore_once()
-    today = _ai_now_iso()[:10].replace("-", "")
-    todays = [r for r in list(_MOVER_CAUSES.values()) if str(r.get("moverCauseId", "")).endswith(today)]
+    todays = _mover_causes_today()
     counts = {"totalMovers": len(todays), "confirmedCause": 0, "probableCatalyst": 0,
               "candidateCatalyst": 0, "noLeadYet": 0}
     keymap = {"confirmed_cause": "confirmedCause", "probable_catalyst": "probableCatalyst",
@@ -11558,16 +11654,148 @@ def api_argus_mover_causes_status():
     }
     all_unknown = counts["totalMovers"] > 0 and counts["noLeadYet"] == counts["totalMovers"]
     degraded = all_unknown and (tdnet_ok or jp_news_ok or bool(_FINN_CACHE))
-    return jsonify({"schemaVersion": "mover-cause-status-v1", "asOf": _ai_now_iso(),
+    # v11.3.4 stricter diagnostics: staleness / market-confirmation gaps / SLA
+    now_iso = _ai_now_iso()
+    qs = argus_mover_cause_refresh.quality_and_sla(todays, now_iso)
+    sla_breached = any(b.get("priority") == "urgent" for b in qs["sla"]["breaches"])
+    diag = None
+    if degraded:
+        diag = ("cause attribution coverage failure suspected — "
+                "情報源はliveなのに全件no_lead。取得/照合の不具合を疑う。")
+    elif sla_breached:
+        diag = "urgent moverの証拠が15分SLAを超過。refreshワークフローの稼働を確認。"
+    elif counts["totalMovers"] > 0 and qs["quality"]["missingMarketConfirmationCount"] == counts["totalMovers"]:
+        diag = "全moverで市場確認が未計算(致命的ではないが確定判定は保守化)。"
+    return jsonify({"schemaVersion": "mover-cause-status-v1", "asOf": now_iso,
                     "counts": counts, "coverage": coverage,
+                    "quality": qs["quality"], "sla": qs["sla"],
                     "degradedIfAllUnknown": bool(degraded),
-                    "diagnosticJa": ("cause attribution coverage failure suspected — "
-                                     "情報源はliveなのに全件no_lead。取得/照合の不具合を疑う。")
-                    if degraded else None,
+                    "degraded": bool(degraded or sla_breached),
+                    "diagnosticJa": diag,
                     "storeTotal": len(_MOVER_CAUSES),
                     "lastRefreshAt": _MOVER_CAUSES_STATE.get("lastRefreshAt"),
                     "pathType": _MOVER_CAUSES_STATE.get("pathType"),
                     "noteJa": "原因確定と有力候補を分離します。全件no_leadなら取得/接続不良として扱います。"})
+
+
+@app.route("/api/argus/mover-causes/refresh-queue")
+def api_argus_mover_causes_refresh_queue():
+    """Public cache-only: which movers ARGUS will re-check next, in what order,
+    within what budget. Built purely from stored records — never fetches."""
+    now = time.time()
+    if _MOVER_REFRESH_QUEUE["data"] is not None and now < _MOVER_REFRESH_QUEUE["expires"]:
+        return jsonify(_MOVER_REFRESH_QUEUE["data"])
+    _mover_causes_restore_once()
+    out = argus_mover_cause_refresh.build_queue(
+        _mover_causes_today(), _ai_now_iso(),
+        max_ai_explain=_MC_AI_MAX_PER_RUN, ai_cooldown_min=_MC_AI_COOLDOWN_MIN,
+        ai_min_abs_move=_MC_AI_MIN_ABS_MOVE, ai_enabled=_MC_AI_ENABLED)
+    _MOVER_REFRESH_QUEUE["data"] = out
+    _MOVER_REFRESH_QUEUE["expires"] = now + 300
+    return jsonify(out)
+
+
+@app.route("/api/argus/admin/mover-causes/refresh-queue/run", methods=["POST"])
+def api_argus_admin_mover_causes_queue_run():
+    """Admin/cron: execute the queue — evidence refresh for queued movers
+    (providers allowed) + cached AI explanations for the budgeted top unresolved.
+    Prompts/search traces are never stored or returned."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    _mover_causes_restore_once()
+    ref = _refresh_mover_causes()                      # discover NEW movers from live feeds
+    now_iso = _ai_now_iso()
+    # transient owner boost — admin path only, never stored/served (privacy)
+    owner_map = {}
+    try:
+        owner_map = {s: (v.get("ownerState") in ("held", "protected") or v.get("priority") == "high")
+                     for s, v in _owner_symbols_cached().items()}
+    except Exception:
+        pass
+    queue = argus_mover_cause_refresh.build_queue(
+        _mover_causes_today(), now_iso,
+        max_ai_explain=_MC_AI_MAX_PER_RUN, ai_cooldown_min=_MC_AI_COOLDOWN_MIN,
+        ai_min_abs_move=_MC_AI_MIN_ABS_MOVE, ai_enabled=_MC_AI_ENABLED,
+        owner_map=owner_map)
+    # execute the REFRESH half of the queue: stored movers that faded out of the
+    # live feeds (e.g. a morning -8% spike) would otherwise never clear their
+    # SLA breach — _refresh_mover_causes only sweeps currently-visible movers.
+    swept = {(m["market"], m["symbol"]) for m in _collect_active_movers()}
+    requeued = 0
+    for q in queue["queue"]:
+        if not q.get("refreshNeeded") or (q["market"], q["symbol"]) in swept:
+            continue
+        if requeued >= queue["budget"]["maxProviderRefreshPerRun"]:
+            break
+        try:
+            quote = _quote_cached_only(q["symbol"], q["market"]) or {}
+            chg = quote.get("changePct", q.get("changePct"))
+            rec = _mover_cause_for(q["symbol"], q["market"], chg,
+                                   name=quote.get("nameJa") or quote.get("name"),
+                                   direction=q.get("direction"), cached_only=False)
+            merged = argus_mover_cause_store.merge_record(
+                _MOVER_CAUSES.get(rec["moverCauseId"]), rec, now_iso=now_iso)
+            if merged:
+                _MOVER_CAUSES[merged["moverCauseId"]] = merged
+                requeued += 1
+        except Exception:
+            continue
+    explained, skipped = [], []
+    for q in queue["queue"]:
+        if not q.get("aiExplainNeeded"):
+            continue
+        try:
+            done = _mover_ai_explain(q["symbol"], q["market"], now_iso)
+            (explained if done else skipped).append(q["symbol"])
+        except Exception:
+            skipped.append(q["symbol"])
+    _mover_causes_persist()
+    _MOVER_REFRESH_QUEUE["data"] = None                # queue changed — recompute
+    return jsonify({"ok": True, "refreshed": ref.get("refreshed"),
+                    "requeuedRefreshed": requeued,
+                    "aiExplained": explained, "aiSkipped": skipped,
+                    "budget": queue["budget"], "asOf": now_iso})
+
+
+@app.route("/api/argus/market-confirmation")
+def api_argus_market_confirmation():
+    """Public cache-only: Market Confirmation v1.5 for one symbol — computed
+    purely from in-memory caches (quotes/push history/daily bars/peers)."""
+    sym = (request.args.get("symbol") or "").strip().upper()
+    if not sym:
+        return jsonify({"error": "symbol required"}), 400
+    mkt = (request.args.get("market") or "JP").upper()
+    q = _quote_cached_only(sym, mkt) or {}
+    chg = q.get("changePct")
+    now_iso = _ai_now_iso()
+    mc = argus_market_confirmation.compute(
+        {"symbol": sym, "market": mkt, "changePct": chg},
+        _market_confirmation_inputs(sym, mkt, chg), now_iso)
+    mc.update({"symbol": sym, "market": mkt, "asOf": now_iso,
+               "noteJa": "既存データによる市場確認v1.5。板/歩み値/borrowではない。"
+                         "市場確認単独では原因を確定しない。"})
+    return jsonify(mc)
+
+
+@app.route("/api/argus/admin/market-confirmation/refresh", methods=["POST"])
+def api_argus_admin_market_confirmation_refresh():
+    """Admin: warm the JP daily-bar cache for requested symbols then recompute
+    (the only fetching step in the market-confirmation layer)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    syms = [str(s).upper() for s in (body.get("symbols") or [])][:10]
+    warmed = []
+    for s in syms:
+        try:
+            if s[:1].isdigit():
+                _jq_price_history(s[:4])       # cached fetch (6h TTL)
+            warmed.append(s)
+        except Exception:
+            continue
+    return jsonify({"ok": True, "warmed": warmed, "asOf": _ai_now_iso()})
 
 
 @app.route("/api/argus/mover-causes/snapshot")
@@ -11584,14 +11812,14 @@ def api_argus_mover_cause_detail(market, symbol):
     cached-evidence build (still no provider fetch / no LLM)."""
     _mover_causes_restore_once()
     symu, mkt = str(symbol).upper(), str(market).upper()
-    today = _ai_now_iso()[:10].replace("-", "")
-    rec = _MOVER_CAUSES.get(f"mc-{mkt}-{symu}-{today}")
+    now_iso = _ai_now_iso()
+    rec = _MOVER_CAUSES.get(f"mc-{mkt}-{symu}-{now_iso[:10].replace('-', '')}")
     if rec is None:
         q = _quote_cached_only(symu, mkt) or {}
         rec = _mover_cause_for(symu, mkt, q.get("changePct"),
                                name=q.get("nameJa") or q.get("name"), cached_only=True)
         rec["computed"] = "cached_evidence_live"
-    return jsonify(rec)
+    return jsonify(_mover_cause_serve(rec, now_iso))
 
 
 @app.route("/api/argus/admin/mover-causes/refresh", methods=["POST"])
@@ -11600,60 +11828,110 @@ def api_argus_admin_mover_causes_refresh():
     if not ok:
         return jsonify(err), code
     try:
-        return jsonify(_refresh_mover_causes())
+        out = _refresh_mover_causes()
+        _MOVER_REFRESH_QUEUE["data"] = None      # store changed — queue must recompute
+        return jsonify(out)
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
 
+def _mover_ai_explain(symbol, market, now_iso, force=False):
+    """One budgeted AI explanation for a mover-cause record (ADMIN PATHS ONLY —
+    the single LLM call in the mover-cause layer). Prompt is built from the
+    ladder's own candidates + missing confirmations; the prompt itself is never
+    stored. Cooldown-guarded. Returns True when a cached explanation was stored."""
+    if not _MC_AI_ENABLED:
+        return False
+    symu, mkt = str(symbol).upper(), str(market).upper()
+    today = now_iso[:10].replace("-", "")
+    mid = f"mc-{mkt}-{symu}-{today}"
+    rec = _MOVER_CAUSES.get(mid)
+    if rec is None:
+        q = _quote_cached_only(symu, mkt) or {}
+        rec = _mover_cause_for(symu, mkt, q.get("changePct"),
+                               name=q.get("nameJa") or q.get("name"), cached_only=False)
+    if not force and argus_mover_cause_refresh._cooldown_active(rec, now_iso, _MC_AI_COOLDOWN_MIN):
+        return False
+    cands = "\n".join(
+        f"- {c.get('titleJa')} [{c.get('category')}/{c.get('timingRelation')}/{c.get('corroborationLevel')}]"
+        for c in (rec.get("causeCandidates") or [])[:5]) or "(候補なし)"
+    missing = "・".join(rec.get("missingConfirmations") or []) or "(なし)"
+    prof = _ENTITY_PROFILES.get(symu, {})
+    pct = rec.get("changePct")
+    pcts = f"{pct:+.1f}%" if isinstance(pct, (int, float)) else "大きく"
+    user = (f"{rec.get('name') or symu}({symu}・{'日本株' if mkt == 'JP' else '米国株'})が本日{pcts}動いた。"
+            "最新ニュースを調べ、以下のARGUS側の候補と突き合わせて原因を日本語で説明して。\n"
+            f"ARGUSの現在の判定: {rec.get('causeStatusJa')}\n候補:\n{cands}\n"
+            f"不足している確認: {missing}\n"
+            f"事業: {prof.get('businessJa') or '(不明)'}\n"
+            "新しい情報が見つからなければ「新規情報なし」と正直に言う。推測は『可能性』と明示。"
+            "投資助言はしない。\n"
+            "出力はSTRICT JSONのみ: {\"explanationJa\": \"3〜4文の説明\", "
+            "\"unverifiedAssumptions\": [\"未検証の仮定(0〜3件)\"]}")
+    txt = _openai_research(user)
+    if not txt:
+        return False
+    parsed = safe_json(txt)
+    expl = (str(parsed.get("explanationJa"))[:700] if isinstance(parsed, dict)
+            and parsed.get("explanationJa") else txt.strip()[:700])
+    ua = ([str(x)[:120] for x in parsed.get("unverifiedAssumptions") or []][:3]
+          if isinstance(parsed, dict) else [])
+    rec["explanationJa"] = expl
+    rec["explanationGeneratedAt"] = now_iso
+    rec["explanationStatus"] = "cached"
+    rec["unverifiedAssumptions"] = ua
+    # deterministic confirm/refute conditions from the ladder itself (no AI needed)
+    rec["whatWouldConfirmJa"] = ("・".join(rec.get("missingConfirmations") or [])[:200]
+                                 or "公式開示/複数ソースと市場反応の一致")
+    rec["whatWouldRefuteJa"] = "同業・指数全体の動きで説明できる場合、または候補材料の否定・訂正報道。"
+    fr = rec.get("freshness") or {}
+    fr["lastAiExplainAt"] = now_iso
+    rec["freshness"] = fr
+    rp = rec.get("refreshPolicy") or {}
+    rp["aiExplainCooldownUntil"] = datetime.fromtimestamp(
+        time.time() + _MC_AI_COOLDOWN_MIN * 60, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rec["refreshPolicy"] = rp
+    _MOVER_CAUSES[mid] = argus_mover_cause_store.merge_record(
+        _MOVER_CAUSES.get(mid), rec, now_iso=now_iso)
+    _MOVER_CAUSES_STATE["lastExplainAt"] = now_iso
+    return True
+
+
 @app.route("/api/argus/admin/mover-causes/explain", methods=["POST"])
 def api_argus_admin_mover_causes_explain():
-    """Admin-only AI explanation for top unresolved movers (max 5). The ONLY
-    LLM path in the mover-cause layer — results are cached into the store and
-    served by public GETs. Prompts/search traces are never exposed."""
+    """Admin-only AI explanation for top unresolved movers (budgeted). Results
+    are cached into the store and served by public GETs. Cooldown-guarded;
+    prompts/search traces are never stored or exposed."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     body = request.get_json(silent=True) or {}
-    syms = [str(s).upper() for s in (body.get("symbols") or [])][:5]
+    syms = [str(s).upper() for s in (body.get("symbols") or [])][:_MC_AI_MAX_PER_RUN]
     market = str(body.get("market") or "JP").upper()
-    mx = min(int(body.get("max") or 5), 5)
+    mx = min(int(body.get("max") or _MC_AI_MAX_PER_RUN), _MC_AI_MAX_PER_RUN)
     _mover_causes_restore_once()
     now_iso = _ai_now_iso()
-    today = now_iso[:10].replace("-", "")
     if not syms:
-        # default: today's unresolved movers, biggest first
-        cand = [r for r in _mover_cause_items("both", "ALL", 50)
-                if str(r.get("moverCauseId", "")).endswith(today)
-                and r.get("causeStatus") in ("candidate_catalyst", "no_lead_yet")
-                and not r.get("explanationJa")]
-        cand.sort(key=lambda r: -abs(r.get("changePct") or 0))
-        pairs = [(r["symbol"], r["market"]) for r in cand[:mx]]
+        queue = argus_mover_cause_refresh.build_queue(
+            _mover_causes_today(), now_iso, max_ai_explain=mx,
+            ai_cooldown_min=_MC_AI_COOLDOWN_MIN, ai_min_abs_move=_MC_AI_MIN_ABS_MOVE,
+            ai_enabled=_MC_AI_ENABLED)
+        pairs = [(q["symbol"], q["market"]) for q in queue["queue"] if q.get("aiExplainNeeded")][:mx]
+        force = False
     else:
         pairs = [(s, market) for s in syms[:mx]]
+        force = True                            # explicit owner request bypasses cooldown
     generated, skipped = [], []
     for sym, mkt in pairs:
         try:
-            mid = f"mc-{mkt}-{sym}-{today}"
-            rec = _MOVER_CAUSES.get(mid)
-            if rec is None:
-                q = _quote_cached_only(sym, mkt) or {}
-                rec = _mover_cause_for(sym, mkt, q.get("changePct"),
-                                       name=q.get("nameJa") or q.get("name"),
-                                       cached_only=False)
-            txt = _cause_explain(sym, rec.get("name") or sym, mkt, rec.get("changePct"))
-            if txt:
-                rec["explanationJa"] = txt
-                rec["explanationGeneratedAt"] = now_iso
-                _MOVER_CAUSES[mid] = argus_mover_cause_store.merge_record(
-                    _MOVER_CAUSES.get(mid), rec, now_iso=now_iso)
-                generated.append(sym)
-            else:
-                skipped.append(sym)
+            (generated if _mover_ai_explain(sym, mkt, now_iso, force=force)
+             else skipped).append(sym)
         except Exception:
             skipped.append(sym)
-    _MOVER_CAUSES_STATE["lastExplainAt"] = now_iso
     _mover_causes_persist()
-    return jsonify({"ok": True, "generated": generated, "skipped": skipped, "asOf": now_iso})
+    _MOVER_REFRESH_QUEUE["data"] = None
+    return jsonify({"ok": True, "generated": generated, "skipped": skipped,
+                    "budgetMax": mx, "asOf": now_iso})
 
 
 _ATTRIB_HIST_CACHE = {"data": None, "expires": 0.0}

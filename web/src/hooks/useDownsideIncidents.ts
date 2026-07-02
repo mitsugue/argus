@@ -45,10 +45,22 @@ export interface MoverCauseCandidate {
   titleJa?: string; category?: string; timingRelation?: string;
   corroborationLevel?: string; confidence?: number; source?: string;
 }
+export interface MoverCauseFreshness {
+  lastEvidenceRefreshAt?: string; evidenceAgeSec?: number;
+  isStale?: boolean; staleReasonJa?: string; nextAutoCheckAt?: string | null;
+}
+export interface MoverMarketConfirmation {
+  status?: string; stale?: boolean; volumeRatio?: number | null; relativeToIndexPct?: number | null;
+  peerBasketMovePct?: number | null; vwapDistancePct?: number | null; window?: string;
+}
 export interface MoverCauseCompact {
   causeStatus?: string; causeStatusJa?: string;
   bestLeadJa?: string; whyNotConfirmedJa?: string; checkedJa?: string;
   nextChecksJa?: string[]; impactCommentJa?: string; confidence?: number;
+  explanationJa?: string | null;
+  explanationStatus?: 'cached' | 'pending' | 'not_generated';
+  freshness?: MoverCauseFreshness;
+  marketConfirmation?: MoverMarketConfirmation;
   topCandidates?: MoverCauseCandidate[];
 }
 
