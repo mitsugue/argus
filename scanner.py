@@ -9346,11 +9346,14 @@ _TDNET_FEED_TTL = 600
 # plan/release, so it is env-overridable and the fetch reports HTTP status HONESTLY
 # (entitlement_missing / endpoint_not_found / rate_limited) instead of guessing. A key
 # being present is NOT 'live' — only a 200 with rows is.
-# The exact J-Quants v2 TDnet Add-on path isn't publicly fixed, so try a few candidates
-# (env override wins) and report the BEST honest status. First 200 wins; a 403 anywhere =
-# entitlement_missing; else endpoint_not_found. Set JQUANTS_TDNET_PATH to pin the real one.
-_JQUANTS_TDNET_PATHS = ([os.environ["JQUANTS_TDNET_PATH"]] if os.environ.get("JQUANTS_TDNET_PATH")
-                        else ["/td/list", "/markets/tdnet", "/tdnet/list", "/fins/tdnet", "/markets/tdnet_documents"])
+# OFFICIAL spec (jpx-jquants.com/ja/spec/td-list, add-on launched 2026-05-18):
+#   GET https://api.jquants.com/v2/td/list — SAME x-api-key, no key regeneration needed.
+#   `date` or `code` is MANDATORY (date accepts YYYY-MM-DD); optional from/to/cursor.
+#   Error semantics (spec/response-status): 403 covers plan-missing AND wrong key AND
+#   wrong path — so only the BODY message distinguishes them; a no-param call returns
+#   400 ("This API requires at least 1 parameter as follows; date, code") IFF the route
+#   resolves and the account is entitled. Add-on has its own 100 req/min pool.
+_JQUANTS_TDNET_PATH = os.environ.get("JQUANTS_TDNET_PATH", "/td/list")
 _TDNET_OFFICIAL_CACHE = {"data": None, "expires": 0.0}
 
 def _jquants_tdnet_fetch(limit=150):
@@ -9364,34 +9367,84 @@ def _jquants_tdnet_fetch(limit=150):
     if c["data"] is not None and now < c["expires"]:
         d = c["data"]
         return d, (d.get("status") == "official_tdnet_live" and bool(d.get("items")))
-    # Probe candidate paths; remember the worst-but-informative status if none 200.
+    # Probe the OFFICIAL path with a mandatory `date` param, walking back a few days so a
+    # weekend/holiday (0 disclosures) isn't misread as a failure. Interpretation per the
+    # official spec: 200+rows=live · 200+empty=entitled-but-empty-window · 400=route AND
+    # entitlement OK (param rejected) · 403 body decides plan-refusal vs gateway noise
+    # ("Missing Authentication Token" = unknown path, NOT entitlement) · 429=rate-limited.
+    # Per-date results kept as (date, http, short message hint) — never key material.
     r = None
-    best_code = None
-    for _path in _JQUANTS_TDNET_PATHS:
+    probes = []          # [{date, http, hint}]
+    ent_hit = None       # a REAL plan/subscription refusal
+    entitled_400 = False  # a 400 proves route + entitlement are fine
+    gateway_403 = False
+    for _back in range(4):
+        _d = (datetime.now(TZ_JST) - timedelta(days=_back)).strftime("%Y-%m-%d")
         try:
-            rr = requests.get(f"{_JQUANTS_BASE}{_path}", headers={"x-api-key": _JQUANTS_API_KEY},
-                              params={"limit": limit}, timeout=10)
-        except Exception:
+            rr = requests.get(f"{_JQUANTS_BASE}{_JQUANTS_TDNET_PATH}",
+                              headers={"x-api-key": _JQUANTS_API_KEY},
+                              params={"date": _d}, timeout=10)
+        except Exception as e:
+            probes.append({"date": _d, "http": None, "hint": type(e).__name__})
             continue
         if rr.status_code == 200:
-            r = rr
+            body = rr.json() if isinstance(rr.json(), dict) else {}
+            rows = body.get("td_list") or body.get("data") or body.get("tdnet") or body.get("items") or []
+            probes.append({"date": _d, "http": 200, "hint": f"{len(rows)} rows"})
+            if rows:
+                r = rr
+                break
+            continue                                   # entitled, empty day → try prior day
+        try:
+            b = rr.json() if isinstance(rr.json(), dict) else {}
+            hint = str(b.get("message") or b.get("Message") or "")[:80]
+        except Exception:
+            hint = (rr.text or "")[:80]
+        probes.append({"date": _d, "http": rr.status_code, "hint": hint[:60]})
+        if rr.status_code == 400:
+            entitled_400 = True                        # spec: 400 ⇒ route+entitlement OK
             break
-        # 403 (entitlement) is more informative than 404 (wrong path) — keep it.
-        if best_code is None or rr.status_code == 403:
-            best_code = rr.status_code
+        if rr.status_code in (401, 403):
+            if "missing authentication token" in hint.lower() or hint.strip().lower() in ("forbidden", "not found"):
+                gateway_403 = True                     # unknown path, NOT an entitlement signal
+            else:
+                ent_hit = (_d, rr.status_code, hint)
+            break
+        if rr.status_code == 429:
+            break
     http = None
     try:
         if r is None:
-            st = argus_jquants_tdnet.status_from_http(best_code or 404)
-            ent = "missing" if best_code in (401, 403) else "unknown"
+            had_200 = any(p.get("http") == 200 for p in probes)
+            last = probes[-1] if probes else {}
+            if had_200 or entitled_400:
+                # Entitlement PROVEN (route resolved) — just no rows / a param quirk.
+                st, ent, code = "live", "tdnet_addon", 200 if had_200 else 400
+                note = ("公式TDnet Add-onは疎通OK（権限あり）。直近数日の開示0件"
+                        + ("" if had_200 else "・パラメータが拒否されたため要確認(400)") + "。")
+            elif ent_hit:
+                st, code, ent = "entitlement_missing", ent_hit[1], "missing"
+                note = (f"公式TDnet {_JQUANTS_TDNET_PATH} → HTTP {code}（{ent_hit[2][:60]}）。"
+                        "TDnet Add-onはStandardとは別の追加購入(月額)です。J-Quantsダッシュボード → "
+                        "Subscription → アドオンプラン → 「TDnet/Company Disclosure」カードに"
+                        "[ご利用中]バッジがあるか確認してください（キー再発行は不要）。")
+            elif gateway_403:
+                st, code, ent = "endpoint_not_found", (last.get("http")), "unknown"
+                note = ("公式TDnetのパスがゲートウェイで解決されません（unknown path応答）。"
+                        "env JQUANTS_TDNET_PATH を確認してください。")
+            elif last.get("http") == 429:
+                st, code, ent = "rate_limited", 429, "unknown"
+                note = "公式TDnetがレート制限中（アドオンは100req/分の専用枠）。"
+            else:
+                st, code, ent = "unavailable", last.get("http"), "unknown"
+                note = "公式TDnet取得エラー（ネットワーク/一時障害の可能性）。"
             snap = argus_jquants_tdnet.build_snapshot(
                 [], status=st, official=True, provider="jquants-tdnet", entitlement=ent,
-                as_of=_ai_now_iso(),
-                note_ja=(f"official TDnet 候補パスすべてHTTP {best_code}（キー値は出しません）。"
-                         "JQUANTS_TDNET_PATHで正しいパスを指定可。"))
-            snap["httpStatus"] = best_code
+                as_of=_ai_now_iso(), note_ja=note)
+            snap["httpStatus"] = code
+            snap["probes"] = probes          # date+code+hint only — never key material
             c["data"] = snap
-            c["expires"] = now + 900
+            c["expires"] = now + (900 if st != "live" else _TDNET_FEED_TTL)
             return snap, False
         http = r.status_code
         if r.status_code == 200:
@@ -10376,13 +10429,30 @@ def _source_registry():
         _td_reg_status, _td_ent, _td_note = "missing", "APIキー未設定", "JQUANTS_API_KEY未設定。"
     elif _td_off_status == "official_tdnet_live":
         _td_reg_status, _td_ent, _td_note = "confirmed_live", "tdnet_addon", "公式J-Quants TDnet Add-onがライブ(official confirmation)。"
+    elif _td_off_status == "live":
+        # route + entitlement proven; the probed window just had no disclosures (weekend等)
+        _td_reg_status, _td_ent, _td_note = "confirmed_live", "tdnet_addon", "公式TDnet Add-on疎通OK(権限あり)。直近ウィンドウの開示0件。"
     elif _td_off_status in ("entitlement_missing",):
-        _td_reg_status, _td_ent, _td_note = "entitlement_missing", "addon未権限(401/403)", "キーはあるがTDnet Add-onの権限が無い(401/403)。"
+        _td_reg_status, _td_ent, _td_note = ("entitlement_missing", "addon未購入/未反映",
+            "公式TDnetが403(プラン拒否)。Add-onは別途購入(月額)— ダッシュボードのSubscription→アドオンプランで"
+            "[ご利用中]バッジを確認。yanoshinフォールバックで暫定運用。")
     elif _td_off_status in ("endpoint_not_found",):
-        # official path may differ per plan — fall back to yanoshin, honestly flagged
-        _td_reg_status, _td_ent, _td_note = "fallback_partial", "endpoint未確認(404)", "公式TDnetのパスが未確認(404)。yanoshinフォールバックで暫定運用。JQUANTS_TDNET_PATHで調整可。"
+        _td_reg_status, _td_ent, _td_note = "fallback_partial", "endpoint未解決", "公式TDnetのパスが未解決。env JQUANTS_TDNET_PATHを確認。yanoshinフォールバックで暫定運用。"
     else:
         _td_reg_status, _td_ent, _td_note = "requires_test", "未実証", "キーはあるが公式TDnetの成功プローブがまだ無い。"
+    # J-Quants STANDARD datasets summary (v11.1.1) — reads the diagnostics CACHE only
+    # (a public GET must never fire provider probes). Unknown until an admin diag ran.
+    _dc = _PROVIDER_DIAG_CACHE.get("data") if time.time() < _PROVIDER_DIAG_CACHE.get("expires", 0.0) else None
+    def _dc_rt(pid):
+        for i in ((_dc or {}).get("items") or []):
+            if i.get("provider") == pid:
+                return i.get("runtimeStatus")
+        return None
+    _jq_ds = {p: _dc_rt(p) for p in ("jquants-trading-calendar", "jquants-earnings-calendar",
+                                     "jquants-margin-interest", "jquants-short-selling",
+                                     "jquants-investor-types")}
+    _jq_live_n = sum(1 for v in _jq_ds.values() if v == "live")
+    _jq_known = any(v for v in _jq_ds.values())
     def S(cap, provider, market, status, entitlement, paid, licence, note):
         return {"capability": cap, "provider": provider, "market": market, "status": status,
                 "entitlement": entitlement, "paid": paid, "licence": licence, "notesJa": note}
@@ -10413,6 +10483,13 @@ def _source_registry():
           "JP", _td_reg_status, _td_ent, "paid", "ok",
           _td_note + " 公式=official confirmation。materialな開示のみofficial_catalyst候補、"
           "曖昧な題目はofficial_fact(価格原因の確定にはmarket/timing確認が必要)。yanoshinは非公式の下位ティア。"),
+        S("J-Quants Standardデータ(カレンダー/決算予定/信用残/空売り/投資部門)", "J-Quants", "JP",
+          ("confirmed_live" if _jq_live_n >= 3 else "partial" if _jq_live_n >= 1 else
+           ("requires_test" if _JQUANTS_API_KEY else "missing")),
+          (f"実測 live {_jq_live_n}/5" if _jq_known else "未プローブ"), "paid", "ok",
+          "文脈/確認データ（生の信用残・空売り比率から単独で売買シグナルは作らない）。"
+          "実測はadmin provider-diagnostics(5分キャッシュ)を参照。"
+          + ("" if _jq_known else "admin診断が未実行のため requires_test 表示。")),
         S("企業開示(EDINET)", "EDINET API v2", "JP",
           ("missing" if not _EDINET_API_KEY else
            "confirmed_live" if _EDINET_STATE["lastFetchOk"] else "requires_test"),
@@ -10546,6 +10623,27 @@ def _provider_diagnostics():
         http = snap.get("httpStatus") or (200 if snap.get("status") == "official_tdnet_live" else 0)
         return (http or 0), len(snap.get("items") or [])
 
+    # J-Quants STANDARD dataset probes (v11.1.1) — per-capability status visibility.
+    # Rows-key varies per dataset; 200+rows=live, 200+0=partial (empty window ≠ broken),
+    # 403 = plan gap / gateway (per J-Quants semantics), honest either way.
+    def _jq_probe(path, params, rows_keys=("data",)):
+        def fn():
+            r = requests.get(f"{_JQUANTS_BASE}{path}", headers={"x-api-key": _JQUANTS_API_KEY},
+                             params=params, timeout=_DIAG_TIMEOUT)
+            n = 0
+            if r.status_code == 200:
+                j = r.json() if isinstance(r.json(), dict) else {}
+                for k in tuple(rows_keys) + ("data",):
+                    v = j.get(k)
+                    if isinstance(v, list):
+                        n = len(v)
+                        break
+            return r.status_code, n
+        return fn
+    _jq_today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    _jq_7d = (datetime.now(TZ_JST) - timedelta(days=7)).strftime("%Y-%m-%d")
+    _jq_90d = (datetime.now(TZ_JST) - timedelta(days=90)).strftime("%Y-%m-%d")
+
     def _edinet():
         r = requests.get("https://api.edinet-fsa.go.jp/api/v2/documents.json",
                          params={"date": datetime.now(TZ_JST).strftime("%Y-%m-%d"), "type": 2,
@@ -10582,7 +10680,12 @@ def _provider_diagnostics():
                          params={"function": "TOP_GAINERS_LOSERS", "apikey": _ALPHAVANTAGE_KEY},
                          timeout=_DIAG_TIMEOUT)
         j = r.json() if r.status_code == 200 else {}
-        return r.status_code, len((j or {}).get("top_gainers", []) if isinstance(j, dict) else [])
+        n = len((j or {}).get("top_gainers", []) if isinstance(j, dict) else [])
+        # AlphaVantage rate-limits with HTTP 200 + an Information/Note body and NO data
+        # (free tier = 25 req/day). Report that honestly as rate_limited, not 'partial'.
+        if r.status_code == 200 and n == 0 and isinstance(j, dict) and (j.get("Information") or j.get("Note")):
+            return 429, 0
+        return r.status_code, n
 
     def _coingecko():
         headers = {"User-Agent": "argus-research/1.0"}
@@ -10599,6 +10702,28 @@ def _provider_diagnostics():
         _diag_probe("jquants-tdnet", bool(_JQUANTS_API_KEY), _jq_tdnet,
                     caps=["official_disclosure"],
                     limitations="公式TDnet Add-on。404ならJQUANTS_TDNET_PATH要調整。official=confirmation。"),
+        _diag_probe("jquants-trading-calendar", bool(_JQUANTS_API_KEY),
+                    _jq_probe("/markets/trading_calendar", {"from": _jq_7d, "to": _jq_today},
+                              ("trading_calendar",)),
+                    caps=["trading_calendar"],
+                    limitations="Standard。市場クロック照合用（現在は静的カレンダー併用）。"),
+        _diag_probe("jquants-earnings-calendar", bool(_JQUANTS_API_KEY),
+                    _jq_probe("/equities/earnings-calendar", {}),
+                    caps=["earnings_calendar"], limitations="決算発表予定。catalystで使用中。"),
+        _diag_probe("jquants-margin-interest", bool(_JQUANTS_API_KEY),
+                    _jq_probe("/markets/weekly_margin_interest", {"code": "7203", "from": _jq_90d}),
+                    caps=["margin_interest"], limitations="信用残(週次)。entry-scoutで使用中。"),
+        _diag_probe("jquants-short-selling", bool(_JQUANTS_API_KEY),
+                    _jq_probe("/markets/short_selling", {"from": _jq_7d, "to": _jq_today},
+                              ("short_selling",)),
+                    caps=["short_ratio"],
+                    limitations="業種別空売り比率。判断には未接続（状態可視化のみ・文脈データ）。"),
+        _diag_probe("jquants-investor-types", bool(_JQUANTS_API_KEY),
+                    _jq_probe("/markets/trades_spec",
+                              {"from": (datetime.now(TZ_JST) - timedelta(days=30)).strftime("%Y-%m-%d"),
+                               "to": _jq_today}, ("trades_spec",)),
+                    caps=["investor_types"],
+                    limitations="投資部門別売買。判断には未接続（状態可視化のみ・文脈データ）。"),
         _diag_probe("edinet", bool(_EDINET_API_KEY), _edinet, caps=["official_filings"],
                     limitations="EDINET v2 公式開示。"),
         _diag_probe("twelvedata-quote", bool(_TWELVEDATA_API_KEY), _td_quote, caps=["quote"],

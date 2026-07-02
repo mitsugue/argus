@@ -97,6 +97,33 @@ def test_blocked_entry_downgrades_posture_delta():
     assert c["decisionImpact"]["downgradeReasonJa"]
 
 
+# ── TDnet → EventCard integration (v11.1.1) ─────────────────────────────────
+def _tdnet_fixture(official):
+    row = {"code": "8058", "title": "業績予想の修正（下方修正）に関するお知らせ",
+           "material": True, "official": official, "provider": ("jquants-tdnet" if official else "yanoshin-tdnet")}
+    return {"status": ("official_tdnet_live" if official else "live"), "official": official,
+            "provider": row["provider"], "items": [row], "bySymbol": {"8058": [row]}}
+
+
+def test_official_tdnet_disclosure_sets_official_on_event_context(monkeypatch):
+    monkeypatch.setattr(scanner, "get_tdnet_recent", lambda limit=150: _tdnet_fixture(True))
+    env = {"eventId": "e-8058", "eventType": "PRICE_CRASH", "symbol": "8058", "source": "moomoo_push"}
+    ctx = scanner._event_card_context([env])["e-8058"]
+    assert ctx["has_official"] is True
+    assert "official:tdnet" in (ctx["source_ids"] or [])
+    assert "exchange_or_listing_venue" in ctx["source_tiers"]
+
+
+def test_fallback_tdnet_does_not_set_official(monkeypatch):
+    # yanoshin (official=False) is a lower-tier wrapper — it must NOT mint an
+    # official confirmation on the EventCard.
+    monkeypatch.setattr(scanner, "get_tdnet_recent", lambda limit=150: _tdnet_fixture(False))
+    env = {"eventId": "e-8058", "eventType": "PRICE_CRASH", "symbol": "8058", "source": "moomoo_push"}
+    ctx = scanner._event_card_context([env])["e-8058"]
+    assert ctx["has_official"] is False
+    assert "official:tdnet" not in (ctx["source_ids"] or [])
+
+
 # ── endpoint shape ───────────────────────────────────────────────────────────
 def test_event_cards_endpoint_shape():
     with scanner.app.test_client() as cl:

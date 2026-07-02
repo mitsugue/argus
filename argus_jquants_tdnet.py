@@ -55,12 +55,18 @@ def normalize_row(raw: Dict[str, Any], classify_fn) -> Dict[str, Any]:
     if code:
         code = str(code)[:4] if str(code).isdigit() and len(str(code)) == 5 else str(code)
     cls = classify_fn(title) if title else {"category": "other", "sentiment": "neutral", "categoryJa": "適時開示"}
+    # Official /v2/td/list fields (jpx-jquants.com/ja/spec/td-list): DiscNo, Code, Name,
+    # DiscDate, DiscTime, Title, DiscStatus, RevNo, DiscItems, Docs.
+    disc_date = pick("DiscDate")
+    disc_time = pick("DiscTime")
+    disclosed = (f"{disc_date}T{disc_time}" if disc_date and disc_time else
+                 pick("PubDate", "DisclosedDate", "DisclosedTime", "disclosedAt", "Date") or disc_date)
     return {
         "symbol": code,
         "company": pick("CompanyName", "companyName", "Name"),
         "title": title,
-        "disclosedAt": pick("PubDate", "DisclosedDate", "DisclosedTime", "disclosedAt", "Date"),
-        "documentId": pick("DocumentID", "documentId", "DisclosureNumber", "Id"),
+        "disclosedAt": disclosed,
+        "documentId": pick("DiscNo", "DocumentID", "documentId", "DisclosureNumber", "Id"),
         "category": cls.get("category"),
         "categoryJa": cls.get("categoryJa"),
         "sentiment": cls.get("sentiment"),

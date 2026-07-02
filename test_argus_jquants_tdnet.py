@@ -50,6 +50,50 @@ def test_material_after_move_is_not_immediate_trigger():
     assert conf["triggerRole"] == "background_confirmation"   # post-move → never immediate
 
 
+# ── probe semantics: gateway 403 (unknown path) ≠ entitlement refusal ────────
+class _FakeResp:
+    def __init__(self, code, body): self.status_code, self._b = code, body
+    def json(self): return self._b
+    @property
+    def text(self):
+        return json.dumps(self._b)
+
+
+def _probe_with(monkeypatch, code, body):
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(scanner.requests, "get", lambda *a, **k: _FakeResp(code, body))
+    scanner._TDNET_OFFICIAL_CACHE["data"] = None
+    snap, usable = scanner._jquants_tdnet_fetch(10)
+    scanner._TDNET_OFFICIAL_CACHE["data"] = None
+    return snap, usable
+
+
+def test_gateway_403_is_endpoint_not_found_not_entitlement(monkeypatch):
+    # AWS API Gateway answers 403 'Missing Authentication Token' for UNKNOWN paths —
+    # that must NOT be misreported as an entitlement refusal.
+    snap, usable = _probe_with(monkeypatch, 403, {"message": "Missing Authentication Token"})
+    assert snap["status"] == "endpoint_not_found" and usable is False
+    assert snap.get("probes")                      # per-path evidence retained
+
+
+def test_real_subscription_403_is_entitlement_missing(monkeypatch):
+    snap, _ = _probe_with(monkeypatch, 403, {"message": "This API is not available on your subscription plan"})
+    assert snap["status"] == "entitlement_missing"
+
+
+def test_200_with_rows_is_official_live(monkeypatch):
+    body = {"data": [{"Code": "80580", "Title": "業績予想の修正（下方修正）",
+                      "PubDate": "2026-07-02T15:00", "DocumentID": "D1", "CompanyName": "三菱商事"}]}
+    snap, usable = _probe_with(monkeypatch, 200, body)
+    assert snap["status"] == "official_tdnet_live" and usable is True
+    assert snap["items"][0]["material"] is True
+
+
+def test_probes_never_contain_key_material(monkeypatch):
+    snap, _ = _probe_with(monkeypatch, 403, {"message": "Missing Authentication Token"})
+    assert "test-key-not-real" not in json.dumps(snap)
+
+
 # ── official-first / yanoshin-fallback separation ────────────────────────────
 def test_tdnet_recent_falls_back_to_yanoshin_without_key(monkeypatch):
     # no key → official not_configured → yanoshin fallback, clearly distinguishable
