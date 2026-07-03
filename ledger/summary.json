@@ -1,18 +1,18 @@
 {
- "updated": "2026-07-02",
+ "updated": "2026-07-03",
  "engineVersion": "ledger-v3",
  "overall": {
-  "days": 5,
-  "n": 48,
-  "hitRate": 0.729,
-  "brierMean": 0.5193
+  "days": 6,
+  "n": 64,
+  "hitRate": 0.719,
+  "brierMean": 0.5274
  },
  "byPosture": {
   "EVENT_WAIT": {
-   "days": 2,
-   "n": 14,
-   "hitRate": 0.714,
-   "brierMean": 0.4918
+   "days": 3,
+   "n": 30,
+   "hitRate": 0.7,
+   "brierMean": 0.5238
   },
   "MIXED": {
    "days": 2,
@@ -35,10 +35,10 @@
    "brierMean": 0.52
   },
   "normal": {
-   "days": 4,
-   "n": 41,
-   "hitRate": 0.756,
-   "brierMean": 0.5191
+   "days": 5,
+   "n": 57,
+   "hitRate": 0.737,
+   "brierMean": 0.5283
   }
  },
  "aiDirectional": {
@@ -47,191 +47,266 @@
   "hitRate": null
  },
  "classes": {
-  "n": 31,
-  "hits": 23,
-  "hitRate": 0.742,
-  "brierMean": 0.4948,
+  "n": 42,
+  "hits": 29,
+  "hitRate": 0.69,
+  "brierMean": 0.5264,
   "byClass": {
    "GOLD": {
-    "n": 5,
+    "n": 6,
     "hits": 4,
-    "hitRate": 0.8
+    "hitRate": 0.667
    },
    "BOND": {
-    "n": 5,
-    "hits": 5,
+    "n": 6,
+    "hits": 6,
     "hitRate": 1.0
    },
    "REIT": {
-    "n": 5,
-    "hits": 5,
+    "n": 6,
+    "hits": 6,
     "hitRate": 1.0
    },
    "CRYPTO_BTC": {
-    "n": 5,
+    "n": 6,
     "hits": 3,
-    "hitRate": 0.6
+    "hitRate": 0.5
    },
    "CRYPTO_ETH": {
-    "n": 5,
+    "n": 6,
     "hits": 2,
-    "hitRate": 0.4
+    "hitRate": 0.333
    },
    "US_BROAD": {
-    "n": 1,
-    "hits": 1,
+    "n": 2,
+    "hits": 2,
     "hitRate": 1.0
    },
    "US_GROWTH": {
-    "n": 1,
-    "hits": 0,
-    "hitRate": 0.0
+    "n": 2,
+    "hits": 1,
+    "hitRate": 0.5
    },
    "SMALL_CAPS": {
-    "n": 1,
-    "hits": 1,
+    "n": 2,
+    "hits": 2,
     "hitRate": 1.0
    },
    "TECH": {
-    "n": 1,
+    "n": 2,
     "hits": 0,
     "hitRate": 0.0
    },
    "DEFENSIVE": {
-    "n": 1,
+    "n": 2,
     "hits": 1,
-    "hitRate": 1.0
+    "hitRate": 0.5
    },
    "CREDIT": {
-    "n": 1,
-    "hits": 1,
+    "n": 2,
+    "hits": 2,
     "hitRate": 1.0
    }
   }
  },
  "posture": {
-  "n": 0,
+  "n": 1,
   "hits": 0,
-  "hitRate": null,
-  "byPosture": {}
+  "hitRate": 0.0,
+  "byPosture": {
+   "EVENT_WAIT": {
+    "n": 1,
+    "hits": 0,
+    "hitRate": 0.0
+   }
+  }
  },
  "layers": {
   "layer1": {
    "byHorizon": {
     "1": {
-     "n": 28,
-     "hits": 24,
-     "hitRate": 0.857,
-     "brierMean": 0.4462,
+     "n": 40,
+     "hits": 34,
+     "hitRate": 0.85,
+     "brierMean": 0.4607,
      "byMember": {
       "TLT": {
-       "n": 5,
-       "hits": 5,
+       "n": 6,
+       "hits": 6,
        "hitRate": 1.0
       },
       "GLD": {
-       "n": 5,
+       "n": 6,
        "hits": 4,
-       "hitRate": 0.8
+       "hitRate": 0.667
       },
       "BTC": {
-       "n": 5,
-       "hits": 5,
+       "n": 6,
+       "hits": 6,
        "hitRate": 1.0
       },
       "SMH": {
-       "n": 2,
-       "hits": 0,
-       "hitRate": 0.0
+       "n": 3,
+       "hits": 1,
+       "hitRate": 0.333
       },
       "XLF": {
-       "n": 2,
-       "hits": 2,
+       "n": 3,
+       "hits": 3,
        "hitRate": 1.0
       },
       "XLE": {
-       "n": 2,
-       "hits": 2,
+       "n": 3,
+       "hits": 3,
        "hitRate": 1.0
       },
       "LQD": {
+       "n": 3,
+       "hits": 3,
+       "hitRate": 1.0
+      },
+      "SPY": {
        "n": 2,
        "hits": 2,
        "hitRate": 1.0
       },
-      "SPY": {
-       "n": 1,
-       "hits": 1,
-       "hitRate": 1.0
-      },
       "QQQ": {
-       "n": 1,
-       "hits": 0,
-       "hitRate": 0.0
+       "n": 2,
+       "hits": 1,
+       "hitRate": 0.5
       },
       "IWM": {
-       "n": 1,
-       "hits": 1,
+       "n": 2,
+       "hits": 2,
        "hitRate": 1.0
       },
       "XLU": {
-       "n": 1,
+       "n": 2,
        "hits": 1,
-       "hitRate": 1.0
+       "hitRate": 0.5
       },
       "HYG": {
-       "n": 1,
-       "hits": 1,
+       "n": 2,
+       "hits": 2,
        "hitRate": 1.0
       }
      },
-     "days": 5
+     "days": 6
     },
     "3": {
-     "n": 23,
-     "hits": 15,
-     "hitRate": 0.652,
-     "brierMean": 0.5261,
+     "n": 35,
+     "hits": 22,
+     "hitRate": 0.629,
+     "brierMean": 0.5529,
      "byMember": {
       "SPY": {
-       "n": 2,
-       "hits": 1,
-       "hitRate": 0.5
+       "n": 3,
+       "hits": 2,
+       "hitRate": 0.667
       },
       "QQQ": {
-       "n": 2,
-       "hits": 1,
-       "hitRate": 0.5
+       "n": 3,
+       "hits": 2,
+       "hitRate": 0.667
       },
       "IWM": {
-       "n": 2,
-       "hits": 2,
+       "n": 3,
+       "hits": 3,
        "hitRate": 1.0
       },
       "XLU": {
-       "n": 2,
-       "hits": 1,
-       "hitRate": 0.5
-      },
-      "TLT": {
        "n": 3,
        "hits": 2,
        "hitRate": 0.667
       },
+      "TLT": {
+       "n": 4,
+       "hits": 2,
+       "hitRate": 0.5
+      },
       "HYG": {
+       "n": 3,
+       "hits": 3,
+       "hitRate": 1.0
+      },
+      "GLD": {
+       "n": 4,
+       "hits": 2,
+       "hitRate": 0.5
+      },
+      "BTC": {
+       "n": 4,
+       "hits": 2,
+       "hitRate": 0.5
+      },
+      "SMH": {
+       "n": 2,
+       "hits": 0,
+       "hitRate": 0.0
+      },
+      "XLF": {
+       "n": 2,
+       "hits": 0,
+       "hitRate": 0.0
+      },
+      "XLE": {
        "n": 2,
        "hits": 2,
        "hitRate": 1.0
       },
-      "GLD": {
-       "n": 3,
+      "LQD": {
+       "n": 2,
        "hits": 2,
-       "hitRate": 0.667
+       "hitRate": 1.0
+      }
+     },
+     "days": 4
+    },
+    "5": {
+     "n": 15,
+     "hits": 8,
+     "hitRate": 0.533,
+     "brierMean": 0.5983,
+     "byMember": {
+      "SPY": {
+       "n": 1,
+       "hits": 1,
+       "hitRate": 1.0
+      },
+      "QQQ": {
+       "n": 1,
+       "hits": 0,
+       "hitRate": 0.0
+      },
+      "IWM": {
+       "n": 1,
+       "hits": 1,
+       "hitRate": 1.0
+      },
+      "XLU": {
+       "n": 1,
+       "hits": 1,
+       "hitRate": 1.0
+      },
+      "TLT": {
+       "n": 2,
+       "hits": 0,
+       "hitRate": 0.0
+      },
+      "HYG": {
+       "n": 1,
+       "hits": 1,
+       "hitRate": 1.0
+      },
+      "GLD": {
+       "n": 2,
+       "hits": 0,
+       "hitRate": 0.0
       },
       "BTC": {
-       "n": 3,
+       "n": 2,
        "hits": 2,
-       "hitRate": 0.667
+       "hitRate": 1.0
       },
       "SMH": {
        "n": 1,
@@ -254,147 +329,98 @@
        "hitRate": 1.0
       }
      },
-     "days": 3
-    },
-    "5": {
-     "n": 8,
-     "hits": 5,
-     "hitRate": 0.625,
-     "brierMean": 0.5275,
-     "byMember": {
-      "SPY": {
-       "n": 1,
-       "hits": 1,
-       "hitRate": 1.0
-      },
-      "QQQ": {
-       "n": 1,
-       "hits": 0,
-       "hitRate": 0.0
-      },
-      "IWM": {
-       "n": 1,
-       "hits": 1,
-       "hitRate": 1.0
-      },
-      "XLU": {
-       "n": 1,
-       "hits": 1,
-       "hitRate": 1.0
-      },
-      "TLT": {
-       "n": 1,
-       "hits": 0,
-       "hitRate": 0.0
-      },
-      "HYG": {
-       "n": 1,
-       "hits": 1,
-       "hitRate": 1.0
-      },
-      "GLD": {
-       "n": 1,
-       "hits": 0,
-       "hitRate": 0.0
-      },
-      "BTC": {
-       "n": 1,
-       "hits": 1,
-       "hitRate": 1.0
-      }
-     },
-     "days": 1
+     "days": 2
     }
    }
   },
   "layer2": {
    "byHorizon": {
     "1": {
-     "n": 20,
-     "hits": 11,
-     "hitRate": 0.55,
-     "brierMean": 0.6215,
+     "n": 24,
+     "hits": 12,
+     "hitRate": 0.5,
+     "brierMean": 0.6385,
      "byMember": {
       "NVDA": {
-       "n": 5,
-       "hits": 4,
-       "hitRate": 0.8
+       "n": 6,
+       "hits": 5,
+       "hitRate": 0.833
       },
       "AAPL": {
-       "n": 5,
+       "n": 6,
        "hits": 2,
-       "hitRate": 0.4
+       "hitRate": 0.333
       },
       "TSLA": {
-       "n": 5,
+       "n": 6,
        "hits": 3,
-       "hitRate": 0.6
+       "hitRate": 0.5
       },
       "META": {
-       "n": 5,
+       "n": 6,
        "hits": 2,
-       "hitRate": 0.4
-      }
-     },
-     "days": 5
-    },
-    "3": {
-     "n": 12,
-     "hits": 1,
-     "hitRate": 0.083,
-     "brierMean": 0.8863,
-     "byMember": {
-      "NVDA": {
-       "n": 3,
-       "hits": 0,
-       "hitRate": 0.0
-      },
-      "AAPL": {
-       "n": 3,
-       "hits": 0,
-       "hitRate": 0.0
-      },
-      "TSLA": {
-       "n": 3,
-       "hits": 0,
-       "hitRate": 0.0
-      },
-      "META": {
-       "n": 3,
-       "hits": 1,
        "hitRate": 0.333
       }
      },
-     "days": 3
+     "days": 6
     },
-    "5": {
-     "n": 4,
+    "3": {
+     "n": 16,
      "hits": 2,
-     "hitRate": 0.5,
-     "brierMean": 0.68,
+     "hitRate": 0.125,
+     "brierMean": 0.8516,
      "byMember": {
       "NVDA": {
-       "n": 1,
+       "n": 4,
        "hits": 1,
-       "hitRate": 1.0
+       "hitRate": 0.25
       },
       "AAPL": {
-       "n": 1,
-       "hits": 1,
-       "hitRate": 1.0
+       "n": 4,
+       "hits": 0,
+       "hitRate": 0.0
       },
       "TSLA": {
-       "n": 1,
+       "n": 4,
        "hits": 0,
        "hitRate": 0.0
       },
       "META": {
-       "n": 1,
+       "n": 4,
+       "hits": 1,
+       "hitRate": 0.25
+      }
+     },
+     "days": 4
+    },
+    "5": {
+     "n": 8,
+     "hits": 3,
+     "hitRate": 0.375,
+     "brierMean": 0.7525,
+     "byMember": {
+      "NVDA": {
+       "n": 2,
+       "hits": 2,
+       "hitRate": 1.0
+      },
+      "AAPL": {
+       "n": 2,
+       "hits": 1,
+       "hitRate": 0.5
+      },
+      "TSLA": {
+       "n": 2,
+       "hits": 0,
+       "hitRate": 0.0
+      },
+      "META": {
+       "n": 2,
        "hits": 0,
        "hitRate": 0.0
       }
      },
-     "days": 1
+     "days": 2
     }
    }
   },
@@ -406,7 +432,7 @@
      "hitRate": null,
      "brierMean": null,
      "byMember": {},
-     "days": 5
+     "days": 6
     },
     "3": {
      "n": 0,
@@ -414,7 +440,7 @@
      "hitRate": null,
      "brierMean": null,
      "byMember": {},
-     "days": 3
+     "days": 4
     },
     "5": {
      "n": 0,
@@ -422,7 +448,7 @@
      "hitRate": null,
      "brierMean": null,
      "byMember": {},
-     "days": 1
+     "days": 2
     }
    }
   }

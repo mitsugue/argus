@@ -1,43 +1,16 @@
 {
- "asOf": "2026-07-02T07:07:34Z",
+ "asOf": "2026-07-03T07:05:36Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-07-02",
- "dayRemainingUsd": 4.8664,
- "daySpentUsd": 0.1336,
+ "day": "2026-07-03",
+ "dayRemainingUsd": 5.0,
+ "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
- "lastRun": {
-  "at": "2026-07-02T07:07:19Z",
-  "estimated": true,
-  "gemStatus": "live",
-  "oaiStatus": "live",
-  "rows": [
-   {
-    "estUsd": 0.034881,
-    "fallbackUsed": false,
-    "grounding": false,
-    "inputTokens": 5865,
-    "model": "gpt-5.5",
-    "outputTokens": 2755,
-    "provider": "openai"
-   },
-   {
-    "estUsd": 0.098741,
-    "fallbackUsed": false,
-    "grounding": true,
-    "inputTokens": 6721,
-    "model": "gemini-2.5-pro",
-    "outputTokens": 5534,
-    "provider": "gemini"
-   }
-  ],
-  "runId": "2026-07-02T07:07:19Z",
-  "totalUsd": 0.133622
- },
- "lastRunCostUsd": 0.133622,
+ "lastRun": null,
+ "lastRunCostUsd": null,
  "month": "2026-07",
- "monthRemainingUsd": 79.8664,
+ "monthRemainingUsd": 80.0,
  "monthSpentUsd": 0.1336,
  "monthlyBudgetUsd": 80.0,
  "noteJa": "コストは推定値(プロバイダのトークン使用量×設定単価)。OpenAIの前払い残高ではなく、このARGUS側上限がハード停止。",
@@ -55,43 +28,5 @@
    "out": 10.0
   }
  },
- "recentRuns": [
-  {
-   "at": "2026-07-02T07:07:19Z",
-   "estimated": true,
-   "gemStatus": "live",
-   "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.034881,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 5865,
-     "model": "gpt-5.5",
-     "outputTokens": 2755,
-     "provider": "openai"
-    },
-    {
-     "estUsd": 0.098741,
-     "fallbackUsed": false,
-     "grounding": true,
-     "inputTokens": 6721,
-     "model": "gemini-2.5-pro",
-     "outputTokens": 5534,
-     "provider": "gemini"
-    }
-   ],
-   "runId": "2026-07-02T07:07:19Z",
-   "totalUsd": 0.133622
-  },
-  {
-   "at": "2026-07-02T07:05:09Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-02T07:05:09Z",
-   "totalUsd": 0.0
-  }
- ]
+ "recentRuns": []
 }
