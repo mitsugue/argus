@@ -932,7 +932,8 @@ def v_mover_items_freshness():
             return False, f"{it.get('symbol')} missing freshness"
         if (it.get("refreshPolicy") or {}).get("priority") == "urgent" and not fr.get("nextAutoCheckAt"):
             return False, f"{it.get('symbol')} urgent without nextAutoCheckAt"
-        if it.get("explanationStatus") not in ("cached", "pending", "not_generated"):
+        # v11.5.2 added "queued" (owner explain-request pending) as a valid state
+        if it.get("explanationStatus") not in ("cached", "queued", "pending", "not_generated"):
             return False, f"bad explanationStatus {it.get('explanationStatus')}"
     return True, f"count={d.get('count')} all carry freshness"
 
