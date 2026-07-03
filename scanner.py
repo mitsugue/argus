@@ -12863,16 +12863,22 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
             # feed >7-day-old articles into TODAY's cause evidence (the freshness
             # gate in argus_mover_cause demotes 72h+ anyway; this trims the pool).
             _now_iso7 = _ai_now_iso()
+            # v11.5.4: per-symbol discovery items carry symbolHint (not linkedAssets) —
+            # match BOTH so investigate-now's fresh finds actually reach the ladder.
             jp_news = [{"titleJa": it.get("titleJa") or it.get("title"),
                         "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
                         "publisher": it.get("author") or "GoogleNewsJP", "source": "google_news_jp",
                         "sentiment": None}
                        for it in list(_INTEL_STORE)
-                       if it.get("sourceId") == "google_news_jp"
-                       and symu in {str(a).upper() for a in (it.get("linkedAssets") or [])}
+                       if it.get("sourceId") in ("google_news_jp", "public_article")
+                       and (symu in {str(a).upper() for a in (it.get("linkedAssets") or [])}
+                            or str(it.get("symbolHint") or "").upper() == symu)
                        and (argus_news_freshness.age_hours(
                            it.get("publishedAt") or it.get("firstDetectedAt"), _now_iso7) or 0) <= 168]
             cover["jpNewsChecked"] = True
+            # newest first — the cap must never crowd fresh items out with old ones
+            jp_news.sort(key=lambda n: argus_news_freshness._epoch(n.get("publishedAt")) or 0.0,
+                         reverse=True)
             ev["jpNews"] = jp_news[:8]
         except Exception:
             pass
