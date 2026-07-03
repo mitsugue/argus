@@ -11,7 +11,13 @@ name: caos-watchtower
 on:
   schedule:
     - cron: '*/15 * * * 1-5'     # every 15 min, weekdays (JP/US sessions + after-hours)
+    # GitHub cron is best-effort and regularly skips */15 slots under load, which
+    # trips the honest 30-min patrol-health staleness alarm. A phase-shifted second
+    # schedule doubles the firing opportunities (:00/:07/:15/:22/... — refresh is
+    # cheap + idempotent, and the concurrency group serializes overlaps).
+    - cron: '7-59/15 * * * 1-5'
     - cron: '0 * * * 0,6'        # hourly on weekends (crypto/24h news still move)
+    - cron: '30 * * * 0,6'       # weekend phase-shift for the same jitter reason
   workflow_dispatch: {}
 
 concurrency:
