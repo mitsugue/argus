@@ -636,6 +636,25 @@ def v_deep_research_status():
                   f"lastSweep={'yes' if d.get('lastInvestigateNow') or d.get('lastPatrolSweep') else 'none'}")
 
 
+def v_news_newest_first():
+    # v11.5.6 owner rule: every news list is newest-first; undated items at the tail.
+    c, d = _get("/api/argus/market-news")
+    dts = [i.get("datetime") for i in (d.get("items") or [])]
+    dated = [x for x in dts if x is not None]
+    if dated != sorted(dated, reverse=True):
+        return False, f"market-news not newest-first: {dts[:8]}"
+    if None in dts and any(x is not None for x in dts[dts.index(None):]):
+        return False, "undated market-news item above dated ones"
+    c2, d2 = _get("/api/argus/cause-attribution?symbol=IONQ&market=US", timeout=40)
+    if c2 != 429:
+        ages = [(n.get("newsFreshness") or {}).get("ageHours")
+                for n in (d2.get("news") or [])]
+        dated2 = [a for a in ages if a is not None]
+        if dated2 != sorted(dated2):
+            return False, f"cause-attribution news not newest-first: {ages[:8]}"
+    return True, f"market-news {len(dts)} items sorted; cause-attribution sorted"
+
+
 def v_patrol_health():
     # v11.5.5: 24h soak proof — schema + deterministic status + no violations.
     c, d = _get("/api/argus/caos/patrol-health")
@@ -1390,6 +1409,7 @@ CHECKS = [
     ("v11.5.4 deep-research status (no old-primary)", v_deep_research_status),
     # ── V11.5.5 patrol reliability / soak proof ──
     ("v11.5.5 patrol health", v_patrol_health),
+    ("v11.5.6 news newest-first", v_news_newest_first),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),
     ("v11.5.5 patrol self-check gated", v_patrol_self_check_gated),
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),

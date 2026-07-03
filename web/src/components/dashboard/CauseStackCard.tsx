@@ -232,8 +232,17 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
         const all = data.news ?? [];
         const isPast = (n: (typeof all)[number]) =>
           n.newsFreshness?.freshness === 'old' || n.newsFreshness?.freshness === 'stale';
-        const current = all.filter((n) => !isPast(n));
-        const past = all.filter(isPast);
+        // v11.5.6 owner rule: newest at the top in BOTH lists (undated sinks last)
+        const byAge = (a: (typeof all)[number], b: (typeof all)[number]) => {
+          const ha = a.newsFreshness?.ageHours ?? null;
+          const hb = b.newsFreshness?.ageHours ?? null;
+          if (ha == null && hb == null) return 0;
+          if (ha == null) return 1;
+          if (hb == null) return -1;
+          return ha - hb;
+        };
+        const current = all.filter((n) => !isPast(n)).sort(byAge);
+        const past = all.filter(isPast).sort(byAge);
         const renderRow = (n: (typeof all)[number], i: number, dim: boolean) => {
           const pending = n.translationStatus === 'pending' || n.translationStatus === 'failed';
           const original = n.titleOriginal;

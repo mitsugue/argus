@@ -206,6 +206,9 @@ def build_sweep_result(*, symbol: str, market: str, asset_class: str, now_iso: s
             continue
         seen.add(h)
         items.append(c)
+    # v11.5.6 owner rule: every displayed news list is newest-first (unknown-time
+    # items sink to the bottom — they must never sit above dated fresh items)
+    items.sort(key=lambda c: (c["ageHours"] is None, c["ageHours"] or 0.0))
     fresh = [c for c in items if c["freshness"] in ("fresh", "recent")]
     official = [c for c in items if c["sourceTier"] in _OFFICIAL_TIERS]
     professional = [c for c in items if c["sourceTier"] in _PROFESSIONAL_TIERS]

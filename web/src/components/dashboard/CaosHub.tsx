@@ -140,7 +140,19 @@ export const CaosHub: React.FC = () => {
     return f.ageHours == null || f.ageHours <= 7 * 24;
   });
   const relNews = notAncient.filter((n) => n.relevant);
-  const news = (relNews.length ? relNews : notAncient).slice(0, 6);
+  // v11.5.6 owner rule: newest at the top, older as you go down — always.
+  // Undated items sink to the bottom (they must never sit above dated fresh news).
+  const news = (relNews.length ? relNews : notAncient)
+    .slice()
+    .sort((a, b) => {
+      const ta = typeof a.datetime === 'number' ? a.datetime : null;
+      const tb = typeof b.datetime === 'number' ? b.datetime : null;
+      if (ta == null && tb == null) return 0;
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      return tb - ta;
+    })
+    .slice(0, 6);
   // v11.5.2: guarantee the on-screen market headlines enter the translation queue
   // (once per session). Never blocks render; never starts translation on the client.
   React.useEffect(() => {

@@ -104,7 +104,10 @@ export function AiExplanationBlock({ explanationJa, explanationStatus, symbol, m
           {result.bestCurrentLeadJa && (
             <p style={{ margin: '3px 0 0' }}><b>現在の最有力:</b> {result.bestCurrentLeadJa}</p>
           )}
-          {(result.sweep?.freshItems ?? []).slice(0, 3).map((it, i) => (
+          {(result.sweep?.freshItems ?? [])
+            .slice()
+            .sort((a, b) => (a.ageHours ?? Infinity) - (b.ageHours ?? Infinity))
+            .slice(0, 3).map((it, i) => (
             <p key={i} style={{ margin: '2px 0 0', color: 'var(--text-sub)' }}>
               ・{it.title}
               <span style={{ color: 'var(--text-faint)', fontSize: 10, marginLeft: 6 }}>

@@ -11404,11 +11404,16 @@ def get_market_news():
                 if not h or h in _seen_h:
                     continue
                 _seen_h.add(h)
+                # v11.5.6: carry a real epoch so the newest-first sort below works —
+                # datetime:None made every JP item unsortable (and stuck at the top
+                # regardless of age, violating 最新が上 on the hub).
+                _ep = argus_news_freshness._epoch(
+                    it.get("publishedAt") or it.get("firstDetectedAt"))
                 jp_items.append({
                     "headline": h, "headlineJa": h,
                     "source": str(sid or "JP")[:40],
                     "url": str(it.get("canonicalUrl") or it.get("url") or "")[:300],
-                    "datetime": None,
+                    "datetime": int(_ep) if _ep else None,
                     "major": bool(_NEWS_MAJOR_RE.search(h)),
                     "tier": "wire" if sid in ("reuters_jp", "boj_official", "meti_official") else "aggregator",
                     "relevant": _news_relevant(h, h),
@@ -11417,9 +11422,12 @@ def get_market_news():
                 if len(jp_items) >= 6:
                     break
             if jp_items:
-                items = (jp_items + items)[:16]   # JP first for the JP owner
+                items = (jp_items + items)[:16]
         except Exception:
             pass
+        # v11.5.6 owner rule: EVERY news list renders newest-first — sort by epoch,
+        # undated items sink to the bottom (never fake-fresh at the top).
+        items.sort(key=lambda i: (i.get("datetime") is None, -(i.get("datetime") or 0)))
         # v11.5.1: Japanese-first display field (headlineJa is filled above; English
         # without a translation gets a JP fallback, never raw English as primary).
         for _it in items:
@@ -12812,6 +12820,10 @@ def get_cause_attribution(symbol, market="JP", explain=False):
     for n in news:
         if n.get("translationStatus") == "pending":
             _NEWS_JA_SEEN.append(n.get("titleOriginal") or "")
+    # v11.5.6 owner rule: newest first on every screen — sort by the decorated age
+    # (undated items sink to the bottom, never fake-fresh at the top).
+    news.sort(key=lambda n: ((n.get("newsFreshness") or {}).get("ageHours") is None,
+                             (n.get("newsFreshness") or {}).get("ageHours") or 0.0))
     stack["news"] = news
     # V11.3.3: attach the mover-cause ladder (cached evidence only — no fetch/LLM)
     try:
