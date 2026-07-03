@@ -5928,6 +5928,8 @@ def _jp_stock_news_intel(pairs):
                 continue
             seen.add(t)
             r = dict(r); r["symbolHint"] = sym; r["lang"] = "ja"; r["corroboration"] = "single"
+            r.setdefault("intelligenceId", hashlib.md5(
+                f"google_news_jp|{r.get('canonicalUrl')}|{t}".encode()).hexdigest()[:16])
             _INTEL_STORE.append(r)
             pushed += 1
     if len(_INTEL_STORE) > _INTEL_STORE_MAX:
@@ -6185,7 +6187,10 @@ def collect_institutional_intel():
     feed that returned nothing, so the market-watch log proves what was ingested.
     Never called by a public GET."""
     now_iso = _ai_now_iso()
-    seen = {i["intelligenceId"] for i in _INTEL_STORE}
+    # raw per-symbol discovery rows (jp/us stock news, article probes) carry no
+    # intelligenceId — a hard i["intelligenceId"] here crashed the WHOLE collect
+    # whenever one was in the store (silent 24/7-patrol killer). Tolerate them.
+    seen = {(i.get("intelligenceId") or f"t:{i.get('title') or ''}") for i in _INTEL_STORE}
     per_feed, per_source, total_new = [], {}, 0
     for sid, label, url, kind in _INTEL_FEEDS:
         txt = _fetch_public_text(url)
@@ -6474,6 +6479,8 @@ def _us_stock_news_intel(pairs):
             r["symbolHint"] = sym
             r["lang"] = "en"
             r["corroboration"] = "single"
+            r.setdefault("intelligenceId", hashlib.md5(
+                f"google_news_us|{r.get('canonicalUrl')}|{t}".encode()).hexdigest()[:16])
             _INTEL_STORE.append(r)
             pushed += 1
     if len(_INTEL_STORE) > _INTEL_STORE_MAX:
@@ -6948,6 +6955,8 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
                         rr["symbolHint"] = symu
                         rr["lang"] = "ja" if mkt == "JP" else "en"
                         rr["corroboration"] = "single"
+                        rr.setdefault("intelligenceId", hashlib.md5(
+                            f"gnews_recent|{rr.get('canonicalUrl')}|{t}".encode()).hexdigest()[:16])
                         _INTEL_STORE.append(rr)
             if mkt == "US":
                 searched.append("finnhub_company_news")
@@ -6995,6 +7004,8 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
                 f["publishedAt"] = f.get("publishedAt") or meta.get("publishedAt")
                 # store metadata (never the body) so C.A.O.S./cause engines see it
                 _INTEL_STORE.insert(0, {
+                    "intelligenceId": hashlib.md5(
+                        f"public_article|{final_url}|{meta['title']}".encode()).hexdigest()[:16],
                     "sourceId": "public_article", "title": meta["title"],
                     "canonicalUrl": meta.get("canonicalUrl") or final_url,
                     "publishedAt": meta.get("publishedAt") or f.get("publishedAt"),
