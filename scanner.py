@@ -6648,6 +6648,16 @@ def api_argus_admin_caos_watchtower_refresh():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    try:
+        return jsonify(_watchtower_refresh_run())
+    except Exception as e:
+        # never a bare HTML 500 — the cron log must show WHAT failed (no secrets)
+        add_log(f"[watchtower] refresh failed: {type(e).__name__}: {str(e)[:160]}")
+        return jsonify({"ok": False, "schemaVersion": "caos-watchtower-refresh-v1",
+                        "error": f"{type(e).__name__}: {str(e)[:200]}"}), 500
+
+
+def _watchtower_refresh_run():
     _watchtower_restore_once()
     _news_ja_restore_once()
     now_iso = _ai_now_iso()
@@ -6732,7 +6742,7 @@ def api_argus_admin_caos_watchtower_refresh():
     _WATCHTOWER_STATE["lastSummary"] = {k: summary[k] for k in
                                         ("asOf", "targetsChecked", "newItems", "freshItems")}
     _watchtower_persist()
-    return jsonify(summary)
+    return summary
 
 
 def _intel_watchlist_symbols():
