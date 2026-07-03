@@ -22,10 +22,14 @@ def _reset_rate_limit_buckets():
         # stamps or queued entries would leak between tests (a later test posting the same
         # symbol reads `rate_limited`/`already_queued` unexpectedly). Clear them per test.
         for name in ("_MC_EXPLAIN_REQUESTS", "_MC_EXPLAIN_REQ_RL", "_NEWS_JA_VQUEUE",
-                     "_NEWS_JA_VQUEUE_RL"):
+                     "_NEWS_JA_VQUEUE_RL", "_INVESTIGATE_RL"):
             d = getattr(scanner, name, None)
             if isinstance(d, dict):
                 d.clear()
+        # V11.5.4: per-symbol sweep timestamps trip the investigate-now cooldown
+        # across tests (single-IP test client) — clear per test.
+        if isinstance(getattr(scanner, "_SWEEP_STATE", None), dict):
+            scanner._SWEEP_STATE["bySymbol"] = {}
     except Exception:
         pass
     yield

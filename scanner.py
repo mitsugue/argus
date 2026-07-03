@@ -43,6 +43,8 @@ import argus_news_freshness  # news freshness gate — old news never a current 
 import argus_investment_universe  # Core Portfolio asset-class universe (pure, v11.5.3)
 import argus_caos_source_universe  # per-asset-class source registry + discovery resolution (pure, v11.5.3)
 import argus_caos_watchtower_plan  # C.A.O.S. watchtower target plan (pure, v11.5.3)
+import argus_caos_patrol  # always-on patrol schedule (pure, v11.5.4)
+import argus_caos_source_sweep  # maximum-available source sweep helpers (pure, v11.5.4)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6745,8 +6747,450 @@ def _watchtower_refresh_run():
     }
     _WATCHTOWER_STATE["lastSummary"] = {k: summary[k] for k in
                                         ("asOf", "targetsChecked", "newItems", "freshItems")}
+    # V11.5.4: deep sweeps for due critical/urgent patrol targets (movers first)
+    try:
+        patrol = argus_caos_patrol.build_patrol_plan(
+            plan["targets"], _SWEEP_STATE.get("bySymbol") or {}, now_iso)
+        picked = argus_caos_patrol.pick_due_targets(patrol, max_deep=4, max_light=0)
+        deep_done = []
+        for t in picked["deep"]:
+            if not t.get("symbol") or t["assetClass"] not in ("JP_EQUITY", "US_EQUITY"):
+                continue
+            try:
+                res = _caos_run_sweep(t["symbol"],
+                                      "JP" if t["assetClass"] == "JP_EQUITY" else "US",
+                                      name=t.get("name"), budget_sec=8, probe_articles=1)
+                deep_done.append({"symbol": t["symbol"], "status": res["status"],
+                                  "fresh": len(res["freshItems"])})
+            except Exception:
+                continue
+        summary["deepSweeps"] = deep_done
+        _SWEEP_STATE["lastPatrolSweep"] = {"asOf": now_iso, "deepSweeps": deep_done}
+        _sweep_state_persist()
+    except Exception:
+        pass
     _watchtower_persist()
     return summary
+
+
+# ━━━ V11.5.4 Always-On Deep Patrol / Investigate Again Now ━━━━━━━━━━━━━━━━━━
+# The owner's directive: go as far as the PUBLIC web allows and never decide
+# "this is enough". The sweep walks official → professional metadata →
+# discovery → public article probe → alternative chasing. A source that blocks
+# us (403/login/subscription) is recorded as blocked — we do NOT bypass it —
+# and we immediately chase official documents and sibling outlets instead.
+# investigate-now is a PUBLIC POST doing a strictly bounded immediate sweep
+# (no LLM ever on this path); the patrol runs the same sweep without clicks.
+
+_SWEEP_STATE = {"restored": False, "bySymbol": {}, "lastInvestigateNow": None,
+                "lastPatrolSweep": None}
+_SWEEP_STATE_FILE = "/tmp/argus_caos_sweeps.json"
+_SWEEP_LOCK = threading.Lock()           # one sweep at a time (public POST safety)
+_INVESTIGATE_RL = {}                     # "ip|MKT:SYM" -> epoch
+_INVESTIGATE_RL_SEC = 60                 # per IP+symbol
+_INVESTIGATE_COOLDOWN_SEC = 120          # per symbol, any caller
+_PROBE_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/125.0 Safari/537.36")
+
+
+def _sweep_state_persist():
+    try:
+        with open(_SWEEP_STATE_FILE, "w") as f:
+            json.dump({k: _SWEEP_STATE[k] for k in
+                       ("bySymbol", "lastInvestigateNow", "lastPatrolSweep")},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _sweep_state_restore_once():
+    if _SWEEP_STATE["restored"]:
+        return
+    _SWEEP_STATE["restored"] = True
+    try:
+        with open(_SWEEP_STATE_FILE) as f:
+            blob = json.load(f)
+        for k in ("bySymbol", "lastInvestigateNow", "lastPatrolSweep"):
+            if blob.get(k) is not None:
+                _SWEEP_STATE[k] = blob[k]
+    except Exception:
+        pass
+
+
+def _probe_article(url, timeout=6):
+    """Stage-4 public article probe: fetch a PUBLICLY served page, detect
+    login/paywall blocks, extract metadata + snippet (<=240 chars). Never stores
+    the body; never sends credentials; never bypasses a block."""
+    try:
+        r = requests.get(url, headers={"User-Agent": _PROBE_UA}, timeout=timeout,
+                         allow_redirects=True)
+        html = r.text[:400_000]
+        meta = argus_caos_source_sweep.extract_article_metadata(html, str(r.url))
+        verdict = argus_caos_source_sweep.detect_block(
+            r.status_code, html, meta.get("isAccessibleForFree"))
+        return verdict, meta, str(r.url)
+    except Exception:
+        return "unreachable", {}, url
+
+
+def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
+                    force_discovery=True):
+    """The maximum-available source sweep for one symbol. Stages: official →
+    professional metadata → discovery → public article probe → alternative
+    chasing for blocked items. Time-budgeted; each stage failure moves on.
+    NEVER calls an LLM. Updates the intel store + mover cause immediately."""
+    t0 = time.time()
+    now_iso = _ai_now_iso()
+    symu, mkt = str(symbol).upper(), str(market).upper()
+    nm = (name or (_ENTITY_PROFILES.get(symu) or {}).get("name") or symu)
+    ac = argus_investment_universe.asset_class_of_symbol(symu, mkt)
+    searched, found, blocked, alternatives = [], [], [], []
+    status = "completed"
+
+    def over_budget():
+        return (time.time() - t0) > budget_sec
+
+    # ── Stage 1: official / primary (cached-first; live TDnet deferred so a slow
+    # official API can never starve the discovery stage of the whole budget) ──
+    tdnet_live_pending = False
+
+    def _tdnet_scan(snap):
+        n = 0
+        for it in ((snap or {}).get("items") or [])[:150]:
+            code = str(it.get("code") or it.get("symbol") or "")
+            if symu in code:
+                found.append({"title": f"適時開示: {it.get('title') or it.get('subject') or ''}",
+                              "publishedAt": it.get("time") or it.get("datetime"),
+                              "url": str(it.get("url") or "")[:300], "source": "tdnet"})
+                n += 1
+        return n
+
+    try:
+        if mkt == "JP":
+            searched.append("tdnet")
+            snap = _tdnet_recent_cached_only()
+            if snap:
+                _tdnet_scan(snap)
+            else:
+                tdnet_live_pending = True          # fetch after discovery if budget left
+            searched.append("official_events_store")
+            for oe in list(_OFFICIAL_EVENTS.values())[:200] if isinstance(_OFFICIAL_EVENTS, dict) else []:
+                if str(oe.get("symbol") or "").upper() == symu:
+                    found.append({"title": f"公式イベント: {oe.get('titleJa') or oe.get('title') or ''}",
+                                  "publishedAt": oe.get("disclosedAt") or oe.get("asOf"),
+                                  "url": "", "source": "tdnet"})
+        else:
+            searched.append("sec_edgar")
+            try:
+                filings, _st = _sec_filings(symu)
+                for f in (filings or [])[:5]:
+                    found.append({"title": f"SEC filing: {f.get('form')}",
+                                  "publishedAt": f.get("filingDate"),
+                                  "url": str(f.get("url") or "")[:300], "source": "sec.gov"})
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # ── Stage 2: professional metadata already collected by the 24/7 feeds ──
+    try:
+        searched.append("caos_feeds(nikkei/reuters/nhk/bloomberg/cnbc/coindesk)")
+        nml = str(nm)
+        for it in list(_INTEL_STORE)[:400]:
+            la = {str(a).upper() for a in (it.get("linkedAssets") or [])}
+            hint = str(it.get("symbolHint") or "").upper()
+            title = str(it.get("title") or "")
+            if symu in la or hint == symu or (len(nml) >= 3 and nml in title):
+                found.append({"title": title, "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
+                              "url": str(it.get("canonicalUrl") or "")[:300],
+                              "source": it.get("sourceId") or ""})
+    except Exception:
+        pass
+
+    # ── Stage 3: discovery search (fresh fetch — bypass the 30-min cache) ──
+    if not over_budget():
+        try:
+            if mkt == "JP":
+                searched.append("google_news_jp")
+                if force_discovery:
+                    _JP_STOCK_NEWS_CACHE.pop(symu, None)
+                _jp_stock_news_intel([(symu, nm)])
+            else:
+                searched.append("google_news_us")
+                if force_discovery:
+                    _US_STOCK_NEWS_CACHE.pop(symu, None)
+                _us_stock_news_intel([(symu, nm)])
+            # per-symbol items land anywhere in the store (append vs insert(0)) —
+            # scan the WHOLE bounded store, not just the head
+            for it in list(_INTEL_STORE):
+                if str(it.get("symbolHint") or "").upper() == symu:
+                    found.append({"title": it.get("title") or "",
+                                  "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
+                                  "url": str(it.get("canonicalUrl") or "")[:300],
+                                  "source": "google_news_jp" if mkt == "JP" else "google_news_us"})
+            if mkt == "US":
+                searched.append("finnhub_company_news")
+                try:
+                    res = _finnhub_catalyst(symu)
+                    fin = res[0] if isinstance(res, tuple) else res
+                    for n in ((fin or {}).get("news") or [])[:8]:
+                        ts = n.get("datetime")
+                        iso = (datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                               if isinstance(ts, (int, float)) and ts > 0 else None)
+                        found.append({"title": str(n.get("headline") or ""), "publishedAt": iso,
+                                      "url": str(n.get("url") or "")[:300],
+                                      "source": n.get("source") or "Finnhub"})
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    else:
+        status = "partial"
+
+    # deferred live TDnet (only when the cache was cold and budget remains)
+    if tdnet_live_pending and not over_budget():
+        try:
+            _tdnet_scan(get_tdnet_recent())
+        except Exception:
+            pass
+
+    # ── Stage 4: public article probe (top fresh items with real URLs) ──
+    probed = 0
+    if probe_articles > 0:
+        candidates = []
+        for f in found:
+            fr = argus_news_freshness.classify(f.get("publishedAt"), now_iso)
+            if fr["freshness"] in ("fresh", "recent") and f.get("url", "").startswith("http"):
+                candidates.append(f)
+        for f in candidates[:probe_articles]:
+            if over_budget():
+                status = "partial"
+                break
+            searched.append(f"article_probe:{f.get('source') or 'web'}")
+            verdict, meta, final_url = _probe_article(f["url"])
+            probed += 1
+            if verdict == "ok" and meta.get("title"):
+                f["snippet"] = meta.get("snippet") or ""
+                f["publishedAt"] = f.get("publishedAt") or meta.get("publishedAt")
+                # store metadata (never the body) so C.A.O.S./cause engines see it
+                _INTEL_STORE.insert(0, {
+                    "sourceId": "public_article", "title": meta["title"],
+                    "canonicalUrl": meta.get("canonicalUrl") or final_url,
+                    "publishedAt": meta.get("publishedAt") or f.get("publishedAt"),
+                    "firstDetectedAt": now_iso, "fetchedAt": now_iso,
+                    "author": meta.get("publisher"), "symbolHint": symu, "lang":
+                        ("ja" if mkt == "JP" else "en"), "corroboration": "single"})
+            elif verdict in ("subscription_required", "login_required", "forbidden",
+                             "not_found", "unreachable"):
+                pub = argus_caos_source_universe.resolve_publisher(
+                    f.get("title") or "", f.get("source") or "", f.get("url") or "")
+                blocked.append({"source": pub["sourceFamily"], "reason": verdict,
+                                "title": str(f.get("title") or "")[:120]})
+
+    # ── Stage 5: alternative chasing for blocked stories ──
+    for b in blocked[:2]:
+        if over_budget():
+            status = "partial"
+            break
+        kws = argus_caos_source_sweep.headline_keywords(b.get("title") or "")
+        if not kws:
+            continue
+        q = " ".join(kws)
+        alternatives.append(f"google_news_{'jp' if mkt == 'JP' else 'us'}:『{q[:40]}』で代替検索")
+        try:
+            rows = (_google_news_jp_rss(q) if mkt == "JP" else _google_news_us_rss(q))[:4]
+            for r in rows:
+                found.append({"title": r.get("title") or "",
+                              "publishedAt": r.get("publishedAt"),
+                              "url": str(r.get("canonicalUrl") or "")[:300],
+                              "source": "google_news_jp" if mkt == "JP" else "google_news_us"})
+        except Exception:
+            pass
+        alternatives.append("tdnet/公式開示を再確認" if mkt == "JP" else "SEC EDGARを再確認")
+
+    if len(_INTEL_STORE) > _INTEL_STORE_MAX:
+        del _INTEL_STORE[:len(_INTEL_STORE) - _INTEL_STORE_MAX]
+
+    result = argus_caos_source_sweep.build_sweep_result(
+        symbol=symu, market=mkt, asset_class=ac, now_iso=now_iso,
+        searched_sources=searched, found_items=found, blocked_sources=blocked,
+        alternative_sources_checked=alternatives,
+        status=status, elapsed_ms=int((time.time() - t0) * 1000))
+
+    # queue English titles for the translation cron (headlines only)
+    try:
+        _news_ja_restore_once()
+        eng = [{"titleOriginal": i["title"], "source": i.get("truePublisher") or ""}
+               for i in result["freshItems"]
+               if argus_news_i18n.looks_translatable(i["title"])]
+        if eng:
+            argus_news_i18n.visible_queue_add(_NEWS_JA_VQUEUE, eng, _NEWS_JA_CACHE,
+                                              context="investigate-now", symbol=symu,
+                                              market=mkt, now_iso=now_iso)
+            _news_ja_persist()
+    except Exception:
+        pass
+
+    # rebuild the mover cause from the (now richer) cached evidence — no LLM
+    try:
+        _mover_causes_restore_once()
+        q = _quote_cached_only(symu, mkt) or {}
+        rec = _mover_cause_for(symu, mkt, q.get("changePct"),
+                               name=q.get("nameJa") or q.get("name") or nm,
+                               cached_only=True)
+        mid = rec.get("moverCauseId")
+        if mid:
+            _MOVER_CAUSES[mid] = argus_mover_cause_store.merge_record(
+                _MOVER_CAUSES.get(mid), rec, now_iso=now_iso)
+            _mover_causes_persist()
+            _MOVER_REFRESH_QUEUE["data"] = None
+        result["moverCauseUpdated"] = True
+        served = _mover_cause_serve(_MOVER_CAUSES.get(mid) or rec, now_iso)
+        result["bestCurrentLeadJa"] = (served.get("bestLeadJa")
+                                       or "最新材料は未確認")[:200]
+    except Exception:
+        result["moverCauseUpdated"] = False
+        result["bestCurrentLeadJa"] = result.get("latestFreshLeadJa") or "最新材料は未確認"
+
+    key = f"{mkt}:{symu}"
+    _SWEEP_STATE.setdefault("bySymbol", {})[key] = {
+        "lastSweepAt": now_iso, "status": result["status"],
+        "freshCount": len(result["freshItems"]),
+        "blockedCount": len(result["blockedSources"]),
+        "latestFreshLeadJa": result["latestFreshLeadJa"]}
+    # bound the per-symbol map
+    bysym = _SWEEP_STATE["bySymbol"]
+    if len(bysym) > 120:
+        for k in sorted(bysym, key=lambda k: str(bysym[k].get("lastSweepAt")))[:len(bysym) - 120]:
+            bysym.pop(k, None)
+    return result
+
+
+@app.route("/api/argus/caos/patrol-plan")
+def api_argus_caos_patrol_plan():
+    """Public cache-only: the always-on patrol schedule (what C.A.O.S. sweeps
+    without any click, at what cadence, and when each target is next due)."""
+    _sweep_state_restore_once()
+    now_iso = _ai_now_iso()
+    plan = _watchtower_plan_build(now_iso)
+    return jsonify(argus_caos_patrol.build_patrol_plan(
+        plan["targets"], _SWEEP_STATE.get("bySymbol") or {}, now_iso))
+
+
+@app.route("/api/argus/caos/investigate-now", methods=["POST"])
+def api_argus_caos_investigate_now():
+    """PUBLIC 念押しボタン: an immediate, strictly bounded source sweep for one
+    symbol — official disclosures, professional metadata, fresh discovery, public
+    article probe, alternative chasing. NO LLM on this path; no login/paywall
+    bypass; per-IP+symbol and per-symbol rate limits; 12s budget → partial."""
+    _sweep_state_restore_once()
+    body = request.get_json(silent=True) or {}
+    sym = (str(body.get("symbol") or "").strip().upper())[:16]
+    mkt = (str(body.get("market") or "JP").strip().upper())[:4]
+    now_iso = _ai_now_iso()
+    base = {"schemaVersion": "caos-investigate-now-v2", "symbol": sym, "market": mkt}
+    if not sym or mkt not in ("JP", "US") or not re.match(r"^[A-Z0-9._-]{1,10}$", sym):
+        return jsonify({**base, "ok": False, "status": "error",
+                        "messageJa": "銘柄コードまたは市場が不正です。"}), 200
+    key = f"{mkt}:{sym}"
+    nowt = time.time()
+    ip = _client_meta().get("ip") or ""
+    if nowt - float(_INVESTIGATE_RL.get(f"{ip}|{key}", 0.0)) < _INVESTIGATE_RL_SEC:
+        return jsonify({**base, "ok": True, "status": "rate_limited",
+                        "messageJa": "直前に確認済みです。少し待って再度お試しください。"}), 200
+    last = ((_SWEEP_STATE.get("bySymbol") or {}).get(key) or {}).get("lastSweepAt")
+    last_ep = argus_news_freshness._epoch(last) if last else None
+    if last_ep and (nowt - last_ep) < _INVESTIGATE_COOLDOWN_SEC and not body.get("force"):
+        nxt = datetime.fromtimestamp(last_ep + _INVESTIGATE_COOLDOWN_SEC, pytz.utc)
+        return jsonify({**base, "ok": True, "status": "rate_limited",
+                        "nextCheckAt": nxt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "messageJa": f"直前に確認済みです。次回確認: {nxt.strftime('%H:%M')}UTC",
+                        "lastSweep": (_SWEEP_STATE.get('bySymbol') or {}).get(key)}), 200
+    if not _SWEEP_LOCK.acquire(blocking=False):
+        return jsonify({**base, "ok": True, "status": "rate_limited",
+                        "messageJa": "調査が混み合っています。数秒後に再度お試しください。"}), 200
+    try:
+        _INVESTIGATE_RL[f"{ip}|{key}"] = nowt
+        if len(_INVESTIGATE_RL) > 2000:
+            _INVESTIGATE_RL.clear()
+        result = _caos_run_sweep(sym, mkt, budget_sec=12, probe_articles=3)
+    finally:
+        _SWEEP_LOCK.release()
+    # AI explanation stays a SEPARATE queued path (no LLM on public POST)
+    _mc_explain_req_restore_once()
+    today = now_iso[:10].replace("-", "")
+    mc = _MOVER_CAUSES.get(f"mc-{mkt}-{sym}-{today}")
+    if mc and mc.get("explanationJa"):
+        ai = {"status": "cached", "messageJa": "AI解説を開けます。"}
+    else:
+        _mc_explain_req_add(sym, mkt, str(body.get("context") or "investigate-now"), now_iso)
+        _mc_explain_req_persist()
+        ai = {"status": "queued", "messageJa": "AI解説は別途生成待ちです(補足)。"}
+    fresh_n = len(result["freshItems"])
+    msg = (f"最新材料を確認しました。新規{fresh_n}件を反映しました。" if fresh_n
+           else "最新材料を確認しました。新しい材料は見つかりませんでした。")
+    if result["status"] == "partial":
+        msg = "一部ソースのみ確認できました。" + msg
+    _SWEEP_STATE["lastInvestigateNow"] = {
+        "asOf": now_iso, "symbol": sym, "market": mkt, "status": result["status"],
+        "searchedSources": result["searchedSources"],
+        "freshCount": fresh_n, "blockedCount": len(result["blockedSources"])}
+    _sweep_state_persist()
+    return jsonify({**base, "ok": True, "status": result["status"],
+                    "elapsedMs": result["elapsedMs"],
+                    "sweep": {k: result[k] for k in (
+                        "searchedSources", "freshItems", "officialItems",
+                        "professionalItems", "publicTextItems", "blockedSources",
+                        "alternativeSourcesChecked", "notFoundJa")},
+                    "moverCauseUpdated": result.get("moverCauseUpdated", False),
+                    "bestCurrentLeadJa": result.get("bestCurrentLeadJa", ""),
+                    "messageJa": msg, "aiExplanation": ai}), 200
+
+
+@app.route("/api/argus/caos/deep-research/status")
+def api_argus_caos_deep_research_status():
+    """Public cache-only audit: what the last investigate-now / patrol sweep did,
+    which symbols have only old news, and any old-news-as-primary VIOLATIONS
+    (must stay empty — smoke fails otherwise)."""
+    _sweep_state_restore_once()
+    _mover_causes_restore_once()
+    now_iso = _ai_now_iso()
+    violations, only_old = [], []
+    for r in _mover_causes_today():
+        served = _mover_cause_serve(r, now_iso)
+        best = str(served.get("bestLeadJa") or "")
+        cands = served.get("causeCandidates") or []
+        news_cands = [c for c in cands if c.get("category") in ("direct_news", "analyst_action")]
+        if best and best != "最新材料は未確認":
+            for c in cands:
+                nf = c.get("newsFreshness") or {}
+                if (c.get("titleJa") and c["titleJa"] in best
+                        and nf.get("freshness") in ("old", "stale")):
+                    violations.append({"symbol": served.get("symbol"),
+                                       "type": "old_news_as_primary",
+                                       "detailJa": f"{nf.get('freshness')}のニュースがbestLeadに使われている"})
+        if news_cands and all((c.get("newsFreshness") or {}).get("freshness")
+                              in ("old", "stale") for c in news_cands):
+            only_old.append(str(served.get("symbol") or ""))
+    stale_sources = []
+    try:
+        for s in (argus_caos_source_universe.build_universe(
+                _watchtower_configured(), now_iso)["sources"]):
+            pass  # tiers come from the watchtower status; keep this endpoint light
+    except Exception:
+        pass
+    return jsonify({
+        "schemaVersion": "caos-deep-research-status-v1", "asOf": now_iso,
+        "lastInvestigateNow": _SWEEP_STATE.get("lastInvestigateNow"),
+        "lastPatrolSweep": _SWEEP_STATE.get("lastPatrolSweep"),
+        "sweepsBySymbol": {k: v for k, v in
+                           list((_SWEEP_STATE.get("bySymbol") or {}).items())[:40]},
+        "coverageByAssetClass": {},   # full coverage lives in /caos-watchtower/status
+        "sourcesStale": stale_sources,
+        "symbolsWithOnlyOldNews": only_old[:20],
+        "violations": violations[:20],
+        "noteJa": "violationsが空=古いニュースがcurrent leadに出ていない。"
+                  "公開GETは取得を起動しない。"})
 
 
 def _intel_watchlist_symbols():

@@ -330,6 +330,8 @@ _FAMILY_PATTERNS = [
     ("decrypt", "specialist_industry_media", "public_metadata", ("decrypt",)),
     ("kitco", "specialist_industry_media", "public_metadata", ("kitco",)),
     ("sec", "official_regulatory", "official", ("sec.gov", "sec edgar", "u.s. securities")),
+    ("tdnet", "official_regulatory", "official", ("tdnet", "適時開示")),
+    ("edinet", "official_regulatory", "official", ("edinet",)),
     ("federal_reserve", "central_bank_or_government", "official",
      ("federalreserve", "federal reserve", "frb")),
     ("boj", "central_bank_or_government", "official", ("日本銀行", "boj.or.jp", "bank of japan")),

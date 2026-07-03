@@ -42,6 +42,58 @@ export async function requestExplanation(
   }
 }
 
+// ── V11.5.4 investigate-now: immediate bounded source sweep (server-side; no LLM) ──
+export interface SweepItem {
+  title: string; url?: string; publishedAt?: string; snippet?: string;
+  sourceFamily?: string; sourceTier?: string; truePublisher?: string;
+  freshness?: string; ageHours?: number | null; weakSignal?: boolean;
+}
+
+export interface InvestigateNowResult {
+  ok: boolean;
+  status: 'completed' | 'partial' | 'rate_limited' | 'blocked' | 'error';
+  symbol: string;
+  market: string;
+  elapsedMs?: number;
+  nextCheckAt?: string;
+  sweep?: {
+    searchedSources: string[];
+    freshItems: SweepItem[];
+    officialItems: SweepItem[];
+    professionalItems: SweepItem[];
+    publicTextItems: SweepItem[];
+    blockedSources: { source: string; reason: string; title?: string }[];
+    alternativeSourcesChecked: string[];
+    notFoundJa: string[];
+  };
+  moverCauseUpdated?: boolean;
+  bestCurrentLeadJa?: string;
+  messageJa?: string;
+  aiExplanation?: { status: string; messageJa?: string };
+}
+
+/** 念押しボタン: run the immediate source sweep now. Longer timeout — the server
+ *  walks official→professional→discovery→article probe within its own 12s budget. */
+export async function investigateNow(
+  symbol: string, market: string, context: string,
+): Promise<InvestigateNowResult | null> {
+  const b = backend();
+  if (!b) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20_000);
+    const r = await fetch(b + '/api/argus/caos/investigate-now', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol, market, context }), signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!r.ok) return null;
+    return (await r.json()) as InvestigateNowResult;
+  } catch {
+    return null;
+  }
+}
+
 export interface TranslationRequestItem {
   titleOriginal: string;
   source?: string;

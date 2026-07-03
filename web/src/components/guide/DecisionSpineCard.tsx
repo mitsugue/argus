@@ -199,13 +199,25 @@ export const DecisionSpineCard: React.FC = () => {
           遅れることがあります。翻訳前は英語原文を主表示せず<b>「翻訳取得中」</b>と表示し、原文は「原文を見る」の
           詳細内で確認できます。次回の翻訳処理で<b>実際の日本語タイトルに置き換わります</b>。
         </p>
-        <span className="mdepth__label" style={{ fontWeight: 600, display: 'block', marginTop: 10 }}>AI解説はなぜすぐ出ないことがあるのか</span>
+        <span className="mdepth__label" style={{ fontWeight: 600, display: 'block', marginTop: 10 }}>C.A.O.S.は常に何を調べているのか</span>
         <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
-          公開画面のクリックでAI検索やAI生成を<b>直接起動しません</b>。<b>「理由を詳しく調べる」</b>を押すと、
-          AI検索をその場で起動するのではなく、<b>調査キューに追加</b>します。重要度・予算・重複を管理したうえで、
-          管理側の定期実行が解説を生成します。生成後は同じ場所で<b>「AI解説を開く」</b>として表示されます。解説が
-          まだない場合でも、<b>原因候補・確認済み範囲・次に確認すること</b>は表示されます（押しても何も起きない
-          ボタンは出しません）。
+          C.A.O.S. Watchtowerは、Core Portfolioの対象資産、ウォッチリスト、急変銘柄、重要イベント、テーマを
+          <b>定期巡回</b>します（急変銘柄は約5分・ウォッチリストは約15分・基線は約30分のnear-real-time）。
+          <b>ボタンを押さなくても最新材料を探し続け</b>、ボタンはその時点でもう一度深掘りするための念押しです。
+        </p>
+        <span className="mdepth__label" style={{ fontWeight: 600, display: 'block', marginTop: 10 }}>「理由を詳しく調べる」は何をするのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          このボタンは<b>単なる予約ではありません</b>。押すと、その場で公式開示(TDnet/SEC)、直近ニュース、
+          公開メタデータ、検索結果、公開本文、同業・出来高などを<b>即時に再確認</b>し、確認したソース一覧・
+          見つかった材料・取得できなかったソースをすぐ表示します。AI解説は別途生成されますが（公開画面から
+          AIは起動しません）、<b>最新材料の確認結果はすぐ表示されます</b>。
+        </p>
+        <span className="mdepth__label" style={{ fontWeight: 600, display: 'block', marginTop: 10 }}>読めるところまで読む</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          ARGUSは公式資料や公開で読めるページは<b>可能な限り取得</b>し、事実抽出に使います（本文の長期保存は
+          せず、タイトル・時刻・短い抜粋のみ）。ログインや契約が必要な本文は突破しませんが、その場合は
+          <b>blocked</b>として記録し、タイトル、URL、公開snippet、関連する公式資料、他の公開ソースを
+          <b>徹底的に追います</b>。古いニュースは「過去ニュース」に隔離し、現在材料として表示しません。
         </p>
       </div>
 

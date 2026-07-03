@@ -133,8 +133,14 @@ export const CaosHub: React.FC = () => {
   // precision (v10.169): show only market-relevant headlines (drop sports/unrelated
   // noise); fall back to the raw list only if nothing is flagged, so it never empties.
   const allNews = newsData?.items ?? [];
-  const relNews = allNews.filter((n) => n.relevant);
-  const news = (relNews.length ? relNews : allNews).slice(0, 6);
+  // v11.5.4 No Stale News: >7-day-old items never render in the hub's news tier
+  // (old/stale within 7d stay visible but dimmed as 過去材料).
+  const notAncient = allNews.filter((n) => {
+    const f = classifyFreshness(n.datetime);
+    return f.ageHours == null || f.ageHours <= 7 * 24;
+  });
+  const relNews = notAncient.filter((n) => n.relevant);
+  const news = (relNews.length ? relNews : notAncient).slice(0, 6);
   // v11.5.2: guarantee the on-screen market headlines enter the translation queue
   // (once per session). Never blocks render; never starts translation on the client.
   React.useEffect(() => {

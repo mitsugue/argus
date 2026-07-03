@@ -225,37 +225,59 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
       {data.dataLimitations?.length > 0 && (
         <p className="csc-limits">データ制約: {data.dataLimitations.join(' / ')}</p>
       )}
-      {data.news && data.news.length > 0 && (
-        <div className="csc-news">
-          <div className="csc-news-h">NEWS<span className="csc-dim"> · 関連ニュース</span></div>
-          {data.news.slice(0, 5).map((n, i) => {
-            // v11.5.1: always show the Japanese (or JP fallback) title as the primary
-            // text; the English original goes into a collapsible 原文を見る.
-            const pending = n.translationStatus === 'pending' || n.translationStatus === 'failed';
-            const original = n.titleOriginal;
-            // v11.5.3: old/stale items are 過去材料 — dimmed, never current material
-            const past = n.newsFreshness?.freshness === 'old' || n.newsFreshness?.freshness === 'stale';
-            return (
-              <div className="csc-news-row" key={i} style={past ? { opacity: 0.55 } : undefined}>
-                <span className={`csc-news-cls csc-news-cls--${n.cls}`}>
-                  {past ? '過去材料' : (NEWS_CLS_JA[n.cls] ?? n.cls)}</span>
-                <span className="csc-news-title">
-                  {newsDisplayTitleJa(n)}
-                  {pending && <span className="csc-dim" style={{ marginLeft: 6, fontSize: 10 }}>{newsRequested ? '翻訳リクエスト済み' : '翻訳取得中'}</span>}
-                  {n.assoc?.relationJa && <span className="csc-news-assoc">連想: {n.assoc.relationJa}</span>}
-                  {pending && original && (
-                    <details style={{ display: 'inline' }}>
-                      <summary style={{ display: 'inline', cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>原文を見る</summary>
-                      <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> {original}</span>
-                    </details>
-                  )}
-                </span>
-                <span className="csc-news-meta">{[n.source, n.time].filter(Boolean).join(' · ')}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {(() => {
+        // v11.5.4 No Stale News: current list = fresh/recent only (each with its age);
+        // stale keeps a caveat; old lives ONLY under collapsed 過去ニュース, and >7d old
+        // stays hidden until the user expands. No current news → 最新ニュース未取得.
+        const all = data.news ?? [];
+        const isPast = (n: (typeof all)[number]) =>
+          n.newsFreshness?.freshness === 'old' || n.newsFreshness?.freshness === 'stale';
+        const current = all.filter((n) => !isPast(n));
+        const past = all.filter(isPast);
+        const renderRow = (n: (typeof all)[number], i: number, dim: boolean) => {
+          const pending = n.translationStatus === 'pending' || n.translationStatus === 'failed';
+          const original = n.titleOriginal;
+          const ageH = n.newsFreshness?.ageHours;
+          const ageLabel = ageH == null ? '' : ageH < 1 ? '1h以内' : ageH < 24 ? `${Math.floor(ageH)}h前` : `${Math.floor(ageH / 24)}日前`;
+          return (
+            <div className="csc-news-row" key={i} style={dim ? { opacity: 0.55 } : undefined}>
+              <span className={`csc-news-cls csc-news-cls--${n.cls}`}>
+                {dim ? '過去材料' : (NEWS_CLS_JA[n.cls] ?? n.cls)}</span>
+              <span className="csc-news-title">
+                {newsDisplayTitleJa(n)}
+                {ageLabel && <span className="csc-dim" style={{ marginLeft: 6, fontSize: 10 }}>{ageLabel}</span>}
+                {pending && <span className="csc-dim" style={{ marginLeft: 6, fontSize: 10 }}>{newsRequested ? '翻訳リクエスト済み' : '翻訳取得中'}</span>}
+                {n.assoc?.relationJa && <span className="csc-news-assoc">連想: {n.assoc.relationJa}</span>}
+                {pending && original && (
+                  <details style={{ display: 'inline' }}>
+                    <summary style={{ display: 'inline', cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>原文を見る</summary>
+                    <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> {original}</span>
+                  </details>
+                )}
+              </span>
+              <span className="csc-news-meta">{[n.source, n.time].filter(Boolean).join(' · ')}</span>
+            </div>
+          );
+        };
+        if (all.length === 0) return null;
+        return (
+          <div className="csc-news">
+            <div className="csc-news-h">NEWS<span className="csc-dim"> · 関連ニュース(直近24時間)</span></div>
+            {current.slice(0, 5).map((n, i) => renderRow(n, i, false))}
+            {current.length === 0 && (
+              <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-faint)' }}>最新ニュース未取得</p>
+            )}
+            {past.length > 0 && (
+              <details style={{ marginTop: 4 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--text-faint)' }}>
+                  過去ニュース({past.length}件) — 現在材料ではありません
+                </summary>
+                {past.slice(0, 5).map((n, i) => renderRow(n, i + 100, true))}
+              </details>
+            )}
+          </div>
+        );
+      })()}
       </>)}
       <p className="csc-foot">決定支援のみ・原因の断定や機関名の名指しはしません。</p>
     </section>

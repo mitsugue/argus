@@ -586,6 +586,56 @@ def v_caos_watchtower_status():
     return True, f"sources={len(d.get('sources') or [])} live={live} alerts={len(d.get('alerts') or [])}"
 
 
+def v_investigate_now_public():
+    # v11.5.4: the 念押し button performs a REAL bounded sweep — valid shape, never 500.
+    code, d = _post_json("/api/argus/caos/investigate-now",
+                         {"symbol": "IONQ", "market": "US", "context": "cause-stack"},
+                         timeout=40)
+    if code == 429:
+        return True, "429 pre-routing (skip)"
+    if code >= 500:
+        return False, f"investigate-now 5xx: {code}"
+    if d.get("schemaVersion") != "caos-investigate-now-v2":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("status") not in ("completed", "partial", "rate_limited", "blocked", "error"):
+        return False, f"bad status {d.get('status')}"
+    if d.get("status") in ("completed", "partial"):
+        sw = d.get("sweep") or {}
+        if not sw.get("searchedSources"):
+            return False, "searchedSources missing"
+        if "次回自動生成で反映" in (d.get("messageJa") or ""):
+            return False, "queue-ticket message as primary result"
+        return True, (f"status={d['status']} searched={len(sw['searchedSources'])} "
+                      f"fresh={len(sw.get('freshItems') or [])} blocked={len(sw.get('blockedSources') or [])}")
+    return True, f"status={d.get('status')}"
+
+
+def v_caos_patrol_plan():
+    c, d = _get("/api/argus/caos/patrol-plan")
+    if d.get("schemaVersion") != "caos-patrol-plan-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    targets = d.get("targets") or []
+    classes = {t.get("assetClass") for t in targets}
+    for ac in ("GOLD_GLD", "CRYPTO_BTC_ETH", "FX_USDJPY", "CASH"):
+        if ac not in classes:
+            return False, f"baseline missing: {ac}"
+    return True, f"targets={len(targets)} due={d.get('dueCount')}"
+
+
+def v_deep_research_status():
+    # v11.5.4: violations MUST be empty — old news as primary is a hard failure.
+    c, d = _get("/api/argus/caos/deep-research/status")
+    if d.get("schemaVersion") != "caos-deep-research-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    v = d.get("violations")
+    if v is None:
+        return False, "violations missing"
+    if v:
+        return False, f"OLD NEWS AS PRIMARY: {v[:2]}"
+    return True, (f"violations=0 onlyOldNews={len(d.get('symbolsWithOnlyOldNews') or [])} "
+                  f"lastSweep={'yes' if d.get('lastInvestigateNow') or d.get('lastPatrolSweep') else 'none'}")
+
+
 def v_watchtower_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/caos-watchtower/refresh",
@@ -1287,6 +1337,10 @@ CHECKS = [
     ("v11.5.3 watchtower plan", v_caos_watchtower_plan),
     ("v11.5.3 watchtower status", v_caos_watchtower_status),
     ("v11.5.3 watchtower admin gated", v_watchtower_admin_gated),
+    # ── V11.5.4 Always-On Deep Patrol / Investigate Now ──
+    ("v11.5.4 investigate-now public", v_investigate_now_public),
+    ("v11.5.4 patrol plan", v_caos_patrol_plan),
+    ("v11.5.4 deep-research status (no old-primary)", v_deep_research_status),
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),
     ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]
