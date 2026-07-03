@@ -141,10 +141,19 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
           </div>
           {(data.moverCause.topCandidates ?? [])
             .filter((c) => !c.titleJa || !(data.moverCause?.bestLeadJa || '').includes(c.titleJa))
-            .slice(0, 2).map((c, i) => (
-            <p key={i} style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
+            .slice(0, 2).map((c, i) => {
+            const past = c.newsFreshness?.freshness === 'old' || c.newsFreshness?.freshness === 'stale';
+            return (
+            <p key={i} style={{ margin: '2px 0 0', fontSize: 12,
+                                color: past ? 'var(--text-faint)' : 'var(--text-sub)' }}>
               ・{c.titleJa} <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                 ({TIMING_JA[c.timingRelation ?? 'unknown']}・{CORRO_JA[c.corroborationLevel ?? 'none']})</span>
+              {past && (
+                <span style={{ fontSize: 10, color: 'var(--text-faint)', border: '1px solid var(--line)',
+                               borderRadius: 999, padding: '0 6px', marginLeft: 6 }}>
+                  {c.newsFreshness?.ageHours != null ? `過去材料(${Math.floor((c.newsFreshness.ageHours || 0) / 24)}日前)` : '過去材料'}
+                </span>
+              )}
               {c.translationStatus === 'pending' && c.titleOriginal && (
                 <details style={{ display: 'inline' }}>
                   <summary style={{ display: 'inline', cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>原文を見る</summary>
@@ -152,7 +161,8 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
                 </details>
               )}
             </p>
-          ))}
+            );
+          })}
           {data.moverCause.whyNotConfirmedJa && (
             <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-faint)' }}>
               確定できない理由: {data.moverCause.whyNotConfirmedJa}
@@ -223,9 +233,12 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
             // text; the English original goes into a collapsible 原文を見る.
             const pending = n.translationStatus === 'pending' || n.translationStatus === 'failed';
             const original = n.titleOriginal;
+            // v11.5.3: old/stale items are 過去材料 — dimmed, never current material
+            const past = n.newsFreshness?.freshness === 'old' || n.newsFreshness?.freshness === 'stale';
             return (
-              <div className="csc-news-row" key={i}>
-                <span className={`csc-news-cls csc-news-cls--${n.cls}`}>{NEWS_CLS_JA[n.cls] ?? n.cls}</span>
+              <div className="csc-news-row" key={i} style={past ? { opacity: 0.55 } : undefined}>
+                <span className={`csc-news-cls csc-news-cls--${n.cls}`}>
+                  {past ? '過去材料' : (NEWS_CLS_JA[n.cls] ?? n.cls)}</span>
                 <span className="csc-news-title">
                   {newsDisplayTitleJa(n)}
                   {pending && <span className="csc-dim" style={{ marginLeft: 6, fontSize: 10 }}>{newsRequested ? '翻訳リクエスト済み' : '翻訳取得中'}</span>}

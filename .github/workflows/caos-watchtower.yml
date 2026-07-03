@@ -1,0 +1,104 @@
+# C.A.O.S. Watchtower — near-real-time source patrol for the Core Portfolio
+# universe (V11.5.3). Every 15 min on weekdays / hourly on weekends it: fetches
+# the allow-listed public feeds + targeted per-symbol discovery for urgent/high
+# targets, applies the news-freshness gate (old news never a current lead),
+# queues English headlines for translation, and snapshots the public-safe status
+# to the ledger branch. Metadata only — no article bodies, no LLM in the refresh
+# (translate-visible is the only LLM step and touches headlines only).
+# HONESTY: this is near-real-time monitoring, NOT a Bloomberg/Reuters terminal.
+name: caos-watchtower
+
+on:
+  schedule:
+    - cron: '*/15 * * * 1-5'     # every 15 min, weekdays (JP/US sessions + after-hours)
+    - cron: '0 * * * 0,6'        # hourly on weekends (crypto/24h news still move)
+  workflow_dispatch: {}
+
+concurrency:
+  group: caos-watchtower
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  patrol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Watchtower refresh + visible translation (admin; token never logged)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "::warning::ARGUS_ADMIN_TOKEN missing — skipping refresh (status snapshot only)"
+          else
+            curl -s --max-time 60 "$BE/healthz" > /dev/null || true    # warm dyno
+            REF=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/caos-watchtower/refresh" || echo '{"error":"unreachable"}')
+            echo "watchtower-refresh: ${REF:0:300}"
+            # translate what the owner actually sees FIRST (headlines only)
+            TRV=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/news/translate-visible" || echo '{"error":"unreachable"}')
+            echo "translate-visible: ${TRV:0:200}"
+          fi
+
+      - name: Fetch public-safe status snapshot
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4; do
+            curl -sf --max-time 60 "$BE/api/argus/caos-watchtower/status" \
+              -o "$RUNNER_TEMP/watchtower-status.json" && break
+            echo "retry $i"; sleep 15
+          done
+          test -s "$RUNNER_TEMP/watchtower-status.json"
+          # sanity peek (public-safe fields only)
+          python3 - "$RUNNER_TEMP/watchtower-status.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          live = sum(1 for s in d.get("sources", []) if s.get("status") == "live")
+          print(f"sources={len(d.get('sources', []))} live={live} alerts={len(d.get('alerts', []))}")
+          PY
+          curl -sf --max-time 60 "$BE/api/argus/caos/watchtower-plan" \
+            -o "$RUNNER_TEMP/watchtower-plan.json" || echo '{}' > "$RUNNER_TEMP/watchtower-plan.json"
+
+      - name: Checkout (main)
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Commit snapshot to ledger branch (hourly slot only, to bound churn)
+        run: |
+          # 96 commits/day would bloat the branch — persist at most once an hour.
+          MIN=$(date -u +%M)
+          if [ "$MIN" -ge 15 ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "skip persist (only :00-:14 slot or manual runs persist)"; exit 0
+          fi
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          fi
+          mkdir -p ledger/caos-watchtower
+          DAY=$(TZ=Asia/Tokyo date +%F)
+          cp "$RUNNER_TEMP/watchtower-status.json" ledger/caos-watchtower/latest.json
+          cp "$RUNNER_TEMP/watchtower-status.json" "ledger/caos-watchtower/$DAY.json"
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/caos-watchtower/
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "caos-watchtower: $(date -u +%FT%TZ) status snapshot"
+            # another ledger writer may have pushed meanwhile — rebase once and retry
+            git push origin HEAD:ledger \
+              || { git pull --rebase origin ledger && git push origin HEAD:ledger; }
+          fi

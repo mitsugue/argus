@@ -67,12 +67,39 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    # Pages publish flakes with an instant "Deployment cancelled" (or a 5-min hang)
+    # when GitHub's backend races deployments for the same commit. Observed fix
+    # (2026-07-02): let the environment settle ~4 minutes, then retry ONCE, alone.
+    # 3 attempts x 5-min timeout + 2 x 4-min settles ≈ 23 min worst case.
+    # Retrying inside one run means a transient flake never emails a failure.
+    timeout-minutes: 25
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment2.outputs.page_url || steps.deployment3.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+        continue-on-error: true
         with:
           timeout: 300000        # 5 min (default 10) — fail fast on a stuck Pages env
+
+      - name: Settle before retry 1 (Pages backend races cancel same-commit deploys)
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 240
+
+      - id: deployment2
+        if: steps.deployment.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+        with:
+          timeout: 300000
+
+      - name: Settle before retry 2
+        if: steps.deployment.outcome == 'failure' && steps.deployment2.outcome == 'failure'
+        run: sleep 240
+
+      - id: deployment3
+        if: steps.deployment.outcome == 'failure' && steps.deployment2.outcome == 'failure'
+        uses: actions/deploy-pages@v4    # final attempt — a real failure should fail the job
+        with:
+          timeout: 300000

@@ -45,6 +45,9 @@ export interface MoverCauseCandidate {
   titleJa?: string; category?: string; timingRelation?: string;
   /** v11.5.2: English original + status when titleJa was a translated headline. */
   titleOriginal?: string; translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
+  /** v11.5.3: freshness gate — old/stale news is 過去材料, never a current lead. */
+  newsFreshness?: { ageHours?: number | null; freshness?: string;
+                    eligibleAsPrimaryLead?: boolean; staleReasonJa?: string };
   corroborationLevel?: string; confidence?: number; source?: string;
 }
 export interface MoverCauseFreshness {

@@ -15,6 +15,7 @@ import { EventCardsPanel } from '../components/guide/EventCardsPanel';
 import { ArgusProAboutCard } from '../components/guide/ArgusProAboutCard';
 import { PaidSourceStatusCard } from '../components/guide/PaidSourceStatusCard';
 import { DecisionSpineCard } from '../components/guide/DecisionSpineCard';
+import { SourceUniverseCard } from '../components/guide/SourceUniverseCard';
 import '../components/dashboard/Dashboard.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
@@ -83,6 +84,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v11.5.3', 'C.A.O.S. Watchtower — 監視ソース体系の再設計＋古いニュースの完全降格（V11.5.3） — オーナー指摘「6/19のフジクラ記事が現在材料として出る」を根治。①News Freshness Gate(argus_news_freshness・純): fresh≤6h/recent≤24h/stale≤72h/old>72h。old/staleのニュースはbestLead/候補ステータスを獲得できず「過去材料(N日前)」として背景に降格。過去材料しか無い場合は「最新材料は未確認」+「最新ニュース/公式開示/出来高反応を再確認」を表示②Investment Universe(9資産クラス+eMAXIS積立3本=Core Portfolio準拠、GET /investment-universe)③Source Universe(資産クラス別の監視ソース登録簿: 公式/取引所/中銀・政府/プロメディア/専門メディア/市場データ/発見手段/弱シグナル/要契約、GET /caos/source-universe)。Google Newsは発見手段であり情報源ではない(見出しを真の発行元に解決して評価・集約単独では原因確定不可)。不明なSEOサイト/動画/SNSはweak_signal=判断根拠にしない。日経/Bloomberg/WSJ/FT本文は権利がない限り取得しない④Watchtower Plan(急変銘柄urgent>ウォッチリストhigh>マクロ連動>Core Portfolio基線、GET /caos/watchtower-plan)⑤admin巡回(POST /admin/caos-watchtower/refresh): 公開フィード+銘柄別発見(JP/US Google News discovery)+Finnhub。メタデータのみ・LLMなし⑥ソース鮮度status(GET /caos-watchtower/status): ソース別最終確認/最新アイテム経過/本日件数/資産クラス別カバレッジ/アラート⑦新フィード: NHK経済・CoinDesk・Cointelegraph(暗号資産に初のニュースソース)+Google News US⑧caos-watchtower.yml: 平日15分毎+週末毎時のnear-real-time巡回(24/365。完全リアルタイムではない)⑨UI: C.A.O.S.に確認時刻ライン+過去材料チップ(古いニュースは減光表示)、Guideにソース一覧表。自動売買なし。'],
   ['v11.5.2', '「理由を詳しく調べる」導線の復活＋画面上の英語ニュースを確実に翻訳キューへ（V11.5.2） — ①AI解説が未生成でも押せる安全なボタン「理由を詳しく調べる」を復活。ただし公開クリックでAIは起動せず、調査キュー(POST /api/argus/mover-causes/explain-request・enqueue専用)へ追加するだけ。押すと「調査リクエスト済み」→次回の管理側定期生成で反映。生成後は同じ場所で「AI解説を開く」。重複排除・IP/銘柄スロットル・キャッシュ済みなら即cached_available②画面に出た英語ニュースは確実に翻訳キューへ(POST /api/argus/news/translation-request・enqueue専用): カード描画時にpending見出しをデバウンス登録し「翻訳取得中」→登録後「翻訳リクエスト済み」表示。翻訳前は英語を主表示せず日本語fallback、原文は「原文を見る」内。次回処理で実際の日本語へ置換③admin翻訳ワークフローは翻訳キューを最優先で消化(translate-visible→translate)④値動き候補のタイトルも英語なら日本語fallback＋原文退避(米国株の候補が英語のままだった問題)⑤GET /api/argus/news/translation-status に visibleQueue(件数/最古/最終処理)・可視翻訳率/キュー率・サンプルを追加。公開GET/POSTはLLMもproviderも呼ばない・秘密や本文は保存しない・自動売買なし。'],
   ['v11.5.0', 'マクロ公式結果の拡張・市場反応の定量化・英語ニュースの日本語翻訳（V11.5） — ①公式結果アダプタをNFP以外に拡張(argus_macro_results・純): CPI/PPI/JOLTS(BLS)・PCE/GDP/FOMC(FRED)を実装。CPIは前月比/前年比・コア、FOMCは目標レンジ差分から利上げ/利下げ/据え置きを判定(ドットプロットは捏造しない)。日銀は信頼できる無料数値APIが無く公式声明URLのみのpartial・入札はnot_implemented。欠損指標は捏造せず未算出と明示②市場反応の定量化(argus_macro_market_reaction・純): 発表後の初回観測を基準に米10年金利/ドル円/SPY/QQQ/VIX/金/BTCの変化(bp/％)とriskToneを算出。データが無ければ「市場反応データ未取得」と表示し偽の数値は出さない。反応単独で原因確定しない③イベント種別ごとの決定論的な影響コメント(CPI/FOMC/日銀/GDP/入札)。公式結果がある時のみ生成④GET /api/argus/macro-events/result-status を全イベントコード対応に拡張・GET /api/argus/dashboard-events に市場反応数値を追加⑤admin refresh-market-reaction追加・マクロワークフローに市場反応ステップと発表後フォロー(14:30/20:30 UTC)追加。★オーナー対応: 英語ニュースは必ず日本語に翻訳してから表示(米国株カードのニュースが英語だった問題)。管理側でGeminiが翻訳してハッシュキャッシュ、公開GETはキャッシュ読取のみ(LLMを起動しない)。トップイベントカードは発表後、紛らわしい「答え合わせ済み」の代わりに囲み文字の「発表済」スタンプを表示。自動売買なし。'],
   ['v11.4.1', '予定イベント表示をトップカードに統合＋NFP発表後モードのバグ修正（V11.4.1） — トップのイベントカードとC.A.O.S.下段で同じイベント文が重複し階層が不明瞭だった問題を解消。①新しい統一表示モデル(argus_dashboard_event_summary・純): ImportantEvents+マクロ分析(事前/公式結果/答え合わせ/市場反応/影響)を1つの表示モデルにマージ。GET /api/argus/dashboard-events(公開cached-only・LLM/取得なし)②表示状態を配信時に実時刻から再判定 — 発表前に生成された記録でも、発表後に読むと自動でpost/取得中モードへ切替(NFPが発表済みなのにpre表示のままになるバグを根治)。発表後は公式結果・影響を先に、事前シナリオは「事前シナリオ（当時）」として下段に③公式結果が無ければ「公式結果取得中」、答え合わせ未生成は「答え合わせ生成待ち」、事前未保存はnot_scoreable — いずれも捏造しない。事前シナリオをコンセンサスと呼ばない④影響コメントが空でも公式結果があれば指標に応じた決定論フォールバックを表示(雇用者数の伸びで金利/成長株の方向感・市場反応確認待ち)⑤C.A.O.S.下段のイベント評価は重複を排除し「トップカードに統合済み」に集約(機関シグナル/急落注視/ニュース等の未統合シグナルは従来どおり表示・トップ取得失敗時は従来表示にフォールバック)⑥admin repair-post-releaseで発表直後の停滞表示を一括修復・マクロワークフローに発表後ホット更新(12:35/12:45/13:30 UTC)追加。自動売買なし。'],
@@ -365,6 +367,8 @@ export const Guide: React.FC = () => {
       <ArgusProAboutCard />
 
       <DecisionSpineCard />
+
+      <SourceUniverseCard />
 
       <section>
         <div className="section-head">

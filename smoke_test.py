@@ -532,6 +532,73 @@ def v_cause_attribution_ionq_displaytitle():
     return True, f"IONQ: {len(news)} news, displayTitleJa present, no raw-English"
 
 
+def v_investment_universe():
+    # v11.5.3: Core Portfolio asset classes are the C.A.O.S. watch universe.
+    c, d = _get("/api/argus/investment-universe")
+    if d.get("schemaVersion") != "investment-universe-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    classes = {x.get("assetClass") for x in (d.get("assetClasses") or [])}
+    need = {"JP_EQUITY", "US_EQUITY", "GOLD_GLD", "BONDS_TLT", "REITS_XLRE",
+            "CRYPTO_BTC_ETH", "FX_USDJPY", "CASH", "FUND_ACCUMULATION"}
+    if not need <= classes:
+        return False, f"missing classes: {need - classes}"
+    return True, f"classes={len(classes)} funds={len(d.get('funds') or [])}"
+
+
+def v_caos_source_universe():
+    c, d = _get("/api/argus/caos/source-universe")
+    if d.get("schemaVersion") != "caos-source-universe-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    by = d.get("sourcesByAssetClass") or {}
+    for ac in ("JP_EQUITY", "US_EQUITY", "GOLD_GLD", "CRYPTO_BTC_ETH", "FX_USDJPY"):
+        if not by.get(ac):
+            return False, f"no sources for {ac}"
+    gn = next((s for s in d.get("sources", []) if s.get("sourceId") == "google_news_jp"), None)
+    if not gn or not gn.get("isDiscoveryLayer") or gn.get("canConfirmCause"):
+        return False, "google_news_jp must be discovery-only"
+    return True, f"sources={len(d.get('sources') or [])}"
+
+
+def v_caos_watchtower_plan():
+    c, d = _get("/api/argus/caos/watchtower-plan")
+    if d.get("schemaVersion") != "caos-watchtower-plan-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    targets = d.get("targets") or []
+    classes = {t.get("assetClass") for t in targets}
+    for ac in ("GOLD_GLD", "BONDS_TLT", "CRYPTO_BTC_ETH", "FX_USDJPY", "CASH"):
+        if ac not in classes:
+            return False, f"baseline class missing: {ac}"
+    if not any(t.get("symbol") == "GLD" for t in targets):
+        return False, "GLD baseline target missing"
+    return True, f"targets={len(targets)}"
+
+
+def v_caos_watchtower_status():
+    c, d = _get("/api/argus/caos-watchtower/status")
+    if d.get("schemaVersion") != "caos-watchtower-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    cov = d.get("coverageByAssetClass") or {}
+    if "JP_EQUITY" not in cov or "CRYPTO_BTC_ETH" not in cov:
+        return False, "coverage classes missing"
+    if "near-real-time" not in (d.get("noteJa") or ""):
+        return False, "must not overclaim real-time"
+    live = sum(1 for s in d.get("sources", []) if s.get("status") == "live")
+    return True, f"sources={len(d.get('sources') or [])} live={live} alerts={len(d.get('alerts') or [])}"
+
+
+def v_watchtower_admin_gated():
+    import urllib.error
+    req = urllib.request.Request(BASE + "/api/argus/admin/caos-watchtower/refresh",
+                                 method="POST", headers={"User-Agent": "argus-smoke"})
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            return False, "returned 200 without token!"
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 503, 429):
+            return False, f"returned {e.code}"
+    return True, "watchtower refresh admin-gated"
+
+
 def v_macro_reaction_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/refresh-market-reaction",
@@ -1214,6 +1281,12 @@ CHECKS = [
     ("v11.5.2 queue admin gated", v_queue_admin_gated),
     ("v11.5.2 translation-status visibleQueue", v_translation_status_visible_queue),
     ("v11.5.2 cause-attribution IONQ displayTitle", v_cause_attribution_ionq_displaytitle),
+    # ── V11.5.3 C.A.O.S. Watchtower ──
+    ("v11.5.3 investment universe", v_investment_universe),
+    ("v11.5.3 caos source universe", v_caos_source_universe),
+    ("v11.5.3 watchtower plan", v_caos_watchtower_plan),
+    ("v11.5.3 watchtower status", v_caos_watchtower_status),
+    ("v11.5.3 watchtower admin gated", v_watchtower_admin_gated),
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),
     ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]

@@ -31,6 +31,9 @@ export interface CauseStack {
     // v11.5.1: Japanese-first display fields (displayTitleJa is never raw English).
     displayTitleJa?: string; titleOriginal?: string;
     translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
+    /** v11.5.3: server-computed freshness — old/stale renders as 過去材料. */
+    newsFreshness?: { ageHours?: number | null; freshness?: string;
+                      eligibleAsPrimaryLead?: boolean; staleReasonJa?: string };
     assoc?: { via: string; term?: string; relationJa?: string; corroboration?: string };  // association link (v10.183)
   }[];
   explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
@@ -54,6 +57,8 @@ export interface CauseStack {
                            vwapDistancePct?: number | null; window?: string };
     topCandidates?: { titleJa?: string; titleOriginal?: string;
                       translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
+                      newsFreshness?: { ageHours?: number | null; freshness?: string;
+                                        eligibleAsPrimaryLead?: boolean; staleReasonJa?: string };
                       category?: string; timingRelation?: string;
                       corroborationLevel?: string; confidence?: number; source?: string }[];
   };

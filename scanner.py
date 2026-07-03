@@ -39,6 +39,10 @@ import argus_dashboard_event_summary  # unified top-card event model + de-dup (p
 import argus_macro_results  # official macro-result parsers (CPI/PPI/FOMC/PCE/GDP/JOLTS, pure, v11.5)
 import argus_macro_market_reaction  # macro market-reaction windows + impact fallbacks (pure, v11.5)
 import argus_news_i18n  # news headline JP-translation cache helpers (pure, v11.5)
+import argus_news_freshness  # news freshness gate — old news never a current lead (pure, v11.5.3)
+import argus_investment_universe  # Core Portfolio asset-class universe (pure, v11.5.3)
+import argus_caos_source_universe  # per-asset-class source registry + discovery resolution (pure, v11.5.3)
+import argus_caos_watchtower_plan  # C.A.O.S. watchtower target plan (pure, v11.5.3)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -5552,6 +5556,11 @@ _INTEL_FEEDS = [
     ("meti_official",        "meti:release",     "https://www.meti.go.jp/ml_index_release_atom.xml", "rss"), # 経産省 (Atom — _parse_rss handles <entry>)
     ("reuters_jp",           "reuters:jp-top",   "https://assets.wor.jp/rss/rdf/reuters/top.rdf", "rss"),    # ロイター日本語 トップ
     ("reuters_jp",           "reuters:jp-biz",   "https://assets.wor.jp/rss/rdf/reuters/business.rdf", "rss"),
+    # V11.5.3 watchtower coverage: NHK 経済 (JP professional media) + crypto specialist
+    # media (Core Portfolio CRYPTO_BTC_ETH had no news source). Public RSS, metadata only.
+    ("nhk_business",         "nhk:keizai",       "https://www3.nhk.or.jp/rss/news/cat5.xml", "rss"),
+    ("coindesk",             "coindesk:news",    "https://www.coindesk.com/arc/outboundfeeds/rss/", "rss"),
+    ("cointelegraph",        "cointelegraph:news", "https://cointelegraph.com/rss", "rss"),
 ]
 _INTEL_STORE = []                  # capped list of recent IntelligenceItems (metadata only)
 _INTEL_STORE_MAX = 400
@@ -5863,6 +5872,9 @@ def _caos_catalyst_for(sym, news_items, intel_items):
         cand = {"titleJa": (n.get("headlineJa") or n.get("titleJa") or n.get("headline") or n.get("title") or "")[:120],
                 "via": link.get("via"), "term": link.get("term"),
                 "relationJa": link.get("relationJa"), "corroboration": corr,
+                # V11.5.3: carry the timestamp so the freshness gate can demote an
+                # association lead built on an OLD story (past ≠ today's lead).
+                "publishedAt": n.get("publishedAt") or n.get("datetime") or n.get("firstDetectedAt"),
                 "_sid": n.get("sourceId") or n.get("source")}   # kept for the audit trail
         if (best is None or rank.get(corr, 2) < rank.get(best["corroboration"], 2)
                 or (rank.get(corr, 2) == rank.get(best["corroboration"], 2)
@@ -6410,6 +6422,317 @@ def api_argus_intel_collect():
     if not ok:
         return jsonify(err), code
     return jsonify(collect_institutional_intel())
+
+
+# ━━━ V11.5.3 C.A.O.S. Watchtower — Core Portfolio source universe + patrol ━━━
+# The owner's June-19-news-as-current-lead complaint exposed two gaps: (1) no
+# freshness gate (fixed in argus_news_freshness + mover cause), (2) no defined
+# "who do we watch, where, how often" registry. This block wires the pure
+# universe/source/plan modules to real collection, tracks per-source freshness,
+# and exposes it all as public cache-only status. Public GETs never fetch/LLM;
+# the admin refresh is the ONLY patrol path (cron: caos-watchtower.yml).
+
+_US_STOCK_NEWS_CACHE = {}          # sym -> {"expires": float}
+_US_STOCK_NEWS_TTL = 30 * 60
+
+
+def _google_news_us_rss(query):
+    """Google News US RSS — DISCOVERY LAYER for US names (same parser as JP;
+    items resolve to their true publisher via argus_caos_source_universe)."""
+    try:
+        url = ("https://news.google.com/rss/search?q=" + quote(query)
+               + "&hl=en-US&gl=US&ceid=US:en")
+        xml = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8).text
+        return _parse_rss(xml, "google_news_us", _ai_now_iso())
+    except Exception:
+        return []
+
+
+def _us_stock_news_intel(pairs):
+    """US counterpart of _jp_stock_news_intel — per-symbol English headlines into
+    _INTEL_STORE (metadata only, symbolHint for association). 30-min per-symbol cache."""
+    now = time.time()
+    pushed = 0
+    seen = {(it.get("title") or "") for it in _INTEL_STORE}
+    for sym, name in pairs:
+        sym = str(sym).upper()
+        nm = (name or sym).strip()
+        if not sym:
+            continue
+        c = _US_STOCK_NEWS_CACHE.get(sym)
+        if c and now < c["expires"]:
+            continue
+        _US_STOCK_NEWS_CACHE[sym] = {"expires": now + _US_STOCK_NEWS_TTL}
+        for r in _google_news_us_rss(f'"{nm}" stock (earnings OR news OR falls OR surges)')[:6]:
+            t = r.get("title") or ""
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            r = dict(r)
+            r["symbolHint"] = sym
+            r["lang"] = "en"
+            r["corroboration"] = "single"
+            _INTEL_STORE.append(r)
+            pushed += 1
+    if len(_INTEL_STORE) > _INTEL_STORE_MAX:
+        del _INTEL_STORE[:len(_INTEL_STORE) - _INTEL_STORE_MAX]
+    return pushed
+
+
+_WATCHTOWER_STATE = {"restored": False, "lastRefreshAt": None,
+                     "sources": {}, "lastSummary": None}
+_WATCHTOWER_FILE = "/tmp/argus_watchtower.json"
+
+
+def _watchtower_persist():
+    try:
+        with open(_WATCHTOWER_FILE, "w") as f:
+            json.dump({k: _WATCHTOWER_STATE[k] for k in
+                       ("lastRefreshAt", "sources", "lastSummary")},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _watchtower_restore_once():
+    if _WATCHTOWER_STATE["restored"]:
+        return
+    _WATCHTOWER_STATE["restored"] = True
+    try:
+        with open(_WATCHTOWER_FILE) as f:
+            blob = json.load(f)
+        for k in ("lastRefreshAt", "sources", "lastSummary"):
+            if blob.get(k) is not None:
+                _WATCHTOWER_STATE[k] = blob[k]
+    except Exception:
+        pass
+
+
+def _watchtower_configured():
+    """Which API paths are configured — boolean flags only, never values."""
+    return {"JQUANTS_API_KEY": bool(_JQUANTS_API_KEY),
+            "FINNHUB_API_KEY": bool(FINNHUB_API_KEY),
+            "TWELVEDATA_API_KEY": bool(_TWELVEDATA_API_KEY),
+            "FRED_API_KEY": bool(_FRED_API_KEY)}
+
+
+def _watchtower_plan_build(now_iso, src_uni=None):
+    src_uni = src_uni or argus_caos_source_universe.build_universe(_watchtower_configured(), now_iso)
+    _mover_causes_restore_once()
+    try:
+        events = (_build_dashboard_events(limit=8) or {}).get("items") or []
+    except Exception:
+        events = []
+    return argus_caos_watchtower_plan.build_plan(
+        watchlist_jp=list(_JP_WATCHLIST), watchlist_us=list(_US_WATCHLIST),
+        movers=_mover_causes_today(), macro_events=events,
+        universe_sources=src_uni["sources"], now_iso=now_iso)
+
+
+@app.route("/api/argus/investment-universe")
+def api_argus_investment_universe():
+    """Public-safe: Core Portfolio asset-class universe. Static — no fetch/LLM,
+    no holdings/amounts."""
+    return jsonify(argus_investment_universe.build_universe(_ai_now_iso()))
+
+
+@app.route("/api/argus/caos/source-universe")
+def api_argus_caos_source_universe():
+    """Public-safe: per-asset-class source registry (tier/rights/status). Env
+    presence is reported as booleans via status only — never values."""
+    return jsonify(argus_caos_source_universe.build_universe(
+        _watchtower_configured(), _ai_now_iso()))
+
+
+@app.route("/api/argus/caos/watchtower-plan")
+def api_argus_caos_watchtower_plan():
+    """Public cache-only: what C.A.O.S. will patrol next (movers/watchlist/events/
+    Core Portfolio baseline). Built from stored records — never fetches."""
+    return jsonify(_watchtower_plan_build(_ai_now_iso()))
+
+
+@app.route("/api/argus/caos-watchtower/status")
+def api_argus_caos_watchtower_status():
+    """Public cache-only: per-source freshness (last check / newest item age /
+    items today) + per-asset-class coverage + honest alerts."""
+    _watchtower_restore_once()
+    now_iso = _ai_now_iso()
+    src_uni = argus_caos_source_universe.build_universe(_watchtower_configured(), now_iso)
+    today = now_iso[:10]
+    # newest item + today count per sourceId from the intel store (metadata only)
+    newest, today_counts = {}, {}
+    for it in list(_INTEL_STORE):
+        sid = it.get("sourceId")
+        if not sid:
+            continue
+        ts = it.get("publishedAt") or it.get("firstDetectedAt")
+        if ts and (sid not in newest or str(ts) > str(newest[sid])):
+            newest[sid] = str(ts)
+        if str(it.get("firstDetectedAt") or "")[:10] == today:
+            today_counts[sid] = today_counts.get(sid, 0) + 1
+    # API-source liveness from their own engine caches (no fetch here)
+    api_alive = {"jquants_tdnet": bool(_TDNET_OFFICIAL_CACHE.get("data")),
+                 "finnhub_company_news": bool(_FINN_CACHE),
+                 "coingecko": True}   # crypto quotes run 24/7 via market loop
+    sources_out = []
+    stats = _WATCHTOWER_STATE.get("sources") or {}
+    for s in src_uni["sources"]:
+        sid = s["sourceId"]
+        st = stats.get(sid) or {}
+        status = s["status"]
+        newest_at = newest.get(sid)
+        age_h = argus_news_freshness.age_hours(newest_at, now_iso) if newest_at else None
+        if status == "live":
+            if sid in api_alive and not api_alive[sid]:
+                status = "partial"
+            # a feed source with no success today cannot claim live
+            if s.get("collectionMethod") in ("rss", "sitemap", "search_discovery") \
+                    and not today_counts.get(sid) and (age_h is None or age_h > 24):
+                status = "stale"
+        sources_out.append({
+            "sourceId": sid, "name": s["name"], "assetClasses": s["assetClasses"],
+            "sourceTier": s["sourceTier"], "rightsClass": s["rightsClass"],
+            "isDiscoveryLayer": s.get("isDiscoveryLayer", False),
+            "status": status,
+            "lastCheckAt": st.get("lastCheckAt") or _WATCHTOWER_STATE.get("lastRefreshAt"),
+            "newestPublishedAt": newest_at,
+            "newestAgeHours": round(age_h, 1) if isinstance(age_h, (int, float)) else None,
+            "itemsToday": today_counts.get(sid, 0),
+            "successRate24h": st.get("successRate24h"),
+            "limitationsJa": s.get("limitationsJa") or []})
+    # per-asset-class coverage
+    coverage = {}
+    for ac in argus_investment_universe.REQUIRED_CLASSES:
+        cls_sources = [x for x in sources_out if ac in x["assetClasses"]]
+        live = [x for x in cls_sources if x["status"] == "live"]
+        ages = [x["newestAgeHours"] for x in live if isinstance(x["newestAgeHours"], (int, float))]
+        coverage[ac] = {"totalSources": len(cls_sources), "liveSources": len(live),
+                        "newestItemAgeHours": min(ages) if ages else None,
+                        "status": ("live" if live else "partial" if cls_sources else "missing")}
+    alerts = []
+    jp_live = [x for x in sources_out if "JP_EQUITY" in x["assetClasses"]
+               and x["status"] == "live"
+               and x["sourceTier"] in ("official_regulatory", "official_corporate",
+                                       "central_bank_or_government", "wire_service",
+                                       "reputable_financial_media")]
+    if not jp_live:
+        alerts.append({"severity": "high", "messageJa":
+                       "日本株の公式/プロメディアのliveソースがゼロ — ニュース監視が機能していない可能性。"})
+    us_live = [x for x in sources_out if "US_EQUITY" in x["assetClasses"]
+               and x["status"] == "live"
+               and (x["sourceTier"].startswith("official") or
+                    x["sourceId"] == "finnhub_company_news" or
+                    x["sourceTier"] in ("wire_service", "reputable_financial_media"))]
+    if not us_live:
+        alerts.append({"severity": "high", "messageJa":
+                       "米国株の公式/企業ニュースのliveソースがゼロ — ニュース監視が機能していない可能性。"})
+    for ac in ("GOLD_GLD", "FX_USDJPY", "CRYPTO_BTC_ETH"):
+        if coverage[ac]["status"] != "live":
+            alerts.append({"severity": "info", "messageJa":
+                           f"{ac}の監視はpartial(専門ソースの一部が未構成)。"})
+    return jsonify({
+        "schemaVersion": "caos-watchtower-status-v1", "asOf": now_iso,
+        "sourceUniverseVersion": src_uni["schemaVersion"],
+        "investmentUniverseVersion": argus_investment_universe.SCHEMA_VERSION,
+        "lastRefreshAt": _WATCHTOWER_STATE.get("lastRefreshAt"),
+        "sources": sources_out, "coverageByAssetClass": coverage, "alerts": alerts,
+        "noteJa": "near-real-time監視(15分巡回)。Bloomberg/Reuters端末の完全代替ではない。"
+                  "公開GETは取得を起動しない。"})
+
+
+@app.route("/api/argus/admin/caos-watchtower/refresh", methods=["POST"])
+def api_argus_admin_caos_watchtower_refresh():
+    """Admin/cron: the patrol. Fetch allow-listed feeds + targeted discovery for
+    urgent/high targets, classify freshness, queue translations. METADATA ONLY —
+    no article bodies, no LLM here, no raw provider blobs stored."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    _watchtower_restore_once()
+    _news_ja_restore_once()
+    now_iso = _ai_now_iso()
+    src_uni = argus_caos_source_universe.build_universe(_watchtower_configured(), now_iso)
+    plan = _watchtower_plan_build(now_iso, src_uni)
+    # 1) allow-listed public feeds (Bloomberg/Nikkei/NHK/CNBC/.../CoinDesk/BOJ/Fed/SEC)
+    intel = collect_institutional_intel()
+    # 2) targeted per-symbol discovery for urgent/high equity targets
+    jp_pairs, us_pairs = [], []
+    for t in plan["targets"]:
+        if t["priority"] not in ("urgent", "high") or not t.get("symbol"):
+            continue
+        if t["assetClass"] == "JP_EQUITY":
+            jp_pairs.append((t["symbol"], t["name"]))
+        elif t["assetClass"] == "US_EQUITY":
+            us_pairs.append((t["symbol"], t["name"]))
+    pushed_jp = _jp_stock_news_intel(jp_pairs[:12])
+    pushed_us = _us_stock_news_intel(us_pairs[:8])
+    for sym, _nm in us_pairs[:6]:            # Finnhub company news (cached per symbol)
+        try:
+            _finnhub_catalyst(sym)
+        except Exception:
+            pass
+    try:
+        get_market_news()                    # Finnhub general (10-min cache)
+    except Exception:
+        pass
+    # 3) freshness pass over the store: count old items (kept as background/過去材料)
+    stale_demoted = 0
+    for it in list(_INTEL_STORE):
+        fr = argus_news_freshness.classify(
+            it.get("publishedAt") or it.get("firstDetectedAt"), now_iso)
+        if fr["freshness"] in ("old", "stale"):
+            stale_demoted += 1
+    # 4) queue NEW English titles for the visible-first translation cron
+    queued_tr = 0
+    for it in list(_INTEL_STORE)[:80]:
+        t = it.get("title") or ""
+        if argus_news_i18n.looks_translatable(t) and not argus_news_i18n.is_translated(t, _NEWS_JA_CACHE):
+            _NEWS_JA_SEEN.append(t)
+            queued_tr += 1
+    # 5) per-source stats
+    stats = _WATCHTOWER_STATE.setdefault("sources", {})
+    for pf in (intel.get("perFeed") or []):
+        sid = pf.get("source")
+        e = stats.setdefault(sid, {"attempts": 0, "successes": 0})
+        e["attempts"] = int(e.get("attempts") or 0) + 1
+        e["successes"] = int(e.get("successes") or 0) + (1 if pf.get("ok") else 0)
+        e["lastCheckAt"] = now_iso
+        e["successRate24h"] = round(e["successes"] / max(1, e["attempts"]), 2)
+    for sid, pushed in (("google_news_jp", pushed_jp), ("google_news_us", pushed_us)):
+        e = stats.setdefault(sid, {"attempts": 0, "successes": 0})
+        e["attempts"] = int(e.get("attempts") or 0) + 1
+        e["successes"] = int(e.get("successes") or 0) + 1
+        e["lastCheckAt"] = now_iso
+        e["successRate24h"] = round(e["successes"] / max(1, e["attempts"]), 2)
+    # per-asset-class new-item counts (sourceId → classes via the universe)
+    cls_of = {s["sourceId"]: s["assetClasses"] for s in src_uni["sources"]}
+    by_class = {}
+    for pf in (intel.get("perFeed") or []):
+        for ac in cls_of.get(pf.get("source"), []):
+            by_class[ac] = by_class.get(ac, 0) + int(pf.get("new") or 0)
+    unconfigured = [s["sourceId"] for s in src_uni["sources"]
+                    if s["status"] in ("not_configured", "requires_contract", "disabled")]
+    _WATCHTOWER_STATE["lastRefreshAt"] = now_iso
+    summary = {
+        "schemaVersion": "caos-watchtower-refresh-v1", "asOf": now_iso,
+        "targetsChecked": len(plan["targets"]),
+        "sourcesChecked": len(intel.get("perFeed") or []) + 2,
+        "newItems": int(intel.get("collected") or 0) + pushed_jp + pushed_us,
+        "freshItems": sum(1 for it in list(_INTEL_STORE)[:120]
+                          if argus_news_freshness.classify(
+                              it.get("publishedAt") or it.get("firstDetectedAt"),
+                              now_iso)["freshness"] in ("fresh", "recent")),
+        "staleItemsDemoted": stale_demoted,
+        "translationQueued": queued_tr,
+        "unconfiguredSources": unconfigured,
+        "byAssetClass": by_class,
+        "bySource": intel.get("perSource") or {},
+        "limitationsJa": ["メタデータのみ取得(本文なし)", "near-real-time(完全リアルタイムではない)"],
+    }
+    _WATCHTOWER_STATE["lastSummary"] = {k: summary[k] for k in
+                                        ("asOf", "targetsChecked", "newItems", "freshItems")}
+    _watchtower_persist()
+    return jsonify(summary)
 
 
 def _intel_watchlist_symbols():
@@ -11742,7 +12065,10 @@ def get_cause_attribution(symbol, market="JP", explain=False):
     # v11.5.1: every news item gets Japanese-first display fields (displayTitleJa is
     # never raw English). English titles are queued for the admin translate cron.
     _news_ja_restore_once()
-    news = [argus_news_i18n.decorate_news_item(n, _NEWS_JA_CACHE) for n in news]
+    news = [argus_news_freshness.decorate_news_item(
+                argus_news_i18n.decorate_news_item(n, _NEWS_JA_CACHE), _ai_now_iso(),
+                time_keys=("time", "publishedAt", "datetime"))
+            for n in news]
     for n in news:
         if n.get("translationStatus") == "pending":
             _NEWS_JA_SEEN.append(n.get("titleOriginal") or "")
@@ -12054,13 +12380,19 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
         try:
             if not cached_only:
                 _jp_stock_news_intel([(symu, name or (_ENTITY_PROFILES.get(symu) or {}).get("name"))])
+            # V11.5.3 evidence hygiene: the intel store keeps items for days — never
+            # feed >7-day-old articles into TODAY's cause evidence (the freshness
+            # gate in argus_mover_cause demotes 72h+ anyway; this trims the pool).
+            _now_iso7 = _ai_now_iso()
             jp_news = [{"titleJa": it.get("titleJa") or it.get("title"),
                         "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
                         "publisher": it.get("author") or "GoogleNewsJP", "source": "google_news_jp",
                         "sentiment": None}
                        for it in list(_INTEL_STORE)
                        if it.get("sourceId") == "google_news_jp"
-                       and symu in {str(a).upper() for a in (it.get("linkedAssets") or [])}]
+                       and symu in {str(a).upper() for a in (it.get("linkedAssets") or [])}
+                       and (argus_news_freshness.age_hours(
+                           it.get("publishedAt") or it.get("firstDetectedAt"), _now_iso7) or 0) <= 168]
             cover["jpNewsChecked"] = True
             ev["jpNews"] = jp_news[:8]
         except Exception:

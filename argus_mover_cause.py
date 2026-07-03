@@ -25,6 +25,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import argus_news_freshness
+
 SCHEMA_VERSION = "mover-cause-v2"
 
 CAUSE_STATUSES = ["confirmed_cause", "probable_catalyst", "candidate_catalyst",
@@ -307,29 +309,54 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
         lims = ["単一ソースは候補止まり(裏取りが必要)"] if corro == "single_source" else []
         if timing == "after_move":
             lims.append("値動きより後の記事のため引き金にしない")
-        out.append(_mk("analyst_action" if is_analyst else "direct_news", title,
-                       role=("trigger" if timing in ("before_move", "during_move") else "amplifier"),
-                       source=str(n.get("publisher") or n.get("source") or "media"),
-                       source_tier=str(n.get("tier") or "media"),
-                       source_family="company_news", rights_class="metadata_only",
-                       published_at=n.get("publishedAt") or n.get("datetime"),
-                       timing=timing, link_type="direct_mention", corroboration=corro,
-                       market_confirmed=confirmed, confidence=conf,
-                       why_ja="銘柄を直接報じるニュース。", limitations=lims))
+        # V11.5.3 freshness gate: old/stale news must NEVER read as the current
+        # lead (the June-19-article-as-July-cause bug). Demote to background,
+        # cap confidence, and record why — the ladder skips background candidates.
+        nf = argus_news_freshness.classify(n.get("publishedAt") or n.get("datetime"),
+                                           now_iso, naive_utc_offset_hours=naive_off)
+        role = "trigger" if timing in ("before_move", "during_move") else "amplifier"
+        if nf["freshness"] in ("old", "stale"):
+            role = "background_only"
+            conf = min(conf, 0.15 if nf["freshness"] == "old" else 0.25)
+            confirmed = False
+            lims.append(nf["staleReasonJa"])
+        cand = _mk("analyst_action" if is_analyst else "direct_news", title,
+                   role=role,
+                   source=str(n.get("publisher") or n.get("source") or "media"),
+                   source_tier=str(n.get("tier") or "media"),
+                   source_family="company_news", rights_class="metadata_only",
+                   published_at=n.get("publishedAt") or n.get("datetime"),
+                   timing=timing, link_type="direct_mention", corroboration=corro,
+                   market_confirmed=confirmed, confidence=conf,
+                   why_ja="銘柄を直接報じるニュース。", limitations=lims)
+        cand["newsFreshness"] = nf
+        out.append(cand)
 
     # D. C.A.O.S. association lead (entity/theme — candidate by definition)
     lead = evidence.get("caosLead")
     if isinstance(lead, dict) and lead.get("titleJa"):
         via = str(lead.get("via") or "theme")
-        out.append(_mk("entity_association" if via in ("entity", "entity_profile", "name")
-                       else "theme", str(lead.get("titleJa")),
-                       role="vulnerability", source="C.A.O.S.", source_tier="association",
-                       source_family="caos", rights_class="metadata_only",
-                       link_type="entity_profile" if via.startswith("entity") else "theme",
-                       corroboration=str(lead.get("corroboration") or "single_source"),
-                       confidence=0.3,
-                       why_ja=str(lead.get("relationJa") or "関連企業/テーマの連想リード。"),
-                       limitations=["連想は原因ではない(候補どまり)"]))
+        # V11.5.3: an association lead built on an OLD intel item is a past story,
+        # not today's lead — same freshness demotion as direct news.
+        nf_lead = argus_news_freshness.classify(lead.get("publishedAt"), now_iso,
+                                                naive_utc_offset_hours=naive_off)
+        lead_role, lead_conf = "vulnerability", 0.3
+        lead_lims = ["連想は原因ではない(候補どまり)"]
+        if nf_lead["freshness"] in ("old", "stale"):
+            lead_role, lead_conf = "background_only", 0.15
+            lead_lims.append(nf_lead["staleReasonJa"])
+        cand = _mk("entity_association" if via in ("entity", "entity_profile", "name")
+                   else "theme", str(lead.get("titleJa")),
+                   role=lead_role, source="C.A.O.S.", source_tier="association",
+                   source_family="caos", rights_class="metadata_only",
+                   published_at=lead.get("publishedAt"),
+                   link_type="entity_profile" if via.startswith("entity") else "theme",
+                   corroboration=str(lead.get("corroboration") or "single_source"),
+                   confidence=lead_conf,
+                   why_ja=str(lead.get("relationJa") or "関連企業/テーマの連想リード。"),
+                   limitations=lead_lims)
+        cand["newsFreshness"] = nf_lead
+        out.append(cand)
 
     # E. sector/theme peers moving together
     peers = evidence.get("peers") or {}
@@ -425,8 +452,11 @@ def _status_from(candidates: List[Dict[str, Any]]):
     for c in candidates:
         if c["confidence"] >= 0.2 and c["role"] != "background_only":
             return "candidate_catalyst", c
-        if c["category"] in ("direct_news", "analyst_action", "entity_association", "theme",
-                             "profit_taking", "short_covering", "flow_positioning"):
+        # V11.5.3: background_only (incl. freshness-demoted old/stale news) must not
+        # earn candidate status by category alone — 過去材料 is context, not a lead.
+        if c["role"] != "background_only" and c["category"] in (
+                "direct_news", "analyst_action", "entity_association", "theme",
+                "profit_taking", "short_covering", "flow_positioning"):
             return "candidate_catalyst", c
     return "no_lead_yet", None
 
@@ -469,6 +499,11 @@ def _next_checks(coverage: Dict[str, Any], candidates: List[Dict[str, Any]],
         checks.append("候補材料の発表時刻と値動き開始時刻の整合を確認")
     if any(c["corroborationLevel"] == "single_source" for c in candidates[:3]):
         checks.append("別ソースでの裏取り(2社目の報道/公式開示)を確認")
+    # V11.5.3: when the only material found is old/stale, the missing thing is the
+    # PRESENT — re-check the latest news/official channel/volume, not the archive.
+    if any((c.get("newsFreshness") or {}).get("freshness") in ("old", "stale")
+           for c in candidates[:6]):
+        checks.insert(0, "最新ニュース/公式開示/出来高反応を再確認")
     checks.append("次の公式開示・決算・適時開示を待つ")
     return checks[:4]
 
@@ -543,9 +578,16 @@ def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
 
     top = winner or (candidates[0] if candidates else None)
     status_ja = STATUS_JA[status]
+    # V11.5.3: only-old-news case — say honestly that no CURRENT material was found
+    # (the old article is background, never presented as today's lead).
+    only_past = (status == "no_lead_yet" and any(
+        (c.get("newsFreshness") or {}).get("freshness") in ("old", "stale")
+        for c in candidates))
     best = ""
     if top and status != "no_lead_yet":
         best = f"{CATEGORY_JA.get(top['category'], top['category'])}: {top['titleJa']}"
+    elif only_past:
+        best = "最新材料は未確認"
     checked_ja = "/".join(l for l, k in (
         ("TDnet", "tdnetChecked"), ("公式イベント", "officialEventsChecked"),
         ("ニュース", "companyNewsChecked"), ("日本語ニュース", "jpNewsChecked"),
@@ -585,6 +627,9 @@ def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
     if status == "probable_catalyst" and mc_block.get("status") in ("missing", "partial") \
             and "市場" not in why:
         why = (why + " 定量的な市場確認(出来高比/指数相対)が未完。").strip()
+    if only_past:
+        why = ("見つかった関連ニュースは過去材料のみ(72時間超前)。現在の値動きの"
+               "主因として扱わない。 " + why).strip()
 
     # PRIVACY: owner relevance is NEVER stored or served — records/snapshots go to
     # public GETs and the public ledger, and an owner-boosted priority or a
@@ -660,7 +705,7 @@ def compact(record: Dict[str, Any]) -> Dict[str, Any]:
                                                       "vwapDistancePct", "window")},
         "topCandidates": [
             {k: c.get(k) for k in ("titleJa", "titleOriginal", "translationStatus",
-                                   "category", "timingRelation",
+                                   "category", "timingRelation", "newsFreshness",
                                    "corroborationLevel", "confidence", "source")}
             for c in (record.get("causeCandidates") or [])[:3]
         ],

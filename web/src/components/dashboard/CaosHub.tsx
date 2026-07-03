@@ -7,6 +7,8 @@ import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { dashboardDedupeKey } from '../../lib/dashboardEventState';
 import { newsDisplayTitleJa } from '../../lib/aiExplanationState';
 import { autoQueueTranslations } from '../../lib/queueRequests';
+import { useWatchtowerStatus } from '../../hooks/useWatchtowerStatus';
+import { classifyFreshness, freshnessLabelJa, isPastMaterial } from '../../lib/newsFreshness';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './CaosEvents.css';
 import './MarketInstitutionalSection.css';
@@ -76,6 +78,7 @@ export const CaosHub: React.FC = () => {
   const { data: evData } = useImportantEvents();   // baseline events so the tier never vanishes
   const { data: dsData } = useDownsideIncidents();  // active drops, surfaced in the hub (v10.178)
   const { data: radarData } = useNewsRadar();       // crisis-theme radar, folded into C.A.O.S. (v10.192)
+  const { data: wt } = useWatchtowerStatus();       // watchtower source freshness (v11.5.3)
   const dash = useDashboardEvents();                // v11.4.1: dedupe vs the unified top card
 
   React.useEffect(() => {
@@ -154,12 +157,39 @@ export const CaosHub: React.FC = () => {
   const empty = material.length === 0 && allMaterialEvents.length === 0 && news.length === 0 && incidents.length === 0;
   const hiddenEventCount = dashActive ? allMaterialEvents.length - materialEvents.length : 0;
 
+  // v11.5.3 Watchtower status line — when did C.A.O.S. last check, and how fresh is
+  // the newest item per group. Honest: shows「ニュース監視に遅延」when the patrol lags.
+  const wtLine = (() => {
+    if (!wt) return null;
+    const cov = wt.coverageByAssetClass || {};
+    const grp = (ac: string, label: string) => {
+      const c = cov[ac];
+      if (!c || c.newestItemAgeHours == null) return `${label} —`;
+      const h = c.newestItemAgeHours;
+      return `${label} ${h < 1 ? '1h以内' : h < 24 ? `${Math.floor(h)}h前` : `${Math.floor(h / 24)}d前`}`;
+    };
+    const checked = wt.lastRefreshAt ? String(wt.lastRefreshAt).slice(11, 16) : '—';
+    const lagMin = wt.lastRefreshAt ? (Date.now() - Date.parse(wt.lastRefreshAt)) / 60_000 : null;
+    return {
+      text: `C.A.O.S.確認 ${checked}UTC · 最新: ${grp('JP_EQUITY', 'JP')} / ${grp('US_EQUITY', 'US')} / ${grp('CRYPTO_BTC_ETH', '暗号')} / ${grp('FX_USDJPY', '為替')}`,
+      delayed: lagMin != null && lagMin > 45,
+      partial: ['GOLD_GLD', 'FX_USDJPY', 'CRYPTO_BTC_ETH'].some((ac) => cov[ac]?.status === 'partial'),
+    };
+  })();
+
   return (
     <section className="caoshub">
       <div className="caoshub-head">
         <span className="caoshub-title">C.A.O.S.</span>
         <span className="caoshub-sub">Corroborated Analyst &amp; Official Signals</span>
       </div>
+      {wtLine && (
+        <p style={{ margin: '2px 0 6px', fontSize: 10.5, color: 'var(--text-faint)' }}>
+          {wtLine.text}
+          {wtLine.delayed && <span style={{ color: 'var(--amber, #fbbf24)', marginLeft: 6 }}>⚠ ニュース監視に遅延</span>}
+          {wtLine.partial && <span style={{ marginLeft: 6 }}>· Gold/FX/Crypto監視はpartial</span>}
+        </p>
+      )}
 
       {empty && crisisThemes.length === 0 && (
         <p className="caoshub-empty">機関の見解・公式シグナル・市場ニュースを継続収集しています…</p>
@@ -294,21 +324,31 @@ export const CaosHub: React.FC = () => {
           <div className="caoshub-tierhead">
             ニュース <span className="caoshub-tiernote">一般市場ニュース(参考・未検証)</span>
           </div>
-          {news.map((it, i) => (
-            <a className="caoshub-news" key={i} href={it.url} target="_blank" rel="noopener noreferrer">
+          {news.map((it, i) => {
+            // v11.5.3: old items render as 過去材料 — never styled as current material
+            const fr = classifyFreshness(it.datetime);
+            const past = isPastMaterial(fr);
+            return (
+            <a className="caoshub-news" key={i} href={it.url} target="_blank" rel="noopener noreferrer"
+               style={past ? { opacity: 0.55 } : undefined}>
               <div className="caoshub-news-meta">
-                {it.major && <span className="caoshub-news-dot" />}
+                {it.major && !past && <span className="caoshub-news-dot" />}
                 <span className="caoshub-news-time">{hhmm(it.datetime)}</span>
                 <span className="caoshub-news-src">{it.source}</span>
+                {past && (
+                  <span style={{ fontSize: 9.5, color: 'var(--text-faint)', border: '1px solid var(--line)',
+                                 borderRadius: 999, padding: '0 6px' }}>{freshnessLabelJa(fr)}</span>
+                )}
                 {it.corroboration && CORROB[it.corroboration] && (
                   <span className={`caoshub-corrob ${CORROB[it.corroboration].cls}`}>{CORROB[it.corroboration].ja}</span>
                 )}
               </div>
-              <div className={`caoshub-news-h${it.major ? ' caoshub-news-h--major' : ''}`}>
+              <div className={`caoshub-news-h${it.major && !past ? ' caoshub-news-h--major' : ''}`}>
                 {newsDisplayTitleJa(it)}
               </div>
             </a>
-          ))}
+            );
+          })}
         </div>
       )}
 
