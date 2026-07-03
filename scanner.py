@@ -7268,13 +7268,16 @@ def _old_primary_violations(now_iso):
         cands = served.get("causeCandidates") or []
         news_cands = [c for c in cands if c.get("category") in ("direct_news", "analyst_action")]
         if best and best != "最新材料は未確認":
-            for c in cands:
-                nf = c.get("newsFreshness") or {}
-                if (c.get("titleJa") and c["titleJa"] in best
-                        and nf.get("freshness") in ("old", "stale")):
-                    violations.append({"symbol": served.get("symbol"),
-                                       "type": "old_news_as_primary",
-                                       "detailJa": f"{nf.get('freshness')}のニュースがbestLeadに使われている"})
+            # the winner is candidates[0] (resolve() moves it there) — matching ANY
+            # candidate whose titleJa appears in best mis-fires when untranslated
+            # headlines share a generic fallback title (IONQ false-triple, v11.5.5).
+            top = cands[0] if cands else None
+            nf = (top or {}).get("newsFreshness") or {}
+            if (top and top.get("titleJa") and top["titleJa"] in best
+                    and nf.get("freshness") in ("old", "stale")):
+                violations.append({"symbol": served.get("symbol"),
+                                   "type": "old_news_as_primary",
+                                   "detailJa": f"{nf.get('freshness')}のニュースがbestLeadに使われている"})
         if news_cands and all((c.get("newsFreshness") or {}).get("freshness")
                               in ("old", "stale") for c in news_cands):
             only_old.append(str(served.get("symbol") or ""))
@@ -13101,14 +13104,19 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
                 fin = res[0] if isinstance(res, tuple) else res
             if isinstance(fin, dict):
                 cover["companyNewsChecked"] = True
-                # v11.5.1: candidate titles/bestLead must never surface raw English —
-                # use the Japanese-first display title (cached JA or a JP fallback);
-                # the English original is queued for the admin translate cron.
+                # v11.5.5: candidates are built from the ORIGINAL headline — the ladder's
+                # identity/corroboration logic needs distinct titles. (The v11.5.1 pre-
+                # replacement with displayTitleJa collapsed every untranslated headline
+                # into the same 「翻訳待ち…」 string, faking multi_source corroboration and
+                # producing meaningless bestLeads — caught by the violations detector.)
+                # Japanese-first DISPLAY happens at serve time via
+                # _mover_cause_decorate_candidates; _news_decorate here only QUEUES the
+                # headline for the translate cron.
                 _cn = []
                 for n in (fin.get("news") or [])[:8]:
                     if isinstance(n, dict) and n.get("headline"):
-                        _d = _news_decorate(str(n["headline"]), n.get("source") or "Finnhub")
-                        n = {**n, "headline": _d["displayTitleJa"], "headlineEn": _d["titleOriginal"]}
+                        _news_decorate(str(n["headline"]), n.get("source") or "Finnhub")
+                        n = {**n, "headlineEn": str(n["headline"])}
                     _cn.append(n)
                 ev["companyNews"] = _cn
         except Exception:
