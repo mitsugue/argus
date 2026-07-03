@@ -7067,7 +7067,10 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
             _MOVER_REFRESH_QUEUE["data"] = None
         result["moverCauseUpdated"] = True
         served = _mover_cause_serve(_MOVER_CAUSES.get(mid) or rec, now_iso)
+        # ladder lead first; when the ladder can't score (e.g. cold price cache →
+        # not_scoreable) the sweep's own fresh lead still answers "what's new NOW"
         result["bestCurrentLeadJa"] = (served.get("bestLeadJa")
+                                       or result.get("latestFreshLeadJa")
                                        or "最新材料は未確認")[:200]
     except Exception:
         result["moverCauseUpdated"] = False
