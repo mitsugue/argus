@@ -163,22 +163,37 @@ export const CaosHub: React.FC = () => {
   const empty = material.length === 0 && allMaterialEvents.length === 0 && news.length === 0 && incidents.length === 0;
   const hiddenEventCount = dashActive ? allMaterialEvents.length - materialEvents.length : 0;
 
-  // v11.5.3 Watchtower status line — when did C.A.O.S. last check, and how fresh is
-  // the newest item per group. Honest: shows「ニュース監視に遅延」when the patrol lags.
+  // v11.5.3/v11.5.5 Watchtower status line — when did C.A.O.S. last check, patrol
+  // liveness (稼働中/遅延/要確認), and per-group newest-item age. Honest, compact.
   const wtLine = (() => {
     if (!wt) return null;
     const cov = wt.coverageByAssetClass || {};
+    const ph = wt.patrolHealth;
     const grp = (ac: string, label: string) => {
       const c = cov[ac];
       if (!c || c.newestItemAgeHours == null) return `${label} —`;
       const h = c.newestItemAgeHours;
       return `${label} ${h < 1 ? '1h以内' : h < 24 ? `${Math.floor(h)}h前` : `${Math.floor(h / 24)}d前`}`;
     };
-    const checked = wt.lastRefreshAt ? String(wt.lastRefreshAt).slice(11, 16) : '—';
+    const checked = (ph?.lastPatrolAt || wt.lastRefreshAt)
+      ? String(ph?.lastPatrolAt || wt.lastRefreshAt).slice(11, 16) : '—';
     const lagMin = wt.lastRefreshAt ? (Date.now() - Date.parse(wt.lastRefreshAt)) / 60_000 : null;
+    const phStatus = ph?.status;
+    const patrolLabel = phStatus === 'healthy' ? '稼働中'
+      : phStatus === 'stale' ? '遅延'
+      : phStatus === 'degraded' || phStatus === 'error' ? '要確認'
+      : phStatus === 'not_ready' ? '起動中' : null;
+    const patrolTone = phStatus === 'healthy' ? 'var(--value-positive, #34d399)'
+      : phStatus === 'stale' ? 'var(--amber, #fbbf24)'
+      : phStatus === 'degraded' || phStatus === 'error' ? 'var(--value-negative, #f87171)'
+      : 'var(--text-faint)';
     return {
       text: `C.A.O.S.確認 ${checked}UTC · 最新: ${grp('JP_EQUITY', 'JP')} / ${grp('US_EQUITY', 'US')} / ${grp('CRYPTO_BTC_ETH', '暗号')} / ${grp('FX_USDJPY', '為替')}`,
-      delayed: lagMin != null && lagMin > 45,
+      patrolLabel, patrolTone,
+      note: ph?.status === 'stale' ? 'C.A.O.S.監視が遅延しています'
+        : (ph?.deepSweeps24h ?? 0) > 0 ? '急変銘柄を優先巡回中'
+        : ph?.baselineOnly ? '現在は基準監視のみ。急変銘柄は検出時に優先巡回します' : null,
+      delayed: phStatus === 'stale' || (lagMin != null && lagMin > 45),
       partial: ['GOLD_GLD', 'FX_USDJPY', 'CRYPTO_BTC_ETH'].some((ac) => cov[ac]?.status === 'partial'),
     };
   })();
@@ -191,9 +206,17 @@ export const CaosHub: React.FC = () => {
       </div>
       {wtLine && (
         <p style={{ margin: '2px 0 6px', fontSize: 10.5, color: 'var(--text-faint)' }}>
+          {wtLine.patrolLabel && (
+            <span style={{ color: wtLine.patrolTone, fontWeight: 600, marginRight: 6 }}>
+              巡回{wtLine.patrolLabel}
+            </span>
+          )}
           {wtLine.text}
           {wtLine.delayed && <span style={{ color: 'var(--amber, #fbbf24)', marginLeft: 6 }}>⚠ ニュース監視に遅延</span>}
           {wtLine.partial && <span style={{ marginLeft: 6 }}>· Gold/FX/Crypto監視はpartial</span>}
+          {wtLine.note && !wtLine.delayed && (
+            <span style={{ marginLeft: 6 }}>· {wtLine.note}</span>
+          )}
         </p>
       )}
 

@@ -45,6 +45,7 @@ import argus_caos_source_universe  # per-asset-class source registry + discovery
 import argus_caos_watchtower_plan  # C.A.O.S. watchtower target plan (pure, v11.5.3)
 import argus_caos_patrol  # always-on patrol schedule (pure, v11.5.4)
 import argus_caos_source_sweep  # maximum-available source sweep helpers (pure, v11.5.4)
+import argus_caos_patrol_store  # 24h patrol ledger — soak proof (pure, v11.5.5)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6643,11 +6644,39 @@ def api_argus_caos_watchtower_status():
         if coverage[ac]["status"] != "live":
             alerts.append({"severity": "info", "messageJa":
                            f"{ac}の監視はpartial(専門ソースの一部が未構成)。"})
+    # v11.5.5 patrol references — the compact proof the patrol is alive (full
+    # detail lives at /api/argus/caos/patrol-health)
+    patrol_ref = None
+    try:
+        _sweep_state_restore_once()
+        _patrol_ledger_restore_once()
+        doc = _PATROL_LEDGER["doc"]
+        runs = doc.get("runs", [])
+        vio, _ = _old_primary_violations(now_iso)
+        summ = argus_caos_patrol_store.summarize(doc, now_iso,
+                                                 old_primary_violations=len(vio))
+        st, _al = argus_caos_patrol_store.derive_status(
+            now_iso=now_iso, last_patrol_at=(runs[-1]["at"] if runs else None),
+            summary=summ, is_weekday=datetime.now(pytz.utc).weekday() < 5,
+            has_runs=bool(runs))
+        deep = [s for s in doc.get("sweeps", []) if s.get("kind") in ("deep", "investigate")]
+        patrol_ref = {"status": st,
+                      "lastPatrolAt": runs[-1]["at"] if runs else None,
+                      "lastDeepSweepAt": deep[-1]["at"] if deep else None,
+                      "baselineSweeps24h": summ["baselineSweeps24h"],
+                      "deepSweeps24h": summ["deepSweeps24h"],
+                      "emptyDeepSweepRuns24h": summ["emptyDeepSweepRuns24h"],
+                      "oldPrimaryViolations": summ["oldPrimaryViolations"],
+                      "baselineOnly": bool(runs and not runs[-1].get("deepSweeps")
+                                           and not int(runs[-1].get("activeMovers") or 0))}
+    except Exception:
+        pass
     return jsonify({
         "schemaVersion": "caos-watchtower-status-v1", "asOf": now_iso,
         "sourceUniverseVersion": src_uni["schemaVersion"],
         "investmentUniverseVersion": argus_investment_universe.SCHEMA_VERSION,
         "lastRefreshAt": _WATCHTOWER_STATE.get("lastRefreshAt"),
+        "patrolHealth": patrol_ref,
         "sources": sources_out, "coverageByAssetClass": coverage, "alerts": alerts,
         "noteJa": "near-real-time監視(15分巡回)。Bloomberg/Reuters端末の完全代替ではない。"
                   "公開GETは取得を起動しない。"})
@@ -6755,11 +6784,14 @@ def _watchtower_refresh_run():
     _WATCHTOWER_STATE["lastSummary"] = {k: summary[k] for k in
                                         ("asOf", "targetsChecked", "newItems", "freshItems")}
     # V11.5.4: deep sweeps for due critical/urgent patrol targets (movers first)
+    deep_done = []
+    active_movers = 0
     try:
+        _sweep_state_restore_once()               # v11.5.5: survive dyno restarts
+        active_movers = len(_mover_causes_today())
         patrol = argus_caos_patrol.build_patrol_plan(
             plan["targets"], _SWEEP_STATE.get("bySymbol") or {}, now_iso)
         picked = argus_caos_patrol.pick_due_targets(patrol, max_deep=4, max_light=0)
-        deep_done = []
         for t in picked["deep"]:
             if not t.get("symbol") or t["assetClass"] not in ("JP_EQUITY", "US_EQUITY"):
                 continue
@@ -6769,11 +6801,47 @@ def _watchtower_refresh_run():
                                       name=t.get("name"), budget_sec=8, probe_articles=1)
                 deep_done.append({"symbol": t["symbol"], "status": res["status"],
                                   "fresh": len(res["freshItems"])})
+                argus_caos_patrol_store.record_sweep(
+                    _PATROL_LEDGER["doc"], now_iso=now_iso, symbol=t["symbol"],
+                    market="JP" if t["assetClass"] == "JP_EQUITY" else "US",
+                    kind="deep", status=res["status"], fresh=len(res["freshItems"]))
             except Exception:
                 continue
         summary["deepSweeps"] = deep_done
         _SWEEP_STATE["lastPatrolSweep"] = {"asOf": now_iso, "deepSweeps": deep_done}
         _sweep_state_persist()
+    except Exception:
+        pass
+    # V11.5.5 patrol ledger: every run is recorded — the feed collection IS the
+    # Core Portfolio baseline check (all 9 classes' sources), so a mover-less run
+    # is an honest baseline-only success, never a silent one.
+    try:
+        _patrol_ledger_restore_once()
+        pf = intel.get("perFeed") or []
+        note = ("" if deep_done else
+                "active mover sweepなし。Core Portfolio baselineのみ確認。" if not active_movers
+                else "急変銘柄はcadence内のためdeep sweep省略(直近実施済み)。")
+        argus_caos_patrol_store.record_run(
+            _PATROL_LEDGER["doc"], now_iso=now_iso, ok=True,
+            deep_sweeps=len(deep_done), baseline_checked=bool(pf),
+            fresh_items=int(summary.get("freshItems") or 0),
+            new_items=int(summary.get("newItems") or 0),
+            source_success=sum(1 for x in pf if x.get("ok")),
+            source_errors=sum(1 for x in pf if not x.get("ok")),
+            active_movers=active_movers, note_ja=note)
+        newest_by_src = {}
+        for it in list(_INTEL_STORE)[:400]:
+            sid = it.get("sourceId")
+            ts = it.get("publishedAt") or it.get("firstDetectedAt")
+            ep = argus_news_freshness._epoch(ts)
+            if sid and ep and ep > (newest_by_src.get(sid, (0, None))[0]):
+                newest_by_src[sid] = (ep, str(ts))
+        for x in pf:
+            sid = x.get("source")
+            argus_caos_patrol_store.update_source(
+                _PATROL_LEDGER["doc"], sid, now_iso=now_iso, ok=bool(x.get("ok")),
+                newest_published_at=(newest_by_src.get(sid) or (0, None))[1])
+        _patrol_ledger_persist()
     except Exception:
         pass
     _watchtower_persist()
@@ -7171,6 +7239,14 @@ def api_argus_caos_investigate_now():
         "searchedSources": result["searchedSources"],
         "freshCount": fresh_n, "blockedCount": len(result["blockedSources"])}
     _sweep_state_persist()
+    try:                                          # v11.5.5: soak-proof ledger entry
+        _patrol_ledger_restore_once()
+        argus_caos_patrol_store.record_sweep(
+            _PATROL_LEDGER["doc"], now_iso=now_iso, symbol=sym, market=mkt,
+            kind="investigate", status=result["status"], fresh=fresh_n)
+        _patrol_ledger_persist()
+    except Exception:
+        pass
     return jsonify({**base, "ok": True, "status": result["status"],
                     "elapsedMs": result["elapsedMs"],
                     "sweep": {k: result[k] for k in (
@@ -7182,14 +7258,9 @@ def api_argus_caos_investigate_now():
                     "messageJa": msg, "aiExplanation": ai}), 200
 
 
-@app.route("/api/argus/caos/deep-research/status")
-def api_argus_caos_deep_research_status():
-    """Public cache-only audit: what the last investigate-now / patrol sweep did,
-    which symbols have only old news, and any old-news-as-primary VIOLATIONS
-    (must stay empty — smoke fails otherwise)."""
-    _sweep_state_restore_once()
-    _mover_causes_restore_once()
-    now_iso = _ai_now_iso()
+def _old_primary_violations(now_iso):
+    """(violations, symbols_with_only_old_news) over today's mover records —
+    the hard invariant: old/stale news must never be the current lead."""
     violations, only_old = [], []
     for r in _mover_causes_today():
         served = _mover_cause_serve(r, now_iso)
@@ -7207,13 +7278,21 @@ def api_argus_caos_deep_research_status():
         if news_cands and all((c.get("newsFreshness") or {}).get("freshness")
                               in ("old", "stale") for c in news_cands):
             only_old.append(str(served.get("symbol") or ""))
-    stale_sources = []
-    try:
-        for s in (argus_caos_source_universe.build_universe(
-                _watchtower_configured(), now_iso)["sources"]):
-            pass  # tiers come from the watchtower status; keep this endpoint light
-    except Exception:
-        pass
+    return violations, only_old
+
+
+@app.route("/api/argus/caos/deep-research/status")
+def api_argus_caos_deep_research_status():
+    """Public cache-only audit: what the last investigate-now / patrol sweep did,
+    which symbols have only old news, and any old-news-as-primary VIOLATIONS
+    (must stay empty — smoke fails otherwise)."""
+    _sweep_state_restore_once()
+    _mover_causes_restore_once()
+    _patrol_ledger_restore_once()
+    now_iso = _ai_now_iso()
+    violations, only_old = _old_primary_violations(now_iso)
+    summary = argus_caos_patrol_store.summarize(_PATROL_LEDGER["doc"], now_iso,
+                                                old_primary_violations=len(violations))
     return jsonify({
         "schemaVersion": "caos-deep-research-status-v1", "asOf": now_iso,
         "lastInvestigateNow": _SWEEP_STATE.get("lastInvestigateNow"),
@@ -7221,11 +7300,176 @@ def api_argus_caos_deep_research_status():
         "sweepsBySymbol": {k: v for k, v in
                            list((_SWEEP_STATE.get("bySymbol") or {}).items())[:40]},
         "coverageByAssetClass": {},   # full coverage lives in /caos-watchtower/status
-        "sourcesStale": stale_sources,
+        "sourcesStale": [s["sourceId"] for s in
+                         argus_caos_patrol_store.source_health(_PATROL_LEDGER["doc"], now_iso)
+                         if s["status"] == "stale"][:20],
         "symbolsWithOnlyOldNews": only_old[:20],
         "violations": violations[:20],
+        # v11.5.5 patrol references (full detail: /api/argus/caos/patrol-health)
+        "patrolHealth": {"lastPatrolAt": _PATROL_LEDGER["doc"].get("asOf"),
+                         "baselineSweeps24h": summary["baselineSweeps24h"],
+                         "deepSweeps24h": summary["deepSweeps24h"],
+                         "emptyDeepSweepRuns24h": summary["emptyDeepSweepRuns24h"],
+                         "oldPrimaryViolations": summary["oldPrimaryViolations"]},
         "noteJa": "violationsが空=古いニュースがcurrent leadに出ていない。"
                   "公開GETは取得を起動しない。"})
+
+
+# ── V11.5.5 patrol ledger: durable 24h soak proof ────────────────────────────
+_PATROL_LEDGER = {"restored": False, "doc": argus_caos_patrol_store.new_ledger("")}
+_PATROL_LEDGER_FILE = "/tmp/argus_caos_patrol_ledger.json"
+
+
+def _patrol_ledger_persist():
+    try:
+        with open(_PATROL_LEDGER_FILE, "w") as f:
+            json.dump(_PATROL_LEDGER["doc"], f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def _patrol_ledger_restore_once():
+    """tmp → ledger-branch latest patrol snapshot (MERGE — never wipe) → empty.
+    A dyno restart must not erase the day's patrol history."""
+    if _PATROL_LEDGER["restored"]:
+        return
+    _PATROL_LEDGER["restored"] = True
+    now_iso = _ai_now_iso()
+    try:
+        with open(_PATROL_LEDGER_FILE) as f:
+            blob = json.load(f)
+        if isinstance(blob, dict) and blob.get("schemaVersion") == argus_caos_patrol_store.SCHEMA_VERSION:
+            _PATROL_LEDGER["doc"] = argus_caos_patrol_store.merge(
+                _PATROL_LEDGER["doc"], blob, now_iso)
+    except Exception:
+        pass
+    if _PATROL_LEDGER["doc"].get("runs"):
+        return                                     # tmp had history — good enough
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/caos-patrol/latest.json?cb={int(time.time())}",
+                         timeout=6)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            snap = json.loads(r.text)
+            inner = snap.get("ledger") if isinstance(snap.get("ledger"), dict) else snap
+            if isinstance(inner, dict):
+                _PATROL_LEDGER["doc"] = argus_caos_patrol_store.merge(
+                    _PATROL_LEDGER["doc"], inner, now_iso)
+    except Exception:
+        pass
+
+
+@app.route("/api/argus/caos/patrol-health")
+def api_argus_caos_patrol_health():
+    """Public cache-only: PROOF that the patrol keeps running — 24h run/sweep
+    counts, per-source success/failure, per-target due state, honest alerts.
+    Never fetches, never calls an LLM."""
+    _sweep_state_restore_once()
+    _patrol_ledger_restore_once()
+    _mover_causes_restore_once()
+    now_iso = _ai_now_iso()
+    doc = _PATROL_LEDGER["doc"]
+    violations, _only_old = _old_primary_violations(now_iso)
+    summary = argus_caos_patrol_store.summarize(doc, now_iso,
+                                                old_primary_violations=len(violations))
+    runs = doc.get("runs", [])
+    last_patrol = runs[-1]["at"] if runs else None
+    deep_sweeps = [s for s in doc.get("sweeps", []) if s.get("kind") in ("deep", "investigate")]
+    base_runs = [r for r in runs if r.get("baselineChecked")]
+    is_weekday = datetime.now(pytz.utc).weekday() < 5
+    status, alerts = argus_caos_patrol_store.derive_status(
+        now_iso=now_iso, last_patrol_at=last_patrol, summary=summary,
+        is_weekday=is_weekday, has_runs=bool(runs))
+    # baseline-only honesty: latest run had no deep sweeps and no active movers
+    if runs and not runs[-1].get("deepSweeps") and not int(runs[-1].get("activeMovers") or 0):
+        alerts.append({"level": "info",
+                       "messageJa": "active mover sweepなし。Core Portfolio baselineのみ確認。"})
+    next_at = None
+    if last_patrol:
+        ep = argus_news_freshness._epoch(last_patrol)
+        if ep:
+            next_at = datetime.fromtimestamp(
+                ep + (15 * 60 if is_weekday else 60 * 60), pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # target health from the live plan (cache-only)
+    try:
+        plan = argus_caos_patrol.build_patrol_plan(
+            _watchtower_plan_build(now_iso)["targets"],
+            _SWEEP_STATE.get("bySymbol") or {}, now_iso)
+        targets = [{k: t[k] for k in ("targetId", "assetClass", "symbol", "priority",
+                                      "lastSweepAt", "nextSweepAt", "stale", "limitationsJa")}
+                   for t in plan["targets"][:30]]
+    except Exception:
+        targets = []
+    summary["targetsPlanned"] = len(targets)
+    return jsonify({
+        "schemaVersion": "caos-patrol-health-v1", "asOf": now_iso,
+        "status": status, "window": "24h",
+        "lastPatrolAt": last_patrol,
+        "lastDeepSweepAt": deep_sweeps[-1]["at"] if deep_sweeps else None,
+        "lastBaselineSweepAt": base_runs[-1]["at"] if base_runs else None,
+        "nextScheduledPatrolAt": next_at,
+        "summary": summary,
+        "sourceHealth": argus_caos_patrol_store.source_health(doc, now_iso)[:40],
+        "targetHealth": targets,
+        "alerts": alerts,
+        # the raw 24h ledger rides along so the workflow snapshot IS the restore source
+        "ledger": {"runs": doc.get("runs", [])[-100:],
+                   "sweeps": doc.get("sweeps", [])[-150:],
+                   "sources": doc.get("sources", {}),
+                   "schemaVersion": doc.get("schemaVersion")},
+        "noteJa": "near-real-time巡回の稼働証明(24時間窓)。true realtime端末ではない。"
+                  "公開GETは取得を起動しない。"})
+
+
+@app.route("/api/argus/admin/caos/patrol-self-check", methods=["POST"])
+def api_argus_admin_caos_patrol_self_check():
+    """Admin: cheap is-the-patrol-dead diagnostic — runtime state + baseline plan +
+    source freshness. No LLM, no heavy provider fetch (plan build is cache-only)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    _sweep_state_restore_once()
+    _patrol_ledger_restore_once()
+    now_iso = _ai_now_iso()
+    checks, repairs = [], []
+
+    def add(name, ok_, msg=""):
+        checks.append({"name": name, "ok": bool(ok_), "messageJa": msg})
+        return ok_
+
+    doc = _PATROL_LEDGER["doc"]
+    runs = doc.get("runs", [])
+    try:
+        plan = _watchtower_plan_build(now_iso)
+        baseline = [t for t in plan["targets"] if t.get("reason") == "core_portfolio"]
+        if not add("baseline_targets_exist", len(baseline) >= 5,
+                   f"Core Portfolio基線ターゲット{len(baseline)}件"):
+            repairs.append("watchtower planの生成を確認(investment universe読込)")
+    except Exception as e:
+        add("baseline_targets_exist", False, f"plan生成失敗: {type(e).__name__}")
+        repairs.append("watchtower plan生成の例外をログで確認")
+    add("patrol_ledger_present", bool(runs),
+        f"24時間窓のrun記録{len(runs)}件" if runs else "run記録なし(再起動直後/初回)")
+    last = runs[-1]["at"] if runs else None
+    last_ep = argus_news_freshness._epoch(last) if last else None
+    fresh_run = bool(last_ep and (time.time() - last_ep) < 45 * 60)
+    if not add("last_run_recent", fresh_run,
+               f"最終巡回 {last or 'なし'}"):
+        repairs.append("caos-watchtower workflowの稼働(cron/dispatch)を確認")
+    src_ok_today = sum(1 for s in argus_caos_patrol_store.source_health(doc, now_iso)
+                       if s["status"] in ("live", "partial"))
+    if not add("sources_alive", src_ok_today > 0, f"本日成功ソース{src_ok_today}件"):
+        repairs.append("admin/caos-watchtower/refreshを手動実行してソース状態を再収集")
+    violations, _ = _old_primary_violations(now_iso)
+    if not add("no_old_primary_violation", not violations,
+               "違反なし" if not violations else f"違反{len(violations)}件"):
+        repairs.append("mover causeの鮮度ゲート回帰を確認(直ちに修正対象)")
+    all_ok = all(c["ok"] for c in checks)
+    status = ("healthy" if all_ok else
+              "error" if violations else
+              "stale" if not fresh_run else "degraded")
+    return jsonify({"schemaVersion": "caos-patrol-self-check-v1", "ok": all_ok,
+                    "status": status, "asOf": now_iso,
+                    "checks": checks, "repairActionsJa": repairs})
 
 
 def _intel_watchlist_symbols():

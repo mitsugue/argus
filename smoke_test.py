@@ -636,6 +636,52 @@ def v_deep_research_status():
                   f"lastSweep={'yes' if d.get('lastInvestigateNow') or d.get('lastPatrolSweep') else 'none'}")
 
 
+def v_patrol_health():
+    # v11.5.5: 24h soak proof — schema + deterministic status + no violations.
+    c, d = _get("/api/argus/caos/patrol-health")
+    if d.get("schemaVersion") != "caos-patrol-health-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("status") not in ("healthy", "degraded", "stale", "error", "not_ready"):
+        return False, f"bad status {d.get('status')}"
+    s = d.get("summary") or {}
+    for k in ("runs24h", "deepSweeps24h", "baselineSweeps24h", "emptyDeepSweepRuns24h",
+              "oldPrimaryViolations"):
+        if k not in s:
+            return False, f"summary.{k} missing"
+    if s.get("oldPrimaryViolations"):
+        return False, f"OLD NEWS AS PRIMARY: {s['oldPrimaryViolations']}"
+    if d.get("status") == "error":
+        return False, "patrol-health status=error"
+    if "ledger" not in d:
+        return False, "restore ledger missing"
+    return True, (f"status={d.get('status')} runs24h={s.get('runs24h')} "
+                  f"deep={s.get('deepSweeps24h')} baseline={s.get('baselineSweeps24h')}")
+
+
+def v_watchtower_status_patrol_ref():
+    c, d = _get("/api/argus/caos-watchtower/status")
+    ph = d.get("patrolHealth")
+    if not isinstance(ph, dict):
+        return False, "patrolHealth missing on watchtower status"
+    for k in ("status", "deepSweeps24h", "baselineSweeps24h"):
+        if k not in ph:
+            return False, f"patrolHealth.{k} missing"
+    return True, f"patrol={ph.get('status')} deep24h={ph.get('deepSweeps24h')}"
+
+
+def v_patrol_self_check_gated():
+    import urllib.error
+    req = urllib.request.Request(BASE + "/api/argus/admin/caos/patrol-self-check",
+                                 method="POST", headers={"User-Agent": "argus-smoke"})
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            return False, "returned 200 without token!"
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 503, 429):
+            return False, f"returned {e.code}"
+    return True, "patrol-self-check admin-gated"
+
+
 def v_watchtower_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/caos-watchtower/refresh",
@@ -1342,6 +1388,10 @@ CHECKS = [
     ("v11.5.4 investigate-now public", v_investigate_now_public),
     ("v11.5.4 patrol plan", v_caos_patrol_plan),
     ("v11.5.4 deep-research status (no old-primary)", v_deep_research_status),
+    # ── V11.5.5 patrol reliability / soak proof ──
+    ("v11.5.5 patrol health", v_patrol_health),
+    ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),
+    ("v11.5.5 patrol self-check gated", v_patrol_self_check_gated),
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),
     ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]

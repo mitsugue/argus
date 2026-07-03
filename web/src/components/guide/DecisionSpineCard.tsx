@@ -212,6 +212,16 @@ export const DecisionSpineCard: React.FC = () => {
           見つかった材料・取得できなかったソースをすぐ表示します。AI解説は別途生成されますが（公開画面から
           AIは起動しません）、<b>最新材料の確認結果はすぐ表示されます</b>。
         </p>
+        <span className="mdepth__label" style={{ fontWeight: 600, display: 'block', marginTop: 10 }}>C.A.O.S.は本当に動き続けているのか</span>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
+          C.A.O.S. Watchtowerは、急変銘柄だけでなく<b>Core Portfolioの基準資産クラスも定期巡回</b>します。
+          active moverがない時間帯でも、Gold、Bonds、Crypto、USD/JPY、Cash判断の材料を確認します
+          (<b>基準巡回=baseline patrol</b>)。急変銘柄が検出されると<b>deep sweep</b>で優先深掘りします。
+          巡回の<b>最終時刻・24時間の成功率・最新記事時刻・deep sweep件数</b>を記録し(24時間台帳)、
+          遅延や停止があればC.A.O.S.カードに<b>「遅延」「要確認」</b>と警告します。ソースが本日一度も
+          成功していなければliveとは表示しません(stale)。dyno再起動後も台帳スナップショットから履歴を
+          復元します。near-real-time巡回であり、true realtime端末ではありません。
+        </p>
         <span className="mdepth__label" style={{ fontWeight: 600, display: 'block', marginTop: 10 }}>読めるところまで読む</span>
         <p style={{ margin: '6px 0 0', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
           ARGUSは公式資料や公開で読めるページは<b>可能な限り取得</b>し、事実抽出に使います（本文の長期保存は

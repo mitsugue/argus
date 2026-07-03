@@ -26,10 +26,23 @@ export interface WatchtowerCoverage {
   status: 'live' | 'partial' | 'missing';
 }
 
+/** v11.5.5: compact patrol-liveness proof carried on the status payload. */
+export interface PatrolHealthRef {
+  status: 'healthy' | 'degraded' | 'stale' | 'error' | 'not_ready';
+  lastPatrolAt?: string | null;
+  lastDeepSweepAt?: string | null;
+  baselineSweeps24h?: number;
+  deepSweeps24h?: number;
+  emptyDeepSweepRuns24h?: number;
+  oldPrimaryViolations?: number;
+  baselineOnly?: boolean;
+}
+
 export interface WatchtowerStatus {
   schemaVersion: string;
   asOf: string;
   lastRefreshAt?: string | null;
+  patrolHealth?: PatrolHealthRef | null;
   sources: WatchtowerSource[];
   coverageByAssetClass: Record<string, WatchtowerCoverage>;
   alerts: { severity: string; messageJa: string }[];

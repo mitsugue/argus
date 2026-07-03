@@ -58,10 +58,28 @@ jobs:
           import json, sys
           d = json.load(open(sys.argv[1]))
           live = sum(1 for s in d.get("sources", []) if s.get("status") == "live")
-          print(f"sources={len(d.get('sources', []))} live={live} alerts={len(d.get('alerts', []))}")
+          ph = d.get("patrolHealth") or {}
+          print(f"sources={len(d.get('sources', []))} live={live} alerts={len(d.get('alerts', []))} "
+                f"patrol={ph.get('status')} deep24h={ph.get('deepSweeps24h')}")
           PY
           curl -sf --max-time 60 "$BE/api/argus/caos/watchtower-plan" \
             -o "$RUNNER_TEMP/watchtower-plan.json" || echo '{}' > "$RUNNER_TEMP/watchtower-plan.json"
+          # V11.5.5: patrol-health = the 24h soak proof (public GET, no AI endpoints).
+          # Its embedded 24h ledger is what a restarted dyno restores from.
+          for i in 1 2 3; do
+            curl -sf --max-time 60 "$BE/api/argus/caos/patrol-health" \
+              -o "$RUNNER_TEMP/patrol-health.json" && break
+            echo "retry patrol-health $i"; sleep 10
+          done
+          test -s "$RUNNER_TEMP/patrol-health.json"
+          python3 - "$RUNNER_TEMP/patrol-health.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          s = d.get("summary") or {}
+          print(f"patrol-health: {d.get('status')} runs24h={s.get('runs24h')} "
+                f"deep={s.get('deepSweeps24h')} baseline={s.get('baselineSweeps24h')} "
+                f"violations={s.get('oldPrimaryViolations')}")
+          PY
 
       - name: Checkout (main)
         uses: actions/checkout@v5
@@ -87,13 +105,16 @@ jobs:
             git rm -rq --cached . 2>/dev/null || true
             find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
           fi
-          mkdir -p ledger/caos-watchtower
+          mkdir -p ledger/caos-watchtower ledger/caos-patrol
           DAY=$(TZ=Asia/Tokyo date +%F)
           cp "$RUNNER_TEMP/watchtower-status.json" ledger/caos-watchtower/latest.json
           cp "$RUNNER_TEMP/watchtower-status.json" "ledger/caos-watchtower/$DAY.json"
+          # V11.5.5: patrol soak-proof snapshot (restore source after dyno restarts)
+          cp "$RUNNER_TEMP/patrol-health.json" ledger/caos-patrol/latest.json
+          cp "$RUNNER_TEMP/patrol-health.json" "ledger/caos-patrol/$DAY.json"
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
-          git add ledger/caos-watchtower/
+          git add ledger/caos-watchtower/ ledger/caos-patrol/
           if git diff --cached --quiet; then
             echo "no change"
           else

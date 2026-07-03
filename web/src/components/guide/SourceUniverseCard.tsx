@@ -74,6 +74,19 @@ export const SourceUniverseCard: React.FC = () => {
         </table>
       </div>
 
+      {data?.patrolHealth && (
+        <p style={{ margin: '8px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>
+          巡回状態: <b style={{ color: data.patrolHealth.status === 'healthy' ? 'var(--value-positive, #34d399)'
+            : data.patrolHealth.status === 'stale' ? 'var(--amber, #fbbf24)' : 'var(--text-faint)' }}>
+            {data.patrolHealth.status === 'healthy' ? '稼働中'
+              : data.patrolHealth.status === 'stale' ? '遅延'
+              : data.patrolHealth.status === 'not_ready' ? '起動中' : '要確認'}</b>
+          {' '}· 最終巡回 {data.patrolHealth.lastPatrolAt ? String(data.patrolHealth.lastPatrolAt).slice(11, 16) + 'UTC' : '—'}
+          {' '}· 24hのdeep sweep {data.patrolHealth.deepSweeps24h ?? 0}件
+          {' '}· baseline確認 {data.patrolHealth.baselineSweeps24h ?? 0}回
+        </p>
+      )}
+
       {(data?.alerts?.length ?? 0) > 0 && (
         <p style={{ margin: '8px 0 0', fontSize: 11.5, color: 'var(--amber, #fbbf24)' }}>
           {data!.alerts.map((a, i) => <span key={i}>⚠ {a.messageJa} </span>)}
