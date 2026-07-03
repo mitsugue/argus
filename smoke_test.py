@@ -655,6 +655,38 @@ def v_news_newest_first():
     return True, f"market-news {len(dts)} items sorted; cause-attribution sorted"
 
 
+def v_bridge_status_segmented():
+    # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
+    # "all green" can never imply JP realtime when entitlement is missing.
+    c, d = _get("/api/argus/bridge/status")
+    if d.get("schemaVersion") != "bridge-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    for k in ("bridgeProcess", "openDStatus", "usRealtimeStatus", "jpRealtimeStatus",
+              "jpFallbackActive", "bridgeMode"):
+        if k not in d:
+            return False, f"{k} missing"
+    blob = json.dumps(d, ensure_ascii=False).lower()
+    for bad in ('"token":', '"secret":', '"password":', '"apikey":'):
+        if bad in blob:
+            return False, f"forbidden key {bad}"
+    return True, (f"bridge={d['bridgeProcess']} openD={d['openDStatus']} "
+                  f"us={d['usRealtimeStatus']} jp={d['jpRealtimeStatus']} "
+                  f"mode={d['bridgeMode']}")
+
+
+def v_bridge_heartbeat_gated():
+    import urllib.error
+    req = urllib.request.Request(BASE + "/api/argus/bridge/heartbeat",
+                                 method="POST", headers={"User-Agent": "argus-smoke"})
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            return False, "returned 200 without token!"
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 503, 429):
+            return False, f"returned {e.code}"
+    return True, "heartbeat admin-gated"
+
+
 def v_patrol_health():
     # v11.5.5: 24h soak proof — schema + deterministic status + no violations.
     c, d = _get("/api/argus/caos/patrol-health")
@@ -1410,6 +1442,9 @@ CHECKS = [
     # ── V11.5.5 patrol reliability / soak proof ──
     ("v11.5.5 patrol health", v_patrol_health),
     ("v11.5.6 news newest-first", v_news_newest_first),
+    # ── V11.5.7 bridge entitlement transparency ──
+    ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
+    ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),
     ("v11.5.5 patrol self-check gated", v_patrol_self_check_gated),
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),

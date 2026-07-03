@@ -10785,18 +10785,75 @@ def _system_health():
     else:
         L("ai_judge", "AI判断", "warning", "キー未設定")
 
-    # moomoo bridge freshness (session-aware so a closed market isn't false-amber)
+    # v11.5.7 SEGMENTED bridge lamps (Jul-3 incident): "all green" must never
+    # imply JP realtime works when the account has no JP quote entitlement.
+    # Bridge process / OpenD / US realtime / JP realtime are evaluated apart.
+    hb = _BRIDGE_HB.get("data")
+    hb_age = (now - _BRIDGE_HB["receivedAt"]) if hb else None
     ages = [now - rec["ts"] for mkt in ("JP", "US")
             for rec in (_PUSHED_QUOTES.get(mkt) or {}).values() if rec.get("ts")]
-    mkt_open = _jp_market_open() or _us_market_open()
-    if not ages:
-        L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
-          "市場時間中なのにpush無し" if mkt_open else "市場時間外(待機)")
-    elif min(ages) <= 120:
-        L("bridge", "moomooブリッジ", "ok", f"最終push {int(min(ages))}秒前")
+    us_ages = [now - rec["ts"] for rec in (_PUSHED_QUOTES.get("US") or {}).values() if rec.get("ts")]
+    jp_ages = [now - rec["ts"] for rec in (_PUSHED_QUOTES.get("JP") or {}).values() if rec.get("ts")]
+    jp_open, us_open = _jp_market_open(), _us_market_open()
+    mkt_open = jp_open or us_open
+    if hb is not None:
+        # bridge process: heartbeat keeps flowing even while markets are closed
+        opend = str(hb.get("openDStatus") or "unknown")
+        disk = hb.get("diskUsagePct")
+        disk_txt = f" · disk {disk}%" if isinstance(disk, (int, float)) else ""
+        if opend == "sms_required":
+            L("bridge", "moomooブリッジ", "stopped",
+              "OpenDがSMS認証待ち — 再ログインまでrealtime push不可" + disk_txt)
+        elif hb_age is not None and hb_age <= 180:
+            mode = str(hb.get("bridgeMode") or "")
+            L("bridge", "moomooブリッジ", "ok",
+              f"heartbeat {int(hb_age)}秒前 · mode={mode or '不明'}"
+              + (" · OpenD不調" if opend == "api_unhealthy" else "") + disk_txt)
+        else:
+            L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
+              f"heartbeat {int((hb_age or 0)//60)}分前(途絶?)" if mkt_open
+              else f"heartbeat {int((hb_age or 0)//60)}分前 · 市場時間外")
+        if isinstance(disk, (int, float)) and disk >= 90:
+            L("bridge_disk", "EC2ディスク", "stopped" if disk >= 97 else "warning",
+              f"使用率 {disk}% — 拡張/掃除が必要")
+        # US realtime — session-aware
+        uss = str(hb.get("usRealtimeStatus") or "unknown")
+        if us_ages and min(us_ages) <= 120:
+            L("us_realtime", "US realtime", "ok", "LIVE — moomooから更新中")
+        elif not us_open:
+            L("us_realtime", "US realtime", "off", "市場時間外(待機)")
+        elif uss in ("ok", "unknown"):
+            L("us_realtime", "US realtime", "warning", "市場時間中なのにUS push無し")
+        else:
+            L("us_realtime", "US realtime", "warning", f"状態: {uss}")
+        # JP realtime — entitlement-aware. disabled=gray(意図的), 権限なし=yellow.
+        jps = str(hb.get("jpRealtimeStatus") or "unknown")
+        if jps == "disabled":
+            L("jp_realtime", "JP realtime", "off",
+              "無効化中(US-onlyモード) — 日本株は代替データ(J-Quants/Yahoo)で判定")
+        elif jps == "entitlement_unavailable":
+            L("jp_realtime", "JP realtime", "warning",
+              "unavailable — moomoo日本株クォート権限なし。日本株は代替データで判定")
+        elif jp_ages and min(jp_ages) <= 120:
+            L("jp_realtime", "JP realtime", "ok", "LIVE — moomooから更新中")
+        elif not jp_open:
+            L("jp_realtime", "JP realtime", "off", "市場時間外(待機)")
+        elif jps == "degraded":
+            L("jp_realtime", "JP realtime", "warning", "一時的な取得エラー(バックオフ中)")
+        else:
+            L("jp_realtime", "JP realtime", "warning", "市場時間中なのにJP push無し")
     else:
-        L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
-          f"最終push {int(min(ages)//60)}分前" + ("(途絶?)" if mkt_open else ""))
+        # legacy bridge (no heartbeat yet) — the pre-v11.5.7 push-derived lamp
+        if not ages:
+            L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
+              ("市場時間中なのにpush無し" if mkt_open else "市場時間外(待機)")
+              + " · 旧ブリッジ(heartbeat未対応)")
+        elif min(ages) <= 120:
+            L("bridge", "moomooブリッジ", "ok",
+              f"最終push {int(min(ages))}秒前 · 旧ブリッジ(heartbeat未対応)")
+        else:
+            L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
+              f"最終push {int(min(ages)//60)}分前" + ("(途絶?)" if mkt_open else ""))
 
     L("prices_jp", "日本株価格", "ok" if conf("jquants") else "warning",
       "J-Quants 設定済" if conf("jquants") else "要設定")
@@ -10823,6 +10880,128 @@ def _system_health():
 @app.route("/api/argus/system-health")
 def api_argus_system_health():
     return jsonify(_system_health())
+
+
+# ── V11.5.7 bridge heartbeat + segmented status (Jul-3 OpenD incident) ────────
+# "All green" must never imply JP realtime works when the moomoo account has no
+# JP quote entitlement. The bridge posts a heartbeat (even while markets are
+# closed); the backend derives SEGMENTED lamps: bridge process / OpenD / US
+# realtime / JP realtime (+fallback). Old bridges without heartbeat keep the
+# legacy push-derived lamp with an honest note.
+_BRIDGE_HB = {"data": None, "receivedAt": 0.0}
+_HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
+                    "lastQuotePushAt", "lastUSQuotePushAt", "lastJPQuotePushAt",
+                    "acceptedCountLastPush", "usRealtimeStatus", "jpRealtimeStatus",
+                    "jpFallbackActive", "jpLastErrorClass", "diskUsagePct", "intervalSec")
+
+
+@app.route("/api/argus/bridge/heartbeat", methods=["POST"])
+def api_argus_bridge_heartbeat():
+    """Bridge-side heartbeat (admin + HMAC gated, same as quote-push). Stores a
+    SANITIZED whitelist of status fields — never secrets/accounts/raw bodies."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    raw = request.get_data() or b""
+    sig_ok, sig_reason = _verify_bridge_signature(raw)
+    if not sig_ok:
+        send_security_alert({"type": "bridge_signature_rejected", "reason": sig_reason,
+                             "meta": _client_meta()})
+        return jsonify({"error": "signature_invalid", "reason": sig_reason}), 401
+    hb = (request.get_json(silent=True) or {}).get("heartbeat")
+    if not isinstance(hb, dict):
+        return jsonify({"error": "bad_payload", "message": "expected {heartbeat: {...}}"}), 400
+    clean = {}
+    for k in _HB_ALLOWED_KEYS:
+        v = hb.get(k)
+        if isinstance(v, bool) or v is None:
+            clean[k] = v
+        elif isinstance(v, (int, float)):
+            clean[k] = v
+        else:
+            clean[k] = str(v)[:60]
+    _BRIDGE_HB["data"] = clean
+    _BRIDGE_HB["receivedAt"] = time.time()
+    return jsonify({"ok": True, "receivedAt": _ai_now_iso()})
+
+
+def _bridge_status_doc():
+    """Segmented bridge status (public-safe). Heartbeat-first; falls back to the
+    legacy push-derived view for old bridges."""
+    now = time.time()
+    now_iso = _ai_now_iso()
+    hb = _BRIDGE_HB.get("data")
+    hb_age = (now - _BRIDGE_HB["receivedAt"]) if hb else None
+    ages = [now - rec["ts"] for mkt in ("JP", "US")
+            for rec in (_PUSHED_QUOTES.get(mkt) or {}).values() if rec.get("ts")]
+    us_ages = [now - rec["ts"] for rec in (_PUSHED_QUOTES.get("US") or {}).values() if rec.get("ts")]
+    jp_ages = [now - rec["ts"] for rec in (_PUSHED_QUOTES.get("JP") or {}).values() if rec.get("ts")]
+    doc = {"schemaVersion": "bridge-status-v1", "asOf": now_iso,
+           "heartbeat": hb, "heartbeatAgeSec": int(hb_age) if hb_age is not None else None,
+           "legacy": hb is None,
+           "lastPushAgeSec": int(min(ages)) if ages else None,
+           "lastUsPushAgeSec": int(min(us_ages)) if us_ages else None,
+           "lastJpPushAgeSec": int(min(jp_ages)) if jp_ages else None}
+    # segmented derivation
+    if hb and hb_age is not None and hb_age <= 180:
+        bridge_seg = "ok"
+    elif hb:
+        bridge_seg = "stale"
+    elif ages and min(ages) <= 120:
+        bridge_seg = "ok_legacy"
+    else:
+        bridge_seg = "unknown"
+    doc["bridgeProcess"] = bridge_seg
+    doc["openDStatus"] = (hb or {}).get("openDStatus") or "unknown"
+    doc["usRealtimeStatus"] = ((hb or {}).get("usRealtimeStatus")
+                               or ("ok" if us_ages and min(us_ages) <= 120 else "unknown"))
+    doc["jpRealtimeStatus"] = ((hb or {}).get("jpRealtimeStatus")
+                               or ("ok" if jp_ages and min(jp_ages) <= 120 else "unknown"))
+    doc["jpFallbackActive"] = bool((hb or {}).get("jpFallbackActive")
+                                   if hb else not (jp_ages and min(jp_ages) <= 600))
+    doc["bridgeMode"] = (hb or {}).get("bridgeMode") or "unknown"
+    doc["diskUsagePct"] = (hb or {}).get("diskUsagePct")
+    doc["noteJa"] = ("ブリッジは正常ですが、moomooの日本株リアルタイムは利用できません"
+                     "(日本株は代替データで判定)。" if doc["jpFallbackActive"]
+                     and doc["bridgeProcess"] in ("ok", "ok_legacy") else
+                     "セグメント別状態: ブリッジ/OpenD/USリアルタイム/JPリアルタイムは独立に評価されます。")
+    return doc
+
+
+@app.route("/api/argus/bridge/status")
+def api_argus_bridge_status():
+    """Public cache-only segmented bridge status — statuses/ages only, no secrets."""
+    return jsonify(_bridge_status_doc())
+
+
+@app.route("/api/argus/admin/bridge/diagnostic")
+def api_argus_admin_bridge_diagnostic():
+    """Admin: diagnostic summary + recommended action (Jul-3 runbook companion)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    doc = _bridge_status_doc()
+    hb = doc.get("heartbeat") or {}
+    rec = []
+    if doc["bridgeProcess"] in ("stale", "unknown"):
+        rec.append("EC2で systemctl status argus-bridge / journalctl -u argus-bridge -n 120 を確認。")
+    if doc["openDStatus"] == "sms_required":
+        rec.append("OpenDがSMS認証待ち。EC2のOpenDで再ログイン(SMSコードをチャットに貼らないこと)。")
+    elif doc["openDStatus"] == "api_unhealthy":
+        rec.append("OpenD APIが不調。OpenD再起動(重複プロセスにも注意)→ argus-bridge再起動。")
+    if doc["jpRealtimeStatus"] == "entitlement_unavailable":
+        rec.append("USブリッジは正常。moomooの日本株クォート権限が無いため、JPはフォールバック"
+                   "継続 or moomoo側でJP権限を有効化。")
+    if doc["jpRealtimeStatus"] == "disabled":
+        rec.append("US-onlyモード(ARGUS_DISABLE_JP_QUOTES=1)。JP権限取得後は環境変数を外して"
+                   "argus-bridge再起動でfullモードに復帰。")
+    if isinstance(doc.get("diskUsagePct"), (int, float)) and doc["diskUsagePct"] >= 90:
+        rec.append("EC2ディスク使用率が高い。bridge/README.mdのディスク拡張チェックリストを実施。")
+    if not rec:
+        rec.append("正常。対応不要。")
+    return jsonify({"schemaVersion": "bridge-diagnostic-v1", "asOf": doc["asOf"],
+                    "status": doc, "lastJpErrorClass": hb.get("jpLastErrorClass"),
+                    "recommendedActionsJa": rec})
 
 _MOOMOO_ALLMARKET_REPORT = {"data": None}  # latest JP all-market sweep from the bridge
 
