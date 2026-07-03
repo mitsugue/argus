@@ -6928,6 +6928,27 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
                                   "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
                                   "url": str(it.get("canonicalUrl") or "")[:300],
                                   "source": "google_news_jp" if mkt == "JP" else "google_news_us"})
+            # Google News ranks by RELEVANCE, so old high-relevance stories can crowd
+            # out this morning's news. A second when:2d query forces the recent window
+            # (行けるところまで行く — never settle for the relevance page alone).
+            if not over_budget():
+                searched.append("google_news_recent(when:2d)")
+                recent_rows = (_google_news_jp_rss(f'"{nm}" when:2d') if mkt == "JP"
+                               else _google_news_us_rss(f'"{nm}" when:2d'))
+                seen_titles = {str(x.get("title") or "") for x in _INTEL_STORE}
+                for r in recent_rows[:8]:
+                    t = str(r.get("title") or "")
+                    if not t:
+                        continue
+                    found.append({"title": t, "publishedAt": r.get("publishedAt"),
+                                  "url": str(r.get("canonicalUrl") or "")[:300],
+                                  "source": "google_news_jp" if mkt == "JP" else "google_news_us"})
+                    if t not in seen_titles:
+                        rr = dict(r)
+                        rr["symbolHint"] = symu
+                        rr["lang"] = "ja" if mkt == "JP" else "en"
+                        rr["corroboration"] = "single"
+                        _INTEL_STORE.append(rr)
             if mkt == "US":
                 searched.append("finnhub_company_news")
                 try:
