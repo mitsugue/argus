@@ -6559,14 +6559,18 @@ def api_argus_caos_watchtower_status():
     now_iso = _ai_now_iso()
     src_uni = argus_caos_source_universe.build_universe(_watchtower_configured(), now_iso)
     today = now_iso[:10]
-    # newest item + today count per sourceId from the intel store (metadata only)
-    newest, today_counts = {}, {}
+    # newest item + today count per sourceId from the intel store (metadata only).
+    # Compare by EPOCH — feeds mix RFC-822 pubDates with ISO stamps, and a string
+    # compare across formats picks the wrong "newest" (36h-old NHK bug).
+    newest, newest_ep, today_counts = {}, {}, {}
     for it in list(_INTEL_STORE):
         sid = it.get("sourceId")
         if not sid:
             continue
         ts = it.get("publishedAt") or it.get("firstDetectedAt")
-        if ts and (sid not in newest or str(ts) > str(newest[sid])):
+        ep = argus_news_freshness._epoch(ts)
+        if ep is not None and ep > newest_ep.get(sid, 0.0):
+            newest_ep[sid] = ep
             newest[sid] = str(ts)
         if str(it.get("firstDetectedAt") or "")[:10] == today:
             today_counts[sid] = today_counts.get(sid, 0) + 1
