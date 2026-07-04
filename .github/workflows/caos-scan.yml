@@ -15,7 +15,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Collect C.A.O.S. public sources
         env:
@@ -27,3 +27,71 @@ jobs:
           RESP=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/institutional-intelligence/collect" || echo '{"error":"unreachable"}')
           echo "caos-collect: $RESP"
+
+      # v11.9.1 (owner: 「ニュースが全部翻訳待ち」): the ONLY translate drain used
+      # to live in caos-watchtower (weekdays only) — weekends never translated.
+      # This scan runs 24/365, so the queue now drains here too, up to 4 rounds
+      # per run (≈240 headlines) until nothing is pending.
+      - name: Translate visible headlines (24/7 drain)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          for i in 1 2 3 4; do
+            TRV=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/news/translate-visible" || echo '{"error":"unreachable"}')
+            echo "translate-visible[$i]: ${TRV:0:200}"
+            TRANSLATED=$(echo "$TRV" | python3 -c "import sys,json;print(json.load(sys.stdin).get('translated',0))" 2>/dev/null || echo 0)
+            PENDING=$(echo "$TRV" | python3 -c "import sys,json;print(json.load(sys.stdin).get('pending',0))" 2>/dev/null || echo 0)
+            [ "$TRANSLATED" = "0" ] && [ "$PENDING" = "0" ] && break
+            sleep 5
+          done
+
+      # v11.9.1: persist the JA cache to the ledger branch — a Render redeploy
+      # wipes /tmp, and 4 same-day deploys once reset EVERY headline to 翻訳待ち.
+      # The snapshot is public-safe (hash→JA title only; no secrets/owner data).
+      - name: Fetch translation-cache snapshot
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3; do
+            curl -sf --max-time 60 "$BE/api/argus/news/ja-cache-snapshot" \
+              -o "$RUNNER_TEMP/news-ja.json" && break
+            echo "retry $i"; sleep 10
+          done
+          COUNT=0
+          [ -s "$RUNNER_TEMP/news-ja.json" ] && \
+            COUNT=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/news-ja.json')).get('count',0))" 2>/dev/null || echo 0)
+          echo "news-ja cache entries: $COUNT"
+          # never overwrite the ledger with an empty cache (e.g. right after deploy)
+          if [ "$COUNT" != "0" ] && [ -n "$COUNT" ]; then echo "PERSIST=1" >> "$GITHUB_ENV"; fi
+
+      - name: Checkout (main)
+        if: env.PERSIST == '1'
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Commit news-ja snapshot to ledger branch
+        if: env.PERSIST == '1'
+        run: |
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger
+          else
+            echo "::warning::origin/ledger not found — skip (never create ledger from here)"
+            exit 0
+          fi
+          mkdir -p ledger/news-ja
+          cp "$RUNNER_TEMP/news-ja.json" ledger/news-ja/latest.json
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/news-ja/
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "news-ja: $(date -u +%FT%TZ) translation-cache snapshot"
+            git push origin HEAD:ledger \
+              || { git pull --rebase origin ledger && git push origin HEAD:ledger; }
+          fi

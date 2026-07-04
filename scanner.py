@@ -10656,6 +10656,22 @@ def api_argus_admin_news_translate_visible():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
 
+@app.route("/api/argus/news/ja-cache-snapshot")
+def api_argus_news_ja_cache_snapshot():
+    """Public cache-only artifact for the ledger workflow (v11.9.1): the JA
+    translation cache, bounded to the newest ~1200 entries. Contains ONLY
+    hash→{ja,at} + public timestamps — no originals, no secrets, no owner data.
+    The 24/7 caos-scan workflow commits this to ledger/news-ja/latest.json so a
+    redeploy no longer wipes every translation back to 翻訳待ち."""
+    _news_ja_restore_once()
+    items = sorted(_NEWS_JA_CACHE.items(),
+                   key=lambda kv: str((kv[1] or {}).get("at") or ""), reverse=True)[:1200]
+    return jsonify({"schemaVersion": "news-ja-cache-v1", "asOf": _ai_now_iso(),
+                    "cache": dict(items),
+                    "state": {"lastTranslateAt": _NEWS_JA_STATE.get("lastTranslateAt")},
+                    "count": len(items)})
+
+
 @app.route("/api/argus/news/translation-status")
 def api_argus_news_translation_status():
     """Public cache-only: translation coverage for the VISIBLE news + overall. Reads
@@ -11761,14 +11777,22 @@ def _news_ja_persist():
 
 
 def _news_ja_restore_once():
+    """3-stage restore (v11.9.1 — owner report 「ニュースが全部翻訳待ち」):
+    /tmp runtime file → ledger-branch news-ja/latest.json → empty. The /tmp
+    file dies on every Render deploy, and 4 same-day deploys used to wipe ALL
+    past translations back to 翻訳待ち. The ledger stage (committed by the
+    24/7 caos-scan workflow) makes translations deploy-proof. /tmp entries win
+    over ledger (they are never older). Short timeout; never blocks startup."""
     if _NEWS_JA_STATE["restored"]:
         return
     _NEWS_JA_STATE["restored"] = True
+    restored_from = []
     try:
         with open(_NEWS_JA_FILE) as f:
             blob = json.load(f)
         if isinstance(blob.get("cache"), dict):
             _NEWS_JA_CACHE.update(blob["cache"])
+            restored_from.append("tmp")
         if isinstance(blob.get("vqueue"), dict):
             _NEWS_JA_VQUEUE.update(blob["vqueue"])
         for k in ("lastDrainAt", "lastDrainCount"):
@@ -11779,6 +11803,23 @@ def _news_ja_restore_once():
                 _NEWS_JA_STATE[k] = blob["state"][k]
     except Exception:
         pass
+    try:
+        r = requests.get(f"{_LEDGER_RAW_BASE}/news-ja/latest.json?cb={int(time.time())}",
+                         timeout=6)
+        if r.status_code == 200 and r.text.strip().startswith("{"):
+            snap = json.loads(r.text)
+            cache = snap.get("cache")
+            if isinstance(cache, dict):
+                for h, ent in cache.items():
+                    if h not in _NEWS_JA_CACHE and isinstance(ent, dict) and ent.get("ja"):
+                        _NEWS_JA_CACHE[h] = ent
+                restored_from.append("ledger")
+            st = snap.get("state") or {}
+            if not _NEWS_JA_STATE.get("lastTranslateAt") and st.get("lastTranslateAt"):
+                _NEWS_JA_STATE["lastTranslateAt"] = st["lastTranslateAt"]
+    except Exception:
+        pass
+    _NEWS_JA_STATE["restoredFrom"] = restored_from or ["empty"]
 
 
 def _headline_ja(text):
