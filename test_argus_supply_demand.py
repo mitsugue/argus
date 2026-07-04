@@ -214,3 +214,16 @@ def test_us_without_flow_is_unknown_never_squeeze():
     assert r["condition"] != "squeeze_prone"          # US can't detect squeeze
     assert any("実測大口フロー" in m for m in r["missingEvidence"])
     assert "暫定" in r["sourceLimitNote"]
+
+
+def test_us_near_zero_flow_is_neutral_not_good():
+    # production bug (2026-07-04): flow -0.00 read as 「流入超/やや良好」 because
+    # the JP structure branch fired on the ABSENCE of margin data.
+    r = sd.classify("NVDA", "US", {"measuredFlowNetRatio": -0.001, "changePct": 0.5,
+                                   "avgDailyVolume": 1e7}, NOW)
+    assert r["condition"] == "neutral"
+    assert "流入超" not in r["ownerReadableWhyJa"]
+    assert r["directnessJa"] == "実データ(実測フロー)あり"
+    assert "純比率" in sd.classify("NVDA", "US",
+        {"measuredFlowNetRatio": 0.3, "changePct": 2.0, "volumeRatio": 1.5,
+         "avgDailyVolume": 1e7}, NOW)["ownerReadableWhyJa"]

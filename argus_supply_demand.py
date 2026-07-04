@@ -197,7 +197,8 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         scores["credit_overhang"] = min(1.0, s)
 
     # good: buying overhang light, selling pressure easing, price healthy
-    if direct and not uri_naga and (buy_overhang_days is None or buy_overhang_days < 5):
+    # (JP structure data only — US absence of margin data is NOT lightness)
+    if (has_margin or has_jsf) and not uri_naga and (buy_overhang_days is None or buy_overhang_days < 5):
         s = 0.35
         if mb_chg is not None and mb_chg < 0:
             s += 0.15                                # 信用買い残が減っている=軽くなる
@@ -289,6 +290,8 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
                                                 "bad", "deteriorating") else 0.3)
                      + (0.2 if not direct else 0.0)), 2)
 
+    directness_ja = ("実データ(実測フロー)あり" if has_us_flow and directness == "direct_data"
+                     else DIRECTNESS_JA[directness])
     return {
         "schemaVersion": SCHEMA_VERSION,
         "id": "sd-" + hashlib.md5(f"{market}:{symbol}:{now_iso[:13]}".encode()).hexdigest()[:10],
@@ -308,7 +311,7 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         "ownerReadableWhyJa": why,
         "checkNextJa": _check_next_ja(condition),
         "actionImplication": action, "actionImplicationJa": ACTION_JA[action],
-        "directness": directness, "directnessJa": DIRECTNESS_JA[directness],
+        "directness": directness, "directnessJa": directness_ja,
         "evidence": evidence,
         "missingEvidence": missing[:6],
         "sourceLimitNote": (
@@ -331,10 +334,10 @@ def _why_ja(condition, rank, ratio, days_to_cover, buy_overhang_days, mb_chg,
             direct, conf, is_us=False, measured_flow=None):
     if is_us and measured_flow is not None:
         us = {
-            'good': f'実測の大口資金が流入超(净比率{measured_flow:+.2f})で、上値を抑える売り圧力は目立たない状態',
-            'slightly_good': f'実測の大口資金は流入超(净比率{measured_flow:+.2f})だが、価格の裏付けは限定的',
-            'distribution_risk': f'価格が保たれる裏で実測の大口資金が流出超(净比率{measured_flow:+.2f}) — 上値で売られている可能性',
-            'deteriorating': f'下落と同時に実測の大口資金も流出超(净比率{measured_flow:+.2f})で、需給は悪化中',
+            'good': f'実測の大口資金が流入超(純比率{measured_flow:+.2f})で、上値を抑える売り圧力は目立たない状態',
+            'slightly_good': f'実測の大口資金は流入超(純比率{measured_flow:+.2f})だが、価格の裏付けは限定的',
+            'distribution_risk': f'価格が保たれる裏で実測の大口資金が流出超(純比率{measured_flow:+.2f}) — 上値で売られている可能性',
+            'deteriorating': f'下落と同時に実測の大口資金も流出超(純比率{measured_flow:+.2f})で、需給は悪化中',
         }
         if condition in us:
             return (us[condition] + '。米国は信用残に相当する公開データが無いため簡易判定。')[:220]
