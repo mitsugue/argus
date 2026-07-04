@@ -26,3 +26,9 @@ import type { LocalBrief } from '../domain/sessionBrief';
 let latestSB: LocalBrief | null = null;
 export function publishSessionBrief(b: LocalBrief): void { latestSB = b; }
 export function latestSessionBrief(): LocalBrief | null { return latestSB; }
+
+// v11.17.0: latest device-local Scenario Sets (same lifecycle contract).
+import type { LocalScenarioSet } from '../domain/scenario';
+let latestSC: LocalScenarioSet[] = [];
+export function publishScenarios(sets: LocalScenarioSet[]): void { latestSC = sets; }
+export function latestScenarios(): LocalScenarioSet[] { return latestSC; }

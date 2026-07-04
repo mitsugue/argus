@@ -53,6 +53,8 @@ export interface PortfolioSnapshot {
   /** v11.13.0: 朝ブリーフ当時値 — 後日「正しいリスクを指していたか」検証用 */
   sessionBrief: { headlineJa: string; ownerMode: string; sessionType: string;
     nextChecksJa: string[]; whatNotToDoJa: string[] } | null;
+  /** v11.17.0: 当日の支配シナリオ — 後日「分岐は正しい側に倒れたか」検証用(帯のみ・%なし) */
+  scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[];
   pricesUsed: Record<string, number>;
   staleDataFlags: string[];
   missingEvidence: string[];
@@ -126,7 +128,8 @@ export function createSnapshot(
     supplyDemand?: { symbol: string; rank: string; condition: string }[];
     topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[];
     sessionBrief?: { headlineJa: string; ownerMode: string; sessionType: string;
-      nextChecksJa: string[]; whatNotToDoJa: string[] } | null },
+      nextChecksJa: string[]; whatNotToDoJa: string[] } | null;
+    scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[] },
 ): PortfolioSnapshot | null {
   // Never fabricate: without any priced holding there is nothing to snapshot —
   // watchlist-only state is not portfolio history.
@@ -161,6 +164,7 @@ export function createSnapshot(
     creditOverhang: (opts.supplyDemand ?? []).filter((x) => x.condition === 'credit_overhang').map((x) => x.symbol),
     topPriorities: (opts.topPriorities ?? []).slice(0, 7),
     sessionBrief: opts.sessionBrief ?? null,
+    scenarioSummary: (opts.scenarioSummary ?? []).slice(0, 10),
     pricesUsed: prices,
     staleDataFlags: pe.unpriced,
     missingEvidence: [
@@ -212,9 +216,10 @@ export function maybeDailySnapshot(pe: PortfolioExposure, appVersion: string,
                                    supplyDemand?: { symbol: string; rank: string; condition: string }[],
                                    topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[],
                                    sessionBrief?: { headlineJa: string; ownerMode: string; sessionType: string;
-                                     nextChecksJa: string[]; whatNotToDoJa: string[] } | null): boolean {
+                                     nextChecksJa: string[]; whatNotToDoJa: string[] } | null,
+                                   scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[]): boolean {
   if (syncMeta().lastSnapshotDay === jstDay()) return false;
-  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief }) != null;
+  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary }) != null;
 }
 
 // ── export / import ─────────────────────────────────────────────────────────

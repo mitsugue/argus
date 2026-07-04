@@ -46,6 +46,8 @@ import { pastPatternLineJa } from '../../lib/learningReview';
 import type { APItem } from '../../domain/actionPriority';
 import { RANK_TONE as AP_TONE } from '../../domain/actionPriority';
 import { READINESS_TONE } from '../../domain/positionExposure';
+import type { LocalScenarioSet } from '../../domain/scenario';
+import { DOM_TONE } from '../../domain/scenario';
 
 interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.8.0: device-local position/exposure note (never uploaded). */
@@ -53,9 +55,11 @@ interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.10.0: 需給ランク(JP). */
   supplyDemand?: SupplyDemandSignal;
   /** v11.12.0: 優先度(端末内). */
-  actionPriority?: APItem; }
+  actionPriority?: APItem;
+  /** v11.17.0: 条件付きシナリオ(端末内合成・保有加味). */
+  scenario?: LocalScenarioSet; }
 
-export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg, actionPriority: apx }) => {
+export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg, actionPriority: apx, scenario: scn }) => {
   const sigColor = `var(${SIGNALS[c.signalCode].token})`;
   const ai = AI_BADGE[c.aiFreshness] ?? AI_BADGE.rule_only;
 
@@ -150,6 +154,45 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
                   {' / 逆日歩 未取得'}
                 </p>
               </details>
+            </div>
+          )}
+
+          {/* SCENARIOS (v11.17.0) — 条件付きの分岐(単一予測なし・確率は帯のみ)。
+              コンパクト=支配シナリオ一行、展開=全分岐+無効化条件+次の確認。 */}
+          {scn && (
+            <div className="uac-sec">
+              <div className="uac-sec-t">SCENARIOS</div>
+              <p className="uac-next" style={{ marginBottom: 2 }}>
+                <b style={{ color: DOM_TONE[scn.dominant] }}>{scn.dominantJa}</b>
+                <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{scn.summaryJa}</span>
+              </p>
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>分岐と無効化条件を見る</summary>
+                {scn.cases.map((cs) => (
+                  <p key={cs.label} className="uac-next" style={{ margin: '3px 0 0', fontSize: 11 }}>
+                    <b>{cs.titleJa}</b>
+                    <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)',
+                                   border: '1px solid var(--line)', borderRadius: 999, padding: '0 5px' }}>
+                      {cs.bandJa}
+                    </span>
+                    <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)' }}>{cs.actionJa}</span>
+                    <br />
+                    <span style={{ color: 'var(--text-sub)' }}>{cs.narrativeJa}</span>
+                  </p>
+                ))}
+                <p className="uac-next" style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  無効化条件: {scn.invalidationJa.join(' / ')}
+                </p>
+                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  次の確認: {scn.nextChecksJa.join(' / ')}
+                </p>
+                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  何が変われば: {scn.whatWouldChangeJa.join(' / ')}
+                </p>
+              </details>
+              <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
+                条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。
+              </p>
             </div>
           )}
 

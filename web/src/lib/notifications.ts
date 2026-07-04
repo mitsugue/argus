@@ -35,6 +35,7 @@ const RULES: Record<string, { severity: Severity; cooldownMin: number; maxPerDay
   supply_demand_deterioration: { severity: 'high', cooldownMin: 1440, maxPerDay: 4 },
   supply_demand_improvement: { severity: 'low', cooldownMin: 1440, maxPerDay: 3 },
   squeeze_watch: { severity: 'medium', cooldownMin: 1440, maxPerDay: 3 },
+  scenario_change: { severity: 'high', cooldownMin: 1440, maxPerDay: 3 },
   avoid_chase: { severity: 'medium', cooldownMin: 1440, maxPerDay: 4 },
   session_brief_ready: { severity: 'info', cooldownMin: 240, maxPerDay: 3 },
   snapshot_missing: { severity: 'low', cooldownMin: 1440, maxPerDay: 1 },
@@ -51,6 +52,7 @@ interface Store {
 export interface PrevState {
   p0?: string[]; p1Held?: string[]; chase?: string[]; events?: string[];
   flow?: Record<string, string>; sd?: Record<string, { rank: string; condition: string }>;
+  scenario?: Record<string, string>;
   briefSession?: string;
 }
 
@@ -74,6 +76,9 @@ export interface NotifInputs {
   sdBySymbol: Record<string, { rank: string; condition: string; level?: string;
     name?: string; isHeld?: boolean }>;
   flowBySymbol: Record<string, { flowClass: string; name?: string; isHeld?: boolean }>;
+  /** v11.17.0: 支配シナリオ(端末内合成)。保有×弱気転換のみ通知(それ以外はノイズ)。 */
+  scenarioBySymbol?: Record<string, { dominant: string; name?: string;
+    isHeld?: boolean; summaryJa?: string }>;
   briefSession: string;
   hasHoldings: boolean;
   snapshotAgeDays: number | null;
@@ -170,6 +175,20 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         dedupeKey: `sdUp|${sym}|${day}`, isPrivate: !!sd.isHeld });
     }
   }
+  // v11.17.0: scenario_change — 保有銘柄の支配シナリオが弱気に転換した時だけ。
+  // 監視銘柄・弱気→改善方向はここでは通知しない(材料が出れば他ルールが拾う)。
+  for (const [sym, sc] of Object.entries(inp.scenarioBySymbol ?? {})) {
+    const was = (st.prev.scenario ?? {})[sym];
+    if (sc.isHeld && sc.dominant === 'bearish' && was && was !== 'bearish') {
+      cands.push({ eventType: 'scenario_change', severity: 'high', symbol: sym,
+        assetName: sc.name ?? null,
+        titleJa: `シナリオ転換：${nm(sym, sc.name)}が弱気優勢に`,
+        bodyJa: sc.summaryJa?.slice(0, 80) || '複数レイヤーの悪化が重なり、支配シナリオが弱気側に切り替わりました。',
+        whyJa: '需給・フロー等の条件付き分岐で弱気側の成立条件が優勢になったため。',
+        checkNextJa: '銘柄カードのSCENARIOSで無効化条件と次の確認を参照',
+        dedupeKey: `scn|${sym}|bearish`, isPrivate: true });
+    }
+  }
   if (inp.briefSession && inp.briefSession !== st.prev.briefSession) {
     cands.push({ eventType: 'session_brief_ready', severity: 'info', symbol: null, assetName: null,
       titleJa: '今日の作戦が更新されました。',
@@ -227,6 +246,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     p0: p0Now, p1Held: p1HeldNow, chase: chaseNow, events: inp.eventNames,
     flow: Object.fromEntries(Object.entries(inp.flowBySymbol).map(([k, v]) => [k, v.flowClass])),
     sd: Object.fromEntries(Object.entries(inp.sdBySymbol).map(([k, v]) => [k, { rank: v.rank, condition: v.condition }])),
+    scenario: Object.fromEntries(Object.entries(inp.scenarioBySymbol ?? {}).map(([k, v]) => [k, v.dominant])),
     briefSession: inp.briefSession,
   };
   save(st);

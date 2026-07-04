@@ -15,7 +15,8 @@ import { buildExposure } from '../lib/portfolio';
 import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure } from '../lib/positionExposureShare';
+import { publishExposure, latestScenarios } from '../lib/positionExposureShare';
+import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
@@ -139,6 +140,39 @@ export const CorePortfolio: React.FC = () => {
           )}
         </div>
       </section>
+
+      {/* PORTFOLIO SCENARIO (v11.17.0) — 保有全体の条件付き分岐(端末内合成)。
+          Todayを開いた後に計算済みシナリオから合成。単一予測・売買指示なし。 */}
+      {(() => {
+        const heldSets = latestScenarios().filter((s) => s.isHeld);
+        const ps = buildPortfolioScenario(heldSets);
+        return (
+          <section>
+            <div className="section-head">
+              <span className="section-head__title">PORTFOLIO SCENARIO</span>
+              <span className="section-head__count">条件付き分岐 · 売買指示なし</span>
+            </div>
+            <div className="card cmd-alloc">
+              {!ps ? (
+                <p className="cmd-alloc__note">
+                  Todayページを一度開くと、保有銘柄の支配シナリオからポートフォリオ全体の分岐を表示します(端末内計算)。
+                </p>
+              ) : (
+                <>
+                  <p className="cmd-alloc__note" style={{ fontSize: 12.5 }}>
+                    <b style={{ color: DOM_TONE[ps.dominant] }}>{DOM_JA[ps.dominant]}</b>
+                    <span style={{ marginLeft: 6 }}>{ps.summaryJa}</span>
+                  </p>
+                  <p className="cmd-alloc__note" style={{ color: 'var(--text-faint)' }}>{ps.detailJa}</p>
+                  <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はTodayの各カード→SCENARIOSで。
+                  </p>
+                </>
+              )}
+            </div>
+          </section>
+        );
+      })()}
 
       {/* PORTFOLIO SYNC & BACKUP (v11.9.0) — where the data lives + export/
           import/snapshot. Cloud sees ciphertext only; no broker, no trading. */}

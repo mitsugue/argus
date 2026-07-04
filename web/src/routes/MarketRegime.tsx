@@ -17,6 +17,7 @@ import '../components/dashboard/Dashboard.css';
 import { useInstitutionalSignals } from '../hooks/useInstitutionalSignals';
 import { useFlowAttributionList, FLOW_TONE } from '../hooks/useFlowAttribution';
 import { latestExposure, latestSessionBrief } from '../lib/positionExposureShare';
+import { marketScenarioLineJa, DOM_JA, DOM_TONE } from '../domain/scenario';
 import { jpDisplay } from '../lib/displayName';
 
 // Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
@@ -423,6 +424,19 @@ export const MarketRegime: React.FC = () => {
         return (
           <p style={{ margin: '0 0 6px', fontSize: 12.5, color: 'var(--text-sub)' }}>
             {b.ownerModeJa}({b.marketStatusJa})：{b.headlineJa}
+          </p>
+        );
+      })()}
+
+      {/* v11.17.0: 地合いのシナリオ一文 — 単一予測ではなく条件付き(帯のみ・%なし) */}
+      {(() => {
+        if (!data) return null;
+        const ms = marketScenarioLineJa(data.regime.label, []);
+        return (
+          <p style={{ margin: '0 0 6px', fontSize: 12.5 }}>
+            <b style={{ color: DOM_TONE[ms.dominant] }}>地合いシナリオ: {DOM_JA[ms.dominant]}</b>
+            <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{ms.lineJa}</span>
+            <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>条件付き・売買指示なし</span>
           </p>
         );
       })()}

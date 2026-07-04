@@ -12,6 +12,7 @@ Exit: 0 = all passed, 1 = one or more failed. Used by .github/workflows/smoke-te
 """
 import sys
 import json
+import re
 import time
 import urllib.request
 import urllib.error
@@ -954,6 +955,41 @@ def v_backup_safety_status():
     return True, "architecture-only, leak-free"
 
 
+def v_scenarios_public():
+    # v11.17.0: scenario sets are WATCHLIST-LEVEL (isHeld unknown) and must never
+    # contain exact probability percentages — bands only.
+    c, d = _get("/api/argus/scenarios")
+    if d.get("schemaVersion") != "scenario-response-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    sets = d.get("scenarioSets") or []
+    if not sets:
+        return False, "no scenario sets"
+    s0 = sets[0]
+    for k in ("cases", "dominantScenario", "invalidationJa", "nextChecksJa",
+              "whatWouldChangeJa", "complianceNote"):
+        if k not in s0:
+            return False, f"missing {k}"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("quantity", "averageCost", "weightPct", "ownerAction", "pnl"):
+        if banned in blob:
+            return False, f"LEAK: {banned}"
+    if re.search(r"の確率|[0-9]{1,3}\s*[%％]で(上|下)", blob):
+        return False, "EXACT PROBABILITY CLAIM leaked"
+    held = {s.get("isHeld") for s in sets}
+    if held - {"unknown"}:
+        return False, f"held context leaked to public: {held}"
+    return True, f"sets={len(sets)} dom0={s0.get('dominantScenario')} bands-only"
+
+
+def v_scenarios_status():
+    c, d = _get("/api/argus/scenarios/status")
+    if d.get("schemaVersion") != "scenario-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("publicLeakSafe") is not True or d.get("storageMode") != "public_redacted":
+        return False, "must be public_redacted+leak-safe"
+    return True, f"sets={d.get('scenarioSetsGenerated')} eventWait={d.get('eventWaitCount')}"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1772,6 +1808,9 @@ CHECKS = [
     ("v11.15.0 learning review status", v_learning_review_status),
     # ── V11.16.0 Backup Safety ──
     ("v11.16.0 backup safety status", v_backup_safety_status),
+    # ── V11.17.0 Scenario Engine ──
+    ("v11.17.0 scenarios public bands-only", v_scenarios_public),
+    ("v11.17.0 scenarios status", v_scenarios_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

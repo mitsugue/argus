@@ -3,6 +3,7 @@ import type { AssetCardModel } from '../../domain/assetCard';
 import type { PositionNote } from '../../domain/positionExposure';
 import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
 import type { APItem } from '../../domain/actionPriority';
+import type { LocalScenarioSet } from '../../domain/scenario';
 import { UnifiedAssetCard } from './UnifiedAssetCard';
 import './AssetCategorySection.css';
 
@@ -23,14 +24,21 @@ interface Props {
   supplyDemandSignals?: SupplyDemandSignal[];
   /** v11.12.0: 優先度(端末内計算). */
   actionPriorities?: APItem[];
+  /** v11.17.0: 条件付きシナリオ(端末内合成・保有加味). */
+  scenarios?: LocalScenarioSet[];
 }
 
-export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, emptyJa, positionNotes, supplyDemandSignals, actionPriorities }) => {
+export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, emptyJa, positionNotes, supplyDemandSignals, actionPriorities, scenarios }) => {
   const apBySym = React.useMemo(() => {
     const m = new Map<string, APItem>();
     for (const it of actionPriorities ?? []) m.set(it.symbol, it);
     return m;
   }, [actionPriorities]);
+  const scBySym = React.useMemo(() => {
+    const m = new Map<string, LocalScenarioSet>();
+    for (const s of scenarios ?? []) m.set(s.symbol.toUpperCase(), s);
+    return m;
+  }, [scenarios]);
   const sdBySym = React.useMemo(() => {
     const m = new Map<string, SupplyDemandSignal>();
     for (const s of supplyDemandSignals ?? []) m.set(s.symbol.toUpperCase(), s);
@@ -60,7 +68,8 @@ export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, empty
             <UnifiedAssetCard key={c.id} card={c} open={openIds.has(c.id)} onToggle={() => toggle(c.id)}
               positionNote={positionNotes?.[c.symbol.toUpperCase()]}
               supplyDemand={sdBySym.get(c.symbol.toUpperCase())}
-              actionPriority={apBySym.get(c.symbol.toUpperCase())} />
+              actionPriority={apBySym.get(c.symbol.toUpperCase())}
+              scenario={scBySym.get(c.symbol.toUpperCase())} />
           ))}
           {cards.length > 5 && (
             <button className="acs-more" onClick={() => setExpanded((v) => !v)}>

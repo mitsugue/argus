@@ -9,6 +9,8 @@ import { sbHandoffTextJa } from '../domain/sessionBrief';
 import { latestSessionBrief } from '../lib/positionExposureShare';
 import { ntHandoffTextJa } from '../lib/notifications';
 import { lrHandoffTextJa } from '../lib/learningReview';
+import { latestScenarios } from '../lib/positionExposureShare';
+import { scHandoffTextJa } from '../domain/scenario';
 import { ActionPill } from '../components/action/ActionBadge';
 import { ACTIONS, ACTION_ORDER, CORE_ACTIONS, CORE_ACTION_ORDER } from '../domain/actions';
 import type { ActionKey, CoreActionKey } from '../types/action';
@@ -255,6 +257,7 @@ export const AIReview: React.FC = () => {
       + '\n\n' + dqHandoffTextJa()
       + '\n\n' + apHandoffTextJa(latestActionPriorities())
       + '\n\n' + sbHandoffTextJa(latestSessionBrief())
+      + '\n\n' + scHandoffTextJa(latestScenarios())
       + '\n\n' + ntHandoffTextJa()
       + '\n\n' + lrHandoffTextJa();
     try {

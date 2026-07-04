@@ -2,12 +2,16 @@ import React from 'react';
 import type { APItem } from '../../domain/actionPriority';
 import { briefJa, RANK_TONE } from '../../domain/actionPriority';
 import { jpDisplay } from '../../lib/displayName';
+import type { LocalScenarioSet } from '../../domain/scenario';
+import { DOM_TONE } from '../../domain/scenario';
 
 // V11.12.0 — ACTION PRIORITY on Today (top area). アプリを開いた瞬間に
 // 「今日はこれを見る」が分かるための注意配分リスト。売買指示ではない。
 // P0=保有×複合悪材料のみ(静かな日はP0ゼロが正しい)。
+// v11.17.0: P0〜P2のみ支配シナリオ一行を添える(P3以下はノイズになるので出さない)。
 
-export const ActionPrioritySection: React.FC<{ items: APItem[] }> = ({ items }) => {
+export const ActionPrioritySection: React.FC<{ items: APItem[];
+  scenarios?: Map<string, LocalScenarioSet> }> = ({ items, scenarios }) => {
   const [showAll, setShowAll] = React.useState(false);
   const visible = items.filter((i) => i.priorityRank !== 'Ignore');
   const shown = showAll ? visible : visible.slice(0, 5);
@@ -48,6 +52,17 @@ export const ActionPrioritySection: React.FC<{ items: APItem[] }> = ({ items }) 
           <p style={{ margin: '1px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
             次に確認: {it.checkNextJa}
           </p>
+          {(() => {
+            if (!['P0', 'P1', 'P2'].includes(it.priorityRank)) return null;
+            const sc = scenarios?.get(it.symbol.toUpperCase());
+            if (!sc) return null;
+            return (
+              <p style={{ margin: '1px 0 0', fontSize: 10.5 }}>
+                <span style={{ color: DOM_TONE[sc.dominant], fontWeight: 600 }}>シナリオ: {sc.dominantJa}</span>
+                <span style={{ marginLeft: 5, color: 'var(--text-faint)' }}>{sc.summaryJa.slice(0, 44)}</span>
+              </p>
+            );
+          })()}
           <details style={{ marginTop: 1 }}>
             <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>何が変われば判断が変わるか</summary>
             <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>{it.whatWouldChangeJa}</p>

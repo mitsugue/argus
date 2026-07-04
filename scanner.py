@@ -57,6 +57,7 @@ import argus_session_brief  # Morning/Session Brief engine (pure, v11.13.0 — �
 import argus_notifications  # Notification engine (pure, v11.14.0 — device-local delivery; server stores none)
 import argus_learning_review  # Learning/Decision Review (pure, v11.15.0 — device-local aggregation; sample discipline)
 import argus_backup_safety  # Backup Safety/Vault Guard (pure, v11.16.0 — device-side; server knows nothing)
+import argus_scenario  # Scenario Engine (pure, v11.17.0 — 条件付き分岐; 確率は帯のみ・%断定禁止)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6837,6 +6838,128 @@ def _session_brief_public():
         "regimeLabel": regime, "regimeRiskOff": risk_off,
         "sdHighlights": sd_hi, "isPrivate": False,
     }, _ai_now_iso())
+
+
+# ── V11.17.0 Scenario Engine (server side = WATCHLIST-LEVEL, isHeld unknown) ─
+# 「明日どうなる?」に単一予測ではなく条件付き分岐で答える層。サーバーは保有を
+# 知らないので isHeld=None(public_safe)で合成し、端末側TSポートが保有文脈で
+# 再合成する。確率は帯のみ — %断定は実証モデルなしには絶対にしない。
+
+def _scenario_set_for(sym, mkt, name, sd, fl, risk_off):
+    ev = (sd.get("evidence") or {})
+    fev = {}
+    try:
+        fev = _flow_evidence_for(sym, mkt)
+    except Exception:
+        pass
+    missing = list(sd.get("missingEvidence") or [])[:2] \
+        + list(fl.get("missingEvidence") or [])[:2]
+    inputs = {
+        "isHeld": None, "assetName": name,
+        "sdRank": sd.get("supplyDemandRank"), "sdCondition": sd.get("condition"),
+        "sdLevel": sd.get("supplyDemandLevel"), "sdDirection": sd.get("direction"),
+        "flowClass": fl.get("flowClass"),
+        "instStance": fev.get("instStance"), "instDirect": False,
+        "eventPending": bool(fev.get("eventToday")),
+        "eventName": fev.get("eventToday"),
+        "regimeRiskOff": risk_off,
+        "changePct": fl.get("changePct") if fl.get("changePct") is not None
+        else fev.get("changePct"),
+        "priorRunupPct": fev.get("priorRunupPct"),
+        "missing": missing,
+    }
+    return argus_scenario.build_scenario_set(sym, mkt, inputs, _ai_now_iso())
+
+
+def _scenario_list(cap=16):
+    sd_by = {s["symbol"]: s for s in _supply_demand_list(cap=30)}
+    flow_by = {r["symbol"]: r for r in _flow_attribution_list(cap=30)}
+    risk_off = False
+    try:
+        lbl = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
+        risk_off = lbl in ("RISK_OFF", "EVENT_WAIT")
+    except Exception:
+        pass
+    out = []
+    for s, mkt in ([(x, "JP") for x in _JP_WATCHLIST] + [(x, "US") for x in _US_WATCHLIST]):
+        sym = str(s.get("symbol") or "").upper()
+        if not sym:
+            continue
+        out.append(_scenario_set_for(sym, mkt, s.get("name") or sym,
+                                     sd_by.get(sym) or {}, flow_by.get(sym) or {},
+                                     risk_off))
+    order = {"bearish": 0, "wait_event": 1, "mixed": 2, "bullish": 3,
+             "base": 4, "unknown": 5}
+    out.sort(key=lambda r: (order.get(r["dominantScenario"], 9), -r["confidence"]))
+    return out[:cap]
+
+
+@app.route("/api/argus/scenarios")
+def api_argus_scenarios():
+    """Public cached-only: conditional scenario sets at WATCHLIST level (no
+    holdings — the app re-composes with held context on device). Probability
+    BANDS only; never a prediction or trade instruction."""
+    sym = str(request.args.get("symbol") or "").upper().strip()
+    now_iso = _ai_now_iso()
+    if sym:
+        all_wl = [(x, "JP") for x in _JP_WATCHLIST] + [(x, "US") for x in _US_WATCHLIST]
+        hit = next(((s, m) for s, m in all_wl
+                    if str(s.get("symbol") or "").upper() == sym), None)
+        if not hit:
+            return jsonify({"schemaVersion": "scenario-response-v1", "asOf": now_iso,
+                            "error": "symbol not in watchlist", "symbol": sym}), 404
+        s, mkt = hit
+        sd_by = {x["symbol"]: x for x in _supply_demand_list(cap=30)}
+        flow_by = {r["symbol"]: r for r in _flow_attribution_list(cap=30)}
+        risk_off = False
+        try:
+            lbl = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
+            risk_off = lbl in ("RISK_OFF", "EVENT_WAIT")
+        except Exception:
+            pass
+        return jsonify({"schemaVersion": "scenario-response-v1", "asOf": now_iso,
+                        "scenarioSet": _scenario_set_for(sym, mkt, s.get("name") or sym,
+                                                         sd_by.get(sym) or {},
+                                                         flow_by.get(sym) or {}, risk_off),
+                        "disclaimerJa": argus_scenario.COMPLIANCE})
+    sets = _scenario_list(cap=16)
+    return jsonify({"schemaVersion": "scenario-response-v1", "asOf": now_iso,
+                    "count": len(sets), "scenarioSets": sets,
+                    "marketScenario": _market_scenario_public(),
+                    "disclaimerJa": argus_scenario.COMPLIANCE})
+
+
+def _market_scenario_public():
+    regime = None
+    risk_off = False
+    try:
+        regime = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
+        risk_off = regime in ("RISK_OFF",)
+    except Exception:
+        pass
+    events = []
+    try:
+        today = _ai_now_iso()[:10]
+        for rec in _MOVER_MACRO_VIEW():
+            if rec.get("phase") in ("imminent", "released_pending_result") \
+                    and str(rec.get("eventTimeUtc") or rec.get("eventDate") or "")[:10] == today:
+                events.append(rec.get("eventCode") or rec.get("title"))
+    except Exception:
+        pass
+    return argus_scenario.market_scenario(regime, risk_off,
+                                          [e for e in events if e][:2], _ai_now_iso())
+
+
+@app.route("/api/argus/scenarios/status")
+def api_argus_scenarios_status():
+    sets = _scenario_list(cap=30)
+    return jsonify(argus_scenario.status_doc(
+        sets, now_iso=_ai_now_iso(),
+        sources={"supplyDemand": True, "flowAttribution": True,
+                 "eventRadar": bool(_MACRO_ANALYSIS),
+                 "marketRegime": bool(_REGIME_CACHE.get("data")),
+                 "positionExposure": False,   # device-local by design
+                 "decisionQuality": False}))  # records device-local by design
 
 
 @app.route("/api/argus/backup-safety/status")
@@ -17965,6 +18088,18 @@ def _build_pro_handoff():
         slines.append(f"注意: {sh['disclaimerJa']}")
         if len(slines) > 3:
             prompt = prompt + "\n\n" + "\n".join(slines)
+    except Exception:
+        pass
+    # v11.17.0: Scenario Set — 条件付き分岐(watchlist-level)。単一予測ではなく
+    # 支配シナリオ+反対シナリオ+無効化条件をProに渡す。確率は帯のみ。
+    try:
+        sch = argus_scenario.handoff_section(_scenario_list(cap=8))
+        sclines = [f"## {sch['title']} (watchlist-level, 条件付き分岐)"]
+        sclines += [f"- {x}" for x in sch.get("top") or []]
+        sclines.append(sch["opposingJa"])
+        sclines.append(f"注意: {sch['disclaimerJa']}")
+        if len(sclines) > 3:
+            prompt = prompt + "\n\n" + "\n".join(sclines)
     except Exception:
         pass
     # v11.13.0: Session Brief — 今日の作戦 (watchlist-level; held-aware version
