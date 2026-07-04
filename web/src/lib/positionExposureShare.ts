@@ -14,3 +14,9 @@ export function publishExposure(pe: PortfolioExposure): void {
 export function latestExposure(): PortfolioExposure | null {
   return latest;
 }
+
+// v11.12.0: latest device-local Action Priority items (same lifecycle contract).
+import type { APItem } from '../domain/actionPriority';
+let latestAP: APItem[] = [];
+export function publishActionPriorities(items: APItem[]): void { latestAP = items; }
+export function latestActionPriorities(): APItem[] { return latestAP; }

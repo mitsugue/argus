@@ -28,9 +28,11 @@ import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { useSupplyDemandList } from '../hooks/useSupplyDemand';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure } from '../lib/positionExposureShare';
+import { publishExposure, publishActionPriorities, latestActionPriorities } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
-import { maybeUpdateOutcomes } from '../lib/decisionQuality';
+import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
+import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
+import { ActionPrioritySection } from '../components/dashboard/ActionPrioritySection';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { coingeckoIdOf } from '../lib/cryptoIds';
@@ -188,10 +190,61 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     publishExposure(pe);   // Pro Handoff / AI Review read this at copy time (device-local)
     // v11.9.0: one automatic LOCAL snapshot per JST day once holdings price —
     // 「あの日ARGUSが何を言っていたか」を将来の答え合わせ用に残す(送信なし)。
-    try { maybeDailySnapshot(pe, __APP_VERSION__, flowBySymbol,
-      sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition }))); } catch { /* quota */ }
+    try {
+      const tops = latestActionPriorities().slice(0, 7).map((x) => ({
+        symbol: x.symbol, rank: x.priorityRank, actionLabel: x.actionLabel, blockingReason: x.blockingReason }));
+      maybeDailySnapshot(pe, __APP_VERSION__, flowBySymbol,
+        sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition })), tops);
+    } catch { /* quota */ }
     return pe;
   }, [assets, cardGroups, rates.data, flowRecords, sdSignals, impEvents, regime.data, peJp.data, peUs.data]);
+
+  // v11.12.0: ACTION PRIORITY — 全レイヤーを「今日これを見る」に統合(端末内・保有加味)。
+  const apItems: APItem[] = useMemo(() => {
+    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
+    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
+    const regLabel = regime.data?.regime?.label ?? null;
+    const riskOff = regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT';
+    const eventSyms = new Map<string, string>();
+    for (const ie of impEvents?.events ?? []) {
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
+        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
+      }
+    }
+    // DQ modifier (modest): symbols whose past avoid_chase was contradicted
+    const dqContra = new Set<string>();
+    const dqSupp = new Set<string>();
+    for (const r of listDQ()) {
+      const it = r.outcome?.outcomeInterpretation;
+      if (r.decisionContext === 'avoid_chase' && it === 'contradicted') dqContra.add(r.symbol.toUpperCase());
+      if (it === 'supported') dqSupp.add(r.symbol.toUpperCase());
+    }
+    const items = assets.map((a) => {
+      const sym = a.symbol.toUpperCase();
+      const note = positionExposure.notes[sym];
+      const sd = sdBySym.get(sym);
+      const fl = flowBySym.get(sym);
+      const missing: string[] = [];
+      if (note?.held && note.pnlPct == null) missing.push(a.avgCost == null ? '取得単価' : '価格');
+      return buildAPItem({
+        symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
+        isHeld: !!note?.held, weightPct: note?.weightPct ?? null,
+        concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
+        positionRiskLevel: riskBySym.get(sym) ?? null,
+        readiness: note?.readiness ?? null,
+        sdRank: sd?.supplyDemandRank ?? null, sdCondition: sd?.condition ?? null,
+        flowClass: fl?.flowClass ?? null,
+        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
+        regimeRiskOff: riskOff, changePct: fl?.changePct ?? null,
+        dataMissing: missing,
+        dqContradictedAvoidChase: dqContra.has(sym), dqSupported: dqSupp.has(sym),
+      });
+    });
+    const ranked = rankAPItems(items, 20);
+    publishActionPriorities(ranked);   // Handoff/AIReview read at copy time
+    return ranked;
+  }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data]);
 
   // v11.11.0: device-local outcome updater — once per JST day, fills
   // 「その後どうなったか」(1d/3d/5d/20d) for past decision records.
@@ -311,6 +364,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* C.A.O.S. — the 2nd card, ALWAYS present. One intelligence hub folding three tiers:
           機関シグナル (institutional views) + イベント分析 (pre/post) + ニュース (market news).
           News is always live, so the card never disappears even when intel/events are empty. */}
+      {/* ACTION PRIORITY (v11.12.0) — 開いた瞬間「今日これを見る」。売買指示なし */}
+      <ActionPrioritySection items={apItems} />
+
       <CaosHub />
 
       {/* BIG MONEY / FLOW (v11.7.0) — who is likely behind today's moves.
@@ -325,8 +381,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           生数値は折りたたみ。状態評価であり売買指示ではない。 */}
       <SupplyDemandSection signals={sdSignals} />
 
-      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} />
-      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} />
+      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} />
+      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} />
 
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
           The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not

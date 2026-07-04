@@ -3,6 +3,8 @@ import { latestExposure } from '../lib/positionExposureShare';
 import { exposureSummaryText } from '../domain/positionExposure';
 import { backupStatusTextJa } from '../lib/portfolioSync';
 import { dqHandoffTextJa } from '../lib/decisionQuality';
+import { latestActionPriorities } from '../lib/positionExposureShare';
+import { apHandoffTextJa } from '../domain/actionPriority';
 import { ActionPill } from '../components/action/ActionBadge';
 import { ACTIONS, ACTION_ORDER, CORE_ACTIONS, CORE_ACTION_ORDER } from '../domain/actions';
 import type { ActionKey, CoreActionKey } from '../types/action';
@@ -246,7 +248,8 @@ export const AIReview: React.FC = () => {
       + '\n\n' + (pe ? exposureSummaryText(pe)
         : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。')
       + '\n' + backupStatusTextJa()
-      + '\n\n' + dqHandoffTextJa();
+      + '\n\n' + dqHandoffTextJa()
+      + '\n\n' + apHandoffTextJa(latestActionPriorities());
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);

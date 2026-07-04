@@ -42,15 +42,19 @@ import type { PositionNote } from '../../domain/positionExposure';
 import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
 import { RANK_TONE } from '../../hooks/useSupplyDemand';
 import { decisionHistoryFor } from '../../lib/decisionQuality';
+import type { APItem } from '../../domain/actionPriority';
+import { RANK_TONE as AP_TONE } from '../../domain/actionPriority';
 import { READINESS_TONE } from '../../domain/positionExposure';
 
 interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.8.0: device-local position/exposure note (never uploaded). */
   positionNote?: PositionNote;
   /** v11.10.0: 需給ランク(JP). */
-  supplyDemand?: SupplyDemandSignal; }
+  supplyDemand?: SupplyDemandSignal;
+  /** v11.12.0: 優先度(端末内). */
+  actionPriority?: APItem; }
 
-export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg }) => {
+export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg, actionPriority: apx }) => {
   const sigColor = `var(${SIGNALS[c.signalCode].token})`;
   const ai = AI_BADGE[c.aiFreshness] ?? AI_BADGE.rule_only;
 
@@ -145,6 +149,20 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
                   {' / 逆日歩 未取得'}
                 </p>
               </details>
+            </div>
+          )}
+
+          {/* ACTION PRIORITY (v11.12.0) — 今日の優先度(注意配分・売買指示なし) */}
+          {apx && apx.priorityRank !== 'Ignore' && (
+            <div className="uac-sec">
+              <div className="uac-sec-t">ACTION PRIORITY</div>
+              <p className="uac-next" style={{ marginBottom: 2 }}>
+                <b style={{ color: AP_TONE[apx.priorityRank] }}>{apx.priorityRank} {apx.actionLabelJa}</b>
+                <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>{apx.whyJa}</span>
+              </p>
+              <p className="uac-next" style={{ marginBottom: 0, fontSize: 10.5, color: 'var(--text-faint)' }}>
+                変化条件: {apx.whatWouldChangeJa}
+              </p>
             </div>
           )}
 

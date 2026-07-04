@@ -52,6 +52,7 @@ import argus_position_exposure  # Position/Exposure engine (pure, v11.8.0 — ba
 import argus_portfolio_sync  # Portfolio Sync/Snapshot foundation (pure, v11.9.0 — models + redaction; server plaintext sync disabled)
 import argus_supply_demand  # Supply/Demand Intelligence for JP stocks (pure, v11.10.0 — 需給ランク; never fabricates JSF/margin)
 import argus_decision_quality  # Decision Quality/Backtest foundation (pure, v11.11.0 — records live device-local only)
+import argus_action_priority  # Action Priority engine (pure, v11.12.0 — attention routing, never trade orders)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6718,6 +6719,68 @@ def _supply_demand_sources():
             "jsf": bool(_JSF_CACHE.get("table")),
             "jqMargin": bool(_JQ_MARGIN_CACHE),
             "shortRatio": False}
+
+
+# ── V11.12.0 Action Priority (server side = WATCHLIST-LEVEL only) ────────────
+# The server never knows holdings, so its items rank public signals with
+# isHeld=unknown (privacy-safe by construction). The device-local TS port
+# re-ranks with real held/weight context for the owner's Today list.
+
+def _action_priority_items(cap=12):
+    now_iso = _ai_now_iso()
+    sd_by = {s["symbol"]: s for s in _supply_demand_list(cap=30)}
+    flow_by = {r["symbol"]: r for r in _flow_attribution_list(cap=30)}
+    risk_off = False
+    try:
+        lbl = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
+        risk_off = lbl in ("RISK_OFF", "EVENT_WAIT")
+    except Exception:
+        pass
+    items = []
+    for s, mkt in ([(x, "JP") for x in _JP_WATCHLIST] + [(x, "US") for x in _US_WATCHLIST]):
+        sym = str(s.get("symbol") or "").upper()
+        if not sym:
+            continue
+        sd = sd_by.get(sym) or {}
+        fl = flow_by.get(sym) or {}
+        ev = (sd.get("evidence") or {})
+        inputs = {
+            "isHeld": None, "assetName": s.get("name") or sym,
+            "sdRank": sd.get("supplyDemandRank"), "sdCondition": sd.get("condition"),
+            "flowClass": fl.get("flowClass") or ev.get("flowAttributionContext"),
+            "changePct": fl.get("changePct"),
+            "priorRunupPct": None,
+            "eventPending": bool(ev.get("eventContext")),
+            "instStance": ev.get("institutionalContext"),
+            "instDirect": False,
+            "regimeRiskOff": risk_off,
+        }
+        items.append(argus_action_priority.build_item(sym, mkt, inputs, now_iso))
+    return argus_action_priority.rank_items(items, cap=cap)
+
+
+@app.route("/api/argus/action-priority")
+def api_argus_action_priority():
+    """Public cached-only: watchlist-level attention priorities (no holdings —
+    the app re-ranks locally with held context). Never a trade instruction."""
+    items = _action_priority_items(cap=12)
+    return jsonify({"schemaVersion": "action-priority-response-v1",
+                    "asOf": _ai_now_iso(), "count": len(items), "items": items,
+                    "summary": argus_action_priority.summary(items, _ai_now_iso()),
+                    "disclaimerJa": argus_action_priority.COMPLIANCE})
+
+
+@app.route("/api/argus/action-priority/status")
+def api_argus_action_priority_status():
+    items = _action_priority_items(cap=30)
+    return jsonify(argus_action_priority.status_doc(
+        items, now_iso=_ai_now_iso(),
+        sources={"positionExposure": False,   # device-local by design
+                 "eventRadar": bool(_MACRO_ANALYSIS), "flowAttribution": True,
+                 "supplyDemand": True,
+                 "institutionalIntelligence": bool(_INTEL_STORE),
+                 "marketRegime": bool(_REGIME_CACHE.get("data")),
+                 "decisionQuality": False}))  # records device-local by design
 
 
 # ── V11.11.0 Decision Quality foundation (server side = status + price history
@@ -17791,6 +17854,24 @@ def _build_pro_handoff():
         slines.append(f"注意: {sh['disclaimerJa']}")
         if len(slines) > 3:
             prompt = prompt + "\n\n" + "\n".join(slines)
+    except Exception:
+        pass
+    # v11.12.0: Action Priority Summary — watchlist-level attention routing.
+    try:
+        ah = argus_action_priority.handoff_section(_action_priority_items(cap=15))
+        alines = [f"## {ah['title']} (watchlist-level)"]
+        for label, key in (("Top (P0/P1)", "top"), ("Blocked by event", "blocked"),
+                           ("押し目限定候補", "pullbackAdds"), ("追いかけ買い注意", "avoidChase"),
+                           ("今日は重要度低", "ignored")):
+            if ah.get(key):
+                alines.append(f"### {label}")
+                alines += [f"- {x}" for x in ah[key]]
+        if ah.get("missingEvidence"):
+            alines.append("### Missing evidence")
+            alines += [f"- {x}" for x in ah["missingEvidence"]]
+        alines.append(f"注意: {ah['disclaimerJa']} 実保有を加味した優先度はアプリ側で付加。")
+        if len(alines) > 2:
+            prompt = prompt + "\n\n" + "\n".join(alines)
     except Exception:
         pass
     # v11.8.0: Position / Exposure Summary — WATCHLIST-LEVEL only. The server

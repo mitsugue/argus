@@ -828,6 +828,40 @@ def v_supply_demand_us():
     return True, f"rank={sig.get('supplyDemandRank')} cond={sig.get('condition')}"
 
 
+def v_action_priority():
+    # v11.12.0: public AP = watchlist-level only (isHeld unknown, no P0, leak-free)
+    c, d = _get("/api/argus/action-priority")
+    if d.get("schemaVersion") != "action-priority-response-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    items = d.get("items") or []
+    if not items:
+        return False, "no items"
+    for it in items:
+        if it.get("isHeld") != "unknown":
+            return False, "held context leaked to public"
+        if it.get("priorityRank") == "P0":
+            return False, "P0 requires held context — must not appear publicly"
+        if not it.get("ownerReadableWhyJa") or not it.get("checkNextJa"):
+            return False, "why/next-check missing"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("quantity", "averageCost", "weightPct", "unrealizedPnl", "accountType"):
+        if banned in blob:
+            return False, f"PRIVATE FIELD LEAKED: {banned}"
+    s = d.get("summary") or {}
+    return True, f"items={len(items)} p1={s.get('p1Count')} avoidChase={s.get('avoidChaseCount')}"
+
+
+def v_action_priority_status():
+    c, d = _get("/api/argus/action-priority/status")
+    if d.get("schemaVersion") != "action-priority-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("publicLeakSafe") is not True or d.get("heldRiskCount") != 0:
+        return False, "public status must be redacted (heldRisk=0)"
+    if "意図的" not in (d.get("noteJa") or ""):
+        return False, "JP-intentional note missing"
+    return True, f"items={d.get('itemsGenerated')} storage={d.get('storageMode')}"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1633,6 +1667,9 @@ CHECKS = [
     ("v11.11.0 decision quality status", v_decision_quality_status),
     ("v11.11.0 price history", v_price_history_shape),
     ("v11.11.0 supply demand US", v_supply_demand_us),
+    # ── V11.12.0 Action Priority ──
+    ("v11.12.0 action priority", v_action_priority),
+    ("v11.12.0 action priority status", v_action_priority_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),
