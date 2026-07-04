@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { latestExposure } from '../../lib/positionExposureShare';
+import { exposureSummaryText } from '../../domain/positionExposure';
 
 // "Copy for GPT-5.5 Pro" — utility action. On click it fetches the backend
 // /api/argus/pro-handoff (no admin token, no secrets, no OpenAI/Gemini call) and
@@ -22,7 +24,13 @@ export const ProHandoffButton: React.FC = () => {
       const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/pro-handoff');
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
-      const prompt: string = d.promptText || '';
+      // v11.8.0: the server prompt is watchlist-level only (it never knows real
+      // holdings). Append the device-local Position/Exposure summary here — it
+      // goes ONLY to the clipboard the owner pastes themselves.
+      const pe = latestExposure();
+      const local = pe ? exposureSummaryText(pe)
+        : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。';
+      const prompt: string = `${d.promptText || ''}\n\n${local}`;
       setText(prompt);
       try {
         await navigator.clipboard.writeText(prompt);

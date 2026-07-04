@@ -38,9 +38,14 @@ const AI_BADGE: Record<string, { txt: string; tone: string }> = {
 };
 const TONE: Record<string, string> = { up: 'var(--value-positive)', down: 'var(--value-negative)', flow: 'var(--event-medium)', news: 'var(--text-sub)', flat: 'var(--text-sub)' };
 
-interface Props { card: AssetCardModel; open: boolean; onToggle: () => void; }
+import type { PositionNote } from '../../domain/positionExposure';
+import { READINESS_TONE } from '../../domain/positionExposure';
 
-export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) => {
+interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
+  /** v11.8.0: device-local position/exposure note (never uploaded). */
+  positionNote?: PositionNote; }
+
+export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn }) => {
   const sigColor = `var(${SIGNALS[c.signalCode].token})`;
   const ai = AI_BADGE[c.aiFreshness] ?? AI_BADGE.rule_only;
 
@@ -110,6 +115,35 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle }) =
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* POSITION / EXPOSURE (v11.8.0) — device-local: 保有/監視・含み損益・
+              比率・買い増し余地。数量未入力は未入力と正直に言う。売買指示なし。 */}
+          {pn && (
+            <div className="uac-sec">
+              <div className="uac-sec-t">POSITION / EXPOSURE</div>
+              <p className="uac-next" style={{ marginBottom: 2 }}>
+                {pn.held ? (
+                  <>
+                    保有中{pn.quantity != null ? ` ${pn.quantity.toLocaleString()}株/口` : ''}
+                    {pn.avgCost != null ? ` · 取得 ${pn.avgCost.toLocaleString()}` : ''}
+                    {pn.pnlPct != null && (
+                      <b style={{ marginLeft: 4, color: pn.pnlPct >= 0 ? 'var(--value-positive)' : 'var(--value-negative)' }}>
+                        {pn.pnlPct >= 0 ? '+' : ''}{pn.pnlPct.toFixed(1)}%
+                      </b>
+                    )}
+                    {pn.weightPct != null && ` · 全体の${pn.weightPct.toFixed(0)}%`}
+                    {` · ${pn.themeJa}`}
+                  </>
+                ) : (
+                  <>監視のみ(保有なし) · {pn.themeJa}</>
+                )}
+              </p>
+              <p className="uac-next" style={{ marginBottom: 0 }}>
+                <b style={{ color: READINESS_TONE[pn.readiness] }}>{pn.readinessJa}</b>
+                <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>{pn.whyJa}</span>
+              </p>
             </div>
           )}
 

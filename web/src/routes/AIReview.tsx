@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { latestExposure } from '../lib/positionExposureShare';
+import { exposureSummaryText } from '../domain/positionExposure';
 import { ActionPill } from '../components/action/ActionBadge';
 import { ACTIONS, ACTION_ORDER, CORE_ACTIONS, CORE_ACTION_ORDER } from '../domain/actions';
 import type { ActionKey, CoreActionKey } from '../types/action';
@@ -236,7 +238,11 @@ export const AIReview: React.FC = () => {
   }, []);
 
   const handleCopy = async () => {
-    const md = buildMarkdown(version, manifest);
+    // v11.8.0: append the device-local Position/Exposure summary (clipboard only).
+    const pe = latestExposure();
+    const md = buildMarkdown(version, manifest)
+      + '\n\n' + (pe ? exposureSummaryText(pe)
+        : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。');
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);

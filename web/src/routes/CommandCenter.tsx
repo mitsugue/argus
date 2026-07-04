@@ -21,6 +21,13 @@ import { useActionLabels } from '../hooks/useActionLabels';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useEventRadar } from '../hooks/useEventRadar';
 import { useAssets } from '../hooks/useAssets';
+import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
+import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
+import { useUSWatchlist } from '../hooks/useUSWatchlist';
+import { useFlowAttributionList } from '../hooks/useFlowAttribution';
+import { buildPositionExposure } from '../domain/positionExposure';
+import { publishExposure } from '../lib/positionExposureShare';
+import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import {
   deriveTodayJudgment, combinePhase,
@@ -135,6 +142,44 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]
       .filter((c) => c.held && (c.signalCode === 'EXIT' || c.signalCode === 'DEFEND')),
     [cardGroups]);
+
+  // ── V11.8.0 Position / Exposure — device-local. Prices come from the cards
+  // already built for Today; quantities/costs never leave localStorage.
+  const rates = useRatesSnapshot();
+  const { records: flowRecords } = useFlowAttributionList();
+  // Card prices vanish outside sessions (labels carry no price) — fall back to
+  // the same real quote hooks Core Portfolio uses (delayed close = real data).
+  const peJpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
+  const peUsSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
+  const peJp = useJapanWatchlist(peJpSyms);
+  const peUs = useUSWatchlist(peUsSyms);
+  const positionExposure = useMemo(() => {
+    const priceMap = new Map<string, number>();
+    const okSt = (st?: string) => st != null && st !== 'mock';
+    for (const s of peJp.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
+    for (const s of peUs.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
+    for (const c of [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]) {
+      if (c.price != null && Number.isFinite(c.price)) priceMap.set(c.symbol.toUpperCase(), c.price);
+    }
+    const flowBySymbol: Record<string, string> = {};
+    for (const r of flowRecords) flowBySymbol[r.symbol.toUpperCase()] = r.flowClass;
+    const eventSymbols = new Set<string>();
+    for (const ie of impEvents?.events ?? []) {
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
+        for (const a of ie.linkedAssets ?? []) eventSymbols.add(String(a).toUpperCase());
+      }
+    }
+    const regLabel = regime.data?.regime?.label ?? null;
+    const pe = buildPositionExposure(
+      assets,
+      (a) => priceMap.get(a.symbol.toUpperCase()),
+      rates.data?.usdJpy?.latestValue ?? null,
+      { regimeLabel: regLabel, riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
+        flowBySymbol, eventSymbols },
+    );
+    publishExposure(pe);   // Pro Handoff / AI Review read this at copy time (device-local)
+    return pe;
+  }, [assets, cardGroups, rates.data, flowRecords, impEvents, regime.data, peJp.data, peUs.data]);
 
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
@@ -251,14 +296,18 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           推定は推定と明示・実測と分離・売買指示なし。 */}
       <FlowAttributionSection />
 
-      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
-      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" />
+      {/* PORTFOLIO EXPOSURE (v11.8.0) — held-position risks, concentration,
+          add-more readiness. Device-local math; never a trade order. */}
+      <PositionRiskSection exposure={positionExposure} />
+
+      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} />
+      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} />
 
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
           The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not
           "what spiked". Watchlist-外の発掘。 */}
       <BuyCandidates />
-      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" />
+      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} />
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
       <FxMacroSection />

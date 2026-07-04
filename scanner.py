@@ -48,6 +48,7 @@ import argus_caos_source_sweep  # maximum-available source sweep helpers (pure, 
 import argus_caos_patrol_store  # 24h patrol ledger — soak proof (pure, v11.5.5)
 import argus_institutional_intel  # formal institutional signal layer (pure, v11.6.0)
 import argus_flow_attribution  # Big Money / Flow Attribution engine (pure, v11.7.0)
+import argus_position_exposure  # Position/Exposure engine (pure, v11.8.0 — backend sees NO holdings)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6468,6 +6469,38 @@ def _flow_attribution_list(cap=12):
     out.sort(key=lambda r: (-(r["confidence"]),
                             -abs(r["changePct"] or 0.0)))
     return out[:cap]
+
+
+# ── V11.8.0 Position / Exposure — watchlist-level ONLY on the backend ───────
+# PRIVACY: actual holdings (quantity/average cost/valuation) exist ONLY in the
+# owner's device localStorage. The server never receives, stores, or serves
+# them, so this public endpoint is structurally leak-free: it reports theme
+# COUNTS over the public watchlist and the honest "position data not
+# configured server-side" state. The real exposure dashboard is computed
+# client-side by web/src/domain/positionExposure.ts.
+
+def _watchlist_theme_items():
+    items = [{"symbol": s.get("symbol"), "market": "JP", "name": s.get("name")}
+             for s in _JP_WATCHLIST]
+    items += [{"symbol": s.get("symbol"), "market": "US", "name": s.get("name")}
+              for s in _US_WATCHLIST]
+    return items
+
+
+@app.route("/api/argus/position-exposure/status")
+def api_argus_position_exposure_status():
+    """Public: watchlist theme exposure (counts only) + where real position
+    data lives. NO quantities/costs/values by construction."""
+    wl = argus_position_exposure.watchlist_theme_exposure(_watchlist_theme_items())
+    return jsonify({
+        "schemaVersion": "position-exposure-status-v1", "asOf": _ai_now_iso(),
+        "positionData": "device_local_only",
+        "positionDataNoteJa": "保有数量・取得単価は端末内(localStorage)のみで管理され、"
+                              "サーバーには送信・保存されません。保有リスク判定は"
+                              "アプリ内でローカル計算されます。",
+        "watchlistExposure": wl,
+        "engineVersion": argus_position_exposure.SCHEMA_VERSION,
+        "disclaimerJa": "リスク点検であり売買指示ではない。"})
 
 
 @app.route("/api/argus/flow-attribution")
@@ -17388,6 +17421,22 @@ def _build_pro_handoff():
         flines.append(f"注意: {fh['disclaimerJa']}")
         if len(flines) > 3:                      # only when there is real content
             prompt = prompt + "\n\n" + "\n".join(flines)
+    except Exception:
+        pass
+    # v11.8.0: Position / Exposure Summary — WATCHLIST-LEVEL only. The server
+    # never knows real holdings; the app appends the device-local summary when
+    # the owner copies the prompt.
+    try:
+        ph = argus_position_exposure.handoff_section(
+            argus_position_exposure.watchlist_theme_exposure(_watchlist_theme_items()))
+        plines = [f"## {ph['title']}"]
+        plines += [f"- {k}: {v}銘柄" for k, v in list(ph["byThemeJa"].items())[:8]]
+        if ph.get("heavyThemes"):
+            plines.append(f"偏りが強いテーマ: {' / '.join(ph['heavyThemes'])}")
+        plines.append(ph["privacyNoteJa"])
+        plines.append(ph["opposingViewJa"])
+        plines.append(f"注意: {ph['disclaimerJa']}")
+        prompt = prompt + "\n\n" + "\n".join(plines)
     except Exception:
         pass
     live_n = sum(1 for v in src.values() if v == "live")

@@ -722,6 +722,25 @@ def v_flow_attribution_status():
                   f"unknown={d.get('unknownCount')}")
 
 
+def v_position_exposure_status():
+    # v11.8.0: public endpoint must be watchlist-level ONLY — leak check is the
+    # core assertion (no quantities/costs/values can appear, ever).
+    c, d = _get("/api/argus/position-exposure/status")
+    if d.get("schemaVersion") != "position-exposure-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("positionData") != "device_local_only":
+        return False, f"positionData={d.get('positionData')}"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("quantity", "averageCost", "avgCost", "marketValue",
+                   "totalMarketValue", "costBasis", "unrealizedPnl", "accountType"):
+        if banned in blob:
+            return False, f"PRIVATE FIELD LEAKED: {banned}"
+    wl = d.get("watchlistExposure") or {}
+    if not wl.get("byTheme"):
+        return False, "byTheme empty"
+    return True, f"themes={len(wl['byTheme'])} symbols={wl.get('totalSymbols')} leak-free"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1516,6 +1535,8 @@ CHECKS = [
     # ── V11.7.0 Big Money / Flow Attribution ──
     ("v11.7.0 flow attribution", v_flow_attribution),
     ("v11.7.0 flow attribution status", v_flow_attribution_status),
+    # ── V11.8.0 Position / Exposure (privacy-critical) ──
+    ("v11.8.0 position exposure leak-free", v_position_exposure_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

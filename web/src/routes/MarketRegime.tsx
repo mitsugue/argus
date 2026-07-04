@@ -16,6 +16,7 @@ import type { MarketRegimeSnapshot, RotationGroup } from '../types/marketRegime'
 import '../components/dashboard/Dashboard.css';
 import { useInstitutionalSignals } from '../hooks/useInstitutionalSignals';
 import { useFlowAttributionList, FLOW_TONE } from '../hooks/useFlowAttribution';
+import { latestExposure } from '../lib/positionExposureShare';
 
 // Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
 // bilingual split, not a transition mistake.
@@ -413,6 +414,43 @@ export const MarketRegime: React.FC = () => {
           })}
         </section>
       )}
+
+      {/* v11.8.0: 今日のレジーム × あなたのポートフォリオ(端末内計算・送信なし)。
+          保有未入力/未計算なら未計算と正直に表示。 */}
+      {(() => {
+        const pe = latestExposure();
+        return (
+          <section className="card">
+            <h2 style={{ margin: '0 0 6px', fontSize: 15 }}>PORTFOLIO SENSITIVITY</h2>
+            {!pe || pe.noHoldings ? (
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-faint)' }}>
+                {!pe
+                  ? 'Todayページを一度開くと、保有構成と今日の地合いの突き合わせを表示します(端末内計算)。'
+                  : '保有数量・取得単価が未入力のため、地合いとの突き合わせは暫定です(Watchlistで入力・端末内のみ)。'}
+              </p>
+            ) : (
+              <>
+                <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-sub)', lineHeight: 1.7 }}>
+                  {pe.regimeSummaryJa}
+                </p>
+                {pe.headwinds.length > 0 && (
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--value-negative)' }}>
+                    向かい風: {pe.headwinds.join(' / ')}
+                  </p>
+                )}
+                {pe.tailwinds.length > 0 && (
+                  <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--value-positive)' }}>
+                    追い風: {pe.tailwinds.join(' / ')}
+                  </p>
+                )}
+                <p style={{ margin: '4px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
+                  端末内で計算(保有データは送信されません)。リスク点検であり売買指示ではありません。
+                </p>
+              </>
+            )}
+          </section>
+        );
+      })()}
 
       {/* v11.7.0: watchlist flow bias — inflow vs outflow classes, aggregated.
           推定の集計であり実測ではない(実測は米国ブリッジのみ)。 */}

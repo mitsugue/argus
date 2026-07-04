@@ -9,6 +9,8 @@ import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
 import { useFundNav } from '../hooks/useFundNav';
 import { buildExposure } from '../lib/portfolio';
+import { buildPositionExposure } from '../domain/positionExposure';
+import { publishExposure } from '../lib/positionExposureShare';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
@@ -63,6 +65,13 @@ export const CorePortfolio: React.FC = () => {
   }, [jp.data, us.data, crypto.byId, cryptoPairs]);
 
   const exp = useMemo(() => buildExposure(assets, priceOf, usdJpy), [assets, priceOf, usdJpy]);
+  // V11.8.0 exposure dashboard — themes/currency/top positions/risk flags.
+  // Device-local math over localStorage holdings; nothing is uploaded.
+  const pe = useMemo(() => {
+    const out = buildPositionExposure(assets, priceOf, usdJpy, {});
+    publishExposure(out);
+    return out;
+  }, [assets, priceOf, usdJpy]);
 
   // 積立方針 — ユーザーの実ファンド + 姿勢連動アクション(Action Alertsと同一ロジック)。
   const funds: CorePosition[] = useMemo(() => {
@@ -121,6 +130,56 @@ export const CorePortfolio: React.FC = () => {
             <p className="cmd-alloc__empty">
               {t('cp.emptyAlloc')}
             </p>
+          )}
+        </div>
+      </section>
+
+      {/* EXPOSURE DASHBOARD (v11.8.0) — テーマ/通貨/集中度/リスクフラグ。
+          保有未入力なら未入力と正直に表示(端末内計算・売買指示なし)。 */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">EXPOSURE DASHBOARD</span>
+          <span className="section-head__count">偏りの点検 · 端末内計算</span>
+        </div>
+        <div className="card cmd-alloc">
+          {pe.noHoldings ? (
+            <p className="cmd-alloc__empty">
+              ポジション数量・取得単価が未入力のため、保有リスクは暫定です。
+              Watchlistの銘柄行で入力すると、テーマ集中・通貨偏り・銘柄集中を判定します(端末内のみ)。
+            </p>
+          ) : (
+            <>
+              {pe.byTheme.slice(0, 6).map((tRow) => (
+                <div className="cmd-alloc__row" key={tRow.key}>
+                  <span className="cmd-alloc__name">{tRow.ja}</span>
+                  <span className="cmd-alloc__bar"><span style={{ width: `${Math.min(100, tRow.pct)}%` }} /></span>
+                  <span className="cmd-alloc__pct">{tRow.pct.toFixed(1)}%</span>
+                  <span className="cmd-alloc__val">{fmtJpy(tRow.valueJpy)}</span>
+                </div>
+              ))}
+              {pe.jpyPct != null && pe.usdPct != null && (
+                <div className="cmd-alloc__note">通貨: 円建て {pe.jpyPct.toFixed(0)}% / ドル建て {pe.usdPct.toFixed(0)}%</div>
+              )}
+              {pe.top1Symbol && pe.top1Pct != null && (
+                <div className="cmd-alloc__note">
+                  最大集中: {pe.top1Symbol} {pe.top1Pct.toFixed(0)}%
+                  {pe.singleNameRisk === 'critical' ? '(危険水準 — 1銘柄依存)'
+                    : pe.singleNameRisk === 'high' ? '(高い)'
+                    : pe.singleNameRisk === 'medium' ? '(やや高い)' : ''}
+                </div>
+              )}
+              {pe.risks.slice(0, 3).map((r, i) => (
+                <div className="cmd-alloc__note" key={i} style={{ color: r.riskLevel === 'high' || r.riskLevel === 'critical' ? 'var(--value-negative)' : undefined }}>
+                  ⚠ {r.whyJa}
+                </div>
+              ))}
+              {pe.unpriced.length > 0 && (
+                <div className="cmd-alloc__note">価格未取得(暫定): {pe.unpriced.join(', ')}</div>
+              )}
+              <div className="cmd-alloc__note" style={{ fontSize: 10 }}>
+                リスク点検であり売買指示ではありません。数量・単価は端末内のみ。
+              </div>
+            </>
           )}
         </div>
       </section>

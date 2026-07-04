@@ -1,5 +1,6 @@
 import React from 'react';
 import type { AssetCardModel } from '../../domain/assetCard';
+import type { PositionNote } from '../../domain/positionExposure';
 import { UnifiedAssetCard } from './UnifiedAssetCard';
 import './AssetCategorySection.css';
 
@@ -14,9 +15,11 @@ interface Props {
   sub?: string;
   cards: AssetCardModel[];
   emptyJa?: string;
+  /** v11.8.0: device-local position note by SYMBOL (upper). */
+  positionNotes?: Record<string, PositionNote>;
 }
 
-export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, emptyJa }) => {
+export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, emptyJa, positionNotes }) => {
   const autoId = cards.find((c) => c.autoExpand)?.id ?? null;   // at most one
   const [openIds, setOpenIds] = React.useState<Set<string>>(() => new Set(autoId ? [autoId] : []));
   const [expanded, setExpanded] = React.useState(false);         // Show N More
@@ -38,7 +41,8 @@ export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, empty
       ) : (
         <div className="acs-rows">
           {shown.map((c) => (
-            <UnifiedAssetCard key={c.id} card={c} open={openIds.has(c.id)} onToggle={() => toggle(c.id)} />
+            <UnifiedAssetCard key={c.id} card={c} open={openIds.has(c.id)} onToggle={() => toggle(c.id)}
+              positionNote={positionNotes?.[c.symbol.toUpperCase()]} />
           ))}
           {cards.length > 5 && (
             <button className="acs-more" onClick={() => setExpanded((v) => !v)}>
