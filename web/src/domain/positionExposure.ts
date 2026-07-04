@@ -122,6 +122,8 @@ export interface ExposureCtx {
   flowBySymbol?: Record<string, string>;
   /** symbols(upper) with imminent/today events */
   eventSymbols?: Set<string>;
+  /** v11.10.0: symbol(upper) → 需給ランク (S/A/B/C/D/E/Unknown) */
+  sdRankBySymbol?: Record<string, string>;
 }
 
 export function buildPositionExposure(
@@ -215,6 +217,14 @@ export function buildPositionExposure(
         checkNextJa: '翌営業日に戻りが売られるか、公式材料が出るかを確認',
       });
     }
+    const sdRank = (ctx.sdRankBySymbol ?? {})[sym];
+    if (sdRank === 'D' || sdRank === 'E') {
+      risks.push({
+        symbol: sym, riskLevel: sdRank === 'E' ? 'high' : 'medium', riskType: 'supply_demand',
+        whyJa: `保有中の${sym}は需給ランク${sdRank}(${sdRank === 'E' ? '需給が悪く追いかけ買い回避' : '信用買い残が重い/戻り売りが出やすい'})。監視銘柄より優先確認対象です。`,
+        checkNextJa: '週次信用残・日証金の次回更新と、戻り局面で売りが出るかを確認',
+      });
+    }
     if (events.has(sym)) {
       risks.push({
         symbol: sym, riskLevel: 'medium', riskType: 'event_risk',
@@ -264,6 +274,12 @@ export function buildPositionExposure(
     } else if (fc === 'panic_selling' || fc === 'distribution') {
       readiness = 'wait';
       whyJa = '売り圧力の推定が出ているため、落ち着くまで見送りが安全です。';
+    } else if ((ctx.sdRankBySymbol ?? {})[sym] === 'E') {
+      readiness = 'wait';
+      whyJa = '需給ランクE(需給が悪い)のため、買い増しは需給リセットの確認まで見送りが安全です。';
+    } else if ((ctx.sdRankBySymbol ?? {})[sym] === 'D') {
+      readiness = 'add_only_on_pullback';
+      whyJa = '需給ランクD(信用買い残が重い)。買い増すなら戻り売りをこなした押し目限定が安全です。';
     } else {
       readiness = 'add_allowed_small';
       whyJa = '明確なブロック要因はありません。ただし一度に大きく買わず、小さく分けるのが基本です。';

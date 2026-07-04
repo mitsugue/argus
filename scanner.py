@@ -50,6 +50,7 @@ import argus_institutional_intel  # formal institutional signal layer (pure, v11
 import argus_flow_attribution  # Big Money / Flow Attribution engine (pure, v11.7.0)
 import argus_position_exposure  # Position/Exposure engine (pure, v11.8.0 — backend sees NO holdings)
 import argus_portfolio_sync  # Portfolio Sync/Snapshot foundation (pure, v11.9.0 — models + redaction; server plaintext sync disabled)
+import argus_supply_demand  # Supply/Demand Intelligence for JP stocks (pure, v11.10.0 — 需給ランク; never fabricates JSF/margin)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6401,6 +6402,16 @@ def _flow_evidence_for(symbol, market):
                 ev["marginShortHeavy"] = bool((latest.get("shortVol") or 0) >
                                               (latest.get("longVol") or 0))
                 sources["margin"] = True
+                # v11.10.0 supply/demand structure hints (RAW shape, not the SD
+                # narrative — keeps flow←structure one-directional):
+                base = [v for v in ((_JQ_HISTORY_CACHE.get(code4) or {}).get("data") or {})
+                        .get("volumes", [])[1:21] if isinstance(v, (int, float)) and v > 0]
+                avg_v = (sum(base) / len(base)) if len(base) >= 5 else None
+                mb, msell = latest.get("longVol"), latest.get("shortVol")
+                if avg_v and isinstance(mb, (int, float)):
+                    ev["creditOverhang"] = (mb / avg_v) >= 5          # 買い残が平均出来高5日分超
+                if avg_v and isinstance(msell, (int, float)):
+                    ev["squeezeProne"] = ev.get("marginShortHeavy") or (msell / avg_v) >= 3
         except Exception:
             pass
         try:
@@ -6410,6 +6421,8 @@ def _flow_evidence_for(symbol, market):
                 # 貸借残: short > loan は売り長 — margin evidence が無い時の補完
                 if "marginShortHeavy" not in ev:
                     ev["marginShortHeavy"] = rec["short"] > rec["loan"]
+                if "squeezeProne" not in ev:
+                    ev["squeezeProne"] = rec["short"] > rec["loan"]
                 sources["shortInterest"] = True
         except Exception:
             pass
@@ -6461,9 +6474,32 @@ def _flow_evidence_for(symbol, market):
     return ev
 
 
+_SD_FLOW_SUPPORT_JA = {
+    "squeeze_prone": "需給は買い戻し(踏み上げ)解釈を支持 — 新規大口買いとは未確定",
+    "credit_overhang": "需給は買い集め解釈を弱める(信用買い残が重い)",
+    "very_good": "需給は買い集め解釈と整合的(上値の玉が軽い)",
+    "good": "需給は買い集め解釈と整合的(上値の玉が軽い)",
+    "distribution_risk": "需給は売り抜け警戒を支持",
+    "unknown": "需給データ不足(解釈の裏付けなし)",
+}
+
+
 def _flow_attribution_for(symbol, market):
-    return argus_flow_attribution.classify(
+    rec = argus_flow_attribution.classify(
         symbol, market, _flow_evidence_for(symbol, market), _ai_now_iso())
+    # v11.10.0: JP flow records carry the supply/demand read as SUPPORTING
+    # evidence (Flow=誰が動かしたか / SD=土台が軽いか重いか、の分離を保つ).
+    if str(market).upper() == "JP":
+        try:
+            sig = _supply_demand_signal_for(symbol)
+            rec["supplyDemand"] = {
+                "rank": sig["supplyDemandRank"], "conditionJa": sig["conditionJa"],
+                "chips": sig["chips"], "readabilityLabelJa": sig["readabilityLabelJa"],
+                "supportNoteJa": _SD_FLOW_SUPPORT_JA.get(sig["condition"], "需給は中立"),
+                "confidence": sig["confidence"]}
+        except Exception:
+            pass
+    return rec
 
 
 def _flow_attribution_list(cap=12):
@@ -6549,6 +6585,107 @@ def api_argus_position_exposure_status():
         "watchlistExposure": wl,
         "engineVersion": argus_position_exposure.SCHEMA_VERSION,
         "disclaimerJa": "リスク点検であり売買指示ではない。"})
+
+
+# ── V11.10.0 Supply / Demand Intelligence (JP) ───────────────────────────────
+# 「日証金を見ると需給は良いのか悪いのか」に RANK+状態 で答える層。数値の読み方
+# はエンジンが行い、生数値はevidence(UIでは折りたたみ)に置く。cached-only:
+# J-Quants週次信用残 + JSF日次貸借残 + 日足 — 公表データでリアルタイムではない。
+
+def _supply_demand_signal_for(symu):
+    """One JP symbol → SupplyDemandSignal. Cached-only, deterministic."""
+    symu = str(symu).upper()
+    code4 = symu[:4]
+    fev = _flow_evidence_for(symu, "JP")
+    ev = {"changePct": fev.get("changePct"), "volumeRatio": fev.get("volumeRatio"),
+          "priorRunupPct": fev.get("priorRunupPct"), "instStance": fev.get("instStance"),
+          "eventToday": fev.get("eventToday"), "regimeRiskOff": fev.get("regimeRiskOff"),
+          "liquidityLow": fev.get("liquidityLow"),
+          "sourceUpdatedAt": fev.get("sourceUpdatedAt")}
+    try:
+        hist = (_JQ_MARGIN_CACHE.get(code4) or {}).get("data") or []
+        if hist:
+            ev["marginBuying"] = hist[0].get("longVol")
+            ev["marginSelling"] = hist[0].get("shortVol")
+            ev["marginDate"] = hist[0].get("date")
+            if len(hist) > 1:
+                ev["marginBuyingPrev"] = hist[1].get("longVol")
+                ev["marginSellingPrev"] = hist[1].get("shortVol")
+    except Exception:
+        pass
+    try:
+        rec = (_JSF_CACHE.get("table") or {}).get(code4)
+        if rec:
+            ev["jsfLoan"], ev["jsfLending"] = rec.get("loan"), rec.get("short")
+            ev["jsfDate"] = _JSF_CACHE.get("date")
+    except Exception:
+        pass
+    try:
+        h = (_JQ_HISTORY_CACHE.get(code4) or {}).get("data") or {}
+        vols = [v for v in (h.get("volumes") or [])[1:21]
+                if isinstance(v, (int, float)) and v > 0]
+        if len(vols) >= 5:
+            ev["avgDailyVolume"] = sum(vols) / len(vols)
+    except Exception:
+        pass
+    try:                                    # flow narrative as context (one-way)
+        ev["flowClass"] = argus_flow_attribution.classify(
+            symu, "JP", fev, _ai_now_iso())["flowClass"]
+    except Exception:
+        pass
+    return argus_supply_demand.classify(symu, "JP", ev, _ai_now_iso())
+
+
+def _supply_demand_list(cap=12):
+    out = []
+    for s in _JP_WATCHLIST:
+        sym = str(s.get("symbol") or "").upper()
+        if not sym:
+            continue
+        sig = _supply_demand_signal_for(sym)
+        sig["name"] = s.get("name") or sym
+        out.append(sig)
+    rank_order = {"S": 0, "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "Unknown": 6}
+    out.sort(key=lambda r: (rank_order.get(r["supplyDemandRank"], 9), -r["confidence"]))
+    return out[:cap]
+
+
+def _supply_demand_sources():
+    return {"enabled": [s for s, ok in (("jquants-margin-weekly", bool(_JQ_MARGIN_CACHE)),
+                                        ("jsf-daily-balance", bool(_JSF_CACHE.get("table"))),
+                                        ("jquants-daily-bars", bool(_JQ_HISTORY_CACHE))) if ok],
+            "disabled": [
+                {"source": "逆日歩(品貸料)", "reasonJa": "未取込(日証金の品貸料CSVは別系統。捏造せず未取得と表示)"},
+                {"source": "銘柄別空売り比率", "reasonJa": "J-Quants Standardは業種別のみ(銘柄別は未提供)"},
+                {"source": "moomoo JPリアルタイム", "reasonJa": "口座権限により意図的に無効(エラーではない)"}],
+            "jsf": bool(_JSF_CACHE.get("table")),
+            "jqMargin": bool(_JQ_MARGIN_CACHE),
+            "shortRatio": False}
+
+
+@app.route("/api/argus/supply-demand")
+def api_argus_supply_demand():
+    """Public cached-only: 需給ランク for ?symbol= (single) or the JP watchlist
+    (list). No fetch, no LLM, no trade instructions, nothing fabricated."""
+    sym = (request.args.get("symbol") or "").strip().upper()
+    now_iso = _ai_now_iso()
+    if sym:
+        sig = _supply_demand_signal_for(sym)
+        return jsonify({"schemaVersion": "supply-demand-response-v1", "asOf": now_iso,
+                        "signal": sig, "disclaimerJa": sig["complianceNote"]})
+    signals = _supply_demand_list(cap=12)
+    return jsonify({"schemaVersion": "supply-demand-response-v1", "asOf": now_iso,
+                    "count": len(signals), "signals": signals,
+                    "disclaimerJa": "需給の状態評価であり売買指示ではない。"})
+
+
+@app.route("/api/argus/supply-demand/status")
+def api_argus_supply_demand_status():
+    """Public observability: sources enabled/disabled with reasons, rank
+    distribution, direct vs inferred counts. Missing JP realtime is intentional."""
+    signals = _supply_demand_list(cap=20)
+    return jsonify(argus_supply_demand.status_doc(
+        signals, now_iso=_ai_now_iso(), sources=_supply_demand_sources()))
 
 
 @app.route("/api/argus/flow-attribution")
@@ -17510,6 +17647,28 @@ def _build_pro_handoff():
         flines.append(f"注意: {fh['disclaimerJa']}")
         if len(flines) > 3:                      # only when there is real content
             prompt = prompt + "\n\n" + "\n".join(flines)
+    except Exception:
+        pass
+    # v11.10.0: Supply / Demand Summary (JP) — best/worst/squeeze/overhang with
+    # direct-vs-inferred separation and the covering-≠-accumulation discipline.
+    try:
+        sh = argus_supply_demand.handoff_section(_supply_demand_list(cap=12))
+        slines = [f"## {sh['title']}",
+                  f"(direct={sh['directCount']} inferred={sh['inferredCount']})"]
+        for label, key in (("Best (S/A)", "best"), ("Watch-positive (B)", "watchPositive"),
+                           ("Squeeze-prone (踏み上げ候補)", "squeezeProne"),
+                           ("Credit overhang (信用買い残重い)", "creditOverhang"),
+                           ("Worst (D/E)", "worst")):
+            if sh.get(key):
+                slines.append(f"### {label}")
+                slines += [f"- {x}" for x in sh[key]]
+        if sh.get("missingEvidence"):
+            slines.append("### Missing evidence")
+            slines += [f"- {x}" for x in sh["missingEvidence"]]
+        slines.append(sh["sourceLimitJa"])
+        slines.append(f"注意: {sh['disclaimerJa']}")
+        if len(slines) > 3:
+            prompt = prompt + "\n\n" + "\n".join(slines)
     except Exception:
         pass
     # v11.8.0: Position / Exposure Summary — WATCHLIST-LEVEL only. The server

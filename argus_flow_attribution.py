@@ -131,6 +131,12 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         scores["liquidity_noise"] = 0.5
         reasons.append("LOW_LIQUIDITY")
 
+    # v11.10.0 Supply/Demand structure hints (raw margin/JSF shape, computed by
+    # the caller — NOT the SD narrative, so there is no circular dependency):
+    # squeezeProne = 売り長/実質的な買い戻し余地, creditOverhang = 信用買い残が重い.
+    sd_squeeze = bool(ev.get("squeezeProne"))
+    sd_overhang = bool(ev.get("creditOverhang"))
+
     # A. institutional accumulation candidate. Volume ratio OR measured flow
     # qualifies — US symbols have no cached avg-volume, but the bridge supplies
     # a MEASURED big-money net ratio, which is stronger evidence than volume.
@@ -153,12 +159,20 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         if runup is not None and runup >= 12 and inst_stance != "bullish" \
                 and not (flow is not None and flow > 0.12):
             s -= 0.2            # extended spike w/o institutional footprint = chase-like
+        if sd_overhang:
+            s -= 0.15           # heavy credit-buying overhang weakens accumulation read
+            reasons.append("SD_CREDIT_OVERHANG")
+        if sd_squeeze and not (flow is not None and flow > 0.12):
+            s -= 0.15           # 売り長 rise reads as covering unless measured inflow
         scores["institutional_accumulation"] = min(1.0, s)
 
     # B. short covering candidate
     if up and short_heavy:
         s = 0.45
         reasons.append("SHORT_HEAVY_BASE")
+        if sd_squeeze:
+            s += 0.15                                # supply/demand supports covering
+            reasons.append("SD_SQUEEZE_SUPPORT")
         if runup is not None and runup < -5:
             s += 0.15
             reasons.append("REBOUND_AFTER_WEAKNESS")

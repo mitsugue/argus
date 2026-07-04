@@ -39,13 +39,17 @@ const AI_BADGE: Record<string, { txt: string; tone: string }> = {
 const TONE: Record<string, string> = { up: 'var(--value-positive)', down: 'var(--value-negative)', flow: 'var(--event-medium)', news: 'var(--text-sub)', flat: 'var(--text-sub)' };
 
 import type { PositionNote } from '../../domain/positionExposure';
+import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
+import { RANK_TONE } from '../../hooks/useSupplyDemand';
 import { READINESS_TONE } from '../../domain/positionExposure';
 
 interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.8.0: device-local position/exposure note (never uploaded). */
-  positionNote?: PositionNote; }
+  positionNote?: PositionNote;
+  /** v11.10.0: 需給ランク(JP). */
+  supplyDemand?: SupplyDemandSignal; }
 
-export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn }) => {
+export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg }) => {
   const sigColor = `var(${SIGNALS[c.signalCode].token})`;
   const ai = AI_BADGE[c.aiFreshness] ?? AI_BADGE.rule_only;
 
@@ -115,6 +119,31 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* SUPPLY / DEMAND (v11.10.0) — ランク+状態が主役。生数値は折りたたみ */}
+          {sdg && (
+            <div className="uac-sec">
+              <div className="uac-sec-t">SUPPLY / DEMAND</div>
+              <p className="uac-next" style={{ marginBottom: 2 }}>
+                <b style={{ color: RANK_TONE[sdg.supplyDemandRank] }}>需給ランク {sdg.supplyDemandRank}</b>
+                <span style={{ marginLeft: 6 }}>{sdg.conditionJa}</span>
+                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+                  {sdg.directnessJa} · 確度{Math.round(sdg.confidence * 100)}%
+                </span>
+              </p>
+              <p className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }}>{sdg.ownerReadableWhyJa}</p>
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>詳細データを見る</summary>
+                <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  信用買い残 {sdg.evidence.marginBuyingBalance != null ? Number(sdg.evidence.marginBuyingBalance).toLocaleString() : '—'} /
+                  売り残 {sdg.evidence.marginSellingBalance != null ? Number(sdg.evidence.marginSellingBalance).toLocaleString() : '—'}
+                  {sdg.evidence.lendingBorrowingRatio != null && <> / 貸借倍率 {String(sdg.evidence.lendingBorrowingRatio)}</>}
+                  {sdg.evidence.daysToCover != null && <> / 買い戻し{String(sdg.evidence.daysToCover)}日分</>}
+                  {' / 逆日歩 未取得'}
+                </p>
+              </details>
             </div>
           )}
 

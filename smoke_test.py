@@ -758,6 +758,39 @@ def v_portfolio_sync_status():
     return True, "layers=local/vault/snapshot, plaintext-sync disabled, leak-free"
 
 
+def v_supply_demand():
+    # v11.10.0: 需給ランク — rank+state primary, honest sources, no orders.
+    c, d = _get("/api/argus/supply-demand?symbol=6146")
+    sig = d.get("signal") or {}
+    if sig.get("schemaVersion") != "supply-demand-v1":
+        return False, f"schema={sig.get('schemaVersion')}"
+    if sig.get("supplyDemandRank") not in ("S", "A", "B", "C", "D", "E", "Unknown"):
+        return False, f"rank={sig.get('supplyDemandRank')}"
+    if not str(sig.get("readabilityLabelJa", "")).startswith("需給ランク"):
+        return False, "readability label missing"
+    if sig.get("actionImplication") not in ("monitor", "wait", "avoid_chase",
+                                            "add_only_on_pullback", "investigate",
+                                            "caution", "no_action"):
+        return False, f"trade-like action: {sig.get('actionImplication')}"
+    ev = sig.get("evidence") or {}
+    if ev.get("reverseStockLendingFee") is not None:
+        return False, "逆日歩 fabricated (source not ingested)"
+    return True, f"rank={sig['supplyDemandRank']} cond={sig.get('condition')} conf={sig.get('confidence')}"
+
+
+def v_supply_demand_status():
+    c, d = _get("/api/argus/supply-demand/status")
+    if d.get("schemaVersion") != "supply-demand-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    disabled = {x.get("source") for x in (d.get("sourcesDisabledWithReason") or [])}
+    if "逆日歩(品貸料)" not in disabled:
+        return False, "逆日歩 must be honestly disabled"
+    if "意図的" not in (d.get("noteJa") or ""):
+        return False, "JP-realtime-intentional note missing"
+    return True, (f"scanned={d.get('assetsScanned')} direct={d.get('directDataCount')} "
+                  f"unknown={d.get('unknownCount')} jsf={d.get('jsfAvailability')}")
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1556,6 +1589,9 @@ CHECKS = [
     ("v11.8.0 position exposure leak-free", v_position_exposure_status),
     # ── V11.9.0 Portfolio Sync foundation (privacy-critical) ──
     ("v11.9.0 portfolio sync status", v_portfolio_sync_status),
+    # ── V11.10.0 Supply / Demand Intelligence ──
+    ("v11.10.0 supply demand", v_supply_demand),
+    ("v11.10.0 supply demand status", v_supply_demand_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

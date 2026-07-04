@@ -25,6 +25,8 @@ import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useFlowAttributionList } from '../hooks/useFlowAttribution';
+import { useSupplyDemandList } from '../hooks/useSupplyDemand';
+import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
 import { publishExposure } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
@@ -149,6 +151,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   // already built for Today; quantities/costs never leave localStorage.
   const rates = useRatesSnapshot();
   const { records: flowRecords } = useFlowAttributionList();
+  const { signals: sdSignals } = useSupplyDemandList();   // v11.10.0 需給ランク(JP)
   // Card prices vanish outside sessions (labels carry no price) — fall back to
   // the same real quote hooks Core Portfolio uses (delayed close = real data).
   const peJpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
@@ -172,19 +175,22 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       }
     }
     const regLabel = regime.data?.regime?.label ?? null;
+    const sdRankBySymbol: Record<string, string> = {};
+    for (const s of sdSignals) sdRankBySymbol[s.symbol.toUpperCase()] = s.supplyDemandRank;
     const pe = buildPositionExposure(
       assets,
       (a) => priceMap.get(a.symbol.toUpperCase()),
       rates.data?.usdJpy?.latestValue ?? null,
       { regimeLabel: regLabel, riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
-        flowBySymbol, eventSymbols },
+        flowBySymbol, eventSymbols, sdRankBySymbol },
     );
     publishExposure(pe);   // Pro Handoff / AI Review read this at copy time (device-local)
     // v11.9.0: one automatic LOCAL snapshot per JST day once holdings price —
     // 「あの日ARGUSが何を言っていたか」を将来の答え合わせ用に残す(送信なし)。
-    try { maybeDailySnapshot(pe, __APP_VERSION__, flowBySymbol); } catch { /* quota */ }
+    try { maybeDailySnapshot(pe, __APP_VERSION__, flowBySymbol,
+      sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition }))); } catch { /* quota */ }
     return pe;
-  }, [assets, cardGroups, rates.data, flowRecords, impEvents, regime.data, peJp.data, peUs.data]);
+  }, [assets, cardGroups, rates.data, flowRecords, sdSignals, impEvents, regime.data, peJp.data, peUs.data]);
 
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
@@ -305,7 +311,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           add-more readiness. Device-local math; never a trade order. */}
       <PositionRiskSection exposure={positionExposure} />
 
-      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} />
+      {/* SUPPLY / DEMAND (v11.10.0) — 日本株の需給ランク。数値の読解はエンジン、
+          生数値は折りたたみ。状態評価であり売買指示ではない。 */}
+      <SupplyDemandSection signals={sdSignals} />
+
+      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} />
       <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} />
 
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).

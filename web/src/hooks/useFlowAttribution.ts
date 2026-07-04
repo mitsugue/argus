@@ -32,6 +32,9 @@ export interface FlowAttribution {
   actionImplicationJa: string;
   sourceLimitNote: string;
   complianceNote: string;
+  /** v11.10.0: JP records carry the supply/demand read as supporting evidence. */
+  supplyDemand?: { rank: string; conditionJa: string; chips: string[];
+    readabilityLabelJa: string; supportNoteJa: string; confidence: number };
 }
 
 export const FLOW_TONE: Record<string, string> = {

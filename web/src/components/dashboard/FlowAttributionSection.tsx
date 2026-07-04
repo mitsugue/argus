@@ -52,6 +52,11 @@ export const FlowAttributionSection: React.FC = () => {
               </span>
               <span style={{ marginLeft: 6 }}>次に確認: {r.checkNextJa}</span>
             </p>
+            {r.supplyDemand?.supportNoteJa && (
+              <p style={{ margin: '1px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                需給: {r.supplyDemand.supportNoteJa}
+              </p>
+            )}
             {r.missingEvidence.length > 0 && r.confidence < 0.65 && (
               <p style={{ margin: '1px 0 0', fontSize: 10, color: 'var(--text-faint)' }}>
                 足りない証拠: {r.missingEvidence.slice(0, 3).join(' / ')}

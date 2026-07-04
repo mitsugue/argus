@@ -44,6 +44,10 @@ export interface PortfolioSnapshot {
   flowSummary: { symbol: string; flowClass: string }[];
   eventSummary: string[];
   actionReadinessSummary: { symbol: string; readiness: string }[];
+  /** v11.10.0: 需給ランク当時値 — 後日「A/Bは続伸したか」「D/E警告は正しかったか」の答え合わせ用 */
+  supplyDemandSummary: { symbol: string; rank: string; condition: string }[];
+  squeezeProne: string[];
+  creditOverhang: string[];
   pricesUsed: Record<string, number>;
   staleDataFlags: string[];
   missingEvidence: string[];
@@ -112,7 +116,8 @@ const jstDay = (): string =>
 
 export function createSnapshot(
   pe: PortfolioExposure,
-  opts: { appVersion: string; flowBySymbol?: Record<string, string>; events?: string[] },
+  opts: { appVersion: string; flowBySymbol?: Record<string, string>; events?: string[];
+    supplyDemand?: { symbol: string; rank: string; condition: string }[] },
 ): PortfolioSnapshot | null {
   // Never fabricate: without any priced holding there is nothing to snapshot —
   // watchlist-only state is not portfolio history.
@@ -142,6 +147,9 @@ export function createSnapshot(
     flowSummary: Object.entries(flow).map(([symbol, flowClass]) => ({ symbol, flowClass })),
     eventSummary: opts.events ?? [],
     actionReadinessSummary: Object.values(pe.notes).map((n) => ({ symbol: n.symbol, readiness: n.readiness })),
+    supplyDemandSummary: (opts.supplyDemand ?? []).slice(0, 10),
+    squeezeProne: (opts.supplyDemand ?? []).filter((x) => x.condition === 'squeeze_prone').map((x) => x.symbol),
+    creditOverhang: (opts.supplyDemand ?? []).filter((x) => x.condition === 'credit_overhang').map((x) => x.symbol),
     pricesUsed: prices,
     staleDataFlags: pe.unpriced,
     missingEvidence: [
@@ -186,9 +194,10 @@ function appendAudit(pe: PortfolioExposure, snap: PortfolioSnapshot,
 
 /** Auto daily snapshot (called once per app open when data is ready). */
 export function maybeDailySnapshot(pe: PortfolioExposure, appVersion: string,
-                                   flowBySymbol?: Record<string, string>): boolean {
+                                   flowBySymbol?: Record<string, string>,
+                                   supplyDemand?: { symbol: string; rank: string; condition: string }[]): boolean {
   if (syncMeta().lastSnapshotDay === jstDay()) return false;
-  return createSnapshot(pe, { appVersion, flowBySymbol }) != null;
+  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand }) != null;
 }
 
 // ── export / import ─────────────────────────────────────────────────────────
