@@ -148,9 +148,15 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
             category, label = "add_only_on_pullback", "ADD_ONLY_ON_PULLBACK"
     if readiness == "add_allowed_small" and not adverse and not event_pending:
         score += 6
-        reasons.append("SMALL_ADD_OK")
-        if category == "no_action":
-            category, label = "add_candidate", "SMALL_ADD_ALLOWED"
+        if sd_cond == "improving_but_heavy":
+            # v11.14.0: 需給改善中でも買い残が重い間は全緑にしない
+            reasons.append("SD_IMPROVING_BUT_HEAVY")
+            if category == "no_action":
+                category, label = "add_only_on_pullback", "ADD_ONLY_ON_PULLBACK"
+        else:
+            reasons.append("SMALL_ADD_OK")
+            if category == "no_action":
+                category, label = "add_candidate", "SMALL_ADD_ALLOWED"
 
     # institutional (direct only meaningfully)
     if inputs.get("instStance") in ("bullish", "bearish"):

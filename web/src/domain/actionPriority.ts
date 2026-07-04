@@ -90,7 +90,12 @@ export function buildItem(i: APInputs): APItem {
     if (category === 'no_action') { category = 'add_only_on_pullback'; label = 'ADD_ONLY_ON_PULLBACK'; }
   }
   if (i.readiness === 'add_allowed_small' && !adverse && !i.eventPending && category === 'no_action') {
-    score += 6; category = 'add_candidate'; label = 'SMALL_ADD_ALLOWED';
+    score += 6;
+    if (sdCond === 'improving_but_heavy') {
+      category = 'add_only_on_pullback'; label = 'ADD_ONLY_ON_PULLBACK';   // 重い間は全緑にしない
+    } else {
+      category = 'add_candidate'; label = 'SMALL_ADD_ALLOWED';
+    }
   }
   if (i.instStance === 'bullish' || i.instStance === 'bearish') {
     score += i.instDirect ? 8 : 3;

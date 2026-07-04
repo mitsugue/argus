@@ -232,6 +232,28 @@ interface Props { onNavigate?: (key: RouteKey) => void; embedded?: boolean; }
 
 // `embedded` = the lower block of the top command card (divider only, no card
 // chrome) per spec §2. Standalone = its own card (used elsewhere).
+
+// v11.14.0 (owner): 「カレンダーを見る」はMarket Contextのイベントカレンダー
+// セクション先頭へ確実に着地させる(従来はページ遷移だけでスクロール位置が
+// 中途半端に残った)。ページは非同期マウントなので短いリトライで探す。
+function gotoCalendar(onNavigate?: (k: string) => void): void {
+  onNavigate?.('regime');
+  let tries = 0;
+  let settles = 0;
+  const tick = () => {
+    const el = document.getElementById('event-calendar');
+    if (el) {
+      el.scrollIntoView({ block: 'start', behavior: 'auto' });
+      // 上のセクション(Matrix等)が遅延マウントしてレイアウトが動くので、
+      // 数回スクロールを当て直して着地を固定する。
+      if (++settles < 5) setTimeout(tick, 350);
+      return;
+    }
+    if (++tries < 12) setTimeout(tick, 180);
+  };
+  setTimeout(tick, 120);
+}
+
 export const ImportantEventsCard: React.FC<Props> = ({ onNavigate, embedded }) => {
   useLocale();
   const dash = useDashboardEvents();             // v11.4.1: unified event feed (preferred)
@@ -246,11 +268,33 @@ export const ImportantEventsCard: React.FC<Props> = ({ onNavigate, embedded }) =
       <section id="important-events" className={embedded ? 'ie-embed' : 'ie-card'} aria-label="Important events">
         <div className="ie-head">
           <span className="ie-title">{t('ie.title')}</span>
-          <button className="ie-viewall" onClick={() => onNavigate?.('regime')}>{t('ie.viewAll')} →</button>
+          <button className="ie-viewall" onClick={() => gotoCalendar(onNavigate as never)}>{t('ie.viewAll')} →</button>
         </div>
         <div className="ie-rows">
           {shown.map((ev, i) => <UnifiedEventRow key={ev.displayEventId} ev={ev} open={i === 0} lastRefresh={lastRefresh} />)}
         </div>
+        {/* v11.14.0 (owner): CAOS下段のイベント評価コーナーは廃止 — この先の予定も
+            ここ(トップカード)に一覧。分析(概要/事前予想)は接近時に上の行へ昇格。 */}
+        {(() => {
+          const covered = new Set(dash.items.map((it) => String(it.eventCode || '').toUpperCase()));
+          const upcoming = (data?.events ?? [])
+            .filter((e) => (e.displayImpact === 'critical' || e.displayImpact === 'high')
+              && !covered.has(String(e.eventCode || '').toUpperCase()))
+            .slice(0, 4);
+          if (!upcoming.length) return null;
+          return (
+            <div style={{ borderTop: '1px solid var(--line)', marginTop: 6, paddingTop: 4 }}>
+              <p style={{ margin: 0, fontSize: 10.5, color: 'var(--text-faint)' }}>この先の重要イベント(接近すると上に昇格して事前予想が付きます)</p>
+              {upcoming.map((e) => (
+                <p key={e.eventId} style={{ margin: '2px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>
+                  <b>{e.eventCode}</b>
+                  <span style={{ marginLeft: 6 }}>{e.date?.slice(5).replace('-', '/')}</span>
+                  <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>影響:{e.displayImpact === 'critical' ? '重大' : '大'}</span>
+                </p>
+              ))}
+            </div>
+          );
+        })()}
         <p className="ie-note">{t('ie.impactNote')}</p>
       </section>
     );
@@ -265,7 +309,7 @@ export const ImportantEventsCard: React.FC<Props> = ({ onNavigate, embedded }) =
     <section id="important-events" className={embedded ? 'ie-embed' : 'ie-card'} aria-label="Important events">
       <div className="ie-head">
         <span className="ie-title">{t('ie.title')}</span>
-        <button className="ie-viewall" onClick={() => onNavigate?.('regime')}>{t('ie.viewAll')} →</button>
+        <button className="ie-viewall" onClick={() => gotoCalendar(onNavigate as never)}>{t('ie.viewAll')} →</button>
       </div>
       <div className="ie-rows">
         {shown.map((e, i) => (

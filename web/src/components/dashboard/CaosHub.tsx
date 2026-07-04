@@ -367,62 +367,8 @@ export const CaosHub: React.FC = () => {
         </div>
       )}
 
-      {(materialEvents.length > 0 || hiddenEventCount > 0) && (
-        <div className="caoshub-tier">
-          <div className="caoshub-tierhead">
-            イベント評価 <span className="caoshub-tiernote">発表前=織り込み/シナリオ · 発表後=結果/受け止め</span>
-          </div>
-          {/* v11.4.1: scheduled-event analysis lives in the top card now — here we
-              only note that it's unified (no duplicated NFP/CPI/FOMC paragraph). */}
-          {hiddenEventCount > 0 && (
-            <a href="#important-events" className="caose-merged"
-               style={{ display: 'block', fontSize: 12, color: 'var(--text-faint)', padding: '2px 0', textDecoration: 'none' }}>
-              📎 予定イベント{hiddenEventCount}件の詳細分析はトップのイベントカードに統合済み — 詳細を見る →
-            </a>
-          )}
-          {materialEvents.map((ev) => {
-            const ai = aiByCode[ev.eventCode];
-            const isPost = ev.daysUntil != null && ev.daysUntil <= 0;
-            const ph = isPost ? PHASE.post : PHASE.pre;
-            const summary = ai?.summaryJa || ai?.headlineJa || ai?.bodyJa || ev.noviceJa || '';   // AI overlay, else baseline 概要
-            const pre = (ai?.preJa || '').trim();
-            const post = (ai?.postJa || '').trim();
-            return (
-              <div className="caose-row" key={ev.eventId}>
-                <div className="caose-l1">
-                  <span className="caose-phase" style={{ color: ph.tone, borderColor: ph.tone }}>{ph.ja}</span>
-                  <span className="caose-code">{ev.eventCode}</span>
-                  <span className="caose-impact">影響:{IMPACT_JA[ev.displayImpact] ?? ev.displayImpact}</span>
-                </div>
-                {summary && (
-                  <div className="caose-line"><span className="caose-h">概要</span><span className="caose-t">{summary}</span></div>
-                )}
-                {/* v11.2.1 (owner request): the 事前予想/事後の答え合わせ rows are ALWAYS
-                    visible for their phase — a placeholder shows while the AI hasn't
-                    generated yet, so the structure is never reduced to 概要 alone. For
-                    POST events the pre-event prediction (preserved by the backend) is
-                    shown alongside the answer-check. */}
-                {!isPost && (
-                  <div className="caose-line"><span className="caose-h caose-h--pre">事前予想(AI)</span>
-                    <span className="caose-t" style={pre ? undefined : { color: 'var(--text-faint)' }}>
-                      {pre || 'AI生成待ち…（市場の織り込み・大口の構え・サプライズ時のシナリオ）'}
-                    </span></div>
-                )}
-                {isPost && pre && (
-                  <div className="caose-line"><span className="caose-h caose-h--pre">事前予想(当時)</span><span className="caose-t">{pre}</span></div>
-                )}
-                {isPost && (
-                  <div className="caose-line"><span className="caose-h caose-h--post">事後の答え合わせ(AI)</span>
-                    <span className="caose-t" style={post ? undefined : { color: 'var(--text-faint)' }}>
-                      {post || 'AI生成待ち…（結果・事前予想との照合・市場の受け止め）'}
-                    </span></div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
+      {/* v11.14.0 (owner): イベント評価 tier REMOVED — 概要/事前予想/答え合わせは
+          すべてトップの統合イベントカードに集約(この先の予定もトップに一覧)。 */}
       {news.length > 0 && (
         <div className="caoshub-tier">
           <div className="caoshub-tierhead">

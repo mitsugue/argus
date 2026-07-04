@@ -14,6 +14,10 @@ export interface SupplyDemandSignal {
   dataDate: string | null;
   supplyDemandRank: 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'Unknown';
   rankJa: string;
+  /** v11.14.0: 水準は方向と別表示(改善中でも重い時はA/S不可) */
+  supplyDemandLevel?: 'light' | 'normal' | 'heavy' | 'very_heavy' | 'unknown';
+  levelJa?: string;
+  rankCapReason?: string | null;
   condition: string;
   conditionJa: string;
   chips: string[];

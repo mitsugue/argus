@@ -54,6 +54,7 @@ import argus_supply_demand  # Supply/Demand Intelligence for JP stocks (pure, v1
 import argus_decision_quality  # Decision Quality/Backtest foundation (pure, v11.11.0 — records live device-local only)
 import argus_action_priority  # Action Priority engine (pure, v11.12.0 — attention routing, never trade orders)
 import argus_session_brief  # Morning/Session Brief engine (pure, v11.13.0 — 今日の作戦, never trade orders)
+import argus_notifications  # Notification engine (pure, v11.14.0 — device-local delivery; server stores none)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6834,6 +6835,20 @@ def _session_brief_public():
         "regimeLabel": regime, "regimeRiskOff": risk_off,
         "sdHighlights": sd_hi, "isPrivate": False,
     }, _ai_now_iso())
+
+
+@app.route("/api/argus/notifications/status")
+def api_argus_notifications_status():
+    """Public REDACTED — feature/architecture flags only. Notifications are
+    generated and stored ON DEVICE; the server holds none by construction."""
+    return jsonify(argus_notifications.public_status(
+        now_iso=_ai_now_iso(),
+        sources={"sessionBrief": True, "actionPriority": True,
+                 "eventRadar": bool(_MACRO_ANALYSIS),
+                 "positionExposure": False, "flowAttribution": True,
+                 "supplyDemand": True,
+                 "institutionalIntelligence": bool(_INTEL_STORE),
+                 "decisionQuality": False, "portfolioSync": False}))
 
 
 @app.route("/api/argus/session-brief")

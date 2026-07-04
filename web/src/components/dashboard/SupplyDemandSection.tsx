@@ -39,6 +39,13 @@ export const SupplyDemandSection: React.FC<{ signals: SupplyDemandSignal[] }> = 
               {s.directnessJa} · 確度{Math.round(s.confidence * 100)}%
             </span>
           </p>
+          {(s.levelJa || s.direction) && (
+            <p style={{ margin: '1px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+              方向: {s.direction === 'improving' ? '改善' : s.direction === 'worsening' ? '悪化' : s.direction === 'stable' ? '安定' : s.direction === 'mixed' ? '混在' : '不明'}
+              {s.levelJa && <> / 買い残水準: {s.levelJa}</>}
+              {s.rankCapReason && <span style={{ marginLeft: 5 }}>({s.rankCapReason})</span>}
+            </p>
+          )}
           <p style={{ margin: '2px 0 0', fontSize: 11.5, color: 'var(--text-sub)', lineHeight: 1.6 }}>
             {s.ownerReadableWhyJa}
           </p>

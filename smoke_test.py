@@ -890,6 +890,36 @@ def v_session_brief_status():
     return True, f"mode={d.get('ownerMode')} items={d.get('briefItemsCount')}"
 
 
+def v_notifications_status():
+    # v11.14.0: server stores no notifications; external channels disabled.
+    c, d = _get("/api/argus/notifications/status")
+    if d.get("schemaVersion") != "notification-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("serverStoresNotifications") is not False:
+        return False, "server must not store notifications"
+    if d.get("deliveryChannelsEnabled") != ["in_app"]:
+        return False, f"channels={d.get('deliveryChannelsEnabled')}"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("quantity", "averageCost", "ownerAction", "weightPct"):
+        if banned in blob:
+            return False, f"LEAK: {banned}"
+    return True, f"in_app only, maxPerDay={d.get('maxPerDay')}"
+
+
+def v_supply_demand_level_model():
+    # v11.14.0: direction≠level — heavy overhang can never rank A/S.
+    c, d = _get("/api/argus/supply-demand/status")
+    if d.get("heavyOverhangCapEnabled") is not True:
+        return False, "cap flag missing"
+    c2, d2 = _get("/api/argus/supply-demand?symbol=5803&market=JP")
+    sig = d2.get("signal") or {}
+    lvl = sig.get("supplyDemandLevel")
+    rank = sig.get("supplyDemandRank")
+    if lvl in ("heavy", "very_heavy") and rank in ("S", "A"):
+        return False, f"HEAVY LEVEL RANKED {rank} (Fujikura bug regressed)"
+    return True, f"5803 rank={rank} level={lvl} cond={sig.get('condition')}"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1701,6 +1731,9 @@ CHECKS = [
     # ── V11.13.0 Session Brief ──
     ("v11.13.0 session brief", v_session_brief),
     ("v11.13.0 session brief status", v_session_brief_status),
+    # ── V11.14.0 notifications + SD level model ──
+    ("v11.14.0 notifications status", v_notifications_status),
+    ("v11.14.0 supply demand level cap", v_supply_demand_level_model),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

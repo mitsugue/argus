@@ -35,6 +35,8 @@ import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from 
 import { ActionPrioritySection } from '../components/dashboard/ActionPrioritySection';
 import { buildLocalBrief } from '../domain/sessionBrief';
 import { SessionBriefSection } from '../components/dashboard/SessionBriefSection';
+import { runNotificationEngine, listNotifications, SEV_TONE, SEV_JA } from '../lib/notifications';
+import { listSnapshots } from '../lib/portfolioSync';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { coingeckoIdOf } from '../lib/cryptoIds';
@@ -196,7 +198,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       const tops = latestActionPriorities().slice(0, 7).map((x) => ({
         symbol: x.symbol, rank: x.priorityRank, actionLabel: x.actionLabel, blockingReason: x.blockingReason }));
       maybeDailySnapshot(pe, __APP_VERSION__, flowBySymbol,
-        sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition })), tops,
+        sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition,
+          level: (s as { supplyDemandLevel?: string }).supplyDemandLevel } as never)), tops,
         (() => { const b = latestSessionBrief(); return b ? { headlineJa: b.headlineJa, ownerMode: b.ownerMode,
           sessionType: b.sessionType, nextChecksJa: b.nextChecksJa, whatNotToDoJa: b.whatNotToDoJa } : null; })());
     } catch { /* quota */ }
@@ -269,6 +272,40 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     publishSessionBrief(b);
     return b;
   }, [apItems, impEvents, regime.data, positionExposure]);
+
+  // v11.14.0: 通知エンジン — 変化検知のみ(60sスロットル+dedupe+静音時間内蔵)。
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const sdBySymbol: Record<string, { rank: string; condition: string; level?: string; name?: string; isHeld?: boolean }> = {};
+        for (const s of sdSignals) {
+          sdBySymbol[s.symbol.toUpperCase()] = {
+            rank: s.supplyDemandRank, condition: s.condition,
+            level: (s as { supplyDemandLevel?: string }).supplyDemandLevel,
+            name: s.name, isHeld: !!positionExposure.notes[s.symbol.toUpperCase()]?.held };
+        }
+        const flowBySymbol: Record<string, { flowClass: string; name?: string; isHeld?: boolean }> = {};
+        for (const r of flowRecords) {
+          flowBySymbol[r.symbol.toUpperCase()] = { flowClass: r.flowClass, name: r.name,
+            isHeld: !!positionExposure.notes[r.symbol.toUpperCase()]?.held };
+        }
+        const snaps = listSnapshots();
+        const age = snaps.length
+          ? Math.floor((Date.now() - Date.parse(snaps[0].createdAt)) / 86_400_000) : null;
+        runNotificationEngine({
+          apItems, eventNames: [...new Set((impEvents?.events ?? [])
+            .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
+            .map((ie) => ie.eventCode))],
+          sdBySymbol, flowBySymbol,
+          briefSession: sessionBrief.sessionType,
+          hasHoldings: !positionExposure.noHoldings,
+          snapshotAgeDays: age,
+          vaultConfigured: !!localStorage.getItem('argus.vaultPass.v1'),
+        });
+      } catch { /* never break Today */ }
+    }, 12_000);
+    return () => clearTimeout(t);
+  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure]);
 
   // v11.11.0: device-local outcome updater — once per JST day, fills
   // 「その後どうなったか」(1d/3d/5d/20d) for past decision records.
@@ -388,6 +425,21 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* C.A.O.S. — the 2nd card, ALWAYS present. One intelligence hub folding three tiers:
           機関シグナル (institutional views) + イベント分析 (pre/post) + ニュース (market news).
           News is always live, so the card never disappears even when intel/events are empty. */}
+      {/* v11.14.0: 新着のcritical/high通知だけ最上部に一帯表示(全リストはベル) */}
+      {(() => {
+        const hot = listNotifications().filter((n) => n.deliveryState === 'new'
+          && (n.severity === 'critical' || n.severity === 'high')).slice(0, 2);
+        if (!hot.length) return null;
+        return hot.map((n) => (
+          <p key={n.id} style={{ margin: '0 0 4px', fontSize: 12, padding: '5px 9px',
+                                 border: `1px solid ${SEV_TONE[n.severity]}`, borderRadius: 8 }}>
+            <b style={{ color: SEV_TONE[n.severity] }}>[{SEV_JA[n.severity]}]</b>
+            <b style={{ marginLeft: 5 }}>{n.titleJa}</b>
+            <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{n.bodyJa}</span>
+          </p>
+        ));
+      })()}
+
       {/* SESSION BRIEF (v11.13.0) — 今日の作戦。Brief=作戦/AP=見る順番 */}
       <SessionBriefSection brief={sessionBrief} />
 

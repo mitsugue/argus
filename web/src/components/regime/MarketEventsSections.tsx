@@ -56,7 +56,7 @@ export const MarketEventsSections: React.FC = () => {
       {/* C.A.O.S. pre/post-event analysis — the prose read that sits with the calendar. */}
       <CaosEvents />
 
-      <section>
+      <section id="event-calendar" className="regime-anchor">
         <div className="section-head">
           <span className="section-head__title">Upcoming events</span>
           <span className={`watch-status watch-status--${phase}`}>{statusLabel}</span>

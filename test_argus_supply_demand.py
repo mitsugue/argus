@@ -227,3 +227,59 @@ def test_us_near_zero_flow_is_neutral_not_good():
     assert "純比率" in sd.classify("NVDA", "US",
         {"measuredFlowNetRatio": 0.3, "changePct": 2.0, "volumeRatio": 1.5,
          "avgDailyVolume": 1e7}, NOW)["ownerReadableWhyJa"]
+
+
+# ── v11.14.0: direction ≠ level(フジクラA問題の根治) ──────────────────────
+def test_fujikura_like_improving_but_heavy_never_A():
+    # 買い残25.2M(前週比-14.6%)・売り残1.3M(倍率≈19=very_heavy)・出来高大
+    r = _c({"marginBuying": 25.2e6, "marginBuyingPrev": 29.5e6,
+            "marginSelling": 1.3e6, "marginSellingPrev": 1.43e6,
+            "jsfLoan": 6e5, "jsfLending": 4e5,
+            "avgDailyVolume": 26e6, "changePct": 1.5, "volumeRatio": 1.4})
+    assert r["condition"] == "improving_but_heavy"
+    assert r["supplyDemandRank"] != "A" and r["supplyDemandRank"] != "S"
+    assert r["supplyDemandRank"] in ("B", "C")
+    assert r["supplyDemandLevel"] == "very_heavy"
+    assert r["direction"] == "improving"
+    assert "改善方向" in r["ownerReadableWhyJa"]
+    assert "まだ大きく" in r["ownerReadableWhyJa"]
+    assert "上値吸収" in r["ownerReadableWhyJa"]
+    assert "続けて減るか" in r["checkNextJa"]
+    assert r["actionImplication"] == "add_only_on_pullback"
+    assert r["flowHints"]["creditOverhang"] is True     # accumulation stays penalized
+    assert "需給改善方向" in r["chips"] and "信用買い残重い" in r["chips"]
+
+
+def test_heavy_level_caps_rank_even_with_all_positives():
+    # 全ての加点が乗ってもheavy水準ならA/S不可(上限B)
+    r = _c({"marginBuying": 8e6, "marginBuyingPrev": 9e6, "marginSelling": 1.2e6,
+            "jsfLoan": 6e5, "jsfLending": 4e5, "avgDailyVolume": 1.2e6,
+            "changePct": 2.5, "volumeRatio": 1.8,
+            "flowClass": "institutional_accumulation"})
+    # ratio 6.7=heavy, days 6.7=heavy
+    assert r["supplyDemandLevel"] == "heavy"
+    assert r["supplyDemandRank"] not in ("S", "A")
+
+
+def test_true_A_still_works_when_level_light():
+    r = _c({"marginBuying": 8e5, "marginSelling": 6e5, "marginBuyingPrev": 1e6,
+            "jsfLoan": 6e5, "jsfLending": 4e5, "avgDailyVolume": 5e5,
+            "changePct": 2.5, "volumeRatio": 1.6})
+    assert r["supplyDemandLevel"] in ("light", "normal")
+    assert r["supplyDemandRank"] in ("A", "B")
+    assert r["rankCapReason"] is None
+
+
+def test_us_flow_path_unaffected_by_jp_level_model():
+    r = sd.classify("NVDA", "US", {"measuredFlowNetRatio": 0.25, "changePct": 3.0,
+                                   "volumeRatio": 1.8, "avgDailyVolume": 1e7}, NOW)
+    assert r["condition"] in ("good", "slightly_good")
+    assert r["supplyDemandLevel"] == "unknown"          # no margin data for US
+
+
+def test_level_displayed_separately_from_direction():
+    r = _c({"marginBuying": 25e6, "marginBuyingPrev": 29e6, "marginSelling": 1.3e6,
+            "avgDailyVolume": 26e6, "changePct": 1.0})
+    assert r["direction"] == "improving"
+    assert r["supplyDemandLevel"] in ("heavy", "very_heavy")
+    assert r["levelJa"] in ("まだ重い", "かなり重い")

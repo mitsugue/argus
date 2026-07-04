@@ -31,8 +31,11 @@ SCHEMA_VERSION = "supply-demand-v1"
 
 RANKS = ("S", "A", "B", "C", "D", "E", "Unknown")
 CONDITIONS = ("very_good", "good", "slightly_good", "neutral", "deteriorating", "bad",
-              "squeeze_prone", "credit_overhang", "distribution_risk", "liquidity_thin",
-              "mixed", "unknown")
+              "squeeze_prone", "credit_overhang", "improving_but_heavy",
+              "distribution_risk", "liquidity_thin", "mixed", "unknown")
+LEVELS = ("light", "normal", "heavy", "very_heavy", "unknown")
+LEVEL_JA = {"light": "軽い", "normal": "普通", "heavy": "まだ重い",
+            "very_heavy": "かなり重い", "unknown": "不明"}
 DIRECTIONS = ("improving", "worsening", "stable", "mixed", "unknown")
 ACTIONS = ("monitor", "wait", "avoid_chase", "add_only_on_pullback",
            "investigate", "caution", "no_action")
@@ -47,6 +50,7 @@ CONDITION_JA = {
     "very_good": "需給非常に良好", "good": "需給良好", "slightly_good": "需給やや良好",
     "neutral": "中立", "deteriorating": "需給悪化中", "bad": "需給悪い",
     "squeeze_prone": "踏み上げ注意(売り長)", "credit_overhang": "信用買い残重い",
+    "improving_but_heavy": "改善中だが信用買い残はまだ重い",
     "distribution_risk": "戻り売り注意", "liquidity_thin": "薄商い注意",
     "mixed": "強弱混在", "unknown": "判定保留",
 }
@@ -54,6 +58,7 @@ CONDITION_JA = {
 CONDITION_CHIPS = {
     "squeeze_prone": ["踏み上げ注意", "買い戻し主導"],
     "credit_overhang": ["信用買い残重い", "戻り売り注意"],
+    "improving_but_heavy": ["需給改善方向", "信用買い残重い"],
     "distribution_risk": ["戻り売り注意"],
     "very_good": ["需給改善"], "good": ["需給改善"], "slightly_good": ["需給改善"],
     "deteriorating": ["需給悪化"], "bad": ["需給悪化"],
@@ -138,6 +143,25 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
     ms_chg = (round((ms - ms_prev) / ms_prev * 100, 1)
               if ms is not None and ms_prev and ms_prev > 0 else None)
 
+    # ── v11.14.0 (owner: フジクラA問題): LEVEL is separate from DIRECTION.
+    # 「買い残が前週比で減った」は改善方向であって「需給良好」ではない。
+    # level = 信用倍率(買い残/売り残)と買い残の出来高日数の“悪い方”。
+    margin_ratio = (round(mb / ms, 2) if mb is not None and ms and ms > 0 else None)
+    def _lv_days(d):
+        if d is None:
+            return None
+        return ("light" if d < 2 else "normal" if d < 5 else
+                "heavy" if d < 10 else "very_heavy")
+    def _lv_ratio(rt):
+        if rt is None:
+            return None
+        return ("light" if rt <= 2 else "normal" if rt <= 5 else
+                "heavy" if rt <= 10 else "very_heavy")
+    _sev = {"light": 0, "normal": 1, "heavy": 2, "very_heavy": 3}
+    _cands = [x for x in (_lv_days(buy_overhang_days), _lv_ratio(margin_ratio)) if x]
+    level = max(_cands, key=lambda x: _sev[x]) if _cands else "unknown"
+    improving_dir = (mb_chg is not None and mb_chg < 0)
+
     # evidence block (raw numbers live HERE — the UI hides them behind 詳細)
     evidence.update({
         "marginBuyingBalance": mb, "marginSellingBalance": ms,
@@ -196,9 +220,15 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         s = 0.5 + (0.15 if (buy_overhang_days or 0) >= 10 else 0.0)
         scores["credit_overhang"] = min(1.0, s)
 
+    # v11.14.0: 重い水準の改善は「改善中だがまだ重い」— good系には入れない。
+    if (has_margin or has_jsf) and level in ("heavy", "very_heavy") \
+            and improving_dir and "squeeze_prone" not in scores:
+        scores["improving_but_heavy"] = 0.55
+
     # good: buying overhang light, selling pressure easing, price healthy
-    # (JP structure data only — US absence of margin data is NOT lightness)
-    if (has_margin or has_jsf) and not uri_naga and (buy_overhang_days is None or buy_overhang_days < 5):
+    # (JP structure data only — US absence of margin data is NOT lightness).
+    # v11.14.0: LEVELが軽い/普通の時だけ — 前週比の改善だけでは入れない。
+    if (has_margin or has_jsf) and not uri_naga and level in ("light", "normal"):
         s = 0.35
         if mb_chg is not None and mb_chg < 0:
             s += 0.15                                # 信用買い残が減っている=軽くなる
@@ -244,15 +274,27 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
 
     # ── rank / direction / confidence ───────────────────────────────────────
     rank = {"very_good": "S", "good": "A", "slightly_good": "B",
-            "squeeze_prone": "B", "neutral": "C", "mixed": "C",
+            "squeeze_prone": "B", "improving_but_heavy": "C",
+            "neutral": "C", "mixed": "C",
             "liquidity_thin": "C", "distribution_risk": "D",
             "credit_overhang": "D", "deteriorating": "D", "bad": "E",
             "unknown": "Unknown"}[condition]
     if rank == "S" and not (has_margin and has_jsf):
         rank = "A"                                    # S never on partial data
+    # v11.14.0 HARD CAP: 重い買い残は改善中でもA/Sを許さない。
+    rank_cap_reason = None
+    _rank_order = ["S", "A", "B", "C", "D", "E", "Unknown"]
+    if level == "heavy" and _rank_order.index(rank) < _rank_order.index("B"):
+        rank, rank_cap_reason = "B", "信用買い残が重い水準のためA/S不可(改善方向でも上限B)"
+    elif level == "very_heavy" and _rank_order.index(rank) < _rank_order.index("C"):
+        rank, rank_cap_reason = "C", "信用買い残がかなり重い水準のため上限C"
+    if rank in ("S", "A") and level not in ("light", "normal"):
+        rank, rank_cap_reason = "B", rank_cap_reason or "買い残水準が確認できないためA/S保留"
 
     if mb_chg is None and ms_chg is None:
         direction = "unknown"
+    elif condition == "improving_but_heavy":
+        direction = "improving"
     elif condition in ("squeeze_prone",):
         direction = "mixed"
     elif (mb_chg is not None and mb_chg < 0) or (ms_chg is not None and ms_chg < 0 and up):
@@ -278,6 +320,7 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
 
     action = {"very_good": "monitor", "good": "monitor",
               "slightly_good": "add_only_on_pullback",
+              "improving_but_heavy": "add_only_on_pullback",
               "squeeze_prone": "avoid_chase", "credit_overhang": "avoid_chase",
               "distribution_risk": "caution", "deteriorating": "wait", "bad": "wait",
               "neutral": "no_action", "mixed": "investigate",
@@ -303,6 +346,8 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
                                "shortSellingRatio": _f(ev.get("shortSellingRatio")) is not None,
                                "reverseStockLendingFee": False},
         "supplyDemandRank": rank, "rankJa": RANK_JA[rank],
+        "supplyDemandLevel": level, "levelJa": LEVEL_JA[level],
+        "rankCapReason": rank_cap_reason,
         "condition": condition, "conditionJa": CONDITION_JA[condition],
         "chips": list(CONDITION_CHIPS.get(condition, [])),
         "direction": direction,
@@ -325,8 +370,10 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         "complianceNote": "需給の状態評価であり売買指示ではない。データが無い項目は推定しない。",
         # feed-forward hints for Flow Attribution (v11.10.0 integration)
         "flowHints": {"squeezeProne": condition == "squeeze_prone",
-                      "creditOverhang": condition == "credit_overhang",
-                      "supportsAccumulation": condition in ("very_good", "good")},
+                      "creditOverhang": condition in ("credit_overhang", "improving_but_heavy")
+                                        or level in ("heavy", "very_heavy"),
+                      "supportsAccumulation": condition in ("very_good", "good")
+                                              and level in ("light", "normal")},
     }
 
 
@@ -351,6 +398,10 @@ def _why_ja(condition, rank, ratio, days_to_cover, buy_overhang_days, mb_chg,
                           + (f"・買い戻し{days_to_cover}日分" if days_to_cover is not None else "")
                           + ")、踏み上げ余地はあります。ただし上昇は買い戻し主導の可能性があり、"
                             "新規の大口買いとは未確定です"),
+        "improving_but_heavy": ("信用買い残は前週比で減少しており、需給は改善方向です。"
+                                "ただし買い残の絶対量はまだ大きく、上昇時には戻り売りが"
+                                "出やすい状態です。A判定には買い残のさらなる減少と"
+                                "出来高を伴う上値吸収が必要"),
         "credit_overhang": (f"信用買い残が重く"
                             + (f"(平均出来高の約{buy_overhang_days:.0f}日分)" if buy_overhang_days is not None else "")
                             + "、上がるたびに戻り売りが出やすい状態"),
@@ -374,6 +425,7 @@ def _check_next_ja(condition):
         "slightly_good": "日証金の貸借残と出来高の質を確認",
         "squeeze_prone": "買い戻し一巡後に失速しないか(上昇の主体が入れ替わるか)を確認",
         "credit_overhang": "戻り局面で売りが出るか、信用買い残が減り始めるかを確認",
+        "improving_but_heavy": "信用買い残が続けて減るか。上昇日に出来高を伴って高値圏で引けられるか。戻り局面で売りに押されないか",
         "distribution_risk": "翌日以降も高出来高で引けが弱い形が続くかを確認",
         "deteriorating": "信用買い残の増加が止まるか、公式材料が出るかを確認",
         "bad": "投げ売り(残の急減)が出て需給がリセットされるかを確認",
@@ -403,6 +455,8 @@ def status_doc(signals: List[Dict[str, Any]], *, now_iso: str,
         "latestDataDate": max((s.get("dataDate") or "" for s in signals), default=None) or None,
         "sourcesEnabled": sources.get("enabled", []),
         "sourcesDisabledWithReason": sources.get("disabled", []),
+        "directionLevelModelEnabled": True,        # v11.14.0: 方向≠水準
+        "heavyOverhangCapEnabled": True,           # heavy→maxB / very_heavy→maxC
         "jsfAvailability": sources.get("jsf", False),
         "marginDataAvailability": sources.get("jqMargin", False),
         "shortSellingDataAvailability": sources.get("shortRatio", False),

@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { RiskLevel } from '../types/action';
 import { useSystemHealth, type LampStatus } from '../hooks/useSystemHealth';
 import { SystemHealthPopover } from './dashboard/SystemHealthPopover';
+import { NotificationPanel } from './NotificationPanel';
+import { unreadCounts } from '../lib/notifications';
 import { ArgusMark } from './ArgusMark';
 import './AppShell.css';
 
@@ -75,6 +77,14 @@ function formatDaysAway(days: number): string {
 // Slim header (brand + next event + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
 export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey }) => {
+  const [notifOpen, setNotifOpen] = React.useState(false);
+  const [notifCounts, setNotifCounts] = React.useState({ total: 0, critical: 0, high: 0 });
+  React.useEffect(() => {
+    const tick = () => { try { setNotifCounts(unreadCounts()); } catch { /* fresh */ } };
+    tick();
+    const iv = setInterval(tick, 30_000);
+    return () => clearInterval(iv);
+  }, [notifOpen]);
   // System-health beacon on the brand: one poll shared by the dot + popover.
   const health = useSystemHealth();
   const [healthOpen, setHealthOpen] = useState(false);
@@ -228,7 +238,22 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
           </span>
         </button>
         {healthOpen && <SystemHealthPopover health={health} onClose={() => setHealthOpen(false)} />}
+        {/* v11.14.0: 通知ベル(端末内通知センター・変化検知のみ・売買指示なし) */}
+        {(() => null)()}
         <div className="shell__meta">
+          <button type="button" aria-label="通知" onClick={() => setNotifOpen((v) => !v)}
+                  style={{ position: 'relative', background: 'transparent', border: 'none',
+                           cursor: 'pointer', fontSize: 15, color: 'var(--text-sub)', padding: '0 6px' }}>
+            🔔
+            {notifCounts.total > 0 && (
+              <span style={{ position: 'absolute', top: -4, right: -2, fontSize: 9, fontWeight: 700,
+                             background: notifCounts.critical > 0 ? 'var(--value-negative)'
+                               : notifCounts.high > 0 ? 'var(--amber, #fbbf24)' : 'var(--accent)',
+                             color: '#000', borderRadius: 999, padding: '0 4px', minWidth: 14 }}>
+                {notifCounts.total > 9 ? '9+' : notifCounts.total}
+              </span>
+            )}
+          </button>
           {nextEvent && (
             <button
               className="shell__next-event"
@@ -249,6 +274,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
           </span>
         </div>
       </header>
+      {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       <div className="shell__body">
         {sidebar}
         <main className="shell__main" ref={mainRef}>
