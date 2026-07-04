@@ -123,18 +123,36 @@ export const CaosHub: React.FC = () => {
     () => new Set((dash?.items ?? []).map((it) => it.dedupeKey)),
     [dash],
   );
+  // v11.12.2 (owner report: AUCTION×2+FOMCが下段に残存): the top card's server
+  // dedupeKey degrades to TITLE:… when the item has no date, so the key match
+  // NEVER fired and 概要/事前予想 kept repeating below. Per the v11.4.1 rule
+  // (概要/事前予想/答え合わせはトップカードに全部集約), also treat a matching
+  // eventCode on the top card as covered.
+  const coveredCodes = React.useMemo(
+    () => new Set((dash?.items ?? []).map((it) => String(it.eventCode || '').toUpperCase())),
+    [dash],
+  );
   const allMaterialEvents = React.useMemo(
     () => (evData?.events ?? [])
       .filter((e) => e.displayImpact === 'critical' || e.displayImpact === 'high')
       .slice(0, 3),
     [evData],
   );
-  const materialEvents = React.useMemo(
-    () => (dashActive
-      ? allMaterialEvents.filter((e) => !coveredKeys.has(dashboardDedupeKey(e.eventCode, e.date)))
-      : allMaterialEvents),
-    [allMaterialEvents, dashActive, coveredKeys],
-  );
+  const materialEvents = React.useMemo(() => {
+    const base = dashActive
+      ? allMaterialEvents.filter((e) => !coveredKeys.has(dashboardDedupeKey(e.eventCode, e.date))
+          && !coveredCodes.has(String(e.eventCode || '').toUpperCase()))
+      : allMaterialEvents;
+    // the AI overlay is keyed by eventCode — two same-code events (10Y/30Y入札)
+    // would render IDENTICAL 概要/事前予想 twice. One row per code here.
+    const seen = new Set<string>();
+    return base.filter((e) => {
+      const c = String(e.eventCode || '').toUpperCase();
+      if (seen.has(c)) return false;
+      seen.add(c);
+      return true;
+    });
+  }, [allMaterialEvents, dashActive, coveredKeys, coveredCodes]);
   // precision (v10.169): show only market-relevant headlines (drop sports/unrelated
   // noise); fall back to the raw list only if nothing is flagged, so it never empties.
   const allNews = newsData?.items ?? [];
