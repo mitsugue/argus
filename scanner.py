@@ -6762,7 +6762,9 @@ def api_argus_supply_demand():
     sym = (request.args.get("symbol") or "").strip().upper()
     now_iso = _ai_now_iso()
     if sym:
-        sig = _supply_demand_signal_for(sym)
+        mkt = (request.args.get("market")
+               or ("JP" if sym[:1].isdigit() else "US")).upper()
+        sig = _supply_demand_signal_for(sym, mkt)
         return jsonify({"schemaVersion": "supply-demand-response-v1", "asOf": now_iso,
                         "signal": sig, "disclaimerJa": sig["complianceNote"]})
     signals = _supply_demand_list(cap=12)

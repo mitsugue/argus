@@ -87,3 +87,15 @@ def test_regressions(monkeypatch):
             r = c.get(path)
             assert r.status_code == 200, path
             assert r.get_json()["schemaVersion"] == schema
+
+
+def test_supply_demand_endpoint_respects_market_param(monkeypatch):
+    # production bug (2026-07-04): ?symbol=NVDA&market=US classified as JP and
+    # listed 週次信用残/日証金 as missing. US must get the US missing list.
+    monkeypatch.setattr(scanner, "requests", _Boom())
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/supply-demand?symbol=NVDA&market=US").get_json()
+        sig = d["signal"]
+        assert sig["market"] == "US"
+        assert any("FINRA" in m for m in sig["missingEvidence"])
+        assert not any("日証金" in m for m in sig["missingEvidence"])
