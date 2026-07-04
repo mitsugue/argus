@@ -6901,7 +6901,28 @@ def api_argus_intel_collect():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(collect_institutional_intel())
+    out = collect_institutional_intel()
+    # v11.10.0: warm the supply/demand caches here (admin path — fetching is
+    # allowed). Without this, a fresh deploy leaves _JQ_MARGIN_CACHE/_JSF_CACHE
+    # cold and every 需給ランク reads Unknown until the owner happens to tap
+    # エントリー診断. Both fetchers honor their own TTLs (12h margin / 6h JSF),
+    # so this 30-min cron is a cheap no-op most runs.
+    warmed = {"jsf": False, "margin": 0}
+    try:
+        table, _d = _jsf_balance_table()
+        warmed["jsf"] = bool(table)
+    except Exception:
+        pass
+    for s in _JP_WATCHLIST:
+        try:
+            code4 = str(s.get("symbol") or "")[:4]
+            if code4.isdigit() or (code4 and code4[0].isdigit()):
+                if _jq_weekly_margin(code4):
+                    warmed["margin"] += 1
+        except Exception:
+            continue
+    out["supplyDemandWarm"] = warmed
+    return jsonify(out)
 
 
 # ━━━ V11.5.3 C.A.O.S. Watchtower — Core Portfolio source universe + patrol ━━━
