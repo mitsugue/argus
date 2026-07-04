@@ -32,3 +32,9 @@ import type { LocalScenarioSet } from '../domain/scenario';
 let latestSC: LocalScenarioSet[] = [];
 export function publishScenarios(sets: LocalScenarioSet[]): void { latestSC = sets; }
 export function latestScenarios(): LocalScenarioSet[] { return latestSC; }
+
+// v11.18.0: latest device-local Position Plans (same lifecycle contract).
+import type { LocalPlan } from '../domain/positionPlan';
+let latestPP: LocalPlan[] = [];
+export function publishPlans(plans: LocalPlan[]): void { latestPP = plans; }
+export function latestPlans(): LocalPlan[] { return latestPP; }

@@ -55,6 +55,9 @@ export interface PortfolioSnapshot {
     nextChecksJa: string[]; whatNotToDoJa: string[] } | null;
   /** v11.17.0: 当日の支配シナリオ — 後日「分岐は正しい側に倒れたか」検証用(帯のみ・%なし) */
   scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[];
+  /** v11.18.0: 当日の計画 — 後日「avoid_chaseは高値掴みを防いだか/押し目限定は機能したか」検証用 */
+  planSummary?: { symbol: string; planType: string; currentStance: string;
+    blockingReasons: string[]; evidenceQuality: string }[];
   pricesUsed: Record<string, number>;
   staleDataFlags: string[];
   missingEvidence: string[];
@@ -129,7 +132,9 @@ export function createSnapshot(
     topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[];
     sessionBrief?: { headlineJa: string; ownerMode: string; sessionType: string;
       nextChecksJa: string[]; whatNotToDoJa: string[] } | null;
-    scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[] },
+    scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[];
+    planSummary?: { symbol: string; planType: string; currentStance: string;
+      blockingReasons: string[]; evidenceQuality: string }[] },
 ): PortfolioSnapshot | null {
   // Never fabricate: without any priced holding there is nothing to snapshot —
   // watchlist-only state is not portfolio history.
@@ -165,6 +170,7 @@ export function createSnapshot(
     topPriorities: (opts.topPriorities ?? []).slice(0, 7),
     sessionBrief: opts.sessionBrief ?? null,
     scenarioSummary: (opts.scenarioSummary ?? []).slice(0, 10),
+    planSummary: (opts.planSummary ?? []).slice(0, 10),
     pricesUsed: prices,
     staleDataFlags: pe.unpriced,
     missingEvidence: [
@@ -217,9 +223,11 @@ export function maybeDailySnapshot(pe: PortfolioExposure, appVersion: string,
                                    topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[],
                                    sessionBrief?: { headlineJa: string; ownerMode: string; sessionType: string;
                                      nextChecksJa: string[]; whatNotToDoJa: string[] } | null,
-                                   scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[]): boolean {
+                                   scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[],
+                                   planSummary?: { symbol: string; planType: string; currentStance: string;
+                                     blockingReasons: string[]; evidenceQuality: string }[]): boolean {
   if (syncMeta().lastSnapshotDay === jstDay()) return false;
-  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary }) != null;
+  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary, planSummary }) != null;
 }
 
 // ── export / import ─────────────────────────────────────────────────────────

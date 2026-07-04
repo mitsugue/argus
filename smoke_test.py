@@ -990,6 +990,44 @@ def v_scenarios_status():
     return True, f"sets={d.get('scenarioSetsGenerated')} eventWait={d.get('eventWaitCount')}"
 
 
+def v_position_plans_public():
+    # v11.18.0: plans are WATCHLIST-LEVEL (isHeld unknown), planning language
+    # only — execution wording ("buy now"/注文) must never appear.
+    c, d = _get("/api/argus/position-plans")
+    if d.get("schemaVersion") != "trade-plan-response-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    plans = d.get("plans") or []
+    if not plans:
+        return False, "no plans"
+    p0 = plans[0]
+    for k in ("planType", "currentStance", "entryPlan", "exitPlan", "holdPlan",
+              "invalidationJa", "nextChecksJa", "complianceNote"):
+        if k not in p0:
+            return False, f"missing {k}"
+    blob = json.dumps(d, ensure_ascii=False).lower()
+    for bad in ("今すぐ買", "今すぐ売", "buy now", "sell now", "place order",
+                "注文を出", "成行で買", "全力買い"):
+        if bad.lower() in blob:
+            return False, f"EXECUTION WORDING LEAKED: {bad}"
+    for banned in ("quantity", "averageCost", "weightPct", "ownerAction", "pnl"):
+        if banned in blob:
+            return False, f"LEAK: {banned}"
+    held = {p.get("isHeld") for p in plans}
+    if held - {"unknown"}:
+        return False, f"held context leaked to public: {held}"
+    return True, f"plans={len(plans)} p0={p0.get('planType')}/{p0.get('currentStance')} wording-clean"
+
+
+def v_position_plans_status():
+    c, d = _get("/api/argus/position-plans/status")
+    if d.get("schemaVersion") != "trade-plan-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("publicLeakSafe") is not True or d.get("storageMode") != "public_redacted":
+        return False, "must be public_redacted+leak-safe"
+    return True, (f"plans={d.get('plansGenerated')} chase={d.get('avoidChaseCount')} "
+                  f"eventWait={d.get('eventWaitCount')}")
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1811,6 +1849,9 @@ CHECKS = [
     # ── V11.17.0 Scenario Engine ──
     ("v11.17.0 scenarios public bands-only", v_scenarios_public),
     ("v11.17.0 scenarios status", v_scenarios_status),
+    # ── V11.18.0 Entry/Exit Planning ──
+    ("v11.18.0 position plans wording-clean", v_position_plans_public),
+    ("v11.18.0 position plans status", v_position_plans_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

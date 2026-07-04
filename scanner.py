@@ -58,6 +58,7 @@ import argus_notifications  # Notification engine (pure, v11.14.0 — device-loc
 import argus_learning_review  # Learning/Decision Review (pure, v11.15.0 — device-local aggregation; sample discipline)
 import argus_backup_safety  # Backup Safety/Vault Guard (pure, v11.16.0 — device-side; server knows nothing)
 import argus_scenario  # Scenario Engine (pure, v11.17.0 — 条件付き分岐; 確率は帯のみ・%断定禁止)
+import argus_trade_plan  # Entry/Exit Planning (pure, v11.18.0 — 計画のみ; 執行語・注文なし)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6948,6 +6949,105 @@ def _market_scenario_public():
         pass
     return argus_scenario.market_scenario(regime, risk_off,
                                           [e for e in events if e][:2], _ai_now_iso())
+
+
+# ── V11.18.0 Entry / Exit Planning (server side = WATCHLIST-LEVEL) ───────────
+# 「今から入っていいか/買い増ししていいか」に計画で答える層。サーバーは保有を
+# 知らないので isHeld=None(public_safe)で合成し、端末側TSポートが数量・比率・
+# 損益を加味して再合成する。執行語(今すぐ買え等)は純モジュールが構造的に禁止。
+
+def _market_open_now(mkt):
+    try:
+        now = datetime.now(TZ_JST)
+        if now.weekday() >= 5:
+            return False
+        if mkt == "JP":
+            return 9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30)
+        return now.hour >= 22 or now.hour < 5
+    except Exception:
+        return None
+
+
+def _trade_plan_list(cap=16):
+    sd_by = {s["symbol"]: s for s in _supply_demand_list(cap=30)}
+    flow_by = {r["symbol"]: r for r in _flow_attribution_list(cap=30)}
+    scen_by = {s["symbol"]: s for s in _scenario_list(cap=30)}
+    ap_by = {i["symbol"]: i for i in _action_priority_items(cap=30)}
+    risk_off = False
+    try:
+        lbl = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
+        risk_off = lbl in ("RISK_OFF", "EVENT_WAIT")
+    except Exception:
+        pass
+    plans = []
+    for s, mkt in ([(x, "JP") for x in _JP_WATCHLIST] + [(x, "US") for x in _US_WATCHLIST]):
+        sym = str(s.get("symbol") or "").upper()
+        if not sym:
+            continue
+        sd = sd_by.get(sym) or {}
+        fl = flow_by.get(sym) or {}
+        sc = scen_by.get(sym) or {}
+        ap = ap_by.get(sym) or {}
+        fev = {}
+        try:
+            fev = _flow_evidence_for(sym, mkt)
+        except Exception:
+            pass
+        plans.append(argus_trade_plan.build_plan(sym, mkt, {
+            "isHeld": None, "assetName": s.get("name") or sym,
+            "sdRank": sd.get("supplyDemandRank"), "sdCondition": sd.get("condition"),
+            "sdLevel": sd.get("supplyDemandLevel"),
+            "flowClass": fl.get("flowClass"),
+            "scenarioDominant": sc.get("dominantScenario"),
+            "apCategory": ap.get("category"), "apRank": ap.get("priorityRank"),
+            "eventPending": bool(fev.get("eventToday")),
+            "eventName": fev.get("eventToday"),
+            "regimeRiskOff": risk_off,
+            "priorRunupPct": fev.get("priorRunupPct"),
+            "changePct": fl.get("changePct"),
+            "marketOpen": _market_open_now(mkt),
+            "missing": list(sd.get("missingEvidence") or [])[:2],
+        }, _ai_now_iso()))
+    order = {"trim_review": 0, "exit_review": 0, "event_wait": 1, "avoid_chase": 2,
+             "add": 3, "entry": 3, "hold": 4, "wait": 5, "no_action": 6, "unknown": 7}
+    plans.sort(key=lambda p: (order.get(p["planType"], 9), -p["confidence"]))
+    return plans[:cap]
+
+
+@app.route("/api/argus/position-plans")
+def api_argus_position_plans():
+    """Public cached-only: WATCHLIST-LEVEL planning views (no holdings — the app
+    re-composes with held context on device). Plans, never orders."""
+    sym = str(request.args.get("symbol") or "").upper().strip()
+    now_iso = _ai_now_iso()
+    plans = _trade_plan_list(cap=30 if sym else 16)
+    if sym:
+        hit = next((p for p in plans if p["symbol"] == sym), None)
+        if not hit:
+            return jsonify({"schemaVersion": "trade-plan-response-v1", "asOf": now_iso,
+                            "error": "symbol not in watchlist", "symbol": sym}), 404
+        return jsonify({"schemaVersion": "trade-plan-response-v1", "asOf": now_iso,
+                        "plan": hit, "disclaimerJa": argus_trade_plan.COMPLIANCE})
+    return jsonify({"schemaVersion": "trade-plan-response-v1", "asOf": now_iso,
+                    "count": len(plans), "plans": plans,
+                    "portfolioSummary": argus_trade_plan.portfolio_summary(plans),
+                    "disclaimerJa": argus_trade_plan.COMPLIANCE})
+
+
+@app.route("/api/argus/position-plans/status")
+def api_argus_position_plans_status():
+    plans = _trade_plan_list(cap=30)
+    return jsonify(argus_trade_plan.status_doc(
+        plans, now_iso=_ai_now_iso(),
+        sources={"scenarioEngine": True, "actionPriority": True,
+                 "supplyDemand": True, "flowAttribution": True,
+                 "positionExposure": False,   # device-local by design
+                 "marketRegime": bool(_REGIME_CACHE.get("data")),
+                 "institutionalIntelligence": bool(_INTEL_STORE),
+                 "eventRadar": bool(_MACRO_ANALYSIS),
+                 "decisionQuality": False,    # records device-local by design
+                 "learningDashboard": False,  # records device-local by design
+                 "notifications": False}))    # stored device-local by design
 
 
 @app.route("/api/argus/scenarios/status")
@@ -18100,6 +18200,27 @@ def _build_pro_handoff():
         sclines.append(f"注意: {sch['disclaimerJa']}")
         if len(sclines) > 3:
             prompt = prompt + "\n\n" + "\n".join(sclines)
+    except Exception:
+        pass
+    # v11.18.0: Entry / Exit Planning — 計画(watchlist-level)。執行語なし。
+    try:
+        ph = argus_trade_plan.handoff_section(_trade_plan_list(cap=12))
+        plines = [f"## {ph['title']} (watchlist-level, 計画であり指示ではない)"]
+        for label, key in (("小さく試し玉候補(注意付き)", "entryCandidates"),
+                           ("押し目限定", "pullbackOnly"),
+                           ("追いかけ買い注意", "avoidChase"),
+                           ("利確検討/リスク確認", "trimRiskReview"),
+                           ("イベント待ちでブロック中", "eventWaitBlocked")):
+            if ph.get(key):
+                plines.append(f"### {label}")
+                plines += [f"- {x}" for x in ph[key]]
+        if ph.get("missingEvidence"):
+            plines.append("### 証拠不足(計画保留)")
+            plines += [f"- {x}" for x in ph["missingEvidence"]]
+        plines.append(ph["invalidationJa"])
+        plines.append(f"注意: {ph['disclaimerJa']}")
+        if len(plines) > 3:
+            prompt = prompt + "\n\n" + "\n".join(plines)
     except Exception:
         pass
     # v11.13.0: Session Brief — 今日の作戦 (watchlist-level; held-aware version

@@ -48,6 +48,8 @@ import { RANK_TONE as AP_TONE } from '../../domain/actionPriority';
 import { READINESS_TONE } from '../../domain/positionExposure';
 import type { LocalScenarioSet } from '../../domain/scenario';
 import { DOM_TONE } from '../../domain/scenario';
+import type { LocalPlan } from '../../domain/positionPlan';
+import { STANCE_TONE } from '../../domain/positionPlan';
 
 interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.8.0: device-local position/exposure note (never uploaded). */
@@ -57,9 +59,11 @@ interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.12.0: 優先度(端末内). */
   actionPriority?: APItem;
   /** v11.17.0: 条件付きシナリオ(端末内合成・保有加味). */
-  scenario?: LocalScenarioSet; }
+  scenario?: LocalScenarioSet;
+  /** v11.18.0: 計画(端末内合成・売買指示なし). */
+  plan?: LocalPlan; }
 
-export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg, actionPriority: apx, scenario: scn }) => {
+export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg, actionPriority: apx, scenario: scn, plan: ppl }) => {
   const sigColor = `var(${SIGNALS[c.signalCode].token})`;
   const ai = AI_BADGE[c.aiFreshness] ?? AI_BADGE.rule_only;
 
@@ -192,6 +196,62 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
               </details>
               <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
                 条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。
+              </p>
+            </div>
+          )}
+
+          {/* POSITION PLAN (v11.18.0) — 入り方/買い増し/利確検討/保有の計画。
+              執行語なし・売買指示ではない。シナリオへのリンク付き。 */}
+          {ppl && (
+            <div className="uac-sec">
+              <div className="uac-sec-t">POSITION PLAN</div>
+              <p className="uac-next" style={{ marginBottom: 2 }}>
+                <b style={{ color: STANCE_TONE[ppl.currentStance], border: `1px solid ${STANCE_TONE[ppl.currentStance]}`,
+                            borderRadius: 4, padding: '0 5px', fontSize: 10.5 }}>
+                  {ppl.currentStanceJa}
+                </b>
+                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+                  証拠: {ppl.evidenceQuality === 'strong' ? '強' : ppl.evidenceQuality === 'medium' ? '中' : ppl.evidenceQuality === 'weak' ? '弱' : '不足'}
+                </span>
+              </p>
+              <p className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }}>{ppl.summaryJa}</p>
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>計画の詳細(条件・やらないこと)を見る</summary>
+                {ppl.entryConditionsJa.length > 0 && (
+                  <p className="uac-next" style={{ margin: '3px 0 0', fontSize: 10.5 }}>
+                    入る条件: {ppl.entryConditionsJa.join(' / ')}
+                  </p>
+                )}
+                {ppl.isHeld && ppl.holdConditionsJa.length > 0 && (
+                  <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5 }}>
+                    保有の監視条件({ppl.holdModeJa}): {ppl.holdConditionsJa.join(' / ')}
+                  </p>
+                )}
+                {ppl.isHeld && ppl.trimReviewConditionsJa.length > 0 && (
+                  <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--amber, #fbbf24)' }}>
+                    利確検討/リスク確認の条件: {ppl.trimReviewConditionsJa.join(' / ')}
+                  </p>
+                )}
+                {ppl.whatNotToDoJa.length > 0 && (
+                  <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                    やらないこと: {ppl.whatNotToDoJa.join(' / ')}
+                  </p>
+                )}
+                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  無効化条件: {ppl.invalidationJa.join(' / ')}
+                </p>
+                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  次の確認: {ppl.nextChecksJa.join(' / ')}
+                </p>
+                {scn && (
+                  <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5 }}>
+                    <span style={{ color: DOM_TONE[scn.dominant] }}>シナリオ連動: {scn.dominantJa}に沿った計画。</span>
+                    <span style={{ color: 'var(--text-faint)' }}>支配シナリオが入れ替われば計画も組み直します。</span>
+                  </p>
+                )}
+              </details>
+              <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
+                計画であり売買指示ではありません。価格の目安が出る場合も注文価格ではなく確認ポイントです。
               </p>
             </div>
           )}

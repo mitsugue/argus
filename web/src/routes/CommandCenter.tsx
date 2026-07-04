@@ -28,13 +28,15 @@ import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { useSupplyDemandList } from '../hooks/useSupplyDemand';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios } from '../lib/positionExposureShare';
+import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
 import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
 import { ActionPrioritySection } from '../components/dashboard/ActionPrioritySection';
 import { buildLocalBrief } from '../domain/sessionBrief';
 import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
+import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
+import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { SessionBriefSection } from '../components/dashboard/SessionBriefSection';
 import { runNotificationEngine, listNotifications, SEV_TONE, SEV_JA } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
@@ -299,6 +301,49 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return sets;
   }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data]);
 
+  // v11.18.0: POSITION PLAN — 「入っていいか/買い増しか/利確検討か/持ち越しか」を
+  // 計画として合成(端末内・保有加味・執行語なし)。売買指示ではない。
+  const positionPlans: LocalPlan[] = useMemo(() => {
+    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
+    const scBySym = new Map(scenarioSets.map((s) => [s.symbol, s]));
+    const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
+    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
+    const regLabel = regime.data?.regime?.label ?? null;
+    const eventSyms = new Map<string, string>();
+    for (const ie of impEvents?.events ?? []) {
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
+        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
+      }
+    }
+    const plans = assets.map((a) => {
+      const sym = a.symbol.toUpperCase();
+      const note = positionExposure.notes[sym];
+      const sd = sdBySym.get(sym);
+      const fl = flowBySym.get(sym);
+      return buildPlan({
+        symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
+        isHeld: !!note?.held,
+        sdRank: sd?.supplyDemandRank ?? null, sdCondition: sd?.condition ?? null,
+        sdLevel: (sd as { supplyDemandLevel?: string } | undefined)?.supplyDemandLevel ?? null,
+        flowClass: fl?.flowClass ?? null,
+        scenarioDominant: scBySym.get(sym)?.dominant ?? null,
+        apCategory: apBySym.get(sym)?.category ?? null,
+        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
+        regimeRiskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
+        weightPct: note?.weightPct ?? null,
+        concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
+        positionRiskLevel: riskBySym.get(sym) ?? null,
+        pnlPct: note?.pnlPct ?? null,
+        priorRunupPct: null,
+        marketOpen: marketOpenNow(a.market),
+        missing: sd || fl ? [] : ['需給/フロー未取得'],
+      });
+    });
+    publishPlans(plans);   // Handoff/AIReview/CorePortfolio read at render/copy time
+    return plans;
+  }, [assets, positionExposure, sdSignals, flowRecords, scenarioSets, apItems, impEvents, regime.data]);
+
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
   useEffect(() => {
@@ -312,9 +357,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           level: (s as { supplyDemandLevel?: string }).supplyDemandLevel } as never)), tops,
         (() => { const b = latestSessionBrief(); return b ? { headlineJa: b.headlineJa, ownerMode: b.ownerMode,
           sessionType: b.sessionType, nextChecksJa: b.nextChecksJa, whatNotToDoJa: b.whatNotToDoJa } : null; })(),
-        scenarioSets.map((s) => ({ symbol: s.symbol, dominant: s.dominant, evidenceQuality: s.evidenceQuality })));
+        scenarioSets.map((s) => ({ symbol: s.symbol, dominant: s.dominant, evidenceQuality: s.evidenceQuality })),
+        positionPlans.map((p) => ({ symbol: p.symbol, planType: p.planType, currentStance: p.currentStance,
+          blockingReasons: p.blockingReasons, evidenceQuality: p.evidenceQuality })));
     } catch { /* quota */ }
-  }, [positionExposure, scenarioSets, sdSignals, flowRecords]);
+  }, [positionExposure, scenarioSets, positionPlans, sdSignals, flowRecords]);
 
   // v11.14.0: 通知エンジン — 変化検知のみ(60sスロットル+dedupe+静音時間内蔵)。
   useEffect(() => {
@@ -341,11 +388,17 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           scenarioBySymbol[s.symbol] = { dominant: s.dominant, name: s.assetName,
             isHeld: s.isHeld, summaryJa: s.summaryJa };
         }
+        const planBySymbol: Record<string, { planType: string; currentStance: string;
+          name?: string; isHeld?: boolean; summaryJa?: string }> = {};
+        for (const p of positionPlans) {
+          planBySymbol[p.symbol] = { planType: p.planType, currentStance: p.currentStance,
+            name: p.assetName, isHeld: p.isHeld, summaryJa: p.summaryJa };
+        }
         runNotificationEngine({
           apItems, eventNames: [...new Set((impEvents?.events ?? [])
             .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
             .map((ie) => ie.eventCode))],
-          sdBySymbol, flowBySymbol, scenarioBySymbol,
+          sdBySymbol, flowBySymbol, scenarioBySymbol, planBySymbol,
           briefSession: sessionBrief.sessionType,
           hasHoldings: !positionExposure.noHoldings,
           snapshotAgeDays: age,
@@ -355,7 +408,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       } catch { /* never break Today */ }
     }, 12_000);
     return () => clearTimeout(t);
-  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets]);
+  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets, positionPlans]);
 
   // v11.11.0: device-local outcome updater — once per JST day, fills
   // 「その後どうなったか」(1d/3d/5d/20d) for past decision records.
@@ -512,6 +565,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <ActionPrioritySection items={apItems}
         scenarios={new Map(scenarioSets.map((s) => [s.symbol, s]))} />
 
+      {/* POSITION PLAN (v11.18.0) — 今日の計画上位のみ(P0-P2/保有リスク/追いかけ注意/
+          追加候補/イベント待ち)。Todayを溢れさせない。売買指示ではない。 */}
+      <PositionPlanSection plans={positionPlans} apItems={apItems} />
+
       <CaosHub />
 
       {/* BIG MONEY / FLOW (v11.7.0) — who is likely behind today's moves.
@@ -526,14 +583,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           生数値は折りたたみ。状態評価であり売買指示ではない。 */}
       <SupplyDemandSection signals={sdSignals} />
 
-      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} />
-      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} />
+      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} />
+      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} />
 
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
           The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not
           "what spiked". Watchlist-外の発掘。 */}
       <BuyCandidates />
-      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} />
+      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} />
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
       <FxMacroSection />

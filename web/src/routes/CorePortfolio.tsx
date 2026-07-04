@@ -15,8 +15,9 @@ import { buildExposure } from '../lib/portfolio';
 import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, latestScenarios } from '../lib/positionExposureShare';
+import { publishExposure, latestScenarios, latestPlans } from '../lib/positionExposureShare';
 import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
+import { planPortfolioSummary } from '../domain/positionPlan';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
@@ -172,6 +173,34 @@ export const CorePortfolio: React.FC = () => {
                   </p>
                 </>
               )}
+            </div>
+          </section>
+        );
+      })()}
+
+      {/* PORTFOLIO PLANNING (v11.18.0) — どこで追加可/ブロック/利確検討/イベント
+          待ちか(端末内合成)。計画であり売買指示ではない。 */}
+      {(() => {
+        const ps = planPortfolioSummary(latestPlans());
+        if (!ps) return null;
+        return (
+          <section>
+            <div className="section-head">
+              <span className="section-head__title">PORTFOLIO PLANNING</span>
+              <span className="section-head__count">計画サマリ · 売買指示なし</span>
+            </div>
+            <div className="card cmd-alloc">
+              <p className="cmd-alloc__note" style={{ fontSize: 12 }}>{ps.summaryJa}</p>
+              {ps.rows.map((r) => (
+                <p key={r.label} className="cmd-alloc__note" style={{ margin: '3px 0 0' }}>
+                  <b style={{ color: r.tone }}>{r.label}</b>
+                  <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{r.names.join(' / ')}</span>
+                </p>
+              ))}
+              <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                比率の高い銘柄は追加より先にリスク確認。詳細条件はTodayの各カード→POSITION PLANで。
+                これは計画であり売買指示ではありません(注文機能はありません)。
+              </p>
             </div>
           </section>
         );

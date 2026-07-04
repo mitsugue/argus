@@ -36,6 +36,7 @@ const RULES: Record<string, { severity: Severity; cooldownMin: number; maxPerDay
   supply_demand_improvement: { severity: 'low', cooldownMin: 1440, maxPerDay: 3 },
   squeeze_watch: { severity: 'medium', cooldownMin: 1440, maxPerDay: 3 },
   scenario_change: { severity: 'high', cooldownMin: 1440, maxPerDay: 3 },
+  plan_change: { severity: 'high', cooldownMin: 1440, maxPerDay: 3 },
   avoid_chase: { severity: 'medium', cooldownMin: 1440, maxPerDay: 4 },
   session_brief_ready: { severity: 'info', cooldownMin: 240, maxPerDay: 3 },
   snapshot_missing: { severity: 'low', cooldownMin: 1440, maxPerDay: 1 },
@@ -53,6 +54,7 @@ export interface PrevState {
   p0?: string[]; p1Held?: string[]; chase?: string[]; events?: string[];
   flow?: Record<string, string>; sd?: Record<string, { rank: string; condition: string }>;
   scenario?: Record<string, string>;
+  plan?: Record<string, string>;
   briefSession?: string;
 }
 
@@ -79,6 +81,9 @@ export interface NotifInputs {
   /** v11.17.0: 支配シナリオ(端末内合成)。保有×弱気転換のみ通知(それ以外はノイズ)。 */
   scenarioBySymbol?: Record<string, { dominant: string; name?: string;
     isHeld?: boolean; summaryJa?: string }>;
+  /** v11.18.0: 計画(端末内合成)。materialな転換のみ通知: 保有×リスク確認/利確検討入り・追加候補→追いかけ注意。 */
+  planBySymbol?: Record<string, { planType: string; currentStance: string;
+    name?: string; isHeld?: boolean; summaryJa?: string }>;
   briefSession: string;
   hasHoldings: boolean;
   snapshotAgeDays: number | null;
@@ -175,6 +180,32 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         dedupeKey: `sdUp|${sym}|${day}`, isPrivate: !!sd.isHeld });
     }
   }
+  // v11.18.0: plan_change — materialな計画転換のみ: ①保有×(リスク確認/利確検討)
+  // 入り ②追加候補(押し目限定/小さく可)→追いかけ注意。毎計画では鳴らさない。
+  for (const [sym, pl] of Object.entries(inp.planBySymbol ?? {})) {
+    const was = (st.prev.plan ?? {})[sym];
+    if (!was) continue;                               // 初回は記録のみ(初期化スパム防止)
+    const nowRisk = ['risk_review', 'trim_consideration'].includes(pl.currentStance);
+    const wasRisk = ['risk_review', 'trim_consideration'].includes(was);
+    const wasAddSide = ['add_only_on_pullback', 'small_add_allowed'].includes(was);
+    if (pl.isHeld && nowRisk && !wasRisk) {
+      cands.push({ eventType: 'plan_change', severity: 'high', symbol: sym,
+        assetName: pl.name ?? null,
+        titleJa: `計画転換：${nm(sym, pl.name)}は${pl.currentStance === 'trim_consideration' ? '一部利確を検討する局面' : 'リスク確認が先'}に`,
+        bodyJa: pl.summaryJa?.slice(0, 80) || '保有銘柄の計画がリスク確認側に切り替わりました。',
+        whyJa: '悪化信号(需給/フロー/シナリオ)が重なったため。',
+        checkNextJa: '銘柄カードのPOSITION PLANで条件と無効化条件を確認',
+        dedupeKey: `plan|${sym}|risk`, isPrivate: true });
+    } else if (wasAddSide && pl.currentStance === 'avoid_chase') {
+      cands.push({ eventType: 'plan_change', severity: 'medium', symbol: sym,
+        assetName: pl.name ?? null,
+        titleJa: `計画転換：${nm(sym, pl.name)}は追いかけ買い注意に`,
+        bodyJa: '追加候補でしたが、過熱/買い戻し主導の可能性が出たため待ちに変更。',
+        whyJa: '上昇の持続性が未確認になったため。',
+        checkNextJa: '出来高を伴う押し目か、上昇主体の入れ替わりを確認',
+        dedupeKey: `plan|${sym}|chase`, isPrivate: !!pl.isHeld });
+    }
+  }
   // v11.17.0: scenario_change — 保有銘柄の支配シナリオが弱気に転換した時だけ。
   // 監視銘柄・弱気→改善方向はここでは通知しない(材料が出れば他ルールが拾う)。
   for (const [sym, sc] of Object.entries(inp.scenarioBySymbol ?? {})) {
@@ -247,6 +278,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     flow: Object.fromEntries(Object.entries(inp.flowBySymbol).map(([k, v]) => [k, v.flowClass])),
     sd: Object.fromEntries(Object.entries(inp.sdBySymbol).map(([k, v]) => [k, { rank: v.rank, condition: v.condition }])),
     scenario: Object.fromEntries(Object.entries(inp.scenarioBySymbol ?? {}).map(([k, v]) => [k, v.dominant])),
+    plan: Object.fromEntries(Object.entries(inp.planBySymbol ?? {}).map(([k, v]) => [k, v.currentStance])),
     briefSession: inp.briefSession,
   };
   save(st);
