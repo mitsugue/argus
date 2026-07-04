@@ -144,7 +144,8 @@ export const CorePortfolio: React.FC = () => {
       {/* PORTFOLIO SCENARIO (v11.17.0) — 保有全体の条件付き分岐(端末内合成)。
           Todayを開いた後に計算済みシナリオから合成。単一予測・売買指示なし。 */}
       {(() => {
-        const heldSets = latestScenarios().filter((s) => s.isHeld);
+        const allSets = latestScenarios();
+        const heldSets = allSets.filter((s) => s.isHeld);
         const ps = buildPortfolioScenario(heldSets);
         return (
           <section>
@@ -155,7 +156,9 @@ export const CorePortfolio: React.FC = () => {
             <div className="card cmd-alloc">
               {!ps ? (
                 <p className="cmd-alloc__note">
-                  Todayページを一度開くと、保有銘柄の支配シナリオからポートフォリオ全体の分岐を表示します(端末内計算)。
+                  {allSets.length === 0
+                    ? 'Todayページを一度開くと、保有銘柄の支配シナリオからポートフォリオ全体の分岐を表示します(端末内計算)。'
+                    : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Watchlistで保有数量を入力すると端末内で合成されます。捏造しません)。'}
                 </p>
               ) : (
                 <>
