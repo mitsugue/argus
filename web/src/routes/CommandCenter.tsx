@@ -36,6 +36,7 @@ import { ActionPrioritySection } from '../components/dashboard/ActionPrioritySec
 import { buildLocalBrief } from '../domain/sessionBrief';
 import { SessionBriefSection } from '../components/dashboard/SessionBriefSection';
 import { runNotificationEngine, listNotifications, SEV_TONE, SEV_JA } from '../lib/notifications';
+import { assessBackupSafety } from '../lib/backupSafety';
 import { listSnapshots } from '../lib/portfolioSync';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
@@ -301,6 +302,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           hasHoldings: !positionExposure.noHoldings,
           snapshotAgeDays: age,
           vaultConfigured: !!localStorage.getItem('argus.vaultPass.v1'),
+          restoreVerified: assessBackupSafety(assets).restoreVerified,
         });
       } catch { /* never break Today */ }
     }, 12_000);
@@ -438,6 +440,21 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{n.bodyJa}</span>
           </p>
         ));
+      })()}
+
+      {/* v11.16.0: バックアップ未保護×保有あり → 一行警告(保護済みなら非表示) */}
+      {(() => {
+        const b = assessBackupSafety(assets);
+        if (b.protectionLevel === 'unprotected') {
+          return (
+            <p style={{ margin: '0 0 4px', fontSize: 12, padding: '5px 9px',
+                        border: '1px solid var(--value-negative)', borderRadius: 8 }}>
+              <b style={{ color: 'var(--value-negative)' }}>バックアップ未保護：</b>
+              <span style={{ color: 'var(--text-sub)' }}>保有データはこの端末内にあります。暗号化バックアップを有効化してください(Core Portfolio → BACKUP SAFETY)。</span>
+            </p>
+          );
+        }
+        return null;
       })()}
 
       {/* SESSION BRIEF (v11.13.0) — 今日の作戦。Brief=作戦/AP=見る順番 */}

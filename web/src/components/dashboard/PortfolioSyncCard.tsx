@@ -5,6 +5,7 @@ import {
   applyImport, createSnapshot, downloadPortfolioBackup, listSnapshots,
   previewImport, syncMeta, type ImportPreview,
 } from '../../lib/portfolioSync';
+import { assessBackupSafety, runRecoveryDrill, drillMeta, LEVEL_TONE } from '../../lib/backupSafety';
 
 // V11.9.0 — PORTFOLIO SYNC & BACKUP (Core Portfolio). Owner-facing truth about
 // where holdings live + export/import/snapshot tools. The cloud only ever sees
@@ -22,6 +23,8 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
 
   const meta = syncMeta();
   const snaps = listSnapshots();
+  const safety = assessBackupSafety(assets);
+  const [drillMsg, setDrillMsg] = React.useState<string | null>(drillMeta().lastDrillResultJa ?? null);
   const vaultOn = typeof window !== 'undefined' && !!localStorage.getItem('argus.vaultPass.v1');
 
   const onFile = async (f: File | undefined) => {
@@ -34,6 +37,8 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
 
   const onApply = (mode: 'merge' | 'replace') => {
     if (!preview?.ok || !preview.file) return;
+    if (mode === 'replace' && !window.confirm(
+      '置換モード: ファイルに無い銘柄の保有数量はクリアされます(銘柄自体は残ります)。実行しますか?')) return;
     const r = applyImport(preview.file, assets, mode, { updateHolding, add: add as never });
     setApplied(`${mode === 'merge' ? '統合' : '置換'}完了: 更新${r.updated}件 / 追加${r.added}件 / スナップショット取込${r.snapshotsMerged}件`);
     setPreview(null);
@@ -57,6 +62,28 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         <span className="section-head__count">v11.9 · 端末内+暗号化バックアップ</span>
       </div>
       <div className="card cmd-alloc">
+        {/* BACKUP SAFETY (v11.16.0) — 保護状態の見える化(端末内判定) */}
+        <div className="cmd-alloc__note" style={{ fontSize: 12.5 }}>
+          <b style={{ color: LEVEL_TONE[safety.protectionLevel], border: `1px solid ${LEVEL_TONE[safety.protectionLevel]}`,
+                      borderRadius: 999, padding: '0 8px' }}>
+            {safety.protectionLevelJa}
+          </b>
+          <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{safety.statusJa}</span>
+        </div>
+        {safety.riskJa && (
+          <div className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>{safety.riskJa}</div>
+        )}
+        <div className="cmd-alloc__note">
+          次の一歩: {safety.nextStepJa}
+          <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>
+            復元確認: {safety.restoreVerified ? `済(${(safety.lastDrillAt ?? '').slice(0, 10)})` : '未'}
+          </span>
+        </div>
+        <details>
+          <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>何が消える可能性があるか</summary>
+          <p className="cmd-alloc__note" style={{ fontSize: 10.5 }}>{safety.whatCanBeLostJa}</p>
+        </details>
+
         <div className="cmd-alloc__note" style={{ fontSize: 12, color: 'var(--text-sub)' }}>
           保存モード: <b>{vaultOn ? '端末内 + パスフレーズ暗号化バックアップ(端末間同期 有効)' : '端末内のみ(Local only)'}</b>
         </div>
@@ -76,6 +103,9 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
                   style={btn}>バックアップJSONを書き出す</button>
           <button type="button" onClick={() => fileRef.current?.click()} style={btn}>JSONを読み込む</button>
           <button type="button" onClick={onSnapshot} style={btn}>今すぐスナップショット作成</button>
+          <button type="button" style={btn}
+                  onClick={() => { const r = runRecoveryDrill(assets, appVersion); setDrillMsg(r.resultJa); bump(); }}>
+            復元ドリルを実行(非破壊)</button>
           <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: 'none' }}
                  onChange={(e) => void onFile(e.target.files?.[0])} />
         </div>
@@ -103,6 +133,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         )}
         {applied && <p className="cmd-alloc__note" style={{ color: 'var(--value-positive)' }}>{applied}</p>}
         {snapMsg && <p className="cmd-alloc__note">{snapMsg}</p>}
+        {drillMsg && <p className="cmd-alloc__note">{drillMsg}</p>}
 
         {snaps.length > 0 && (
           <div className="cmd-alloc__note">

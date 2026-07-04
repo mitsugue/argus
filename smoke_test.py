@@ -936,6 +936,24 @@ def v_learning_review_status():
     return True, f"discipline={d.get('sampleDiscipline')}"
 
 
+def v_backup_safety_status():
+    # v11.16.0: server must know NOTHING about device protection state.
+    c, d = _get("/api/argus/backup-safety/status")
+    if d.get("schemaVersion") != "backup-safety-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    arch = d.get("architecture") or {}
+    if arch.get("serverKnowsDeviceProtectionState") is not False:
+        return False, "server must not know device protection state"
+    if arch.get("vaultPayloadVisibleToServer") is not False:
+        return False, "vault payload must be invisible to server"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("vaultPass", "login_pwd", "X-ARGUS-ADMIN-TOKEN", "quantity",
+                   "averageCost", "passphrase=", 'passphrase\"'):
+        if banned in blob:
+            return False, f"LEAK: {banned}"
+    return True, "architecture-only, leak-free"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1752,6 +1770,8 @@ CHECKS = [
     ("v11.14.0 supply demand level cap", v_supply_demand_level_model),
     # ── V11.15.0 Learning Review ──
     ("v11.15.0 learning review status", v_learning_review_status),
+    # ── V11.16.0 Backup Safety ──
+    ("v11.16.0 backup safety status", v_backup_safety_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

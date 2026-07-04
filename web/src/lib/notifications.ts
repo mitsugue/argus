@@ -39,6 +39,7 @@ const RULES: Record<string, { severity: Severity; cooldownMin: number; maxPerDay
   session_brief_ready: { severity: 'info', cooldownMin: 240, maxPerDay: 3 },
   snapshot_missing: { severity: 'low', cooldownMin: 1440, maxPerDay: 1 },
   sync_backup_warning: { severity: 'low', cooldownMin: 4320, maxPerDay: 1 },
+  restore_not_verified: { severity: 'low', cooldownMin: 10080, maxPerDay: 1 },
 };
 
 interface Store {
@@ -77,6 +78,7 @@ export interface NotifInputs {
   hasHoldings: boolean;
   snapshotAgeDays: number | null;
   vaultConfigured: boolean;
+  restoreVerified?: boolean;
 }
 
 /** Run once per Today mount (throttled by dedupe/cooldowns internally). */
@@ -182,6 +184,12 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         bodyJa: '保有データのスナップショットが最近作成されていません。',
         whyJa: '履歴が残らないと後日の答え合わせができません。',
         checkNextJa: 'Todayを開けば自動作成されます', dedupeKey: `snap|${day}`, isPrivate: true });
+    }
+    if (inp.restoreVerified === false && inp.vaultConfigured) {
+      cands.push({ eventType: 'restore_not_verified', severity: 'low', symbol: null, assetName: null,
+        titleJa: '復元未確認', bodyJa: 'バックアップから戻せることを一度も確認していません。復元ドリル(非破壊)を実行してください。',
+        whyJa: '復元できないバックアップは保護になりません。', checkNextJa: 'Core Portfolio → BACKUP SAFETY → 復元ドリルを実行',
+        dedupeKey: 'drill', isPrivate: true });
     }
     if (!inp.vaultConfigured) {
       cands.push({ eventType: 'sync_backup_warning', severity: 'low', symbol: null, assetName: null,

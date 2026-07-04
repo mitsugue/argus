@@ -9,7 +9,8 @@ export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.tr
   // v11.9.0: snapshot/audit layer rides the SAME encrypted vault — history is
   // preserved permanently and syncs across devices, ciphertext-only in the cloud.
   'argus.portfolio.snapshots.v1', 'argus.decision.audit.v1', 'argus.portfolioSync.meta.v1',
-  'argus.notifications.v1'] as const;    // v11.14.0: notifications (device-local history)
+  'argus.notifications.v1',              // v11.14.0: notifications (device-local history)
+  'argus.backupSafety.meta.v1'] as const; // v11.16.0: recovery-drill verification state
 const LAST_AUTO_KEY = 'argus.lastAutoBackup.v1';
 const AUTO_INTERVAL_MS = 7 * 86_400_000; // weekly
 
