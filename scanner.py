@@ -6847,7 +6847,7 @@ def api_argus_learning_review_status():
         sources={"decisionQuality": False, "snapshots": False, "notifications": False,
                  "supplyDemand": True, "flowAttribution": True,
                  "actionPriority": True, "sessionBrief": True,
-                 "ownerActions": False}))
+                 "ownerAnnotations": False}))
 
 
 @app.route("/api/argus/notifications/status")
