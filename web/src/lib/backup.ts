@@ -5,7 +5,10 @@
 
 // v11.3.3: assetTombstones ride along so deletions propagate across devices
 // (the assets key itself is merged per-item by the sync loop, not replaced).
-export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.trades.v1', 'argus.research.v1', 'argus.assetTombstones.v1'] as const;
+export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.trades.v1', 'argus.research.v1', 'argus.assetTombstones.v1',
+  // v11.9.0: snapshot/audit layer rides the SAME encrypted vault — history is
+  // preserved permanently and syncs across devices, ciphertext-only in the cloud.
+  'argus.portfolio.snapshots.v1', 'argus.decision.audit.v1', 'argus.portfolioSync.meta.v1'] as const;
 const LAST_AUTO_KEY = 'argus.lastAutoBackup.v1';
 const AUTO_INTERVAL_MS = 7 * 86_400_000; // weekly
 

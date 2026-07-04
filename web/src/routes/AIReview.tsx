@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { latestExposure } from '../lib/positionExposureShare';
 import { exposureSummaryText } from '../domain/positionExposure';
+import { backupStatusTextJa } from '../lib/portfolioSync';
 import { ActionPill } from '../components/action/ActionBadge';
 import { ACTIONS, ACTION_ORDER, CORE_ACTIONS, CORE_ACTION_ORDER } from '../domain/actions';
 import type { ActionKey, CoreActionKey } from '../types/action';
@@ -242,7 +243,8 @@ export const AIReview: React.FC = () => {
     const pe = latestExposure();
     const md = buildMarkdown(version, manifest)
       + '\n\n' + (pe ? exposureSummaryText(pe)
-        : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。');
+        : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。')
+      + '\n' + backupStatusTextJa();
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);

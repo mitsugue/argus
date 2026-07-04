@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { AlertCard } from '../components/dashboard/AlertCard';
 import { useActionAlerts } from '../hooks/useActionAlerts';
 import { useAssets } from '../hooks/useAssets';
+import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
@@ -33,7 +34,8 @@ const fmtJpy = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 export const CorePortfolio: React.FC = () => {
   useLocale();   // re-render on locale switch
   const { cards, posture, phase } = useActionAlerts();
-  const { assets } = useAssets();
+  const assetsApi = useAssets();
+  const { assets } = assetsApi;
   const { funds: navFunds } = useFundNav();   // 投信 基準価額(NAV) follow
   const rates = useRatesSnapshot();
   const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
@@ -134,6 +136,10 @@ export const CorePortfolio: React.FC = () => {
           )}
         </div>
       </section>
+
+      {/* PORTFOLIO SYNC & BACKUP (v11.9.0) — where the data lives + export/
+          import/snapshot. Cloud sees ciphertext only; no broker, no trading. */}
+      <PortfolioSyncCard assetsApi={assetsApi} appVersion={__APP_VERSION__} />
 
       {/* EXPOSURE DASHBOARD (v11.8.0) — テーマ/通貨/集中度/リスクフラグ。
           保有未入力なら未入力と正直に表示(端末内計算・売買指示なし)。 */}

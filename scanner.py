@@ -49,6 +49,7 @@ import argus_caos_patrol_store  # 24h patrol ledger — soak proof (pure, v11.5.
 import argus_institutional_intel  # formal institutional signal layer (pure, v11.6.0)
 import argus_flow_attribution  # Big Money / Flow Attribution engine (pure, v11.7.0)
 import argus_position_exposure  # Position/Exposure engine (pure, v11.8.0 — backend sees NO holdings)
+import argus_portfolio_sync  # Portfolio Sync/Snapshot foundation (pure, v11.9.0 — models + redaction; server plaintext sync disabled)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6498,6 +6499,40 @@ def _watchlist_theme_items():
     items += [{"symbol": s.get("symbol"), "market": "US", "name": s.get("name")}
               for s in _US_WATCHLIST]
     return items
+
+
+# ── V11.9.0 Portfolio Sync / Snapshot Foundation ─────────────────────────────
+# ARCHITECTURE (see argus_portfolio_sync module docstring): the cross-device
+# sync path is the EXISTING client-encrypted passphrase vault (ciphertext-only
+# in the cloud). A server-side PLAINTEXT portfolio store is modeled but
+# DISABLED until real authentication exists: the flag below has no env wire on
+# purpose — enabling it is a deliberate future code change, not a config flip.
+_PORTFOLIO_SERVER_SYNC_ENABLED = False
+
+
+@app.route("/api/argus/portfolio-sync/status")
+def api_argus_portfolio_sync_status():
+    """Public: storage-layer architecture + enabled/disabled state ONLY.
+    Structurally leak-free (argus_portfolio_sync.contains_sensitive == [])."""
+    return jsonify(argus_portfolio_sync.public_sync_status(
+        server_sync_enabled=_PORTFOLIO_SERVER_SYNC_ENABLED, now_iso=_ai_now_iso()))
+
+
+@app.route("/api/argus/portfolio-sync/pull", methods=["GET"])
+@app.route("/api/argus/portfolio-sync/push", methods=["POST"])
+@app.route("/api/argus/portfolio-sync/snapshots", methods=["GET", "POST"])
+def api_argus_portfolio_sync_disabled():
+    """Server-side plaintext sync stubs — admin-gated AND disabled. Even a
+    valid admin token gets 'disabled' until an authenticated private store
+    exists; the client-encrypted vault remains the sync path."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify({"status": "disabled",
+                    "reasonJa": "サーバー側に平文の保有データを置く同期は、認証基盤が"
+                                "整うまで無効です。端末間同期は既存のパスフレーズ暗号化"
+                                "バックアップ(vault)をご利用ください。",
+                    "syncSchemaVersion": argus_portfolio_sync.SYNC_SCHEMA_VERSION}), 403
 
 
 @app.route("/api/argus/position-exposure/status")

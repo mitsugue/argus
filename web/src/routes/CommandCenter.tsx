@@ -27,6 +27,7 @@ import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { buildPositionExposure } from '../domain/positionExposure';
 import { publishExposure } from '../lib/positionExposureShare';
+import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { coingeckoIdOf } from '../lib/cryptoIds';
@@ -179,6 +180,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         flowBySymbol, eventSymbols },
     );
     publishExposure(pe);   // Pro Handoff / AI Review read this at copy time (device-local)
+    // v11.9.0: one automatic LOCAL snapshot per JST day once holdings price —
+    // 「あの日ARGUSが何を言っていたか」を将来の答え合わせ用に残す(送信なし)。
+    try { maybeDailySnapshot(pe, __APP_VERSION__, flowBySymbol); } catch { /* quota */ }
     return pe;
   }, [assets, cardGroups, rates.data, flowRecords, impEvents, regime.data, peJp.data, peUs.data]);
 

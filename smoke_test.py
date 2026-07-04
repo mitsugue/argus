@@ -741,6 +741,23 @@ def v_position_exposure_status():
     return True, f"themes={len(wl['byTheme'])} symbols={wl.get('totalSymbols')} leak-free"
 
 
+def v_portfolio_sync_status():
+    # v11.9.0: public sync status = architecture facts only; server plaintext
+    # sync must read disabled; sensitive keys are a hard failure.
+    c, d = _get("/api/argus/portfolio-sync/status")
+    if d.get("schemaVersion") != "portfolio-sync-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    pc = (d.get("storageLayers") or {}).get("privateCloud") or {}
+    if pc.get("serverPlaintextSync") != "disabled":
+        return False, f"serverPlaintextSync={pc.get('serverPlaintextSync')}"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("quantity", "averageCost", "costBasis", "marketValue",
+                   "unrealizedPnl", "accountType", "portfolioTotal"):
+        if banned in blob:
+            return False, f"PRIVATE FIELD LEAKED: {banned}"
+    return True, "layers=local/vault/snapshot, plaintext-sync disabled, leak-free"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1537,6 +1554,8 @@ CHECKS = [
     ("v11.7.0 flow attribution status", v_flow_attribution_status),
     # ── V11.8.0 Position / Exposure (privacy-critical) ──
     ("v11.8.0 position exposure leak-free", v_position_exposure_status),
+    # ── V11.9.0 Portfolio Sync foundation (privacy-critical) ──
+    ("v11.9.0 portfolio sync status", v_portfolio_sync_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),
