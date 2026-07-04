@@ -53,6 +53,7 @@ import argus_portfolio_sync  # Portfolio Sync/Snapshot foundation (pure, v11.9.0
 import argus_supply_demand  # Supply/Demand Intelligence for JP stocks (pure, v11.10.0 — 需給ランク; never fabricates JSF/margin)
 import argus_decision_quality  # Decision Quality/Backtest foundation (pure, v11.11.0 — records live device-local only)
 import argus_action_priority  # Action Priority engine (pure, v11.12.0 — attention routing, never trade orders)
+import argus_session_brief  # Morning/Session Brief engine (pure, v11.13.0 — 今日の作戦, never trade orders)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6781,6 +6782,76 @@ def api_argus_action_priority_status():
                  "institutionalIntelligence": bool(_INTEL_STORE),
                  "marketRegime": bool(_REGIME_CACHE.get("data")),
                  "decisionQuality": False}))  # records device-local by design
+
+
+# ── V11.13.0 Session Brief (server side = WATCHLIST-LEVEL redacted brief) ────
+
+def _session_brief_public():
+    now = datetime.now(TZ_JST)
+    jp_open = False
+    us_open = False
+    try:
+        jp_open = now.weekday() < 5 and (9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30))
+        us_h = now.hour
+        us_open = now.weekday() < 5 and (us_h >= 22 or us_h < 5) \
+            or (now.weekday() == 5 and now.hour < 5)
+    except Exception:
+        pass
+    sess = argus_session_brief.resolve_session(now.hour, now.weekday(), jp_open, us_open)
+    items = _action_priority_items(cap=20)
+    events = []
+    try:
+        today = _ai_now_iso()[:10]
+        for rec in _MOVER_MACRO_VIEW():
+            if rec.get("phase") in ("imminent", "released_pending_result") \
+                    and str(rec.get("eventTimeUtc") or rec.get("eventDate") or "")[:10] == today:
+                events.append(rec.get("eventCode") or rec.get("title"))
+    except Exception:
+        pass
+    regime = None
+    risk_off = False
+    try:
+        regime = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
+        risk_off = regime in ("RISK_OFF", "EVENT_WAIT")
+    except Exception:
+        pass
+    sd_hi = []
+    try:
+        for s in _supply_demand_list(cap=16):
+            if s["supplyDemandRank"] in ("S", "A", "D", "E") \
+                    or s["condition"] == "squeeze_prone":
+                sd_hi.append({"symbol": s["symbol"], "name": s.get("name"),
+                              "rank": s["supplyDemandRank"], "conditionJa": s["conditionJa"]})
+    except Exception:
+        pass
+    return argus_session_brief.build_brief({
+        "sessionType": sess["sessionType"], "marketStatus": sess["marketStatus"],
+        "priorityItems": items, "eventNames": [e for e in events if e][:4],
+        "regimeLabel": regime, "regimeRiskOff": risk_off,
+        "sdHighlights": sd_hi, "isPrivate": False,
+    }, _ai_now_iso())
+
+
+@app.route("/api/argus/session-brief")
+def api_argus_session_brief():
+    """Public cached-only: watchlist-level 今日の作戦 (no holdings — the app
+    composes the held-aware version locally). Never a trade instruction."""
+    brief = _session_brief_public()
+    return jsonify({"schemaVersion": "session-brief-response-v1",
+                    "asOf": _ai_now_iso(), "brief": brief,
+                    "disclaimerJa": argus_session_brief.COMPLIANCE})
+
+
+@app.route("/api/argus/session-brief/status")
+def api_argus_session_brief_status():
+    brief = _session_brief_public()
+    return jsonify(argus_session_brief.status_doc(
+        brief, now_iso=_ai_now_iso(),
+        sources={"actionPriority": True, "eventRadar": bool(_MACRO_ANALYSIS),
+                 "marketRegime": bool(_REGIME_CACHE.get("data")),
+                 "institutionalIntelligence": bool(_INTEL_STORE),
+                 "flowAttribution": True, "supplyDemand": True,
+                 "positionExposure": False, "decisionQuality": False}))
 
 
 # ── V11.11.0 Decision Quality foundation (server side = status + price history
@@ -17854,6 +17925,20 @@ def _build_pro_handoff():
         slines.append(f"注意: {sh['disclaimerJa']}")
         if len(slines) > 3:
             prompt = prompt + "\n\n" + "\n".join(slines)
+    except Exception:
+        pass
+    # v11.13.0: Session Brief — 今日の作戦 (watchlist-level; held-aware version
+    # is appended by the app at copy time).
+    try:
+        shh = argus_session_brief.handoff_section(_session_brief_public())
+        blines = [f"## {shh['title']} (watchlist-level)",
+                  f"モード: {shh['modeJa']} — {shh['headlineJa']}", shh["summaryJa"] or ""]
+        if shh.get("whatNotToDo"):
+            blines.append("やらないこと: " + " / ".join(shh["whatNotToDo"]))
+        if shh.get("nextChecks"):
+            blines.append("次の確認: " + " / ".join(shh["nextChecks"]))
+        blines.append(f"注意: {shh['disclaimerJa']} {shh['caveatJa']}")
+        prompt = prompt + "\n\n" + "\n".join(x for x in blines if x)
     except Exception:
         pass
     # v11.12.0: Action Priority Summary — watchlist-level attention routing.

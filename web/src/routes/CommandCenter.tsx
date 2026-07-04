@@ -28,11 +28,13 @@ import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { useSupplyDemandList } from '../hooks/useSupplyDemand';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, publishActionPriorities, latestActionPriorities } from '../lib/positionExposureShare';
+import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
 import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
 import { ActionPrioritySection } from '../components/dashboard/ActionPrioritySection';
+import { buildLocalBrief } from '../domain/sessionBrief';
+import { SessionBriefSection } from '../components/dashboard/SessionBriefSection';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { coingeckoIdOf } from '../lib/cryptoIds';
@@ -194,7 +196,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       const tops = latestActionPriorities().slice(0, 7).map((x) => ({
         symbol: x.symbol, rank: x.priorityRank, actionLabel: x.actionLabel, blockingReason: x.blockingReason }));
       maybeDailySnapshot(pe, __APP_VERSION__, flowBySymbol,
-        sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition })), tops);
+        sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition })), tops,
+        (() => { const b = latestSessionBrief(); return b ? { headlineJa: b.headlineJa, ownerMode: b.ownerMode,
+          sessionType: b.sessionType, nextChecksJa: b.nextChecksJa, whatNotToDoJa: b.whatNotToDoJa } : null; })());
     } catch { /* quota */ }
     return pe;
   }, [assets, cardGroups, rates.data, flowRecords, sdSignals, impEvents, regime.data, peJp.data, peUs.data]);
@@ -245,6 +249,26 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     publishActionPriorities(ranked);   // Handoff/AIReview read at copy time
     return ranked;
   }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data]);
+
+  // v11.13.0: SESSION BRIEF — 今日の作戦(端末内合成・保有加味)。
+  const sessionBrief = useMemo(() => {
+    const eventNames: string[] = [];
+    for (const ie of impEvents?.events ?? []) {
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') eventNames.push(ie.eventCode);
+    }
+    const regLabel = regime.data?.regime?.label ?? null;
+    const missing: string[] = [];
+    if (!positionExposure.noHoldings && positionExposure.unpriced.length) {
+      missing.push(`価格未取得: ${positionExposure.unpriced.slice(0, 2).join('/')}`);
+    }
+    const b = buildLocalBrief(apItems, {
+      eventNames: [...new Set(eventNames)].slice(0, 3),
+      riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
+      missingDataJa: missing,
+    });
+    publishSessionBrief(b);
+    return b;
+  }, [apItems, impEvents, regime.data, positionExposure]);
 
   // v11.11.0: device-local outcome updater — once per JST day, fills
   // 「その後どうなったか」(1d/3d/5d/20d) for past decision records.
@@ -364,6 +388,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* C.A.O.S. — the 2nd card, ALWAYS present. One intelligence hub folding three tiers:
           機関シグナル (institutional views) + イベント分析 (pre/post) + ニュース (market news).
           News is always live, so the card never disappears even when intel/events are empty. */}
+      {/* SESSION BRIEF (v11.13.0) — 今日の作戦。Brief=作戦/AP=見る順番 */}
+      <SessionBriefSection brief={sessionBrief} />
+
       {/* ACTION PRIORITY (v11.12.0) — 開いた瞬間「今日これを見る」。売買指示なし */}
       <ActionPrioritySection items={apItems} />
 

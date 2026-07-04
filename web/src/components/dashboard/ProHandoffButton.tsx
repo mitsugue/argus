@@ -5,6 +5,8 @@ import { backupStatusTextJa } from '../../lib/portfolioSync';
 import { dqHandoffTextJa } from '../../lib/decisionQuality';
 import { latestActionPriorities } from '../../lib/positionExposureShare';
 import { apHandoffTextJa } from '../../domain/actionPriority';
+import { sbHandoffTextJa } from '../../domain/sessionBrief';
+import { latestSessionBrief } from '../../lib/positionExposureShare';
 
 // "Copy for GPT-5.5 Pro" — utility action. On click it fetches the backend
 // /api/argus/pro-handoff (no admin token, no secrets, no OpenAI/Gemini call) and
@@ -34,7 +36,7 @@ export const ProHandoffButton: React.FC = () => {
       const pe = latestExposure();
       const local = pe ? exposureSummaryText(pe)
         : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。';
-      const prompt: string = `${d.promptText || ''}\n\n${local}\n${backupStatusTextJa()}\n\n${dqHandoffTextJa()}\n\n${apHandoffTextJa(latestActionPriorities())}`;
+      const prompt: string = `${d.promptText || ''}\n\n${local}\n${backupStatusTextJa()}\n\n${dqHandoffTextJa()}\n\n${apHandoffTextJa(latestActionPriorities())}\n\n${sbHandoffTextJa(latestSessionBrief())}`;
       setText(prompt);
       try {
         await navigator.clipboard.writeText(prompt);

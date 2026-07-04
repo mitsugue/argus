@@ -50,6 +50,9 @@ export interface PortfolioSnapshot {
   creditOverhang: string[];
   /** v11.12.0: 当日の優先度上位 — 後日「P0/P1は本当に重要だったか」検証用 */
   topPriorities: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[];
+  /** v11.13.0: 朝ブリーフ当時値 — 後日「正しいリスクを指していたか」検証用 */
+  sessionBrief: { headlineJa: string; ownerMode: string; sessionType: string;
+    nextChecksJa: string[]; whatNotToDoJa: string[] } | null;
   pricesUsed: Record<string, number>;
   staleDataFlags: string[];
   missingEvidence: string[];
@@ -121,7 +124,9 @@ export function createSnapshot(
   pe: PortfolioExposure,
   opts: { appVersion: string; flowBySymbol?: Record<string, string>; events?: string[];
     supplyDemand?: { symbol: string; rank: string; condition: string }[];
-    topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[] },
+    topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[];
+    sessionBrief?: { headlineJa: string; ownerMode: string; sessionType: string;
+      nextChecksJa: string[]; whatNotToDoJa: string[] } | null },
 ): PortfolioSnapshot | null {
   // Never fabricate: without any priced holding there is nothing to snapshot —
   // watchlist-only state is not portfolio history.
@@ -155,6 +160,7 @@ export function createSnapshot(
     squeezeProne: (opts.supplyDemand ?? []).filter((x) => x.condition === 'squeeze_prone').map((x) => x.symbol),
     creditOverhang: (opts.supplyDemand ?? []).filter((x) => x.condition === 'credit_overhang').map((x) => x.symbol),
     topPriorities: (opts.topPriorities ?? []).slice(0, 7),
+    sessionBrief: opts.sessionBrief ?? null,
     pricesUsed: prices,
     staleDataFlags: pe.unpriced,
     missingEvidence: [
@@ -204,9 +210,11 @@ function appendAudit(pe: PortfolioExposure, snap: PortfolioSnapshot,
 export function maybeDailySnapshot(pe: PortfolioExposure, appVersion: string,
                                    flowBySymbol?: Record<string, string>,
                                    supplyDemand?: { symbol: string; rank: string; condition: string }[],
-                                   topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[]): boolean {
+                                   topPriorities?: { symbol: string; rank: string; actionLabel: string; blockingReason: string }[],
+                                   sessionBrief?: { headlineJa: string; ownerMode: string; sessionType: string;
+                                     nextChecksJa: string[]; whatNotToDoJa: string[] } | null): boolean {
   if (syncMeta().lastSnapshotDay === jstDay()) return false;
-  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities }) != null;
+  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief }) != null;
 }
 
 // ── export / import ─────────────────────────────────────────────────────────

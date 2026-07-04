@@ -16,7 +16,7 @@ import type { MarketRegimeSnapshot, RotationGroup } from '../types/marketRegime'
 import '../components/dashboard/Dashboard.css';
 import { useInstitutionalSignals } from '../hooks/useInstitutionalSignals';
 import { useFlowAttributionList, FLOW_TONE } from '../hooks/useFlowAttribution';
-import { latestExposure } from '../lib/positionExposureShare';
+import { latestExposure, latestSessionBrief } from '../lib/positionExposureShare';
 import { jpDisplay } from '../lib/displayName';
 
 // Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
@@ -415,6 +415,17 @@ export const MarketRegime: React.FC = () => {
           })}
         </section>
       )}
+
+      {/* v11.13.0: 今日のセッション一文(端末内Briefから) */}
+      {(() => {
+        const b = latestSessionBrief();
+        if (!b) return null;
+        return (
+          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: 'var(--text-sub)' }}>
+            {b.ownerModeJa}({b.marketStatusJa})：{b.headlineJa}
+          </p>
+        );
+      })()}
 
       {/* v11.8.0: 今日のレジーム × あなたのポートフォリオ(端末内計算・送信なし)。
           保有未入力/未計算なら未計算と正直に表示。 */}

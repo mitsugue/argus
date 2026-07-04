@@ -20,3 +20,9 @@ import type { APItem } from '../domain/actionPriority';
 let latestAP: APItem[] = [];
 export function publishActionPriorities(items: APItem[]): void { latestAP = items; }
 export function latestActionPriorities(): APItem[] { return latestAP; }
+
+// v11.13.0: latest device-local Session Brief (same lifecycle contract).
+import type { LocalBrief } from '../domain/sessionBrief';
+let latestSB: LocalBrief | null = null;
+export function publishSessionBrief(b: LocalBrief): void { latestSB = b; }
+export function latestSessionBrief(): LocalBrief | null { return latestSB; }
