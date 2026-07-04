@@ -76,12 +76,23 @@ def test_submit_scripts_never_echo_codes():
 # ── docs/scripts carry no raw secrets ────────────────────────────────────────
 
 def test_bridge_tree_has_no_raw_secrets():
-    """Placeholder-only: no real-looking values for credentials in the repo."""
+    """Placeholder-only: no real-looking values for credentials in the repo.
+
+    Scans TEXT sources only. On CI, pytest imports bridge/moomoo_push and
+    CPython drops bridge/__pycache__/*.pyc (binary) into the tree — reading
+    those as UTF-8 crashed this test on EVERY CI run since v11.5.9 while
+    passing locally (no pycache there). Secrets live in source text; caches
+    and binaries are pruned, and decoding is lenient as a belt-and-braces
+    (the scanned patterns are pure ASCII, so replacement never hides them)."""
     offenders = []
-    for root, _dirs, files in os.walk("bridge"):
+    for root, dirs, files in os.walk("bridge"):
+        dirs[:] = [d for d in dirs if d not in ("__pycache__", ".git")]
         for fn in files:
+            if fn.endswith((".pyc", ".pyo", ".so", ".zip", ".png", ".jpg")):
+                continue
             p = os.path.join(root, fn)
-            src = _read(p)
+            with open(p, encoding="utf-8", errors="replace") as f:
+                src = f.read()
             for m in re.finditer(r"(ARGUS_ADMIN_TOKEN|ARGUS_BRIDGE_HMAC_SECRET)[ \t]*=[ \t]*([^\n]*)", src):
                 val = m.group(2).strip('"\'')
                 if val and val not in ("PUT-YOUR-TOKEN-HERE",) and not val.startswith("$"):
