@@ -193,9 +193,13 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         scores["profit_taking"] = 0.45
         reasons.append("RUNUP_THEN_WEAK_CLOSE")
 
-    # E. panic selling
-    if down and chg is not None and chg <= -5 and big_vol:
-        s = 0.45
+    # E. panic selling. A >=5% drop with volume data missing (vr is None) still
+    # scores as a LOW-confidence candidate — a -7% mover must never read as
+    # 「対応不要」 just because avg-volume isn't cached (US has no JQ bars).
+    if down and chg is not None and chg <= -5 and (big_vol or vr is None):
+        s = 0.45 if big_vol else 0.35
+        if vr is None:
+            reasons.append("PRICE_ONLY_DROP")
         if weak_close:
             s += 0.15
             reasons.append("CLOSE_NEAR_LOW")
@@ -271,6 +275,10 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
               "event_driven_selling": "wait_for_confirmation",
               "liquidity_noise": "no_action", "mixed": "wait_for_confirmation",
               "unknown": "no_action"}[flow_class]
+    # a MATERIAL move that we cannot classify is a reason to dig, not to relax
+    if flow_class == "unknown" and chg is not None and abs(chg) >= 2:
+        action = "investigate"
+        reasons.append("MATERIAL_MOVE_UNCLASSIFIED")
 
     why = _why_ja(flow_class, conf, directness, evidence, missing)
     check = _check_next_ja(flow_class, missing, market)
@@ -325,7 +333,8 @@ def _why_ja(flow_class, conf, directness, evidence, missing):
         "event_driven_selling": "本日のイベントを起点とした売りの可能性",
         "liquidity_noise": "商いが薄く、値動きに大きな意味を持たせない",
         "mixed": "買い集めと売り抜けの両方の型が混在(判定を急がない)",
-        "unknown": "判定に必要な証拠が不足",
+        "unknown": ("大きな動きだが判定に必要な証拠が不足(誰の売買かは未確定)"
+                    if have else "判定に必要な証拠が不足"),
     }[flow_class]
     tail = f"。確度{lvl}" + (f"({miss}の確認前)" if miss and conf < 0.65 else "") + "。"
     if directness == "direct_evidence":

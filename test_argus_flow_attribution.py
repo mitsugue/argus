@@ -129,6 +129,20 @@ def test_no_data_is_unknown_not_fabricated():
     assert all(v is None for v in r["evidence"].values())
 
 
+def test_big_drop_without_volume_is_never_no_action():
+    # production bug (2026-07-04): TSLA -7.5% with no cached avg-volume returned
+    # unknown/対応不要. A material move must read as low-conf panic candidate or
+    # at minimum 要調査 — never 「対応不要」.
+    r = _c({"changePct": -7.5}, symbol="TSLA", market="US")
+    assert r["actionImplication"] != "no_action"
+    assert r["flowClass"] in ("panic_selling", "unknown")
+    if r["flowClass"] == "panic_selling":
+        assert r["confidence"] <= 0.45          # missing evidence caps it
+        assert "PRICE_ONLY_DROP" in r["reasonCodes"]
+    r2 = _c({"changePct": 4.8}, symbol="AAPL", market="US")
+    assert r2["actionImplication"] == "investigate"   # unknown but material → dig
+
+
 def test_liquidity_noise():
     r = _c({"changePct": 3.0, "volumeRatio": 0.6, "liquidityLow": True})
     assert r["flowClass"] == "liquidity_noise"
