@@ -129,3 +129,87 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/bridge/status | python
 cd /opt/argus && sudo git pull
 sudo systemctl restart argus-bridge
 ```
+
+---
+
+## OpenD 10.8.6818 運用ランブック (v11.5.9 — 7/3-4障害からの復旧を運用化)
+
+### 現在の本番構成(2026-07-04時点)
+- EC2: `ubuntu@52.195.168.61` / ディスク 48GB(使用 ~16%)
+- OpenD: **10.8.6818**(旧 10.7.6718 からアップグレード済み)
+  - 実行ディレクトリ: `/home/ubuntu/moomoo_OpenD_new/moomoo_OpenD_10.8.6818_Ubuntu18.04/`
+  - API: `127.0.0.1:11111` / telnet: `127.0.0.1:22222`(**どちらもlocalhostのみ**)
+- 権限: **US Stocks LV3(Normal)/ JPN Stocks 権限なし** → **US-onlyモードは意図的**
+  (`ARGUS_DISABLE_JP_QUOTES=1`)。日本株はJ-Quants/Yahoo代替で判定(アプリに明示)。
+  moomoo側でJPN Stocksが Normal/LV1+ になるまでJPは無効のまま維持する。
+- HMAC秘密はローテーション済み・`/etc/argus-bridge.env`(root:root, 600)のみ。
+  `systemctl cat argus-bridge` に秘密は出ない。
+
+### 安全な確認コマンド(このリポジトリの bridge/scripts/ を使う)
+```bash
+cd /opt/argus && sudo git pull        # スクリプト取得(初回)
+bridge/scripts/check_opend_status.sh      # OpenDバージョン/ポート/プロセス(マスク済み)
+bridge/scripts/check_bridge_status.sh     # argus-bridge状態+直近ログ(マスク済み)
+bridge/scripts/safe_opend_process_view.sh # プロセス表示(資格情報を必ずマスク)
+bridge/scripts/safe_public_bridge_status.sh  # 公開ステータス(どこからでも可)
+```
+**生の `ps aux | grep OpenD` をドキュメントやチャットに貼らないこと** —
+OpenDは `-login_pwd` 引数を持つため、マスク無しの出力はパスワードを含み得る。
+
+### 図形認証(graphic verification)の手順
+1. `bridge/scripts/request_pic_verify_code.sh` — `req_pic_verify_code` を送信。
+   画像はOpenDディレクトリ直下の `PicVerifyCode.png` に生成される
+2. Mac側で取得して開く:
+   `scp ubuntu@52.195.168.61:/home/ubuntu/moomoo_OpenD_new/moomoo_OpenD_10.8.6818_Ubuntu18.04/PicVerifyCode.png ~/Desktop/`
+3. `bridge/scripts/submit_pic_verify_code.sh` — コードは**サイレント入力**
+   (`input_pic_verify_code -code=...` を内部送信・画面/履歴に残さない)
+4. **間違えたら古い画像は失効** — 必ず手順1から画像を取り直す
+
+### SMS認証の手順
+1. `bridge/scripts/request_sms_verify_code.sh`(`req_phone_verify_code`)
+2. `bridge/scripts/submit_sms_verify_code.sh` — サイレント入力
+   (`input_phone_verify_code -code=...`)
+3. **SMSコード/図形コード/パスワードをチャットやドキュメントに絶対に貼らない**
+
+### OpenDアップグレード・チェックリスト(10.8.6818で実証済みの経路)
+1. Macで公式Ubuntu版OpenDをダウンロード
+2. `scp <パッケージ> ubuntu@52.195.168.61:/home/ubuntu/moomoo_OpenD_latest.tar.gz`
+3. `sudo systemctl stop argus-bridge`
+4. OpenD停止(safe_opend_process_view.sh でPID確認 → kill。**重複プロセス厳禁**)
+5. 旧ディレクトリをバックアップ(例: `mv moomoo_OpenD_new moomoo_OpenD_backup_$(date +%F)`)
+6. 新パッケージを展開
+7. `OpenD.xml` で `telnet_ip=127.0.0.1 / telnet_port=22222` と `api_ip=127.0.0.1` を維持
+8. 新しいmoomooパスワードでOpenD起動 → 図形/SMS認証(上記手順)
+9. USスナップショット手動テスト(下記) → `ret=0` を確認
+10. `bridge/scripts/restart_argus_bridge.sh` → `pushed http=200 accepted=N mode=us_only`
+11. `safe_public_bridge_status.sh` で bridgeProcess=ok / usRealtimeStatus=ok を確認
+12. **JPN Stocks権限が Normal/LV1+ になるまで `ARGUS_DISABLE_JP_QUOTES=1` を外さない**
+
+USスナップショット手動テスト:
+```bash
+python3 - <<'PY'
+from moomoo import OpenQuoteContext
+qc = OpenQuoteContext(host="127.0.0.1", port=11111)
+ret, df = qc.get_market_snapshot(["US.NVDA", "US.TSLA"])
+print("ret=", ret)   # 0 = OK
+qc.close()
+PY
+```
+
+### OpenDのsystemd化(提案・未デプロイ)と残存リスク
+`bridge/opend.service.example` を用意した(引数なし起動・localhost限定・
+Restart=on-failure・**Environment=に秘密なし**)。ただし前提として
+**OpenD.xmlが資格情報欄をサポートするかをEC2上で実際に確認**すること
+(リポジトリからは断定できない — example内の検証手順参照)。
+確認できるまでは現行の手動起動を継続してよい。
+
+**残存リスク(正直に):** `-login_pwd` 引数で起動する限り、このホストの
+ローカルユーザー(root/ubuntu)は `ps` でパスワードを閲覧できる。
+完全な隠蔽は未確認 — 「隠れている」と思い込まないこと。緩和策:
+シェル履歴に残さない(起動コマンドは先頭スペース or `history -d`)、
+ログへ流さない、資格情報ファイルは600、そして万一チャット等へ露出したら
+**即パスワード変更+ARGUSトークン/HMACローテーション**(7/3-4で実施済みの手順)。
+
+### 過去バージョンの記録(履歴)
+- 10.7.6718: 7/3障害時の旧バージョン(ディスク満杯+SMS要求+JP権限喪失が複合)
+- 10.8.6818: 2026-07-04アップグレード・図形認証→ログイン成功→US LV3確認
