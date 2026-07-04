@@ -43,3 +43,11 @@ def test_search_bucket_has_own_limit():
 def test_heavy_limit_raised():
     assert scanner._RL_MAX_HEAVY >= 140
     assert scanner._RL_MAX_SEARCH >= 20
+
+
+def test_default_bucket_fits_owner_fleet_v11131():
+    # 2026-07-04 owner report: Today mounts ~20 cached-read endpoints and polls
+    # them across Mac+iPhone+iPad on one IP — 120/min made the app 429 ITSELF
+    # (需給/フロー wiped blank, crypto stuck at BTC/ETH).
+    assert scanner._RL_MAX >= 300
+    assert scanner._RL_MAX_HEAVY >= 200

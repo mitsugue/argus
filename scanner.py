@@ -404,15 +404,19 @@ def add_no_cache(response):
 _RL_LOCK    = threading.Lock()
 _RL_BUCKETS = {}          # ip -> deque[timestamps]
 _RL_WINDOW  = 60.0        # seconds
-_RL_MAX     = 120         # default requests / IP / minute
+_RL_MAX     = 300         # default requests / IP / minute — v11.13.1: Today now
+                          # mounts ~20 cached-read endpoints and polls them across
+                          # the owner's Mac+iPhone+iPad on ONE home IP; 120 made the
+                          # app 429 ITSELF (需給/フロー消失・crypto BTC/ETHのみ残留,
+                          # observed 2026-07-04). All these are cheap cache reads.
 # Heavy (cache-busting) budget: was 30/min pre-15s-polling. Legit usage is now
 # ~10-12/min PER DEVICE (jp+us watchlist every 15s + action-labels) and one
 # home IP often runs phone+Mac+preview simultaneously — 30 made the app
 # rate-limit ITSELF (observed 2026-06-13). 90 keeps 3 devices + scout taps
 # comfortable while still bounding abuse (all heavy endpoints are cached).
-_RL_MAX_HEAVY = 140       # raised 90→140 (v11.8.1): v11.7/11.8 added flow +
-                          # position-exposure + rates polling; 3 devices × ~20/min
-                          # legit heavy reads were brushing the 90 ceiling.
+_RL_MAX_HEAVY = 200       # 90→140 (v11.8.1) → 200 (v11.13.1): every release
+                          # added polling; 3 devices + preview share one IP and all
+                          # heavy endpoints are cached reads on Render Standard.
 # Interactive symbol-search gets its OWN bucket (v11.8.1) so background quote
 # polling can never starve a human typing in the search box into 「混雑」.
 _RL_MAX_SEARCH = 30

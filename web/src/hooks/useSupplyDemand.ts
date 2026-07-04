@@ -49,7 +49,13 @@ export function useSupplyDemandList(): State {
     const load = () => {
       fetch(`${backend.replace(/\/$/, '')}/api/argus/supply-demand`)
         .then((r) => r.json())
-        .then((d) => { if (alive) setState({ signals: (d.signals ?? []) as SupplyDemandSignal[], loading: false }); })
+        .then((d) => {
+          if (!alive) return;
+          // 429/error bodies have no signals array — keep the last good list
+          // instead of wiping the section blank (owner report 2026-07-04).
+          if (Array.isArray(d.signals)) setState({ signals: d.signals as SupplyDemandSignal[], loading: false });
+          else setState((s) => ({ ...s, loading: false }));
+        })
         .catch(() => { if (alive) setState((s) => ({ ...s, loading: false })); });
     };
     load();

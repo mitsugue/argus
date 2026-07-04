@@ -61,7 +61,9 @@ export function useFlowAttributionList(): ListState {
         .then((r) => r.json())
         .then((d) => {
           if (!alive) return;
-          setState({ records: (d.records ?? []) as FlowAttribution[], loading: false });
+          // keep last good records on 429/error bodies (never wipe the section)
+          if (Array.isArray(d.records)) setState({ records: d.records as FlowAttribution[], loading: false });
+          else setState((s) => ({ ...s, loading: false }));
         })
         .catch(() => { if (alive) setState((s) => ({ ...s, loading: false })); });
     };
