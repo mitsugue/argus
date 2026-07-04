@@ -12,6 +12,7 @@ import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
 import { useFundNav } from '../hooks/useFundNav';
 import { buildExposure } from '../lib/portfolio';
 import { coingeckoIdOf } from '../lib/cryptoIds';
+import { jpDisplay } from '../lib/displayName';
 import { buildPositionExposure } from '../domain/positionExposure';
 import { publishExposure } from '../lib/positionExposureShare';
 import { coreActionFor } from '../lib/todayCall';
@@ -173,7 +174,7 @@ export const CorePortfolio: React.FC = () => {
               )}
               {pe.top1Symbol && pe.top1Pct != null && (
                 <div className="cmd-alloc__note">
-                  最大集中: {pe.top1Symbol} {pe.top1Pct.toFixed(0)}%
+                  最大集中: {jpDisplay(pe.top1Symbol, pe.notes[pe.top1Symbol]?.name)} {pe.top1Pct.toFixed(0)}%
                   {pe.singleNameRisk === 'critical' ? '(危険水準 — 1銘柄依存)'
                     : pe.singleNameRisk === 'high' ? '(高い)'
                     : pe.singleNameRisk === 'medium' ? '(やや高い)' : ''}

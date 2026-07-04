@@ -1,6 +1,7 @@
 import React from 'react';
 import type { APItem } from '../../domain/actionPriority';
 import { briefJa, RANK_TONE } from '../../domain/actionPriority';
+import { jpDisplay } from '../../lib/displayName';
 
 // V11.12.0 — ACTION PRIORITY on Today (top area). アプリを開いた瞬間に
 // 「今日はこれを見る」が分かるための注意配分リスト。売買指示ではない。
@@ -31,7 +32,7 @@ export const ActionPrioritySection: React.FC<{ items: APItem[] }> = ({ items }) 
                         borderRadius: 4, padding: '0 5px', fontSize: 10.5 }}>
               {it.priorityRank}
             </b>
-            <b style={{ marginLeft: 6 }}>{it.symbol}</b>
+            <b style={{ marginLeft: 6 }}>{jpDisplay(it.symbol, it.assetName)}</b>
             {it.isHeld && <span style={{ marginLeft: 4, fontSize: 9.5, color: 'var(--amber, #fbbf24)',
                                          border: '1px solid var(--line)', borderRadius: 999, padding: '0 5px' }}>保有</span>}
             <span style={{ marginLeft: 6, color: RANK_TONE[it.priorityRank], fontWeight: 600 }}>

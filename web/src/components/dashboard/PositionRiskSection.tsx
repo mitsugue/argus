@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PortfolioExposure } from '../../domain/positionExposure';
 import { READINESS_TONE } from '../../domain/positionExposure';
+import { jpDisplay } from '../../lib/displayName';
 
 // V11.8.0 — PORTFOLIO EXPOSURE on Today. Held-position risks first (a held
 // asset's problem outranks any watchlist signal), then concentration/theme/
@@ -29,7 +30,7 @@ export const PositionRiskSection: React.FC<{ exposure: PortfolioExposure }> = ({
       ) : pe.base.holdings.length === 0 ? (
         <p style={{ fontSize: 12, color: 'var(--text-sub)', margin: '4px 0', lineHeight: 1.7 }}>
           保有は入力済みですが価格が未取得のため、比率・集中度の判定を一時保留しています(価格取得後に自動計算)。
-          保有銘柄: {Object.values(pe.notes).filter((n) => n.held).map((n) => n.symbol).join(' / ') || '—'}
+          保有銘柄: {Object.values(pe.notes).filter((n) => n.held).map((n) => jpDisplay(n.symbol, n.name)).join(' / ') || '—'}
         </p>
       ) : (
         <>
@@ -61,7 +62,7 @@ export const PositionRiskSection: React.FC<{ exposure: PortfolioExposure }> = ({
           </p>
           {pe.top1Symbol && pe.top1Pct != null && pe.singleNameRisk !== 'low' && (
             <p style={{ margin: '2px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>
-              最大集中: <b>{pe.top1Symbol}</b> {pe.top1Pct.toFixed(0)}%
+              最大集中: <b>{jpDisplay(pe.top1Symbol, pe.notes[pe.top1Symbol]?.name)}</b> {pe.top1Pct.toFixed(0)}%
               <b style={{ marginLeft: 4, color: LEVEL_TONE[pe.singleNameRisk ?? 'low'] }}>
                 {pe.singleNameRisk === 'critical' ? '危険水準' : pe.singleNameRisk === 'high' ? '高い' : 'やや高い'}
               </b>
@@ -79,7 +80,7 @@ export const PositionRiskSection: React.FC<{ exposure: PortfolioExposure }> = ({
                 {capped.slice(0, 5).map((n, i) => (
                   <span key={n.symbol}>
                     {i > 0 && ' / '}
-                    <b>{n.symbol}</b>
+                    <b>{jpDisplay(n.symbol, n.name)}</b>
                     <span style={{ color: READINESS_TONE[n.readiness], marginLeft: 3 }}>{n.readinessJa}</span>
                   </span>
                 ))}

@@ -3,6 +3,8 @@ import {
   annotateOwnerAction, dqSummary, lastOutcomeUpdateAt, listDQ,
   OWNER_ACTION_JA, type DQRecord,
 } from '../../lib/decisionQuality';
+import { useAssets } from '../../hooks/useAssets';
+import { jpDisplay } from '../../lib/displayName';
 
 // V11.11.0 — DECISION QUALITY (Core Portfolio). ARGUSの過去判断を後で検証する
 // ための記録。履歴が浅いうちは成績として扱わない(断定しない)。記録・結果・
@@ -20,6 +22,11 @@ const INTERP_JA: Record<string, string> = {
 
 export const DecisionQualityCard: React.FC = () => {
   const [, bump] = React.useReducer((x: number) => x + 1, 0);
+  const { assets } = useAssets();
+  const nameOf = React.useMemo(() => {
+    const m = new Map(assets.map((a) => [a.symbol.toUpperCase(), a.displayNameJa || a.displayName]));
+    return (sym: string) => m.get(sym.toUpperCase());
+  }, [assets]);
   const s = dqSummary();
   const recent = listDQ().slice(0, 5);
   const upd = lastOutcomeUpdateAt();
@@ -49,7 +56,7 @@ export const DecisionQualityCard: React.FC = () => {
         ) : recent.map((r: DQRecord) => (
           <div key={r.id} style={{ borderTop: '1px solid var(--line)', padding: '6px 0' }}>
             <p style={{ margin: 0, fontSize: 12 }}>
-              <b>{r.symbol}</b>
+              <b>{jpDisplay(r.symbol, nameOf(r.symbol))}</b>
               <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{r.asOf.slice(0, 10)}</span>
               <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--text-faint)' }}>[{r.decisionContext}]</span>
               {r.supplyDemandRank && <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--text-faint)' }}>需給{r.supplyDemandRank}</span>}

@@ -17,6 +17,7 @@ import '../components/dashboard/Dashboard.css';
 import { useInstitutionalSignals } from '../hooks/useInstitutionalSignals';
 import { useFlowAttributionList, FLOW_TONE } from '../hooks/useFlowAttribution';
 import { latestExposure } from '../lib/positionExposureShare';
+import { jpDisplay } from '../lib/displayName';
 
 // Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
 // bilingual split, not a transition mistake.
@@ -475,7 +476,7 @@ export const MarketRegime: React.FC = () => {
           })()}
           {flowRecords.slice(0, 4).map((r) => (
             <p key={r.id + r.symbol} style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
-              <b>{r.symbol}</b>
+              <b>{jpDisplay(r.symbol, r.name)}</b>
               <span style={{ marginLeft: 6, color: FLOW_TONE[r.direction] || 'var(--text-main)' }}>{r.flowClassJa}</span>
               <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>確度{Math.round(r.confidence * 100)}%</span>
             </p>

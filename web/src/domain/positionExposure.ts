@@ -81,6 +81,8 @@ export interface PositionRisk {
 
 export interface PositionNote {
   symbol: string;
+  /** 表示名(日本株は数字+社名並記ルール用) */
+  name: string;
   held: boolean;
   quantity?: number;
   avgCost?: number;
@@ -138,6 +140,8 @@ export function buildPositionExposure(
     ccy === 'JPY' ? v : usdJpy != null ? v * usdJpy : null;
 
   const themeBySym = new Map(assets.map((a) => [a.symbol.toUpperCase(), themeOf(a)]));
+  const nameBySym = new Map(assets.map((a) => [a.symbol.toUpperCase(), a.displayNameJa || a.displayName]));
+  const disp = (sym: string) => (/^\d/.test(sym) && nameBySym.get(sym) ? `${sym} ${String(nameBySym.get(sym)).slice(0, 8)}` : sym);
   const weightBySym = new Map<string, number>();
   const themeAgg = new Map<ThemeKey, number>();
   if (total != null && total > 0) {
@@ -186,7 +190,7 @@ export function buildPositionExposure(
         : w >= THRESHOLDS.singleNameHigh ? 'high' : 'medium';
       risks.push({
         symbol: sym, riskLevel: lvl, riskType: 'concentration',
-        whyJa: `${sym}が保有全体の約${Math.round(w * 100)}%。この1銘柄の値動きで資産全体が大きく揺れる比率です。`,
+        whyJa: `${disp(sym)}が保有全体の約${Math.round(w * 100)}%。この1銘柄の値動きで資産全体が大きく揺れる比率です。`,
         checkNextJa: '買い増しより分散を優先するか、比率の上限を決めることを検討',
       });
     }
@@ -205,7 +209,7 @@ export function buildPositionExposure(
     if (h.plPct <= -15) {
       risks.push({
         symbol: sym, riskLevel: h.plPct <= -25 ? 'high' : 'medium', riskType: 'drawdown',
-        whyJa: `${sym}は取得単価から約${Math.abs(Math.round(h.plPct))}%の含み損。ナンピンの前に下落原因の確認が先です。`,
+        whyJa: `${disp(sym)}は取得単価から約${Math.abs(Math.round(h.plPct))}%の含み損。ナンピンの前に下落原因の確認が先です。`,
         checkNextJa: '銘柄カードの「原因の詳細」とイベント予定を確認',
       });
     }
@@ -213,7 +217,7 @@ export function buildPositionExposure(
     if (fc === 'panic_selling' || fc === 'distribution' || fc === 'profit_taking') {
       risks.push({
         symbol: sym, riskLevel: fc === 'panic_selling' ? 'high' : 'medium', riskType: 'held_flow_risk',
-        whyJa: `保有中の${sym}に売り圧力の推定が出ています。監視銘柄なら様子見で済みますが、保有中のため優先確認対象です。`,
+        whyJa: `保有中の${disp(sym)}に売り圧力の推定が出ています。監視銘柄なら様子見で済みますが、保有中のため優先確認対象です。`,
         checkNextJa: '翌営業日に戻りが売られるか、公式材料が出るかを確認',
       });
     }
@@ -221,14 +225,14 @@ export function buildPositionExposure(
     if (sdRank === 'D' || sdRank === 'E') {
       risks.push({
         symbol: sym, riskLevel: sdRank === 'E' ? 'high' : 'medium', riskType: 'supply_demand',
-        whyJa: `保有中の${sym}は需給ランク${sdRank}(${sdRank === 'E' ? '需給が悪く追いかけ買い回避' : '信用買い残が重い/戻り売りが出やすい'})。監視銘柄より優先確認対象です。`,
+        whyJa: `保有中の${disp(sym)}は需給ランク${sdRank}(${sdRank === 'E' ? '需給が悪く追いかけ買い回避' : '信用買い残が重い/戻り売りが出やすい'})。監視銘柄より優先確認対象です。`,
         checkNextJa: '週次信用残・日証金の次回更新と、戻り局面で売りが出るかを確認',
       });
     }
     if (events.has(sym)) {
       risks.push({
         symbol: sym, riskLevel: 'medium', riskType: 'event_risk',
-        whyJa: `保有中の${sym}に直近の重要イベントがあります。通過までポジションを増やさないのが基本です。`,
+        whyJa: `保有中の${disp(sym)}に直近の重要イベントがあります。通過までポジションを増やさないのが基本です。`,
         checkNextJa: 'イベント結果と初動反応を確認',
       });
     }
@@ -285,7 +289,7 @@ export function buildPositionExposure(
       whyJa = '明確なブロック要因はありません。ただし一度に大きく買わず、小さく分けるのが基本です。';
     }
     notes[sym] = {
-      symbol: sym, held,
+      symbol: sym, name: a.displayNameJa || a.displayName, held,
       quantity: held ? a.quantity : undefined,
       avgCost: held ? a.avgCost : undefined,
       pnlPct: h ? h.plPct : null,

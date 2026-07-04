@@ -269,7 +269,7 @@ export function previewImport(text: string): ImportPreview {
     withQuantity: withQ.length,
     watchOnly: f.positions.length - withQ.length,
     snapshots: Array.isArray(f.snapshots) ? f.snapshots.length : 0,
-    symbols: withQ.slice(0, 8).map((p) => p.symbol),
+    symbols: withQ.slice(0, 8).map((p) => (/^\d/.test(p.symbol) && p.name ? `${p.symbol} ${p.name.slice(0, 8)}` : p.symbol)),
   };
 }
 
