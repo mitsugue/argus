@@ -6919,6 +6919,7 @@ def api_argus_intel_collect():
             if code4.isdigit() or (code4 and code4[0].isdigit()):
                 if _jq_weekly_margin(code4):
                     warmed["margin"] += 1
+                _jq_price_history(code4)   # daily bars → avgVolume/daysToCover/runup
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
