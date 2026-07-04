@@ -188,3 +188,10 @@ def test_every_item_has_why_and_next_and_no_trade_verbs():
         assert banned not in src, banned
     for banned_import in ("import requests", "import urllib", "import socket"):
         assert banned_import not in src, banned_import
+
+
+def test_sd_watch_label_is_monitor_not_no_action():
+    # production polish (2026-07-04): 需給D注意なのにラベル「対応不要」は矛盾
+    r = _b({"isHeld": False, "sdRank": "D"})
+    assert r["category"] == "supply_demand_watch"
+    assert r["actionLabel"] == "MONITOR"

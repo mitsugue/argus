@@ -105,7 +105,8 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
         score += 20 if held else 10
         adverse += 1
         reasons.append(f"SD_{sd_rank}")
-        category = "supply_demand_watch" if category == "no_action" else category
+        if category == "no_action":
+            category, label = "supply_demand_watch", "MONITOR"
         blocking = "supply_demand_bad"
     if pos_risk in ("high", "critical"):
         score += 20

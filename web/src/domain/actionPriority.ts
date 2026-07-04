@@ -61,7 +61,7 @@ export function buildItem(i: APInputs): APItem {
   }
   if (sdRank === 'D' || sdRank === 'E') {
     score += i.isHeld ? 20 : 10; adverse++;
-    if (category === 'no_action') category = 'supply_demand_watch';
+    if (category === 'no_action') { category = 'supply_demand_watch'; label = 'MONITOR'; }
     blocking = 'supply_demand_bad';
   }
   if (i.positionRiskLevel === 'high' || i.positionRiskLevel === 'critical') {
