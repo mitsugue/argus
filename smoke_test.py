@@ -655,6 +655,39 @@ def v_news_newest_first():
     return True, f"market-news {len(dts)} items sorted; cause-attribution sorted"
 
 
+def v_institutional_signals():
+    # v11.6.0: formal institutional signals — public, secret-free, disclaimered.
+    c, d = _get("/api/argus/institutional-intel/signals")
+    if d.get("schemaVersion") != "institutional-intel-signals-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if "自動売買の指示ではありません" not in (d.get("disclaimerJa") or ""):
+        return False, "disclaimer missing"
+    for s in (d.get("signals") or [])[:5]:
+        for k in ("sourceName", "stance", "directness", "ownerReadableWhy", "actionImplication"):
+            if k not in s:
+                return False, f"signal missing {k}"
+        if s.get("actionImplication") not in ("watch", "wait", "hold", "caution",
+                                              "investigate", "avoid_chase", "no_action"):
+            return False, f"trade-like action: {s.get('actionImplication')}"
+    blob = json.dumps(d, ensure_ascii=False).lower()
+    for bad in ('"token":', '"secret":', '"apikey":', '"order"'):
+        if bad in blob:
+            return False, f"forbidden {bad}"
+    return True, f"signals={d.get('count')} themes={sum(1 for t in (d.get('regimeThemes') or {}).values() if t.get('count'))}"
+
+
+def v_institutional_status():
+    c, d = _get("/api/argus/institutional-intel/status")
+    if d.get("schemaVersion") != "institutional-intel-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    for k in ("sourcesChecked", "signalsNow", "headlineOnlyCount", "disabledSources",
+              "ingestionAlive"):
+        if k not in d:
+            return False, f"{k} missing"
+    return True, (f"checked={d['sourcesChecked']} signals={d['signalsNow']} "
+                  f"headlineOnly={d['headlineOnlyCount']} alive={d['ingestionAlive']}")
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1443,6 +1476,9 @@ CHECKS = [
     ("v11.5.5 patrol health", v_patrol_health),
     ("v11.5.6 news newest-first", v_news_newest_first),
     # ── V11.5.7 bridge entitlement transparency ──
+    # ── V11.6.0 Institutional Intelligence ──
+    ("v11.6.0 institutional signals", v_institutional_signals),
+    ("v11.6.0 institutional status", v_institutional_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

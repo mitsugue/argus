@@ -221,6 +221,34 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
         )}
       </div>
 
+      {/* v11.6.0: compact institutional notes — public signals, context only */}
+      {(data.institutionalSignals ?? []).length > 0 && (
+        <div style={{ borderLeft: '2px solid var(--line)', paddingLeft: 8, margin: '6px 0' }}>
+          <span className="csc-k">INSTITUTIONAL SIGNAL</span>
+          {(data.institutionalSignals ?? []).map((s) => (
+            <div key={s.id} style={{ marginTop: 2 }}>
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-sub)' }}>
+                <b>{s.sourceName}</b>
+                <span style={{ marginLeft: 6, color: s.stance === 'bullish' ? 'var(--value-positive)'
+                  : s.stance === 'bearish' ? 'var(--value-negative)' : 'var(--amber, #fbbf24)' }}>
+                  {s.stanceJa}
+                </span>
+                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+                  {s.directnessJa}{s.headlineOnly ? ' · 見出しのみ(限定確度)' : ''}
+                </span>
+              </p>
+              <p style={{ margin: '1px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>{s.headline}</p>
+              <p style={{ margin: '1px 0 0', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+                {s.ownerReadableWhy}
+              </p>
+            </div>
+          ))}
+          <p style={{ margin: '3px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
+            公開シグナル(文脈情報)・売買指示ではありません
+          </p>
+        </div>
+      )}
+
       <p className="csc-next"><b>何が変われば結論が変わるか:</b> {data.preEvent?.nextEvidenceRequired}</p>
       {data.dataLimitations?.length > 0 && (
         <p className="csc-limits">データ制約: {data.dataLimitations.join(' / ')}</p>

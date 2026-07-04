@@ -14,6 +14,7 @@ import type {
 } from '../types/regime';
 import type { MarketRegimeSnapshot, RotationGroup } from '../types/marketRegime';
 import '../components/dashboard/Dashboard.css';
+import { useInstitutionalSignals } from '../hooks/useInstitutionalSignals';
 
 // Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
 // bilingual split, not a transition mistake.
@@ -94,6 +95,8 @@ export const MarketRegime: React.FC = () => {
   useLocale();   // re-render on locale switch
   const { data, phase } = useMarketRegime();
   const movers = useMarketMovers();
+  const { data: instData } = useInstitutionalSignals();   // v11.6.0 regime themes
+  const instThemes = instData?.regimeThemes;
   const jpMovers = useMarketMovers('/api/argus/jp-market-movers');
 
   useEffect(() => {
@@ -381,6 +384,31 @@ export const MarketRegime: React.FC = () => {
               {data.dataLimitations.map((d, i) => <li key={i}>{d}</li>)}
             </ul>
           </div>
+        </section>
+      )}
+
+      {/* v11.6.0: institutional regime commentary — public signals grouped by theme */}
+      {instThemes && Object.values(instThemes).some((t) => t.count > 0) && (
+        <section className="card">
+          <h2 style={{ margin: '0 0 6px', fontSize: 15 }}>INSTITUTIONAL REGIME SIGNALS</h2>
+          <p style={{ margin: '0 0 8px', fontSize: 11.5, color: 'var(--text-faint)' }}>
+            機関・メディアの公開コメントをテーマ別に集計(文脈情報・売買指示ではない)
+          </p>
+          {([
+            ['risk_on', 'リスクオン論調'], ['risk_off', 'リスクオフ論調'],
+            ['rate_cut', '利下げ観測'], ['rate_hike', '利上げ観測'],
+            ['ai_capex', 'AI設備投資'], ['sector_rotation', 'ローテーション'],
+            ['jp_flow', '日本株フロー'],
+          ] as const).map(([key, label]) => {
+            const t = instThemes[key];
+            if (!t || t.count === 0) return null;
+            return (
+              <p key={key} style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
+                <b>{label}</b> × {t.count}
+                {t.example && <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> — 例: {t.example}</span>}
+              </p>
+            );
+          })}
         </section>
       )}
     </PageShell>

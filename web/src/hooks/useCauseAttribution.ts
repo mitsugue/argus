@@ -36,6 +36,13 @@ export interface CauseStack {
                       eligibleAsPrimaryLead?: boolean; staleReasonJa?: string };
     assoc?: { via: string; term?: string; relationJa?: string; corroboration?: string };  // association link (v10.183)
   }[];
+  /** v11.6.0: compact institutional notes for this symbol (context, not trades). */
+  institutionalSignals?: {
+    id: string; sourceName: string; stance: string; stanceJa: string;
+    directness: string; directnessJa: string; headline: string;
+    ownerReadableWhy: string; confidence: number; publishedAt?: string | null;
+    headlineOnly?: boolean; actionImplicationJa?: string; url?: string | null;
+  }[];
   explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
   explanationStatus?: 'cached' | 'not_generated' | 'pending' | 'disabled' | 'budget_limited' | 'error';
   explanationGeneratedAt?: string | null;

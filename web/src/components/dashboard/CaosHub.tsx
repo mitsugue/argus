@@ -8,6 +8,9 @@ import { dashboardDedupeKey } from '../../lib/dashboardEventState';
 import { newsDisplayTitleJa } from '../../lib/aiExplanationState';
 import { autoQueueTranslations } from '../../lib/queueRequests';
 import { useWatchtowerStatus } from '../../hooks/useWatchtowerStatus';
+import { useInstitutionalSignals, STANCE_LABEL as SIG_STANCE_LABEL,
+         STANCE_TONE as SIG_STANCE_TONE, DIRECTNESS_LABEL as SIG_DIRECTNESS_LABEL }
+  from '../../hooks/useInstitutionalSignals';
 import { classifyFreshness, freshnessLabelJa, isPastMaterial } from '../../lib/newsFreshness';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import './CaosEvents.css';
@@ -79,6 +82,8 @@ export const CaosHub: React.FC = () => {
   const { data: dsData } = useDownsideIncidents();  // active drops, surfaced in the hub (v10.178)
   const { data: radarData } = useNewsRadar();       // crisis-theme radar, folded into C.A.O.S. (v10.192)
   const { data: wt } = useWatchtowerStatus();       // watchtower source freshness (v11.5.3)
+  const { data: instData } = useInstitutionalSignals();   // formal signals (v11.6.0)
+  const instSignals = instData?.signals ?? [];
   const dash = useDashboardEvents();                // v11.4.1: dedupe vs the unified top card
 
   React.useEffect(() => {
@@ -280,10 +285,41 @@ export const CaosHub: React.FC = () => {
         </div>
       )}
 
-      {material.length > 0 && (
+      {(instSignals.length > 0 || material.length > 0) && (
         <div className="caoshub-tier">
-          <div className="caoshub-tierhead">機関シグナル</div>
-          {material.map((it, i) => (
+          <div className="caoshub-tierhead">
+            INSTITUTIONAL INTELLIGENCE
+            <span className="caoshub-tiernote"> 機関・メディアの公開シグナル(文脈情報・売買指示ではない)</span>
+          </div>
+          {instSignals.length > 0 ? instSignals.slice(0, 5).map((s) => (
+            <div className="mis-row" key={s.id} style={{ paddingBottom: 6 }}>
+              <div className="mis-l1">
+                <span className="mis-inst">{s.sourceName}</span>
+                <span className="mis-stance" style={{ color: SIG_STANCE_TONE[s.stance] }}>
+                  {SIG_STANCE_LABEL[s.stance] ?? s.stance}
+                </span>
+                <span style={{ fontSize: 9.5, color: 'var(--text-faint)', border: '1px solid var(--line)',
+                               borderRadius: 999, padding: '0 6px' }}>
+                  {SIG_DIRECTNESS_LABEL[s.directness]}
+                </span>
+                {s.headlineOnly && (
+                  <span style={{ fontSize: 9.5, color: 'var(--text-faint)' }}>Headline-only</span>
+                )}
+                {(s.affectedAssets || []).slice(0, 4).map((a) => (
+                  <span className="mis-asset" key={a}>{a}</span>
+                ))}
+              </div>
+              <a className="mis-headline" href={s.url || '#'} target="_blank" rel="noopener noreferrer">
+                {s.headline}
+              </a>
+              <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-sub)', lineHeight: 1.6 }}>
+                なぜ重要か: {s.ownerReadableWhy}
+              </p>
+              <p style={{ margin: '1px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                次に確認: {s.checkNextJa} · 含意: {s.actionImplicationJa}
+              </p>
+            </div>
+          )) : material.map((it, i) => (
             <div className="mis-row" key={i}>
               <div className="mis-l1">
                 <span className="mis-inst">{INST_NAME[it.institutionId!] ?? it.institutionId}</span>
@@ -301,6 +337,9 @@ export const CaosHub: React.FC = () => {
               </a>
             </div>
           ))}
+          <p style={{ margin: '4px 0 0', fontSize: 10, color: 'var(--text-faint)' }}>
+            {instData?.disclaimerJa ?? 'これは公開されている機関・メディアのシグナルであり、文脈情報です。自動売買の指示ではありません。'}
+          </p>
         </div>
       )}
 

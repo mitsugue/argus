@@ -46,6 +46,7 @@ import argus_caos_watchtower_plan  # C.A.O.S. watchtower target plan (pure, v11.
 import argus_caos_patrol  # always-on patrol schedule (pure, v11.5.4)
 import argus_caos_source_sweep  # maximum-available source sweep helpers (pure, v11.5.4)
 import argus_caos_patrol_store  # 24h patrol ledger — soak proof (pure, v11.5.5)
+import argus_institutional_intel  # formal institutional signal layer (pure, v11.6.0)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6254,6 +6255,80 @@ def collect_institutional_intel():
 
 def _intel_clusters():
     return argus_research_mesh.cluster_items(list(_INTEL_STORE))
+
+
+# ━━━ V11.6.0 Institutional Intelligence Layer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Formal InstitutionalSignal records built (cached-only) from the intel mesh:
+# stance / claim type / direct-vs-background / owner-readable why (JA) / action
+# implication that is NEVER a trade. Public GETs read the in-memory store only.
+
+def _owner_asset_set():
+    base = {"GLD", "TLT", "XLRE", "BTC", "ETH", "USDJPY"}
+    try:
+        return set(_intel_watchlist_symbols()) | base
+    except Exception:
+        return base
+
+
+def _institutional_signals(symbol=None, cap=40):
+    now_iso = _ai_now_iso()
+    sigs = argus_institutional_intel.build_signals(
+        list(_INTEL_STORE)[:400], owner_assets=_owner_asset_set(),
+        now_iso=now_iso, cap=cap)
+    if symbol:
+        symu = str(symbol).upper()
+        sigs = [s for s in sigs if symu in (s.get("affectedAssets") or [])
+                or symu in (s.get("tickers") or [])]
+    return sigs
+
+
+@app.route("/api/argus/institutional-intel/signals")
+def api_argus_institutional_intel_signals():
+    """Public cached-only: ranked institutional signals (+regime themes). No fetch,
+    no LLM. ?symbol= narrows to one asset. Context, never trade instructions."""
+    try:
+        limit = max(1, min(int(request.args.get("limit") or 20), 40))
+    except Exception:
+        limit = 20
+    sigs = _institutional_signals(symbol=request.args.get("symbol"), cap=40)
+    return jsonify({
+        "schemaVersion": "institutional-intel-signals-v1", "asOf": _ai_now_iso(),
+        "count": len(sigs[:limit]), "signals": sigs[:limit],
+        "regimeThemes": argus_institutional_intel.regime_themes(sigs),
+        "handoffSummary": argus_institutional_intel.handoff_summary(sigs[:20]),
+        "disclaimerJa": argus_institutional_intel.DISCLAIMER_JA,
+        "disclaimerEn": argus_institutional_intel.DISCLAIMER_EN})
+
+
+@app.route("/api/argus/institutional-intel/status")
+def api_argus_institutional_intel_status():
+    """Public observability: registry (enabled/disabled with reasons), fetch stats
+    from the existing 24/7 collector, today's signal counts. Not a red alert unless
+    ingestion is actually dead."""
+    now_iso = _ai_now_iso()
+    sigs = _institutional_signals(cap=40)
+    today = now_iso[:10]
+    per_feed = _INTEL_LAST.get("perFeed") or []
+    failed = [f["feed"] for f in per_feed if not f.get("ok")]
+    reg = argus_institutional_intel.build_source_registry()
+    disabled = [{"sourceName": s["sourceName"], "reasonJa": s["noteJa"]}
+                for s in (reg["media"] + reg["official"])
+                if s["status"] in ("disabled", "metadata_only")]
+    ts = _INTEL_LAST.get("ts") or 0
+    return jsonify({
+        "schemaVersion": "institutional-intel-status-v1", "asOf": now_iso,
+        "sourcesChecked": len(per_feed), "sourcesFailed": failed,
+        "latestFetchAt": (datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                          if ts else None),
+        "signalsNow": len(sigs),
+        "signalsToday": sum(1 for s in sigs if str(s.get("publishedAt") or "")[:10] == today
+                            or str(s.get("fetchedAt") or "")[:10] == today),
+        "mappedToOwnerAssets": sum(1 for s in sigs if s.get("ownerAssetHit")),
+        "headlineOnlyCount": sum(1 for s in sigs if s.get("headlineOnly")),
+        "registry": reg, "disabledSources": disabled,
+        "ingestionAlive": bool(ts and (time.time() - ts) < 3600),
+        "noteJa": "取込は既存のC.A.O.S. 24/7巡回(rate-limit/dedupe/失敗バックオフ実装済み)を共用。"
+                  "公開GETは取得を起動しない。"})
 
 
 @app.route("/api/argus/institutional-intelligence")
@@ -13004,6 +13079,12 @@ def get_cause_attribution(symbol, market="JP", explain=False):
     news.sort(key=lambda n: ((n.get("newsFreshness") or {}).get("ageHours") is None,
                              (n.get("newsFreshness") or {}).get("ageHours") or 0.0))
     stack["news"] = news
+    # v11.6.0: compact institutional notes for this symbol (cached-only; context,
+    # never a trade instruction — the FE renders stance/directness/whyJa).
+    try:
+        stack["institutionalSignals"] = _institutional_signals(symbol=symu, cap=40)[:2]
+    except Exception:
+        stack["institutionalSignals"] = []
     # V11.3.3: attach the mover-cause ladder (cached evidence only — no fetch/LLM)
     try:
         _mover_causes_restore_once()
@@ -17072,6 +17153,25 @@ def _build_pro_handoff():
     ds_section = _pro_downside_section()         # active downside incidents + cause matrix (#9, v10.98)
     if ds_section:
         prompt = prompt + "\n\n" + ds_section
+    # v11.6.0: Institutional Intelligence Summary — supportive vs opposing vs
+    # conditional public signals, missing evidence, direct/background split.
+    try:
+        ho = argus_institutional_intel.handoff_summary(_institutional_signals(cap=40)[:20])
+        lines = [f"## {ho['title']}",
+                 f"(direct={ho['directCount']} related={ho['relatedCount']} "
+                 f"background={ho['backgroundCount']})"]
+        for label, key in (("Supportive", "supportive"), ("Opposing", "opposing"),
+                           ("Conditional/Mixed", "conditional")):
+            if ho.get(key):
+                lines.append(f"### {label}")
+                lines += [f"- {x}" for x in ho[key]]
+        if ho.get("missingEvidence"):
+            lines.append("### Missing evidence")
+            lines += [f"- {x}" for x in ho["missingEvidence"]]
+        lines.append(f"注意: {ho['disclaimerJa']}")
+        prompt = prompt + "\n\n" + "\n".join(lines)
+    except Exception:
+        pass
     live_n = sum(1 for v in src.values() if v == "live")
     status = "live" if live_n == len(src) else ("partial" if live_n > 0 else "mock")
     source_statuses = {**src, "proHandoff": "live", "aiJudgment": aij_status}
