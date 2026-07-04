@@ -195,12 +195,21 @@ def register_institution_alias(institution_id: str, alias: str) -> bool:
 
 def resolve_institution(text: str) -> Optional[str]:
     """Alias → institutionId, longest-alias-first. None when not confidently matched
-    (never invent an identity, §6)."""
+    (never invent an identity, §6). Short ASCII aliases (<=4 chars, e.g. "gs"/"ms"/
+    "ubs") match on WORD BOUNDARIES only — bare substring matching mis-attributed
+    'holdinGS' to Goldman Sachs (caught in the v11.6.0 UI review)."""
     t = (text or "").lower()
     best = None
     for iid, v in INSTITUTIONS.items():
         for alias in v["aliases"]:
-            if alias and alias in t and (best is None or len(alias) > best[1]):
+            if not alias:
+                continue
+            if len(alias) <= 4 and alias.isascii():
+                if not re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", t):
+                    continue
+            elif alias not in t:
+                continue
+            if best is None or len(alias) > best[1]:
                 best = (iid, len(alias))
     return best[0] if best else None
 
