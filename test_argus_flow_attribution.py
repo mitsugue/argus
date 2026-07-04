@@ -139,6 +139,9 @@ def test_big_drop_without_volume_is_never_no_action():
     if r["flowClass"] == "panic_selling":
         assert r["confidence"] <= 0.45          # missing evidence caps it
         assert "PRICE_ONLY_DROP" in r["reasonCodes"]
+        # why-text must not claim evidence we don't hold (no volume/close data)
+        assert "出来高急増" not in r["ownerReadableWhyJa"]
+        assert "安値引け" not in r["ownerReadableWhyJa"]
     r2 = _c({"changePct": 4.8}, symbol="AAPL", market="US")
     assert r2["actionImplication"] == "investigate"   # unknown but material → dig
 

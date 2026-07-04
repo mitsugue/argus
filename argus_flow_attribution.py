@@ -280,7 +280,7 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         action = "investigate"
         reasons.append("MATERIAL_MOVE_UNCLASSIFIED")
 
-    why = _why_ja(flow_class, conf, directness, evidence, missing)
+    why = _why_ja(flow_class, conf, directness, evidence, missing, reasons)
     check = _check_next_ja(flow_class, missing, market)
     ev_score = round(sum(1 for v in evidence.values() if v) / len(EVIDENCE_KEYS), 2)
     risk = round(min(1.0, (0.6 if flow_class in ("retail_chase", "distribution",
@@ -314,19 +314,28 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
     }
 
 
-def _why_ja(flow_class, conf, directness, evidence, missing):
+def _why_ja(flow_class, conf, directness, evidence, missing, reasons=()):
+    """NEVER claim evidence we don't hold: each template only names the pieces
+    that are actually present (volume spike / weak close / measured flow)."""
     lvl = "高" if conf >= 0.65 else "中" if conf >= 0.45 else "低"
     have = "・".join(v for v in (evidence.get("priceActionEvidence"),
                                  evidence.get("volumeEvidence")) if v)
     miss = "・".join(missing[:2])
+    has_vol = bool(evidence.get("volumeEvidence"))
+    weak_close = "CLOSE_NEAR_LOW" in reasons or "VOL_UP_WEAK_CLOSE" in reasons
+    panic_bits = "急落" + ("+出来高急増" if has_vol else "(出来高は未取得)") \
+                 + ("+安値引け" if weak_close else "")
+    dist_txt = ("価格が保たれる裏で実測フローが流出超 — 上値で売り抜けられている可能性"
+                if "MEASURED_BIG_OUTFLOW" in reasons and not weak_close
+                else "出来高増なのに終値が弱く、上値で売り抜けられている可能性")
     base = {
         "institutional_accumulation":
             f"{have}と終値位置は買い集め型。ただし大口の実買いとは断定できない",
         "short_covering": f"{have}。売り長/空売りの積み上がりからの買い戻し(踏み上げ)の型",
         "retail_chase": f"急伸後の{have}に機関の裏付けが薄く、個人の追随買いの型",
         "profit_taking": "上昇後に上値で売られる型(利益確定の推定)",
-        "distribution": "出来高増なのに終値が弱く、上値で売り抜けられている可能性",
-        "panic_selling": "急落+出来高急増+安値引けで、狼狽売りの型",
+        "distribution": dist_txt,
+        "panic_selling": f"{panic_bits}で、狼狽売りの型",
         "rotation_in": "同テーマの複数銘柄が同時に買われており、テーマへの資金流入の型",
         "rotation_out": "同テーマの複数銘柄が同時に売られており、資金流出の型",
         "event_driven_buying": "本日のイベントを起点とした買いの可能性",
