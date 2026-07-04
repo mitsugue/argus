@@ -405,7 +405,12 @@ _RL_MAX     = 120         # default requests / IP / minute
 # home IP often runs phone+Mac+preview simultaneously — 30 made the app
 # rate-limit ITSELF (observed 2026-06-13). 90 keeps 3 devices + scout taps
 # comfortable while still bounding abuse (all heavy endpoints are cached).
-_RL_MAX_HEAVY = 90
+_RL_MAX_HEAVY = 140       # raised 90→140 (v11.8.1): v11.7/11.8 added flow +
+                          # position-exposure + rates polling; 3 devices × ~20/min
+                          # legit heavy reads were brushing the 90 ceiling.
+# Interactive symbol-search gets its OWN bucket (v11.8.1) so background quote
+# polling can never starve a human typing in the search box into 「混雑」.
+_RL_MAX_SEARCH = 30
 _RL_MAX_IPS = 5000        # memory bound on a public endpoint
 
 def _rl_client_ip():
@@ -417,10 +422,18 @@ def _rate_limit():
     p = request.path
     if not p.startswith("/api/argus/") or request.method == "OPTIONS":
         return None
-    heavy = ("symbol-search" in p) or any(k in request.args for k in ("symbols", "jp", "us", "ids", "q", "symbol"))
-    limit = _RL_MAX_HEAVY if heavy else _RL_MAX
+    # v11.8.1 (owner report 「検索すると混雑してるとよく言われる」): symbol-search
+    # used to share the heavy bucket with the app's own quote polling (Mac+
+    # iPhone+iPad on one home IP), so background polling starved interactive
+    # search into 429s. Search now has its OWN per-IP bucket — polling can no
+    # longer eat the search budget — and the heavy budget is raised for the
+    # v11.7/11.8 polling growth (all cached reads on Render Standard 2GB).
+    search = "symbol-search" in p
+    heavy = (not search) and any(k in request.args
+                                 for k in ("symbols", "jp", "us", "ids", "q", "symbol"))
+    limit = _RL_MAX_SEARCH if search else (_RL_MAX_HEAVY if heavy else _RL_MAX)
     now = time.time()
-    ip = _rl_client_ip()
+    ip = _rl_client_ip() + (":search" if search else "")
     with _RL_LOCK:
         if len(_RL_BUCKETS) > _RL_MAX_IPS:
             _RL_BUCKETS.clear()

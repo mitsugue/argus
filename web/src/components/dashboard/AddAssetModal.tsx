@@ -1,3 +1,4 @@
+import { SYMBOL_TO_COINGECKO } from '../../lib/cryptoIds';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { searchFunds } from '../../lib/fundCatalog';
@@ -95,7 +96,10 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
     const sym = kind === 'US Stock' ? symbol.trim().toUpperCase() : symbol.trim();
     const dn = name.trim();
     if (!sym || !dn) { setErr('シンボルと表示名は必須です(候補をクリックすると自動入力)。'); return; }
-    const memo = kind === 'Crypto' && cgId ? `coingecko:${cgId}` : undefined;
+    // v11.8.1: fall back to the well-known symbol map so a manually-typed
+    // XRP/SOL still prices (owner report: candidates not clicked → no memo).
+    const cgResolved = cgId || (kind === 'Crypto' ? (SYMBOL_TO_COINGECKO[sym.toUpperCase()] ?? '') : '');
+    const memo = kind === 'Crypto' && cgResolved ? `coingecko:${cgResolved}` : undefined;
     const id = onAdd({
       market: cfg.market, assetType: cfg.assetType, source: cfg.source,
       symbol: sym, displayName: dn, displayNameJa: nameJa.trim() || undefined, memo,

@@ -9,6 +9,7 @@ import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
 import { useFundNav } from '../hooks/useFundNav';
 import { buildExposure } from '../lib/portfolio';
+import { coingeckoIdOf } from '../lib/cryptoIds';
 import { buildPositionExposure } from '../domain/positionExposure';
 import { publishExposure } from '../lib/positionExposureShare';
 import { coreActionFor } from '../lib/todayCall';
@@ -44,7 +45,7 @@ export const CorePortfolio: React.FC = () => {
   const cryptoPairs = useMemo(
     () => assets
       .filter((a) => a.market === 'CRYPTO')
-      .map((a) => ({ symbol: a.symbol, id: (a.memo ?? '').startsWith('coingecko:') ? (a.memo as string).slice('coingecko:'.length) : '' }))
+      .map((a) => ({ symbol: a.symbol, id: coingeckoIdOf(a) }))
       .filter((p) => p.id),
     [assets],
   );

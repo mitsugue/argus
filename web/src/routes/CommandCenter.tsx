@@ -29,6 +29,7 @@ import { buildPositionExposure } from '../domain/positionExposure';
 import { publishExposure } from '../lib/positionExposureShare';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
+import { coingeckoIdOf } from '../lib/cryptoIds';
 import {
   deriveTodayJudgment, combinePhase,
   type TodayPhase,
@@ -81,13 +82,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   // crypto cards show the day-change like JP/US (was always "—" before).
   const cryptoAssets = useMemo(() => assets.filter((a) => a.market === 'CRYPTO'), [assets]);
   const cryptoIds = useMemo(
-    () => cryptoAssets.map((a) => (a.memo?.match(/coingecko:(\S+)/)?.[1])).filter(Boolean) as string[],
+    () => cryptoAssets.map((a) => coingeckoIdOf(a)).filter(Boolean),
     [cryptoAssets]);
   const cw = useCryptoWatchlist(cryptoIds);
   const cryptoQuotes = useMemo(() => {
     const m: Record<string, { price?: number | null; changePct?: number | null }> = {};
     for (const a of cryptoAssets) {
-      const id = a.memo?.match(/coingecko:(\S+)/)?.[1];
+      const id = coingeckoIdOf(a);
       const q = id ? cw.byId?.[id] : undefined;
       if (q) m[a.symbol.toUpperCase()] = { price: q.priceUsd ?? null, changePct: q.changePct ?? null };
     }

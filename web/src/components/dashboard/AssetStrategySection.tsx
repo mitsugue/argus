@@ -1,3 +1,4 @@
+import { coingeckoIdOf } from '../../lib/cryptoIds';
 import React, { useMemo, useState } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
@@ -706,7 +707,7 @@ export const AssetStrategySection: React.FC<Props> = ({ assets, onReorder, expan
   const cryptoPairs = useMemo(
     () => assets
       .filter((a) => a.market === 'CRYPTO')
-      .map((a) => ({ symbol: a.symbol, id: (a.memo ?? '').startsWith('coingecko:') ? (a.memo as string).slice('coingecko:'.length) : '' }))
+      .map((a) => ({ symbol: a.symbol, id: coingeckoIdOf(a) }))
       .filter((p) => p.id),
     [assets],
   );
