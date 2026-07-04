@@ -109,7 +109,7 @@ export function AiExplanationBlock({ explanationJa, explanationStatus, symbol, m
             .sort((a, b) => (a.ageHours ?? Infinity) - (b.ageHours ?? Infinity))
             .slice(0, 3).map((it, i) => (
             <p key={i} style={{ margin: '2px 0 0', color: 'var(--text-sub)' }}>
-              ・{it.title}
+              ・{it.displayTitleJa || it.title}
               <span style={{ color: 'var(--text-faint)', fontSize: 10, marginLeft: 6 }}>
                 {it.truePublisher}{it.ageHours != null ? ` · ${it.ageHours < 1 ? '1h以内' : `${Math.floor(it.ageHours)}h前`}` : ''}
               </span>

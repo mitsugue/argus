@@ -422,7 +422,9 @@ def regime_themes(signals: List[Dict[str, Any]]) -> Dict[str, Any]:
             if any(k in text for k in kws):
                 counts[theme]["count"] += 1
                 if counts[theme]["example"] is None:
-                    counts[theme]["example"] = s["headline"][:120]
+                    # owner rule: display text is Japanese-first when available
+                    counts[theme]["example"] = (s.get("displayTitleJa")
+                                                or s["headline"])[:120]
     return counts
 
 

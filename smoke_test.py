@@ -688,6 +688,40 @@ def v_institutional_status():
                   f"headlineOnly={d['headlineOnlyCount']} alive={d['ingestionAlive']}")
 
 
+def v_flow_attribution():
+    # v11.7.0: flow attribution — public cached-only, hedged vocabulary, no trading.
+    c, d = _get("/api/argus/flow-attribution?symbol=6146&market=JP")
+    if d.get("schemaVersion") != "flow-attribution-response-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    rec = d.get("record") or {}
+    for k in ("flowClass", "flowClassJa", "confidence", "directness", "missingEvidence",
+              "ownerReadableWhyJa", "actionImplication", "complianceNote"):
+        if k not in rec:
+            return False, f"record missing {k}"
+    if rec["actionImplication"] not in ("investigate", "wait_for_confirmation",
+                                        "avoid_chase", "monitor", "caution", "no_action"):
+        return False, f"trade-like action: {rec['actionImplication']}"
+    if "大口が買っている" in (rec.get("ownerReadableWhyJa") or ""):
+        return False, "assertive big-money phrase leaked"
+    c2, d2 = _get("/api/argus/flow-attribution")
+    if "records" not in d2:
+        return False, "list missing records"
+    return True, f"single={rec['flowClass']}({rec['confidence']}) list={len(d2['records'])}"
+
+
+def v_flow_attribution_status():
+    c, d = _get("/api/argus/flow-attribution/status")
+    if d.get("schemaVersion") != "flow-attribution-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    sa = d.get("sourceAvailability") or {}
+    if sa.get("flow_jp_bridge") is not False:
+        return False, "JP flow must be reported as intentionally off"
+    if "意図的に無効" not in (d.get("noteJa") or ""):
+        return False, "JP-off honesty note missing"
+    return True, (f"scanned={d.get('assetsScanned')} signals={d.get('signalsGenerated')} "
+                  f"unknown={d.get('unknownCount')}")
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1479,6 +1513,9 @@ CHECKS = [
     # ── V11.6.0 Institutional Intelligence ──
     ("v11.6.0 institutional signals", v_institutional_signals),
     ("v11.6.0 institutional status", v_institutional_status),
+    # ── V11.7.0 Big Money / Flow Attribution ──
+    ("v11.7.0 flow attribution", v_flow_attribution),
+    ("v11.7.0 flow attribution status", v_flow_attribution_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

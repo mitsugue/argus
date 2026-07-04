@@ -237,7 +237,7 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
                   {s.directnessJa}{s.headlineOnly ? ' · 見出しのみ(限定確度)' : ''}
                 </span>
               </p>
-              <p style={{ margin: '1px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>{s.headline}</p>
+              <p style={{ margin: '1px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>{s.displayTitleJa || s.headline}</p>
               <p style={{ margin: '1px 0 0', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.6 }}>
                 {s.ownerReadableWhy}
               </p>
@@ -246,6 +246,27 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
           <p style={{ margin: '3px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
             公開シグナル(文脈情報)・売買指示ではありません
           </p>
+        </div>
+      )}
+
+      {/* v11.7.0: flow attribution — 誰の売買か(推定)。実測/推定を分離、断定なし */}
+      {data.flowAttribution && data.flowAttribution.flowClass !== 'unknown' && (
+        <div style={{ borderLeft: '2px solid var(--line)', paddingLeft: 8, margin: '6px 0' }}>
+          <span className="csc-k">FLOW (推定)</span>
+          <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
+            <b>{data.flowAttribution.flowClassJa}</b>
+            <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+              {data.flowAttribution.directnessJa} · 確度{Math.round(data.flowAttribution.confidence * 100)}%
+            </span>
+          </p>
+          <p style={{ margin: '1px 0 0', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+            {data.flowAttribution.ownerReadableWhyJa}
+          </p>
+          {data.flowAttribution.missingEvidence.length > 0 && data.flowAttribution.confidence < 0.65 && (
+            <p style={{ margin: '1px 0 0', fontSize: 10, color: 'var(--text-faint)' }}>
+              足りない証拠: {data.flowAttribution.missingEvidence.slice(0, 3).join(' / ')}
+            </p>
+          )}
         </div>
       )}
 

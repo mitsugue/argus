@@ -15,6 +15,7 @@ import type {
 import type { MarketRegimeSnapshot, RotationGroup } from '../types/marketRegime';
 import '../components/dashboard/Dashboard.css';
 import { useInstitutionalSignals } from '../hooks/useInstitutionalSignals';
+import { useFlowAttributionList, FLOW_TONE } from '../hooks/useFlowAttribution';
 
 // Regime tag keys stay English (UI vocabulary); gloss is JP — intentional
 // bilingual split, not a transition mistake.
@@ -96,6 +97,7 @@ export const MarketRegime: React.FC = () => {
   const { data, phase } = useMarketRegime();
   const movers = useMarketMovers();
   const { data: instData } = useInstitutionalSignals();   // v11.6.0 regime themes
+  const { records: flowRecords } = useFlowAttributionList();  // v11.7.0 flow bias
   const instThemes = instData?.regimeThemes;
   const jpMovers = useMarketMovers('/api/argus/jp-market-movers');
 
@@ -409,6 +411,37 @@ export const MarketRegime: React.FC = () => {
               </p>
             );
           })}
+        </section>
+      )}
+
+      {/* v11.7.0: watchlist flow bias — inflow vs outflow classes, aggregated.
+          推定の集計であり実測ではない(実測は米国ブリッジのみ)。 */}
+      {flowRecords.length > 0 && (
+        <section className="card">
+          <h2 style={{ margin: '0 0 6px', fontSize: 15 }}>FLOW BIAS (推定)</h2>
+          <p style={{ margin: '0 0 8px', fontSize: 11.5, color: 'var(--text-faint)' }}>
+            本日の大きな動き{flowRecords.length}件の資金フロー推定の偏り(売買指示ではない)
+          </p>
+          {(() => {
+            const inflow = flowRecords.filter((r) => r.direction === 'inflow');
+            const outflow = flowRecords.filter((r) => r.direction === 'outflow');
+            const other = flowRecords.length - inflow.length - outflow.length;
+            return (
+              <p style={{ margin: 0, fontSize: 12.5 }}>
+                <span style={{ color: FLOW_TONE.inflow }}>流入型 {inflow.length}</span>
+                <span style={{ margin: '0 8px', color: 'var(--text-faint)' }}>/</span>
+                <span style={{ color: FLOW_TONE.outflow }}>流出型 {outflow.length}</span>
+                {other > 0 && <span style={{ marginLeft: 8, color: 'var(--text-faint)' }}>混在・不明 {other}</span>}
+              </p>
+            );
+          })()}
+          {flowRecords.slice(0, 4).map((r) => (
+            <p key={r.id + r.symbol} style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
+              <b>{r.symbol}</b>
+              <span style={{ marginLeft: 6, color: FLOW_TONE[r.direction] || 'var(--text-main)' }}>{r.flowClassJa}</span>
+              <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>確度{Math.round(r.confidence * 100)}%</span>
+            </p>
+          ))}
         </section>
       )}
     </PageShell>

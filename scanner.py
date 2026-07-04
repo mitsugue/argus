@@ -47,6 +47,7 @@ import argus_caos_patrol  # always-on patrol schedule (pure, v11.5.4)
 import argus_caos_source_sweep  # maximum-available source sweep helpers (pure, v11.5.4)
 import argus_caos_patrol_store  # 24h patrol ledger — soak proof (pure, v11.5.5)
 import argus_institutional_intel  # formal institutional signal layer (pure, v11.6.0)
+import argus_flow_attribution  # Big Money / Flow Attribution engine (pure, v11.7.0)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6279,6 +6280,15 @@ def _institutional_signals(symbol=None, cap=40):
         symu = str(symbol).upper()
         sigs = [s for s in sigs if symu in (s.get("affectedAssets") or [])
                 or symu in (s.get("tickers") or [])]
+    # v11.7.0 owner rule: news headlines are NEVER shown in raw English — attach
+    # the Japanese-first display title (cached JA or JP fallback) and queue the
+    # original for the admin translate cron. Cache-read only on this public path.
+    _news_ja_restore_once()
+    for s in sigs:
+        d = _news_decorate(s.get("headline") or "", s.get("sourceName") or "")
+        s["displayTitleJa"] = d["displayTitleJa"]
+        s["titleOriginal"] = d["titleOriginal"]
+        s["translationStatus"] = d["translationStatus"]
     return sigs
 
 
@@ -6329,6 +6339,175 @@ def api_argus_institutional_intel_status():
         "ingestionAlive": bool(ts and (time.time() - ts) < 3600),
         "noteJa": "取込は既存のC.A.O.S. 24/7巡回(rate-limit/dedupe/失敗バックオフ実装済み)を共用。"
                   "公開GETは取得を起動しない。"})
+
+
+# ── V11.7.0 Big Money / Flow Attribution ─────────────────────────────────────
+# Answers 「大口の新規買いか、買い戻しか、個人の追随か」 as EVIDENCE, never as a
+# trade signal. Evidence collection is CACHED-ONLY (public-path safe): bridge
+# quotes (US flow), JQ daily bars, weekly margin, institutional signals, regime,
+# macro events. Missing pieces (JP moomoo flow is intentionally off) become
+# missingEvidence + a confidence cap — never fabricated numbers.
+
+def _flow_evidence_for(symbol, market):
+    """Cached-only evidence dict for argus_flow_attribution.classify. NEVER fetches."""
+    symu, mkt = str(symbol).upper(), str(market).upper()
+    ev, sources = {}, {}
+    q = _quote_cached_only(symu, mkt) or {}
+    if isinstance(q.get("changePct"), (int, float)):
+        ev["changePct"] = float(q["changePct"])
+    if isinstance(q.get("price"), (int, float)):
+        ev["price"] = float(q["price"])
+    if isinstance(q.get("volume"), (int, float)) and q["volume"] > 0:
+        ev["volume"] = q["volume"]
+    bnr = (q.get("flow") or {}).get("bigNetRatio")
+    if isinstance(bnr, (int, float)):
+        ev["flowBigNetRatio"] = float(bnr)
+        sources["flow"] = True
+    ev["sourceUpdatedAt"] = q.get("exchangeTs") or q.get("date")
+    if mkt == "JP":
+        code4 = symu[:4]
+        h = (_JQ_HISTORY_CACHE.get(code4) or {}).get("data") or {}
+        closes, vols = h.get("closes") or [], h.get("volumes") or []
+        try:
+            if len(closes) >= 7 and closes[6]:
+                ev["priorRunupPct"] = round((float(closes[1]) / float(closes[6]) - 1) * 100, 1)
+        except Exception:
+            pass
+        try:
+            base = [v for v in vols[1:21] if isinstance(v, (int, float)) and v > 0]
+            if len(base) >= 5 and isinstance(ev.get("volume"), (int, float)):
+                ev["volumeRatio"] = round(ev["volume"] / (sum(base) / len(base)), 2)
+        except Exception:
+            pass
+        try:
+            hist = (_JQ_MARGIN_CACHE.get(code4) or {}).get("data") or []
+            if hist:
+                latest = hist[0]                    # newest-first
+                ev["marginShortHeavy"] = bool((latest.get("shortVol") or 0) >
+                                              (latest.get("longVol") or 0))
+                sources["margin"] = True
+        except Exception:
+            pass
+        try:
+            table, _dt = _JSF_CACHE.get("table"), None
+            rec = (table or {}).get(code4)
+            if rec and isinstance(rec.get("short"), int) and isinstance(rec.get("loan"), int):
+                # 貸借残: short > loan は売り長 — margin evidence が無い時の補完
+                if "marginShortHeavy" not in ev:
+                    ev["marginShortHeavy"] = rec["short"] > rec["loan"]
+                sources["shortInterest"] = True
+        except Exception:
+            pass
+    try:                                            # institutional stance (v11.6.0)
+        for s in _institutional_signals(symbol=symu, cap=10)[:3]:
+            st = s.get("stance")
+            if st in ("bullish", "bearish"):
+                ev["instStance"] = st
+                ev["instDirect"] = s.get("directness") == "direct"
+                break
+    except Exception:
+        pass
+    try:                                            # regime + macro events today
+        reg = ((_REGIME_CACHE.get("data") or {}).get("regime") or {})
+        if reg.get("label"):
+            ev["regimeLabel"] = reg["label"]
+            ev["regimeRiskOff"] = reg["label"] in ("RISK_OFF", "EVENT_WAIT")
+    except Exception:
+        pass
+    try:
+        today = _ai_now_iso()[:10]
+        ev["eventToday"] = any(
+            rec.get("phase") in ("imminent", "released_pending_result", "post_result")
+            and str(rec.get("eventTimeUtc") or rec.get("eventDate") or "")[:10] == today
+            for rec in _MOVER_MACRO_VIEW())
+    except Exception:
+        pass
+    try:                                            # theme peers (same direction)
+        chg = ev.get("changePct")
+        if isinstance(chg, (int, float)) and abs(chg) >= 1.0:
+            for members in _DOWNSIDE_THEMES.values():
+                if symu not in members:
+                    continue
+                same = total = 0
+                for m in members:
+                    if m == symu:
+                        continue
+                    pq = _quote_cached_only(m, "JP" if m[:1].isdigit() else "US") or {}
+                    pc = pq.get("changePct")
+                    if isinstance(pc, (int, float)):
+                        total += 1
+                        if abs(pc) >= 1.0 and ((pc > 0) == (chg > 0)):
+                            same += 1
+                ev["themePeersSame"], ev["themePeersTotal"] = same, total
+                break
+    except Exception:
+        pass
+    ev["sources"] = sources
+    return ev
+
+
+def _flow_attribution_for(symbol, market):
+    return argus_flow_attribution.classify(
+        symbol, market, _flow_evidence_for(symbol, market), _ai_now_iso())
+
+
+def _flow_attribution_list(cap=12):
+    """Material movers on the watchlist (|chg|>=2% or vol spike), classified."""
+    out = []
+    for s in (_JP_WATCHLIST + _US_WATCHLIST):
+        sym = str(s.get("symbol") or "").upper()
+        mkt = "JP" if sym[:1].isdigit() else "US"
+        ev = _flow_evidence_for(sym, mkt)
+        chg, vr = ev.get("changePct"), ev.get("volumeRatio")
+        if not ((isinstance(chg, (int, float)) and abs(chg) >= 2.0)
+                or (isinstance(vr, (int, float)) and vr >= 1.8)):
+            continue
+        rec = argus_flow_attribution.classify(sym, mkt, ev, _ai_now_iso())
+        rec["name"] = s.get("name") or sym
+        out.append(rec)
+    out.sort(key=lambda r: (-(r["confidence"]),
+                            -abs(r["changePct"] or 0.0)))
+    return out[:cap]
+
+
+@app.route("/api/argus/flow-attribution")
+def api_argus_flow_attribution():
+    """Public cached-only: flow attribution for ?symbol= (single) or today's
+    material watchlist movers (list). No fetch, no LLM, no trade instructions.
+    Rate limiting: the global /api/argus/ before_request bucket."""
+    sym = (request.args.get("symbol") or "").strip().upper()
+    now_iso = _ai_now_iso()
+    if sym:
+        mkt = (request.args.get("market") or ("JP" if sym[:1].isdigit() else "US")).upper()
+        rec = _flow_attribution_for(sym, mkt)
+        return jsonify({"schemaVersion": "flow-attribution-response-v1",
+                        "asOf": now_iso, "record": rec,
+                        "disclaimerJa": rec["complianceNote"]})
+    records = _flow_attribution_list(cap=12)
+    return jsonify({"schemaVersion": "flow-attribution-response-v1",
+                    "asOf": now_iso, "count": len(records), "records": records,
+                    "disclaimerJa": "推定であり売買指示ではない。大口の実在は"
+                                    "direct evidenceが無い限り断定しない。"})
+
+
+@app.route("/api/argus/flow-attribution/status")
+def api_argus_flow_attribution_status():
+    """Public observability: how many assets scanned, evidence availability
+    (JP moomoo flow is intentionally off — never a red alert), missing-evidence
+    tally. Cached-only."""
+    records = _flow_attribution_list(cap=40)
+    us_flow = any(isinstance(((_PUSHED_QUOTES.get("US") or {}).get(s, {}).get("row") or {})
+                             .get("flow", {}).get("bigNetRatio"), (int, float))
+                  for s in list(_PUSHED_QUOTES.get("US") or {})[:20])
+    avail = {"flow_us_bridge": us_flow,
+             "flow_jp_bridge": False,      # intentionally disabled (Jul-3 incident)
+             "jq_margin_weekly": bool(_JQ_MARGIN_CACHE),
+             "jsf_daily_balance": bool(_JSF_CACHE.get("table")),
+             "jq_daily_bars": bool(_JQ_HISTORY_CACHE),
+             "institutional_signals": bool(_INTEL_STORE)}
+    doc = argus_flow_attribution.status_doc(records, now_iso=_ai_now_iso(),
+                                            source_availability=avail)
+    return jsonify(doc)
 
 
 @app.route("/api/argus/institutional-intelligence")
@@ -7191,6 +7370,18 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
         searched_sources=searched, found_items=found, blocked_sources=blocked,
         alternative_sources_checked=alternatives,
         status=status, elapsed_ms=int((time.time() - t0) * 1000))
+    # v11.7.0 owner rule: sweep items shown in the UI must be Japanese-first —
+    # attach displayTitleJa (cached JA or JP fallback) and queue originals.
+    try:
+        _news_ja_restore_once()
+        for lst in ("foundItems", "freshItems", "officialItems",
+                    "professionalItems", "publicTextItems"):
+            for it in result.get(lst) or []:
+                d = _news_decorate(it.get("title") or "", it.get("truePublisher") or "")
+                it["displayTitleJa"] = d["displayTitleJa"]
+                it["translationStatus"] = d["translationStatus"]
+    except Exception:
+        pass
 
     # queue English titles for the translation cron (headlines only)
     try:
@@ -13085,6 +13276,12 @@ def get_cause_attribution(symbol, market="JP", explain=False):
         stack["institutionalSignals"] = _institutional_signals(symbol=symu, cap=40)[:2]
     except Exception:
         stack["institutionalSignals"] = []
+    # v11.7.0: flow attribution — 大口/買い戻し/追随の型を証拠ベースで添付
+    # (cached-only; 可能性/推定の語彙のみ、断定・売買指示なし)。
+    try:
+        stack["flowAttribution"] = _flow_attribution_for(symu, market)
+    except Exception:
+        stack["flowAttribution"] = None
     # V11.3.3: attach the mover-cause ladder (cached evidence only — no fetch/LLM)
     try:
         _mover_causes_restore_once()
@@ -17170,6 +17367,27 @@ def _build_pro_handoff():
             lines += [f"- {x}" for x in ho["missingEvidence"]]
         lines.append(f"注意: {ho['disclaimerJa']}")
         prompt = prompt + "\n\n" + "\n".join(lines)
+    except Exception:
+        pass
+    # v11.7.0: Big Money / Flow Attribution — likely accumulation vs covering vs
+    # distribution candidates + strongest opposing interpretation + missing evidence.
+    try:
+        fh = argus_flow_attribution.handoff_section(_flow_attribution_list(cap=20))
+        flines = [f"## {fh['title']}"]
+        for label, key in (("Likely accumulation (可能性)", "likelyAccumulation"),
+                           ("Likely short covering (可能性)", "likelyShortCovering"),
+                           ("Distribution / profit-taking risk", "distributionRisks"),
+                           ("Avoid chase (追いかけ買い注意)", "avoidChase")):
+            if fh.get(key):
+                flines.append(f"### {label}")
+                flines += [f"- {x}" for x in fh[key]]
+        if fh.get("missingEvidence"):
+            flines.append("### Missing evidence (top)")
+            flines += [f"- {m} ×{c}" for m, c in fh["missingEvidence"]]
+        flines.append(fh["opposingViewJa"])
+        flines.append(f"注意: {fh['disclaimerJa']}")
+        if len(flines) > 3:                      # only when there is real content
+            prompt = prompt + "\n\n" + "\n".join(flines)
     except Exception:
         pass
     live_n = sum(1 for v in src.values() if v == "live")

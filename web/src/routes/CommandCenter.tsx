@@ -4,6 +4,7 @@ import { HeroCard } from '../components/dashboard/HeroCard';
 import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
 import { FxMacroSection } from '../components/dashboard/FxMacroSection';
 import { CaosHub } from '../components/dashboard/CaosHub';
+import { FlowAttributionSection } from '../components/dashboard/FlowAttributionSection';
 import { BuyCandidates } from '../components/dashboard/BuyCandidates';
 import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
 import { useVisibilityGuard } from '../hooks/useVisibilityGuard';
@@ -245,6 +246,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           機関シグナル (institutional views) + イベント分析 (pre/post) + ニュース (market news).
           News is always live, so the card never disappears even when intel/events are empty. */}
       <CaosHub />
+
+      {/* BIG MONEY / FLOW (v11.7.0) — who is likely behind today's moves.
+          推定は推定と明示・実測と分離・売買指示なし。 */}
+      <FlowAttributionSection />
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" />
       <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" />

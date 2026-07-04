@@ -11,6 +11,10 @@ export interface InstitutionalSignal {
   region: string;
   publishedAt?: string | null;
   headline: string;
+  /** v11.7.0 owner rule: Japanese-first display title (never raw English). */
+  displayTitleJa?: string;
+  titleOriginal?: string;
+  translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
   summary?: string;
   url?: string | null;
   tickers: string[];

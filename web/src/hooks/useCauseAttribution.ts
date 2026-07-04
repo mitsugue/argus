@@ -39,10 +39,12 @@ export interface CauseStack {
   /** v11.6.0: compact institutional notes for this symbol (context, not trades). */
   institutionalSignals?: {
     id: string; sourceName: string; stance: string; stanceJa: string;
-    directness: string; directnessJa: string; headline: string;
+    directness: string; directnessJa: string; headline: string; displayTitleJa?: string;
     ownerReadableWhy: string; confidence: number; publishedAt?: string | null;
     headlineOnly?: boolean; actionImplicationJa?: string; url?: string | null;
   }[];
+  /** v11.7.0: evidence-based flow reading (可能性/推定 only; never a trade signal). */
+  flowAttribution?: import('./useFlowAttribution').FlowAttribution | null;
   explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
   explanationStatus?: 'cached' | 'not_generated' | 'pending' | 'disabled' | 'budget_limited' | 'error';
   explanationGeneratedAt?: string | null;

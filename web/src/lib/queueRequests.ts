@@ -44,7 +44,9 @@ export async function requestExplanation(
 
 // ── V11.5.4 investigate-now: immediate bounded source sweep (server-side; no LLM) ──
 export interface SweepItem {
-  title: string; url?: string; publishedAt?: string; snippet?: string;
+  title: string;
+  /** v11.7.0: Japanese-first display title (never raw English as primary). */
+  displayTitleJa?: string; url?: string; publishedAt?: string; snippet?: string;
   sourceFamily?: string; sourceTier?: string; truePublisher?: string;
   freshness?: string; ageHours?: number | null; weakSignal?: boolean;
 }

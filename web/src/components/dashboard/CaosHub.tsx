@@ -310,8 +310,14 @@ export const CaosHub: React.FC = () => {
                 ))}
               </div>
               <a className="mis-headline" href={s.url || '#'} target="_blank" rel="noopener noreferrer">
-                {s.headline}
+                {s.displayTitleJa || s.headline}
               </a>
+              {s.translationStatus === 'pending' && s.titleOriginal && (
+                <details style={{ display: 'inline' }}>
+                  <summary style={{ display: 'inline', cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>原文を見る</summary>
+                  <span style={{ color: 'var(--text-faint)', fontSize: 10.5 }}> {s.titleOriginal}</span>
+                </details>
+              )}
               <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-sub)', lineHeight: 1.6 }}>
                 なぜ重要か: {s.ownerReadableWhy}
               </p>
