@@ -64,14 +64,15 @@ export interface DecisionAuditRecord {
   symbol: string;
   market: string;
   decisionContext: string;      // = add-more readiness at the time
-  ownerAction: null;            // owner can annotate later (bought/held/…)
+  ownerAction: string | null;   // owner can annotate later (bought/held/…) — v11.11.0
   reasonCodes: string[];
   flowClass: string | null;
   positionRisk: string | null;
   marketRegime: string | null;
   priceAtDecision: number | null;
-  futureReturn1d: null; futureReturn3d: null; futureReturn5d: null; futureReturn20d: null;
-  reviewNote: null;
+  futureReturn1d: number | null; futureReturn3d: number | null;
+  futureReturn5d: number | null; futureReturn20d: number | null;
+  reviewNote: string | null;
   privacyLevel: 'local_only';
 }
 
@@ -171,6 +172,7 @@ export function createSnapshot(
 function appendAudit(pe: PortfolioExposure, snap: PortfolioSnapshot,
                      flow: Record<string, string>): void {
   const riskBySym = new Map(pe.risks.map((r) => [r.symbol, r.riskLevel]));
+  const sdBySym = new Map(snap.supplyDemandSummary.map((s) => [s.symbol.toUpperCase(), s]));
   const recs: DecisionAuditRecord[] = Object.values(pe.notes).map((n) => ({
     schemaVersion: AUDIT_SCHEMA_VERSION,
     id: `da-${snap.asOf}-${n.symbol}`,
@@ -182,6 +184,8 @@ function appendAudit(pe: PortfolioExposure, snap: PortfolioSnapshot,
     reasonCodes: [n.whyJa.slice(0, 60)],
     flowClass: flow[n.symbol] ?? null,
     positionRisk: riskBySym.get(n.symbol) ?? null,
+    supplyDemandRank: sdBySym.get(n.symbol)?.rank ?? null,
+    supplyDemandCondition: sdBySym.get(n.symbol)?.condition ?? null,
     marketRegime: pe.regimeSummaryJa.slice(0, 60) || null,
     priceAtDecision: snap.pricesUsed[n.symbol] ?? null,
     futureReturn1d: null, futureReturn3d: null, futureReturn5d: null, futureReturn20d: null,

@@ -30,6 +30,7 @@ import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection
 import { buildPositionExposure } from '../domain/positionExposure';
 import { publishExposure } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
+import { maybeUpdateOutcomes } from '../lib/decisionQuality';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { coingeckoIdOf } from '../lib/cryptoIds';
@@ -192,6 +193,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return pe;
   }, [assets, cardGroups, rates.data, flowRecords, sdSignals, impEvents, regime.data, peJp.data, peUs.data]);
 
+  // v11.11.0: device-local outcome updater — once per JST day, fills
+  // 「その後どうなったか」(1d/3d/5d/20d) for past decision records.
+  useEffect(() => {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+    if (!backend) return;
+    const t = setTimeout(() => { void maybeUpdateOutcomes(backend); }, 8000);
+    return () => clearTimeout(t);
+  }, []);
+
   const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
   const judgment = useMemo(
     () => deriveTodayJudgment(al.data, regime.data, ev.data, Date.now()),
@@ -316,7 +326,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       <SupplyDemandSection signals={sdSignals} />
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} />
-      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} />
+      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} />
 
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
           The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not

@@ -186,3 +186,31 @@ def test_handoff_and_snapshot_summary():
     assert "5803" in snap["squeezeProne"]
     assert "9984" in snap["creditOverhang"]
     assert snap["missingSupplyDemandEvidence"]
+
+
+# ── v11.11.0: US simplified supply/demand (owner: 「アメリカ株の需給は?」) ──
+def test_us_measured_flow_is_direct_and_capped():
+    r = sd.classify("NVDA", "US", {"measuredFlowNetRatio": 0.25, "changePct": 3.0,
+                                   "volumeRatio": 1.8, "avgDailyVolume": 1e7}, NOW)
+    assert r["condition"] in ("good", "slightly_good")
+    assert r["directness"] == "direct_data"
+    assert r["confidence"] <= 0.6                     # simplified read caps
+    assert r["supplyDemandRank"] != "S"               # S needs JP dual feeds
+    assert "実測" in r["ownerReadableWhyJa"]
+    assert "簡易判定" in r["ownerReadableWhyJa"] or "簡易判定" in r["sourceLimitNote"]
+    assert any("FINRA" in m for m in r["missingEvidence"])
+
+
+def test_us_distribution_on_outflow_into_strength():
+    r = sd.classify("TSLA", "US", {"measuredFlowNetRatio": -0.2, "changePct": 2.0,
+                                   "avgDailyVolume": 1e7}, NOW)
+    assert r["condition"] == "distribution_risk"
+    assert "流出超" in r["ownerReadableWhyJa"]
+
+
+def test_us_without_flow_is_unknown_never_squeeze():
+    r = sd.classify("AAPL", "US", {"changePct": 5.0, "volumeRatio": 2.0}, NOW)
+    assert r["supplyDemandRank"] == "Unknown"
+    assert r["condition"] != "squeeze_prone"          # US can't detect squeeze
+    assert any("実測大口フロー" in m for m in r["missingEvidence"])
+    assert "暫定" in r["sourceLimitNote"]

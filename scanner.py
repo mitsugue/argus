@@ -51,6 +51,7 @@ import argus_flow_attribution  # Big Money / Flow Attribution engine (pure, v11.
 import argus_position_exposure  # Position/Exposure engine (pure, v11.8.0 — backend sees NO holdings)
 import argus_portfolio_sync  # Portfolio Sync/Snapshot foundation (pure, v11.9.0 — models + redaction; server plaintext sync disabled)
 import argus_supply_demand  # Supply/Demand Intelligence for JP stocks (pure, v11.10.0 — 需給ランク; never fabricates JSF/margin)
+import argus_decision_quality  # Decision Quality/Backtest foundation (pure, v11.11.0 — records live device-local only)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -6587,21 +6588,76 @@ def api_argus_position_exposure_status():
         "disclaimerJa": "リスク点検であり売買指示ではない。"})
 
 
+# ── V11.11.0 US daily-bars cache (Finnhub candles; warmed by the collect cron
+# only — public GETs read cache). Feeds US supply/demand volume metrics, flow
+# volumeRatio, and the Decision Quality outcome updater. ──────────────────────
+_US_HISTORY_CACHE = {}          # SYM -> {"data": {...}|None, "expires": epoch}
+_US_HISTORY_TTL = 6 * 3600
+
+
+def _us_price_history(sym):
+    """~60 trading days of closes/volumes/dates (newest-first) for one US symbol.
+    FETCHES (Finnhub) — call only from admin/cron paths; readers use the cache."""
+    symu = str(sym).upper()
+    now = time.time()
+    c = _US_HISTORY_CACHE.get(symu)
+    if c and now < c["expires"]:
+        return c["data"]
+    data = None
+    try:
+        candles = get_stock_candles(symu, days=90)
+        if candles and len(candles) >= 20:
+            rows = sorted(candles, key=lambda x: x["timestamp"], reverse=True)
+            data = {"closes": [float(r["close"]) for r in rows],
+                    "volumes": [int(r.get("volume") or 0) for r in rows],
+                    "dates": [datetime.utcfromtimestamp(r["timestamp"]).strftime("%Y-%m-%d")
+                              for r in rows]}
+    except Exception as e:
+        add_log(f"[sd] us history fetch failed {symu}: {type(e).__name__}")
+    _US_HISTORY_CACHE[symu] = {"data": data, "expires": now + (_US_HISTORY_TTL if data else 600)}
+    return data
+
+
 # ── V11.10.0 Supply / Demand Intelligence (JP) ───────────────────────────────
 # 「日証金を見ると需給は良いのか悪いのか」に RANK+状態 で答える層。数値の読み方
 # はエンジンが行い、生数値はevidence(UIでは折りたたみ)に置く。cached-only:
 # J-Quants週次信用残 + JSF日次貸借残 + 日足 — 公表データでリアルタイムではない。
 
-def _supply_demand_signal_for(symu):
-    """One JP symbol → SupplyDemandSignal. Cached-only, deterministic."""
+def _supply_demand_signal_for(symu, market="JP"):
+    """One symbol → SupplyDemandSignal. Cached-only, deterministic. JP uses
+    margin/JSF structure; US uses the measured bridge flow (簡易判定, honest)."""
     symu = str(symu).upper()
+    mkt = str(market).upper()
     code4 = symu[:4]
-    fev = _flow_evidence_for(symu, "JP")
+    fev = _flow_evidence_for(symu, mkt)
     ev = {"changePct": fev.get("changePct"), "volumeRatio": fev.get("volumeRatio"),
           "priorRunupPct": fev.get("priorRunupPct"), "instStance": fev.get("instStance"),
           "eventToday": fev.get("eventToday"), "regimeRiskOff": fev.get("regimeRiskOff"),
           "liquidityLow": fev.get("liquidityLow"),
           "sourceUpdatedAt": fev.get("sourceUpdatedAt")}
+    if mkt == "US":
+        ev["measuredFlowNetRatio"] = fev.get("flowBigNetRatio")
+        try:
+            h = (_US_HISTORY_CACHE.get(symu) or {}).get("data") or {}
+            vols = [v for v in (h.get("volumes") or [])[1:21]
+                    if isinstance(v, (int, float)) and v > 0]
+            if len(vols) >= 5:
+                ev["avgDailyVolume"] = sum(vols) / len(vols)
+                q = _quote_cached_only(symu, "US") or {}
+                if isinstance(q.get("volume"), (int, float)) and q["volume"] > 0 \
+                        and ev.get("volumeRatio") is None:
+                    ev["volumeRatio"] = round(q["volume"] / ev["avgDailyVolume"], 2)
+            closes = h.get("closes") or []
+            if len(closes) >= 7 and closes[6] and ev.get("priorRunupPct") is None:
+                ev["priorRunupPct"] = round((float(closes[1]) / float(closes[6]) - 1) * 100, 1)
+        except Exception:
+            pass
+        try:
+            ev["flowClass"] = argus_flow_attribution.classify(
+                symu, "US", fev, _ai_now_iso())["flowClass"]
+        except Exception:
+            pass
+        return argus_supply_demand.classify(symu, "US", ev, _ai_now_iso())
     try:
         hist = (_JQ_MARGIN_CACHE.get(code4) or {}).get("data") or []
         if hist:
@@ -6636,13 +6692,14 @@ def _supply_demand_signal_for(symu):
     return argus_supply_demand.classify(symu, "JP", ev, _ai_now_iso())
 
 
-def _supply_demand_list(cap=12):
+def _supply_demand_list(cap=16):
     out = []
-    for s in _JP_WATCHLIST:
+    for s, mkt in ([(x, "JP") for x in _JP_WATCHLIST]
+                   + [(x, "US") for x in _US_WATCHLIST]):
         sym = str(s.get("symbol") or "").upper()
         if not sym:
             continue
-        sig = _supply_demand_signal_for(sym)
+        sig = _supply_demand_signal_for(sym, mkt)
         sig["name"] = s.get("name") or sym
         out.append(sig)
     rank_order = {"S": 0, "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "Unknown": 6}
@@ -6661,6 +6718,41 @@ def _supply_demand_sources():
             "jsf": bool(_JSF_CACHE.get("table")),
             "jqMargin": bool(_JQ_MARGIN_CACHE),
             "shortRatio": False}
+
+
+# ── V11.11.0 Decision Quality foundation (server side = status + price history
+# only; the RECORDS live device-local, the server never stores them) ─────────
+
+@app.route("/api/argus/price-history")
+def api_argus_price_history():
+    """Public cached-only daily closes (dates newest-first) — the Decision
+    Quality outcome updater runs ON DEVICE and needs forward closes. JP from
+    the J-Quants bars cache, US from the Finnhub bars cache (both warmed by the
+    collect cron). NEVER fetches here; cold cache → honest empty."""
+    sym = (request.args.get("symbol") or "").strip().upper()
+    mkt = (request.args.get("market") or ("JP" if sym[:1].isdigit() else "US")).upper()
+    if not sym:
+        return jsonify({"error": "symbol required"}), 400
+    h = None
+    if mkt == "JP":
+        h = (_JQ_HISTORY_CACHE.get(sym[:4]) or {}).get("data")
+    elif mkt == "US":
+        h = (_US_HISTORY_CACHE.get(sym) or {}).get("data")
+    return jsonify({"schemaVersion": "price-history-v1", "asOf": _ai_now_iso(),
+                    "symbol": sym, "market": mkt,
+                    "available": bool(h),
+                    "dates": (h or {}).get("dates") or [],
+                    "closes": (h or {}).get("closes") or [],
+                    "noteJa": (None if h else
+                               "日足キャッシュ未取得(平日の巡回で自動取得されます)。")})
+
+
+@app.route("/api/argus/decision-quality/status")
+def api_argus_decision_quality_status():
+    """Public REDACTED status — architecture facts only. Records/outcomes are
+    device-local (+encrypted vault); the server holds none by construction."""
+    return jsonify(argus_decision_quality.public_status(
+        enabled=True, storage_mode="local_only+encrypted_vault", now_iso=_ai_now_iso()))
 
 
 @app.route("/api/argus/supply-demand")
@@ -6920,6 +7012,12 @@ def api_argus_intel_collect():
                 if _jq_weekly_margin(code4):
                     warmed["margin"] += 1
                 _jq_price_history(code4)   # daily bars → avgVolume/daysToCover/runup
+        except Exception:
+            continue
+    for s in _US_WATCHLIST:                    # v11.11.0: US bars for 需給/outcome
+        try:
+            if _us_price_history(str(s.get("symbol") or "")):
+                warmed["usBars"] = warmed.get("usBars", 0) + 1
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed

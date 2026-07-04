@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { latestExposure } from '../../lib/positionExposureShare';
 import { exposureSummaryText } from '../../domain/positionExposure';
 import { backupStatusTextJa } from '../../lib/portfolioSync';
+import { dqHandoffTextJa } from '../../lib/decisionQuality';
 
 // "Copy for GPT-5.5 Pro" — utility action. On click it fetches the backend
 // /api/argus/pro-handoff (no admin token, no secrets, no OpenAI/Gemini call) and
@@ -31,7 +32,7 @@ export const ProHandoffButton: React.FC = () => {
       const pe = latestExposure();
       const local = pe ? exposureSummaryText(pe)
         : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。';
-      const prompt: string = `${d.promptText || ''}\n\n${local}\n${backupStatusTextJa()}`;
+      const prompt: string = `${d.promptText || ''}\n\n${local}\n${backupStatusTextJa()}\n\n${dqHandoffTextJa()}`;
       setText(prompt);
       try {
         await navigator.clipboard.writeText(prompt);

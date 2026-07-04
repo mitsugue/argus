@@ -41,6 +41,7 @@ const TONE: Record<string, string> = { up: 'var(--value-positive)', down: 'var(-
 import type { PositionNote } from '../../domain/positionExposure';
 import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
 import { RANK_TONE } from '../../hooks/useSupplyDemand';
+import { decisionHistoryFor } from '../../lib/decisionQuality';
 import { READINESS_TONE } from '../../domain/positionExposure';
 
 interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
@@ -146,6 +147,32 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
               </details>
             </div>
           )}
+
+          {/* DECISION HISTORY (v11.11.0) — この銘柄への過去ラベルとその後(端末内記録) */}
+          {(() => {
+            const hist = decisionHistoryFor(c.symbol, 2);
+            if (!hist.length) return null;
+            return (
+              <div className="uac-sec">
+                <div className="uac-sec-t">DECISION HISTORY</div>
+                {hist.map((h) => (
+                  <p key={h.id} className="uac-next" style={{ marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-faint)' }}>{h.asOf.slice(0, 10)}</span>
+                    <span style={{ marginLeft: 5 }}>[{h.decisionContext}]</span>
+                    {h.outcome?.outcomeReturn5d != null && (
+                      <span style={{ marginLeft: 5, color: h.outcome.outcomeReturn5d >= 0 ? 'var(--value-positive)' : 'var(--value-negative)' }}>
+                        5d {h.outcome.outcomeReturn5d >= 0 ? '+' : ''}{h.outcome.outcomeReturn5d.toFixed(1)}%
+                      </span>
+                    )}
+                    {h.outcome?.outcomeReadableJa && (
+                      <span style={{ marginLeft: 5, color: 'var(--text-faint)' }}>{h.outcome.outcomeReadableJa}</span>
+                    )}
+                    {!h.outcome?.outcomeReadableJa && <span style={{ marginLeft: 5, color: 'var(--text-faint)' }}>結果待ち</span>}
+                  </p>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* POSITION / EXPOSURE (v11.8.0) — device-local: 保有/監視・含み損益・
               比率・買い増し余地。数量未入力は未入力と正直に言う。売買指示なし。 */}

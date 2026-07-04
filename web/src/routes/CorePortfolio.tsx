@@ -4,6 +4,7 @@ import { AlertCard } from '../components/dashboard/AlertCard';
 import { useActionAlerts } from '../hooks/useActionAlerts';
 import { useAssets } from '../hooks/useAssets';
 import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
+import { DecisionQualityCard } from '../components/dashboard/DecisionQualityCard';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
@@ -140,6 +141,9 @@ export const CorePortfolio: React.FC = () => {
       {/* PORTFOLIO SYNC & BACKUP (v11.9.0) — where the data lives + export/
           import/snapshot. Cloud sees ciphertext only; no broker, no trading. */}
       <PortfolioSyncCard assetsApi={assetsApi} appVersion={__APP_VERSION__} />
+
+      {/* DECISION QUALITY (v11.11.0) — 過去判断の答え合わせ(端末内・成績断定なし) */}
+      <DecisionQualityCard />
 
       {/* EXPOSURE DASHBOARD (v11.8.0) — テーマ/通貨/集中度/リスクフラグ。
           保有未入力なら未入力と正直に表示(端末内計算・売買指示なし)。 */}

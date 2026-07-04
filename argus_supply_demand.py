@@ -69,7 +69,7 @@ DIRECTNESS_JA = {"direct_data": "実データ(信用/貸借)あり", "inferred":
 EVIDENCE_KEYS = ("marginBuyingBalance", "marginSellingBalance", "marginBalanceChange",
                  "lendingBalance", "borrowingBalance", "loanBalance",
                  "lendingBorrowingRatio", "shortSellingRatio", "reverseStockLendingFee",
-                 "daysToCover", "volumeTrend", "turnoverTrend", "priceActionContext",
+                 "daysToCover", "measuredFlowNetRatio", "volumeTrend", "turnoverTrend", "priceActionContext",
                  "closeLocation", "gapFadeFlag", "institutionalContext",
                  "flowAttributionContext", "eventContext")
 
@@ -86,24 +86,37 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
       priorRunupPct, closeLocation, gapFade, liquidityLow, flowClass, instStance,
       eventToday, regimeRiskOff, sources{jqMargin,jsf,shortRatio}
     """
+    is_us = str(market).upper() == "US"
     mb, ms = _f(ev.get("marginBuying")), _f(ev.get("marginSelling"))
     mb_prev, ms_prev = _f(ev.get("marginBuyingPrev")), _f(ev.get("marginSellingPrev"))
     loan, lend = _f(ev.get("jsfLoan")), _f(ev.get("jsfLending"))
     avg_vol = _f(ev.get("avgDailyVolume"))
     vr, chg = _f(ev.get("volumeRatio")), _f(ev.get("changePct"))
     runup = _f(ev.get("priorRunupPct"))
+    measured_flow = _f(ev.get("measuredFlowNetRatio"))   # US bridge big-money net ratio
     flow_class = ev.get("flowClass")
     missing: List[str] = []
     evidence: Dict[str, Any] = {k: None for k in EVIDENCE_KEYS}
 
     has_margin = mb is not None or ms is not None
     has_jsf = loan is not None or lend is not None
-    direct = has_margin or has_jsf
-    if not has_margin:
-        missing.append("週次信用残(J-Quants)")
-    if not has_jsf:
-        missing.append("日証金貸借残")
-    missing.append("逆日歩(未取込ソース)")           # never ingested yet — always honest
+    # v11.11.0 US支援(オーナー質問「アメリカ株の需給はわからないのかな」への正直な
+    # 答え): 米国には信用残/日証金に相当する公開日次データが無い。代わりに実測の
+    # 大口資金フロー(ブリッジ)を直接証拠として使い、squeeze/信用過多系は
+    # 「判定不能(データ未取込)」を貫く — JPと同じ見た目・違う限界を明示する。
+    has_us_flow = is_us and measured_flow is not None
+    direct = has_margin or has_jsf or has_us_flow
+    if is_us:
+        missing.append("FINRA空売り残(隔週・未取込)")
+        missing.append("貸株フィー(未取込)")
+        if not has_us_flow:
+            missing.append("実測大口フロー(ブリッジ)")
+    else:
+        if not has_margin:
+            missing.append("週次信用残(J-Quants)")
+        if not has_jsf:
+            missing.append("日証金貸借残")
+        missing.append("逆日歩(未取込ソース)")       # never ingested yet — always honest
     if avg_vol is None:
         missing.append("平均出来高")
     if ev.get("closeLocation") is None:
@@ -135,6 +148,7 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         "shortSellingRatio": _f(ev.get("shortSellingRatio")),
         "reverseStockLendingFee": None,               # not ingested — never invented
         "daysToCover": days_to_cover,
+        "measuredFlowNetRatio": measured_flow,
         "volumeTrend": (f"出来高比 {vr:.1f}倍" if vr is not None else None),
         "turnoverTrend": None,
         "priceActionContext": (f"変化率{chg:+.1f}%" + (f"・直近{runup:+.0f}%"
@@ -154,6 +168,18 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
 
     if ev.get("liquidityLow"):
         scores["liquidity_thin"] = 0.5
+
+    # ── US branch: measured big-money flow IS the direct evidence ───────────
+    if has_us_flow:
+        if measured_flow > 0.12 and up:
+            scores["good"] = 0.5 + (0.1 if vol_up else 0.0)
+        elif measured_flow > 0.12:
+            scores["slightly_good"] = 0.45
+        elif measured_flow < -0.12 and up:
+            scores["distribution_risk"] = 0.55        # selling into strength
+        elif measured_flow < -0.12 and down:
+            scores["deteriorating"] = 0.5
+        # |flow| small → neutral falls through
 
     # squeeze-prone: 売り長 or heavy days-to-cover, esp. when price starts up
     if direct and (uri_naga or (days_to_cover is not None and days_to_cover >= 3)):
@@ -240,8 +266,10 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
     conf = base
     if directness != "direct_data":
         conf = min(conf, 0.4)
-    if direct and (not has_margin or not has_jsf):
+    if direct and not is_us and (not has_margin or not has_jsf):
         conf = min(conf, 0.6)                         # one feed only
+    if has_us_flow:
+        conf = min(conf, 0.6)                         # US simplified read caps here
     if ev.get("staleData"):
         conf = min(conf, 0.4)
         missing.append("データ鮮度")
@@ -255,7 +283,7 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
               "liquidity_thin": "no_action", "unknown": "no_action"}[condition]
 
     why = _why_ja(condition, rank, ratio, days_to_cover, buy_overhang_days,
-                  mb_chg, direct, conf)
+                  mb_chg, direct, conf, is_us=is_us, measured_flow=measured_flow)
     ev_score = round(sum(1 for v in evidence.values() if v is not None) / len(EVIDENCE_KEYS), 2)
     risk = round(min(1.0, (0.6 if condition in ("credit_overhang", "distribution_risk",
                                                 "bad", "deteriorating") else 0.3)
@@ -283,9 +311,14 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         "directness": directness, "directnessJa": DIRECTNESS_JA[directness],
         "evidence": evidence,
         "missingEvidence": missing[:6],
-        "sourceLimitNote": ("信用残は週次・貸借残は日次の公表データで、リアルタイムではない。"
-                            "逆日歩は未取込。" if direct else
-                            "日証金/信用/空売りデータ未取得のため、需給ランクは暫定です。"),
+        "sourceLimitNote": (
+            "米国は信用残・貸借残に相当する公開日次データが無いため、実測大口フロー+"
+            "出来高ベースの簡易判定。空売り残(FINRA・隔週)は未取込。" if is_us and has_us_flow else
+            "米国の需給データ(実測フロー/空売り残)が未取得のため、需給ランクは暫定です。"
+            if is_us else
+            "信用残は週次・貸借残は日次の公表データで、リアルタイムではない。"
+            "逆日歩は未取込。" if direct else
+            "日証金/信用/空売りデータ未取得のため、需給ランクは暫定です。"),
         "complianceNote": "需給の状態評価であり売買指示ではない。データが無い項目は推定しない。",
         # feed-forward hints for Flow Attribution (v11.10.0 integration)
         "flowHints": {"squeezeProne": condition == "squeeze_prone",
@@ -295,7 +328,17 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
 
 
 def _why_ja(condition, rank, ratio, days_to_cover, buy_overhang_days, mb_chg,
-            direct, conf):
+            direct, conf, is_us=False, measured_flow=None):
+    if is_us and measured_flow is not None:
+        us = {
+            'good': f'実測の大口資金が流入超(净比率{measured_flow:+.2f})で、上値を抑える売り圧力は目立たない状態',
+            'slightly_good': f'実測の大口資金は流入超(净比率{measured_flow:+.2f})だが、価格の裏付けは限定的',
+            'distribution_risk': f'価格が保たれる裏で実測の大口資金が流出超(净比率{measured_flow:+.2f}) — 上値で売られている可能性',
+            'deteriorating': f'下落と同時に実測の大口資金も流出超(净比率{measured_flow:+.2f})で、需給は悪化中',
+        }
+        if condition in us:
+            return (us[condition] + '。米国は信用残に相当する公開データが無いため簡易判定。')[:220]
+
     ratio_txt = (f"貸借倍率{ratio}" if ratio is not None else "")
     base = {
         "very_good": "信用買い残が軽く売り圧力も減少中で、上値を抑える玉が少ない状態",

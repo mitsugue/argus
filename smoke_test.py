@@ -791,6 +791,43 @@ def v_supply_demand_status():
                   f"unknown={d.get('unknownCount')} jsf={d.get('jsfAvailability')}")
 
 
+def v_decision_quality_status():
+    # v11.11.0: public DQ status is REDACTED architecture facts only.
+    c, d = _get("/api/argus/decision-quality/status")
+    if d.get("schemaVersion") != "decision-quality-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("serverStoresRecords") is not False:
+        return False, "server must not store decision records"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("quantity", "averageCost", "ownerAction", "accountType",
+                   "unrealizedPnl", "marketValue"):
+        if banned in blob:
+            return False, f"PRIVATE FIELD LEAKED: {banned}"
+    return True, f"storage={d.get('storageMode')} leak-free"
+
+
+def v_price_history_shape():
+    c, d = _get("/api/argus/price-history?symbol=6146&market=JP")
+    if d.get("schemaVersion") != "price-history-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if "available" not in d or "closes" not in d:
+        return False, "shape missing"
+    return True, f"available={d['available']} n={len(d.get('closes') or [])}"
+
+
+def v_supply_demand_us():
+    # v11.11.0: US gets an honest simplified read (never squeeze, FINRA marked missing)
+    c, d = _get("/api/argus/supply-demand?symbol=NVDA&market=US")
+    sig = d.get("signal") or {}
+    if sig.get("market") != "US":
+        return False, f"market={sig.get('market')}"
+    if sig.get("condition") in ("squeeze_prone", "credit_overhang"):
+        return False, "US must not classify squeeze/credit (no data source)"
+    if not any("FINRA" in m for m in (sig.get("missingEvidence") or [])):
+        return False, "FINRA gap must be explicit"
+    return True, f"rank={sig.get('supplyDemandRank')} cond={sig.get('condition')}"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1592,6 +1629,10 @@ CHECKS = [
     # ── V11.10.0 Supply / Demand Intelligence ──
     ("v11.10.0 supply demand", v_supply_demand),
     ("v11.10.0 supply demand status", v_supply_demand_status),
+    # ── V11.11.0 Decision Quality + US supply/demand ──
+    ("v11.11.0 decision quality status", v_decision_quality_status),
+    ("v11.11.0 price history", v_price_history_shape),
+    ("v11.11.0 supply demand US", v_supply_demand_us),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),
