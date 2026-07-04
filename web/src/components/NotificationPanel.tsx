@@ -58,7 +58,7 @@ export const NotificationPanel: React.FC<{ onClose: () => void }> = ({ onClose }
         </div>
       ))}
       <p style={{ margin: '8px 0 0', fontSize: 9, color: 'var(--text-faint)' }}>
-        通知は端末内で生成・保存(サーバー送信なし)。外部push/メールは未設定のため無効。注意喚起であり売買指示ではありません。
+        通知タイプの有用性は学習中です(閉じた回数もノイズ指標として記録)。通知は端末内で生成・保存(サーバー送信なし)。外部push/メールは未設定のため無効。注意喚起であり売買指示ではありません。
       </p>
     </div>
   );

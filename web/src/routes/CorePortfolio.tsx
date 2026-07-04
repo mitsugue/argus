@@ -5,6 +5,7 @@ import { useActionAlerts } from '../hooks/useActionAlerts';
 import { useAssets } from '../hooks/useAssets';
 import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
 import { DecisionQualityCard } from '../components/dashboard/DecisionQualityCard';
+import { LearningDashboardCard } from '../components/dashboard/LearningDashboardCard';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
@@ -145,6 +146,9 @@ export const CorePortfolio: React.FC = () => {
 
       {/* DECISION QUALITY (v11.11.0) — 過去判断の答え合わせ(端末内・成績断定なし) */}
       <DecisionQualityCard />
+
+      {/* LEARNING DASHBOARD (v11.15.0) — ラベル別の学習レビュー(端末内・成績断定なし) */}
+      <LearningDashboardCard />
 
       {/* EXPOSURE DASHBOARD (v11.8.0) — テーマ/通貨/集中度/リスクフラグ。
           保有未入力なら未入力と正直に表示(端末内計算・売買指示なし)。 */}

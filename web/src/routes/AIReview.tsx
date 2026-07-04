@@ -8,6 +8,7 @@ import { apHandoffTextJa } from '../domain/actionPriority';
 import { sbHandoffTextJa } from '../domain/sessionBrief';
 import { latestSessionBrief } from '../lib/positionExposureShare';
 import { ntHandoffTextJa } from '../lib/notifications';
+import { lrHandoffTextJa } from '../lib/learningReview';
 import { ActionPill } from '../components/action/ActionBadge';
 import { ACTIONS, ACTION_ORDER, CORE_ACTIONS, CORE_ACTION_ORDER } from '../domain/actions';
 import type { ActionKey, CoreActionKey } from '../types/action';
@@ -254,7 +255,8 @@ export const AIReview: React.FC = () => {
       + '\n\n' + dqHandoffTextJa()
       + '\n\n' + apHandoffTextJa(latestActionPriorities())
       + '\n\n' + sbHandoffTextJa(latestSessionBrief())
-      + '\n\n' + ntHandoffTextJa();
+      + '\n\n' + ntHandoffTextJa()
+      + '\n\n' + lrHandoffTextJa();
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);

@@ -42,6 +42,7 @@ import type { PositionNote } from '../../domain/positionExposure';
 import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
 import { RANK_TONE } from '../../hooks/useSupplyDemand';
 import { decisionHistoryFor } from '../../lib/decisionQuality';
+import { pastPatternLineJa } from '../../lib/learningReview';
 import type { APItem } from '../../domain/actionPriority';
 import { RANK_TONE as AP_TONE } from '../../domain/actionPriority';
 import { READINESS_TONE } from '../../domain/positionExposure';
@@ -173,6 +174,8 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
             return (
               <div className="uac-sec">
                 <div className="uac-sec-t">DECISION HISTORY</div>
+                {(() => { const pl = pastPatternLineJa(c.symbol);
+                  return pl ? <p className="uac-next" style={{ marginBottom: 2, color: 'var(--text-faint)' }}>{pl}</p> : null; })()}
                 {hist.map((h) => (
                   <p key={h.id} className="uac-next" style={{ marginBottom: 2 }}>
                     <span style={{ color: 'var(--text-faint)' }}>{h.asOf.slice(0, 10)}</span>
