@@ -58,6 +58,11 @@ export interface PortfolioSnapshot {
   /** v11.18.0: 当日の計画 — 後日「avoid_chaseは高値掴みを防いだか/押し目限定は機能したか」検証用 */
   planSummary?: { symbol: string; planType: string; currentStance: string;
     blockingReasons: string[]; evidenceQuality: string }[];
+  /** v11.19.0: 当日の戦略状態 — 後日「戦術枠超過警告はドローダウンを防いだか」検証用 */
+  strategySummary?: { strategyMode: string; fireStatus: string;
+    corePct: number; satellitePct: number; tacticalPct: number; hedgePct: number;
+    tacticalBudget: string; themeRisk: string; singleNameRisk: string;
+    roles: { symbol: string; role: string; addPolicy: string }[] };
   pricesUsed: Record<string, number>;
   staleDataFlags: string[];
   missingEvidence: string[];
@@ -134,7 +139,8 @@ export function createSnapshot(
       nextChecksJa: string[]; whatNotToDoJa: string[] } | null;
     scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[];
     planSummary?: { symbol: string; planType: string; currentStance: string;
-      blockingReasons: string[]; evidenceQuality: string }[] },
+      blockingReasons: string[]; evidenceQuality: string }[];
+    strategySummary?: PortfolioSnapshot['strategySummary'] },
 ): PortfolioSnapshot | null {
   // Never fabricate: without any priced holding there is nothing to snapshot —
   // watchlist-only state is not portfolio history.
@@ -171,6 +177,7 @@ export function createSnapshot(
     sessionBrief: opts.sessionBrief ?? null,
     scenarioSummary: (opts.scenarioSummary ?? []).slice(0, 10),
     planSummary: (opts.planSummary ?? []).slice(0, 10),
+    strategySummary: opts.strategySummary,
     pricesUsed: prices,
     staleDataFlags: pe.unpriced,
     missingEvidence: [
@@ -225,9 +232,10 @@ export function maybeDailySnapshot(pe: PortfolioExposure, appVersion: string,
                                      nextChecksJa: string[]; whatNotToDoJa: string[] } | null,
                                    scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[],
                                    planSummary?: { symbol: string; planType: string; currentStance: string;
-                                     blockingReasons: string[]; evidenceQuality: string }[]): boolean {
+                                     blockingReasons: string[]; evidenceQuality: string }[],
+                                   strategySummary?: PortfolioSnapshot['strategySummary']): boolean {
   if (syncMeta().lastSnapshotDay === jstDay()) return false;
-  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary, planSummary }) != null;
+  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary, planSummary, strategySummary }) != null;
 }
 
 // ── export / import ─────────────────────────────────────────────────────────

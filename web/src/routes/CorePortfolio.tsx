@@ -15,9 +15,10 @@ import { buildExposure } from '../lib/portfolio';
 import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, latestScenarios, latestPlans } from '../lib/positionExposureShare';
+import { publishExposure, latestScenarios, latestPlans, latestStrategy } from '../lib/positionExposureShare';
 import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
 import { planPortfolioSummary } from '../domain/positionPlan';
+import { FIRE_TONE, BUDGET_JA, STRATEGY_COMPLIANCE_JA } from '../domain/portfolioStrategy';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
@@ -170,6 +171,68 @@ export const CorePortfolio: React.FC = () => {
                   <p className="cmd-alloc__note" style={{ color: 'var(--text-faint)' }}>{ps.detailJa}</p>
                   <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
                     条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はTodayの各カード→SCENARIOSで。
+                  </p>
+                </>
+              )}
+            </div>
+          </section>
+        );
+      })()}
+
+      {/* PORTFOLIO STRATEGY / FIRE ALIGNMENT (v11.19.0) — 短期の計画とFIRE目的を
+          接続する戦略層(端末内合成)。免許業の助言ではない・売買指示でもない。 */}
+      {(() => {
+        const s = latestStrategy();
+        return (
+          <section>
+            <div className="section-head">
+              <span className="section-head__title">PORTFOLIO STRATEGY / FIRE ALIGNMENT</span>
+              <span className="section-head__count">概算 · 助言ではない</span>
+            </div>
+            <div className="card cmd-alloc">
+              {!s ? (
+                <p className="cmd-alloc__note">
+                  Todayページを一度開くと、保有構成から戦略判定(コア/サテライト/戦術枠・FIRE整合)を端末内で合成します。
+                </p>
+              ) : (
+                <>
+                  <p className="cmd-alloc__note" style={{ fontSize: 12.5 }}>
+                    <b style={{ color: FIRE_TONE[s.fireStatus], border: `1px solid ${FIRE_TONE[s.fireStatus]}`,
+                                borderRadius: 999, padding: '0 8px' }}>
+                      FIRE整合: {s.fireStatusJa}
+                    </b>
+                    <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{s.summaryJa}</span>
+                  </p>
+                  {!s.noHoldings && (
+                    <p className="cmd-alloc__note" style={{ color: 'var(--text-sub)' }}>
+                      戦術枠(短期勝負): <b>{BUDGET_JA[s.tacticalBudget]}</b>(約{Math.round(s.tacticalPct)}%)
+                      · AIテーマ合計 約{Math.round(s.aiThemePct)}%
+                      · 金 約{Math.round(s.goldPct)}% · 暗号資産 約{Math.round(s.cryptoPct)}%
+                    </p>
+                  )}
+                  <p className="cmd-alloc__note">{s.riskJa}</p>
+                  {s.warningsJa.map((w) => (
+                    <p key={w.slice(0, 12)} className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>⚠ {w}</p>
+                  ))}
+                  {s.opportunitiesJa.map((o) => (
+                    <p key={o.slice(0, 12)} className="cmd-alloc__note" style={{ color: 'var(--text-sub)' }}>◇ {o}</p>
+                  ))}
+                  {s.stressNotesJa.length > 0 && (
+                    <details>
+                      <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>ポートフォリオのストレスシナリオを見る</summary>
+                      {s.stressNotesJa.map((n) => (
+                        <p key={n.slice(0, 12)} className="cmd-alloc__note" style={{ fontSize: 10.5 }}>・{n}</p>
+                      ))}
+                    </details>
+                  )}
+                  <p className="cmd-alloc__note" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+                    次の確認: {s.nextChecksJa.join(' / ')}
+                  </p>
+                  <p className="cmd-alloc__note" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+                    不足データ: {s.missingDataJa.join(' / ')}(不足分は判定に使わず、捏造しません)
+                  </p>
+                  <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                    {STRATEGY_COMPLIANCE_JA} 判定は帯のみで、達成見込みの精密計算はしません。
                   </p>
                 </>
               )}

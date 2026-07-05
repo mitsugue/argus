@@ -38,3 +38,9 @@ import type { LocalPlan } from '../domain/positionPlan';
 let latestPP: LocalPlan[] = [];
 export function publishPlans(plans: LocalPlan[]): void { latestPP = plans; }
 export function latestPlans(): LocalPlan[] { return latestPP; }
+
+// v11.19.0: latest device-local Portfolio Strategy (same lifecycle contract).
+import type { LocalStrategy } from '../domain/portfolioStrategy';
+let latestPS: LocalStrategy | null = null;
+export function publishStrategy(s: LocalStrategy): void { latestPS = s; }
+export function latestStrategy(): LocalStrategy | null { return latestPS; }

@@ -39,10 +39,16 @@ export interface PlanInputs {
   positionRiskLevel?: string | null; pnlPct?: number | null;
   priorRunupPct?: number | null; marketOpen?: boolean | null;
   missing?: string[];
+  /** v11.19.0: 戦略層からの制約(Portfolio Strategyが供給・端末内)。 */
+  portfolioTacticalStretched?: boolean;
+  themeConcentrationHigh?: boolean;
 }
 
 export interface LocalPlan {
   symbol: string; assetName: string; isHeld: boolean;
+  /** v11.19.0: 戦略上の役割(CommandCenterで付与・端末内)。 */
+  strategicRole?: { roleJa: string; roleReasonJa: string; addPolicyJa: string;
+    strategyFit: string };
   planType: PlanType; currentStance: Stance; currentStanceJa: string;
   summaryJa: string; whyJa: string;
   entryConditionsJa: string[]; holdConditionsJa: string[];
@@ -99,6 +105,14 @@ export function buildPlan(i: PlanInputs): LocalPlan {
   if (overext) whatNot.push('高値追いしない(急伸直後の新規・追加は不利になりやすい)');
   if (highConc && i.isHeld) { blocking.push('concentration_high'); whatNot.push('比率の高い銘柄をさらに厚くしない(全体の振れが大きくなる)'); }
   if (i.marketOpen === false) whatNot.push(PTS_WARNING_JA);
+  if (i.portfolioTacticalStretched) {
+    blocking.push('portfolio_tactical_stretched');
+    whatNot.push('銘柄単体の条件が良くても、ポートフォリオの短期勝負枠が大きいため新規追加より整理が先');
+  }
+  if (i.themeConcentrationHigh) {
+    blocking.push('theme_concentration_high');
+    whatNot.push('テーマ集中を予算超えで上げる追加はしない(買うなら押し目+小口のみ)');
+  }
 
   // exit / hold (held only)
   let exitMode = 'no_exit_signal';
@@ -127,7 +141,10 @@ export function buildPlan(i: PlanInputs): LocalPlan {
   else if (squeeze || overext || i.apCategory === 'avoid_chase') { planType = 'avoid_chase'; stance = 'avoid_chase'; }
   else if (improvingHeavy || (i.isHeld && highConc)) { planType = i.isHeld ? 'add' : 'entry'; stance = 'add_only_on_pullback'; }
   else if (favorable >= 2 && adverse === 0 && (eq === 'strong' || eq === 'medium') && !(i.isHeld && highConc)) {
-    planType = i.isHeld ? 'add' : 'entry'; stance = 'small_add_allowed';
+    // 戦略制約: 短期勝負枠超過/テーマ集中高では好条件でも押し目限定に降格
+    if (i.portfolioTacticalStretched || i.themeConcentrationHigh) {
+      planType = i.isHeld ? 'add' : 'entry'; stance = 'add_only_on_pullback';
+    } else { planType = i.isHeld ? 'add' : 'entry'; stance = 'small_add_allowed'; }
   } else if (sdBad || flowBad || adverse >= 2) { planType = 'wait'; stance = 'wait'; }
   else if (i.isHeld) { planType = 'hold'; stance = holdMode === 'hold_ok' ? 'no_action' : adverse ? 'hold_review' : 'monitor'; }
   else { planType = 'wait'; stance = 'monitor'; }

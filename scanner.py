@@ -59,6 +59,7 @@ import argus_learning_review  # Learning/Decision Review (pure, v11.15.0 — dev
 import argus_backup_safety  # Backup Safety/Vault Guard (pure, v11.16.0 — device-side; server knows nothing)
 import argus_scenario  # Scenario Engine (pure, v11.17.0 — 条件付き分岐; 確率は帯のみ・%断定禁止)
 import argus_trade_plan  # Entry/Exit Planning (pure, v11.18.0 — 計画のみ; 執行語・注文なし)
+import argus_portfolio_strategy  # Portfolio Strategy/FIRE (pure, v11.19.0 — 戦略は端末内; 公開はredacted)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -7060,6 +7061,19 @@ def api_argus_scenarios_status():
                  "marketRegime": bool(_REGIME_CACHE.get("data")),
                  "positionExposure": False,   # device-local by design
                  "decisionQuality": False}))  # records device-local by design
+
+
+@app.route("/api/argus/portfolio-strategy/status")
+def api_argus_portfolio_strategy_status():
+    """Public REDACTED — feature flags only. Strategy/FIRE/role details are
+    composed ON DEVICE from local holdings; the server knows none of it."""
+    return jsonify(argus_portfolio_strategy.public_status(
+        now_iso=_ai_now_iso(),
+        sources={"positionExposure": False,      # device-local by design
+                 "entryExitPlanning": True, "scenarioEngine": True,
+                 "marketRegime": bool(_REGIME_CACHE.get("data")),
+                 "decisionQuality": False, "learningDashboard": False,
+                 "portfolioSync": False, "backupSafety": False}))
 
 
 @app.route("/api/argus/backup-safety/status")

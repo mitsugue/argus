@@ -28,7 +28,7 @@ import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { useSupplyDemandList } from '../hooks/useSupplyDemand';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans } from '../lib/positionExposureShare';
+import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
 import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
@@ -37,6 +37,8 @@ import { buildLocalBrief } from '../domain/sessionBrief';
 import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
 import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
+import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
+import { themeOf } from '../domain/positionExposure';
 import { SessionBriefSection } from '../components/dashboard/SessionBriefSection';
 import { runNotificationEngine, listNotifications, SEV_TONE, SEV_JA } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
@@ -301,6 +303,34 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return sets;
   }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data]);
 
+  // v11.19.0: PORTFOLIO STRATEGY — 役割分類(コア/サテライト/戦術枠/ヘッジ)と
+  // FIRE整合・リスク予算を端末内で合成。計画層(下)へ制約を供給する。
+  const portfolioStrategy: LocalStrategy = useMemo(() => {
+    const eventSyms = new Set<string>();
+    for (const ie of impEvents?.events ?? []) {
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
+        for (const a of ie.linkedAssets ?? []) eventSyms.add(String(a).toUpperCase());
+      }
+    }
+    const roles = assets.map((a) => {
+      const sym = a.symbol.toUpperCase();
+      const note = positionExposure.notes[sym];
+      return classifyRole({
+        symbol: sym, assetName: a.displayNameJa || a.displayName,
+        theme: themeOf(a), assetType: a.assetType,
+        isHeld: !!note?.held, weightPct: note?.weightPct ?? null,
+        concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
+        eventPending: eventSyms.has(sym),
+      });
+    });
+    const s = buildStrategy(positionExposure, roles, {
+      eventPending: eventSyms.size > 0,
+      recurringAccumulationKnown: false,   // 積立額の入力UIは未提供 — 不足と正直に言う
+    });
+    publishStrategy(s);   // CorePortfolio/Handoff/AIReview read at render/copy time
+    return s;
+  }, [assets, positionExposure, impEvents]);
+
   // v11.18.0: POSITION PLAN — 「入っていいか/買い増しか/利確検討か/持ち越しか」を
   // 計画として合成(端末内・保有加味・執行語なし)。売買指示ではない。
   const positionPlans: LocalPlan[] = useMemo(() => {
@@ -316,11 +346,16 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
       }
     }
+    const tacticalStretched = ['stretched', 'exceeded'].includes(portfolioStrategy.tacticalBudget);
+    const themeHigh = ['high', 'critical'].includes(portfolioStrategy.themeRisk);
+    const roleBySym = new Map(portfolioStrategy.roles.map((r) => [r.symbol, r]));
     const plans = assets.map((a) => {
       const sym = a.symbol.toUpperCase();
       const note = positionExposure.notes[sym];
       const sd = sdBySym.get(sym);
       const fl = flowBySym.get(sym);
+      const role = roleBySym.get(sym);
+      const aiTheme = role ? ['ai_infrastructure', 'physical_ai_robotics', 'semiconductor_photonics'].includes(role.theme) : false;
       return buildPlan({
         symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
         isHeld: !!note?.held,
@@ -338,11 +373,19 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         priorRunupPct: null,
         marketOpen: marketOpenNow(a.market),
         missing: sd || fl ? [] : ['需給/フロー未取得'],
+        portfolioTacticalStretched: tacticalStretched,
+        themeConcentrationHigh: themeHigh && aiTheme,
       });
     });
+    // v11.19.0: 戦略上の役割をカード表示用に付与(端末内のみ)
+    for (const p of plans) {
+      const r = roleBySym.get(p.symbol);
+      if (r) p.strategicRole = { roleJa: r.roleJa, roleReasonJa: r.roleReasonJa,
+        addPolicyJa: r.addPolicyJa, strategyFit: r.strategyFit };
+    }
     publishPlans(plans);   // Handoff/AIReview/CorePortfolio read at render/copy time
     return plans;
-  }, [assets, positionExposure, sdSignals, flowRecords, scenarioSets, apItems, impEvents, regime.data]);
+  }, [assets, positionExposure, sdSignals, flowRecords, scenarioSets, apItems, impEvents, regime.data, portfolioStrategy]);
 
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
@@ -359,9 +402,17 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           sessionType: b.sessionType, nextChecksJa: b.nextChecksJa, whatNotToDoJa: b.whatNotToDoJa } : null; })(),
         scenarioSets.map((s) => ({ symbol: s.symbol, dominant: s.dominant, evidenceQuality: s.evidenceQuality })),
         positionPlans.map((p) => ({ symbol: p.symbol, planType: p.planType, currentStance: p.currentStance,
-          blockingReasons: p.blockingReasons, evidenceQuality: p.evidenceQuality })));
+          blockingReasons: p.blockingReasons, evidenceQuality: p.evidenceQuality })),
+        portfolioStrategy.noHoldings ? undefined : {
+          strategyMode: portfolioStrategy.strategyMode, fireStatus: portfolioStrategy.fireStatus,
+          corePct: portfolioStrategy.corePct, satellitePct: portfolioStrategy.satellitePct,
+          tacticalPct: portfolioStrategy.tacticalPct, hedgePct: portfolioStrategy.hedgePct,
+          tacticalBudget: portfolioStrategy.tacticalBudget,
+          themeRisk: portfolioStrategy.themeRisk, singleNameRisk: portfolioStrategy.singleNameRisk,
+          roles: portfolioStrategy.roles.filter((r) => r.weightPct != null)
+            .map((r) => ({ symbol: r.symbol, role: r.role, addPolicy: r.addPolicy })) });
     } catch { /* quota */ }
-  }, [positionExposure, scenarioSets, positionPlans, sdSignals, flowRecords]);
+  }, [positionExposure, scenarioSets, positionPlans, portfolioStrategy, sdSignals, flowRecords]);
 
   // v11.14.0: 通知エンジン — 変化検知のみ(60sスロットル+dedupe+静音時間内蔵)。
   useEffect(() => {
@@ -399,6 +450,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
             .map((ie) => ie.eventCode))],
           sdBySymbol, flowBySymbol, scenarioBySymbol, planBySymbol,
+          strategyState: portfolioStrategy.noHoldings ? null : {
+            tactical: portfolioStrategy.tacticalBudget, single: portfolioStrategy.singleNameRisk,
+            theme: portfolioStrategy.themeRisk, fire: portfolioStrategy.fireStatus,
+            summaryJa: portfolioStrategy.summaryJa },
           briefSession: sessionBrief.sessionType,
           hasHoldings: !positionExposure.noHoldings,
           snapshotAgeDays: age,
@@ -408,7 +463,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       } catch { /* never break Today */ }
     }, 12_000);
     return () => clearTimeout(t);
-  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets, positionPlans]);
+  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets, positionPlans, portfolioStrategy]);
 
   // v11.11.0: device-local outcome updater — once per JST day, fills
   // 「その後どうなったか」(1d/3d/5d/20d) for past decision records.
@@ -560,6 +615,21 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
       {/* SESSION BRIEF (v11.13.0) — 今日の作戦。Brief=作戦/AP=見る順番 */}
       <SessionBriefSection brief={sessionBrief} />
+
+      {/* v11.19.0: 戦略の一行注意 — 出すべき警告がある時だけ(通常は非表示)。 */}
+      {(() => {
+        const note = todayStrategicNoteJa(portfolioStrategy);
+        if (!note) return null;
+        return (
+          <p style={{ margin: '0 0 6px', fontSize: 12, borderLeft: `2px solid ${note.tone}`,
+                      paddingLeft: 8, color: 'var(--text-sub)' }}>
+            <b style={{ color: note.tone }}>{note.textJa}</b>
+            <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+              詳細はCore Portfolio→PORTFOLIO STRATEGY(助言ではない)
+            </span>
+          </p>
+        );
+      })()}
 
       {/* ACTION PRIORITY (v11.12.0) — 開いた瞬間「今日これを見る」。売買指示なし */}
       <ActionPrioritySection items={apItems}

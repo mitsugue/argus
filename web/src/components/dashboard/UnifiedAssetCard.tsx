@@ -215,6 +215,18 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
                 </span>
               </p>
               <p className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }}>{ppl.summaryJa}</p>
+              {/* v11.19.0: 戦略上の役割(コア/サテライト/戦術枠/ヘッジ・端末内) */}
+              {ppl.strategicRole && (
+                <p className="uac-next" style={{ marginBottom: 2, fontSize: 10.5 }}>
+                  <span style={{ border: '1px solid var(--line)', borderRadius: 999,
+                                 padding: '0 6px', color: 'var(--accent)' }}>
+                    役割: {ppl.strategicRole.roleJa}
+                  </span>
+                  <span style={{ marginLeft: 5, color: 'var(--text-faint)' }}>
+                    追加方針: {ppl.strategicRole.addPolicyJa} · {ppl.strategicRole.roleReasonJa}
+                  </span>
+                </p>
+              )}
               <details>
                 <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>計画の詳細(条件・やらないこと)を見る</summary>
                 {ppl.entryConditionsJa.length > 0 && (

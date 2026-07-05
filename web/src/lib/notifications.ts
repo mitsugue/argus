@@ -37,6 +37,7 @@ const RULES: Record<string, { severity: Severity; cooldownMin: number; maxPerDay
   squeeze_watch: { severity: 'medium', cooldownMin: 1440, maxPerDay: 3 },
   scenario_change: { severity: 'high', cooldownMin: 1440, maxPerDay: 3 },
   plan_change: { severity: 'high', cooldownMin: 1440, maxPerDay: 3 },
+  strategy_risk: { severity: 'high', cooldownMin: 4320, maxPerDay: 2 },
   avoid_chase: { severity: 'medium', cooldownMin: 1440, maxPerDay: 4 },
   session_brief_ready: { severity: 'info', cooldownMin: 240, maxPerDay: 3 },
   snapshot_missing: { severity: 'low', cooldownMin: 1440, maxPerDay: 1 },
@@ -55,6 +56,7 @@ export interface PrevState {
   flow?: Record<string, string>; sd?: Record<string, { rank: string; condition: string }>;
   scenario?: Record<string, string>;
   plan?: Record<string, string>;
+  strategy?: { tactical?: string; single?: string; theme?: string; fire?: string };
   briefSession?: string;
 }
 
@@ -84,6 +86,9 @@ export interface NotifInputs {
   /** v11.18.0: 計画(端末内合成)。materialな転換のみ通知: 保有×リスク確認/利確検討入り・追加候補→追いかけ注意。 */
   planBySymbol?: Record<string, { planType: string; currentStance: string;
     name?: string; isHeld?: boolean; summaryJa?: string }>;
+  /** v11.19.0: 戦略リスク(端末内合成)。materialな悪化転換のみ通知。 */
+  strategyState?: { tactical: string; single: string; theme: string; fire: string;
+    summaryJa?: string } | null;
   briefSession: string;
   hasHoldings: boolean;
   snapshotAgeDays: number | null;
@@ -178,6 +183,37 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         whyJa: heavy ? '買い残は減少中だが絶対量が大きい。' : '買い残水準・売り圧力が軽い状態。',
         checkNextJa: heavy ? '買い残が続けて減るか、上昇日に出来高を伴うかを確認' : '続伸時の出来高を確認',
         dedupeKey: `sdUp|${sym}|${day}`, isPrivate: !!sd.isHeld });
+    }
+  }
+  // v11.19.0: strategy_risk — 戦略リスクのmaterialな悪化転換のみ:
+  // 戦術枠→超過 / 1銘柄集中→critical / テーマ集中→critical / FIRE整合の悪化。
+  // 初回(prev無し)は記録のみ。改善方向は通知しない(ノイズ)。
+  if (inp.strategyState && st.prev.strategy) {
+    const cur = inp.strategyState, was = st.prev.strategy;
+    const trans: [string, string, string][] = [];
+    if (cur.tactical === 'exceeded' && was.tactical !== 'exceeded') {
+      trans.push(['tactical', '短期勝負枠が超過しました',
+        '新規追加よりも、既存ポジションの集中度とイベントリスクの確認が先です。']);
+    }
+    if (cur.single === 'critical' && was.single !== 'critical') {
+      trans.push(['single', '1銘柄集中が危険水準になりました',
+        '追加の前に、この銘柄の比率上限を確認してください。']);
+    }
+    if (cur.theme === 'critical' && was.theme !== 'critical') {
+      trans.push(['theme', 'テーマ集中が危険水準になりました',
+        'AI関連が同時に下がる前提での比率確認が先です。']);
+    }
+    if (['stretched', 'misaligned'].includes(cur.fire)
+      && !['stretched', 'misaligned'].includes(was.fire ?? '')) {
+      trans.push(['fire', 'FIRE整合が悪化しました',
+        '個別株の判断とは別に、コア(積立)比率の確認を。']);
+    }
+    for (const [key, title, body] of trans) {
+      cands.push({ eventType: 'strategy_risk', severity: 'high', symbol: null,
+        assetName: null, titleJa: `戦略注意：${title}`,
+        bodyJa: inp.strategyState.summaryJa?.slice(0, 80) || body,
+        whyJa: body, checkNextJa: 'Core Portfolio → PORTFOLIO STRATEGYで詳細確認(助言ではない)',
+        dedupeKey: `strat|${key}`, isPrivate: true });
     }
   }
   // v11.18.0: plan_change — materialな計画転換のみ: ①保有×(リスク確認/利確検討)
@@ -279,6 +315,9 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     sd: Object.fromEntries(Object.entries(inp.sdBySymbol).map(([k, v]) => [k, { rank: v.rank, condition: v.condition }])),
     scenario: Object.fromEntries(Object.entries(inp.scenarioBySymbol ?? {}).map(([k, v]) => [k, v.dominant])),
     plan: Object.fromEntries(Object.entries(inp.planBySymbol ?? {}).map(([k, v]) => [k, v.currentStance])),
+    strategy: inp.strategyState ? { tactical: inp.strategyState.tactical,
+      single: inp.strategyState.single, theme: inp.strategyState.theme,
+      fire: inp.strategyState.fire } : st.prev.strategy,
     briefSession: inp.briefSession,
   };
   save(st);

@@ -91,6 +91,9 @@ def build_plan(symbol: str, market: str, inputs: Dict[str, Any],
     runup = _f(inputs.get("priorRunupPct"))
     market_open = inputs.get("marketOpen")
     missing = list(inputs.get("missing") or [])
+    # v11.19.0: 戦略層からの制約(端末側はPortfolio Strategyが供給)
+    strat_tactical = bool(inputs.get("portfolioTacticalStretched"))
+    strat_theme = bool(inputs.get("themeConcentrationHigh"))
 
     heavy = sd_level in ("heavy", "very_heavy")
     squeeze = sd_cond == "squeeze_prone" or flow == "short_covering"
@@ -136,6 +139,12 @@ def build_plan(symbol: str, market: str, inputs: Dict[str, Any],
     if market_open is False:
         risk_flags.append("market_closed_thin_liquidity")
         what_not.append(PTS_WARNING_JA)
+    if strat_tactical:
+        blocking.append("portfolio_tactical_stretched")
+        what_not.append("銘柄単体の条件が良くても、ポートフォリオの短期勝負枠が大きいため新規追加より整理が先")
+    if strat_theme:
+        blocking.append("theme_concentration_high")
+        what_not.append("テーマ集中を予算超えで上げる追加はしない(買うなら押し目+小口のみ)")
 
     # ── EntryPlan(新規/追加の入り方) ────────────────────────────────────────
     if event:
@@ -150,7 +159,11 @@ def build_plan(symbol: str, market: str, inputs: Dict[str, Any],
         allowed, chase = "pullback_only", "medium"
     elif favorable >= 2 and adverse == 0 and eq in ("strong", "medium") \
             and not (held and high_conc):
-        allowed, chase = "small_trial_only", "low"
+        # 戦略制約: 短期勝負枠超過/テーマ集中高では好条件でも押し目限定に降格
+        if strat_tactical or strat_theme:
+            allowed, chase = "pullback_only", "medium"
+        else:
+            allowed, chase = "small_trial_only", "low"
     else:
         allowed, chase = "monitor_only", ("medium" if runup is None else "low")
 
