@@ -4,7 +4,8 @@
 // 秘密ゼロ・執行語ゼロ。売買指示ではなくレビュー依頼の文書。
 
 import { latestExposure, latestActionPriorities, latestSessionBrief,
-  latestScenarios, latestPlans, latestStrategy, latestFireCore } from './positionExposureShare';
+  latestScenarios, latestPlans, latestStrategy, latestFireCore,
+  latestDataQuality } from './positionExposureShare';
 import { listNotifications } from './notifications';
 import { assessBackupSafety } from './backupSafety';
 import { jpDisplay } from './displayName';
@@ -154,6 +155,14 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
     }
     const dqLine = '過去判断の答え合わせは端末内記録ベース。履歴が少ない間は成績として扱わない(検証中)。';
     L.push('', '## Decision Quality / Learning', dqLine);
+    // v11.22.0: データ鮮度の注意 — レビュアーが「古いデータ由来の判断」を割引けるように
+    const dqc = latestDataQuality();
+    if (dqc) {
+      L.push('', '## Data Quality / データ鮮度の注意',
+        `総合: ${dqc.overallStatusJa}(古いデータのレイヤーは確度を割引いて評価してください)`);
+      L.push(...dqc.topIssuesJa.slice(0, 3).map((x) => `- ${x}`));
+      L.push(...dqc.expectedDisabledJa.slice(0, 3).map((x) => `- 仕様上の未取得: ${x}`));
+    }
     const notifs = strip(redacted, listNotifications().slice(0, 3).map((n) => n.titleJa));
     if (notifs.length) { L.push('', '## Attention Changes'); L.push(...notifs.map((x) => `- ${x}`)); }
     if (!redacted && o.packType === 'daily') {

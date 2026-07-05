@@ -68,6 +68,9 @@ export interface PortfolioSnapshot {
     monthlyContributionTotal: number | null; tacticalToCoreRatio: number | null;
     tacticalToCoreBand: string; contributionDataStatus: string;
     valuationDataStatus: string; staleCount: number };
+  /** v11.22.0: 当日のデータ品質 — 後日「あの判断は古いデータ由来だったか」検証用 */
+  dataQualitySummary?: { overallStatus: string; topIssues: string[];
+    expectedDisabled: string[] };
   pricesUsed: Record<string, number>;
   staleDataFlags: string[];
   missingEvidence: string[];
@@ -146,7 +149,8 @@ export function createSnapshot(
     planSummary?: { symbol: string; planType: string; currentStance: string;
       blockingReasons: string[]; evidenceQuality: string }[];
     strategySummary?: PortfolioSnapshot['strategySummary'];
-    fireCoreSummary?: PortfolioSnapshot['fireCoreSummary'] },
+    fireCoreSummary?: PortfolioSnapshot['fireCoreSummary'];
+    dataQualitySummary?: PortfolioSnapshot['dataQualitySummary'] },
 ): PortfolioSnapshot | null {
   // Never fabricate: without any priced holding there is nothing to snapshot —
   // watchlist-only state is not portfolio history.
@@ -185,6 +189,7 @@ export function createSnapshot(
     planSummary: (opts.planSummary ?? []).slice(0, 10),
     strategySummary: opts.strategySummary,
     fireCoreSummary: opts.fireCoreSummary,
+    dataQualitySummary: opts.dataQualitySummary,
     pricesUsed: prices,
     staleDataFlags: pe.unpriced,
     missingEvidence: [
@@ -241,9 +246,10 @@ export function maybeDailySnapshot(pe: PortfolioExposure, appVersion: string,
                                    planSummary?: { symbol: string; planType: string; currentStance: string;
                                      blockingReasons: string[]; evidenceQuality: string }[],
                                    strategySummary?: PortfolioSnapshot['strategySummary'],
-                                   fireCoreSummary?: PortfolioSnapshot['fireCoreSummary']): boolean {
+                                   fireCoreSummary?: PortfolioSnapshot['fireCoreSummary'],
+                                   dataQualitySummary?: PortfolioSnapshot['dataQualitySummary']): boolean {
   if (syncMeta().lastSnapshotDay === jstDay()) return false;
-  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary, planSummary, strategySummary, fireCoreSummary }) != null;
+  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary, planSummary, strategySummary, fireCoreSummary, dataQualitySummary }) != null;
 }
 
 // ── export / import ─────────────────────────────────────────────────────────

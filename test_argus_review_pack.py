@@ -138,6 +138,19 @@ def test_hierarchy_order():
 
 # ── honesty ──────────────────────────────────────────────────────────────────
 
+def test_data_quality_caveat_included():
+    p = rp.build_pack("daily", _ctx(dataQualityJa=["需給(JSF)が2日更新なし — 需給ランクは割引いて読む",
+                                                   "JPリアルタイムは意図的に無効(仕様)"]),
+                      now_iso=NOW, app_version="11.22.0")
+    md = rp.render_markdown(p)
+    assert "Data Quality / データ鮮度の注意" in md
+    assert "意図的に無効" in md
+    # redactedでも鮮度注意は残る(私的情報ではない)
+    p2 = rp.build_pack("daily", _ctx(dataQualityJa=["需給(JSF)が2日更新なし"]),
+                       privacy_mode="redacted", now_iso=NOW, app_version="11.22.0")
+    assert "データ鮮度の注意" in rp.render_markdown(p2)
+
+
 def test_missing_evidence_included():
     md = rp.render_markdown(_pack())
     assert "逆日歩(未取込)" in md

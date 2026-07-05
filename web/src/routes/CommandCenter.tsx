@@ -28,7 +28,7 @@ import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { useSupplyDemandList } from '../hooks/useSupplyDemand';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy, publishFireCore, latestFireCore, publishEventsJa } from '../lib/positionExposureShare';
+import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy, publishFireCore, latestFireCore, publishEventsJa, publishDataQuality, latestDataQuality } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
 import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
@@ -437,7 +437,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           monthlyContributionTotal: f.monthlyContributionTotal,
           tacticalToCoreRatio: f.tacticalToCoreRatio, tacticalToCoreBand: f.tacticalToCoreBand,
           contributionDataStatus: f.contributionDataStatus,
-          valuationDataStatus: f.valuationDataStatus, staleCount: f.staleCount } : undefined; })());
+          valuationDataStatus: f.valuationDataStatus, staleCount: f.staleCount } : undefined; })(),
+        (() => { const d = latestDataQuality(); return d ? {
+          overallStatus: d.overallStatus, topIssues: d.topIssuesJa.slice(0, 4),
+          expectedDisabled: d.expectedDisabledJa.slice(0, 3) } : undefined; })());
     } catch { /* quota */ }
   }, [positionExposure, scenarioSets, positionPlans, portfolioStrategy, sdSignals, flowRecords]);
 
@@ -494,6 +497,30 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     }, 12_000);
     return () => clearTimeout(t);
   }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets, positionPlans, portfolioStrategy]);
+
+  // v11.22.0: Data Quality — 一度だけ取得し、warning/critical時のみTodayに一行警告。
+  // 取得内容はパック/スナップショットにも共有(鮮度注意は私的情報ではない)。
+  const [dqNote, setDqNote] = useState<{ tone: string; textJa: string } | null>(null);
+  useEffect(() => {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+    if (!backend) return;
+    const t = setTimeout(() => {
+      fetch(backend.replace(/\/$/, '') + '/api/argus/data-quality')
+        .then((r) => r.json())
+        .then((d) => {
+          publishDataQuality({ overallStatus: d.overallStatus, overallStatusJa: d.overallStatusJa,
+            topIssuesJa: d.topIssuesJa ?? [],
+            expectedDisabledJa: (d.expectedDisabled ?? [])
+              .map((x: { sourceName: string; reasonJa: string }) => `${x.sourceName}: ${x.reasonJa}`) });
+          if (d.overallStatus === 'critical' || d.overallStatus === 'warning') {
+            setDqNote({ tone: d.overallStatus === 'critical' ? 'var(--value-negative)' : 'var(--amber, #fbbf24)',
+              textJa: `データ品質${d.overallStatusJa}: ${(d.topIssuesJa ?? [])[0] ?? d.ownerReadableSummaryJa}` });
+          }
+        })
+        .catch(() => { /* Data Qualityページ自体が疎通チェック — Todayは静かに */ });
+    }, 5000);
+    return () => clearTimeout(t);
+  }, []);
 
   // v11.20.0: AI Review Pack用のイベント一行群(パック内でイベント要約は1回のみ)
   useEffect(() => {
@@ -667,6 +694,17 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           </p>
         );
       })()}
+
+      {/* v11.22.0: データ品質の一行警告 — warning/critical時のみ(静かな日は非表示) */}
+      {dqNote && (
+        <p style={{ margin: '0 0 6px', fontSize: 12, borderLeft: `2px solid ${dqNote.tone}`,
+                    paddingLeft: 8, color: 'var(--text-sub)' }}>
+          <b style={{ color: dqNote.tone }}>{dqNote.textJa}</b>
+          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+            詳細はData Qualityページ(古いデータのレイヤーは確度を割引く)
+          </span>
+        </p>
+      )}
 
       {/* v11.19.1: FIRE Coreの一行注意 — 評価額未更新/未入力/戦術枠比の時だけ。 */}
       {(() => {

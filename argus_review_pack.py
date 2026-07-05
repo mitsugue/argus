@@ -33,7 +33,7 @@ SECTION_TYPES = ("session_brief", "action_priority", "important_events",
                  "portfolio_strategy", "fire_core", "position_exposure",
                  "supply_demand", "flow_attribution", "institutional_intelligence",
                  "decision_quality", "learning_dashboard", "notifications",
-                 "backup_safety", "missing_data", "opposing_view",
+                 "backup_safety", "data_quality", "missing_data", "opposing_view",
                  "prompt_instruction")
 HELD_STATUSES = ("held", "watch_only", "unknown")
 
@@ -197,6 +197,10 @@ def build_pack(pack_type: str, ctx: Dict[str, Any], *, privacy_mode: str = "owne
     if ctx.get("backupSafeJa") and not redacted:
         sections.append(_sec("backup_safety", "Backup(状態のみ)", ctx["backupSafeJa"],
                              priority=6, privacy="private_local"))
+    if ctx.get("dataQualityJa"):
+        # v11.22.0: 外部レビュアーに「どのデータが古いか」を先に伝える(全モード)
+        sections.append(_sec("data_quality", "Data Quality / データ鮮度の注意",
+                             bullets=list(ctx["dataQualityJa"])[:5], priority=6))
     sections.append(_sec("missing_data", "Missing Evidence / 不足データ",
                          bullets=missing or ["特筆すべき欠落なし(各レイヤーの注意書き参照)"],
                          priority=7))

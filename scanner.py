@@ -62,6 +62,7 @@ import argus_trade_plan  # Entry/Exit Planning (pure, v11.18.0 — 計画のみ;
 import argus_portfolio_strategy  # Portfolio Strategy/FIRE (pure, v11.19.0 — 戦略は端末内; 公開はredacted)
 import argus_fire_core  # FIRE Core/投信追跡 (pure, v11.19.1 — 全データ端末内; 公開はredacted)
 import argus_review_pack  # AI Review Pack (pure, v11.20.0 — 端末内合成; サーバー保存/自動送信なし)
+import argus_data_quality  # Data Quality Console (pure, v11.22.0 — 鮮度捏造なし; 意図的無効≠障害)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -7063,6 +7064,132 @@ def api_argus_scenarios_status():
                  "marketRegime": bool(_REGIME_CACHE.get("data")),
                  "positionExposure": False,   # device-local by design
                  "decisionQuality": False}))  # records device-local by design
+
+
+# ── V11.22.0 Data Quality Console (server-side collection — honest only) ────
+# 鮮度はサーバーが実測できたタイムスタンプのみから判定。測れないものはunknown。
+# 私的レイヤー(保有/投信/記録)は「端末内で判定」として数値を持たない。
+
+def _dq_iso(epoch):
+    try:
+        return datetime.utcfromtimestamp(epoch).strftime("%Y-%m-%dT%H:%M:%SZ") if epoch else None
+    except Exception:
+        return None
+
+
+def _data_quality_console():
+    import time as _t
+    now = _t.time()
+    now_iso = _ai_now_iso()
+    bdoc = _bridge_status_doc()
+
+    def cache_success(cache, ttl):
+        """expires-TTL≈最終成功時刻(dataがある場合のみ・なければNone=unknown)。"""
+        try:
+            exps = [v.get("expires", 0) for v in cache.values()
+                    if isinstance(v, dict) and v.get("data")]
+            return _dq_iso(max(exps) - ttl) if exps else None
+        except Exception:
+            return None
+
+    jq_margin_last = None
+    try:
+        dates = [h[0].get("date") for h in
+                 ((v.get("data") or None) for v in _JQ_MARGIN_CACHE.values()) if h]
+        if dates:
+            jq_margin_last = max(d for d in dates if d)
+    except Exception:
+        pass
+
+    us_last = _dq_iso(now - bdoc["lastUsPushAgeSec"]) if bdoc.get("lastUsPushAgeSec") is not None else None
+    rates_last = _dq_iso(_RATES_CACHE["expires"] - _RATES_CACHE_TTL) \
+        if _RATES_CACHE.get("data") is not None and _RATES_CACHE.get("expires") else None
+
+    sources = [
+        {"sourceName": "us-realtime-bridge", "sourceType": "market_data",
+         "cadence": "realtime", "lastSuccessAt": us_last,
+         "impactJa": "米国株の現在値・Flow実測", "nextStepJa": "bridge/scripts/check_bridge_status.sh"},
+        {"sourceName": "jp-fallback-prices", "sourceType": "market_data",
+         "cadence": "intraday", "lastSuccessAt": None,   # 取得毎キャッシュで一括時刻なし
+         "fallbackActive": True, "impactJa": "日本株の価格(夜間/引け後はdelayedで正常)"},
+        {"sourceName": "jsf-daily-balance", "sourceType": "supply_demand",
+         "cadence": "daily", "lastSuccessAt": (str(_JSF_CACHE.get("date")) + "T16:00:00+09:00"
+                                               if _JSF_CACHE.get("date") else None),
+         "impactJa": "需給ランク(貸借残)の鮮度", "nextStepJa": "collect cron(30分毎)後に再確認"},
+        {"sourceName": "jquants-margin-weekly", "sourceType": "supply_demand",
+         "cadence": "weekly", "lastSuccessAt": (str(jq_margin_last) + "T16:00:00+09:00"
+                                                if jq_margin_last else None),
+         "impactJa": "需給ランク(週次信用残)の鮮度"},
+        {"sourceName": "fund-nav", "sourceType": "market_data", "cadence": "daily",
+         "lastSuccessAt": cache_success(_FUND_NAV_CACHE, _FUND_NAV_TTL),
+         "impactJa": "投信(FIRE Core)の評価額"},
+        {"sourceName": "crypto-prices", "sourceType": "market_data", "cadence": "realtime",
+         "lastSuccessAt": cache_success(_CRYPTO_CACHE, _CRYPTO_CACHE_TTL),
+         "impactJa": "暗号資産の現在値"},
+        {"sourceName": "fred-rates-vix", "sourceType": "macro", "cadence": "intraday",
+         "lastSuccessAt": rates_last, "impactJa": "金利/VIX/ドル円(地合い判定)"},
+        {"sourceName": "event-calendar", "sourceType": "event", "cadence": "event_based",
+         "lastSuccessAt": None if not _MACRO_ANALYSIS else now_iso,
+         "impactJa": "重要イベント(cron生成キャッシュ)"},
+        {"sourceName": "institutional-intel", "sourceType": "institutional",
+         "cadence": "intraday", "lastSuccessAt": now_iso if _INTEL_STORE else None,
+         "impactJa": "機関シグナル/C.A.O.S."},
+        # 恒久の意図的無効(criticalにしない)
+        {"sourceName": "moomoo JPリアルタイム", "sourceType": "market_data",
+         "cadence": "realtime", "expectedDisabled": True,
+         "impactJa": "JPはフォールバック(J-Quants/Yahoo)で運用"},
+        {"sourceName": "逆日歩(品貸料)", "sourceType": "supply_demand",
+         "cadence": "daily", "expectedDisabled": True, "impactJa": "需給evidenceで常に未取得表示"},
+        {"sourceName": "銘柄別空売り比率", "sourceType": "supply_demand",
+         "cadence": "daily", "expectedDisabled": True, "impactJa": "業種別のみ取得可"},
+    ]
+    engines = [
+        {"engineName": n, "status": "ok", "lastRunAt": now_iso}
+        for n in ("session_brief", "action_priority", "scenario",
+                  "entry_exit_planning", "supply_demand", "flow_attribution",
+                  "institutional_intelligence")
+    ] + [
+        {"engineName": n, "status": "ok", "lastRunAt": None,
+         "impactJa": "端末内で計算(サーバーは内容を知らない)"}
+        for n in ("portfolio_strategy", "fire_core", "decision_quality",
+                  "learning_dashboard", "notifications", "backup_safety",
+                  "ai_review_pack")
+    ]
+    console = argus_data_quality.build_console({
+        "sources": sources, "engines": engines,
+        "bridge": {"bridgeProcess": bdoc.get("bridgeProcess"),
+                   "openDStatus": bdoc.get("openDStatus"),
+                   "bridgeMode": (bdoc.get("heartbeat") or {}).get("bridgeMode") or "us_only",
+                   "usRealtimeStatus": bdoc.get("usRealtimeStatus"),
+                   "jpRealtimeStatus": bdoc.get("jpRealtimeStatus"),
+                   "jpFallbackActive": bdoc.get("jpFallbackActive"),
+                   "heartbeatAgeSec": bdoc.get("heartbeatAgeSec"),
+                   "acceptedCount": (bdoc.get("heartbeat") or {}).get("acceptedCount"),
+                   "diskUsagePct": (bdoc.get("heartbeat") or {}).get("diskUsagePct")},
+        "publicLeakSafe": True, "backupUnsafeWithData": None,
+        "eventNear": False,
+    }, now_iso, app_version="")
+    # 自己漏洩検査 — 自分のドキュメントに機微フィールドが乗ったら即critical化
+    try:
+        if argus_portfolio_sync.contains_sensitive(console):
+            console["publicLeakSafe"] = False
+            console["overallStatus"] = "critical"
+    except Exception:
+        pass
+    return console
+
+
+@app.route("/api/argus/data-quality")
+def api_argus_data_quality():
+    """Public REDACTED console — statuses/buckets/timestamps only. No holdings,
+    no fund data, no secrets. Honest: unmeasurable freshness stays unknown."""
+    return jsonify(_data_quality_console())
+
+
+@app.route("/api/argus/data-quality/status")
+def api_argus_data_quality_status():
+    return jsonify(argus_data_quality.public_status(
+        _data_quality_console(), now_iso=_ai_now_iso()))
 
 
 @app.route("/api/argus/review-pack/status")

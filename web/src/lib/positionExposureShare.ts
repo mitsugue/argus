@@ -51,6 +51,15 @@ let latestFC: LocalFireCore | null = null;
 export function publishFireCore(f: LocalFireCore): void { latestFC = f; }
 export function latestFireCore(): LocalFireCore | null { return latestFC; }
 
+// v11.22.0: latest Data Quality summary (Today fetch → pack/snapshot readers).
+export interface DataQualityShare {
+  overallStatus: string; overallStatusJa: string;
+  topIssuesJa: string[]; expectedDisabledJa: string[];
+}
+let latestDQx: DataQualityShare | null = null;
+export function publishDataQuality(d: DataQualityShare): void { latestDQx = d; }
+export function latestDataQuality(): DataQualityShare | null { return latestDQx; }
+
 // v11.20.0: latest Important Events one-liners (for the AI Review Pack —
 // the event summary appears in the pack exactly ONCE, from this list).
 let latestEV: string[] = [];

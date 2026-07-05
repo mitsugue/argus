@@ -1081,6 +1081,36 @@ def v_review_pack_status():
     return True, f"types={len(d.get('packTypesSupported') or [])} on-device only"
 
 
+def v_data_quality_console():
+    # v11.22.0: honest freshness console — expected-disabled never counts as a
+    # failure; no secrets/private fields in the public doc.
+    c, d = _get("/api/argus/data-quality")
+    if d.get("schemaVersion") != "data-quality-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("overallStatus") not in ("ok", "degraded", "partial", "warning",
+                                      "critical", "unknown"):
+        return False, f"overall={d.get('overallStatus')}"
+    dis = [s for s in d.get("sourceHealth") or [] if s.get("isExpectedDisabled")]
+    if len(dis) != 3 or any(s.get("status") != "disabled_expected" for s in dis):
+        return False, "expected-disabled trio wrong"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("vaultPass", "passphrase=", "login_pwd", "Bearer ",
+                   "quantity", "averageCost", "monthlyContribution"):
+        if banned in blob:
+            return False, f"LEAK: {banned}"
+    return True, f"overall={d['overallStatus']} sources={len(d.get('sourceHealth') or [])}"
+
+
+def v_data_quality_status():
+    c, d = _get("/api/argus/data-quality/status")
+    if d.get("schemaVersion") != "data-quality-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("storageMode") != "public_redacted":
+        return False, "must be public_redacted"
+    return True, (f"overall={d.get('overallStatus')} hb={d.get('heartbeatBucket')} "
+                  f"disabled={d.get('expectedDisabledCount')}")
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1911,6 +1941,9 @@ CHECKS = [
     ("v11.19.1 fire core redacted", v_fire_core_status),
     # ── V11.20.0 AI Review Pack ──
     ("v11.20.0 review pack status", v_review_pack_status),
+    # ── V11.22.0 Data Quality ──
+    ("v11.22.0 data quality console", v_data_quality_console),
+    ("v11.22.0 data quality status", v_data_quality_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

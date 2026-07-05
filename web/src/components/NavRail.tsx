@@ -11,6 +11,7 @@ export type RouteKey =
   | 'watchlist'
   | 'core'
   | 'backup'
+  | 'quality'
   | 'guide';
 
 interface NavItem {
@@ -66,6 +67,16 @@ export const NavRail: React.FC<Props> = ({
       >
         <span className="nav__dot" aria-hidden />
         Backup
+      </button>
+
+      {/* v11.22.0: Data Quality — 運用点検ページ(下段グループ・Backupの下) */}
+      <button
+        className={`nav__btn nav__btn--guide ${active === 'quality' ? 'is-active' : ''}`}
+        onClick={() => onSelect('quality')}
+        aria-current={active === 'quality' ? 'page' : undefined}
+      >
+        <span className="nav__dot" aria-hidden />
+        Data Quality
       </button>
 
       <button
