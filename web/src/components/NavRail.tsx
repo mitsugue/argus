@@ -10,6 +10,7 @@ export type RouteKey =
   | 'regime'
   | 'watchlist'
   | 'core'
+  | 'backup'
   | 'guide';
 
 interface NavItem {
@@ -55,6 +56,17 @@ export const NavRail: React.FC<Props> = ({
           {n.label}
         </button>
       ))}
+
+      {/* v11.19.1 (owner request): backup operations consolidated on ONE page,
+          placed at the bottom group next to Guide. */}
+      <button
+        className={`nav__btn nav__btn--guide ${active === 'backup' ? 'is-active' : ''}`}
+        onClick={() => onSelect('backup')}
+        aria-current={active === 'backup' ? 'page' : undefined}
+      >
+        <span className="nav__dot" aria-hidden />
+        Backup
+      </button>
 
       <button
         className={`nav__btn nav__btn--guide ${active === 'guide' ? 'is-active' : ''}`}

@@ -28,7 +28,7 @@ import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { useSupplyDemandList } from '../hooks/useSupplyDemand';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy } from '../lib/positionExposureShare';
+import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy, publishFireCore, latestFireCore } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
 import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
@@ -39,6 +39,7 @@ import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
 import { themeOf } from '../domain/positionExposure';
+import { buildLocalFireCore, fireCoreTodayNoteJa } from '../lib/fireCore';
 import { SessionBriefSection } from '../components/dashboard/SessionBriefSection';
 import { runNotificationEngine, listNotifications, SEV_TONE, SEV_JA } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
@@ -323,9 +324,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         eventPending: eventSyms.has(sym),
       });
     });
+    // v11.19.1: FIRE Core(投信=本丸資産)を先に合成し、戦略へ文脈供給
+    const fc = buildLocalFireCore(assets, positionExposure, roles);
+    publishFireCore(fc);
     const s = buildStrategy(positionExposure, roles, {
       eventPending: eventSyms.size > 0,
-      recurringAccumulationKnown: false,   // 積立額の入力UIは未提供 — 不足と正直に言う
+      recurringAccumulationKnown: fc.contributionDataStatus === 'complete',
+      fireCore: { known: fc.fireCoreTotal != null,
+        tacticalToCoreBand: fc.tacticalToCoreBand,
+        contributionKnown: fc.contributionDataStatus === 'complete' },
     });
     publishStrategy(s);   // CorePortfolio/Handoff/AIReview read at render/copy time
     return s;
@@ -378,10 +385,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       });
     });
     // v11.19.0: 戦略上の役割をカード表示用に付与(端末内のみ)
+    // v11.19.1: 投信はFIRE Core注記(積立/評価額の鮮度)を追記
+    const fcPos = new Map((latestFireCore()?.positions ?? []).map((x) => [x.symbol, x]));
     for (const p of plans) {
       const r = roleBySym.get(p.symbol);
-      if (r) p.strategicRole = { roleJa: r.roleJa, roleReasonJa: r.roleReasonJa,
-        addPolicyJa: r.addPolicyJa, strategyFit: r.strategyFit };
+      if (r) {
+        let reason = r.roleReasonJa;
+        const fp = fcPos.get(p.symbol);
+        if (fp) {
+          reason = `FIRE Core(本丸資産)。積立${fp.monthlyContribution != null ? `月${fp.monthlyContribution.toLocaleString()}円` : '未入力'}`
+            + `・評価額${fp.marketValue != null ? (fp.stale ? '更新が古い' : '追跡中') : '未入力'}(${fp.accountTypeJa})`;
+        }
+        p.strategicRole = { roleJa: fp ? 'FIRE Core' : r.roleJa, roleReasonJa: reason,
+          addPolicyJa: r.addPolicyJa, strategyFit: r.strategyFit };
+      }
     }
     publishPlans(plans);   // Handoff/AIReview/CorePortfolio read at render/copy time
     return plans;
@@ -410,7 +427,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           tacticalBudget: portfolioStrategy.tacticalBudget,
           themeRisk: portfolioStrategy.themeRisk, singleNameRisk: portfolioStrategy.singleNameRisk,
           roles: portfolioStrategy.roles.filter((r) => r.weightPct != null)
-            .map((r) => ({ symbol: r.symbol, role: r.role, addPolicy: r.addPolicy })) });
+            .map((r) => ({ symbol: r.symbol, role: r.role, addPolicy: r.addPolicy })) },
+        (() => { const f = latestFireCore(); return f && f.positions.length ? {
+          mutualFundTotal: f.mutualFundTotal, fireCoreTotal: f.fireCoreTotal,
+          monthlyContributionTotal: f.monthlyContributionTotal,
+          tacticalToCoreRatio: f.tacticalToCoreRatio, tacticalToCoreBand: f.tacticalToCoreBand,
+          contributionDataStatus: f.contributionDataStatus,
+          valuationDataStatus: f.valuationDataStatus, staleCount: f.staleCount } : undefined; })());
     } catch { /* quota */ }
   }, [positionExposure, scenarioSets, positionPlans, portfolioStrategy, sdSignals, flowRecords]);
 
@@ -454,6 +477,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             tactical: portfolioStrategy.tacticalBudget, single: portfolioStrategy.singleNameRisk,
             theme: portfolioStrategy.themeRisk, fire: portfolioStrategy.fireStatus,
             summaryJa: portfolioStrategy.summaryJa },
+          fireCoreState: (() => { const f = latestFireCore(); return f && f.positions.length ? {
+            valuation: f.valuationDataStatus, contribution: f.contributionDataStatus,
+            ratio: f.tacticalToCoreBand } : null; })(),
           briefSession: sessionBrief.sessionType,
           hasHoldings: !positionExposure.noHoldings,
           snapshotAgeDays: age,
@@ -627,6 +653,18 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
               詳細はCore Portfolio→PORTFOLIO STRATEGY(助言ではない)
             </span>
+          </p>
+        );
+      })()}
+
+      {/* v11.19.1: FIRE Coreの一行注意 — 評価額未更新/未入力/戦術枠比の時だけ。 */}
+      {(() => {
+        const note = fireCoreTodayNoteJa(latestFireCore());
+        if (!note) return null;
+        return (
+          <p style={{ margin: '0 0 6px', fontSize: 12, borderLeft: `2px solid ${note.tone}`,
+                      paddingLeft: 8, color: 'var(--text-sub)' }}>
+            <b style={{ color: note.tone }}>{note.textJa}</b>
           </p>
         );
       })()}

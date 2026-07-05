@@ -208,9 +208,17 @@ def build_strategy(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     else:
         fire_status, band = "mostly_aligned", "moderate"
 
+    # v11.19.1: FIRE Core文脈(投信=本丸資産・端末側argus_fire_coreが供給)
+    fcx = dict(inputs.get("fireCore") or {})
+    fc_known = fcx.get("known")
+    fc_band = str(fcx.get("tacticalToCoreBand") or "unknown")
+    fc_contrib = fcx.get("contributionKnown")
+
     missing = [m for m in (
+        "投資信託(FIRE Core)の評価額が未入力 — Core Portfolioで入力可" if fc_known is False else None,
         "現金比率(証券口座外の現金は未入力)",
-        "毎月の積立額・入金力(未入力)" if not inputs.get("recurringAccumulationKnown") else None,
+        "毎月の積立額・入金力(未入力)" if not inputs.get("recurringAccumulationKnown")
+        and fc_contrib is not True else None,
         "住宅ローン・生活キャッシュフロー(未入力)",
         "NISA/iDeCo口座区分(未入力)",
         f"価格未取得{inputs.get('unpricedCount')}銘柄" if (inputs.get("unpricedCount") or 0) > 0 else None,
@@ -264,8 +272,14 @@ def build_strategy(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     warnings = fire["warningJa"] + [w for w in (
         f"1銘柄({top1})への集中が{single_risk}水準です。" if single_risk in ("high", "critical") and top1 else None,
         f"暗号資産が約{crypto:.0f}%と大きめです(戦術枠として管理)。" if crypto >= 15 else None,
+        "戦術枠がFIRE Coreに対して大きくなっています。個別株の勝負がFIRE計画全体を振らす構成です。"
+        if fc_band in ("stretched", "exceeded") else None,
+        "毎月積立額が未入力のため、長期入金整合は判定保留です。"
+        if fc_known is True and fc_contrib is False else None,
     ) if w]
     opportunities = [o for o in (
+        "個別株の利益が出た場合、一定部分をFIRE Coreへ移す検討余地があります。"
+        if fc_band in ("elevated", "stretched", "exceeded") else None,
         "金の比率はポートフォリオの値動きを和らげる役割があります。ただしリターン源というよりヘッジとして扱う方が自然です。" if gold > 0 else None,
         "戦術枠に余裕があります。ただし使い切る必要はありません(見送りも選択肢)。" if tac_budget == "underused" else None,
         "コア比率が確保できており、短期の分岐に振り回されにくい構成です。" if fire_status == "aligned" else None,

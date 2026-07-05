@@ -89,7 +89,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         </div>
         <div className="cmd-alloc__note">
           現在、保有データはこの端末内に保存されています。サーバーには送信されません。
-          {!vaultOn && ' Guideの「バックアップと同期」でパスフレーズを設定すると、Mac/iPhone/iPad間で暗号化同期されます。'}
+          {!vaultOn && ' このBackupページ上部の「暗号化バックアップ / 端末間同期」でパスフレーズを設定すると、Mac/iPhone/iPad間で暗号化同期されます。'}
         </div>
         <div className="cmd-alloc__note">
           クラウド同期(平文)は安全な認証が整うまで無効です。将来、Mac/iPhone/iPadで同期できるようにするため、同期用データ構造だけ先に準備しています。

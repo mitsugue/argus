@@ -111,7 +111,9 @@ export interface LocalStrategy {
 }
 
 export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
-  ctx: { eventPending?: boolean; recurringAccumulationKnown?: boolean }): LocalStrategy {
+  ctx: { eventPending?: boolean; recurringAccumulationKnown?: boolean;
+    /** v11.19.1: FIRE Core文脈(lib/fireCoreが供給・端末内)。 */
+    fireCore?: { known: boolean; tacticalToCoreBand: string; contributionKnown: boolean } }): LocalStrategy {
   const themePct = (k: ThemeKey) => pe.byTheme.find((t) => t.key === k)?.pct ?? 0;
   const alloc = (r: AssetRoleKey) =>
     Math.round(roles.filter((x) => x.role === r).reduce((s, x) => s + (x.weightPct ?? 0), 0) * 10) / 10;
@@ -163,7 +165,11 @@ export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
     ...(['high', 'critical'].includes(singleRisk) && pe.top1Symbol
       ? [`1銘柄(${pe.top1Symbol})への集中が${singleRisk === 'critical' ? '危険' : '高い'}水準です。`] : []),
     ...(crypto >= 15 ? [`暗号資産が約${Math.round(crypto)}%と大きめです(戦術枠として管理)。`] : []),
-  ].slice(0, 4);
+    ...(ctx.fireCore && ['stretched', 'exceeded'].includes(ctx.fireCore.tacticalToCoreBand)
+      ? ['戦術枠がFIRE Coreに対して大きくなっています。個別株の勝負がFIRE計画全体を振らす構成です。'] : []),
+    ...(ctx.fireCore?.known === true && !ctx.fireCore.contributionKnown
+      ? ['毎月積立額が未入力のため、長期入金整合は判定保留です。'] : []),
+  ].slice(0, 5);
 
   return {
     strategyMode: mode, strategyModeJa: MODE_JA[mode],
@@ -180,6 +186,8 @@ export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
     riskJa,
     warningsJa,
     opportunitiesJa: [
+      ...(ctx.fireCore && ['elevated', 'stretched', 'exceeded'].includes(ctx.fireCore.tacticalToCoreBand)
+        ? ['個別株の利益が出た場合、一定部分をFIRE Coreへ移す検討余地があります。'] : []),
       ...(gold > 0 ? ['金の比率はポートフォリオの値動きを和らげる役割があります。ただしリターン源というよりヘッジとして扱う方が自然です。'] : []),
       ...(tacBudget === 'underused' ? ['戦術枠に余裕があります。ただし使い切る必要はありません(見送りも選択肢)。'] : []),
       ...(fire === 'aligned' ? ['コア比率が確保できており、短期の分岐に振り回されにくい構成です。'] : []),
@@ -202,6 +210,7 @@ export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
       'テーマ集中と1銘柄集中の週次確認',
     ].slice(0, 3),
     missingDataJa: [
+      ...(ctx.fireCore?.known === false ? ['投資信託(FIRE Core)の評価額が未入力 — Core Portfolioで入力可'] : []),
       '現金比率(証券口座外の現金は未入力)',
       ...(!ctx.recurringAccumulationKnown ? ['毎月の積立額・入金力(未入力)'] : []),
       '住宅ローン・生活キャッシュフロー(未入力)',

@@ -38,6 +38,7 @@ const RULES: Record<string, { severity: Severity; cooldownMin: number; maxPerDay
   scenario_change: { severity: 'high', cooldownMin: 1440, maxPerDay: 3 },
   plan_change: { severity: 'high', cooldownMin: 1440, maxPerDay: 3 },
   strategy_risk: { severity: 'high', cooldownMin: 4320, maxPerDay: 2 },
+  fire_core: { severity: 'low', cooldownMin: 4320, maxPerDay: 1 },
   avoid_chase: { severity: 'medium', cooldownMin: 1440, maxPerDay: 4 },
   session_brief_ready: { severity: 'info', cooldownMin: 240, maxPerDay: 3 },
   snapshot_missing: { severity: 'low', cooldownMin: 1440, maxPerDay: 1 },
@@ -57,6 +58,7 @@ export interface PrevState {
   scenario?: Record<string, string>;
   plan?: Record<string, string>;
   strategy?: { tactical?: string; single?: string; theme?: string; fire?: string };
+  fireCore?: { valuation?: string; contribution?: string; ratio?: string };
   briefSession?: string;
 }
 
@@ -89,6 +91,8 @@ export interface NotifInputs {
   /** v11.19.0: 戦略リスク(端末内合成)。materialな悪化転換のみ通知。 */
   strategyState?: { tactical: string; single: string; theme: string; fire: string;
     summaryJa?: string } | null;
+  /** v11.19.1: FIRE Core(投信=本丸)。stale化/欠落化/比率悪化の転換のみ通知。 */
+  fireCoreState?: { valuation: string; contribution: string; ratio: string } | null;
   briefSession: string;
   hasHoldings: boolean;
   snapshotAgeDays: number | null;
@@ -216,6 +220,31 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         dedupeKey: `strat|${key}`, isPrivate: true });
     }
   }
+  // v11.19.1: fire_core — 悪化転換のみ: 評価額stale化/積立欠落化/戦術枠比の悪化。
+  // 初回(prev無し)は記録のみ。低severity・週1回上限(スパムしない)。
+  if (inp.fireCoreState && st.prev.fireCore) {
+    const cur = inp.fireCoreState, was = st.prev.fireCore;
+    if (cur.valuation === 'stale' && was.valuation !== 'stale') {
+      cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
+        titleJa: 'FIRE Core: 投信の評価額が未更新です',
+        bodyJa: '投資信託の現在価値を更新すると、戦術枠の取りすぎを正確に判定できます。',
+        whyJa: '評価額の更新が7日を超えました。', checkNextJa: 'Core Portfolio → FIRE COREで更新',
+        dedupeKey: 'fc|stale', isPrivate: true });
+    } else if (['stretched', 'exceeded'].includes(cur.ratio ?? '')
+      && !['stretched', 'exceeded'].includes(was.ratio ?? '')) {
+      cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
+        titleJa: 'FIRE Core: 戦術枠が本丸資産に対して大きくなっています',
+        bodyJa: '個別株の追加より、FIRE Core(投信)とのバランス確認が先です。',
+        whyJa: '戦術枠/FIRE Core比が悪化しました。', checkNextJa: 'Core Portfolio → FIRE COREで確認',
+        dedupeKey: 'fc|ratio', isPrivate: true });
+    } else if (cur.contribution === 'missing' && was.contribution !== 'missing') {
+      cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
+        titleJa: 'FIRE Core: 毎月積立額が未入力です',
+        bodyJa: '積立額を入力すると長期入金整合の判定精度が上がります(捏造はしません)。',
+        whyJa: '積立データが欠落しています。', checkNextJa: 'Core Portfolio → FIRE COREで入力',
+        dedupeKey: 'fc|contrib', isPrivate: true });
+    }
+  }
   // v11.18.0: plan_change — materialな計画転換のみ: ①保有×(リスク確認/利確検討)
   // 入り ②追加候補(押し目限定/小さく可)→追いかけ注意。毎計画では鳴らさない。
   for (const [sym, pl] of Object.entries(inp.planBySymbol ?? {})) {
@@ -281,7 +310,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'sync_backup_warning', severity: 'low', symbol: null, assetName: null,
         titleJa: 'バックアップ未設定',
         bodyJa: '暗号化バックアップ(パスフレーズ)が未設定です。端末故障で保有データが失われます。',
-        whyJa: '保有・判断履歴は端末内のみ。', checkNextJa: 'Guideの「バックアップと同期」で設定',
+        whyJa: '保有・判断履歴は端末内のみ。', checkNextJa: 'Backupページでパスフレーズを設定',
         dedupeKey: 'vault', isPrivate: true });
     }
   }
@@ -318,6 +347,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     strategy: inp.strategyState ? { tactical: inp.strategyState.tactical,
       single: inp.strategyState.single, theme: inp.strategyState.theme,
       fire: inp.strategyState.fire } : st.prev.strategy,
+    fireCore: inp.fireCoreState ?? st.prev.fireCore,
     briefSession: inp.briefSession,
   };
   save(st);

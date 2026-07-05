@@ -5,6 +5,7 @@ import { CommandCenter } from './routes/CommandCenter';
 import { MarketRegime } from './routes/MarketRegime';
 import { Watchlist } from './routes/Watchlist';
 import { CorePortfolio } from './routes/CorePortfolio';
+import { BackupPage } from './routes/BackupPage';
 import { Guide } from './routes/Guide';
 import { AIReview } from './routes/AIReview';
 import { useActionLabels } from './hooks/useActionLabels';
@@ -21,6 +22,7 @@ const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   regime:    MarketRegime as React.FC<RouteProps>,
   watchlist: Watchlist as React.FC<RouteProps>,
   core:      CorePortfolio as React.FC<RouteProps>,
+  backup:    BackupPage as React.FC<RouteProps>,
   guide:     Guide as React.FC<RouteProps>,
 };
 
@@ -103,10 +105,10 @@ const App: React.FC = () => {
 
   // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
   // Keep in sync with NavRail's NAV order (1=全体把握 2=個別 3+=その他情報).
-  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'regime', 'core', 'guide'];
+  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'regime', 'core', 'backup', 'guide'];
   const NAV_LABEL: Record<RouteKey, string> = {
     command: 'Today', regime: 'Market Context',
-    watchlist: 'Watchlist', core: 'Core Portfolio', guide: 'Guide',
+    watchlist: 'Watchlist', core: 'Core Portfolio', backup: 'Backup', guide: 'Guide',
   };
   const curIdx = NAV_ORDER.indexOf(route);
   const overscrollNext = (!isReview && curIdx >= 0 && curIdx + 1 < NAV_ORDER.length)

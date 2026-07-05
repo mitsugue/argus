@@ -63,6 +63,11 @@ export interface PortfolioSnapshot {
     corePct: number; satellitePct: number; tacticalPct: number; hedgePct: number;
     tacticalBudget: string; themeRisk: string; singleNameRisk: string;
     roles: { symbol: string; role: string; addPolicy: string }[] };
+  /** v11.19.1: FIRE Core(投信=本丸資産)の当日状態 — 端末内のみ・暗号化バックアップ同乗 */
+  fireCoreSummary?: { mutualFundTotal: number | null; fireCoreTotal: number | null;
+    monthlyContributionTotal: number | null; tacticalToCoreRatio: number | null;
+    tacticalToCoreBand: string; contributionDataStatus: string;
+    valuationDataStatus: string; staleCount: number };
   pricesUsed: Record<string, number>;
   staleDataFlags: string[];
   missingEvidence: string[];
@@ -140,7 +145,8 @@ export function createSnapshot(
     scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[];
     planSummary?: { symbol: string; planType: string; currentStance: string;
       blockingReasons: string[]; evidenceQuality: string }[];
-    strategySummary?: PortfolioSnapshot['strategySummary'] },
+    strategySummary?: PortfolioSnapshot['strategySummary'];
+    fireCoreSummary?: PortfolioSnapshot['fireCoreSummary'] },
 ): PortfolioSnapshot | null {
   // Never fabricate: without any priced holding there is nothing to snapshot —
   // watchlist-only state is not portfolio history.
@@ -178,6 +184,7 @@ export function createSnapshot(
     scenarioSummary: (opts.scenarioSummary ?? []).slice(0, 10),
     planSummary: (opts.planSummary ?? []).slice(0, 10),
     strategySummary: opts.strategySummary,
+    fireCoreSummary: opts.fireCoreSummary,
     pricesUsed: prices,
     staleDataFlags: pe.unpriced,
     missingEvidence: [
@@ -233,9 +240,10 @@ export function maybeDailySnapshot(pe: PortfolioExposure, appVersion: string,
                                    scenarioSummary?: { symbol: string; dominant: string; evidenceQuality: string }[],
                                    planSummary?: { symbol: string; planType: string; currentStance: string;
                                      blockingReasons: string[]; evidenceQuality: string }[],
-                                   strategySummary?: PortfolioSnapshot['strategySummary']): boolean {
+                                   strategySummary?: PortfolioSnapshot['strategySummary'],
+                                   fireCoreSummary?: PortfolioSnapshot['fireCoreSummary']): boolean {
   if (syncMeta().lastSnapshotDay === jstDay()) return false;
-  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary, planSummary, strategySummary }) != null;
+  return createSnapshot(pe, { appVersion, flowBySymbol, supplyDemand, topPriorities, sessionBrief, scenarioSummary, planSummary, strategySummary, fireCoreSummary }) != null;
 }
 
 // ── export / import ─────────────────────────────────────────────────────────

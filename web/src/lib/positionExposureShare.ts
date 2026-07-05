@@ -44,3 +44,9 @@ import type { LocalStrategy } from '../domain/portfolioStrategy';
 let latestPS: LocalStrategy | null = null;
 export function publishStrategy(s: LocalStrategy): void { latestPS = s; }
 export function latestStrategy(): LocalStrategy | null { return latestPS; }
+
+// v11.19.1: latest device-local FIRE Core summary (same lifecycle contract).
+import type { LocalFireCore } from './fireCore';
+let latestFC: LocalFireCore | null = null;
+export function publishFireCore(f: LocalFireCore): void { latestFC = f; }
+export function latestFireCore(): LocalFireCore | null { return latestFC; }

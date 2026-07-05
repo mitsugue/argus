@@ -96,7 +96,7 @@ export function assessBackupSafety(assets: AssetItem[]): BackupSafety {
       ? '保有・判断記録・通知・学習履歴がこの端末だけにあり、サイトデータ削除・ブラウザリセット・PWA削除・端末紛失で失われます。'
       : !verified && level !== 'unknown'
         ? '復元できることを一度も確認していません。復元ドリル(非破壊)の実行を推奨します。' : '',
-    nextStepJa: !vault && hasData ? 'Guideの「バックアップと同期」でパスフレーズを設定(暗号化バックアップ有効化)'
+    nextStepJa: !vault && hasData ? 'Backupページでパスフレーズを設定(暗号化バックアップ有効化)'
       : !verified && hasData ? '「復元ドリルを実行」で戻せることを確認(非破壊)'
       : risks.includes('no_export_backup') && hasData ? 'バックアップJSONを書き出してiCloud Drive等に保管'
       : '現状維持でOK(週1回のエクスポート保管を推奨)',

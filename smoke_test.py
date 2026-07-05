@@ -1047,6 +1047,23 @@ def v_portfolio_strategy_status():
     return True, "redacted, on-device only"
 
 
+def v_fire_core_status():
+    # v11.19.1: fund data lives ON DEVICE — public status is flags only.
+    c, d = _get("/api/argus/fire-core/status")
+    if d.get("schemaVersion") != "fire-core-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("serverKnowsFundData") is not False:
+        return False, "server must not know fund data"
+    if d.get("storageMode") != "public_redacted" or d.get("publicLeakSafe") is not True:
+        return False, "must be public_redacted+leak-safe"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("units", "navPrice", "marketValue", "monthlyContribution",
+                   "accountType", "fireCoreTotal", "fundName", "quantity"):
+        if banned in blob:
+            return False, f"LEAK: {banned}"
+    return True, "redacted, on-device only"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1873,6 +1890,8 @@ CHECKS = [
     ("v11.18.0 position plans status", v_position_plans_status),
     # ── V11.19.0 Portfolio Strategy ──
     ("v11.19.0 portfolio strategy redacted", v_portfolio_strategy_status),
+    # ── V11.19.1 FIRE Core ──
+    ("v11.19.1 fire core redacted", v_fire_core_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

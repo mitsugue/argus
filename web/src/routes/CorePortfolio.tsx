@@ -3,7 +3,6 @@ import { PageShell } from './PageShell';
 import { AlertCard } from '../components/dashboard/AlertCard';
 import { useActionAlerts } from '../hooks/useActionAlerts';
 import { useAssets } from '../hooks/useAssets';
-import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
 import { DecisionQualityCard } from '../components/dashboard/DecisionQualityCard';
 import { LearningDashboardCard } from '../components/dashboard/LearningDashboardCard';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
@@ -19,6 +18,7 @@ import { publishExposure, latestScenarios, latestPlans, latestStrategy } from '.
 import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
 import { planPortfolioSummary } from '../domain/positionPlan';
 import { FIRE_TONE, BUDGET_JA, STRATEGY_COMPLIANCE_JA } from '../domain/portfolioStrategy';
+import { FireCoreCard } from '../components/dashboard/FireCoreCard';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
@@ -179,6 +179,10 @@ export const CorePortfolio: React.FC = () => {
         );
       })()}
 
+      {/* FIRE CORE / MUTUAL FUNDS (v11.19.1) — 投信=FIREの本丸資産の追跡。
+          口数×日次NAV or 手動評価額・積立・口座区分。端末内のみ。 */}
+      <FireCoreCard assetsApi={assetsApi} />
+
       {/* PORTFOLIO STRATEGY / FIRE ALIGNMENT (v11.19.0) — 短期の計画とFIRE目的を
           接続する戦略層(端末内合成)。免許業の助言ではない・売買指示でもない。 */}
       {(() => {
@@ -269,9 +273,12 @@ export const CorePortfolio: React.FC = () => {
         );
       })()}
 
-      {/* PORTFOLIO SYNC & BACKUP (v11.9.0) — where the data lives + export/
-          import/snapshot. Cloud sees ciphertext only; no broker, no trading. */}
-      <PortfolioSyncCard assetsApi={assetsApi} appVersion={__APP_VERSION__} />
+      {/* v11.19.1 (owner request): PORTFOLIO SYNC & BACKUP moved to the new
+          Backup page — all backup ops now live in ONE place. Pointer only. */}
+      <p className="cmd-alloc__note" style={{ margin: '2px 0 8px', fontSize: 11.5, color: 'var(--text-faint)' }}>
+        バックアップ操作(暗号化バックアップ設定・JSON書き出し/読み込み・スナップショット・復元ドリル)は
+        左ナビの「<b>Backup</b>」ページに集約しました。
+      </p>
 
       {/* DECISION QUALITY (v11.11.0) — 過去判断の答え合わせ(端末内・成績断定なし) */}
       <DecisionQualityCard />

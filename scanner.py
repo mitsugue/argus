@@ -60,6 +60,7 @@ import argus_backup_safety  # Backup Safety/Vault Guard (pure, v11.16.0 — devi
 import argus_scenario  # Scenario Engine (pure, v11.17.0 — 条件付き分岐; 確率は帯のみ・%断定禁止)
 import argus_trade_plan  # Entry/Exit Planning (pure, v11.18.0 — 計画のみ; 執行語・注文なし)
 import argus_portfolio_strategy  # Portfolio Strategy/FIRE (pure, v11.19.0 — 戦略は端末内; 公開はredacted)
+import argus_fire_core  # FIRE Core/投信追跡 (pure, v11.19.1 — 全データ端末内; 公開はredacted)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -7061,6 +7062,13 @@ def api_argus_scenarios_status():
                  "marketRegime": bool(_REGIME_CACHE.get("data")),
                  "positionExposure": False,   # device-local by design
                  "decisionQuality": False}))  # records device-local by design
+
+
+@app.route("/api/argus/fire-core/status")
+def api_argus_fire_core_status():
+    """Public REDACTED — flags only. Fund data (names/units/NAV/values/
+    contributions/accounts) lives on device; the server holds none of it."""
+    return jsonify(argus_fire_core.public_status(now_iso=_ai_now_iso()))
 
 
 @app.route("/api/argus/portfolio-strategy/status")

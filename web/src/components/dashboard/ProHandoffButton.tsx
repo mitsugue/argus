@@ -10,10 +10,11 @@ import { latestSessionBrief } from '../../lib/positionExposureShare';
 import { ntHandoffTextJa } from '../../lib/notifications';
 import { lrHandoffTextJa } from '../../lib/learningReview';
 import { assessBackupSafety } from '../../lib/backupSafety';
-import { latestScenarios, latestPlans, latestStrategy } from '../../lib/positionExposureShare';
+import { latestScenarios, latestPlans, latestStrategy, latestFireCore } from '../../lib/positionExposureShare';
 import { scHandoffTextJa } from '../../domain/scenario';
 import { ppHandoffTextJa } from '../../domain/positionPlan';
 import { psHandoffTextJa } from '../../domain/portfolioStrategy';
+import { fcHandoffTextJa } from '../../lib/fireCore';
 
 // "Copy for GPT-5.5 Pro" — utility action. On click it fetches the backend
 // /api/argus/pro-handoff (no admin token, no secrets, no OpenAI/Gemini call) and
@@ -43,7 +44,7 @@ export const ProHandoffButton: React.FC = () => {
       const pe = latestExposure();
       const local = pe ? exposureSummaryText(pe)
         : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。';
-      const prompt: string = `${d.promptText || ''}\n\n${local}\n${backupStatusTextJa()}\n${(() => { try { const b = assessBackupSafety([]); return b.protectionLevel === 'unknown' ? '' : `バックアップ保護: ${b.protectionLevelJa} / 復元確認${b.restoreVerified ? '済' : '未'}`; } catch { return ''; } })()}\n\n${dqHandoffTextJa()}\n\n${apHandoffTextJa(latestActionPriorities())}\n\n${sbHandoffTextJa(latestSessionBrief())}\n\n${scHandoffTextJa(latestScenarios())}\n\n${ppHandoffTextJa(latestPlans())}\n\n${psHandoffTextJa(latestStrategy())}\n\n${ntHandoffTextJa()}\n\n${lrHandoffTextJa()}`;
+      const prompt: string = `${d.promptText || ''}\n\n${local}\n${backupStatusTextJa()}\n${(() => { try { const b = assessBackupSafety([]); return b.protectionLevel === 'unknown' ? '' : `バックアップ保護: ${b.protectionLevelJa} / 復元確認${b.restoreVerified ? '済' : '未'}`; } catch { return ''; } })()}\n\n${dqHandoffTextJa()}\n\n${apHandoffTextJa(latestActionPriorities())}\n\n${sbHandoffTextJa(latestSessionBrief())}\n\n${scHandoffTextJa(latestScenarios())}\n\n${ppHandoffTextJa(latestPlans())}\n\n${psHandoffTextJa(latestStrategy())}\n\n${fcHandoffTextJa(latestFireCore())}\n\n${ntHandoffTextJa()}\n\n${lrHandoffTextJa()}`;
       setText(prompt);
       try {
         await navigator.clipboard.writeText(prompt);
