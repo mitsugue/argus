@@ -38,6 +38,9 @@ import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
 import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
+import { CollapsibleSection } from '../components/common/CollapsibleSection';
+import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
+import { unreadCounts } from '../lib/notifications';
 import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
 import { themeOf } from '../domain/positionExposure';
 import { buildLocalFireCore, fireCoreTodayNoteJa } from '../lib/fireCore';
@@ -690,17 +693,43 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
       <CaosHub />
 
-      {/* BIG MONEY / FLOW (v11.7.0) — who is likely behind today's moves.
-          推定は推定と明示・実測と分離・売買指示なし。 */}
-      <FlowAttributionSection />
+      {/* v11.21.0: 低優先セクションは「件数+一行結論」に圧縮(既定折りたたみ・
+          開くまでレンダリングしない)。P0/P1と保有リスクは上のAP/PLANで既出。 */}
+      <CollapsibleSection title="BIG MONEY / FLOW"
+        countLabel={`${flowRecords.filter((r) => r.flowClass !== 'unknown').length}件`}
+        severityTone={flowRecords.some((r) => ['panic_selling', 'distribution'].includes(r.flowClass))
+          ? 'var(--amber, #fbbf24)' : undefined}
+        conclusionJa={(() => {
+          const bad = flowRecords.filter((r) => ['panic_selling', 'distribution'].includes(r.flowClass)).length;
+          const acc = flowRecords.filter((r) => r.flowClass === 'institutional_accumulation').length;
+          return bad || acc ? `売り圧力推定${bad}件 / 大口買い推定${acc}件` : '本日の大きなフロー推定はありません';
+        })()}>
+        {() => <FlowAttributionSection />}
+      </CollapsibleSection>
 
-      {/* PORTFOLIO EXPOSURE (v11.8.0) — held-position risks, concentration,
-          add-more readiness. Device-local math; never a trade order. */}
-      <PositionRiskSection exposure={positionExposure} />
+      <CollapsibleSection title="PORTFOLIO EXPOSURE"
+        countLabel={positionExposure.noHoldings ? '未入力' : `リスク${positionExposure.risks.length}件`}
+        severityTone={positionExposure.risks.some((r) => ['high', 'critical'].includes(r.riskLevel))
+          ? 'var(--value-negative)' : undefined}
+        defaultOpen={positionExposure.risks.some((r) => ['high', 'critical'].includes(r.riskLevel))}
+        conclusionJa={positionExposure.noHoldings ? '保有数量未入力(監視のみ)'
+          : `集中度: ${positionExposure.singleNameRisk ?? '不明'} / 詳細は展開`}>
+        {() => <PositionRiskSection exposure={positionExposure} />}
+      </CollapsibleSection>
 
-      {/* SUPPLY / DEMAND (v11.10.0) — 日本株の需給ランク。数値の読解はエンジン、
-          生数値は折りたたみ。状態評価であり売買指示ではない。 */}
-      <SupplyDemandSection signals={sdSignals} />
+      <CollapsibleSection title="SUPPLY / DEMAND"
+        countLabel={`${sdSignals.filter((s) => s.supplyDemandRank !== 'Unknown').length}件`}
+        severityTone={sdSignals.some((s) => ['D', 'E'].includes(s.supplyDemandRank))
+          ? 'var(--amber, #fbbf24)' : undefined}
+        conclusionJa={(() => {
+          const de = sdSignals.filter((s) => ['D', 'E'].includes(s.supplyDemandRank)).length;
+          const sq = sdSignals.filter((s) => s.condition === 'squeeze_prone').length;
+          const heavy = sdSignals.filter((s) => s.condition === 'improving_but_heavy').length;
+          const parts = [de ? `D/E ${de}件` : '', sq ? `踏み上げ候補${sq}件` : '', heavy ? `改善中だが重い${heavy}件` : ''].filter(Boolean);
+          return parts.length ? parts.join(' / ') : '需給に大きな偏りなし';
+        })()}>
+        {() => <SupplyDemandSection signals={sdSignals} />}
+      </CollapsibleSection>
 
       <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} />
       <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} />
@@ -708,17 +737,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
           The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not
           "what spiked". Watchlist-外の発掘。 */}
-      <BuyCandidates />
+      <CollapsibleSection title="RECOMMEND / 発掘"
+        conclusionJa="ウォッチリスト外の高確信候補(開いて確認)">
+        {() => <BuyCandidates />}
+      </CollapsibleSection>
       <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} />
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
-      <FxMacroSection />
+      <CollapsibleSection title="FX / MACRO" conclusionJa="ドル円・米金利・VIXの背景(開いて確認)">
+        {() => <FxMacroSection />}
+      </CollapsibleSection>
 
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">HISTORY / JUDGMENT LOG</span>
-          <span className="section-head__count">device-local memory</span>
-        </div>
+      <CollapsibleSection title="HISTORY / JUDGMENT LOG"
+        conclusionJa="自己採点と判断履歴(開いて確認)">
+        {() => (
         <div className="card jlog">
           <p className="jlog__diff">{diffLineJa}</p>
           {aiStateJa && <p className="jlog__diff" style={{ marginTop: 6 }}>{aiStateJa}</p>}
@@ -783,7 +815,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             </div>
           )}
         </div>
-      </section>
+        )}
+      </CollapsibleSection>
+
+      {/* v11.21.0: モバイル専用の下部要約バー(10秒把握・720px以下のみ) */}
+      <MobileStickyCommand
+        ownerModeJa={sessionBrief.ownerModeJa}
+        p0Count={apItems.filter((i) => i.priorityRank === 'P0').length}
+        nextEventJa={(() => {
+          const ie = (impEvents?.events ?? []).find((e) => e.countdown === 'D' || e.countdown === 'D-1')
+            ?? (impEvents?.events ?? [])[0];
+          return ie ? `${ie.eventCode} ${ie.countdown === 'D' ? '当日' : ie.countdown}` : null;
+        })()}
+        unreadCount={unreadCounts().total}
+      />
     </PageShell>
   );
 };

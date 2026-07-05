@@ -1,0 +1,43 @@
+/* V11.21.0 — mobile-only compact command bar. Hidden on desktop. */
+.msc, .msc-spacer { display: none; }
+
+@media (max-width: 720px) {
+  .msc {
+    position: fixed;
+    bottom: 0;
+    left: 44px;                 /* the dots-only nav rail keeps its column */
+    right: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+    background: var(--bg-card, #0d1117);
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--text-sub);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  /* content never hides behind the bar */
+  .msc-spacer { display: block; height: 42px; }
+
+  .msc__mode { font-weight: 700; color: var(--accent); }
+  .msc__p0 {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0 7px;
+    color: var(--text-faint);
+  }
+  .msc__p0.is-hot {
+    color: var(--value-negative);
+    border-color: var(--value-negative);
+    font-weight: 700;
+  }
+  .msc__ev { overflow: hidden; text-overflow: ellipsis; }
+  .msc__bell { margin-left: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msc { transition: none; }
+}

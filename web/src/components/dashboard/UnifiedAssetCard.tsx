@@ -51,6 +51,7 @@ import { DOM_TONE } from '../../domain/scenario';
 import type { LocalPlan } from '../../domain/positionPlan';
 import { STANCE_TONE } from '../../domain/positionPlan';
 import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
+import { ExpandableReason } from '../common/CollapsibleSection';
 
 // v11.20.0 — 「この銘柄をAIに相談」: Asset Review Packをコピー(自動送信なし)。
 const AskAIAsset: React.FC<{ symbol: string }> = ({ symbol }) => {
@@ -134,95 +135,8 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
             </div>
           </div>
 
-          {c.timeline.length > 0 && (
-            <div className="uac-sec">
-              <div className="uac-sec-t">TIMELINE</div>
-              <ul className="uac-tl">
-                {c.timeline.map((t, i) => (
-                  <li key={i}><span className="uac-tl-time">{t.time}</span><span style={{ color: TONE[t.tone] }}>{t.textJa}</span></li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {c.causeSlices.length > 0 && (
-            <div className="uac-sec">
-              <div className="uac-sec-t">CAUSE</div>
-              <div className="uac-cz">
-                {c.causeSlices.map((s) => (
-                  <div className="uac-cz-row" key={s.labelJa}>
-                    <span className="uac-cz-l">{s.labelJa}</span>
-                    <span className="uac-cz-bar"><i style={{ width: `${s.pct}%` }} /></span>
-                    <span className="uac-cz-p">{s.pct}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* SUPPLY / DEMAND (v11.10.0) — ランク+状態が主役。生数値は折りたたみ */}
-          {sdg && (
-            <div className="uac-sec">
-              <div className="uac-sec-t">SUPPLY / DEMAND</div>
-              <p className="uac-next" style={{ marginBottom: 2 }}>
-                <b style={{ color: RANK_TONE[sdg.supplyDemandRank] }}>需給ランク {sdg.supplyDemandRank}</b>
-                <span style={{ marginLeft: 6 }}>{sdg.conditionJa}</span>
-                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
-                  {sdg.directnessJa} · 確度{Math.round(sdg.confidence * 100)}%
-                </span>
-              </p>
-              <p className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }}>{sdg.ownerReadableWhyJa}</p>
-              <details>
-                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>詳細データを見る</summary>
-                <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-                  信用買い残 {sdg.evidence.marginBuyingBalance != null ? Number(sdg.evidence.marginBuyingBalance).toLocaleString() : '—'} /
-                  売り残 {sdg.evidence.marginSellingBalance != null ? Number(sdg.evidence.marginSellingBalance).toLocaleString() : '—'}
-                  {sdg.evidence.lendingBorrowingRatio != null && <> / 貸借倍率 {String(sdg.evidence.lendingBorrowingRatio)}</>}
-                  {sdg.evidence.daysToCover != null && <> / 買い戻し{String(sdg.evidence.daysToCover)}日分</>}
-                  {' / 逆日歩 未取得'}
-                </p>
-              </details>
-            </div>
-          )}
-
-          {/* SCENARIOS (v11.17.0) — 条件付きの分岐(単一予測なし・確率は帯のみ)。
-              コンパクト=支配シナリオ一行、展開=全分岐+無効化条件+次の確認。 */}
-          {scn && (
-            <div className="uac-sec">
-              <div className="uac-sec-t">SCENARIOS</div>
-              <p className="uac-next" style={{ marginBottom: 2 }}>
-                <b style={{ color: DOM_TONE[scn.dominant] }}>{scn.dominantJa}</b>
-                <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{scn.summaryJa}</span>
-              </p>
-              <details>
-                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>分岐と無効化条件を見る</summary>
-                {scn.cases.map((cs) => (
-                  <p key={cs.label} className="uac-next" style={{ margin: '3px 0 0', fontSize: 11 }}>
-                    <b>{cs.titleJa}</b>
-                    <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)',
-                                   border: '1px solid var(--line)', borderRadius: 999, padding: '0 5px' }}>
-                      {cs.bandJa}
-                    </span>
-                    <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)' }}>{cs.actionJa}</span>
-                    <br />
-                    <span style={{ color: 'var(--text-sub)' }}>{cs.narrativeJa}</span>
-                  </p>
-                ))}
-                <p className="uac-next" style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-                  無効化条件: {scn.invalidationJa.join(' / ')}
-                </p>
-                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-                  次の確認: {scn.nextChecksJa.join(' / ')}
-                </p>
-                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-                  何が変われば: {scn.whatWouldChangeJa.join(' / ')}
-                </p>
-              </details>
-              <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
-                条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。
-              </p>
-            </div>
-          )}
+          {/* v11.21.0: TIMELINE/CAUSEは生データとして最下部の「詳細データ」へ移動。
+              構え(計画)→優先度→シナリオ→需給の順で10秒把握を優先。 */}
 
           {/* POSITION PLAN (v11.18.0) — 入り方/買い増し/利確検討/保有の計画。
               執行語なし・売買指示ではない。シナリオへのリンク付き。 */}
@@ -238,7 +152,7 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
                   証拠: {ppl.evidenceQuality === 'strong' ? '強' : ppl.evidenceQuality === 'medium' ? '中' : ppl.evidenceQuality === 'weak' ? '弱' : '不足'}
                 </span>
               </p>
-              <p className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }}>{ppl.summaryJa}</p>
+              <ExpandableReason className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }} text={ppl.summaryJa} />
               {/* v11.19.0: 戦略上の役割(コア/サテライト/戦術枠/ヘッジ・端末内) */}
               {ppl.strategicRole && (
                 <p className="uac-next" style={{ marginBottom: 2, fontSize: 10.5 }}>
@@ -286,9 +200,6 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
                   </p>
                 )}
               </details>
-              <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
-                計画であり売買指示ではありません。価格の目安が出る場合も注文価格ではなく確認ポイントです。
-              </p>
             </div>
           )}
 
@@ -303,6 +214,67 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
               <p className="uac-next" style={{ marginBottom: 0, fontSize: 10.5, color: 'var(--text-faint)' }}>
                 変化条件: {apx.whatWouldChangeJa}
               </p>
+            </div>
+          )}
+
+          {/* SCENARIOS (v11.17.0) — 条件付きの分岐(単一予測なし・確率は帯のみ)。
+              コンパクト=支配シナリオ一行、展開=全分岐+無効化条件+次の確認。 */}
+          {scn && (
+            <div className="uac-sec">
+              <div className="uac-sec-t">SCENARIOS</div>
+              <p className="uac-next" style={{ marginBottom: 2 }}>
+                <b style={{ color: DOM_TONE[scn.dominant] }}>{scn.dominantJa}</b>
+                <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{scn.summaryJa}</span>
+              </p>
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>分岐と無効化条件を見る</summary>
+                {scn.cases.map((cs) => (
+                  <p key={cs.label} className="uac-next" style={{ margin: '3px 0 0', fontSize: 11 }}>
+                    <b>{cs.titleJa}</b>
+                    <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)',
+                                   border: '1px solid var(--line)', borderRadius: 999, padding: '0 5px' }}>
+                      {cs.bandJa}
+                    </span>
+                    <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)' }}>{cs.actionJa}</span>
+                    <br />
+                    <span style={{ color: 'var(--text-sub)' }}>{cs.narrativeJa}</span>
+                  </p>
+                ))}
+                <p className="uac-next" style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  無効化条件: {scn.invalidationJa.join(' / ')}
+                </p>
+                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  次の確認: {scn.nextChecksJa.join(' / ')}
+                </p>
+                <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  何が変われば: {scn.whatWouldChangeJa.join(' / ')}
+                </p>
+              </details>
+            </div>
+          )}
+
+          {/* SUPPLY / DEMAND (v11.10.0) — ランク+状態が主役。生数値は折りたたみ */}
+          {sdg && (
+            <div className="uac-sec">
+              <div className="uac-sec-t">SUPPLY / DEMAND</div>
+              <p className="uac-next" style={{ marginBottom: 2 }}>
+                <b style={{ color: RANK_TONE[sdg.supplyDemandRank] }}>需給ランク {sdg.supplyDemandRank}</b>
+                <span style={{ marginLeft: 6 }}>{sdg.conditionJa}</span>
+                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+                  {sdg.directnessJa} · 確度{Math.round(sdg.confidence * 100)}%
+                </span>
+              </p>
+              <ExpandableReason className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }} text={sdg.ownerReadableWhyJa} />
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>詳細データを見る</summary>
+                <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                  信用買い残 {sdg.evidence.marginBuyingBalance != null ? Number(sdg.evidence.marginBuyingBalance).toLocaleString() : '—'} /
+                  売り残 {sdg.evidence.marginSellingBalance != null ? Number(sdg.evidence.marginSellingBalance).toLocaleString() : '—'}
+                  {sdg.evidence.lendingBorrowingRatio != null && <> / 貸借倍率 {String(sdg.evidence.lendingBorrowingRatio)}</>}
+                  {sdg.evidence.daysToCover != null && <> / 買い戻し{String(sdg.evidence.daysToCover)}日分</>}
+                  {' / 逆日歩 未取得'}
+                </p>
+              </details>
             </div>
           )}
 
@@ -370,6 +342,11 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
             </div>
           )}
 
+          {/* v11.21.0: 免責はカード内で1回だけ(各セクションで繰り返さない) */}
+          <p className="uac-next" style={{ margin: '4px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
+            ※ シナリオ/計画/優先度は条件付きの判断支援であり売買指示ではありません(確率は帯のみ・注文機能なし・価格の目安は確認ポイント)。
+          </p>
+
           {/* v11.20.0: Asset Review Pack copy(端末内合成・自動送信なし) */}
           <AskAIAsset symbol={c.symbol} />
 
@@ -382,9 +359,36 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
               incident stocks. The button is always available; the full 原因スタック
               (immediate trigger / distribution / contagion / positioning / what-would-
               change) renders inside only when attribution data exists. */}
-          <div className="uac-sec uac-deep">
+          {/* v11.21.0: 生データ(値動きタイムライン/原因スライス/原因スタック)は
+              常に折りたたみ — モバイルのスクロール圧迫と重複表示を防ぐ。 */}
+          <details className="uac-sec uac-deep">
+            <summary style={{ cursor: 'pointer', fontSize: 10.5, color: 'var(--text-faint)' }}>詳細データ(値動き・原因分析)を見る</summary>
+            {c.timeline.length > 0 && (
+              <div className="uac-sec">
+                <div className="uac-sec-t">TIMELINE</div>
+                <ul className="uac-tl">
+                  {c.timeline.map((t, i) => (
+                    <li key={i}><span className="uac-tl-time">{t.time}</span><span style={{ color: TONE[t.tone] }}>{t.textJa}</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {c.causeSlices.length > 0 && (
+              <div className="uac-sec">
+                <div className="uac-sec-t">CAUSE</div>
+                <div className="uac-cz">
+                  {c.causeSlices.map((sl) => (
+                    <div className="uac-cz-row" key={sl.labelJa}>
+                      <span className="uac-cz-l">{sl.labelJa}</span>
+                      <span className="uac-cz-bar"><i style={{ width: `${sl.pct}%` }} /></span>
+                      <span className="uac-cz-p">{sl.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <CauseStackCard symbol={c.symbol} market={c.market} />
-          </div>
+          </details>
         </div>
       )}
     </div>
