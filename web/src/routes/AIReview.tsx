@@ -1,19 +1,6 @@
 import React, { useState } from 'react';
-import { latestExposure } from '../lib/positionExposureShare';
-import { exposureSummaryText } from '../domain/positionExposure';
-import { backupStatusTextJa } from '../lib/portfolioSync';
-import { dqHandoffTextJa } from '../lib/decisionQuality';
-import { latestActionPriorities } from '../lib/positionExposureShare';
-import { apHandoffTextJa } from '../domain/actionPriority';
-import { sbHandoffTextJa } from '../domain/sessionBrief';
-import { latestSessionBrief } from '../lib/positionExposureShare';
-import { ntHandoffTextJa } from '../lib/notifications';
-import { lrHandoffTextJa } from '../lib/learningReview';
-import { latestScenarios, latestPlans, latestStrategy, latestFireCore } from '../lib/positionExposureShare';
-import { scHandoffTextJa } from '../domain/scenario';
-import { ppHandoffTextJa } from '../domain/positionPlan';
-import { psHandoffTextJa } from '../domain/portfolioStrategy';
-import { fcHandoffTextJa } from '../lib/fireCore';
+import { latestEventsJa } from '../lib/positionExposureShare';
+import { buildReviewPackMarkdown } from '../lib/reviewPack';
 import { ActionPill } from '../components/action/ActionBadge';
 import { ACTIONS, ACTION_ORDER, CORE_ACTIONS, CORE_ACTION_ORDER } from '../domain/actions';
 import type { ActionKey, CoreActionKey } from '../types/action';
@@ -252,20 +239,11 @@ export const AIReview: React.FC = () => {
 
   const handleCopy = async () => {
     // v11.8.0: append the device-local Position/Exposure summary (clipboard only).
-    const pe = latestExposure();
+    // v11.20.0: 旧「レイヤー別handoff文の鎖状連結」→ AI Review Pack(構造化・
+    // 重複なし)に置換。レビューシート本文+デイリーパック。
     const md = buildMarkdown(version, manifest)
-      + '\n\n' + (pe ? exposureSummaryText(pe)
-        : '## Position / Exposure Summary (device-local)\n実保有サマリ: 未計算(TodayまたはWatchlistを開くと計算されます)。')
-      + '\n' + backupStatusTextJa()
-      + '\n\n' + dqHandoffTextJa()
-      + '\n\n' + apHandoffTextJa(latestActionPriorities())
-      + '\n\n' + sbHandoffTextJa(latestSessionBrief())
-      + '\n\n' + scHandoffTextJa(latestScenarios())
-      + '\n\n' + ppHandoffTextJa(latestPlans())
-      + '\n\n' + psHandoffTextJa(latestStrategy())
-      + '\n\n' + fcHandoffTextJa(latestFireCore())
-      + '\n\n' + ntHandoffTextJa()
-      + '\n\n' + lrHandoffTextJa();
+      + '\n\n' + buildReviewPackMarkdown({ packType: 'daily', privacyMode: 'owner_copy',
+        length: 'full', appVersion: version, eventsJa: latestEventsJa() });
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);

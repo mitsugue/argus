@@ -50,3 +50,9 @@ import type { LocalFireCore } from './fireCore';
 let latestFC: LocalFireCore | null = null;
 export function publishFireCore(f: LocalFireCore): void { latestFC = f; }
 export function latestFireCore(): LocalFireCore | null { return latestFC; }
+
+// v11.20.0: latest Important Events one-liners (for the AI Review Pack —
+// the event summary appears in the pack exactly ONCE, from this list).
+let latestEV: string[] = [];
+export function publishEventsJa(lines: string[]): void { latestEV = lines; }
+export function latestEventsJa(): string[] { return latestEV; }

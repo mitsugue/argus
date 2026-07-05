@@ -60,7 +60,7 @@ export const NavRail: React.FC<Props> = ({
       {/* v11.19.1 (owner request): backup operations consolidated on ONE page,
           placed at the bottom group next to Guide. */}
       <button
-        className={`nav__btn nav__btn--guide ${active === 'backup' ? 'is-active' : ''}`}
+        className={`nav__btn nav__btn--backup ${active === 'backup' ? 'is-active' : ''}`}
         onClick={() => onSelect('backup')}
         aria-current={active === 'backup' ? 'page' : undefined}
       >

@@ -5,6 +5,7 @@ import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEventReaction } from '../../lib/dashboardEventState';
 import { useLocale, t, pick } from '../../i18n';
 import type { RouteKey } from '../NavRail';
+import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
 import './ImportantEventsCard.css';
 
 // v11.4.1 tone → color for the unified state badge.
@@ -140,8 +141,36 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
         <p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>
         {ai && <CaosAnalysisBlock ai={ai} released={released} />}
         <p className="ie-data">{t('ie.forecast')}: {t('ie.unavailable')} · {t('ie.previous')}: {t('ie.unavailable')}{e.source ? ` · ${e.source}` : ''}</p>
+        <AskAIEvent code={e.eventCode} titleJa={e.title}
+          stateJa={released ? '発表済' : countdown} whyJa={novice}
+          linkedAssets={e.linkedAssets || []} />
       </div>
     </details>
+  );
+};
+
+// v11.20.0 — 「このイベントをAIに相談」: Event Review Packをコピー(自動送信なし)。
+const AskAIEvent: React.FC<{ code: string; titleJa: string; stateJa: string;
+  whyJa?: string; linkedAssets: string[] }> = ({ code, titleJa, stateJa, whyJa, linkedAssets }) => {
+  const [msg, setMsg] = React.useState<string | null>(null);
+  return (
+    <p className="ie-line" style={{ fontSize: 10.5 }}>
+      <button type="button"
+        style={{ fontSize: 10.5, cursor: 'pointer', background: 'transparent',
+                 color: 'var(--accent)', border: '1px solid var(--line)',
+                 borderRadius: 5, padding: '1px 8px' }}
+        onClick={async () => {
+          const md = buildReviewPackMarkdown({ packType: 'event', privacyMode: 'owner_copy',
+            length: 'full', appVersion: __APP_VERSION__,
+            event: { code, titleJa, stateJa, whyJa, linkedAssets,
+              checksAfterJa: ['金利(US10Y)の初動', 'ドル円', '指数(SPY/QQQ/日経先物)', '関連銘柄の出来高'] } });
+          setMsg(await copyPack(md) ? '✓ コピーしました' : 'コピー失敗');
+          window.setTimeout(() => setMsg(null), 2500);
+        }}>
+        このイベントをAIに相談(コピー)
+      </button>
+      {msg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{msg}</span>}
+    </p>
   );
 };
 
@@ -223,6 +252,11 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
             )}
           </>
         )}
+        {/* v11.20.0: Event Review Pack copy(端末内合成・自動送信なし) */}
+        <AskAIEvent code={ev.eventCode} titleJa={ev.title}
+          stateJa={ds.released ? '発表済' : ev.stateLabelJa || '発表前'}
+          whyJa={c.preScenarioJa || c.summaryJa}
+          linkedAssets={c.assetsToWatch || []} />
       </div>
     </details>
   );

@@ -28,7 +28,7 @@ import { useFlowAttributionList } from '../hooks/useFlowAttribution';
 import { useSupplyDemandList } from '../hooks/useSupplyDemand';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
 import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy, publishFireCore, latestFireCore } from '../lib/positionExposureShare';
+import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy, publishFireCore, latestFireCore, publishEventsJa } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
 import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
@@ -37,6 +37,7 @@ import { buildLocalBrief } from '../domain/sessionBrief';
 import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
 import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
+import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
 import { themeOf } from '../domain/positionExposure';
 import { buildLocalFireCore, fireCoreTodayNoteJa } from '../lib/fireCore';
@@ -491,6 +492,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return () => clearTimeout(t);
   }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets, positionPlans, portfolioStrategy]);
 
+  // v11.20.0: AI Review Pack用のイベント一行群(パック内でイベント要約は1回のみ)
+  useEffect(() => {
+    const lines = (impEvents?.events ?? []).slice(0, 6).map((ie) =>
+      `${ie.eventCode} ${ie.title} — ${ie.countdown}${ie.actual ? ` / 結果: ${ie.actual}` : ''}`);
+    publishEventsJa(lines);
+  }, [impEvents]);
+
   // v11.11.0: device-local outcome updater — once per JST day, fills
   // 「その後どうなったか」(1d/3d/5d/20d) for past decision records.
   useEffect(() => {
@@ -670,6 +678,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       })()}
 
       {/* ACTION PRIORITY (v11.12.0) — 開いた瞬間「今日これを見る」。売買指示なし */}
+      {/* v11.20.0: AI Review Pack — Todayから直接コピー(自動送信なし) */}
+      <p style={{ margin: '0 0 6px' }}><ProHandoffButton /></p>
+
       <ActionPrioritySection items={apItems}
         scenarios={new Map(scenarioSets.map((s) => [s.symbol, s]))} />
 

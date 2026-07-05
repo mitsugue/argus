@@ -4,6 +4,7 @@ import { briefJa, RANK_TONE } from '../../domain/actionPriority';
 import { jpDisplay } from '../../lib/displayName';
 import type { LocalScenarioSet } from '../../domain/scenario';
 import { DOM_TONE } from '../../domain/scenario';
+import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
 
 // V11.12.0 — ACTION PRIORITY on Today (top area). アプリを開いた瞬間に
 // 「今日はこれを見る」が分かるための注意配分リスト。売買指示ではない。
@@ -27,6 +28,8 @@ export const ActionPrioritySection: React.FC<{ items: APItem[];
         {briefJa(items)}
         {ignored > 0 && <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>(重要度低 {ignored}件は非表示)</span>}
       </p>
+      {/* v11.20.0: P0がある時だけ緊急レビューパック(端末内合成・自動送信なし) */}
+      {items.some((i) => i.priorityRank === 'P0') && <EmergencyCopy />}
       {shown.map((it) => (
         <div key={it.symbol + it.category}
              style={{ borderLeft: `2px solid ${RANK_TONE[it.priorityRank]}`,
@@ -82,6 +85,28 @@ export const ActionPrioritySection: React.FC<{ items: APItem[];
         全レイヤー(イベント・レジーム・機関・フロー・需給・保有・判断品質)の統合であり、売買指示ではありません。
       </p>
     </section>
+  );
+};
+
+// v11.20.0 — P0発生時のみ表示: Emergency Review Packをコピー。
+const EmergencyCopy: React.FC = () => {
+  const [msg, setMsg] = React.useState<string | null>(null);
+  return (
+    <p style={{ margin: '0 0 4px', fontSize: 11.5 }}>
+      <button type="button"
+        style={{ fontSize: 11.5, cursor: 'pointer', background: 'transparent',
+                 color: 'var(--value-negative)', border: '1px solid var(--value-negative)',
+                 borderRadius: 6, padding: '2px 10px' }}
+        onClick={async () => {
+          const md = buildReviewPackMarkdown({ packType: 'emergency', privacyMode: 'owner_copy',
+            length: 'full', appVersion: __APP_VERSION__ });
+          setMsg(await copyPack(md) ? '✓ 緊急レビュー用にコピーしました' : 'コピー失敗');
+          window.setTimeout(() => setMsg(null), 2500);
+        }}>
+        緊急レビュー用にコピー(P0)
+      </button>
+      {msg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{msg}</span>}
+    </p>
   );
 };
 

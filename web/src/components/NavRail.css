@@ -86,9 +86,12 @@
 
 /* Bottom-pinned footer — version + AI review link. Visible at all sizes
    so the user can always reach the review sheet and see the build. */
-/* Glossary/Guide sits near the bottom: it absorbs the free space so it and the
-   footer cluster at the bottom of the rail (version stamp stays visible). */
-.nav__btn--guide { margin-top: auto; }
+/* The bottom group (Backup → Guide → footer) clusters at the bottom of the
+   rail. v11.20.0 (owner fix): ONLY the first bottom item (Backup) carries
+   margin-top:auto — two auto margins would split the free space and strand
+   Backup in the vertical middle. */
+.nav__btn--backup { margin-top: auto; }
+.nav__btn--guide { margin-top: 2px; }
 .nav__footer {
   padding: 12px 10px 4px;
   font-size: 10px;

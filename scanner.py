@@ -61,6 +61,7 @@ import argus_scenario  # Scenario Engine (pure, v11.17.0 — 条件付き分岐;
 import argus_trade_plan  # Entry/Exit Planning (pure, v11.18.0 — 計画のみ; 執行語・注文なし)
 import argus_portfolio_strategy  # Portfolio Strategy/FIRE (pure, v11.19.0 — 戦略は端末内; 公開はredacted)
 import argus_fire_core  # FIRE Core/投信追跡 (pure, v11.19.1 — 全データ端末内; 公開はredacted)
+import argus_review_pack  # AI Review Pack (pure, v11.20.0 — 端末内合成; サーバー保存/自動送信なし)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -7062,6 +7063,13 @@ def api_argus_scenarios_status():
                  "marketRegime": bool(_REGIME_CACHE.get("data")),
                  "positionExposure": False,   # device-local by design
                  "decisionQuality": False}))  # records device-local by design
+
+
+@app.route("/api/argus/review-pack/status")
+def api_argus_review_pack_status():
+    """Public REDACTED — flags only. Review packs are generated and copied ON
+    DEVICE; the server never sees, stores, or forwards them."""
+    return jsonify(argus_review_pack.public_status(now_iso=_ai_now_iso()))
 
 
 @app.route("/api/argus/fire-core/status")

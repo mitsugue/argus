@@ -1064,6 +1064,23 @@ def v_fire_core_status():
     return True, "redacted, on-device only"
 
 
+def v_review_pack_status():
+    # v11.20.0: packs are generated/copied ON DEVICE — server stores nothing,
+    # never auto-calls external AI.
+    c, d = _get("/api/argus/review-pack/status")
+    if d.get("schemaVersion") != "review-pack-status-v1":
+        return False, f"schema={d.get('schemaVersion')}"
+    if d.get("serverStoresPacks") is not False or d.get("autoExternalAICall") is not False:
+        return False, "server must not store packs / auto-call AI"
+    if d.get("storageMode") != "public_redacted" or d.get("publicLeakSafe") is not True:
+        return False, "must be public_redacted+leak-safe"
+    blob = json.dumps(d, ensure_ascii=False)
+    for banned in ("quantity", "averageCost", "fundName", "vaultPass", "passphrase="):
+        if banned in blob:
+            return False, f"LEAK: {banned}"
+    return True, f"types={len(d.get('packTypesSupported') or [])} on-device only"
+
+
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
     # "all green" can never imply JP realtime when entitlement is missing.
@@ -1892,6 +1909,8 @@ CHECKS = [
     ("v11.19.0 portfolio strategy redacted", v_portfolio_strategy_status),
     # ── V11.19.1 FIRE Core ──
     ("v11.19.1 fire core redacted", v_fire_core_status),
+    # ── V11.20.0 AI Review Pack ──
+    ("v11.20.0 review pack status", v_review_pack_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
     ("v11.5.5 watchtower patrol ref", v_watchtower_status_patrol_ref),

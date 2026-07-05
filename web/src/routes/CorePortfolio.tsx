@@ -19,6 +19,7 @@ import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
 import { planPortfolioSummary } from '../domain/positionPlan';
 import { FIRE_TONE, BUDGET_JA, STRATEGY_COMPLIANCE_JA } from '../domain/portfolioStrategy';
 import { FireCoreCard } from '../components/dashboard/FireCoreCard';
+import { buildReviewPackMarkdown, copyPack } from '../lib/reviewPack';
 import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
@@ -182,6 +183,32 @@ export const CorePortfolio: React.FC = () => {
       {/* FIRE CORE / MUTUAL FUNDS (v11.19.1) — 投信=FIREの本丸資産の追跡。
           口数×日次NAV or 手動評価額・積立・口座区分。端末内のみ。 */}
       <FireCoreCard assetsApi={assetsApi} />
+
+      {/* v11.20.0: Portfolio / FIRE Review Pack copy(端末内合成・自動送信なし) */}
+      {(() => {
+        const CopyBtns: React.FC = () => {
+          const [msg, setMsg] = React.useState<string | null>(null);
+          const doCopy = async (pm: 'owner_copy' | 'redacted') => {
+            const md = buildReviewPackMarkdown({ packType: 'portfolio', privacyMode: pm,
+              length: 'full', appVersion: __APP_VERSION__ });
+            setMsg(await copyPack(md) ? '✓ コピーしました(貼り先に注意)' : 'コピー失敗');
+            window.setTimeout(() => setMsg(null), 2500);
+          };
+          return (
+            <p className="cmd-alloc__note" style={{ margin: '2px 0 8px', fontSize: 11.5 }}>
+              ポートフォリオ/FIREをAIに相談:
+              <button type="button" style={{ fontSize: 11, cursor: 'pointer', marginLeft: 6,
+                background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
+                borderRadius: 5, padding: '2px 8px' }} onClick={() => void doCopy('owner_copy')}>フルでコピー</button>
+              <button type="button" style={{ fontSize: 11, cursor: 'pointer', marginLeft: 6,
+                background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
+                borderRadius: 5, padding: '2px 8px' }} onClick={() => void doCopy('redacted')}>redactedでコピー</button>
+              {msg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{msg}</span>}
+            </p>
+          );
+        };
+        return <CopyBtns />;
+      })()}
 
       {/* PORTFOLIO STRATEGY / FIRE ALIGNMENT (v11.19.0) — 短期の計画とFIRE目的を
           接続する戦略層(端末内合成)。免許業の助言ではない・売買指示でもない。 */}

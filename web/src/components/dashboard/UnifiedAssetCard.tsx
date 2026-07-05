@@ -50,6 +50,30 @@ import type { LocalScenarioSet } from '../../domain/scenario';
 import { DOM_TONE } from '../../domain/scenario';
 import type { LocalPlan } from '../../domain/positionPlan';
 import { STANCE_TONE } from '../../domain/positionPlan';
+import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
+
+// v11.20.0 — 「この銘柄をAIに相談」: Asset Review Packをコピー(自動送信なし)。
+const AskAIAsset: React.FC<{ symbol: string }> = ({ symbol }) => {
+  const [msg, setMsg] = React.useState<string | null>(null);
+  const doCopy = async (privacyMode: 'owner_copy' | 'redacted', length: 'full' | 'short') => {
+    const md = buildReviewPackMarkdown({ packType: 'asset', privacyMode, length,
+      appVersion: __APP_VERSION__, symbol });
+    setMsg(await copyPack(md) ? '✓ コピーしました(貼り先に注意)' : 'コピー失敗 — もう一度お試しください');
+    window.setTimeout(() => setMsg(null), 2500);
+  };
+  return (
+    <p className="uac-next" style={{ margin: '4px 0 0', fontSize: 10.5 }}>
+      この銘柄をAIに相談:
+      <button type="button" style={aiBtn} onClick={() => void doCopy('owner_copy', 'full')}>フル</button>
+      <button type="button" style={aiBtn} onClick={() => void doCopy('owner_copy', 'short')}>短縮</button>
+      <button type="button" style={aiBtn} onClick={() => void doCopy('redacted', 'full')}>redacted</button>
+      {msg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{msg}</span>}
+    </p>
+  );
+};
+const aiBtn: React.CSSProperties = { fontSize: 10.5, cursor: 'pointer', marginLeft: 5,
+  background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
+  borderRadius: 5, padding: '1px 7px' };
 
 interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.8.0: device-local position/exposure note (never uploaded). */
@@ -345,6 +369,9 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
               <p className="uac-next">{c.nextJa}</p>
             </div>
           )}
+
+          {/* v11.20.0: Asset Review Pack copy(端末内合成・自動送信なし) */}
+          <AskAIAsset symbol={c.symbol} />
 
           {/* Named institutional views attached to THIS asset (public metadata).
               A reported view, never a trading position; renders nothing when none. */}
