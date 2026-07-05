@@ -303,7 +303,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     if (inp.restoreVerified === false && inp.vaultConfigured) {
       cands.push({ eventType: 'restore_not_verified', severity: 'low', symbol: null, assetName: null,
         titleJa: '復元未確認', bodyJa: 'バックアップから戻せることを一度も確認していません。復元ドリル(非破壊)を実行してください。',
-        whyJa: '復元できないバックアップは保護になりません。', checkNextJa: 'Core Portfolio → BACKUP SAFETY → 復元ドリルを実行',
+        whyJa: '復元できないバックアップは保護になりません。', checkNextJa: 'Backupページ → 復元ドリルを実行',
         dedupeKey: 'drill', isPrivate: true });
     }
     if (!inp.vaultConfigured) {

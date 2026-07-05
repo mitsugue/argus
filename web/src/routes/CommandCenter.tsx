@@ -670,7 +670,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             <p style={{ margin: '0 0 4px', fontSize: 12, padding: '5px 9px',
                         border: '1px solid var(--value-negative)', borderRadius: 8 }}>
               <b style={{ color: 'var(--value-negative)' }}>バックアップ未保護：</b>
-              <span style={{ color: 'var(--text-sub)' }}>保有データはこの端末内にあります。暗号化バックアップを有効化してください(Core Portfolio → BACKUP SAFETY)。</span>
+              <span style={{ color: 'var(--text-sub)' }}>保有データはこの端末内にあります。暗号化バックアップを有効化してください(Backupページ)。</span>
             </p>
           );
         }
