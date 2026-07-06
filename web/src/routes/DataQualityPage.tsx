@@ -19,6 +19,16 @@ interface Console {
   engineHealth: { engineName: string; status: string; lastRunAt: string | null;
     ownerReadableImpactJa: string }[];
   bridgeHealth: Record<string, unknown> & { jpRealtimeNoteJa?: string | null };
+  jpReadiness?: { jpRealtimeStatus: string; jpPermissionStatus: string;
+    lastJPQuotePushAt: string | null; jpFallbackActive: boolean;
+    usOnlyOverrideActive: boolean; activationReady: boolean | 'unknown';
+    showActivationSteps: boolean; reasonJa: string | null; safeModeJa: string | null;
+    activationConditionJa: string; ownerReadableStatusJa: string;
+    nextStepJa: string; guardJa: string | null };
+  rebootSafety?: { systemRestartRequired: boolean | 'unknown';
+    opendAutostartConfigured: boolean | 'unknown';
+    bridgeAutostartConfigured: boolean | 'unknown';
+    rebootSafe: boolean | 'unknown'; ownerReadableRiskJa: string; nextStepJa: string };
   expectedDisabled: { sourceName: string; reasonJa: string }[];
   privacyHealth: { publicLeakSafe: boolean; noteJa: string };
   publicLeakSafe: boolean;
@@ -164,6 +174,91 @@ export const DataQualityPage: React.FC = () => {
               </p>
             </div>
           </section>
+
+          {/* v12.0.2: JP Realtime Readiness — 権限の事実と復帰条件。手順は準備OK時のみ表示 */}
+          {c.jpReadiness && (
+            <section>
+              <div className="section-head">
+                <span className="section-head__title">JP REALTIME READINESS</span>
+                <span className="section-head__count">moomoo権限依存 · アプリ側では直せません</span>
+              </div>
+              <div className="card cmd-alloc">
+                <p className="cmd-alloc__note" style={{ fontSize: 12.5 }}>
+                  <b style={{ color: c.jpReadiness.activationReady === true ? 'var(--value-positive)'
+                    : c.jpReadiness.jpPermissionStatus === 'no_permission' ? 'var(--value-negative)'
+                      : 'var(--text-faint)' }}>
+                    {c.jpReadiness.ownerReadableStatusJa}
+                  </b>
+                </p>
+                {c.jpReadiness.reasonJa && <p className="cmd-alloc__note">{c.jpReadiness.reasonJa}</p>}
+                {c.jpReadiness.safeModeJa && (
+                  <p className="cmd-alloc__note" style={{ color: 'var(--text-sub)' }}>{c.jpReadiness.safeModeJa}</p>
+                )}
+                <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                  権限: <b>{c.jpReadiness.jpPermissionStatus === 'no_permission' ? '権限なし'
+                    : c.jpReadiness.jpPermissionStatus === 'ready' ? 'あり(ret=0確認)' : '未テスト'}</b>
+                  {' '}· JP最終push: {c.jpReadiness.lastJPQuotePushAt ?? 'なし'}
+                  {' '}· フォールバック: {c.jpReadiness.jpFallbackActive ? '稼働中' : '—'}
+                  {' '}· US-only override: {c.jpReadiness.usOnlyOverrideActive ? '有効' : '解除'}
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 11, color: 'var(--text-sub)' }}>
+                  復帰条件: {c.jpReadiness.activationConditionJa}
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                  権限テスト(EC2・安全): <code>bridge/scripts/check_opend_status.sh</code> →
+                  moomoo APIのJP snapshotテスト(bridge/README.md参照・出力に秘密は含まれません)。
+                </p>
+                {c.jpReadiness.showActivationSteps ? (
+                  <div className="cmd-alloc__note" style={{ border: '1px solid var(--value-positive)', borderRadius: 6, padding: 8 }}>
+                    <b style={{ color: 'var(--value-positive)' }}>US-only解除手順(準備OKのため表示):</b>
+                    <p style={{ margin: '3px 0 0', fontSize: 10.5 }}>
+                      ① no-jp-quotes.conf(ARGUS_DISABLE_JP_QUOTES=1)を退避 → ② sudo systemctl daemon-reload →
+                      ③ <code>bridge/scripts/restart_argus_bridge.sh</code> → ④ このページでJP pushとmode=fullを確認。
+                    </p>
+                  </div>
+                ) : (
+                  <p className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)', fontWeight: 700 }}>
+                    {c.jpReadiness.guardJa ?? 'まだUS-onlyを外さないでください。'}
+                  </p>
+                )}
+                <details>
+                  <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>復帰に失敗した場合のロールバック(常設)</summary>
+                  <p className="cmd-alloc__note" style={{ fontSize: 10.5 }}>
+                    No permissionで失敗したら: ① no-jp-quotes.conf を復元(US-onlyへ戻す) →
+                    ② sudo systemctl daemon-reload → ③ <code>bridge/scripts/restart_argus_bridge.sh</code> →
+                    ④ <code>bridge/scripts/safe_public_bridge_status.sh</code> で mode=us_only を確認。秘密値は出ません。
+                  </p>
+                </details>
+                <p className="cmd-alloc__note" style={{ fontSize: 10.5, color: 'var(--text-sub)' }}>
+                  次の一歩: {c.jpReadiness.nextStepJa}
+                </p>
+              </div>
+            </section>
+          )}
+
+          {/* v12.0.2: Reboot Safety — OpenD自動復旧が未検証の間は再起動非推奨 */}
+          {c.rebootSafety && (
+            <section>
+              <div className="section-head">
+                <span className="section-head__title">REBOOT SAFETY (EC2)</span>
+                <span className="section-head__count">検証まで再起動しない</span>
+              </div>
+              <div className="card cmd-alloc">
+                <p className="cmd-alloc__note">
+                  再起動安全: <b style={{ color: c.rebootSafety.rebootSafe === true ? 'var(--value-positive)'
+                    : c.rebootSafety.rebootSafe === false ? 'var(--value-negative)' : 'var(--amber, #fbbf24)' }}>
+                    {c.rebootSafety.rebootSafe === true ? '可' : c.rebootSafety.rebootSafe === false ? '不可' : '未確認'}
+                  </b>
+                  {' '}· OpenD自動起動: {String(c.rebootSafety.opendAutostartConfigured) === 'true' ? '設定済み'
+                    : String(c.rebootSafety.opendAutostartConfigured) === 'false' ? '未設定' : '不明'}
+                  {' '}· bridge自動起動: {String(c.rebootSafety.bridgeAutostartConfigured) === 'true' ? '設定済み'
+                    : String(c.rebootSafety.bridgeAutostartConfigured) === 'false' ? '未設定' : '不明'}
+                </p>
+                <p className="cmd-alloc__note" style={{ color: 'var(--text-sub)' }}>{c.rebootSafety.ownerReadableRiskJa}</p>
+                <p className="cmd-alloc__note" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{c.rebootSafety.nextStepJa}</p>
+              </div>
+            </section>
+          )}
 
           {/* 4. エンジン健全性(サーバー側+端末側) */}
           <section>

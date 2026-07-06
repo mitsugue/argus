@@ -7182,7 +7182,10 @@ def _data_quality_console():
                    "jpFallbackActive": bdoc.get("jpFallbackActive"),
                    "heartbeatAgeSec": bdoc.get("heartbeatAgeSec"),
                    "acceptedCount": (bdoc.get("heartbeat") or {}).get("acceptedCount"),
+                   "lastJPQuotePushAt": (bdoc.get("heartbeat") or {}).get("lastJPQuotePushAt"),
+                   "jpLastErrorClass": (bdoc.get("heartbeat") or {}).get("jpLastErrorClass"),
                    "diskUsagePct": (bdoc.get("heartbeat") or {}).get("diskUsagePct")},
+        "heartbeatRaw": (bdoc.get("heartbeat") or {}),
         "publicLeakSafe": True, "backupUnsafeWithData": None,
         "eventNear": False,
     }, now_iso, app_version="")

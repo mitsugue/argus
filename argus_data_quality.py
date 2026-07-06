@@ -245,6 +245,9 @@ def build_console(inputs: Dict[str, Any], now_iso: str,
             "acceptedCount": bridge.get("acceptedCount"),
             "diskUsagePct": bridge.get("diskUsagePct"),
         },
+        # v12.0.2: JP復帰準備 + 再起動安全(heartbeat実測のみ・捏造なし)
+        "jpReadiness": build_jp_readiness(bridge),
+        "rebootSafety": build_reboot_safety(bridge, inputs.get("heartbeatRaw")),
         "backupHealth": {"evaluatedOnDevice": True,
                          "noteJa": "保護状態・復元確認は端末内で判定(Backupページ参照)。サーバーは知らない。"},
         "privacyHealth": {"publicLeakSafe": leak_safe,
@@ -254,6 +257,96 @@ def build_console(inputs: Dict[str, Any], now_iso: str,
         "publicLeakSafe": leak_safe,
         "sourceLimitNote": "鮮度はサーバーが実測できたタイムスタンプのみから判定(不明はunknown)。",
         "complianceNote": COMPLIANCE,
+    }
+
+
+# ── V12.0.2 — JP Realtime Activation Readiness / Reboot Safety ──────────────
+# JPリアルタイムはmoomoo側の権限次第 — アプリコードでは直せない事実を明示し、
+# US-only解除の手順は「準備OKが実測できた時だけ」表示する(誤操作ガード)。
+
+JP_PERMISSION = ("no_permission", "ready", "unknown")
+ACTIVATION_TEST_JA = "JP.5803 / JP.8058 / JP.9984 のsnapshot testが ret=0 になったら復帰可能。"
+
+
+def build_jp_readiness(bridge: Dict[str, Any]) -> Dict[str, Any]:
+    """bridge: jpRealtimeStatus, jpLastErrorClass, lastJPQuotePushAt,
+    jpFallbackActive, bridgeMode, bridgeProcess, openDStatus.
+    権限状態はheartbeatの実測からのみ導出(捏造しない・不明はunknown)。"""
+    jp = str(bridge.get("jpRealtimeStatus") or "unknown")
+    err = str(bridge.get("jpLastErrorClass") or "").lower()
+    mode = str(bridge.get("bridgeMode") or "")
+    us_only = mode == "us_only" or jp == "disabled"
+    bridge_ok = str(bridge.get("bridgeProcess") or "") in ("ok", "ok_legacy")
+    opend_ok = str(bridge.get("openDStatus") or "") == "connected"
+
+    if jp == "entitlement_unavailable" or "permission" in err or "entitlement" in err:
+        perm = "no_permission"
+    elif jp == "ok":
+        perm = "ready"
+    else:
+        perm = "unknown"          # 権限テスト未実施(disabledだけでは権限は断定できない)
+
+    if perm == "no_permission":
+        activation = False
+        status_ja = "復帰不可：moomoo側の日本株クォート権限がありません。"
+        next_ja = ("moomooアプリ/サポートでJPN Stocksクォート権限を取得後、EC2で権限テスト"
+                   "(下の安全手順)を実行。アプリ側のコード変更では直りません。")
+    elif perm == "ready" and us_only:
+        activation = True
+        status_ja = "復帰準備OK：US-only解除前に安全手順を実行してください。"
+        next_ja = "Data Qualityの復帰手順(表示中)に従いUS-onlyを解除 → 復帰後にJP push実測を確認。"
+    elif perm == "ready" and not us_only and bridge_ok and opend_ok:
+        activation = True
+        status_ja = "JPリアルタイム稼働中。"
+        next_ja = "対応不要(JP pushの鮮度をこのページで監視)。"
+    else:
+        activation = "unknown"
+        status_ja = "権限テスト未実施。US-only modeで運用中。日本株は代替データで判定しています。"
+        next_ja = f"必要ならEC2で権限テストを実行(安全手順参照)。{ACTIVATION_TEST_JA}"
+
+    return {
+        "jpRealtimeStatus": jp,
+        "jpPermissionStatus": perm,
+        "lastJPQuotePushAt": bridge.get("lastJPQuotePushAt"),
+        "jpFallbackActive": bool(bridge.get("jpFallbackActive")),
+        "usOnlyOverrideActive": us_only,
+        "activationReady": activation,
+        "showActivationSteps": activation is True and us_only,   # ガード: 準備OK時のみ
+        "reasonJa": "moomooのJPN Stocksクォート権限がないため、日本株リアルタイムは利用できません。"
+        if perm == "no_permission" else None,
+        "safeModeJa": "US-only modeで運用中。日本株は代替データで判定しています。" if us_only else None,
+        "activationConditionJa": ACTIVATION_TEST_JA,
+        "ownerReadableStatusJa": status_ja,
+        "nextStepJa": next_ja,
+        "guardJa": None if activation is True else "まだUS-onlyを外さないでください。",
+    }
+
+
+def build_reboot_safety(bridge: Dict[str, Any],
+                        hb: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """EC2再起動の安全性 — サーバーが実測できない項目はunknown(捏造しない)。
+    OpenD autostartは提案のみ・未検証のため、確認まで再起動は非推奨。"""
+    hb = hb or {}
+    opend_auto = hb.get("opendAutostart")
+    bridge_auto = hb.get("bridgeAutostart")
+    opend_auto = bool(opend_auto) if isinstance(opend_auto, bool) else "unknown"
+    bridge_auto = bool(bridge_auto) if isinstance(bridge_auto, bool) else "unknown"
+    safe = True if opend_auto is True and bridge_auto is True else \
+        ("unknown" if "unknown" in (opend_auto, bridge_auto) else False)
+    return {
+        "systemRestartRequired": hb.get("systemRestartRequired")
+        if isinstance(hb.get("systemRestartRequired"), bool) else "unknown",
+        "opendAutostartConfigured": opend_auto,
+        "bridgeAutostartConfigured": bridge_auto,
+        "rebootSafe": safe,
+        "ownerReadableRiskJa": (
+            "再起動可(自動復旧が両方確認済み)。念のため再起動後チェックリストを実施。"
+            if safe is True else
+            "EC2再起動はまだ推奨しません。OpenD自動復旧を確認してから実施してください"
+            "(OpenDのsystemd化は提案のみで未検証。再起動するとOpenDが手動ログイン待ちになり、"
+            "USリアルタイムが停止する可能性があります)。"),
+        "nextStepJa": ("bridge/README.md の再起動ランブック(v12.0.2)に従い、"
+                       "①OpenD自動起動+自動ログインの検証 ②検証後に計画再起動 ③再起動後チェック。"),
     }
 
 

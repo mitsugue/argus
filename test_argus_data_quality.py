@@ -176,6 +176,75 @@ def test_public_status_redacted():
         assert banned not in blob, banned
 
 
+# ── V12.0.2 JP readiness / reboot safety ────────────────────────────────────
+
+def test_jp_no_permission_not_ready_not_critical():
+    r = dq.build_jp_readiness({"jpRealtimeStatus": "disabled",
+                               "jpLastErrorClass": "no_permission",
+                               "bridgeMode": "us_only", "jpFallbackActive": True})
+    assert r["jpPermissionStatus"] == "no_permission"
+    assert r["activationReady"] is False
+    assert r["showActivationSteps"] is False
+    assert "復帰不可" in r["ownerReadableStatusJa"]
+    assert "クォート権限がない" in r["reasonJa"]
+    assert "まだUS-onlyを外さないでください" in r["guardJa"]
+    # 全体スコアはJP無効でcriticalにならない(既存expected-disabled動作)
+    c = _console()
+    assert c["overallStatus"] == "ok"
+    assert c["jpReadiness"]["jpPermissionStatus"] in ("unknown", "no_permission")
+
+
+def test_jp_ready_but_usonly_shows_guarded_steps():
+    r = dq.build_jp_readiness({"jpRealtimeStatus": "ok", "bridgeMode": "us_only",
+                               "bridgeProcess": "ok", "openDStatus": "connected",
+                               "jpFallbackActive": True})
+    # jp==ok かつ us_onlyフラグ → 準備OK・手順表示
+    assert r["jpPermissionStatus"] == "ready"
+    assert r["activationReady"] is True
+    assert "復帰準備OK" in r["ownerReadableStatusJa"]
+
+
+def test_jp_live_when_full_mode():
+    r = dq.build_jp_readiness({"jpRealtimeStatus": "ok", "bridgeMode": "full",
+                               "bridgeProcess": "ok", "openDStatus": "connected"})
+    assert r["ownerReadableStatusJa"] == "JPリアルタイム稼働中。"
+
+
+def test_jp_unknown_permission_untested():
+    r = dq.build_jp_readiness({"jpRealtimeStatus": "disabled",
+                               "bridgeMode": "us_only", "jpFallbackActive": True})
+    assert r["jpPermissionStatus"] == "unknown"
+    assert r["activationReady"] == "unknown"
+    assert "権限テスト未実施" in r["ownerReadableStatusJa"]
+    assert "代替データで判定" in r["safeModeJa"]
+    assert r["showActivationSteps"] is False       # 手順は隠す
+
+
+def test_jp_wording_never_implies_live_when_disabled():
+    r = dq.build_jp_readiness({"jpRealtimeStatus": "disabled",
+                               "jpLastErrorClass": "entitlement",
+                               "bridgeMode": "us_only"})
+    blob = json.dumps(r, ensure_ascii=False)
+    assert "稼働中" not in blob
+
+
+def test_reboot_safety_unknown_autostart_warns():
+    r = dq.build_reboot_safety({}, {})
+    assert r["opendAutostartConfigured"] == "unknown"
+    assert r["rebootSafe"] == "unknown"
+    assert "推奨しません" in r["ownerReadableRiskJa"]
+    blob = json.dumps(r, ensure_ascii=False)
+    for banned in ("login_pwd", "vaultPass", "ps aux", "pgrep"):
+        assert banned not in blob
+
+
+def test_reboot_safe_only_when_both_confirmed():
+    r = dq.build_reboot_safety({}, {"opendAutostart": True, "bridgeAutostart": True})
+    assert r["rebootSafe"] is True
+    r2 = dq.build_reboot_safety({}, {"opendAutostart": False, "bridgeAutostart": True})
+    assert r2["rebootSafe"] is False
+
+
 def test_deterministic():
     a = json.dumps(_console(), ensure_ascii=False)
     b = json.dumps(_console(), ensure_ascii=False)

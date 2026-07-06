@@ -213,3 +213,53 @@ Restart=on-failure・**Environment=に秘密なし**)。ただし前提として
 ### 過去バージョンの記録(履歴)
 - 10.7.6718: 7/3障害時の旧バージョン(ディスク満杯+SMS要求+JP権限喪失が複合)
 - 10.8.6818: 2026-07-04アップグレード・図形認証→ログイン成功→US LV3確認
+
+## 再起動(リブート)安全ランブック — v12.0.2
+
+**現状の結論: EC2の再起動はまだ推奨しない。** bridgeはsystemd常駐だが、
+OpenDのsystemd化は「提案のみ・未検証」。再起動するとOpenDが手動ログイン
+(場合によりSMS/図形認証)待ちになり、USリアルタイムが停止する可能性がある。
+「System restart required」表示だけを理由に再起動しないこと。
+
+### 再起動前チェックリスト(全て満たすまで再起動しない)
+1. OpenD自動起動+自動ログインの検証が完了している(未検証なら再起動しない)
+2. 市場時間外である(US場中の再起動はリアルタイム停止に直結)
+3. `bridge/scripts/check_opend_status.sh` が connected
+4. `bridge/scripts/check_bridge_status.sh` が active
+5. 認証コード受信手段(SMS/アプリ)が手元にある(再ログインに備える)
+
+### 再起動後チェックリスト
+1. OpenDポート確認: `bridge/scripts/check_opend_status.sh`
+   (127.0.0.1:11111 / 22222 がLISTENか — 生のps/pgrepは使わない: 引数に資格情報が乗るため)
+2. OpenDが未起動/ログイン待ちなら手動起動(既存手順・SMS/図形認証はチャットに貼らない)
+3. bridge再開: `bridge/scripts/restart_argus_bridge.sh`
+4. push確認: `bridge/scripts/check_bridge_status.sh`(pushed http=200 / mode=us_only)
+5. 公開状態: `bridge/scripts/safe_public_bridge_status.sh`
+   (bridgeProcess=ok / usRealtimeStatus=ok / jpRealtimeStatus=disabled)
+6. アプリのData Qualityページで us-realtime-bridge=fresh を確認
+
+## JPリアルタイム復帰ランブック — v12.0.2
+
+**前提の事実: JP snapshot は現在 ret=-1 (No permission)。** これはmoomoo口座の
+JPN Stocksクォート権限の問題であり、アプリ/ブリッジのコードでは直らない。
+
+### 復帰条件(すべて満たすまでUS-onlyを外さない)
+- moomoo側でJPN Stocksクォート権限を取得済み
+- EC2の権限テストで JP.5803 / JP.8058 / JP.9984 のsnapshotが **ret=0**
+- OpenD connected / bridge active
+
+### 復帰手順(条件成立後のみ)
+1. `sudo mv /etc/systemd/system/argus-bridge.service.d/no-jp-quotes.conf ~/no-jp-quotes.conf.bak`
+2. `sudo systemctl daemon-reload`
+3. `bridge/scripts/restart_argus_bridge.sh`
+4. `bridge/scripts/safe_public_bridge_status.sh` で mode=full / jpRealtimeStatus=ok を確認
+5. アプリのData Quality「JP REALTIME READINESS」で JP push 実測を確認
+
+### ロールバック(No permissionで失敗した場合)
+1. `sudo mv ~/no-jp-quotes.conf.bak /etc/systemd/system/argus-bridge.service.d/no-jp-quotes.conf`
+2. `sudo systemctl daemon-reload`
+3. `bridge/scripts/restart_argus_bridge.sh`
+4. `bridge/scripts/safe_public_bridge_status.sh` で mode=us_only に戻ったことを確認
+
+※ 本ランブックのコマンドは秘密値を一切表示しない。OpenDの起動引数を含む
+生の `ps`/`pgrep` は使わないこと(`safe_opend_process_view.sh` を使う)。
