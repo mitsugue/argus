@@ -241,14 +241,53 @@ OpenDのsystemd化は「提案のみ・未検証」。再起動するとOpenDが
    (bridgeProcess=ok / usRealtimeStatus=ok / jpRealtimeStatus=disabled)
 6. アプリのData Qualityページで us-realtime-bridge=fresh を確認
 
-## JPリアルタイム復帰ランブック — v12.0.2
+## JPメンテナンス復旧ランブック — v12.0.5(サポート確認済みメンテナンスからの復旧)
 
-**前提の事実: JP snapshot は現在 ret=-1 (No permission)。** これはmoomoo口座の
-JPN Stocksクォート権限の問題であり、アプリ/ブリッジのコードでは直らない。
+**前提の事実(2026-07-06・moomooサポート正式回答):**
+- 日本株API相場情報サービスのメンテナンスが、OpenD APIの JP snapshot /
+  ORDER_BOOK(JP.5803等)に影響している(現在 ret=-1)。
+- 日本株フル板はアプリ内で契約済み。**契約済みなら追加申込は現時点で不要**。
+- 復旧時期は未定。**復旧後はOpenDの再起動・再ログインが必要**。
+- アプリ/ブリッジのコード変更では直らない。復旧まで US-only + JP代替データを維持。
+
+### Step 1 — moomooのメンテナンス完了を待つ
+- 完了告知またはサポートの確認が取れるまで何もしない(このランブックの以降の
+  手順は実行しない)。焦って再試行を繰り返さないこと。
+
+### Step 2 — 安全な時間帯を選ぶ
+- できるだけ市場時間外(JST 15:30以降〜翌朝、または週末)に作業する。
+  ザラ場中の作業はUSリアルタイム供給を巻き込むリスクがある。
+
+### Step 3 — OpenDを安全に再起動・再ログイン
+- 手順は上の「OpenD 10.8.6818 運用ランブック」の再起動/認証手順に従う。
+- **SMS認証が要求される場合がある**(SMS認証チェックリスト参照)。
+- **図形認証(graphic verification)が要求される場合がある**(同上参照)。
+- **SMS認証コード・パスワード・パスフレーズはチャットやチケット等に貼らないこと。**
+  認証はEC2上のOpenD操作の中だけで完結させる(SSHが資格情報の境界)。
+- **EC2自体の再起動はしない**(REBOOT SAFETYがrebootSafe=trueになるまで非推奨)。
+
+### Step 4 — JP APIの再テスト(すべてret=0を確認)
+- JP.5803 snapshot → **ret=0**
+- JP.8058 snapshot → **ret=0**
+- JP.9984 snapshot → **ret=0**
+- 板情報を使う場合: JP.5803 ORDER_BOOK → **ret=0**
+- 1つでも ret=-1 なら Step 6 へ(US-onlyのまま・積極的な再試行はしない)。
+
+### Step 5 — ret=0確認後のみ: US-only解除(下の復帰手順)
+- アプリのData Quality「JP REALTIME READINESS」が復帰準備OKを表示してから、
+  下の復帰手順を実行し、mode=full / jpRealtimeStatus=ok /
+  lastJPQuotePushAt が非null / usRealtimeStatus=ok を確認する。
+
+### Step 6 — 失敗した場合
+- US-onlyへ戻す(下のロールバック手順)。JP代替データ(J-Quants/Yahoo)は
+  そのまま動き続けるので判断機能は失われない。
+- メンテナンス継続の可能性があるため、再試行を繰り返さずサポート回答を待つ。
 
 ### 復帰条件(すべて満たすまでUS-onlyを外さない)
-- moomoo側でJPN Stocksクォート権限を取得済み
+- moomoo側のメンテナンス完了(告知またはサポート確認)
+- OpenDを再起動・再ログイン済み
 - EC2の権限テストで JP.5803 / JP.8058 / JP.9984 のsnapshotが **ret=0**
+- 板情報を使う場合は JP.5803 の ORDER_BOOK も **ret=0**
 - OpenD connected / bridge active
 
 ### 復帰手順(条件成立後のみ)
@@ -258,7 +297,7 @@ JPN Stocksクォート権限の問題であり、アプリ/ブリッジのコー
 4. `bridge/scripts/safe_public_bridge_status.sh` で mode=full / jpRealtimeStatus=ok を確認
 5. アプリのData Quality「JP REALTIME READINESS」で JP push 実測を確認
 
-### ロールバック(No permissionで失敗した場合)
+### ロールバック(ret=-1 / No permissionで失敗した場合)
 1. `sudo mv ~/no-jp-quotes.conf.bak /etc/systemd/system/argus-bridge.service.d/no-jp-quotes.conf`
 2. `sudo systemctl daemon-reload`
 3. `bridge/scripts/restart_argus_bridge.sh`

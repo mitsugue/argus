@@ -264,11 +264,24 @@ def build_console(inputs: Dict[str, Any], now_iso: str,
 # JPリアルタイムはmoomoo側の権限次第 — アプリコードでは直せない事実を明示し、
 # US-only解除の手順は「準備OKが実測できた時だけ」表示する(誤操作ガード)。
 
-JP_PERMISSION = ("no_permission", "maintenance_or_no_permission", "ready", "unknown")
+JP_PERMISSION = ("no_permission", "maintenance_or_no_permission",
+                 "maintenance_confirmed", "ready", "unknown")
 JP_MAINTENANCE_JA = ("日本株リアルタイムAPIは現在利用できません。moomoo側の日本株API"
                      "相場情報サービスがメンテナンス/権限未反映の可能性があります。")
 JP_FULLBOARD_JA = ("日本株フル板契約済みでも、OpenD API側ではまだJP snapshot / "
                    "ORDER_BOOKが ret=-1 のため復帰不可です。")
+# v12.0.5: moomooサポートがメンテナンス影響を正式確認(「疑い」→「確認済み」へ昇格)
+JP_MAINT_CONFIRMED_JA = ("moomooサポート確認済み：日本株API相場情報サービスの"
+                         "メンテナンスがOpenD APIのJP snapshot / ORDER_BOOKに影響しています。")
+JP_RECOVERY_WAIT_JA = ("復旧待ち：moomoo側の日本株API相場情報サービスがメンテナンス中です。"
+                       "フル板契約は済んでいますが、復旧完了まではOpenD APIでsnapshot / "
+                       "ORDER_BOOKを取得できません。復旧後はOpenDの再起動・再ログイン後に"
+                       "ret=0確認が必要です。")
+JP_GUARD_MAINT_JA = ("まだUS-onlyを外さないでください。復旧後にOpenD再起動・再ログインし、"
+                     "JP snapshot ret=0を確認してから解除します。")
+JP_ACTIVATION_FULL_JA = ("①moomooメンテナンス完了 ②OpenD再起動・再ログイン "
+                         "③JP.5803 / JP.8058 / JP.9984 のsnapshotが ret=0 "
+                         "④板情報を使う場合は JP.5803 のORDER_BOOKも ret=0。")
 ACTIVATION_TEST_JA = "JP.5803 / JP.8058 / JP.9984 のsnapshot testが ret=0 になったら復帰可能。"
 
 
@@ -285,12 +298,18 @@ def build_jp_readiness(bridge: Dict[str, Any],
     opend_ok = str(bridge.get("openDStatus") or "") == "connected"
     ctx = dict(context or {})
     maintenance_note = bool(ctx.get("supportMaintenanceNote"))
+    maintenance_confirmed = bool(ctx.get("supportMaintenanceConfirmed"))
 
     if jp == "ok":
-        perm = "ready"
+        perm = "ready"            # 実測ret=0は古いcontextに常に勝つ
     elif jp == "entitlement_unavailable" or "permission" in err or "entitlement" in err \
             or ctx.get("manualProbeNoPermission"):
-        perm = "maintenance_or_no_permission" if maintenance_note else "no_permission"
+        if maintenance_confirmed:
+            perm = "maintenance_confirmed"
+        elif maintenance_note:
+            perm = "maintenance_or_no_permission"
+        else:
+            perm = "no_permission"
     else:
         perm = "unknown"          # 権限テスト未実施(disabledだけでは権限は断定できない)
 
@@ -299,8 +318,19 @@ def build_jp_readiness(bridge: Dict[str, Any],
         order_book = False if ctx.get("manualProbeNoPermission") else "unknown"
     full_board = ctx.get("fullBoardAppSubscription")
     full_board = bool(full_board) if isinstance(full_board, bool) else "unknown"
+    add_sub = ctx.get("additionalSubscriptionRequired")
+    add_sub = bool(add_sub) if isinstance(add_sub, bool) else "unknown"
 
-    if perm == "maintenance_or_no_permission":
+    if perm == "maintenance_confirmed":
+        activation = False
+        status_ja = JP_RECOVERY_WAIT_JA
+        next_ja = ("moomooのメンテナンス完了告知/サポート確認を待つ → 市場時間外に"
+                   "OpenDを再起動・再ログイン(SMS/図形認証の可能性あり・認証コードや"
+                   "パスワードはチャット等に貼らない) → JP.5803/8058/9984のsnapshotと"
+                   "JP.5803のORDER_BOOKが ret=0 になるまでUS-onlyを維持。"
+                   "詳細は bridge/README.md の復旧ランブック(v12.0.5)。"
+                   "アプリ側のコード変更では直りません。")
+    elif perm == "maintenance_or_no_permission":
         activation = False
         status_ja = "復帰不可：" + JP_MAINTENANCE_JA
         next_ja = ("moomoo側のAPIメンテナンス完了を待ち、後日JP snapshot / ORDER_BOOKを"
@@ -332,23 +362,42 @@ def build_jp_readiness(bridge: Dict[str, Any],
         "usOnlyOverrideActive": us_only,
         "activationReady": activation,
         "showActivationSteps": activation is True and us_only,   # ガード: 準備OK時のみ
-        "jpApiMaintenanceSuspected": (True if perm == "maintenance_or_no_permission"
+        "jpApiMaintenanceSuspected": (True if perm in ("maintenance_or_no_permission",
+                                                       "maintenance_confirmed")
+                                      else False if perm in ("ready", "no_permission")
+                                      else "unknown"),
+        # v12.0.5: サポートがメンテナンス影響を正式確認(疑いとは別フィールド)
+        "jpApiMaintenanceConfirmed": (True if perm == "maintenance_confirmed"
                                       else False if perm in ("ready", "no_permission")
                                       else "unknown"),
         "jpFullBoardAppSubscriptionKnown": full_board,
         "jpOpenDOrderBookReady": order_book,
+        "additionalSubscriptionRequired": add_sub,
+        "additionalSubscriptionNoteJa": ("追加申込は現時点で不要(moomooサポート回答)"
+                                         if add_sub is False else None),
+        "recoveryEtaJa": ("未定(moomoo側の告知待ち)"
+                          if perm == "maintenance_confirmed" else None),
+        "postRecoveryActionJa": ("OpenDの再起動・再ログイン後、JP snapshot / ORDER_BOOKの"
+                                 "ret=0確認が必要"
+                                 if perm == "maintenance_confirmed" else None),
         "fullBoardNoteJa": (JP_FULLBOARD_JA if full_board is True and order_book is not True
                             else None),
         "contextAsOf": ctx.get("asOf"),
         "reasonJa": ("moomooのJPN Stocksクォート権限がないため、日本株リアルタイムは利用できません。"
                      if perm == "no_permission"
+                     else JP_MAINT_CONFIRMED_JA if perm == "maintenance_confirmed"
                      else JP_MAINTENANCE_JA if perm == "maintenance_or_no_permission"
                      else None),
         "safeModeJa": "US-only modeで運用中。日本株は代替データで判定しています。" if us_only else None,
-        "activationConditionJa": ACTIVATION_TEST_JA,
+        "activationConditionJa": (JP_ACTIVATION_FULL_JA
+                                  if perm in ("maintenance_confirmed",
+                                              "maintenance_or_no_permission")
+                                  else ACTIVATION_TEST_JA),
         "ownerReadableStatusJa": status_ja,
         "nextStepJa": next_ja,
-        "guardJa": None if activation is True else "まだUS-onlyを外さないでください。",
+        "guardJa": (None if activation is True
+                    else JP_GUARD_MAINT_JA if perm == "maintenance_confirmed"
+                    else "まだUS-onlyを外さないでください。"),
     }
 
 

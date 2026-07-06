@@ -293,6 +293,84 @@ def test_console_forwards_jp_api_context():
     assert c["overallStatus"] == "ok"
 
 
+# ── V12.0.5 JP APIメンテナンス「サポート確認済み」への昇格 ──────────────────
+
+_CONF_CTX = {"manualProbeNoPermission": True, "supportMaintenanceNote": True,
+             "supportMaintenanceConfirmed": True, "fullBoardAppSubscription": True,
+             "additionalSubscriptionRequired": False, "asOf": "2026-07-06"}
+
+
+def test_jp_maintenance_confirmed_shows_recovery_wait():
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), dict(_CONF_CTX))
+    assert r["jpPermissionStatus"] == "maintenance_confirmed"
+    assert r["jpApiMaintenanceConfirmed"] is True
+    assert "復旧待ち" in r["ownerReadableStatusJa"]
+    assert "メンテナンス中" in r["ownerReadableStatusJa"]
+    assert "再起動・再ログイン" in r["ownerReadableStatusJa"]
+    assert "moomooサポート確認済み" in r["reasonJa"]
+    assert "ORDER_BOOKに影響" in r["reasonJa"]
+
+
+def test_jp_confirmed_full_board_does_not_make_ready_while_ret_minus1():
+    # フル板契約済み+追加申込不要でも、snapshot ret=-1の間はready/解除不可
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), dict(_CONF_CTX))
+    assert r["jpFullBoardAppSubscriptionKnown"] is True
+    assert r["jpOpenDOrderBookReady"] is False
+    assert r["additionalSubscriptionRequired"] is False
+    assert "追加申込は現時点で不要" in r["additionalSubscriptionNoteJa"]
+    assert r["activationReady"] is False
+    assert r["showActivationSteps"] is False
+
+
+def test_jp_confirmed_guard_and_recovery_fields():
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), dict(_CONF_CTX))
+    assert "まだUS-onlyを外さないでください" in r["guardJa"]
+    assert "再起動・再ログイン" in r["guardJa"]
+    assert "ret=0を確認してから解除" in r["guardJa"]
+    assert "未定" in r["recoveryEtaJa"]
+    assert "再起動・再ログイン" in r["postRecoveryActionJa"]
+    # 復帰条件は4点版(メンテ完了/OpenD再起動・再ログイン/snapshot/ORDER_BOOK)
+    assert "メンテナンス完了" in r["activationConditionJa"]
+    assert "再起動・再ログイン" in r["activationConditionJa"]
+    assert "ORDER_BOOK" in r["activationConditionJa"]
+
+
+def test_jp_confirmed_actual_recovery_still_wins():
+    r = dq.build_jp_readiness({"jpRealtimeStatus": "ok", "bridgeMode": "us_only",
+                               "bridgeProcess": "ok", "openDStatus": "connected"},
+                              dict(_CONF_CTX))
+    assert r["jpPermissionStatus"] == "ready"
+    assert r["activationReady"] is True
+
+
+def test_jp_confirmed_wording_never_implies_live_and_no_secrets():
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), dict(_CONF_CTX))
+    blob = json.dumps(r, ensure_ascii=False)
+    assert "JPリアルタイム稼働中" not in blob
+    for banned in ("login_pwd", "vaultPass", "パスフレーズの値", "TOKEN"):
+        assert banned not in blob
+
+
+def test_console_forwards_confirmed_context():
+    c = _console(jpApiContext=dict(_CONF_CTX))
+    r = c["jpReadiness"]
+    assert r["jpPermissionStatus"] == "maintenance_confirmed"
+    assert r["recoveryEtaJa"] is not None
+    assert c["overallStatus"] == "ok"     # 確認済みメンテでもcritical化しない
+
+
+def test_recovery_runbook_has_post_maintenance_steps():
+    src = open("bridge/README.md", encoding="utf-8").read()
+    assert "メンテナンス復旧ランブック" in src
+    assert "再起動・再ログイン" in src
+    assert "SMS認証" in src
+    assert "図形認証" in src
+    assert "貼らない" in src              # 認証コード/パスワードをチャットに貼らない
+    assert "市場時間外" in src
+    assert "ORDER_BOOK" in src
+    assert "再試行" in src                 # 失敗時は積極的に再試行しない
+
+
 def test_reboot_safety_unknown_autostart_warns():
     r = dq.build_reboot_safety({}, {})
     assert r["opendAutostartConfigured"] == "unknown"

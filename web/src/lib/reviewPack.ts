@@ -164,8 +164,9 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
       L.push(...dqc.topIssuesJa.slice(0, 3).map((x) => `- ${x}`));
       L.push(...dqc.expectedDisabledJa.slice(0, 2).map((x) => `- 仕様上の未取得: ${x}`));
     }
-    // v12.0.4: moomoo側メンテナンス認知 — JPリアルタイム+フル板APIとも利用不可の事実を明記
-    L.push('- 日本株リアルタイムとフル板APIはmoomoo側メンテナンス/権限未反映により利用不可(ARGUS側では意図的に無効化中)。日本株判断は代替データ(J-Quants/Yahoo・夜間/引け後delayed)前提で評価してください。');
+    // v12.0.5: moomooサポートがメンテナンス影響を正式確認(疑い→確認済み)
+    L.push('- 日本株リアルタイム/APIフル板はmoomoo側メンテナンス中です。サポート確認済みで、OpenD APIのsnapshot / ORDER_BOOKに影響しています。フル板契約は済んでおり追加申込は現時点で不要ですが、復旧時期は未定です。復旧後はOpenD再起動・再ログイン後にret=0確認が必要です。');
+    L.push('- それまで日本株判断は代替データ(J-Quants/Yahoo・夜間/引け後delayed・ARGUS側では意図的に無効化中)前提で評価してください。');
     const notifs = strip(redacted, listNotifications().slice(0, 3).map((n) => n.titleJa));
     if (notifs.length) { L.push('', '## Attention Changes'); L.push(...notifs.map((x) => `- ${x}`)); }
     if (!redacted && o.packType === 'daily') {

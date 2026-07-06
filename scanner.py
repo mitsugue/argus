@@ -7092,14 +7092,18 @@ def _dq_iso(epoch):
         return None
 
 
-# v12.0.4: JP APIメンテナンス認知 — オーナー確認済みの事実のみ(捏造なし)。
-# 2026-07-06時点: 手動プローブでJP snapshot/ORDER_BOOKともret=-1(権限なし)、
-# moomooサポート回答=JP/SG/MY株APIの相場情報サービスはコンプライアンス対応で
-# メンテナンス中、アプリ内で日本株フル板は契約済み。状況が変わったらここを更新。
+# v12.0.4/12.0.5: JP APIメンテナンス — オーナー/サポート確認済みの事実のみ(捏造なし)。
+# 2026-07-06時点(サポート正式回答で「疑い」→「確認済み」に昇格):
+#   ①日本株API相場情報サービスのメンテナンスがOpenD APIのJP snapshot/ORDER_BOOKに
+#     影響している(JP.5803等でret=-1) ②日本株フル板はアプリ内契約済み
+#   ③契約済みなら追加申込は現時点で不要 ④復旧時期は未定
+#   ⑤復旧後はOpenDの再起動・再ログインが必要。状況が変わったらここを更新。
 _JP_API_CONTEXT = {
     "manualProbeNoPermission": True,
     "supportMaintenanceNote": True,
+    "supportMaintenanceConfirmed": True,
     "fullBoardAppSubscription": True,
+    "additionalSubscriptionRequired": False,
     "asOf": "2026-07-06",
 }
 

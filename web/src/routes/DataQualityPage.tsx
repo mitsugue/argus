@@ -29,7 +29,12 @@ interface Console {
     jpApiMaintenanceSuspected?: boolean | 'unknown';
     jpFullBoardAppSubscriptionKnown?: boolean | 'unknown';
     jpOpenDOrderBookReady?: boolean | 'unknown';
-    fullBoardNoteJa?: string | null; contextAsOf?: string | null };
+    fullBoardNoteJa?: string | null; contextAsOf?: string | null;
+    // v12.0.5: サポート正式確認+復旧情報
+    jpApiMaintenanceConfirmed?: boolean | 'unknown';
+    additionalSubscriptionRequired?: boolean | 'unknown';
+    additionalSubscriptionNoteJa?: string | null;
+    recoveryEtaJa?: string | null; postRecoveryActionJa?: string | null };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -191,7 +196,8 @@ export const DataQualityPage: React.FC = () => {
                 <p className="cmd-alloc__note" style={{ fontSize: 12.5 }}>
                   <b style={{ color: c.jpReadiness.activationReady === true ? 'var(--value-positive)'
                     : c.jpReadiness.jpPermissionStatus === 'no_permission' ? 'var(--value-negative)'
-                      : c.jpReadiness.jpPermissionStatus === 'maintenance_or_no_permission' ? 'var(--amber, #fbbf24)'
+                      : c.jpReadiness.jpPermissionStatus === 'maintenance_or_no_permission'
+                        || c.jpReadiness.jpPermissionStatus === 'maintenance_confirmed' ? 'var(--amber, #fbbf24)'
                         : 'var(--text-faint)' }}>
                     {c.jpReadiness.ownerReadableStatusJa}
                   </b>
@@ -211,8 +217,9 @@ export const DataQualityPage: React.FC = () => {
                 </p>
                 <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
                   権限: <b>{c.jpReadiness.jpPermissionStatus === 'no_permission' ? '権限なし'
-                    : c.jpReadiness.jpPermissionStatus === 'maintenance_or_no_permission' ? 'メンテナンス/権限未反映'
-                      : c.jpReadiness.jpPermissionStatus === 'ready' ? 'あり(ret=0確認)' : '未テスト'}</b>
+                    : c.jpReadiness.jpPermissionStatus === 'maintenance_confirmed' ? 'メンテナンス確認済み(moomooサポート)'
+                      : c.jpReadiness.jpPermissionStatus === 'maintenance_or_no_permission' ? 'メンテナンス/権限未反映'
+                        : c.jpReadiness.jpPermissionStatus === 'ready' ? 'あり(ret=0確認)' : '未テスト'}</b>
                   {' '}· JP最終push: {c.jpReadiness.lastJPQuotePushAt ?? 'なし'}
                   {' '}· フォールバック: {c.jpReadiness.jpFallbackActive ? '稼働中' : '—'}
                   {' '}· US-only override: {c.jpReadiness.usOnlyOverrideActive ? '有効' : '解除'}
@@ -224,6 +231,21 @@ export const DataQualityPage: React.FC = () => {
                     : c.jpReadiness.jpOpenDOrderBookReady === false ? 'ret=-1(利用不可)' : '未テスト'}</b>
                   {c.jpReadiness.contextAsOf ? ` · 確認日: ${c.jpReadiness.contextAsOf}` : ''}
                 </p>
+                {/* v12.0.5: サポート正式確認の復旧情報(追加申込・時期・復旧後アクション) */}
+                {(c.jpReadiness.additionalSubscriptionNoteJa || c.jpReadiness.recoveryEtaJa
+                  || c.jpReadiness.postRecoveryActionJa) && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                    {c.jpReadiness.additionalSubscriptionNoteJa && (
+                      <>追加申込: <b>{c.jpReadiness.additionalSubscriptionNoteJa}</b></>
+                    )}
+                    {c.jpReadiness.recoveryEtaJa && <>{' '}· 復旧時期: <b>{c.jpReadiness.recoveryEtaJa}</b></>}
+                    {c.jpReadiness.postRecoveryActionJa && (
+                      <span style={{ display: 'block', marginTop: 2 }}>
+                        復旧後: {c.jpReadiness.postRecoveryActionJa}
+                      </span>
+                    )}
+                  </p>
+                )}
                 <p className="cmd-alloc__note" style={{ fontSize: 11, color: 'var(--text-sub)' }}>
                   フル板/ORDER_BOOKも ret=0 になるまで板情報はAPIで使えません。
                 </p>
