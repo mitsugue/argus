@@ -6,6 +6,7 @@ import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEv
 import { useLocale, t, pick } from '../../i18n';
 import type { RouteKey } from '../NavRail';
 import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
+import { EVENT_DESC_JA } from '../../lib/eventLabels';
 import './ImportantEventsCard.css';
 
 // v11.4.1 tone → color for the unified state badge.
@@ -209,6 +210,12 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         )}
       </summary>
       <div className="ie-body">
+        {/* v12.0.4 (owner): どんなイベントかの一言概要を先頭に */}
+        {EVENT_DESC_JA[ev.eventCode] && (
+          <p className="ie-line" style={{ color: 'var(--text-sub)' }}>
+            <span className="ie-k">これは何</span>{EVENT_DESC_JA[ev.eventCode]}
+          </p>
+        )}
         {ds.showActualFirst && (
           <>
             <p className="ie-line"><span className="ie-k">公式結果</span><b>{ev.officialResult.headlineJa || '取得済み'}</b></p>
@@ -324,6 +331,11 @@ export const ImportantEventsCard: React.FC<Props> = ({ onNavigate, embedded }) =
                   <b>{e.eventCode}</b>
                   <span style={{ marginLeft: 6 }}>{e.date?.slice(5).replace('-', '/')}</span>
                   <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>影響:{e.displayImpact === 'critical' ? '重大' : '大'}</span>
+                  {EVENT_DESC_JA[e.eventCode] && (
+                    <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                      {EVENT_DESC_JA[e.eventCode]}
+                    </span>
+                  )}
                 </p>
               ))}
             </div>

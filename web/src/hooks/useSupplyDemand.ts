@@ -36,10 +36,12 @@ export interface SupplyDemandSignal {
   complianceNote: string;
 }
 
+// v12.0.4 (owner request): C/Unknownがmuted/faintで「かなり暗い」— 全ランクを
+// ダーク背景で読める明色に固定(状態の意味は不変・色だけ)。
 export const RANK_TONE: Record<string, string> = {
-  S: 'var(--value-positive)', A: 'var(--value-positive)', B: 'var(--accent)',
-  C: 'var(--text-muted)', D: 'var(--amber, #fbbf24)', E: 'var(--value-negative)',
-  Unknown: 'var(--text-faint)',
+  S: '#34d399', A: '#6ee7b7', B: '#67e8f9',
+  C: '#e2e8f0', D: '#fbbf24', E: '#f87171',
+  Unknown: '#94a3b8',
 };
 
 interface State { signals: SupplyDemandSignal[]; loading: boolean; }

@@ -246,7 +246,7 @@ def build_console(inputs: Dict[str, Any], now_iso: str,
             "diskUsagePct": bridge.get("diskUsagePct"),
         },
         # v12.0.2: JP復帰準備 + 再起動安全(heartbeat実測のみ・捏造なし)
-        "jpReadiness": build_jp_readiness(bridge),
+        "jpReadiness": build_jp_readiness(bridge, inputs.get("jpApiContext")),
         "rebootSafety": build_reboot_safety(bridge, inputs.get("heartbeatRaw")),
         "backupHealth": {"evaluatedOnDevice": True,
                          "noteJa": "保護状態・復元確認は端末内で判定(Backupページ参照)。サーバーは知らない。"},
@@ -264,11 +264,16 @@ def build_console(inputs: Dict[str, Any], now_iso: str,
 # JPリアルタイムはmoomoo側の権限次第 — アプリコードでは直せない事実を明示し、
 # US-only解除の手順は「準備OKが実測できた時だけ」表示する(誤操作ガード)。
 
-JP_PERMISSION = ("no_permission", "ready", "unknown")
+JP_PERMISSION = ("no_permission", "maintenance_or_no_permission", "ready", "unknown")
+JP_MAINTENANCE_JA = ("日本株リアルタイムAPIは現在利用できません。moomoo側の日本株API"
+                     "相場情報サービスがメンテナンス/権限未反映の可能性があります。")
+JP_FULLBOARD_JA = ("日本株フル板契約済みでも、OpenD API側ではまだJP snapshot / "
+                   "ORDER_BOOKが ret=-1 のため復帰不可です。")
 ACTIVATION_TEST_JA = "JP.5803 / JP.8058 / JP.9984 のsnapshot testが ret=0 になったら復帰可能。"
 
 
-def build_jp_readiness(bridge: Dict[str, Any]) -> Dict[str, Any]:
+def build_jp_readiness(bridge: Dict[str, Any],
+                       context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """bridge: jpRealtimeStatus, jpLastErrorClass, lastJPQuotePushAt,
     jpFallbackActive, bridgeMode, bridgeProcess, openDStatus.
     権限状態はheartbeatの実測からのみ導出(捏造しない・不明はunknown)。"""
@@ -278,15 +283,30 @@ def build_jp_readiness(bridge: Dict[str, Any]) -> Dict[str, Any]:
     us_only = mode == "us_only" or jp == "disabled"
     bridge_ok = str(bridge.get("bridgeProcess") or "") in ("ok", "ok_legacy")
     opend_ok = str(bridge.get("openDStatus") or "") == "connected"
+    ctx = dict(context or {})
+    maintenance_note = bool(ctx.get("supportMaintenanceNote"))
 
-    if jp == "entitlement_unavailable" or "permission" in err or "entitlement" in err:
-        perm = "no_permission"
-    elif jp == "ok":
+    if jp == "ok":
         perm = "ready"
+    elif jp == "entitlement_unavailable" or "permission" in err or "entitlement" in err \
+            or ctx.get("manualProbeNoPermission"):
+        perm = "maintenance_or_no_permission" if maintenance_note else "no_permission"
     else:
         perm = "unknown"          # 権限テスト未実施(disabledだけでは権限は断定できない)
 
-    if perm == "no_permission":
+    order_book = ctx.get("orderBookReady")
+    if order_book is None:
+        order_book = False if ctx.get("manualProbeNoPermission") else "unknown"
+    full_board = ctx.get("fullBoardAppSubscription")
+    full_board = bool(full_board) if isinstance(full_board, bool) else "unknown"
+
+    if perm == "maintenance_or_no_permission":
+        activation = False
+        status_ja = "復帰不可：" + JP_MAINTENANCE_JA
+        next_ja = ("moomoo側のAPIメンテナンス完了を待ち、後日JP snapshot / ORDER_BOOKを"
+                   "再テスト(安全手順参照)。ret=0になるまでUS-onlyを維持。"
+                   "アプリ側のコード変更では直りません。")
+    elif perm == "no_permission":
         activation = False
         status_ja = "復帰不可：moomoo側の日本株クォート権限がありません。"
         next_ja = ("moomooアプリ/サポートでJPN Stocksクォート権限を取得後、EC2で権限テスト"
@@ -312,8 +332,18 @@ def build_jp_readiness(bridge: Dict[str, Any]) -> Dict[str, Any]:
         "usOnlyOverrideActive": us_only,
         "activationReady": activation,
         "showActivationSteps": activation is True and us_only,   # ガード: 準備OK時のみ
-        "reasonJa": "moomooのJPN Stocksクォート権限がないため、日本株リアルタイムは利用できません。"
-        if perm == "no_permission" else None,
+        "jpApiMaintenanceSuspected": (True if perm == "maintenance_or_no_permission"
+                                      else False if perm in ("ready", "no_permission")
+                                      else "unknown"),
+        "jpFullBoardAppSubscriptionKnown": full_board,
+        "jpOpenDOrderBookReady": order_book,
+        "fullBoardNoteJa": (JP_FULLBOARD_JA if full_board is True and order_book is not True
+                            else None),
+        "contextAsOf": ctx.get("asOf"),
+        "reasonJa": ("moomooのJPN Stocksクォート権限がないため、日本株リアルタイムは利用できません。"
+                     if perm == "no_permission"
+                     else JP_MAINTENANCE_JA if perm == "maintenance_or_no_permission"
+                     else None),
         "safeModeJa": "US-only modeで運用中。日本株は代替データで判定しています。" if us_only else None,
         "activationConditionJa": ACTIVATION_TEST_JA,
         "ownerReadableStatusJa": status_ja,

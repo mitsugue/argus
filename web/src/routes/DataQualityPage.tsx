@@ -24,7 +24,12 @@ interface Console {
     usOnlyOverrideActive: boolean; activationReady: boolean | 'unknown';
     showActivationSteps: boolean; reasonJa: string | null; safeModeJa: string | null;
     activationConditionJa: string; ownerReadableStatusJa: string;
-    nextStepJa: string; guardJa: string | null };
+    nextStepJa: string; guardJa: string | null;
+    // v12.0.4: moomoo側メンテナンス認知(オーナー確認済み事実のみ)
+    jpApiMaintenanceSuspected?: boolean | 'unknown';
+    jpFullBoardAppSubscriptionKnown?: boolean | 'unknown';
+    jpOpenDOrderBookReady?: boolean | 'unknown';
+    fullBoardNoteJa?: string | null; contextAsOf?: string | null };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -186,20 +191,41 @@ export const DataQualityPage: React.FC = () => {
                 <p className="cmd-alloc__note" style={{ fontSize: 12.5 }}>
                   <b style={{ color: c.jpReadiness.activationReady === true ? 'var(--value-positive)'
                     : c.jpReadiness.jpPermissionStatus === 'no_permission' ? 'var(--value-negative)'
-                      : 'var(--text-faint)' }}>
+                      : c.jpReadiness.jpPermissionStatus === 'maintenance_or_no_permission' ? 'var(--amber, #fbbf24)'
+                        : 'var(--text-faint)' }}>
                     {c.jpReadiness.ownerReadableStatusJa}
                   </b>
                 </p>
                 {c.jpReadiness.reasonJa && <p className="cmd-alloc__note">{c.jpReadiness.reasonJa}</p>}
+                {/* v12.0.4: フル板契約済みでもOpenD側はまだret=-1(オーナー確認済み事実) */}
+                {c.jpReadiness.fullBoardNoteJa && (
+                  <p className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>
+                    {c.jpReadiness.fullBoardNoteJa}
+                  </p>
+                )}
                 {c.jpReadiness.safeModeJa && (
                   <p className="cmd-alloc__note" style={{ color: 'var(--text-sub)' }}>{c.jpReadiness.safeModeJa}</p>
                 )}
+                <p className="cmd-alloc__note" style={{ color: 'var(--text-sub)' }}>
+                  現在の安全運用: USリアルタイム + 日本株代替データ(J-Quants/Yahoo)。
+                </p>
                 <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
                   権限: <b>{c.jpReadiness.jpPermissionStatus === 'no_permission' ? '権限なし'
-                    : c.jpReadiness.jpPermissionStatus === 'ready' ? 'あり(ret=0確認)' : '未テスト'}</b>
+                    : c.jpReadiness.jpPermissionStatus === 'maintenance_or_no_permission' ? 'メンテナンス/権限未反映'
+                      : c.jpReadiness.jpPermissionStatus === 'ready' ? 'あり(ret=0確認)' : '未テスト'}</b>
                   {' '}· JP最終push: {c.jpReadiness.lastJPQuotePushAt ?? 'なし'}
                   {' '}· フォールバック: {c.jpReadiness.jpFallbackActive ? '稼働中' : '—'}
                   {' '}· US-only override: {c.jpReadiness.usOnlyOverrideActive ? '有効' : '解除'}
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                  フル板(アプリ内契約): <b>{c.jpReadiness.jpFullBoardAppSubscriptionKnown === true ? '契約済み'
+                    : c.jpReadiness.jpFullBoardAppSubscriptionKnown === false ? 'なし' : '不明'}</b>
+                  {' '}· ORDER_BOOK(API): <b>{c.jpReadiness.jpOpenDOrderBookReady === true ? 'ret=0'
+                    : c.jpReadiness.jpOpenDOrderBookReady === false ? 'ret=-1(利用不可)' : '未テスト'}</b>
+                  {c.jpReadiness.contextAsOf ? ` · 確認日: ${c.jpReadiness.contextAsOf}` : ''}
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 11, color: 'var(--text-sub)' }}>
+                  フル板/ORDER_BOOKも ret=0 になるまで板情報はAPIで使えません。
                 </p>
                 <p className="cmd-alloc__note" style={{ fontSize: 11, color: 'var(--text-sub)' }}>
                   復帰条件: {c.jpReadiness.activationConditionJa}

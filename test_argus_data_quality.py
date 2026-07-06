@@ -191,7 +191,8 @@ def test_jp_no_permission_not_ready_not_critical():
     # 全体スコアはJP無効でcriticalにならない(既存expected-disabled動作)
     c = _console()
     assert c["overallStatus"] == "ok"
-    assert c["jpReadiness"]["jpPermissionStatus"] in ("unknown", "no_permission")
+    assert c["jpReadiness"]["jpPermissionStatus"] in (
+        "unknown", "no_permission", "maintenance_or_no_permission")
 
 
 def test_jp_ready_but_usonly_shows_guarded_steps():
@@ -226,6 +227,70 @@ def test_jp_wording_never_implies_live_when_disabled():
                                "bridgeMode": "us_only"})
     blob = json.dumps(r, ensure_ascii=False)
     assert "稼働中" not in blob
+
+
+# ── V12.0.4 JP APIメンテナンス認知(オーナー確認済み事実の反映) ──────────────
+
+_MAINT_CTX = {"manualProbeNoPermission": True, "supportMaintenanceNote": True,
+              "fullBoardAppSubscription": True, "asOf": "2026-07-06"}
+_MAINT_BRIDGE = {"jpRealtimeStatus": "disabled", "bridgeMode": "us_only",
+                 "jpFallbackActive": True}
+
+
+def test_jp_maintenance_context_yields_maintenance_status():
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), dict(_MAINT_CTX))
+    assert r["jpPermissionStatus"] == "maintenance_or_no_permission"
+    assert r["jpApiMaintenanceSuspected"] is True
+    assert r["activationReady"] is False
+    assert r["showActivationSteps"] is False
+    assert "日本株リアルタイムAPIは現在利用できません" in r["ownerReadableStatusJa"]
+    assert "メンテナンス" in r["ownerReadableStatusJa"]
+    assert "US-onlyを維持" in r["nextStepJa"]
+    assert "コード変更では直りません" in r["nextStepJa"]
+    assert "まだUS-onlyを外さないでください" in r["guardJa"]
+
+
+def test_jp_maintenance_full_board_note_when_order_book_not_ready():
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), dict(_MAINT_CTX))
+    assert r["jpFullBoardAppSubscriptionKnown"] is True
+    assert r["jpOpenDOrderBookReady"] is False       # 手動プローブでret=-1実測
+    assert r["fullBoardNoteJa"] is not None
+    assert "フル板契約済みでも" in r["fullBoardNoteJa"]
+    assert "ORDER_BOOKが ret=-1" in r["fullBoardNoteJa"]
+    assert r["contextAsOf"] == "2026-07-06"
+
+
+def test_jp_probe_without_maintenance_note_stays_no_permission():
+    ctx = dict(_MAINT_CTX, supportMaintenanceNote=False)
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), ctx)
+    assert r["jpPermissionStatus"] == "no_permission"
+    assert r["jpApiMaintenanceSuspected"] is False
+
+
+def test_jp_actual_recovery_overrides_maintenance_context():
+    # JP snapshotが本当にret=0になったら、古いcontextが復帰を妨げない
+    r = dq.build_jp_readiness({"jpRealtimeStatus": "ok", "bridgeMode": "us_only",
+                               "bridgeProcess": "ok", "openDStatus": "connected"},
+                              dict(_MAINT_CTX))
+    assert r["jpPermissionStatus"] == "ready"
+    assert r["activationReady"] is True
+
+
+def test_jp_maintenance_wording_never_implies_live():
+    r = dq.build_jp_readiness(dict(_MAINT_BRIDGE), dict(_MAINT_CTX))
+    blob = json.dumps(r, ensure_ascii=False)
+    assert "JPリアルタイム稼働中" not in blob
+    for banned in ("login_pwd", "vaultPass", "パスフレーズ"):
+        assert banned not in blob
+
+
+def test_console_forwards_jp_api_context():
+    c = _console(jpApiContext=dict(_MAINT_CTX))
+    r = c["jpReadiness"]
+    assert r["jpPermissionStatus"] == "maintenance_or_no_permission"
+    assert r["fullBoardNoteJa"] is not None
+    # メンテナンス認知でも全体はcritical化しない(意図的無効の原則を維持)
+    assert c["overallStatus"] == "ok"
 
 
 def test_reboot_safety_unknown_autostart_warns():

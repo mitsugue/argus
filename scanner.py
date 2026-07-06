@@ -7092,6 +7092,18 @@ def _dq_iso(epoch):
         return None
 
 
+# v12.0.4: JP APIメンテナンス認知 — オーナー確認済みの事実のみ(捏造なし)。
+# 2026-07-06時点: 手動プローブでJP snapshot/ORDER_BOOKともret=-1(権限なし)、
+# moomooサポート回答=JP/SG/MY株APIの相場情報サービスはコンプライアンス対応で
+# メンテナンス中、アプリ内で日本株フル板は契約済み。状況が変わったらここを更新。
+_JP_API_CONTEXT = {
+    "manualProbeNoPermission": True,
+    "supportMaintenanceNote": True,
+    "fullBoardAppSubscription": True,
+    "asOf": "2026-07-06",
+}
+
+
 def _data_quality_console():
     import time as _t
     now = _t.time()
@@ -7186,6 +7198,7 @@ def _data_quality_console():
                    "jpLastErrorClass": (bdoc.get("heartbeat") or {}).get("jpLastErrorClass"),
                    "diskUsagePct": (bdoc.get("heartbeat") or {}).get("diskUsagePct")},
         "heartbeatRaw": (bdoc.get("heartbeat") or {}),
+        "jpApiContext": _JP_API_CONTEXT,
         "publicLeakSafe": True, "backupUnsafeWithData": None,
         "eventNear": False,
     }, now_iso, app_version="")
