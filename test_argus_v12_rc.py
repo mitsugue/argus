@@ -123,6 +123,40 @@ def test_mobile_nav_reaches_backup_and_data_quality():
     assert "'backup'" in app and "'quality'" in app
 
 
+def test_backend_landing_is_clearly_not_the_app(monkeypatch):
+    """v12.0.1: backendルートは運用シェルであることを明示し、PWAへ誘導する。"""
+    monkeypatch.setattr(scanner, "requests", _Boom())
+    with scanner.app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "backend health画面" in html
+        assert "mitsugue.github.io/argus" in html
+        assert "アプリ本体の版とは別" in html
+        for w in SECRET_WORDS:
+            assert w not in html, w
+
+
+def test_data_quality_no_fabricated_freshness(monkeypatch):
+    """v12.0.1: 「存在すればnow」の偽装freshを禁止 — 実測 or unknownのみ。"""
+    monkeypatch.setattr(scanner, "requests", _Boom())
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/data-quality").get_json()
+        rows = {s["sourceName"]: s for s in d["sourceHealth"]}
+        # 新プロセス直後 = 計測点未発火 → unknown(捏造しない)
+        for name in ("event-calendar", "institutional-intel", "jp-fallback-prices"):
+            s = rows[name]
+            assert s["status"] in ("unknown", "ok", "stale", "degraded")
+            if s["lastSuccessAt"] is None:
+                assert s["freshnessBucket"] == "unknown"
+        # JP代替の文言(稼働主張ではなくfallback明示)
+        assert "代替データ" in rows["jp-fallback-prices"]["ownerReadableImpactJa"]
+
+
+def test_review_pack_has_permanent_jp_fallback_caveat():
+    """v12.0.1: パックの鮮度セクションにJP代替caveatが常設(FEソースgrep)。"""
+    src = open(os.path.join(WEB, "lib", "reviewPack.ts"), encoding="utf-8").read()
+    assert "代替データ" in src and "意図的に無効" in src
+
+
 def test_unknown_never_positive():
     """unknown/stale入力が好条件として扱われないことの回帰ガード。"""
     plan = argus_trade_plan.build_plan("5803", "JP", {

@@ -254,6 +254,11 @@ header{display:flex;align-items:center;margin-bottom:10px;padding-bottom:8px;bor
 .price-tag{font-size:11px;color:#74fafd;margin-left:auto;font-weight:700}
 .price-chg-up{color:#4ec94e}.price-chg-dn{color:#f44747}
 </style></head><body>
+<div style="border:1px solid #3a3a3a;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;line-height:1.7;background:#141414">
+これは<b>ARGUS backend health画面</b>(運用シェル)です。アプリ本体(PWA)はこちら →
+<a href="https://mitsugue.github.io/argus/" style="color:#7bd88f">mitsugue.github.io/argus</a><br>
+※この画面の表記・バージョンはbackendシェルのもので、アプリ本体の版とは別です。秘密情報は表示されません。
+</div>
 <header>
   <div><div class="logo" id="logoBtn" onclick="location.reload()">A.R.G.U.S.</div><div class="sub">velvet-razor v2.0 — Autonomous Risk and Global Uncertainty Scanner</div></div>
   <div style="margin-left:auto;text-align:right">
@@ -3082,11 +3087,21 @@ def get_japan_watchlist_snapshot(symbols=None):
         _remember_jp_symbols(requested)
     return _overlay_pushed(snap, "JP", requested)
 
+_JP_FALLBACK_LAST = {"ts": None}   # v12.0.1 実測: JP代替価格を最後に実データで返せた時刻
+
+
 @app.route("/api/argus/japan-watchlist")
 def api_argus_japan_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
-    return jsonify(get_japan_watchlist_snapshot(symbols))
+    snap = get_japan_watchlist_snapshot(symbols)
+    try:
+        if any((st.get("status") or "") not in ("", "mock") and st.get("price") is not None
+               for st in (snap.get("stocks") or [])):
+            _JP_FALLBACK_LAST["ts"] = time.time()
+    except Exception:
+        pass
+    return jsonify(snap)
 
 
 # Watchlist symbols the frontend has actually requested — so the moomoo bridge can
@@ -7110,8 +7125,9 @@ def _data_quality_console():
          "cadence": "realtime", "lastSuccessAt": us_last,
          "impactJa": "米国株の現在値・Flow実測", "nextStepJa": "bridge/scripts/check_bridge_status.sh"},
         {"sourceName": "jp-fallback-prices", "sourceType": "market_data",
-         "cadence": "intraday", "lastSuccessAt": None,   # 取得毎キャッシュで一括時刻なし
-         "fallbackActive": True, "impactJa": "日本株の価格(夜間/引け後はdelayedで正常)"},
+         "cadence": "intraday", "lastSuccessAt": _dq_iso(_JP_FALLBACK_LAST["ts"]),
+         "fallbackActive": True,
+         "impactJa": "日本株は代替データ(J-Quants/Yahoo)で判定 — 夜間/引け後delayedが正常"},
         {"sourceName": "jsf-daily-balance", "sourceType": "supply_demand",
          "cadence": "daily", "lastSuccessAt": (str(_JSF_CACHE.get("date")) + "T16:00:00+09:00"
                                                if _JSF_CACHE.get("date") else None),
@@ -7128,12 +7144,13 @@ def _data_quality_console():
          "impactJa": "暗号資産の現在値"},
         {"sourceName": "fred-rates-vix", "sourceType": "macro", "cadence": "intraday",
          "lastSuccessAt": rates_last, "impactJa": "金利/VIX/ドル円(地合い判定)"},
+        # v12.0.1: 「存在すればnow=常に新鮮」の偽装をやめ、実測時刻のみ使う(不明はunknown)
         {"sourceName": "event-calendar", "sourceType": "event", "cadence": "event_based",
-         "lastSuccessAt": None if not _MACRO_ANALYSIS else now_iso,
-         "impactJa": "重要イベント(cron生成キャッシュ)"},
+         "lastSuccessAt": _dq_iso(_EVENTS_BUILD_LAST["ts"]),
+         "impactJa": "重要イベント(実データ入りで組めた最終時刻)"},
         {"sourceName": "institutional-intel", "sourceType": "institutional",
-         "cadence": "intraday", "lastSuccessAt": now_iso if _INTEL_STORE else None,
-         "impactJa": "機関シグナル/C.A.O.S."},
+         "cadence": "intraday", "lastSuccessAt": None,   # 取込時刻の計測点は未設置 — 捏造しない
+         "impactJa": "機関シグナル/C.A.O.S.(件数は稼働中・鮮度計測は今後)"},
         # 恒久の意図的無効(criticalにしない)
         {"sourceName": "moomoo JPリアルタイム", "sourceType": "market_data",
          "cadence": "realtime", "expectedDisabled": True,
@@ -11556,6 +11573,9 @@ def _build_dashboard_events(limit=8, importance=None):
     return summ, items, now_iso
 
 
+_EVENTS_BUILD_LAST = {"ts": None}   # v12.0.1 実測: イベントカレンダーを実データ入りで組めた時刻
+
+
 @app.route("/api/argus/dashboard-events")
 def api_argus_dashboard_events():
     """Public cache-only: the single unified event surface for the top dashboard
@@ -11569,6 +11589,8 @@ def api_argus_dashboard_events():
     importance = (request.args.get("importance") or "").strip().lower()
     include_details = (request.args.get("includeDetails") or "").lower() in ("1", "true", "yes")
     summ, items, now_iso = _build_dashboard_events(limit, importance)
+    if items:
+        _EVENTS_BUILD_LAST["ts"] = time.time()   # v12.0.1 実測: 実データ入りで組めた時刻
     st = argus_dashboard_event_summary.status_counts({"items": items})
     dedupe = dict(summ["dedupe"])
     dedupe["mergedCount"] = len(items)

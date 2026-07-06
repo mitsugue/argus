@@ -156,13 +156,15 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
     const dqLine = '過去判断の答え合わせは端末内記録ベース。履歴が少ない間は成績として扱わない(検証中)。';
     L.push('', '## Decision Quality / Learning', dqLine);
     // v11.22.0: データ鮮度の注意 — レビュアーが「古いデータ由来の判断」を割引けるように
+    // v12.0.1: JP代替データのcaveatは常設(取得状態に依らない恒久の事実)
+    L.push('', '## Data Quality / データ鮮度の注意');
     const dqc = latestDataQuality();
     if (dqc) {
-      L.push('', '## Data Quality / データ鮮度の注意',
-        `総合: ${dqc.overallStatusJa}(古いデータのレイヤーは確度を割引いて評価してください)`);
+      L.push(`総合: ${dqc.overallStatusJa}(古いデータのレイヤーは確度を割引いて評価してください)`);
       L.push(...dqc.topIssuesJa.slice(0, 3).map((x) => `- ${x}`));
-      L.push(...dqc.expectedDisabledJa.slice(0, 3).map((x) => `- 仕様上の未取得: ${x}`));
+      L.push(...dqc.expectedDisabledJa.slice(0, 2).map((x) => `- 仕様上の未取得: ${x}`));
     }
+    L.push('- 日本株はリアルタイムではなく代替データ(J-Quants/Yahoo・夜間/引け後delayed)で判定しています(moomoo JP権限なしのため意図的に無効)。');
     const notifs = strip(redacted, listNotifications().slice(0, 3).map((n) => n.titleJa));
     if (notifs.length) { L.push('', '## Attention Changes'); L.push(...notifs.map((x) => `- ${x}`)); }
     if (!redacted && o.packType === 'daily') {

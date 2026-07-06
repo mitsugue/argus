@@ -159,6 +159,9 @@ export const DataQualityPage: React.FC = () => {
               {c.bridgeHealth.jpRealtimeNoteJa && (
                 <p className="cmd-alloc__note" style={{ color: 'var(--text-faint)' }}>{c.bridgeHealth.jpRealtimeNoteJa}</p>
               )}
+              <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                ※ bridgeVersionはEC2ブリッジスクリプトの版で、アプリ本体の版とは別管理です(不一致は異常ではありません)。
+              </p>
             </div>
           </section>
 
