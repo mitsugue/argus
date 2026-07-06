@@ -153,6 +153,98 @@
     "n": 0,
     "hits": 0
    }
+  },
+  "3": {
+   "scoredOn": "2026-07-06",
+   "tradingAge": 3,
+   "layer1": {
+    "sensors": {
+     "n": 3,
+     "hits": 1,
+     "hitRate": 0.333,
+     "brierMean": 0.78,
+     "rows": [
+      {
+       "sensor": "TLT",
+       "realizedPct": -1.05,
+       "bucket": "sideways_stabilization",
+       "argmax": "sideways_stabilization",
+       "hit": true,
+       "brier": 0.38
+      },
+      {
+       "sensor": "GLD",
+       "realizedPct": 2.65,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.98
+      },
+      {
+       "sensor": "BTC",
+       "realizedPct": 7.25,
+       "bucket": "rebound_attempt",
+       "argmax": "sideways_stabilization",
+       "hit": false,
+       "brier": 0.98
+      }
+     ]
+    },
+    "stocks": {
+     "n": 0,
+     "hits": 0,
+     "hitRate": null,
+     "brierMean": null,
+     "rows": []
+    }
+   },
+   "layer2": {
+    "n": 4,
+    "hits": 0,
+    "hitRate": 0.0,
+    "brierMean": 0.9012,
+    "rows": [
+     {
+      "symbol": "NVDA",
+      "realizedPct": -2.63,
+      "bucket": "downside_continuation",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.875
+     },
+     {
+      "symbol": "AAPL",
+      "realizedPct": 6.66,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.875
+     },
+     {
+      "symbol": "TSLA",
+      "realizedPct": -6.46,
+      "bucket": "downside_continuation",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.875
+     },
+     {
+      "symbol": "META",
+      "realizedPct": 3.48,
+      "bucket": "rebound_attempt",
+      "argmax": "sideways_stabilization",
+      "hit": false,
+      "brier": 0.98
+     }
+    ]
+   },
+   "layer3": {
+    "n": 0,
+    "hits": 0,
+    "hitRate": null,
+    "brierMean": null,
+    "rows": []
+   }
   }
  }
 }

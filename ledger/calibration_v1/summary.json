@@ -43,32 +43,32 @@
     },
     "regime_sensor_fixed": {
       "1d": {
-        "n": 54,
-        "hitRate": 0.8704,
-        "brierMean": 0.149,
-        "rpsMean": 0.0992
+        "n": 55,
+        "hitRate": 0.8727,
+        "brierMean": 0.1486,
+        "rpsMean": 0.0985
       },
       "3d": {
-        "n": 39,
-        "hitRate": 0.6154,
-        "brierMean": 0.1877,
-        "rpsMean": 0.1538
+        "n": 42,
+        "hitRate": 0.5952,
+        "brierMean": 0.1929,
+        "rpsMean": 0.1617
       },
       "5d": {
-        "n": 15,
-        "hitRate": 0.4667,
-        "brierMean": 0.2083,
-        "rpsMean": 0.1838
+        "n": 18,
+        "hitRate": 0.3889,
+        "brierMean": 0.2281,
+        "rpsMean": 0.214
       }
     }
   },
   "epochId": "calibration_v1",
   "status": "dry_run",
-  "updated": "2026-07-03",
+  "updated": "2026-07-06",
   "recorded": 20,
-  "scored": 54,
+  "scored": 7,
   "held": 0,
-  "totalRows": 122,
-  "tradingDays": 7,
+  "totalRows": 142,
+  "tradingDays": 8,
   "noteJa": "v4のparallel dry-run(本番ヘッドラインではない)。v3とは別ディレクトリ。市場別クロックでJPを採点、US/cryptoは正しい時刻のジョブ実装まで保留。"
 }
