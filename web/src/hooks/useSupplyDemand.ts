@@ -46,14 +46,18 @@ export const RANK_TONE: Record<string, string> = {
 
 interface State { signals: SupplyDemandSignal[]; loading: boolean; }
 
-export function useSupplyDemandList(): State {
+/** v12.0.6 (owner: 保有銘柄の需給が出ない): extraSymbols = デバイスのウォッチリスト
+ *  銘柄のカンマ結合(ソート済みの安定文字列)。サーバー固定リスト外の銘柄にも
+ *  需給ランクを出す(サーバー側はcached-only・銘柄コードは保有情報ではない)。 */
+export function useSupplyDemandList(extraSymbols?: string): State {
   const [state, setState] = useState<State>({ signals: [], loading: true });
   useEffect(() => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
     if (!backend) { setState({ signals: [], loading: false }); return; }
     let alive = true;
+    const qs = extraSymbols ? `?symbols=${encodeURIComponent(extraSymbols)}` : '';
     const load = () => {
-      fetch(`${backend.replace(/\/$/, '')}/api/argus/supply-demand`)
+      fetch(`${backend.replace(/\/$/, '')}/api/argus/supply-demand${qs}`)
         .then((r) => r.json())
         .then((d) => {
           if (!alive) return;
@@ -67,6 +71,6 @@ export function useSupplyDemandList(): State {
     load();
     const iv = setInterval(load, 5 * 60_000);
     return () => { alive = false; clearInterval(iv); };
-  }, []);
+  }, [extraSymbols]);
   return state;
 }

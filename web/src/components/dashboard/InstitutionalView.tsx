@@ -1,13 +1,19 @@
 import React from 'react';
+import { autoQueueTranslations } from '../../lib/queueRequests';
 
 // INSTITUTIONAL VIEW inside the asset card (v10.147). A NAMED institutional VIEW is
 // reported context — never a named trading position. Public metadata only; the full
 // article opens at the source. Relation to the move is labelled, not asserted.
+// v12.0.6 (owner: ニュースが英語のまま): displayTitleJaを主表示にし(未翻訳は
+// 「翻訳待ち」+原文折りたたみ)、英語見出しは自動で翻訳キューへ。古い記事(>14日)は
+// サーバー側で除外済み。
 
 interface IntelItem {
   title: string; titleJa?: string | null; institutionId?: string | null; publishedAt?: string | null;
   accessClass: string; canonicalUrl?: string | null; stance?: string;
   category?: string; contentType?: string;
+  displayTitleJa?: string | null; titleOriginal?: string | null; translationStatus?: string | null;
+  ageHours?: number | null;
   relation: string; relationLabelJa: string; isNamedView: boolean; notConfirmed: string[];
 }
 
@@ -43,7 +49,18 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
     if (!backend) return;
     let alive = true;
     fetch(`${backend.replace(/\/$/, '')}/api/argus/events/${encodeURIComponent(symbol)}/institutional-intelligence`)
-      .then((r) => r.json()).then((j) => { if (alive) setItems(j.items || []); }).catch(() => {});
+      .then((r) => r.json()).then((j) => {
+        if (!alive) return;
+        const its: IntelItem[] = j.items || [];
+        setItems(its);
+        // 未翻訳の英語見出しを可視翻訳キューへ(dedupe済み・24/365 cronが排出)
+        const pend = its
+          .filter((it) => it.translationStatus === 'pending' && it.titleOriginal)
+          .map((it) => ({ titleOriginal: String(it.titleOriginal),
+                          source: it.institutionId ?? undefined,
+                          publishedAt: it.publishedAt ?? undefined }));
+        if (pend.length) autoQueueTranslations(`inst-view|${symbol}`, 'institutional-view', symbol, '', pend);
+      }).catch(() => {});
     return () => { alive = false; };
   }, [symbol]);
 
@@ -59,7 +76,16 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
             {it.contentType && CONTENT_JA[it.contentType] && <span className="iv-ct">{CONTENT_JA[it.contentType]}</span>}
             <span className="iv-rel" style={{ color: REL_TONE[it.relation] ?? 'var(--text-muted)' }}>{it.relationLabelJa}</span>
           </div>
-          <a className="iv-title" href={it.canonicalUrl || '#'} target="_blank" rel="noopener noreferrer">{it.titleJa || it.title}</a>
+          {/* 主表示は常に日本語(displayTitleJa)。未翻訳は「翻訳待ち」+原文折りたたみ */}
+          <a className="iv-title" href={it.canonicalUrl || '#'} target="_blank" rel="noopener noreferrer">
+            {it.displayTitleJa || it.titleJa || it.title}
+          </a>
+          {it.translationStatus === 'pending' && it.titleOriginal && (
+            <details>
+              <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>原文を見る</summary>
+              <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-sub)' }}>{it.titleOriginal}</p>
+            </details>
+          )}
           {it.isNamedView && it.notConfirmed.length > 0 && (
             <div className="iv-nc">未確認: {it.notConfirmed.join(' / ')}</div>
           )}

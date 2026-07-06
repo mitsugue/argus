@@ -38,7 +38,7 @@ COMPLIANCE = "運用ステータスの可視化であり、売買判断・売買
 
 # 期待どおりの無効(criticalにしない・「意図的」表示) — 恒久の3件
 EXPECTED_DISABLED = (
-    {"sourceName": "moomoo JPリアルタイム", "reasonJa": "moomoo口座にJP quote権限なし(意図的に無効・エラーではない)。JPは常時フォールバック(J-Quants/Yahoo)"},
+    {"sourceName": "moomoo JPリアルタイム", "reasonJa": "moomoo側の日本株APIメンテナンス(サポート確認済み)のため意図的に無効(エラーではない)。JPは常時フォールバック(J-Quants/Yahoo)"},
     {"sourceName": "逆日歩(品貸料)", "reasonJa": "未取込(日証金の品貸料CSVは別系統・捏造せず未取得表示)"},
     {"sourceName": "銘柄別空売り比率", "reasonJa": "J-Quants Standardは業種別のみ(銘柄別は未提供)"},
 )
@@ -238,7 +238,7 @@ def build_console(inputs: Dict[str, Any], now_iso: str,
             "bridgeMode": bridge.get("bridgeMode"),
             "usRealtimeStatus": bridge.get("usRealtimeStatus"),
             "jpRealtimeStatus": bridge.get("jpRealtimeStatus"),
-            "jpRealtimeNoteJa": "意図的に無効(moomoo JP権限なし) — エラーではない"
+            "jpRealtimeNoteJa": "意図的に無効(moomoo側メンテナンス確認済み) — エラーではない"
             if str(bridge.get("jpRealtimeStatus")) == "disabled" else None,
             "jpFallbackActive": bridge.get("jpFallbackActive"),
             "heartbeatAgeSec": bridge.get("heartbeatAgeSec"),

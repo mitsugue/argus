@@ -38,7 +38,7 @@ import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
 import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
-import { CollapsibleSection } from '../components/common/CollapsibleSection';
+import { CollapsibleSection, resetTodayLayout } from '../components/common/CollapsibleSection';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { unreadCounts } from '../lib/notifications';
 import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
@@ -169,7 +169,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   // already built for Today; quantities/costs never leave localStorage.
   const rates = useRatesSnapshot();
   const { records: flowRecords } = useFlowAttributionList();
-  const { signals: sdSignals } = useSupplyDemandList();   // v11.10.0 需給ランク(JP)
+  // v12.0.6 (owner: 保有銘柄の需給が全く出ない): デバイスのウォッチリスト銘柄を
+  // サーバーへ渡し、固定リスト外(6965/7011等)にも需給ランクを出す。ソート済み
+  // カンマ結合で参照安定化(不要な再fetchを防ぐ)。
+  const sdExtraSymbols = useMemo(() =>
+    assets.filter((a) => a.market === 'JP' || a.market === 'US')
+      .map((a) => a.symbol.toUpperCase()).sort().join(','),
+    [assets]);
+  const { signals: sdSignals } = useSupplyDemandList(sdExtraSymbols);   // v11.10.0 需給ランク
   // Card prices vanish outside sessions (labels carry no price) — fall back to
   // the same real quote hooks Core Portfolio uses (delayed close = real data).
   const peJpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
@@ -733,7 +740,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
       {/* v11.21.0: 低優先セクションは「件数+一行結論」に圧縮(既定折りたたみ・
           開くまでレンダリングしない)。P0/P1と保有リスクは上のAP/PLANで既出。 */}
-      <CollapsibleSection title="BIG MONEY / FLOW"
+      <CollapsibleSection title="BIG MONEY / FLOW" persistKey="flow"
         countLabel={`${flowRecords.filter((r) => r.flowClass !== 'unknown').length}件`}
         severityTone={flowRecords.some((r) => ['panic_selling', 'distribution'].includes(r.flowClass))
           ? 'var(--amber, #fbbf24)' : undefined}
@@ -745,7 +752,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         {() => <FlowAttributionSection />}
       </CollapsibleSection>
 
-      <CollapsibleSection title="PORTFOLIO EXPOSURE"
+      <CollapsibleSection title="PORTFOLIO EXPOSURE" persistKey="exposure"
         countLabel={positionExposure.noHoldings ? '未入力' : `リスク${positionExposure.risks.length}件`}
         severityTone={positionExposure.risks.some((r) => ['high', 'critical'].includes(r.riskLevel))
           ? 'var(--value-negative)' : undefined}
@@ -755,7 +762,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         {() => <PositionRiskSection exposure={positionExposure} />}
       </CollapsibleSection>
 
-      <CollapsibleSection title="SUPPLY / DEMAND"
+      <CollapsibleSection title="SUPPLY / DEMAND" persistKey="sd"
         countLabel={`${sdSignals.filter((s) => s.supplyDemandRank !== 'Unknown').length}件`}
         severityTone={sdSignals.some((s) => ['D', 'E'].includes(s.supplyDemandRank))
           ? 'var(--amber, #fbbf24)' : undefined}
@@ -775,18 +782,18 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
           The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not
           "what spiked". Watchlist-外の発掘。 */}
-      <CollapsibleSection title="RECOMMEND / 発掘"
+      <CollapsibleSection title="RECOMMEND / 発掘" persistKey="recommend"
         conclusionJa="ウォッチリスト外の高確信候補(開いて確認)">
         {() => <BuyCandidates />}
       </CollapsibleSection>
       <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} />
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
-      <CollapsibleSection title="FX / MACRO" conclusionJa="ドル円・米金利・VIXの背景(開いて確認)">
+      <CollapsibleSection title="FX / MACRO" persistKey="fxmacro" conclusionJa="ドル円・米金利・VIXの背景(開いて確認)">
         {() => <FxMacroSection />}
       </CollapsibleSection>
 
-      <CollapsibleSection title="HISTORY / JUDGMENT LOG"
+      <CollapsibleSection title="HISTORY / JUDGMENT LOG" persistKey="history"
         conclusionJa="自己採点と判断履歴(開いて確認)">
         {() => (
         <div className="card jlog">
@@ -855,6 +862,16 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         </div>
         )}
       </CollapsibleSection>
+
+      {/* v12.0.6: 折りたたみ状態は端末内に記憶(argus.todayCollapse.v1) — リセットで既定へ */}
+      <p style={{ margin: '4px 0 0', textAlign: 'right' }}>
+        <button type="button"
+          onClick={() => { resetTodayLayout(); window.location.reload(); }}
+          style={{ fontSize: 10, color: 'var(--text-faint)', background: 'transparent',
+                   border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+          セクションの開閉状態をリセット
+        </button>
+      </p>
 
       {/* v11.21.0: モバイル専用の下部要約バー(10秒把握・720px以下のみ) */}
       <MobileStickyCommand

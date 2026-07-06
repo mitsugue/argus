@@ -38,6 +38,7 @@ const AI_BADGE: Record<string, { txt: string; tone: string }> = {
 };
 const TONE: Record<string, string> = { up: 'var(--value-positive)', down: 'var(--value-negative)', flow: 'var(--event-medium)', news: 'var(--text-sub)', flat: 'var(--text-sub)' };
 
+import { AiExplanationBlock } from './AiExplanationBlock';
 import type { PositionNote } from '../../domain/positionExposure';
 import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
 import { RANK_TONE } from '../../hooks/useSupplyDemand';
@@ -349,6 +350,13 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
 
           {/* v11.20.0: Asset Review Pack copy(端末内合成・自動送信なし) */}
           <AskAIAsset symbol={c.symbol} />
+
+          {/* v12.0.6 (owner: ボタンが見当たらない): 「理由を詳しく調べる」即時調査を
+              詳細データ折りたたみの外に常時表示(v11.21の圧縮で埋まっていた)。 */}
+          <div className="uac-sec">
+            <div className="uac-sec-t">今の動きを調べる</div>
+            <AiExplanationBlock symbol={c.symbol} market={c.market} context="asset-card" dense />
+          </div>
 
           {/* Named institutional views attached to THIS asset (public metadata).
               A reported view, never a trading position; renders nothing when none. */}

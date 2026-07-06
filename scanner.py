@@ -6744,7 +6744,7 @@ def _supply_demand_sources():
             "disabled": [
                 {"source": "逆日歩(品貸料)", "reasonJa": "未取込(日証金の品貸料CSVは別系統。捏造せず未取得と表示)"},
                 {"source": "銘柄別空売り比率", "reasonJa": "J-Quants Standardは業種別のみ(銘柄別は未提供)"},
-                {"source": "moomoo JPリアルタイム", "reasonJa": "口座権限により意図的に無効(エラーではない)"}],
+                {"source": "moomoo JPリアルタイム", "reasonJa": "moomoo側メンテナンス(サポート確認済み)のため意図的に無効(エラーではない)"}],
             "jsf": bool(_JSF_CACHE.get("table")),
             "jqMargin": bool(_JQ_MARGIN_CACHE),
             "shortRatio": False}
@@ -7164,9 +7164,11 @@ def _data_quality_console():
         {"sourceName": "event-calendar", "sourceType": "event", "cadence": "event_based",
          "lastSuccessAt": _dq_iso(_EVENTS_BUILD_LAST["ts"]),
          "impactJa": "重要イベント(実データ入りで組めた最終時刻)"},
+        # v12.0.6: 収集cronの最終成功時刻(_INTEL_LAST.ts)は実測 — 未収集ならunknownのまま
         {"sourceName": "institutional-intel", "sourceType": "institutional",
-         "cadence": "intraday", "lastSuccessAt": None,   # 取込時刻の計測点は未設置 — 捏造しない
-         "impactJa": "機関シグナル/C.A.O.S.(件数は稼働中・鮮度計測は今後)"},
+         "cadence": "intraday",
+         "lastSuccessAt": _dq_iso(_INTEL_LAST["ts"]) if _INTEL_LAST.get("ts") else None,
+         "impactJa": "機関シグナル/C.A.O.S.(収集cronの最終成功時刻)"},
         # 恒久の意図的無効(criticalにしない)
         {"sourceName": "moomoo JPリアルタイム", "sourceType": "market_data",
          "cadence": "realtime", "expectedDisabled": True,
@@ -7346,10 +7348,49 @@ def api_argus_decision_quality_status():
         enabled=True, storage_mode="local_only+encrypted_vault", now_iso=_ai_now_iso()))
 
 
+# v12.0.6 (owner: 保有銘柄の需給ランクが全く出ない): デバイスのウォッチリスト銘柄が
+# サーバー固定リスト(_JP_WATCHLIST/_US_WATCHLIST)に無いと需給が出なかった。公開GETは
+# cached-onlyの原則を守ったまま ?symbols= で追加銘柄を受け、リクエストされた銘柄は
+# 有界レジストリに記録して30分毎のcollect cronがキャッシュをウォームする(次回から
+# 信用残/日足も揃う)。銘柄コードはウォッチリスト水準の公開情報で保有情報ではない。
+_SD_EXTRA_SYMBOLS = {}                 # SYM -> {"market": "JP"|"US", "ts": epoch}
+_SD_EXTRA_MAX = 16
+_SD_EXTRA_TTL = 14 * 86400
+_US_SYM_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,5}$")
+
+
+def _sd_register_extra(symu, mkt):
+    now = time.time()
+    _SD_EXTRA_SYMBOLS[symu] = {"market": mkt, "ts": now}
+    for k in [k for k, v in _SD_EXTRA_SYMBOLS.items() if now - v["ts"] > _SD_EXTRA_TTL]:
+        _SD_EXTRA_SYMBOLS.pop(k, None)
+    if len(_SD_EXTRA_SYMBOLS) > _SD_EXTRA_MAX:      # oldest-first drop
+        for k in sorted(_SD_EXTRA_SYMBOLS, key=lambda k: _SD_EXTRA_SYMBOLS[k]["ts"])[
+                :len(_SD_EXTRA_SYMBOLS) - _SD_EXTRA_MAX]:
+            _SD_EXTRA_SYMBOLS.pop(k, None)
+
+
+def _sd_parse_extra_symbols(raw, base_syms):
+    """?symbols=6965,7011,IONQ → validated (sym, market) pairs not already served."""
+    pairs = []
+    for tok in str(raw or "").split(",")[:24]:
+        s = tok.strip().upper()
+        if not s or s in base_syms or any(s == p[0] for p in pairs):
+            continue
+        if _JP_SYM_RE.match(s) and s[:1].isdigit():
+            pairs.append((s, "JP"))
+        elif _US_SYM_RE.match(s):
+            pairs.append((s, "US"))
+        if len(pairs) >= 10:
+            break
+    return pairs
+
+
 @app.route("/api/argus/supply-demand")
 def api_argus_supply_demand():
-    """Public cached-only: 需給ランク for ?symbol= (single) or the JP watchlist
-    (list). No fetch, no LLM, no trade instructions, nothing fabricated."""
+    """Public cached-only: 需給ランク for ?symbol= (single), the watchlist (list),
+    plus ?symbols= extras (v12.0.6 — device watchlist symbols outside the server
+    list). No fetch, no LLM, no trade instructions, nothing fabricated."""
     sym = (request.args.get("symbol") or "").strip().upper()
     now_iso = _ai_now_iso()
     if sym:
@@ -7359,6 +7400,16 @@ def api_argus_supply_demand():
         return jsonify({"schemaVersion": "supply-demand-response-v1", "asOf": now_iso,
                         "signal": sig, "disclaimerJa": sig["complianceNote"]})
     signals = _supply_demand_list(cap=12)
+    base_syms = {s["symbol"] for s in signals}
+    for xs, xmkt in _sd_parse_extra_symbols(request.args.get("symbols"), base_syms):
+        try:
+            xsig = _supply_demand_signal_for(xs, xmkt)
+            q = _quote_cached_only(xs, xmkt) or {}
+            xsig["name"] = q.get("nameJa") or q.get("name") or xs
+            signals.append(xsig)
+            _sd_register_extra(xs, xmkt)
+        except Exception:
+            continue
     return jsonify({"schemaVersion": "supply-demand-response-v1", "asOf": now_iso,
                     "count": len(signals), "signals": signals,
                     "disclaimerJa": "需給の状態評価であり売買指示ではない。"})
@@ -7473,19 +7524,38 @@ def api_argus_event_intel(symbol):
                         "messageJa": "銘柄コードを指定してください。"}), 400
     reg = (_REGIME_CACHE.get("data") or {})
     move = _ai_now_iso()
-    out = []
+    # v12.0.6 (owner): ①英語見出しをそのまま出さない — 翻訳キャッシュを引き、
+    # 未翻訳は displayTitleJa=「翻訳待ち: …」で返す(V11.5.1規律の適用漏れを修正)
+    # ②古い記事(>14日)はカードの「現在の動き」文脈から除外(2024年の格下げ記事が
+    # 増幅要因として並んだオーナー報告への根治)。除外件数は正直に返す。
+    _news_ja_restore_once()
+    out, omitted_old = [], 0
     for it in _INTEL_STORE:
         if symu not in (it.get("linkedAssets") or []):
             continue
+        age_h = argus_news_freshness.age_hours(it.get("publishedAt"), move)
+        if age_h is not None and age_h > 14 * 24:
+            omitted_old += 1
+            continue
         link = argus_research_mesh.link_to_event(it, {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move})
-        out.append({"title": it["title"], "titleJa": it.get("titleJa"),
+        deco = argus_news_i18n.decorate(it["title"], _NEWS_JA_CACHE,
+                                        source=str(it.get("institutionId") or ""))
+        out.append({"title": it["title"], "titleJa": it.get("titleJa") or deco.get("titleJa"),
+                    "titleOriginal": deco.get("titleOriginal"),
+                    "displayTitleJa": (it.get("titleJa") or deco.get("displayTitleJa")),
+                    "translationStatus": ("translated" if it.get("titleJa")
+                                          else deco.get("translationStatus")),
+                    "ageHours": round(age_h, 1) if age_h is not None else None,
                     "institutionId": it.get("institutionId"),
                     "category": it.get("category"), "contentType": it.get("contentType"),
                     "publishedAt": it.get("publishedAt"), "accessClass": it["accessClass"],
                     "canonicalUrl": it.get("canonicalUrl"), "stance": it.get("stance"),
                     "relation": link["causalRole"], "relationLabelJa": link["relationLabelJa"],
                     "isNamedView": link["isNamedView"], "notConfirmed": link["notConfirmed"]})
-    return jsonify({"symbol": symu, "count": len(out), "items": out[:8]})
+    return jsonify({"symbol": symu, "count": len(out), "items": out[:8],
+                    "omittedOldCount": omitted_old,
+                    "freshnessNoteJa": ("14日より古い記事はこの欄から除外(過去材料を現在の動きの説明に使わない)"
+                                        if omitted_old else None)})
 
 
 @app.route("/api/argus/institutional-intelligence/capture", methods=["POST"])
@@ -7611,6 +7681,20 @@ def api_argus_intel_collect():
         try:
             if _us_price_history(str(s.get("symbol") or "")):
                 warmed["usBars"] = warmed.get("usBars", 0) + 1
+        except Exception:
+            continue
+    # v12.0.6: デバイスから要求された追加銘柄(有界レジストリ)もウォームする —
+    # 公開GETはcached-onlyのため、ここが唯一のfetch経路(30分毎・TTL付き)。
+    for xs, meta in list(_SD_EXTRA_SYMBOLS.items()):
+        try:
+            if meta.get("market") == "JP":
+                code4 = xs[:4]
+                if _jq_weekly_margin(code4):
+                    warmed["extraMargin"] = warmed.get("extraMargin", 0) + 1
+                _jq_price_history(code4)
+            else:
+                if _us_price_history(xs):
+                    warmed["extraUsBars"] = warmed.get("extraUsBars", 0) + 1
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed

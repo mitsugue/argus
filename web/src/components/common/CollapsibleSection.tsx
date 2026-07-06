@@ -5,6 +5,32 @@ import React from 'react';
 // 中身は開くまでレンダリングしない(lazy — モバイル性能とAPI節約)。
 // ExpandableReason: 長い日本語段落を一文目+「続きを見る」に圧縮する。
 
+// v12.0.6: 開閉状態の端末内記憶(GPT既知課題「再訪でリセット」)。localStorageのみ・
+// サーバー送信なし・値は{key: boolean}だけで銘柄/保有情報を含まない。
+// defaultOpen(高リスク自動展開)はtrueなら記憶より優先(安全側)。
+const COLLAPSE_STORE_KEY = 'argus.todayCollapse.v1';
+
+function readCollapseStore(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_STORE_KEY);
+    const v = raw ? JSON.parse(raw) : {};
+    return v && typeof v === 'object' ? v as Record<string, boolean> : {};
+  } catch { return {}; }   // localStorage不可でも壊れない(記憶なしで動く)
+}
+
+function writeCollapseState(key: string, open: boolean): void {
+  try {
+    const cur = readCollapseStore();
+    cur[key] = open;
+    localStorage.setItem(COLLAPSE_STORE_KEY, JSON.stringify(cur));
+  } catch { /* storage unavailable — 記憶なしで続行 */ }
+}
+
+/** 「表示リセット」— 記憶した開閉状態を全消去(既定の静かな圧縮表示へ)。 */
+export function resetTodayLayout(): void {
+  try { localStorage.removeItem(COLLAPSE_STORE_KEY); } catch { /* noop */ }
+}
+
 export const CollapsibleSection: React.FC<{
   title: string;
   /** 件数など右肩の短いラベル */
@@ -14,10 +40,21 @@ export const CollapsibleSection: React.FC<{
   /** 最重要度の色(チップ枠) — 無指定はニュートラル */
   severityTone?: string;
   defaultOpen?: boolean;
+  /** v12.0.6: 指定すると開閉状態を端末内に記憶(再訪しても保持) */
+  persistKey?: string;
   /** lazy render: 開くまで children() は呼ばれない */
   children: () => React.ReactNode;
-}> = ({ title, countLabel, conclusionJa, severityTone, defaultOpen = false, children }) => {
-  const [open, setOpen] = React.useState(defaultOpen);
+}> = ({ title, countLabel, conclusionJa, severityTone, defaultOpen = false, persistKey, children }) => {
+  const [open, setOpenRaw] = React.useState(() => {
+    if (defaultOpen) return true;                       // 高リスク自動展開は記憶より優先
+    if (persistKey) return readCollapseStore()[persistKey] === true;
+    return false;
+  });
+  const setOpen = (fn: (v: boolean) => boolean) => setOpenRaw((v) => {
+    const nv = fn(v);
+    if (persistKey) writeCollapseState(persistKey, nv);
+    return nv;
+  });
   return (
     <section>
       <button type="button" onClick={() => setOpen((v) => !v)}

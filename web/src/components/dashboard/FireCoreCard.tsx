@@ -28,6 +28,10 @@ export const FireCoreCard: React.FC<{ assetsApi: UseAssets }> = ({ assetsApi }) 
         <p className="cmd-alloc__note" style={{ fontSize: 12 }}>
           FIREの本丸資産として投資信託を追跡します。{OWNER_RULE_JA}
         </p>
+        {/* v12.0.6: 手動更新でOKなことを明示(GPT既知課題 — 更新頻度の不安を消す) */}
+        <p className="cmd-alloc__note" style={{ fontSize: 11, color: 'var(--text-sub)' }}>
+          投資信託はリアルタイムでなくてOKです。週1程度の評価額更新でもFIRE Core判定に使えます。
+        </p>
 
         {!f || !funds.length ? (
           <p className="cmd-alloc__note">
@@ -64,7 +68,12 @@ export const FireCoreCard: React.FC<{ assetsApi: UseAssets }> = ({ assetsApi }) 
                       {p.valueSource === 'units_x_nav' && ' (口数×日次NAV)'}
                       {p.valueSource === 'manual_value' && ` (手動 ${p.lastValueDate ?? '日付不明'})`}
                     </span>
-                    {p.stale === true && <b style={{ marginLeft: 6, color: 'var(--amber, #fbbf24)' }}>更新が古い</b>}
+                    {/* v12.0.6: 日付+次の一歩を添える(週1手動更新は正常運用 — 過剰警告しない) */}
+                    {p.stale === true && (
+                      <b style={{ marginLeft: 6, color: 'var(--amber, #fbbf24)' }}>
+                        更新が古い(最終 {p.lastValueDate ?? '不明'} → 下の欄で評価額を更新)
+                      </b>
+                    )}
                     {p.unrealizedPnlPct != null && (
                       <span style={{ marginLeft: 6, color: p.unrealizedPnlPct >= 0 ? 'var(--value-positive)' : 'var(--value-negative)' }}>
                         {p.unrealizedPnlPct >= 0 ? '+' : ''}{p.unrealizedPnlPct.toFixed(1)}%
