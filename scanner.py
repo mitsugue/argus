@@ -12093,7 +12093,9 @@ _BRIDGE_HB = {"data": None, "receivedAt": 0.0}
 _HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
                     "lastQuotePushAt", "lastUSQuotePushAt", "lastJPQuotePushAt",
                     "acceptedCountLastPush", "usRealtimeStatus", "jpRealtimeStatus",
-                    "jpFallbackActive", "jpLastErrorClass", "diskUsagePct", "intervalSec")
+                    "jpFallbackActive", "jpLastErrorClass", "diskUsagePct", "intervalSec",
+                    # v12.0.3 reboot-safety自己申告(enabled/存在フラグのみ・秘密なし)
+                    "opendAutostart", "bridgeAutostart", "systemRestartRequired")
 
 
 @app.route("/api/argus/bridge/heartbeat", methods=["POST"])

@@ -176,6 +176,37 @@ def disk_usage_pct(path="/"):
         return None
 
 
+def _systemd_enabled(unit):
+    """v12.0.3 reboot-safety self-report — 'is-enabled' only (no args, no env,
+    no secrets). Returns True/False, or None when systemd/unit is unavailable."""
+    try:
+        import subprocess
+        r = subprocess.run(["systemctl", "is-enabled", unit],
+                           capture_output=True, text=True, timeout=5)
+        out = (r.stdout or "").strip()
+        if out == "enabled":
+            return True
+        if out in ("disabled", "masked", "static"):
+            return False
+        return None            # not-found 等 — 不明はNone(捏造しない)
+    except Exception:
+        return None
+
+
+def reboot_safety_facts():
+    """自動復旧の自己申告(EC2実測)。秘密ゼロ — enabled/存在フラグのみ。"""
+    facts = {}
+    for key, unit in (("bridgeAutostart", "argus-bridge"), ("opendAutostart", "opend")):
+        v = _systemd_enabled(unit)
+        if v is not None:
+            facts[key] = v
+    try:
+        facts["systemRestartRequired"] = os.path.exists("/var/run/reboot-required")
+    except Exception:
+        pass
+    return facts
+
+
 def build_heartbeat(state=None, disable_jp=None, now_iso=None):
     """The public-safe heartbeat payload — statuses/timestamps/counts ONLY.
     Never tokens, never account identifiers, never raw provider bodies."""
@@ -183,6 +214,7 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
     disable_jp = DISABLE_JP if disable_jp is None else disable_jp
     import datetime as _dt2
     return {
+        **reboot_safety_facts(),   # v12.0.3: opendAutostart/bridgeAutostart/systemRestartRequired
         "at": now_iso or _dt2.datetime.now(_dt2.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "bridgeVersion": BRIDGE_VERSION,
         "bridgeMode": bridge_mode(state, disable_jp),

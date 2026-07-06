@@ -241,8 +241,55 @@ def test_reboot_safety_unknown_autostart_warns():
 def test_reboot_safe_only_when_both_confirmed():
     r = dq.build_reboot_safety({}, {"opendAutostart": True, "bridgeAutostart": True})
     assert r["rebootSafe"] is True
+    assert "再起動可" in r["ownerReadableRiskJa"]
     r2 = dq.build_reboot_safety({}, {"opendAutostart": False, "bridgeAutostart": True})
-    assert r2["rebootSafe"] is False
+    assert r2["rebootSafe"] is False          # bridge enabledだけでは不十分
+
+
+def test_restart_required_surfaced_but_not_reboot_trigger():
+    r = dq.build_reboot_safety({}, {"systemRestartRequired": True})
+    assert r["systemRestartRequired"] is True
+    assert r["rebootSafe"] == "unknown"       # 要求ありでも自動復旧未確認なら非推奨
+    assert "推奨しません" in r["ownerReadableRiskJa"]
+
+
+def test_heartbeat_whitelist_accepts_reboot_facts():
+    import scanner
+    for k in ("opendAutostart", "bridgeAutostart", "systemRestartRequired"):
+        assert k in scanner._HB_ALLOWED_KEYS
+
+
+def test_bridge_heartbeat_selfreport_has_no_secrets():
+    import importlib.util, os as _os
+    spec = importlib.util.spec_from_file_location(
+        "mp", _os.path.join(_os.path.dirname(__file__), "bridge", "moomoo_push.py"))
+    src = open(spec.origin, encoding="utf-8").read()
+    # 自己申告はis-enabled/存在フラグのみ — 生ps/pgrepや資格情報を使わない
+    seg = src[src.find("def _systemd_enabled"):src.find("def build_heartbeat")]
+    for bad in ("login_pwd", "ps aux", "pgrep", "TOKEN", "HMAC"):
+        assert bad not in seg, bad
+
+
+def test_opend_service_example_has_no_secrets():
+    src = open("bridge/opend.service.example", encoding="utf-8").read()
+    for line in src.splitlines():
+        assert not line.strip().startswith("Environment="), "unit must not embed credentials"
+    for bad in ("login_pwd=", "password=", "PWD="):
+        assert bad not in src, bad
+
+
+def test_runbook_never_recommends_raw_process_commands():
+    src = open("bridge/README.md", encoding="utf-8").read()
+    for i, line in enumerate(src.splitlines(), 1):
+        if "pgrep" in line or "ps aux" in line or ("`ps`" in line):
+            assert any(w in line for w in ("使わない", "禁止", "見られ", "閲覧", "貼らない")), (i, line)
+
+
+def test_readiness_script_secret_free():
+    src = open("bridge/scripts/check_reboot_readiness.sh", encoding="utf-8").read()
+    for bad in ("login_pwd", "TOKEN", "HMAC", "passphrase"):
+        assert bad not in src, bad
+    assert "ss -ltn" in src            # ポート確認はps系ではなくss
 
 
 def test_deterministic():

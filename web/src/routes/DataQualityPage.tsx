@@ -247,12 +247,18 @@ export const DataQualityPage: React.FC = () => {
                 <p className="cmd-alloc__note">
                   再起動安全: <b style={{ color: c.rebootSafety.rebootSafe === true ? 'var(--value-positive)'
                     : c.rebootSafety.rebootSafe === false ? 'var(--value-negative)' : 'var(--amber, #fbbf24)' }}>
-                    {c.rebootSafety.rebootSafe === true ? '可' : c.rebootSafety.rebootSafe === false ? '不可' : '未確認'}
+                    {c.rebootSafety.rebootSafe === true ? '準備OK' : c.rebootSafety.rebootSafe === false ? '不可' : '未確認'}
                   </b>
                   {' '}· OpenD自動起動: {String(c.rebootSafety.opendAutostartConfigured) === 'true' ? '設定済み'
                     : String(c.rebootSafety.opendAutostartConfigured) === 'false' ? '未設定' : '不明'}
                   {' '}· bridge自動起動: {String(c.rebootSafety.bridgeAutostartConfigured) === 'true' ? '設定済み'
                     : String(c.rebootSafety.bridgeAutostartConfigured) === 'false' ? '未設定' : '不明'}
+                  {' '}· OS再起動要求: {String(c.rebootSafety.systemRestartRequired) === 'true' ? 'あり'
+                    : String(c.rebootSafety.systemRestartRequired) === 'false' ? 'なし' : '不明'}
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                  実測はEC2で <code>bridge/scripts/check_reboot_readiness.sh</code>(秘密ゼロ)。
+                  ブリッジ更新(git pull+restart)後はheartbeatが自動起動状態を自己申告し、この表示が実測になります。
                 </p>
                 <p className="cmd-alloc__note" style={{ color: 'var(--text-sub)' }}>{c.rebootSafety.ownerReadableRiskJa}</p>
                 <p className="cmd-alloc__note" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{c.rebootSafety.nextStepJa}</p>

@@ -80,7 +80,7 @@ heartbeat(閉場中も)をバックエンドへ送り、アプリの「システ
 6. 不要ログ掃除: `sudo journalctl --vacuum-size=200M`
 
 ### OpenD SMS認証チェックリスト(7/3: 認証待ちでpush不能に)
-1. `ps aux | grep -i opend` — **重複プロセスがあれば全部kill**してから1つ起動
+1. `bridge/scripts/safe_opend_process_view.sh`(redacted表示) — **重複プロセスがあれば全部kill**してから1つ起動(生の`ps aux`は起動引数が見えるため使わない)
 2. OpenDログに `Abnormal event timeout / RemoteClose / Context status bad`
    が出ていたらAPI不調 → OpenD再起動
 3. SMS認証待ちの場合: telnet制御ポート(127.0.0.1:22222 — **localhostのみ**)
@@ -222,11 +222,14 @@ OpenDのsystemd化は「提案のみ・未検証」。再起動するとOpenDが
 「System restart required」表示だけを理由に再起動しないこと。
 
 ### 再起動前チェックリスト(全て満たすまで再起動しない)
+0. `bridge/scripts/check_reboot_readiness.sh` の判定が「準備OK」(v12.0.3・秘密ゼロ)
 1. OpenD自動起動+自動ログインの検証が完了している(未検証なら再起動しない)
 2. 市場時間外である(US場中の再起動はリアルタイム停止に直結)
 3. `bridge/scripts/check_opend_status.sh` が connected
 4. `bridge/scripts/check_bridge_status.sh` が active
 5. 認証コード受信手段(SMS/アプリ)が手元にある(再ログインに備える)
+6. アプリのBackupページでバックアップ保護済み(最低でもJSONエクスポート済み)
+7. US-only設定(no-jp-quotes.conf)がそのまま — 再起動をJP有効化の機会にしない
 
 ### 再起動後チェックリスト
 1. OpenDポート確認: `bridge/scripts/check_opend_status.sh`
