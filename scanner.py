@@ -1405,7 +1405,22 @@ def healthz():
 
 @app.route("/api/state")
 def api_state():
+    """v12.0.7 (監査P1): レガシー状態のフルボディ(ログ末尾・sentinel等)は
+    v10.88で施錠した /api/logs と同じ情報を含むため、admin限定に。公開は
+    ランディングページの進捗表示が動く最小のredacted応答のみ(ログ本文・
+    sentinel・スキャン結果は含めない — 執行系enumを公開面に出さない)。"""
     global BACKGROUND_TASK_RUNNING
+    if not _admin_token_ok():
+        _ph = load_state().get("phase")
+        return jsonify({
+            "ok": True, "schemaVersion": "legacy-state-public-v1",
+            "publicRedacted": True, "server_ready": True,
+            "scanning": BACKGROUND_TASK_RUNNING,
+            "phase": _ph if isinstance(_ph, int) else 0,
+            "dst_active": is_dst_now(), "schedule": get_jst_schedule(),
+            "log": ["(logs are admin-only — 詳細ログ/スキャン結果はadminトークンが必要です)"],
+            "messageJa": "レガシー状態の詳細はadmin限定です。アプリ本体はGitHub Pages側を利用してください。",
+        })
     state = load_state(); saved = state.get("log",[]); live = list(LOG_BUFFER)[-50:]
     seen = set(saved); merged = list(saved)
     for l in live:
@@ -7144,9 +7159,12 @@ def _data_quality_console():
          "cadence": "intraday", "lastSuccessAt": _dq_iso(_JP_FALLBACK_LAST["ts"]),
          "fallbackActive": True,
          "impactJa": "日本株は代替データ(J-Quants/Yahoo)で判定 — 夜間/引け後delayedが正常"},
+        # v12.0.7 (監査P1): JSFの日付は「2026/07/03」形式 — スラッシュのままだと
+        # _parse_isoが読めず恒久「鮮度不明」になっていた計測バグ。ハイフンへ正規化。
         {"sourceName": "jsf-daily-balance", "sourceType": "supply_demand",
-         "cadence": "daily", "lastSuccessAt": (str(_JSF_CACHE.get("date")) + "T16:00:00+09:00"
-                                               if _JSF_CACHE.get("date") else None),
+         "cadence": "daily",
+         "lastSuccessAt": (str(_JSF_CACHE.get("date")).replace("/", "-") + "T16:00:00+09:00"
+                           if _JSF_CACHE.get("date") else None),
          "impactJa": "需給ランク(貸借残)の鮮度", "nextStepJa": "collect cron(30分毎)後に再確認"},
         {"sourceName": "jquants-margin-weekly", "sourceType": "supply_demand",
          "cadence": "weekly", "lastSuccessAt": (str(jq_margin_last) + "T16:00:00+09:00"
@@ -7533,8 +7551,12 @@ def api_argus_event_intel(symbol):
     for it in _INTEL_STORE:
         if symu not in (it.get("linkedAssets") or []):
             continue
-        age_h = argus_news_freshness.age_hours(it.get("publishedAt"), move)
-        if age_h is not None and age_h > 14 * 24:
+        # v12.0.7 (P2-D): publishedAt欠落/未パース時はfirstDetectedAt→fetchedAtへ
+        # フォールバック。それでも年齢不明なら「現在の動き」欄には出さない
+        # (日付不明の古い記事のすり抜け防止 — 新しい再報道はfresh時刻で通過)。
+        age_h = argus_news_freshness.age_hours(
+            it.get("publishedAt") or it.get("firstDetectedAt") or it.get("fetchedAt"), move)
+        if age_h is None or age_h > 14 * 24:
             omitted_old += 1
             continue
         link = argus_research_mesh.link_to_event(it, {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move})
@@ -7554,7 +7576,7 @@ def api_argus_event_intel(symbol):
                     "isNamedView": link["isNamedView"], "notConfirmed": link["notConfirmed"]})
     return jsonify({"symbol": symu, "count": len(out), "items": out[:8],
                     "omittedOldCount": omitted_old,
-                    "freshnessNoteJa": ("14日より古い記事はこの欄から除外(過去材料を現在の動きの説明に使わない)"
+                    "freshnessNoteJa": ("14日より古い記事(または日付を確認できない記事)はこの欄から除外(過去材料を現在の動きの説明に使わない)"
                                         if omitted_old else None)})
 
 
@@ -7621,13 +7643,22 @@ def api_argus_intel_missed():
 
 @app.route("/api/argus/institutional-intelligence/missed", methods=["GET"])
 def api_argus_intel_missed_list():
-    """Missed-intelligence log + metrics (count by likely cause). Public read-only."""
+    """Missed-intelligence metrics. v12.0.7 (監査P1): 公開は集計のみ —
+    オーナー自筆の自由記述(whyJa)・title/url/symbol等のフィードバック詳細は
+    オーナーノート級のため、adminトークンがある場合だけitemsを返す。"""
     by_cause = {}
     for m in _MISSED_INTEL:
         c = ((m.get("diagnosis") or {}).get("likelyCause")) or "unknown"
         by_cause[c] = by_cause.get(c, 0) + 1
-    return jsonify({"count": len(_MISSED_INTEL), "byCause": by_cause,
-                    "items": _MISSED_INTEL[:30], "aliasOverlaySize": len(_INST_ALIAS_OVERLAY)})
+    out = {"schemaVersion": "missed-intel-status-v2",
+           "count": len(_MISSED_INTEL), "byCause": by_cause,
+           "aliasOverlaySize": len(_INST_ALIAS_OVERLAY),
+           "itemsAccess": "admin_only",
+           "noteJa": "見逃しフィードバックの本文(自由記述を含む)は公開しません。集計のみ。"}
+    if _admin_token_ok():
+        out["items"] = _MISSED_INTEL[:30]
+        out["itemsAccess"] = "admin"
+    return jsonify(out)
 
 @app.route("/api/argus/institutional-intelligence/missed/apply", methods=["POST"])
 def api_argus_intel_missed_apply():
@@ -9846,6 +9877,17 @@ _OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.5"
 _GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-2.5-pro"
 _GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "") or "gemini-2.5-flash"
 _ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
+
+
+def _admin_token_ok():
+    """v12.0.7: 公開ルート上の「adminなら追加情報」用ソフト判定。_require_admin と
+    違い、トークン不在でも失敗カウント/セキュリティ通報を発火しない(公開GETの
+    通常トラフィックは攻撃ではない — 通報スパム/ソフトロックを防ぐ)。"""
+    try:
+        return bool(_ARGUS_ADMIN_TOKEN) and \
+            request.headers.get("X-ARGUS-ADMIN-TOKEN", "") == _ARGUS_ADMIN_TOKEN
+    except Exception:
+        return False
 
 # ── AI safety / Security Gate v1 config ──────────────────────────────
 _AI_JUDGE_ENABLED  = os.environ.get("AI_JUDGE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
@@ -16780,7 +16822,15 @@ def get_runtime_manifest():
                              "holdings/cost basis never leave the device in plaintext"],
         "currentLimitations": [
             "calibration is burn-in — accuracy not proven (ARGUS classifies the present; it is not a profit guarantee)",
-            "JP prices are J-Quants T-1 unless the moomoo bridge is live (then realtime)",
+            # v12.0.7 (監査P1): 旧文言「bridge live → JP realtime」は誤読を生むため撤去。
+            # bridge稼働=USリアルタイムのみ。JPはmoomoo側メンテナンス(サポート確認済み)が
+            # 明けてOpenD再起動・再ログイン後に JP snapshot/ORDER_BOOK ret=0 を実測するまで不可。
+            "JP realtime via OpenD is UNAVAILABLE (moomoo-side JP API market data maintenance, "
+            "confirmed by support). JP assets use fallback data (J-Quants/Yahoo, T-1/delayed). "
+            "A live bridge means US realtime only — it does NOT mean JP realtime. "
+            "JP activation requires: maintenance completed → OpenD restart/re-login → "
+            "JP.5803/8058/9984 snapshot ret=0 (+ ORDER_BOOK ret=0 if board data needed) → "
+            "only then remove US-only.",
             # v11.1: drop the third-party-wrapper caveat once the OFFICIAL J-Quants TDnet
             # Add-on is live; keep it (fallback) otherwise.
             ("TDnet: official J-Quants Add-on live (official confirmation; material titles → official_catalyst, ambiguous → official_fact)"

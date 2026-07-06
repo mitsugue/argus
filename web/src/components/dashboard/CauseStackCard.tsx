@@ -46,7 +46,10 @@ const CORRO_JA: Record<string, string> = {
   single_source: '単一ソース', none: '未裏取り',
 };
 
-export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ symbol, market = 'JP' }) => {
+export const CauseStackCard: React.FC<{ symbol: string; market?: string;
+  /** v12.0.7: 親(銘柄カード)が既に即時調査ボタンを常時表示している場合、
+   *  同一カード内の二重ボタンを避ける(AI解説の既生成分は表示を維持)。 */
+  hideInvestigateButton?: boolean }> = ({ symbol, market = 'JP', hideInvestigateButton = false }) => {
   const { data } = useCauseAttribution(symbol, market);
   // v11.5.1: AI explanation is cached-only. Fetch the cached explanation (explain=1
   // is cache-read on the backend — no LLM) once per symbol, then render a STATE, never
@@ -115,6 +118,10 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string }> = ({ 
             {expl?.whatRefute && <p className="csc-why-note">否定条件: {expl.whatRefute}</p>}
             <p className="csc-why-note">要確認・投資助言ではありません。</p>
           </details>
+        ) : hideInvestigateButton ? (
+          // v12.0.7: 親カード側に即時調査ボタンがあるため、ここでは二重表示しない。
+          // 生成済みAI解説がなければ静かに何も出さない(死にボタンも重複も作らない)。
+          expl?.text ? <p className="csc-why-text">{expl.text}</p> : null
         ) : (
           // v11.5.2: not_generated → clickable「理由を詳しく調べる」(enqueues only);
           // queued/pending/… → non-clickable chip. Never a dead button.

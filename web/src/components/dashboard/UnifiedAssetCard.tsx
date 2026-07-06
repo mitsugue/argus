@@ -395,7 +395,7 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
                 </div>
               </div>
             )}
-            <CauseStackCard symbol={c.symbol} market={c.market} />
+            <CauseStackCard symbol={c.symbol} market={c.market} hideInvestigateButton />
           </details>
         </div>
       )}

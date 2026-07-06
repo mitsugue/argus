@@ -51,9 +51,14 @@ DECISION_CONTEXTS = ("add_allowed_small", "add_only_on_pullback", "wait", "avoid
 OWNER_ACTIONS = ("bought", "sold", "trimmed", "added", "held", "watched", "skipped", "unknown")
 
 # Fields that must NEVER appear on public unauthenticated endpoints.
+# v12.0.7 (監査P2-A): FIRE Core/投信のオーナー側フィールド名もtripwireに追加 —
+# 将来ファンドオブジェクトが公開応答へ紛れ込んだ時にRC横断テストが即検知する。
 SENSITIVE_FIELDS = ("quantity", "averageCost", "avgCost", "costBasis", "marketValue",
                     "unrealizedPnl", "unrealizedPnlPct", "accountType", "portfolioTotal",
-                    "totalMarketValue", "weightPct", "valueJpy", "ownerNote", "positions")
+                    "totalMarketValue", "weightPct", "valueJpy", "ownerNote", "positions",
+                    "fundName", "monthlyContribution", "monthlyContributionTotal",
+                    "manualValue", "manualValueDate", "mutualFundTotal", "fireCoreTotal",
+                    "tacticalToCoreRatio", "contributionAmount", "units", "totalCost")
 
 
 def validate_sync_record(rec: Dict[str, Any]) -> Tuple[bool, List[str]]:

@@ -31,7 +31,9 @@ CONTRIB_STATUSES = ("complete", "partial", "missing", "stale", "unknown")
 VALUATION_STATUSES = ("current", "stale", "manual", "missing", "unknown")
 RATIO_BANDS = ("ok", "elevated", "stretched", "exceeded", "unknown")
 
-STALE_DAYS = 7          # 評価額がこれより古ければstale(投信は日次NAVで十分)
+STALE_DAYS = 10         # 評価額がこれより古ければstale。v12.0.7: 7→10日 —
+                        # 「週1程度の手動更新でOK」の運用(7〜9日間隔)が
+                        # 恒常的に警告を踏まない境界へ(TS側fireCore.tsと同期)
 OWNER_RULE_JA = ("投資信託の合計額をFIRE用の本丸資産として扱います。"
                  "個別株の利益は、将来的にこのFIRE Coreへ移す候補として見ます。")
 COMPLIANCE = ("FIRE Coreの追跡は概算であり、免許を持つFP・税務・法務の助言ではない。"

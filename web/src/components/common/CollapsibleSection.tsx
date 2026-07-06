@@ -50,6 +50,12 @@ export const CollapsibleSection: React.FC<{
     if (persistKey) return readCollapseStore()[persistKey] === true;
     return false;
   });
+  // v12.0.7 (監査P1): リスク入力は非同期到着のため、マウント後に defaultOpen が
+  // false→true へ変わった時も開く(安全優先が実挙動になる)。記憶(argus.todayCollapse.v1)
+  // は書き換えない — リスクが去った翌日以降はユーザーの畳み設定に戻る。
+  React.useEffect(() => {
+    if (defaultOpen) setOpenRaw(true);
+  }, [defaultOpen]);
   const setOpen = (fn: (v: boolean) => boolean) => setOpenRaw((v) => {
     const nv = fn(v);
     if (persistKey) writeCollapseState(persistKey, nv);

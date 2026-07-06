@@ -1,7 +1,9 @@
 """V12.0.0 Pro RC — cross-cutting integration/consistency/leak guards.
 
 新機能ではなく「全域の規律」を恒久固定するテスト:
-  - 公開エンドポイント全数: 漏洩ゼロ・執行語ゼロ・確率断定ゼロ・JP稼働主張ゼロ
+  - 代表・高リスク公開GET(下のPUBLIC_GETS): 漏洩ゼロ・執行語ゼロ・確率断定ゼロ・JP稼働主張ゼロ
+    ※「全数」ではない(v12.0.7監査で過大主張を修正)。公開データ本体ルートを
+    追加・変更したら必ずこのリストにも追加すること。
   - 用語統一: Py/TS両エンジンの日本語ラベル一致
   - FEソース: 旧Backup参照ゼロ・ナビにBackup/Data Quality
 """
@@ -29,6 +31,16 @@ PUBLIC_GETS = [
     "/api/argus/supply-demand/status", "/api/argus/decision-quality/status",
     "/api/argus/position-exposure/status", "/api/argus/flow-attribution/status",
     "/api/argus/institutional-intel/status", "/api/argus/pro-handoff",
+    # v12.0.7 (監査P1-4): データ本体ルートを追加 — v12.0.6で改修した2本+主要データ系。
+    # ここに載せる条件: 公開GET・cached-only(networkを叩かない)・200を返す。
+    "/api/argus/supply-demand",
+    "/api/argus/supply-demand?symbols=6965,7011",
+    "/api/argus/events/7011/institutional-intelligence",
+    "/api/argus/flow-attribution",
+    "/api/argus/session-brief",
+    "/api/argus/price-history?symbol=NVDA&market=US",
+    "/api/argus/runtime-manifest",
+    "/api/argus/institutional-intelligence/missed",
 ]
 
 EXEC_WORDS = ("今すぐ買", "今すぐ売", "buy now", "sell now", "place order",
@@ -46,6 +58,8 @@ class _Boom:
 
 def test_all_public_endpoints_clean(monkeypatch):
     monkeypatch.setattr(scanner, "requests", _Boom())
+    # v12.0.7: 一度きりの復元fetch(翻訳キャッシュ等)も抑止してcached-onlyを厳密検証
+    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
     with scanner.app.test_client() as c:
         for path in PUBLIC_GETS:
             r = c.get(path)

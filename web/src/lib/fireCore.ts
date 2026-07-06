@@ -9,7 +9,7 @@ import type { PortfolioExposure } from '../domain/positionExposure';
 import type { LocalAssetRole } from '../domain/portfolioStrategy';
 
 export const FIRE_CORE_KEY = 'argus.fireCore.v1';
-const STALE_DAYS = 7;
+const STALE_DAYS = 10;  // v12.0.7: 週1程度(7〜9日間隔)の手動更新を過剰警告しない(Py側と同期)
 export const OWNER_RULE_JA = '投資信託の合計額をFIRE用の本丸資産として扱います。個別株の利益は、将来的にこのFIRE Coreへ移す候補として見ます。';
 
 export type AccountType = 'nisa' | 'ideco' | 'taxable' | 'corporate' | 'unknown';
