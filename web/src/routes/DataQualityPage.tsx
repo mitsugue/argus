@@ -35,6 +35,9 @@ interface Console {
     additionalSubscriptionRequired?: boolean | 'unknown';
     additionalSubscriptionNoteJa?: string | null;
     recoveryEtaJa?: string | null; postRecoveryActionJa?: string | null };
+  osintHealth?: { geminiProviderConfigured: boolean; gptProviderConfigured: boolean;
+    agentQueueDepth: number; lastDeepDiveAt: string | null; lastAgentsRunAt: string | null;
+    canaryStatus: string; canaryMissedByArgus: number; canaryNoteJa: string; noteJa: string };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -279,6 +282,37 @@ export const DataQualityPage: React.FC = () => {
                 </details>
                 <p className="cmd-alloc__note" style={{ fontSize: 10.5, color: 'var(--text-sub)' }}>
                   次の一歩: {c.jpReadiness.nextStepJa}
+                </p>
+              </div>
+            </section>
+          )}
+
+          {/* v12.1.0: OSINTエンジン健全性(プロバイダ/キュー/canary) */}
+          {c.osintHealth && (
+            <section>
+              <div className="section-head">
+                <span className="section-head__title">OSINT AGENTS</span>
+                <span className="section-head__count">外部AIは管理側実行のみ</span>
+              </div>
+              <div className="card cmd-alloc">
+                <p className="cmd-alloc__note" style={{ fontSize: 12 }}>
+                  Gemini: <b>{c.osintHealth.geminiProviderConfigured ? '設定済み' : '未設定(外部AIベンチマーク未実行)'}</b>
+                  {' '}· GPT: <b>{c.osintHealth.gptProviderConfigured ? '設定済み' : '未設定(外部AIベンチマーク未実行)'}</b>
+                  {' '}· スカウト待ち: {c.osintHealth.agentQueueDepth}件
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                  最終深掘り: {c.osintHealth.lastDeepDiveAt ?? '未実行'}
+                  {' '}· 最終スカウト実行: {c.osintHealth.lastAgentsRunAt ?? '未実行'}
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 11,
+                  color: c.osintHealth.canaryStatus === 'degraded' ? 'var(--amber, #fbbf24)' : 'var(--text-sub)' }}>
+                  canary: {c.osintHealth.canaryStatus === 'degraded' ? 'OSINT監視に見落としの可能性' :
+                    c.osintHealth.canaryStatus === 'ok' ? '正常' : '未実行'}
+                  {c.osintHealth.canaryMissedByArgus > 0 && ` (ARGUS見落とし ${c.osintHealth.canaryMissedByArgus}件)`}
+                  {' '}— {c.osintHealth.canaryNoteJa}
+                </p>
+                <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                  {c.osintHealth.noteJa}
                 </p>
               </div>
             </section>

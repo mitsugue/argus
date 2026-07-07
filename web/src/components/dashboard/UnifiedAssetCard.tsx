@@ -39,6 +39,7 @@ const AI_BADGE: Record<string, { txt: string; tone: string }> = {
 const TONE: Record<string, string> = { up: 'var(--value-positive)', down: 'var(--value-negative)', flow: 'var(--event-medium)', news: 'var(--text-sub)', flat: 'var(--text-sub)' };
 
 import { AiExplanationBlock } from './AiExplanationBlock';
+import { OsintDeepDive } from './OsintDeepDive';
 import type { ResolvedStance } from '../../domain/primaryStance';
 import { PRIMARY_STANCE_TONE } from '../../domain/primaryStance';
 import type { PositionNote } from '../../domain/positionExposure';
@@ -380,6 +381,9 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
             <div className="uac-sec-t">今の動きを調べる</div>
             <AiExplanationBlock symbol={c.symbol} market={c.market} context="asset-card" dense labelJa="この原因を再確認(公式・ニュース・検索を再走査)" />
           </div>
+
+          {/* v12.1.0: マルチエージェントOSINT(計画→収集→Gemini/GPT→検証→統合) */}
+          <OsintDeepDive symbol={c.symbol} market={c.market} held={c.held} />
 
           {/* Named institutional views attached to THIS asset (public metadata).
               A reported view, never a trading position; renders nothing when none. */}

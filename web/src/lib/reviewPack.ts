@@ -5,7 +5,7 @@
 
 import { latestExposure, latestActionPriorities, latestSessionBrief,
   latestScenarios, latestPlans, latestStrategy, latestFireCore,
-  latestDataQuality, latestOsint } from './positionExposureShare';
+  latestDataQuality, latestOsint, latestOsintDeep } from './positionExposureShare';
 import { listNotifications } from './notifications';
 import { assessBackupSafety } from './backupSafety';
 import { jpDisplay } from './displayName';
@@ -199,6 +199,17 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
       L.push('', '### 検証依頼');
       L.push('- 直接材料(この銘柄固有の開示/報道)とテーマ連想(セクター/バリューチェーン)を分けて評価してください。');
       L.push('- ARGUSが見つけられていない強いニュース・公式開示があれば指摘してください。');
+      // v12.1.0: 深掘りOSINT結果(カバレッジ/ベンチマーク/不一致/検証済みソース)
+      const dz = latestOsintDeep(o.symbol);
+      if (dz) {
+        L.push('', '### 深掘りOSINT(マルチエージェント)');
+        L.push(`- 結論: ${dz.summaryJa}`);
+        L.push(`- 探索カバレッジ: ${dz.coverageJa} / 信頼度: ${dz.reliabilityJa}`);
+        L.push(`- ベンチマーク: ${dz.benchmarkJa}`);
+        if (dz.verifiedTitlesJa.length) L.push(`- 検証済みソース: ${dz.verifiedTitlesJa.join(' / ')}`);
+        if (dz.disagreementJa.length) L.push(`- エージェント間の不一致: ${dz.disagreementJa.join(' / ')}`);
+        if (dz.missingAreasJa.length) L.push(`- 不足領域: ${dz.missingAreasJa.join(' / ')}`);
+      }
     } else {
       L.push('- 候補原因データ未取得(銘柄カードの原因分析を一度開いてから再コピーしてください)。');
     }

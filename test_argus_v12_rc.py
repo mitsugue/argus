@@ -41,6 +41,9 @@ PUBLIC_GETS = [
     "/api/argus/price-history?symbol=NVDA&market=US",
     "/api/argus/runtime-manifest",
     "/api/argus/institutional-intelligence/missed",
+    # v12.1.0: OSINTエンジンの公開GET(cached-only・redacted設計)
+    "/api/argus/osint/investigation?symbol=6965",
+    "/api/argus/osint/canary",
 ]
 
 EXEC_WORDS = ("今すぐ買", "今すぐ売", "buy now", "sell now", "place order",

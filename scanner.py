@@ -65,6 +65,7 @@ import argus_review_pack  # AI Review Pack (pure, v11.20.0 — 端末内合成; 
 import argus_data_quality  # Data Quality Console (pure, v11.22.0 — 鮮度捏造なし; 意図的無効≠障害)
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_osint_attribution  # OSINT/catalyst帰属レビュー — 直接/テーマ/マクロ分離+確度 (pure, v12.0.8)
+import argus_osint_engine  # マルチエージェントOSINTエンジン(計画/検証/採点/ベンチ) (pure, v12.1.0)
 import argus_primary_stance  # 銘柄ごとの単一の構え(カード間矛盾の根治・TS版と同期) (pure, v12.0.8)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
@@ -7231,6 +7232,24 @@ def _data_quality_console():
         "publicLeakSafe": True, "backupUnsafeWithData": None,
         "eventNear": False,
     }, now_iso, app_version="")
+    # v12.1.0: OSINTエンジンの健全性(プロバイダ設定/キュー/canary — 秘密ゼロ)
+    try:
+        cd = _OSINT_CANARY_LAST.get("data") or {}
+        console["osintHealth"] = {
+            "geminiProviderConfigured": bool(google_genai and GEMINI_API_KEY),
+            "gptProviderConfigured": bool(_OPENAI_API_KEY),
+            "agentQueueDepth": len(_OSINT_AGENT_QUEUE),
+            "lastDeepDiveAt": _OSINT_LAST.get("deepAt"),
+            "lastAgentsRunAt": _OSINT_LAST.get("agentsAt"),
+            "canaryStatus": ("degraded" if cd.get("degraded") else
+                             "ok" if cd else "not_run"),
+            "canaryMissedByArgus": cd.get("missedByArgusCount", 0),
+            "canaryNoteJa": cd.get("noteJa") or "canary未実行",
+            "noteJa": ("外部AIスカウトは管理側実行のみ(公開画面から起動しない)。"
+                       "プロバイダ未設定時は『外部AIベンチマーク未実行』と表示。"),
+        }
+    except Exception:
+        pass
     # 自己漏洩検査 — 自分のドキュメントに機微フィールドが乗ったら即critical化
     try:
         if argus_portfolio_sync.contains_sensitive(console):
@@ -14468,6 +14487,376 @@ def get_cause_attribution(symbol, market="JP", explain=False):
     except Exception:
         stack["osint"] = None
     return stack
+
+
+# ━━━ V12.1.0 Multi-Agent OSINT Engine ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 「Gemini単体に負けない」ためのOSINT編成層。公開POSTは決定論部分のみを実行し
+# (外部AIは絶対に呼ばない)、Gemini/GPTスカウトは admin/cron 経由のみ(予算つき)。
+# 私的情報は redacted 既定でプロンプトに乗らない(engine.build_scout_prompt)。
+
+# 銘柄OSINTプロファイル(再利用規則: 上書きが無ければ watchlist名+テーマ語で合成)
+_OSINT_PROFILE_OVERRIDES = {
+    "6965": {"nameEn": "Hamamatsu Photonics", "sector": "光半導体",
+             "themes": ["光半導体", "フォトニクス", "光センサー", "AI半導体"],
+             "valueChain": ["Samsung Anthropic AI chip", "Anthropic custom chip",
+                             "optical semiconductor", "photonics AI data center",
+                             "AI半導体 バリューチェーン", "AI投資 採算 半導体"],
+             "competitors": ["ソニーグループ", "キーエンス"]},
+    "5803": {"nameEn": "Fujikura", "sector": "電線/光配線",
+             "themes": ["AI半導体", "データセンター", "光配線"],
+             "valueChain": ["hyperscaler capex", "AIデータセンター投資", "NVIDIA"]},
+    "7011": {"nameEn": "Mitsubishi Heavy Industries", "sector": "防衛/重工",
+             "themes": ["防衛", "地政学"],
+             "valueChain": ["防衛予算", "geopolitical risk"]},
+}
+
+
+def _osint_profile(symu, market="JP"):
+    symu = str(symu).upper()
+    name_ja = symu
+    try:
+        jp = get_japan_watchlist_snapshot() if market == "JP" else get_us_watchlist_snapshot()
+        for st in (jp.get("stocks") or []):
+            if str(st.get("symbol", "")).upper() == symu:
+                name_ja = st.get("nameJa") or st.get("name") or symu
+                break
+    except Exception:
+        pass
+    themes = []
+    for tname, members in _DOWNSIDE_THEMES.items():
+        if symu in members:
+            themes += _THEME_WORDS_JA.get(tname, [])
+    ov = _OSINT_PROFILE_OVERRIDES.get(symu, {})
+    prof = {"symbol": symu, "nameJa": name_ja, "nameEn": ov.get("nameEn", ""),
+            "sector": ov.get("sector", ""),
+            "themes": (ov.get("themes") or []) + themes[:6],
+            "valueChain": ov.get("valueChain") or themes[:4],
+            "competitors": ov.get("competitors") or [], "aliases": []}
+    return prof
+
+
+_OSINT_STORE = {}                 # SYM -> latest investigation (redacted by construction)
+_OSINT_STORE_MAX = 24
+_OSINT_AGENT_QUEUE = {}           # SYM -> {market, mode, privacyMode, queuedAt}
+_OSINT_QUEUE_MAX = 12
+_OSINT_TERM_OVERLAY = {}          # SYM -> [terms] (owner貼り戻しの探索語拡張・有界)
+_OSINT_LAST = {"deepAt": None, "agentsAt": None, "agentsStatus": None}
+_OSINT_CANARY_LAST = {"data": None, "at": None}
+_OSINT_CANARY_TOPICS = [
+    {"topic": "samsung_anthropic_ai_chip",
+     "expectedKeywords": ["Samsung", "Anthropic", "AIチップ", "custom"],
+     "impactJa": "AI半導体バリューチェーン(6965等の連想元)"},
+    {"topic": "cpi_official_schedule",
+     "expectedKeywords": ["CPI"], "impactJa": "マクロイベントの取り込み"},
+    {"topic": "nfp_release", "expectedKeywords": ["雇用統計", "NFP"],
+     "impactJa": "米雇用統計の取り込み"},
+    {"topic": "fomc", "expectedKeywords": ["FOMC"], "impactJa": "金融政策イベント"},
+    {"topic": "jp_semis_theme",
+     "expectedKeywords": ["半導体", "AI"], "impactJa": "日本の半導体/光半導体テーマ"},
+]
+
+
+def _osint_pool_items(cap=400):
+    """検証インデックス/canary用の既知メタデータプール(cached-only)。"""
+    pool = list(_INTEL_STORE)[:cap]
+    try:
+        mn = get_market_news()
+        if isinstance(mn, dict):
+            for n in (mn.get("items") or [])[:60]:
+                pool.append({"title": n.get("headline"), "titleJa": n.get("headlineJa"),
+                             "url": n.get("url"), "publishedAt": n.get("datetime")})
+    except Exception:
+        pass
+    return pool
+
+
+def _osint_retrieve(symu, market, plan):
+    """決定論収集: 銘柄の cause-attribution ニュース + プール内のクエリ語ヒット。
+    fetchなし(cached-only) — 公開POSTから呼ばれても安全。"""
+    cands, counts = [], {"direct": 0, "official": 0, "sector": 0, "valueChain": 0,
+                         "globalNews": 0, "jaNews": 0}
+    try:
+        st = get_cause_attribution(symu, market)
+        for n in (st.get("news") or [])[:12]:
+            t = n.get("displayTitleJa") or n.get("titleJa") or ""
+            if not t:
+                continue
+            src = str(n.get("source") or "")
+            cands.append({"titleJa": t, "title": n.get("titleOriginal"),
+                          "url": n.get("url"), "sourceName": src,
+                          "publishedAt": n.get("time"),
+                          "directness": "direct_company" if n.get("cls") == "CONFIRMED"
+                          else "sector_theme"})
+            counts["direct"] += 1
+            if "tdnet" in src.lower() or "edgar" in src.lower():
+                counts["official"] += 1
+        flow_hint = (st.get("flowAttribution") or {}).get("flowClass")
+    except Exception:
+        flow_hint = None
+    # プール内クエリヒット(テーマ/バリューチェーン/海外)
+    pool = _osint_pool_items()
+    vs = [w.lower() for w in (plan.get("valueChain") or []) + (plan.get("globalCatalyst") or [])]
+    ss = [w.lower() for w in (plan.get("sector") or [])]
+    seen = set()
+    for it in pool:
+        t = str(it.get("titleJa") or it.get("title") or "")
+        tl = t.lower()
+        if not t or t in seen:
+            continue
+        hit_v = any(any(tok in tl for tok in q.split()[:2]) for q in vs[:12]) if vs else False
+        hit_s = any(any(tok in tl for tok in q.split()[:1]) for q in ss[:8]) if ss else False
+        if not (hit_v or hit_s):
+            continue
+        seen.add(t)
+        cands.append({"titleJa": t, "url": it.get("canonicalUrl") or it.get("url"),
+                      "sourceName": it.get("sourceId") or it.get("source"),
+                      "publishedAt": it.get("publishedAt"),
+                      "directness": "value_chain" if hit_v else "sector_theme"})
+        counts["valueChain" if hit_v else "sector"] += 1
+        if re.search(r"[A-Za-z]{4,}", t):
+            counts["globalNews"] += 1
+        else:
+            counts["jaNews"] += 1
+        if len(cands) >= 24:
+            break
+    return cands, counts, flow_hint
+
+
+_OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONのみ。ソースの捏造禁止。"
+                    "根拠のない断定禁止。投資助言・売買指示はしない。")
+
+
+def _gemini_osint(prompt):
+    """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
+    if not google_genai or not GEMINI_API_KEY:
+        return None, "disabled"
+    try:
+        client = google_genai.Client(api_key=GEMINI_API_KEY)
+        cfg = None
+        try:
+            from google.genai import types as _gt
+            cfg = _gt.GenerateContentConfig(tools=[_gt.Tool(google_search=_gt.GoogleSearch())])
+        except Exception:
+            cfg = None
+        resp = (client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
+                                               contents=prompt, config=cfg)
+                if cfg else client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
+                                                           contents=prompt))
+        txt = getattr(resp, "text", None) or ""
+        out = safe_json(txt)
+        return (out if isinstance(out, dict) else {"claims": [], "rawLen": len(txt)}), "ok"
+    except Exception as e:
+        add_log(f"[osint] gemini scout failed: {type(e).__name__}")
+        return None, "failed"
+
+
+def _gpt_osint(prompt):
+    """GPT scout(web_search付き・admin経路のみ)。"""
+    if not _OPENAI_API_KEY:
+        return None, "disabled"
+    try:
+        txt = _openai_research(prompt + "\n出力は上記JSONのみ。")
+        if not txt:
+            return None, "failed"
+        out = safe_json(txt)
+        return (out if isinstance(out, dict) else {"claims": [], "rawLen": len(txt)}), "ok"
+    except Exception as e:
+        add_log(f"[osint] gpt scout failed: {type(e).__name__}")
+        return None, "failed"
+
+
+def _osint_agent_run(provider, status, out, now_iso, privacy_mode):
+    claims = []
+    for c in ((out or {}).get("claims") or [])[:10]:
+        if isinstance(c, dict):
+            claims.append({k: c.get(k) for k in
+                           ("titleJa", "title", "url", "sourceName", "publishedAt",
+                            "directness", "summaryJa")})
+    return {"provider": provider,
+            "modelName": (_GEMINI_JUDGE_MODEL if provider == "gemini" else _OPENAI_MODEL)
+            if status == "ok" else None,
+            "promptType": "osint_scout", "startedAt": now_iso, "completedAt": now_iso,
+            "status": status, "claims": claims,
+            "citedSources": [c.get("url") or c.get("sourceName") for c in claims if c],
+            "missingEvidence": (out or {}).get("notFoundJa") or [],
+            "failureReasonRedacted": None if status in ("ok", "disabled") else "provider_error",
+            "privacyMode": privacy_mode}
+
+
+def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso):
+    prof = _osint_profile(symu, market)
+    extra = _OSINT_TERM_OVERLAY.get(symu) or []
+    q = get_japan_watchlist_snapshot() if market == "JP" else get_us_watchlist_snapshot()
+    chg = None
+    for st in (q.get("stocks") or []):
+        if str(st.get("symbol", "")).upper() == symu:
+            chg = st.get("changePct")
+            break
+    plan = argus_osint_engine.build_query_plan(prof, move_pct=chg, extra_terms=extra)
+    cands, counts, flow_hint = _osint_retrieve(symu, market, plan)
+    idx = argus_osint_engine.build_known_index(_osint_pool_items())
+    verified = [argus_osint_engine.verify_source(c, idx, now_iso) for c in cands]
+    # 外部AIの主張も検証(LLM出力は検証まで証拠でない)
+    for r in agent_runs:
+        for c in (r.get("claims") or []):
+            v = argus_osint_engine.verify_source(c, idx, now_iso)
+            c["verified"] = v["verificationStatus"] == "verified"
+            verified.append(v)
+    bench = argus_osint_engine.compare_benchmark(
+        [c.get("titleJa") or "" for c in cands], agent_runs)
+    inv = argus_osint_engine.build_investigation(
+        symbol=symu, asset_name=prof["nameJa"], as_of=now_iso, mode=mode,
+        trigger=trigger, privacy_mode=privacy_mode, plan=plan,
+        retrieved_counts=counts, verified=verified, agent_runs=agent_runs,
+        benchmark=bench, flow_hint=flow_hint,
+        canary_degraded=bool((_OSINT_CANARY_LAST.get("data") or {}).get("degraded")))
+    # missed-by-argus → 探索語オーバーレイに自動追加(有界)
+    if bench.get("missedByArgusCount"):
+        terms = argus_osint_engine.extract_expansion_terms(agent_runs, cap=4)
+        cur = _OSINT_TERM_OVERLAY.get(symu) or []
+        _OSINT_TERM_OVERLAY[symu] = (cur + [t for t in terms if t not in cur])[:12]
+    _OSINT_STORE[symu] = inv
+    while len(_OSINT_STORE) > _OSINT_STORE_MAX:
+        _OSINT_STORE.pop(next(iter(_OSINT_STORE)), None)
+    return inv
+
+
+@app.route("/api/argus/osint/deep-dive", methods=["POST"])
+def api_argus_osint_deep_dive():
+    """公開POST: 決定論OSINT(計画+cached収集+検証+採点)のみ実行し、
+    Gemini/GPTスカウトはキューに積むだけ(外部AIはここから絶対に呼ばれない)。"""
+    body = request.get_json(silent=True) or {}
+    sym = str(body.get("symbol") or "").strip().upper()
+    if not sym:
+        return jsonify({"error": "symbol_required"}), 400
+    mkt = str(body.get("market") or ("JP" if sym[:1].isdigit() else "US")).upper()
+    mode = body.get("mode") if body.get("mode") in argus_osint_engine.MODES else "deep"
+    priv = body.get("privacyMode") if body.get("privacyMode") in argus_osint_engine.PRIVACY_MODES else "redacted"
+    now_iso = _ai_now_iso()
+    queued = [{"provider": p, "status": "queued"} for p in ("gemini", "gpt")]
+    agent_runs = [_osint_agent_run("deterministic", "ok", None, now_iso, priv)]
+    for qr in queued:
+        agent_runs.append({**_osint_agent_run(qr["provider"], "disabled", None, now_iso, priv),
+                           "status": ("queued" if (_OPENAI_API_KEY if qr["provider"] == "gpt"
+                                                   else (google_genai and GEMINI_API_KEY))
+                                      else "disabled")})
+    inv = _osint_build(sym, mkt, mode, priv, "owner_request", agent_runs, now_iso)
+    if len(_OSINT_AGENT_QUEUE) < _OSINT_QUEUE_MAX:
+        _OSINT_AGENT_QUEUE[sym] = {"market": mkt, "mode": mode,
+                                   "privacyMode": priv, "queuedAt": now_iso}
+    _OSINT_LAST["deepAt"] = now_iso
+    return jsonify({"ok": True, "investigation": inv,
+                    "agentNoteJa": "Gemini/GPTスカウトはキュー済み(管理側の定期実行で反映・"
+                                   "公開画面から外部AIは起動しません)。"})
+
+
+@app.route("/api/argus/osint/investigation")
+def api_argus_osint_investigation():
+    """公開GET: 最新のOSINT調査(cached-only・redacted設計)。無ければ正直にnone。"""
+    sym = str(request.args.get("symbol") or "").strip().upper()
+    inv = _OSINT_STORE.get(sym)
+    return jsonify({"status": "live" if inv else "none", "symbol": sym or None,
+                    "investigation": inv,
+                    "noteJa": None if inv else "深掘りOSINTは未実行です。"})
+
+
+@app.route("/api/argus/osint/terms", methods=["POST"])
+def api_argus_osint_terms():
+    """公開POST(enqueueのみ): オーナー貼り戻しから抽出した探索語の追加。
+    本文は受け取らない — 語(≤8個・各≤40字)だけ。私的情報はここに来ない設計。"""
+    body = request.get_json(silent=True) or {}
+    sym = str(body.get("symbol") or "").strip().upper()
+    if not sym or not _JP_SYM_RE.match(sym) and not _US_SYM_RE.match(sym):
+        return jsonify({"error": "symbol_invalid"}), 400
+    terms = []
+    for t in (body.get("terms") or [])[:8]:
+        w = str(t).strip()[:40]
+        if w and not w.lower().startswith("http") and len(w) >= 2:
+            terms.append(w)
+    cur = _OSINT_TERM_OVERLAY.get(sym) or []
+    _OSINT_TERM_OVERLAY[sym] = (cur + [t for t in terms if t not in cur])[:12]
+    while len(_OSINT_TERM_OVERLAY) > 16:
+        _OSINT_TERM_OVERLAY.pop(next(iter(_OSINT_TERM_OVERLAY)), None)
+    return jsonify({"ok": True, "storedTerms": _OSINT_TERM_OVERLAY[sym],
+                    "noteJa": "今後の探索語に追加しました(貼り戻し本文はサーバーに保存しません)。"})
+
+
+@app.route("/api/argus/admin/osint/agents-run", methods=["POST"])
+def api_argus_admin_osint_agents_run():
+    """Admin/cron: キュー済み銘柄のGemini/GPTスカウトを実行(予算: 1回3銘柄まで)。
+    外部AI呼び出しはこの経路だけ。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        body = request.get_json(silent=True) or {}
+        target = str(body.get("symbol") or "").strip().upper()
+        now_iso = _ai_now_iso()
+        syms = [target] if target else list(_OSINT_AGENT_QUEUE.keys())[:3]
+        results = []
+        for sym in syms:
+            meta = _OSINT_AGENT_QUEUE.pop(sym, None) or                 {"market": "JP" if sym[:1].isdigit() else "US",
+                 "mode": "deep", "privacyMode": "redacted"}
+            prof = _osint_profile(sym, meta["market"])
+            plan = argus_osint_engine.build_query_plan(
+                prof, extra_terms=_OSINT_TERM_OVERLAY.get(sym) or [])
+            runs = [_osint_agent_run("deterministic", "ok", None, now_iso,
+                                     meta["privacyMode"])]
+            for prov, caller in (("gemini", _gemini_osint), ("gpt", _gpt_osint)):
+                prompt = argus_osint_engine.build_scout_prompt(
+                    prov, prof, plan, move_pct=None,
+                    privacy_mode=meta["privacyMode"])
+                out, status = caller(prompt)
+                runs.append(_osint_agent_run(prov, status, out, now_iso,
+                                             meta["privacyMode"]))
+            inv = _osint_build(sym, meta["market"], meta["mode"],
+                               meta["privacyMode"], "admin_agents_run", runs, now_iso)
+            results.append({"symbol": sym,
+                            "benchmark": inv["benchmark"],
+                            "verdict": inv["catalystVerdict"]["verdict"]})
+        _OSINT_LAST["agentsAt"] = now_iso
+        _OSINT_LAST["agentsStatus"] = "ok" if results else "empty"
+        return jsonify({"ok": True, "ran": results, "queuedRemaining": len(_OSINT_AGENT_QUEUE)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
+
+
+@app.route("/api/argus/admin/osint/canary-run", methods=["POST"])
+def api_argus_admin_osint_canary_run():
+    """Admin/cron: canary(既知トピックを取りこぼしていないか)を評価。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        pool = _osint_pool_items()
+        titles = " ".join(str(it.get("titleJa") or it.get("title") or "") for it in pool).lower()
+
+        def found(kws):
+            return any(str(k).lower() in titles for k in kws)
+        agent_found = {}
+        for sym, inv in _OSINT_STORE.items():
+            for r in inv.get("agentRuns") or []:
+                if r.get("provider") not in ("gemini", "gpt") or r.get("status") != "ok":
+                    continue
+                blob = " ".join(str(c.get("titleJa") or "") for c in (r.get("claims") or [])).lower()
+                for t in _OSINT_CANARY_TOPICS:
+                    if any(str(k).lower() in blob for k in t["expectedKeywords"]):
+                        agent_found.setdefault(t["topic"], {})[r["provider"]] = True
+        res = argus_osint_engine.evaluate_canary(_OSINT_CANARY_TOPICS, found, agent_found)
+        _OSINT_CANARY_LAST["data"] = res
+        _OSINT_CANARY_LAST["at"] = _ai_now_iso()
+        return jsonify({"ok": True, **res})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
+
+
+@app.route("/api/argus/osint/canary")
+def api_argus_osint_canary():
+    """公開GET: 最新canary結果(cached-only・未実行は正直にunknown)。"""
+    d = _OSINT_CANARY_LAST.get("data")
+    return jsonify({"status": "live" if d else "not_run", "at": _OSINT_CANARY_LAST.get("at"),
+                    "result": d,
+                    "noteJa": None if d else "canary未実行(管理側の定期実行で更新)。"})
 
 
 @app.route("/api/argus/cause-attribution")

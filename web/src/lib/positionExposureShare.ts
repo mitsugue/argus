@@ -73,6 +73,18 @@ export interface OsintShare {
   sourcesMissingJa: string[];
 }
 const latestOSINT = new Map<string, OsintShare>();
+
+// v12.1.0: 深掘りOSINT調査の共有(パック用・端末内のみ)。
+export interface OsintDeepShare {
+  symbol: string; summaryJa: string; coverageJa: string; reliabilityJa: string;
+  benchmarkJa: string; disagreementJa: string[]; verifiedTitlesJa: string[];
+  missingAreasJa: string[];
+}
+const latestOSINTDeep = new Map<string, OsintDeepShare>();
+export function publishOsintDeep(o: OsintDeepShare): void { latestOSINTDeep.set(o.symbol.toUpperCase(), o); }
+export function latestOsintDeep(symbol: string): OsintDeepShare | null {
+  return latestOSINTDeep.get(symbol.toUpperCase()) ?? null;
+}
 export function publishOsint(o: OsintShare): void { latestOSINT.set(o.symbol.toUpperCase(), o); }
 export function latestOsint(symbol: string): OsintShare | null {
   return latestOSINT.get(symbol.toUpperCase()) ?? null;
