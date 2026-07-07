@@ -7281,6 +7281,28 @@ def _data_quality_console():
             "noteJa": ("外部AIスカウトは管理側実行のみ(公開画面から起動しない)。"
                        "プロバイダ未設定時は『外部AIベンチマーク未実行』と表示。"),
         }
+        # v12.1.3 Phase 2/3: Research Power最新値+ソースユニバース可用性
+        rp_latest = None
+        for i in _OSINT_STORE.values():
+            rp = i.get("researchPower")
+            if rp:
+                rp_latest = {"symbol": i.get("symbol"), "status": rp.get("status"),
+                             "statusJa": rp.get("statusJa"),
+                             "argusScore": rp.get("argusScore"),
+                             "geminiBaselineScore": rp.get("geminiBaselineScore"),
+                             "ratio": rp.get("argusVsGeminiRatio"),
+                             "displayJa": rp.get("displayJa")}
+        console["osintHealth"]["researchPowerLatest"] = rp_latest
+        uni = argus_osint_engine.source_universe_status(
+            agents_configured=bool(_OPENAI_API_KEY or (google_genai and GEMINI_API_KEY)))
+        console["osintHealth"]["sourceUniverse"] = {
+            "total": len(uni),
+            "live": sum(1 for u in uni if u["availability"] == "live"),
+            "viaAgents": sum(1 for u in uni if u["availability"] == "via_agents"),
+            "unavailable": sum(1 for u in uni if u["availability"] in
+                               ("unavailable", "agents_not_configured")),
+            "categories": uni,
+        }
     except Exception:
         pass
     # 自己漏洩検査 — 自分のドキュメントに機微フィールドが乗ったら即critical化
@@ -14530,8 +14552,13 @@ def get_cause_attribution(symbol, market="JP", explain=False):
 # 銘柄OSINTプロファイル(再利用規則: 上書きが無ければ watchlist名+テーマ語で合成)
 _OSINT_PROFILE_OVERRIDES = {
     "6965": {"nameEn": "Hamamatsu Photonics", "sector": "光半導体",
-             "themes": ["光半導体", "フォトニクス", "光センサー", "AI半導体"],
-             "valueChain": ["Samsung Anthropic AI chip", "Anthropic custom chip",
+             # v12.1.3 Phase 1: 半導体製造装置(SEAJ)を探索テーマの上位に
+             # (build_query_planはthemes[:4]/valueChain[:6]しか使わない)
+             "themes": ["光半導体", "半導体製造装置", "フォトニクス", "AI半導体",
+                        "光センサー"],
+             "valueChain": ["SEAJ 半導体製造装置 販売高予測",
+                             "半導体製造装置 需要予測 2026",
+                             "Samsung Anthropic AI chip", "Anthropic custom chip",
                              "optical semiconductor", "photonics AI data center",
                              "AI半導体 バリューチェーン", "AI投資 採算 半導体"],
              "competitors": ["ソニーグループ", "キーエンス"]},
@@ -14730,9 +14757,9 @@ def _osint_live_upgrade(vs, claim, now_iso, sym="GLOBAL"):
         vs["verifiedAt"] = now_iso
         vs["labelJa"] = "検証済み(ライブ取得)"
         vs["primaryEligible"] = age_h is not None and age_h <= 96
-        # 恒久メモリ+今後のindexに載せる(公開安全メタのみ)
-        rec = argus_osint_engine.memory_record(
-            symbol=sym, source_url=url,
+        # 恒久メモリ+今後のindexに載せる(公開安全メタのみ) — v12.1.3: useCase付きv2
+        rec = argus_osint_engine.memory_record_v2(
+            symbol=sym, use_case="source_discovery", source_url=url,
             source_title=fetched, learned_from="gemini", verified=True,
             now_iso=now_iso)
         if rec:
@@ -14959,6 +14986,46 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
     legacy["argusMissedImportantCount"] = sup2["unresolvedImportant"]
     inv["superiority"] = legacy
     inv["budget"] = dict(argus_osint_engine.OSINT_BUDGETS.get(mode, {}))
+    # ── v12.1.3 Phase 2-7: Research Power / 矛盾規律 / 価値連鎖 / ユニバース ──
+    try:
+        if _supply_demand_signal_for(symu, market).get("level") not in (None, "", "unknown"):
+            ctx_adv.append("需給文脈")
+    except Exception:
+        pass
+    try:
+        if _official_events_by_symbol(symu):
+            ctx_adv.append("イベント文脈")
+    except Exception:
+        pass
+    vc = argus_osint_engine.value_chain_context(
+        " ".join((prof.get("themes") or []) + (prof.get("valueChain") or [])))
+    if vc:
+        ctx_adv.append("バリューチェーン規則")
+        # Phase 7: テーマ規則の適用実績を学習(銘柄→テーマの再利用可能な紐付け)
+        if not any(m.get("symbol") == symu and m.get("useCase") == "theme_rule"
+                   for m in _OSINT_MEMORY):
+            rec = argus_osint_engine.memory_record_v2(
+                symbol=symu, use_case="theme_rule", theme=vc["labelJa"],
+                learned_from="deterministic", verified=True, now_iso=now_iso)
+            if rec:
+                _OSINT_MEMORY.append(rec)
+    inv["valueChainContext"] = vc
+    contr = argus_osint_engine.contradiction_report(
+        verified, agent_runs, flow_only=bool(flow_hint) and not ver_list)
+    # 注意: 既存contradictionReport(string[]・FEが.mapする)とは別キーにする
+    inv["contradictionReportV2"] = contr
+    learning_updated = any(m.get("symbol") == symu for m in _OSINT_MEMORY)
+    agents_configured = bool(_OPENAI_API_KEY or (google_genai and GEMINI_API_KEY))
+    universe = argus_osint_engine.source_universe_status(agents_configured=agents_configured)
+    missing_n = sum(1 for u in universe if u["availability"] in ("unavailable", "agents_not_configured"))
+    inv["sourceUniverse"] = universe
+    rps = argus_osint_engine.research_power_score(
+        verified=verified, agent_runs=agent_runs, gap_ledger=gap_ledger,
+        coverage=inv["coverageScore"], contradiction=contr,
+        context_advantages=ctx_adv,
+        source_universe_missing=min(3, missing_n // 3),
+        learning_updated=learning_updated)
+    inv["researchPower"] = rps
     _osint_persist()
     # missed-by-argus → 探索語オーバーレイに自動追加(有界)
     if bench.get("missedByArgusCount"):
@@ -15070,6 +15137,23 @@ def _osint_set_progress(sym, stage, loop=0, max_loops=0, note=None):
         pr["notesJa"] = (pr.get("notesJa") or [])[-4:] + [note]
 
 
+def _osint_autopilot_mark(sym, *keys):
+    """v12.1.3 Phase 5: Autopilot 14段階の完了マーク(進捗はGET investigationで可視)。"""
+    pr = _OSINT_PROGRESS.setdefault(sym, {"notesJa": []})
+    done = pr.setdefault("autopilotDone", [])
+    for k in keys:
+        if k not in done:
+            done.append(k)
+    pr["autopilot"] = argus_osint_engine.autopilot_progress(done)
+
+
+def _osint_autopilot_fail(sym, stage_key, reason_ja):
+    pr = _OSINT_PROGRESS.setdefault(sym, {"notesJa": []})
+    pr["autopilot"] = argus_osint_engine.autopilot_progress(
+        pr.get("autopilotDone") or [], failed_stage=stage_key,
+        fail_reason_ja=reason_ja)
+
+
 def _osint_agents_worker(syms):
     """バックグラウンドでGemini/GPTスカウト→検証→再探索ループを実行。
     v12.1.1: Gemini-onlyの未回収claimに追撃クエリ+URLライブ検証で回収を試み、
@@ -15083,9 +15167,12 @@ def _osint_agents_worker(syms):
                 "mode": "deep", "privacyMode": "redacted"}
             max_loops = _OSINT_LOOP_BUDGET.get(meta.get("mode"), 2)
             _osint_set_progress(sym, "planning", 0, max_loops)
+            _OSINT_PROGRESS.setdefault(sym, {"notesJa": []})["autopilotDone"] = []
             prof = _osint_profile(sym, meta["market"])
+            _osint_autopilot_mark(sym, "profile")
             plan = argus_osint_engine.build_query_plan(
                 prof, extra_terms=_OSINT_TERM_OVERLAY.get(sym) or [])
+            _osint_autopilot_mark(sym, "query_plan")
             runs = [_osint_agent_run("deterministic", "ok", None, now_iso,
                                      meta["privacyMode"])]
             for prov, caller in (("gemini", _gemini_osint), ("gpt", _gpt_osint)):
@@ -15096,6 +15183,8 @@ def _osint_agents_worker(syms):
                 out, status = caller(prompt)
                 runs.append(_osint_agent_run(prov, status, out, now_iso,
                                              meta["privacyMode"]))
+                _osint_autopilot_mark(sym, f"scout_{prov}")
+            _osint_autopilot_mark(sym, "parse_normalize")
             try:
                 _OSINT_PARSER_HEALTH["lastWarnings"] = [
                     w for r in runs for w in (r.get("parserWarnings") or [])]
@@ -15105,6 +15194,8 @@ def _osint_agents_worker(syms):
             _osint_set_progress(sym, "verification", 0, max_loops)
             inv = _osint_build(sym, meta["market"], meta["mode"],
                                meta["privacyMode"], "admin_agents_run", runs, now_iso)
+            _osint_autopilot_mark(sym, "internal_retrieval", "clustering",
+                                  "gap_resolution")
 
             # ── v12.1.1 Part D: 反復再探索(未回収Gemini/GPT-onlyの回収) ──
             for loop_i in range(1, max_loops + 1):
@@ -15144,15 +15235,27 @@ def _osint_agents_worker(syms):
                 if follow:
                     cur = _OSINT_TERM_OVERLAY.get(sym) or []
                     _OSINT_TERM_OVERLAY[sym] = (cur + [t for t in follow if t not in cur])[:12]
+                    # Phase 7: 追撃語の学習(query_expansion・有界)
+                    for t in follow[:2]:
+                        rec = argus_osint_engine.memory_record_v2(
+                            symbol=sym, use_case="query_expansion", query_term=t,
+                            learned_from="deterministic", verified=False,
+                            now_iso=_ai_now_iso())
+                        if rec and not any(m.get("id") == rec["id"] for m in _OSINT_MEMORY):
+                            _OSINT_MEMORY.append(rec)
                 inv = _osint_build(sym, meta["market"], meta["mode"],
                                    meta["privacyMode"], "admin_agents_run", runs,
                                    _ai_now_iso())
                 still = inv["superiority"]["argusMissedImportantCount"]
                 _osint_set_progress(sym, "research_loop", loop_i, max_loops,
                                     f"検証済みに昇格: {promoted}件 / 未回収: {still}件")
+                _osint_autopilot_mark(sym, "url_verification", "re_search")
                 if promoted == 0 and not follow:
                     break
             _osint_set_progress(sym, "synthesis", max_loops, max_loops)
+            _osint_autopilot_mark(sym, "url_verification", "re_search",
+                                  "contradiction_check", "context_integration",
+                                  "scoring", "report")
             _osint_set_progress(sym, "complete", max_loops, max_loops,
                                 inv["superiority"]["ownerReadableVerdictJa"])
             results.append(sym)
@@ -15164,6 +15267,12 @@ def _osint_agents_worker(syms):
         _OSINT_LAST["agentsStatus"] = f"failed:{type(e).__name__}"
         for sym in syms:
             _osint_set_progress(sym, "failed", 0, 0, f"スカウト実行失敗({type(e).__name__})")
+            # v12.1.3 Phase 5: failed_safe — 途中結果は保持・嘘の完了は返さない
+            pr = _OSINT_PROGRESS.get(sym) or {}
+            done = pr.get("autopilotDone") or []
+            nxt = next((k for k, _ in argus_osint_engine.AUTOPILOT_STAGES
+                        if k not in done), "report")
+            _osint_autopilot_fail(sym, nxt, f"実行失敗({type(e).__name__}) — 途中結果は保持")
         add_log(f"[osint] agents worker failed: {type(e).__name__}")
 
 

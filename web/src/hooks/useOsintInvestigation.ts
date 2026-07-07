@@ -59,10 +59,38 @@ export interface OsintInvestigation {
     resolutionReasonJa: string; followUpQueries: string[]; ownerReadableJa: string;
   }[];
   budget?: { maxUrls?: number; maxLoops?: number; maxSeconds?: number; maxCostLabel?: string };
+  /** v12.1.3 Phase 2: Research Power Score(生件数では2xにならない測定)。 */
+  researchPower?: {
+    components: Record<string, number>;
+    geminiBaselineScore: number; gptBaselineScore: number; argusScore: number;
+    argusVsGeminiRatio: number | null; argusVsBestExternalRatio: number | null;
+    status: 'below_gemini' | 'matches_gemini' | 'exceeds_gemini' | 'exceeds_gemini_2x' | 'insufficient_data';
+    statusJa: string; displayJa: string; ownerReadableVerdictJa: string;
+    blockersJa: string[];
+  };
+  /** v12.1.3 Phase 6: 構造化矛盾レポート(旧contradictionReportはstring[]のまま)。 */
+  contradictionReportV2?: {
+    directEvidenceAbsent: boolean; themeInferenceOnly: boolean;
+    priceOnlyNarrativeRisk: boolean; agentDisagreement: boolean;
+    staleEvidencePresent: boolean; unsupportedClaims: number;
+    ownerReadableWarningsJa: string[];
+  };
+  /** v12.1.3 Phase 4: 再利用可能な価値連鎖規則(無ければnull=捏造しない)。 */
+  valueChainContext?: { theme: string; labelJa: string;
+    rolesJa: Record<string, string>; cautionJa: string } | null;
+  /** v12.1.3 Phase 3: 探索ソースユニバース(unavailableも可視)。 */
+  sourceUniverse?: { key: string; labelJa: string; availability: string; noteJa: string }[];
 }
 
 export interface OsintProgress {
   stage: string; loop: number; maxLoops: number; notesJa: string[]; at: string;
+  /** v12.1.3 Phase 5: Autopilot 14段階(failed_safe=嘘の完了を返さない)。 */
+  autopilot?: {
+    stages: { key: string; labelJa: string; state: 'done' | 'pending' | 'failed' }[];
+    doneCount: number; totalStages: number;
+    status: 'running' | 'completed' | 'failed_safe';
+    currentStageJa: string | null; failReasonJa: string;
+  };
 }
 
 interface State { inv: OsintInvestigation | null; loading: boolean; running: boolean;

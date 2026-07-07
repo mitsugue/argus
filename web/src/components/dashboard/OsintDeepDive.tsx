@@ -68,6 +68,9 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
       superiorityVerdictJa: inv.superiority?.ownerReadableVerdictJa,
       unresolvedCount: inv.superiority?.argusMissedImportantCount,
       verificationRatePct: inv.superiority ? Math.round(inv.superiority.sourceVerificationRate * 100) : undefined,
+      researchPowerJa: inv.researchPower?.displayJa,
+      researchPowerVerdictJa: inv.researchPower?.ownerReadableVerdictJa,
+      contradictionWarningsJa: inv.contradictionReportV2?.ownerReadableWarningsJa,
     });
   }, [inv]);
 
@@ -103,6 +106,16 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
           {progress.notesJa.length > 0 && (
             <span style={{ display: 'block', color: 'var(--text-faint)' }}>{progress.notesJa[progress.notesJa.length - 1]}</span>
           )}
+          {/* v12.1.3: Autopilot 14段階(failed_safe=途中結果保持を正直表示) */}
+          {progress.autopilot && (
+            <span style={{ display: 'block', fontSize: 10, color: progress.autopilot.status === 'failed_safe'
+              ? 'var(--amber, #fbbf24)' : 'var(--text-faint)' }}>
+              Autopilot {progress.autopilot.doneCount}/{progress.autopilot.totalStages}段階
+              {progress.autopilot.status === 'failed_safe'
+                ? ` · 安全停止: ${progress.autopilot.failReasonJa}`
+                : progress.autopilot.currentStageJa ? ` · 現在: ${progress.autopilot.currentStageJa}` : ''}
+            </span>
+          )}
           <button type="button" style={{ ...{ fontSize: 10, cursor: 'pointer', marginLeft: 6,
             background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
             borderRadius: 5, padding: '1px 6px' } }} onClick={() => reload()}>更新</button>
@@ -134,6 +147,43 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
                   {inv.superiority.contextEdgeJa}
                 </span>
               )}
+            </p>
+          )}
+          {/* v12.1.3: Research Powerチップ(Gemini基準比 — 生件数では2xにならない) */}
+          {inv.researchPower && (
+            <p style={{ margin: '0 0 3px', fontSize: 11.5 }}>
+              <b style={{ color: inv.researchPower.status === 'exceeds_gemini_2x' ? 'var(--value-positive)'
+                : inv.researchPower.status === 'exceeds_gemini' ? 'var(--value-positive)'
+                : inv.researchPower.status === 'below_gemini' ? 'var(--amber, #fbbf24)'
+                : 'var(--text-sub)',
+                border: '1px solid var(--line)', borderRadius: 999, padding: '0 8px' }}>
+                Research Power: {inv.researchPower.statusJa}
+              </b>
+              <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--text-sub)' }}>
+                {inv.researchPower.displayJa}
+              </span>
+              <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-sub)' }}>
+                {inv.researchPower.ownerReadableVerdictJa}
+              </span>
+              {inv.researchPower.blockersJa.length > 0 && (
+                <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>
+                  2x未達の要因: {inv.researchPower.blockersJa.join(' / ')}
+                </span>
+              )}
+            </p>
+          )}
+          {/* v12.1.3: 矛盾・因果規律の警告(ソースが増えても確信は増やさない) */}
+          {(inv.contradictionReportV2?.ownerReadableWarningsJa?.length ?? 0) > 0 && (
+            <p style={{ margin: '0 0 3px', fontSize: 10.5, color: 'var(--amber, #fbbf24)' }}>
+              {inv.contradictionReportV2!.ownerReadableWarningsJa.map((w, i) => (
+                <span key={i} style={{ display: 'block' }}>⚠ {w}</span>
+              ))}
+            </p>
+          )}
+          {/* v12.1.3: 価値連鎖規則(テーマ→個社は昇格させない注意つき) */}
+          {inv.valueChainContext && (
+            <p style={{ margin: '0 0 3px', fontSize: 10.5, color: 'var(--text-faint)' }}>
+              価値連鎖: {inv.valueChainContext.labelJa} — {inv.valueChainContext.cautionJa}
             </p>
           )}
           <p style={{ margin: 0, fontSize: 12 }}>

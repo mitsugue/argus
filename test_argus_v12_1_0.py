@@ -213,6 +213,8 @@ def test_full_private_prompt_requires_warning_in_ui():
 
 def test_public_deep_dive_never_calls_external_ai(monkeypatch):
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
+    scanner._OSINT_AGENT_QUEUE.clear()      # 順序依存防止(重複ガード誤発火)
+    scanner._OSINT_PROGRESS.clear()
 
     def die(*a, **k):
         raise AssertionError("external AI called from public route")

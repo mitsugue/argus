@@ -82,6 +82,9 @@ export interface OsintDeepShare {
   // v12.1.1: 優位性メトリクス
   superiorityJa?: string; superiorityVerdictJa?: string;
   unresolvedCount?: number; verificationRatePct?: number;
+  // v12.1.3: Research Power(Gemini基準比)+矛盾警告
+  researchPowerJa?: string; researchPowerVerdictJa?: string;
+  contradictionWarningsJa?: string[];
 }
 const latestOSINTDeep = new Map<string, OsintDeepShare>();
 export function publishOsintDeep(o: OsintDeepShare): void { latestOSINTDeep.set(o.symbol.toUpperCase(), o); }

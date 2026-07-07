@@ -216,7 +216,8 @@ def verify_source(claim: Dict[str, Any], known_index: Dict[str, Dict[str, Any]],
     return {
         "titleJa": title[:160], "originalTitle": str(claim.get("title") or "")[:160] or None,
         "url": url or None, "sourceName": str(claim.get("sourceName") or "")[:40] or None,
-        "sourceType": claim.get("sourceType") or "unknown",
+        "sourceType": claim.get("sourceType")
+        or industry_source_type(claim.get("sourceName") or "", title) or "unknown",
         "publishedAt": pub, "detectedAt": now_iso, "verifiedAt": now_iso if hit else None,
         "ageHours": round(age_h, 1) if age_h is not None else None,
         "freshness": fresh,
@@ -667,7 +668,17 @@ def unresolved_agent_claims(agent_runs: List[Dict[str, Any]],
             if c.get("verified"):
                 continue
             fresh = c.get("_freshness")
-            important = fresh in ("today", "within_3_trading_days") or                 str(c.get("directness") or "") in ("direct", "direct_company", "value_chain")
+            dirn = str(c.get("directness") or "")
+            # v12.1.3 Phase1: URLも日付もないテーマ一般論は「重要ギャップ」ではなく
+            # 探索語の材料 — 曖昧なimportant残存(v12.1.2の2件目型)を構造的に作らない
+            theme_only_no_pointer = (not c.get("url")) and (
+                c.get("publishedAt") in (None, "", "unknown")) and (
+                dirn in ("", "sector_theme", "macro", "value_chain")) and (
+                fresh not in ("today", "within_3_trading_days"))
+            if theme_only_no_pointer:
+                continue
+            important = fresh in ("today", "within_3_trading_days") or (
+                dirn in ("direct", "direct_company", "value_chain"))
             if important or fresh is None:
                 out.append({**c, "provider": r["provider"]})
     return out
@@ -795,6 +806,23 @@ _DOMAIN_ALIASES = {
     "finance.yahoo.com": "yahoo.com", "news.yahoo.co.jp": "yahoo.co.jp",
     "jp.reuters.com": "reuters.com", "www.reuters.com": "reuters.com",
 }
+
+
+# v12.1.3 Phase1/3: 業界団体/業界予測ソースの検出(SEAJ等 — Geminiが優先しない一次筋)
+_INDUSTRY_SOURCE_HINTS = ("seaj", "semi.org", "協会", "工業会", "jeita", "半導体製造装置協会")
+
+
+# v12.1.3 Phase 1: ソース種別の正準リスト(業界団体/業界予測を一次情報として扱う)
+SOURCE_TYPES = ("official_disclosure", "official_gov", "industry_association",
+                "industry_forecast", "media", "agent_search", "unknown")
+
+
+def industry_source_type(source_name: str, title: str = "") -> Optional[str]:
+    sn = (str(source_name or "") + " " + str(title or "")).lower()
+    if any(k in sn for k in _INDUSTRY_SOURCE_HINTS):
+        return ("industry_forecast" if ("予測" in sn or "forecast" in sn or "販売高" in sn)
+                else "industry_association")
+    return None
 
 
 def canonicalize_url(url: str) -> str:
@@ -928,6 +956,12 @@ def resolve_gap(claim: Dict[str, Any], provider: str, argus_clusters: List[Dict[
     if status is None and age_h is not None and age_h > 14 * 24:
         status, reason = "stale_rejected", f"{int(age_h // 24)}日前の記事 — 当日の主因にならない"
     # ④ URL/日付なし
+    # v12.1.3 Phase1: URL/日付なしの明示的テーマ一般論は低価値背景(重要ギャップに
+    # しない)。directness未指定("")はmissing_url側に残す(銘柄名指しの噂は標的再探索)。
+    # — missing_urlより先に判定しないと死に分岐になる
+    if status is None and not url and (pub in (None, "", "unknown")) and (
+            str(claim.get("directness") or "") in ("sector_theme", "value_chain")):
+        status, reason = "low_value_background", "具体ソースのないテーマ一般論 — 探索語として学習(重要ギャップ扱いしない)"
     if status is None and not url:
         status, reason = "missing_url", "URLなし — 標的再探索でも発見できず証拠にできない"
     if status is None and (pub is None or str(pub).lower() == "unknown") and age_h is None \
@@ -988,7 +1022,9 @@ def gap_ledger_summary(ledger: List[Dict[str, Any]]) -> Dict[str, Any]:
     if unresolved:
         lines.append(f"{len(unresolved)}件は未検証重要ソースとして残存")
     return {"byStatus": by, "unresolvedImportant": len(unresolved),
-            "unresolvedImportantItems": [g["ownerReadableJa"] for g in unresolved][:6],
+            "unresolvedImportantItems": [g.get("ownerReadableJa")
+                                         or g.get("resolutionReasonJa") or ""
+                                         for g in unresolved][:6],
             "progressLinesJa": lines[:6]}
 
 
@@ -1027,3 +1063,301 @@ def superiority_v2(gap_ledger: List[Dict[str, Any]], *, agents_ok: bool,
             "argusOnlyVerifiedCount": argus_only_verified,
             "verifiedOverlapCount": verified_overlap,
             "sourceVerificationRate": round(verification_rate, 2)}
+
+
+# ━━━ v12.1.3 Phase 2/6 — Research Power Score / Contradiction Report ━━━━━━━━
+
+RPS_STATUSES = ("below_gemini", "matches_gemini", "exceeds_gemini",
+                "exceeds_gemini_2x", "insufficient_data")
+RPS_JA = {"below_gemini": "Gemini未満", "matches_gemini": "Gemini同等",
+          "exceeds_gemini": "Gemini超過", "exceeds_gemini_2x": "Gemini 2x達成",
+          "insufficient_data": "判定保留"}
+
+
+def contradiction_report(verified: List[Dict[str, Any]],
+                         agent_runs: List[Dict[str, Any]],
+                         *, flow_only: bool = False) -> Dict[str, Any]:
+    """Phase 6: ソースが増えても確信を増やさないための構造化レポート。"""
+    eligible = [v for v in verified if v.get("primaryEligible")]
+    directs = [v for v in eligible if v.get("directness") == "direct_company"]
+    themes = [v for v in eligible if v.get("directness") == "sector_theme"]
+    vchain = [v for v in eligible if v.get("directness") == "value_chain"]
+    stale = [v for v in verified if v.get("verificationStatus") == "stale"]
+    unsupported = sum(1 for r in agent_runs for c in (r.get("claims") or [])
+                      if not c.get("verified") and not c.get("url"))
+    gem = {_title_hash(str(c.get("titleJa") or "")) for r in agent_runs
+           if r.get("provider") == "gemini" and r.get("status") == "ok"
+           for c in (r.get("claims") or [])}
+    gpt = {_title_hash(str(c.get("titleJa") or "")) for r in agent_runs
+           if r.get("provider") == "gpt" and r.get("status") == "ok"
+           for c in (r.get("claims") or [])}
+    disagreement = bool(gem and gpt and not (gem & gpt))
+    conflicts = bool(directs and any(v.get("directness") == "macro" for v in eligible))
+    warnings = []
+    if not directs:
+        warnings.append("直接材料は未確認")
+    if themes and not directs:
+        warnings.append("テーマ連想のみ — 事実として扱わない")
+    if vchain and not directs:
+        warnings.append("バリューチェーン推論 — 影響度は未実証")
+    if flow_only and not eligible:
+        warnings.append("値動きのみで物語を作らない(価格変動それ自体は原因ではない)")
+    if disagreement:
+        warnings.append("Gemini/GPTの提示ソースが不一致 — 双方を検証で裁定")
+    if stale:
+        warnings.append(f"古いソース{len(stale)}件を主因から却下")
+    if unsupported:
+        warnings.append(f"裏付けのない主張{unsupported}件は証拠にしない")
+    return {"directEvidenceAbsent": not directs,
+            "evidenceConflicts": conflicts,
+            "staleEvidencePresent": bool(stale),
+            "themeInferenceOnly": bool(themes) and not directs,
+            "valueChainInferenceOnly": bool(vchain) and not directs and not themes,
+            "priceOnlyNarrativeRisk": flow_only and not eligible,
+            "agentDisagreement": disagreement,
+            "unsupportedClaims": unsupported,
+            "ownerReadableWarningsJa": warnings[:6]}
+
+
+def research_power_score(*, verified: List[Dict[str, Any]],
+                         agent_runs: List[Dict[str, Any]],
+                         gap_ledger: List[Dict[str, Any]],
+                         coverage: Dict[str, Any],
+                         contradiction: Dict[str, Any],
+                         context_advantages: List[str],
+                         source_universe_missing: int = 0,
+                         learning_updated: bool = False) -> Dict[str, Any]:
+    """Phase 2: 「Geminiの2倍」の測定。生件数では2xにならない —
+    検証済み・公式/業界一次・文脈統合・矛盾規律・学習が積み上がって初めて2x。"""
+    ver = [v for v in verified if v.get("verificationStatus") == "verified"]
+    vrate = (len(ver) / len(verified)) if verified else 0.0
+    summ = gap_ledger_summary(gap_ledger)
+    unresolved = summ["unresolvedImportant"]
+    resolved = sum(n for st, n in summ["byStatus"].items()
+                   if st != "still_unresolved_important")
+    official = [v for v in ver if v.get("sourceType") in
+                ("official_disclosure", "industry_association", "industry_forecast")
+                or v.get("directness") == "direct_company"]
+    cov_rank = {"strong": 2, "medium": 1}.get(str(coverage.get("totalCoverage")), 0)
+
+    components = {
+        "verifiedUsefulSourceScore": min(30, len(ver) * 5),
+        "officialPrimarySourceScore": min(20, len(official) * 10),
+        "directEvidenceScore": 15 if not contradiction.get("directEvidenceAbsent") else 0,
+        "sectorThemeCoverageScore": 5 if coverage.get("sectorCoverage") in ("medium", "strong") else 0,
+        "valueChainCoverageScore": 5 if coverage.get("valueChainCoverage") in ("medium", "strong") else 0,
+        "contradictionDetectionScore": min(10, len(contradiction.get("ownerReadableWarningsJa") or []) * 2),
+        "sourceVerificationRateScore": int(round(vrate * 15)),
+        "gapClosureScore": min(15, resolved * 3) - min(15, unresolved * 5),
+        "portfolioContextScore": 5 if "保有文脈" in context_advantages else 0,
+        "flowSupplyDemandContextScore": 5 if any(a in context_advantages for a in ("Flow文脈", "需給文脈")) else 0,
+        "eventContextScore": 5 if "イベント文脈" in context_advantages else 0,
+        "learningMemoryScore": 5 if learning_updated else 0,
+        "staleSourceRejectionScore": 5 if contradiction.get("staleEvidencePresent") else 0,
+        "hallucinationResistanceScore": max(0, 10 - int(contradiction.get("unsupportedClaims") or 0)),
+    }
+    argus = max(0, sum(components.values()) + cov_rank * 5 - source_universe_missing * 3)
+    # 外部ベースライン: エージェントのclaim数×検証率ベース(検証済みでないclaimは弱い)
+    def _base(prov):
+        cs = [c for r in agent_runs if r.get("provider") == prov and r.get("status") == "ok"
+              for c in (r.get("claims") or [])]
+        if not cs:
+            return 0
+        vr = sum(1 for c in cs if c.get("verified")) / len(cs)
+        return int(round(min(20, len(cs) * 4) * (0.5 + 0.5 * vr) + 60))   # 単発AIの基準力=60
+    gem_base = _base("gemini")
+    gpt_base = _base("gpt")
+    best_ext = max(gem_base, gpt_base)
+    ratio = round(argus / gem_base, 2) if gem_base else None
+    ratio_best = round(argus / best_ext, 2) if best_ext else None
+
+    agents_ok = gem_base > 0 or gpt_base > 0
+    blockers = []
+    if unresolved > 0:
+        blockers.append("未回収ソースあり")
+    if not official:
+        blockers.append("公式一次情報が不足")
+    if vrate < 0.5:
+        blockers.append("ソース検証率が不足(<50%)")
+    if not context_advantages:
+        blockers.append("ARGUS独自文脈(保有/需給/Flow/イベント)が未統合")
+    if not learning_updated:
+        blockers.append("学習メモリ未更新")
+
+    if not agents_ok:
+        status = "insufficient_data"
+    elif unresolved > 0:
+        status = "below_gemini"
+    elif ratio is not None and ratio >= 2.0 and not blockers:
+        status = "exceeds_gemini_2x"
+    elif context_advantages or len(ver) > 0:
+        status = "exceeds_gemini" if (official or context_advantages) else "matches_gemini"
+    else:
+        status = "matches_gemini"
+
+    display = (f"Research Power: Gemini {gem_base or '—'} / ARGUS {argus}"
+               + (f" / {ratio:.2f}x" if ratio else ""))
+    if status == "exceeds_gemini_2x":
+        verdict = f"2x達成: 外部AIソース回収 + {'+'.join(context_advantages[:3])}を追加({display})"
+    elif blockers:
+        verdict = f"2x未達: {blockers[0]}({display})"
+    else:
+        verdict = display
+    return {"components": components,
+            "geminiBaselineScore": gem_base, "gptBaselineScore": gpt_base,
+            "argusScore": argus,
+            "argusVsGeminiRatio": ratio, "argusVsBestExternalRatio": ratio_best,
+            "status": status, "statusJa": RPS_JA[status],
+            "displayJa": display, "ownerReadableVerdictJa": verdict,
+            "blockersJa": blockers[:4]}
+
+
+# ━━━ v12.1.3 Phase 3 — Source Universe(探索対象カテゴリの明示・沈黙省略の禁止) ━━━
+
+SOURCE_UNIVERSE = [
+    # (key, ja, availability) availability: live/via_agents/unavailable
+    ("official_disclosure", "公式開示(TDnet/EDINET/IR)", "live"),
+    ("official_gov", "官公庁・規制当局(経産省/金融庁/FRB等)", "via_agents"),
+    ("industry_association", "業界団体(SEAJ/JEITA/SEMI等)", "via_agents"),
+    ("industry_forecast", "業界統計・予測(販売高予測等)", "via_agents"),
+    ("jp_media", "日本メディア(日経/NHK/Reuters JP等)", "live"),
+    ("global_media", "海外メディア(Reuters/Bloomberg等)", "live"),
+    ("crypto_media", "暗号資産メディア(CoinDesk/Cointelegraph)", "live"),
+    ("exchange_stats", "取引所統計(信用残/貸借/空売り)", "live"),
+    ("price_flow", "価格・出来高・Flow実測", "live"),
+    ("macro_calendar", "マクロ指標カレンダー(FRED/公式予定)", "live"),
+    ("agent_search_gemini", "Gemini接地検索(スカウト)", "via_agents"),
+    ("agent_search_gpt", "GPT web検索(スカウト)", "via_agents"),
+    ("analyst_reports", "証券会社アナリストレポート", "unavailable"),
+    ("paid_terminals", "有料端末(Bloomberg/Refinitiv本体)", "unavailable"),
+    ("social_forums", "SNS・掲示板(X/Reddit等)", "unavailable"),
+    ("insider_channels", "非公開・インサイダー情報", "unavailable"),
+    ("l2_tape", "板・歩み値(L2/tape)", "unavailable"),
+    ("options_iv", "オプションIV", "unavailable"),
+]
+
+_UNIVERSE_UNAVAILABLE_NOTE = {
+    "analyst_reports": "契約なし — 公式開示+業界統計で代替",
+    "paid_terminals": "契約なし — 無料一次ソース優先方針",
+    "social_forums": "検証不能な伝聞のため構造的に除外(捏造防止)",
+    "insider_channels": "違法・構造的に除外",
+    "l2_tape": "requires_contract(未契約)",
+    "options_iv": "requires_contract(未契約)",
+}
+
+
+def source_universe_status(*, agents_configured: bool) -> List[Dict[str, Any]]:
+    """探索カテゴリ一覧。unavailableも必ず可視化(沈黙省略の禁止)。"""
+    out = []
+    for key, ja, avail in SOURCE_UNIVERSE:
+        a = avail
+        if avail == "via_agents" and not agents_configured:
+            a = "agents_not_configured"
+        out.append({"key": key, "labelJa": ja, "availability": a,
+                    "noteJa": _UNIVERSE_UNAVAILABLE_NOTE.get(key, "")})
+    return out
+
+
+# ━━━ v12.1.3 Phase 4 — Value Chain Knowledge Graph v1(再利用可能テーマ規則) ━━━
+
+VALUE_CHAIN_RULES = [
+    # (theme_key, ja, trigger_terms, related_roles) — 銘柄固有でなくテーマ規則
+    {"theme": "semiconductor_equipment", "labelJa": "半導体製造装置サイクル",
+     "triggers": ("半導体製造装置", "seaj", "wfe", "半導体投資", "設備投資 半導体", "semicap"),
+     "roles": {"equipment": "装置(露光/成膜/エッチング/検査)",
+               "materials": "材料(フォトレジスト/シリコンウェハ/特殊ガス)",
+               "components": "部品(光学/真空/精密部品)",
+               "foundry": "製造(ファウンドリ/IDM)",
+               "downstream": "需要(AI/データセンター/車載)"},
+     "cautionJa": "業界予測は業界全体の話 — 個社の直接材料ではない(direct_company昇格禁止)"},
+    {"theme": "ai_datacenter", "labelJa": "AI/データセンター投資",
+     "triggers": ("データセンター", "ai投資", "gpu", "生成ai", "hbm", "ai server"),
+     "roles": {"chips": "チップ(GPU/HBM/カスタムASIC)",
+               "power": "電力(電線/変圧器/冷却)",
+               "construction": "建設(データセンター建設/不動産)",
+               "network": "通信(光ファイバー/光モジュール)"},
+     "cautionJa": "テーマ連想は波及仮説 — 個社の受注/開示で裏取りするまで事実扱いしない"},
+    {"theme": "defense", "labelJa": "防衛予算サイクル",
+     "triggers": ("防衛費", "防衛予算", "防衛装備", "defense budget"),
+     "roles": {"prime": "主契約(重工)", "electronics": "電子装備", "materials": "素材"},
+     "cautionJa": "予算は複数年執行 — 発表と個社受注の時差に注意"},
+]
+
+
+def value_chain_context(theme_text: str) -> Optional[Dict[str, Any]]:
+    """テーマ文字列から再利用可能なバリューチェーン規則を引く。無ければNone(捏造しない)。"""
+    t = str(theme_text or "").lower()
+    for rule in VALUE_CHAIN_RULES:
+        if any(k in t for k in rule["triggers"]):
+            return {"theme": rule["theme"], "labelJa": rule["labelJa"],
+                    "rolesJa": rule["roles"], "cautionJa": rule["cautionJa"]}
+    return None
+
+
+# ━━━ v12.1.3 Phase 5 — War Room Autopilot 進行ステージ(14段階+failed_safe) ━━━
+
+AUTOPILOT_STAGES = [
+    ("profile", "プロファイル収集"),
+    ("query_plan", "クエリ計画"),
+    ("internal_retrieval", "内部リトリーバル"),
+    ("scout_gemini", "Geminiスカウト"),
+    ("scout_gpt", "GPTスカウト"),
+    ("parse_normalize", "解析・正規化"),
+    ("clustering", "クラスタリング・重複排除"),
+    ("url_verification", "URL検証"),
+    ("gap_resolution", "ギャップ回収"),
+    ("re_search", "再探索ループ"),
+    ("contradiction_check", "矛盾・因果規律チェック"),
+    ("context_integration", "保有/需給/Flow/イベント文脈統合"),
+    ("scoring", "Research Power採点"),
+    ("report", "オーナー向けレポート生成"),
+]
+
+AUTOPILOT_TERMINAL = ("completed", "failed_safe")
+
+
+def autopilot_progress(done_keys: List[str], *, failed_stage: Optional[str] = None,
+                       fail_reason_ja: str = "") -> Dict[str, Any]:
+    """段階進行の構造化。失敗はfailed_safe(途中結果は保持・嘘の完了は返さない)。"""
+    done = [k for k, _ in AUTOPILOT_STAGES if k in set(done_keys or [])]
+    stages = [{"key": k, "labelJa": ja,
+               "state": ("failed" if k == failed_stage else
+                         "done" if k in done else "pending")}
+              for k, ja in AUTOPILOT_STAGES]
+    if failed_stage:
+        status = "failed_safe"
+    elif len(done) == len(AUTOPILOT_STAGES):
+        status = "completed"
+    else:
+        status = "running"
+    nxt = next((ja for k, ja in AUTOPILOT_STAGES
+                if k not in set(done) and k != failed_stage), None)
+    return {"stages": stages, "doneCount": len(done),
+            "totalStages": len(AUTOPILOT_STAGES), "status": status,
+            "currentStageJa": (None if status in AUTOPILOT_TERMINAL else nxt),
+            "failReasonJa": (fail_reason_ja or "") if failed_stage else ""}
+
+
+# ━━━ v12.1.3 Phase 7 — Persistent Learning v2(useCase付き学習レコード) ━━━
+
+MEMORY_USE_CASES = ("query_expansion", "source_discovery", "theme_rule",
+                    "miss_learning", "canary")
+
+
+def memory_record_v2(*, symbol: str, use_case: str, theme: str = "",
+                     query_term: str = "", source_url: str = "",
+                     source_title: str = "", learned_from: str = "deterministic",
+                     verified: bool = False, now_iso: str = "",
+                     privacy_level: str = "public_safe") -> Optional[Dict[str, Any]]:
+    """v2: useCase必須。何のための学習かを構造で持つ(用途不明レコードは作らない)。"""
+    if use_case not in MEMORY_USE_CASES:
+        return None
+    base = memory_record(symbol=symbol, theme=theme, query_term=query_term,
+                         source_url=source_url, source_title=source_title,
+                         learned_from=learned_from, verified=verified,
+                         now_iso=now_iso, privacy_level=privacy_level)
+    if base is None:
+        return None
+    base["useCase"] = use_case
+    base["v"] = 2
+    return base

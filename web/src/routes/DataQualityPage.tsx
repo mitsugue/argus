@@ -42,7 +42,13 @@ interface Console {
     superiorityLatest?: string; unresolvedGeminiOnlyTotal?: number;
     benchmarkWarnJa?: string | null; memoryRecords?: number;
     memoryPersisted?: boolean; parserWarnings?: number;
-    capReachedCount?: number; benchmarkVerdictJa?: string };
+    capReachedCount?: number; benchmarkVerdictJa?: string;
+    // v12.1.3: Research Power最新値+ソースユニバース(unavailableも可視)
+    researchPowerLatest?: { symbol: string; status: string; statusJa: string;
+      argusScore: number; geminiBaselineScore: number; ratio: number | null;
+      displayJa: string } | null;
+    sourceUniverse?: { total: number; live: number; viaAgents: number; unavailable: number;
+      categories: { key: string; labelJa: string; availability: string; noteJa: string }[] } };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -341,6 +347,40 @@ export const DataQualityPage: React.FC = () => {
                   <p className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>
                     ⚠ {c.osintHealth.benchmarkWarnJa}
                   </p>
+                )}
+                {/* v12.1.3: Research Power最新値(Gemini基準比) */}
+                {c.osintHealth.researchPowerLatest && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11,
+                    color: c.osintHealth.researchPowerLatest.status === 'below_gemini'
+                      ? 'var(--amber, #fbbf24)'
+                      : c.osintHealth.researchPowerLatest.status.startsWith('exceeds')
+                        ? 'var(--value-positive)' : 'var(--text-sub)' }}>
+                    Research Power(最新 {c.osintHealth.researchPowerLatest.symbol}):{' '}
+                    <b>{c.osintHealth.researchPowerLatest.statusJa}</b>
+                    {' '}— {c.osintHealth.researchPowerLatest.displayJa}
+                  </p>
+                )}
+                {/* v12.1.3: ソースユニバース(unavailableも沈黙省略せず可視化) */}
+                {c.osintHealth.sourceUniverse && (
+                  <details style={{ fontSize: 10.5 }}>
+                    <summary style={{ cursor: 'pointer', color: 'var(--text-sub)' }}>
+                      探索ソースユニバース: 全{c.osintHealth.sourceUniverse.total}カテゴリ
+                      (稼働{c.osintHealth.sourceUniverse.live}
+                      ・スカウト経由{c.osintHealth.sourceUniverse.viaAgents}
+                      ・利用不可{c.osintHealth.sourceUniverse.unavailable})
+                    </summary>
+                    {c.osintHealth.sourceUniverse.categories.map((u) => (
+                      <p key={u.key} className="cmd-alloc__note" style={{ margin: '1px 0 0',
+                        fontSize: 10, color: u.availability === 'live' ? 'var(--text-sub)'
+                          : u.availability === 'via_agents' ? 'var(--text-faint)'
+                          : 'var(--amber, #fbbf24)' }}>
+                        {u.labelJa}: {({ live: '稼働', via_agents: 'スカウト経由',
+                          agents_not_configured: 'スカウト未設定',
+                          unavailable: '利用不可' } as Record<string, string>)[u.availability] ?? u.availability}
+                        {u.noteJa ? ` — ${u.noteJa}` : ''}
+                      </p>
+                    ))}
+                  </details>
                 )}
                 <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
                   {c.osintHealth.noteJa}
