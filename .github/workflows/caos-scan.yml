@@ -31,6 +31,16 @@ jobs:
           RESP=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/institutional-intelligence/collect" || echo '{"error":"unreachable"}')
           echo "caos-collect: $RESP"
+          # v12.1.0: OSINTスカウトのキュー消化(キューが空なら外部AIは呼ばれない=無料)
+          OS=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            -H "Content-Type: application/json" -d '{}' \
+            "$BE/api/argus/admin/osint/agents-run" || echo '{"error":"unreachable"}')
+          echo "osint-agents: $OS"
+          # v12.1.0: canary(見落とし監視・cached評価のみで外部AIなし)
+          CN=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            -H "Content-Type: application/json" -d '{}' \
+            "$BE/api/argus/admin/osint/canary-run" || echo '{"error":"unreachable"}')
+          echo "osint-canary: $CN"
 
       # v11.9.1 (owner: 「ニュースが全部翻訳待ち」): the ONLY translate drain used
       # to live in caos-watchtower (weekdays only) — weekends never translated.
