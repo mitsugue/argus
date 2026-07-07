@@ -14781,22 +14781,16 @@ def api_argus_osint_terms():
                     "noteJa": "今後の探索語に追加しました(貼り戻し本文はサーバーに保存しません)。"})
 
 
-@app.route("/api/argus/admin/osint/agents-run", methods=["POST"])
-def api_argus_admin_osint_agents_run():
-    """Admin/cron: キュー済み銘柄のGemini/GPTスカウトを実行(予算: 1回3銘柄まで)。
-    外部AI呼び出しはこの経路だけ。"""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
+def _osint_agents_worker(syms):
+    """バックグラウンドでGemini/GPTスカウトを実行(HTTPワーカーtimeout回避 —
+    v12.1.0実測: 同期実行はGemini+GPTで180秒超になりrequestが殺された)。"""
+    now_iso = _ai_now_iso()
+    results = []
     try:
-        body = request.get_json(silent=True) or {}
-        target = str(body.get("symbol") or "").strip().upper()
-        now_iso = _ai_now_iso()
-        syms = [target] if target else list(_OSINT_AGENT_QUEUE.keys())[:3]
-        results = []
         for sym in syms:
-            meta = _OSINT_AGENT_QUEUE.pop(sym, None) or                 {"market": "JP" if sym[:1].isdigit() else "US",
-                 "mode": "deep", "privacyMode": "redacted"}
+            meta = _OSINT_AGENT_QUEUE.pop(sym, None) or {
+                "market": "JP" if sym[:1].isdigit() else "US",
+                "mode": "deep", "privacyMode": "redacted"}
             prof = _osint_profile(sym, meta["market"])
             plan = argus_osint_engine.build_query_plan(
                 prof, extra_terms=_OSINT_TERM_OVERLAY.get(sym) or [])
@@ -14811,12 +14805,38 @@ def api_argus_admin_osint_agents_run():
                                              meta["privacyMode"]))
             inv = _osint_build(sym, meta["market"], meta["mode"],
                                meta["privacyMode"], "admin_agents_run", runs, now_iso)
-            results.append({"symbol": sym,
-                            "benchmark": inv["benchmark"],
-                            "verdict": inv["catalystVerdict"]["verdict"]})
-        _OSINT_LAST["agentsAt"] = now_iso
+            results.append(sym)
+            add_log(f"[osint] agents done {sym}: missedByArgus={inv['benchmark']['missedByArgusCount']}")
+        _OSINT_LAST["agentsAt"] = _ai_now_iso()
         _OSINT_LAST["agentsStatus"] = "ok" if results else "empty"
-        return jsonify({"ok": True, "ran": results, "queuedRemaining": len(_OSINT_AGENT_QUEUE)})
+    except Exception as e:
+        _OSINT_LAST["agentsStatus"] = f"failed:{type(e).__name__}"
+        add_log(f"[osint] agents worker failed: {type(e).__name__}")
+
+
+@app.route("/api/argus/admin/osint/agents-run", methods=["POST"])
+def api_argus_admin_osint_agents_run():
+    """Admin/cron: キュー済み銘柄のGemini/GPTスカウトを実行(予算: 1回3銘柄まで)。
+    外部AI呼び出しはこの経路だけ。v12.1.0実測でGemini+GPT逐次は180秒超になり
+    HTTPが切られたため非同期(202)実行 — 完了はDQ osintHealth.lastAgentsRunAtと
+    /osint/investigationで確認。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        body = request.get_json(silent=True) or {}
+        target = str(body.get("symbol") or "").strip().upper()
+        syms = [target] if target else list(_OSINT_AGENT_QUEUE.keys())[:3]
+        if not syms:
+            _OSINT_LAST["agentsStatus"] = "empty"
+            return jsonify({"ok": True, "started": [], "queuedRemaining": 0,
+                            "noteJa": "キューは空(外部AIは呼ばれていません)。"})
+        _OSINT_LAST["agentsStatus"] = "running"
+        import threading
+        threading.Thread(target=_osint_agents_worker, args=(syms,), daemon=True).start()
+        return jsonify({"ok": True, "started": syms,
+                        "queuedRemaining": max(0, len(_OSINT_AGENT_QUEUE) - len(syms)),
+                        "noteJa": "バックグラウンドで実行中(結果は/osint/investigationに反映)。"}), 202
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
 
