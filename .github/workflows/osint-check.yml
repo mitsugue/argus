@@ -40,6 +40,10 @@ jobs:
           for g in inv.get("gapLedger") or []:
               by[g.get("resolutionStatus")] = by.get(g.get("resolutionStatus"), 0) + 1
           print("gapLedger byStatus:", json.dumps(by, ensure_ascii=False))
+          for g in inv.get("gapLedger") or []:
+              if g.get("resolutionStatus") == "still_unresolved_important":
+                  print("unresolved:", g.get("ownerReadableJa"))
+                  print("  followUp:", g.get("followUpQueries"))
           for w in (inv.get("contradictionReportV2") or {}).get("ownerReadableWarningsJa") or []:
               print("warn:", w)
           PY
