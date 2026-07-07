@@ -71,6 +71,9 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
       researchPowerJa: inv.researchPower?.displayJa,
       researchPowerVerdictJa: inv.researchPower?.ownerReadableVerdictJa,
       contradictionWarningsJa: inv.contradictionReportV2?.ownerReadableWarningsJa,
+      sourceCoverageJa: inv.sourceCoverage
+        ? `${inv.sourceCoverage.filter((r) => r.state === 'checked').length}/${inv.sourceCoverage.length}カテゴリ探索済み`
+        : undefined,
     });
   }, [inv]);
 
@@ -170,6 +173,31 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
                   2x未達の要因: {inv.researchPower.blockersJa.join(' / ')}
                 </span>
               )}
+              {(inv.researchPower.strengthsJa?.length ?? 0) > 0 && (
+                <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>
+                  強み: {inv.researchPower.strengthsJa!.slice(0, 3).join(' / ')}
+                </span>
+              )}
+            </p>
+          )}
+          {/* v12.1.3: ソースカバレッジ(checkedの捏造なし)+主張ガード */}
+          {inv.sourceCoverage && (
+            <p style={{ margin: '0 0 3px', fontSize: 10, color: 'var(--text-faint)' }}>
+              探索カバレッジ: {inv.sourceCoverage.filter((r) => r.state === 'checked').length}
+              /{inv.sourceCoverage.length}カテゴリ探索済み
+              {inv.sourceCoverage.some((r) => r.state !== 'checked') &&
+                ` — 未探索: ${inv.sourceCoverage.filter((r) => r.state !== 'checked')
+                  .map((r) => r.labelJa).slice(0, 3).join('・')}`}
+              {(inv.coverageGuardsJa?.length ?? 0) > 0 && (
+                <span style={{ display: 'block', color: 'var(--amber, #fbbf24)' }}>
+                  {inv.coverageGuardsJa!.join(' / ')}
+                </span>
+              )}
+            </p>
+          )}
+          {inv.valueChainGraph?.incomplete && inv.valueChainGraph.incompleteNoteJa && (
+            <p style={{ margin: '0 0 3px', fontSize: 10, color: 'var(--text-faint)' }}>
+              {inv.valueChainGraph.incompleteNoteJa}
             </p>
           )}
           {/* v12.1.3: 矛盾・因果規律の警告(ソースが増えても確信は増やさない) */}

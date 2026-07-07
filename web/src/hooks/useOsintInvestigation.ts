@@ -62,12 +62,22 @@ export interface OsintInvestigation {
   /** v12.1.3 Phase 2: Research Power Score(生件数では2xにならない測定)。 */
   researchPower?: {
     components: Record<string, number>;
-    geminiBaselineScore: number; gptBaselineScore: number; argusScore: number;
+    geminiBaselineScore: number; gptBaselineScore: number;
+    bestExternalBaselineScore?: number; argusScore: number;
     argusVsGeminiRatio: number | null; argusVsBestExternalRatio: number | null;
     status: 'below_gemini' | 'matches_gemini' | 'exceeds_gemini' | 'exceeds_gemini_2x' | 'insufficient_data';
     statusJa: string; displayJa: string; ownerReadableVerdictJa: string;
-    blockersJa: string[];
+    ownerReadableJa?: string;
+    blockersJa: string[]; strengthsJa?: string[];
   };
+  /** v12.1.3 Phase 3差分: この調査で実際に見たカテゴリ(checkedの捏造なし)。 */
+  sourceCoverage?: { key: string; labelJa: string; state: string;
+    resultCount: number | null; coverageImpact: string }[];
+  coverageGuardsJa?: string[];
+  /** v12.1.3 Phase 4差分: バリューチェーングラフ(不完全は正直表示)。 */
+  valueChainGraph?: { symbol: string; company: string; sector: string | null;
+    adjacentThemes: string[]; queryExpansions: string[];
+    incomplete: boolean; incompleteNoteJa: string | null };
   /** v12.1.3 Phase 6: 構造化矛盾レポート(旧contradictionReportはstring[]のまま)。 */
   contradictionReportV2?: {
     directEvidenceAbsent: boolean; themeInferenceOnly: boolean;

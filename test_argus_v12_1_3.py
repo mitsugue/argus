@@ -130,7 +130,7 @@ def test_rps_insufficient_data_without_agents():
     assert rps["statusJa"] == "判定保留"
 
 
-def test_rps_has_14_components_and_display():
+def test_rps_has_15_components_and_display():
     ver = [{"titleJa": "公式開示", "verificationStatus": "verified",
             "primaryEligible": True, "directness": "direct_company",
             "sourceType": "official_disclosure", "freshness": "today"}] * 4
@@ -140,7 +140,7 @@ def test_rps_has_14_components_and_display():
         coverage={"totalCoverage": "strong", "sectorCoverage": "medium",
                   "valueChainCoverage": "medium"},
         contradiction=cr, context_advantages=["需給文脈"], learning_updated=True)
-    assert len(rps["components"]) == 14
+    assert len(rps["components"]) == 15
     assert "Gemini" in rps["displayJa"] and "ARGUS" in rps["displayJa"]
     assert rps["status"] in oe.RPS_STATUSES
     assert rps["argusVsGeminiRatio"] is None or rps["argusVsGeminiRatio"] > 0
@@ -282,3 +282,113 @@ def test_fe_dq_shows_source_universe():
 def test_review_pack_includes_research_power():
     src = _read("lib", "reviewPack.ts")
     assert "researchPower" in src
+
+
+# ── v12.1.3 正式spec差分の恒久ガード ─────────────────────────────────────────
+
+def test_equipment_cycle_expansions_in_plan():
+    prof = scanner._osint_profile("6965", "JP")
+    plan = oe.build_query_plan(prof)
+    joined = " ".join(plan["all"])
+    assert "SEAJ 販売高 予測 2026" in joined
+    assert "需要予測 上方修正" in joined
+    assert plan.get("themeExpansion")
+
+
+def test_new_source_types_supported():
+    for t in ("trade_association", "sector_cycle", "equipment_cycle",
+              "public_forecast_metadata"):
+        assert t in oe.SOURCE_TYPES
+
+
+def test_no_url_no_date_claim_exact_wording():
+    g = oe.resolve_gap({"titleJa": "浜松ホトニクスに関する重要な噂"}, "gemini", [],
+                       symbol="6965", investigation_id="i", now_iso=NOW,
+                       theme_entities={"浜松ホトニクス"})
+    assert g["resolutionStatus"] == "missing_url"
+    assert "URL・日付がなく" in g["resolutionReasonJa"]
+    assert "証拠扱いしません" in g["resolutionReasonJa"]
+    assert g["followUpQueries"], "次のアクション(追撃クエリ)必須"
+
+
+def test_rps_industry_source_increases_score():
+    runs = _runs(verified=True)
+    base_ver = [{"titleJa": "一般記事", "verificationStatus": "verified",
+                 "primaryEligible": True, "sourceType": "media",
+                 "directness": "sector_theme"}]
+    ind_ver = base_ver + [{"titleJa": "SEAJ予測", "verificationStatus": "verified",
+                           "primaryEligible": True, "sourceType": "industry_forecast",
+                           "directness": "sector_theme"}]
+    kw = dict(agent_runs=runs, gap_ledger=[], coverage={"totalCoverage": "medium"},
+              context_advantages=[], learning_updated=False)
+    r1 = oe.research_power_score(verified=base_ver,
+                                 contradiction=oe.contradiction_report(base_ver, runs), **kw)
+    r2 = oe.research_power_score(verified=ind_ver,
+                                 contradiction=oe.contradiction_report(ind_ver, runs), **kw)
+    assert r2["argusScore"] > r1["argusScore"]
+    assert r2["components"]["industrySourceScore"] > 0
+
+
+def test_rps_strengths_and_best_external():
+    ver = [{"titleJa": "SEAJ予測", "verificationStatus": "verified",
+            "primaryEligible": True, "sourceType": "industry_forecast",
+            "directness": "sector_theme"}]
+    runs = _runs(verified=True)
+    rps = oe.research_power_score(
+        verified=ver, agent_runs=runs, gap_ledger=[],
+        coverage={"totalCoverage": "strong"},
+        contradiction=oe.contradiction_report(ver, runs),
+        context_advantages=["需給文脈"], learning_updated=True)
+    assert rps["strengthsJa"]
+    assert any("業界一次" in x for x in rps["strengthsJa"])
+    assert rps["bestExternalBaselineScore"] >= rps["geminiBaselineScore"] or         rps["bestExternalBaselineScore"] >= 0
+    assert rps["ownerReadableJa"]
+
+
+def test_source_coverage_no_silent_omission():
+    # プロバイダ未設定→unavailableとして必ず可視(沈黙省略の禁止)
+    cov = oe.investigation_source_coverage({}, [], [], events_checked=False)
+    keys = {r["key"]: r for r in cov}
+    assert keys["agent_search_gemini"]["state"] == "unavailable"
+    assert keys["agent_search_gpt"]["state"] == "unavailable"
+    assert keys["macro_calendar"]["state"] == "not_checked"
+    # 重要カテゴリの未探索はスコアを下げる
+    assert keys["industry_association"]["coverageImpact"] == "lowers_score"
+
+
+def test_coverage_guards_forbid_absence_claims():
+    cov = oe.investigation_source_coverage({}, [], [], events_checked=False)
+    guards = oe.coverage_claim_guards(cov)
+    assert any("装置予測材料なしとは言えない" in g for g in guards)
+
+
+def test_value_chain_graph_6965_expansions():
+    prof = scanner._osint_profile("6965", "JP")
+    g = oe.value_chain_graph(prof)
+    joined = " ".join(g["queryExpansions"])
+    for kw in ("photonics", "custom silicon", "SEAJ"):
+        assert kw in joined, kw
+    assert "半導体製造装置サイクル" in g["adjacentThemes"]
+    assert "光半導体/フォトニクス" in g["adjacentThemes"]
+
+
+def test_value_chain_graph_generic_equipment_symbol():
+    # 6965ハードコードでなく再利用規則: 任意の装置テーマ銘柄で装置サイクル展開
+    g = oe.value_chain_graph({"symbol": "9999", "nameJa": "テスト装置",
+                              "sector": "半導体製造装置", "themes": ["半導体製造装置"],
+                              "valueChain": [], "competitors": []})
+    assert any("SEAJ" in q for q in g["queryExpansions"])
+    assert g["incomplete"] is True and g["incompleteNoteJa"]
+
+
+def test_memory_snapshot_includes_rps_history():
+    scanner._OSINT_RPS_HISTORY.append(
+        {"symbol": "6965", "at": NOW, "status": "below_gemini",
+         "argusScore": 77, "geminiBaselineScore": 68, "ratio": 1.13})
+    with scanner.app.test_client() as c:
+        r = c.get("/api/argus/osint/memory-snapshot")
+        d = r.get_json()
+        assert any(h.get("symbol") == "6965" for h in (d.get("rpsHistory") or []))
+        body = r.get_data(as_text=True)
+        for banned in ("quantity", "avgCost", "passphrase", "hmac"):
+            assert banned not in body

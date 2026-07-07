@@ -211,6 +211,7 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
         // v12.1.3: researchPower(Gemini基準比 — 生件数では2xにならない測定)
         if (dz.researchPowerJa) L.push(`- ${dz.researchPowerJa}${dz.researchPowerVerdictJa ? ` — ${dz.researchPowerVerdictJa}` : ''}`);
         if (dz.contradictionWarningsJa?.length) L.push(`- 因果規律の警告: ${dz.contradictionWarningsJa.join(' / ')}`);
+        if (dz.sourceCoverageJa) L.push(`- ソースカバレッジ: ${dz.sourceCoverageJa}`);
         if (dz.verificationRatePct != null) L.push(`- ソース検証率: ${dz.verificationRatePct}%`);
         if ((dz.unresolvedCount ?? 0) > 0) L.push(`- 注意: Gemini単発に対して未回収のOSINTギャップ ${dz.unresolvedCount}件(検証されるまで証拠として扱っていません)`);
         if (dz.verifiedTitlesJa.length) L.push(`- 検証済みソース: ${dz.verifiedTitlesJa.join(' / ')}`);

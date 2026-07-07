@@ -7293,6 +7293,7 @@ def _data_quality_console():
                              "ratio": rp.get("argusVsGeminiRatio"),
                              "displayJa": rp.get("displayJa")}
         console["osintHealth"]["researchPowerLatest"] = rp_latest
+        console["osintHealth"]["rpsHistoryCount"] = len(_OSINT_RPS_HISTORY)
         uni = argus_osint_engine.source_universe_status(
             agents_configured=bool(_OPENAI_API_KEY or (google_genai and GEMINI_API_KEY)))
         console["osintHealth"]["sourceUniverse"] = {
@@ -14592,6 +14593,12 @@ def _osint_profile(symu, market="JP"):
             "themes": (ov.get("themes") or []) + themes[:6],
             "valueChain": ov.get("valueChain") or themes[:4],
             "competitors": ov.get("competitors") or [], "aliases": []}
+    # v12.1.3: マッチした全テーマ規則の拡張クエリを注入(SEAJ/装置サイクル等)
+    try:
+        prof["queryExpansions"] = argus_osint_engine.value_chain_graph(
+            prof).get("queryExpansions") or []
+    except Exception:
+        prof["queryExpansions"] = []
     return prof
 
 
@@ -14635,13 +14642,15 @@ _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
 _OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
 _OSINT_CAP_REACHED = {"count": 0}      # 検証上限到達の累計(DQ表示用)
+_OSINT_RPS_HISTORY = []                # Research Powerスコア履歴(公開安全・有界40)
 
 
 def _osint_persist():
     try:
         blob = {"termOverlay": _OSINT_TERM_OVERLAY, "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
                 "urlCache": dict(list(_OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
-                "canaryLast": _OSINT_CANARY_LAST}
+                "canaryLast": _OSINT_CANARY_LAST,
+                "rpsHistory": _OSINT_RPS_HISTORY[-40:]}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(blob, f, ensure_ascii=False)
@@ -14684,6 +14693,11 @@ def _osint_restore_once():
         cl = blob.get("canaryLast")
         if isinstance(cl, dict) and cl.get("data") and not _OSINT_CANARY_LAST.get("data"):
             _OSINT_CANARY_LAST.update(cl)
+        for h in (blob.get("rpsHistory") or [])[-40:]:
+            if isinstance(h, dict) and not any(
+                    x.get("at") == h.get("at") and x.get("symbol") == h.get("symbol")
+                    for x in _OSINT_RPS_HISTORY):
+                _OSINT_RPS_HISTORY.append(h)
     except Exception:
         pass
 
@@ -15019,13 +15033,31 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
     universe = argus_osint_engine.source_universe_status(agents_configured=agents_configured)
     missing_n = sum(1 for u in universe if u["availability"] in ("unavailable", "agents_not_configured"))
     inv["sourceUniverse"] = universe
+    # Phase 3差分: この調査で実際に見たカテゴリ(checkedの捏造なし)+主張ガード
+    # macro_calendarは公式イベントパイプラインが常時稼働のためchecked
+    src_cov = argus_osint_engine.investigation_source_coverage(
+        counts, verified, agent_runs, events_checked=True)
+    inv["sourceCoverage"] = src_cov
+    inv["coverageGuardsJa"] = argus_osint_engine.coverage_claim_guards(src_cov)
+    cov_missing = sum(1 for r in src_cov if r["coverageImpact"] == "lowers_score")
+    # Phase 4差分: バリューチェーングラフ(不完全は正直表示・保有情報なし)
+    inv["valueChainGraph"] = argus_osint_engine.value_chain_graph(prof)
     rps = argus_osint_engine.research_power_score(
         verified=verified, agent_runs=agent_runs, gap_ledger=gap_ledger,
         coverage=inv["coverageScore"], contradiction=contr,
         context_advantages=ctx_adv,
-        source_universe_missing=min(3, missing_n // 3),
+        source_universe_missing=min(3, missing_n // 3) + min(2, cov_missing),
         learning_updated=learning_updated)
     inv["researchPower"] = rps
+    # Phase 7差分: Research Powerスコア履歴(公開安全・有界・スナップショット同乗)
+    if rps.get("status") != "insufficient_data":
+        _OSINT_RPS_HISTORY.append({
+            "symbol": symu, "at": now_iso, "status": rps["status"],
+            "argusScore": rps["argusScore"],
+            "geminiBaselineScore": rps["geminiBaselineScore"],
+            "ratio": rps.get("argusVsGeminiRatio")})
+        while len(_OSINT_RPS_HISTORY) > 40:
+            _OSINT_RPS_HISTORY.pop(0)
     _osint_persist()
     # missed-by-argus → 探索語オーバーレイに自動追加(有界)
     if bench.get("missedByArgusCount"):
@@ -15384,6 +15416,7 @@ def api_argus_osint_memory_snapshot():
                                if m.get("privacyLevel") == "public_safe"][-_OSINT_MEMORY_MAX:],
                     "urlCache": dict(list(_OSINT_URL_CACHE.items())[-60:]),
                     "canaryLast": _OSINT_CANARY_LAST,
+                    "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 
