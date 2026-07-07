@@ -23,6 +23,23 @@ function jstFromUtc(utc?: string | null): string {
   return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' }) + ' JST';
 }
 
+// v12.0.8 Part B (owner: CPIが「21:30 JST 発表前」で今日に見えた): イベントの
+// 「いつ」は必ず 日付+JST時刻+D-count で表示する。日付が今日でも「本日」を明示。
+// 日時が取れない場合は「日時未確認」と正直に言う(時刻だけの表示はしない)。
+function eventWhenJa(utc?: string | null, fallbackDate?: string | null): string {
+  if (!utc) return fallbackDate ? `${fallbackDate} · 時刻未確認` : '日時未確認';
+  const d = new Date(utc);
+  if (isNaN(d.getTime())) return '日時未確認';
+  const jstDay = (x: Date) => x.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const md = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' });
+  const hm = d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' });
+  const today = jstDay(new Date());
+  const evDay = jstDay(d);
+  const diffDays = Math.round((new Date(evDay.replace(/\//g, '-')).getTime() - new Date(today.replace(/\//g, '-')).getTime()) / 86_400_000);
+  const rel = diffDays === 0 ? '本日' : diffDays > 0 ? `あと${diffDays}日` : `${-diffDays}日前`;
+  return `${md} ${hm} JST · ${rel}`;
+}
+
 const RISK_TONE_JA: Record<string, string> = {
   risk_on: 'リスクオン', risk_off: 'リスクオフ', rates_up: '金利上昇', rates_down: '金利低下',
   mixed: 'まちまち', unknown: '方向感不明',
@@ -184,7 +201,8 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
   const ds = deriveDashboardEventDisplayState(ev);
   const color = STATE_TONE_COLOR[ds.tone] ?? STATE_TONE_COLOR.neutral;
   const c = ev.caos || {};
-  const when = [ev.eventDate, jstFromUtc(ev.eventTimeUtc)].filter(Boolean).join(' · ');
+  // v12.0.8: 日付+時刻+D-count を常時表示(「21:30 JSTだけで今日に見える」の根治)
+  const when = eventWhenJa(ev.eventTimeUtc, ev.eventDate);
   const vColor = (VERDICT_JA[c.verdict || 'not_available'] || VERDICT_JA.not_available).tone;
   const preHistorical = (c.preScenarioJa || c.summaryJa) && ds.showPreAsHistorical ? (
     <details className="ie-hist">

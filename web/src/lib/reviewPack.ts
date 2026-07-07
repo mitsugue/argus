@@ -5,12 +5,12 @@
 
 import { latestExposure, latestActionPriorities, latestSessionBrief,
   latestScenarios, latestPlans, latestStrategy, latestFireCore,
-  latestDataQuality } from './positionExposureShare';
+  latestDataQuality, latestOsint } from './positionExposureShare';
 import { listNotifications } from './notifications';
 import { assessBackupSafety } from './backupSafety';
 import { jpDisplay } from './displayName';
 
-export type PackType = 'daily' | 'asset' | 'portfolio' | 'event' | 'emergency';
+export type PackType = 'daily' | 'asset' | 'portfolio' | 'event' | 'emergency' | 'osint';
 export type PrivacyMode = 'redacted' | 'owner_copy';
 export type PackLength = 'full' | 'short';
 
@@ -28,6 +28,7 @@ const INSTRUCTIONS_JA: Record<PackType, string> = {
   portfolio: 'ポートフォリオ構成とFIRE整合について、集中リスク・コア/戦術枠のバランス・不足データの影響を中心にレビューしてください。数値は概算・帯であり、退職時期や確率の計算は求めません。売買指示は不要です。',
   event: 'このイベントについて、ARGUSの事前シナリオの弱点・見落としている波及経路・発表後に真っ先に確認すべき指標を整理してください。売買指示は不要です。',
   emergency: '保有銘柄に複合リスク信号が出ています。ARGUSの判断が過剰反応か過小反応か、いま確認すべき事実の優先順位、やってはいけない行動を整理してください。パニック的な即断を勧めないでください。売買指示は不要です。',
+  osint: 'あなたはOSINT(公開情報)調査のレビュアーです。以下の候補原因について、公式開示・主要ニュース・セクター/テーマ連想を分けて妥当性を検証し、ARGUSが見逃している強い材料がないかを指摘してください。弱い連想を事実として扱わないでください。売買指示は不要です。',
 };
 const QUESTIONS_JA: Record<PackType, string> = {
   daily: '今日の全体をプロ目線でレビューしてほしい。ARGUSの見落としはないか。',
@@ -35,6 +36,8 @@ const QUESTIONS_JA: Record<PackType, string> = {
   portfolio: 'この構成でFIRE計画として無理はないか。集中しすぎていないか。',
   event: 'このイベントの前後で何を確認すべきか。ARGUSの事前シナリオに穴はないか。',
   emergency: '保有銘柄に警報が出た。冷静に、何を確認しどう構えるべきか。',
+  // v12.0.8 Part F: 外部AIへのOSINT診断依頼(コピー専用・自動送信なし)
+  osint: 'この下落/上昇要因について、ARGUSの候補原因が妥当か、他に強いニュースがないか、公式開示・主要ニュース・セクター連想を分けて検証してください。',
 };
 
 export interface PackEventInfo {
@@ -78,7 +81,7 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
       'small_add_allowed', 'add_only_on_pullback'].includes(p.currentStance)).map((p) => p.symbol),
     ...plans.filter((p) => p.isHeld).map((p) => p.symbol),
   ])];
-  if (o.packType === 'asset' && o.symbol) focus = [o.symbol.toUpperCase()];
+  if ((o.packType === 'asset' || o.packType === 'osint') && o.symbol) focus = [o.symbol.toUpperCase()];
   if (o.packType === 'event' && o.event) focus = o.event.linkedAssets.map((s) => s.toUpperCase());
   if (o.packType === 'emergency') {
     focus = aps.filter((i) => i.priorityRank === 'P0').map((i) => i.symbol);
@@ -163,6 +166,10 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
       L.push(`総合: ${dqc.overallStatusJa}(古いデータのレイヤーは確度を割引いて評価してください)`);
       L.push(...dqc.topIssuesJa.slice(0, 3).map((x) => `- ${x}`));
       L.push(...dqc.expectedDisabledJa.slice(0, 2).map((x) => `- 仕様上の未取得: ${x}`));
+      // v12.0.8 Part D: 部分データ時はその事実と確度上限を必ず明示
+      if (dqc.overallStatus !== 'ok') {
+        L.push('- 部分データ稼働中: 判断確度に上限がかかっています。JPリアルタイム復旧・イベント/機関データの更新・需給ウォームで解消されます。');
+      }
     }
     // v12.0.6: JP caveatは簡潔な1行だけ(重複させない・v12.0.5の確認済み事実を維持)
     L.push('- 日本株リアルタイム/APIフル板はmoomoo側メンテナンス中(サポート確認済み・フル板契約済みで追加申込不要・復旧時期未定・復旧後はOpenD再起動・再ログイン後にret=0確認)。日本株判断は代替データ(J-Quants/Yahoo・夜間/引け後delayed・ARGUS側では意図的に無効化中)前提で評価してください。');
@@ -172,6 +179,28 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
       try { const b = assessBackupSafety([]);
         if (b.protectionLevel !== 'unknown') L.push('', '## Backup(状態のみ)', `保護状態: ${b.protectionLevelJa}`);
       } catch { /* ignore */ }
+    }
+  }
+
+  // v12.0.8 Part F: OSINTパック — 候補原因・見つかったソース・欠けているソース・
+  // 直接材料かテーマ連想かを明示(弱い推測を事実として書かない)。
+  if (o.packType === 'osint' && o.symbol) {
+    const oz = latestOsint(o.symbol);
+    L.push('', '## OSINT: 疑われる原因(ARGUSの候補)');
+    if (oz) {
+      L.push(`- 見立て: ${oz.headlineJa}`);
+      L.push(`- OSINT確度: ${oz.osintConfidenceJa}(候補であり断定ではない)`);
+      L.push('', '### 候補原因(カテゴリ別)');
+      L.push(...oz.causes.map((cz, i) => `${i + 1}. [${cz.categoryJa}] ${cz.titleJa}(出典: ${cz.source || '不明'}) — 外れの可能性: ${cz.whyWrongJa}`));
+      if (oz.sourcesMissingJa.length) {
+        L.push('', '### 欠けているソース');
+        L.push(...oz.sourcesMissingJa.map((x) => `- ${x}`));
+      }
+      L.push('', '### 検証依頼');
+      L.push('- 直接材料(この銘柄固有の開示/報道)とテーマ連想(セクター/バリューチェーン)を分けて評価してください。');
+      L.push('- ARGUSが見つけられていない強いニュース・公式開示があれば指摘してください。');
+    } else {
+      L.push('- 候補原因データ未取得(銘柄カードの原因分析を一度開いてから再コピーしてください)。');
     }
   }
 

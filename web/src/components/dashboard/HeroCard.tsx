@@ -17,6 +17,9 @@ interface Props {
   isPartialData?: boolean;
   confidence?: number | null;   // already capped by the caller when partial
   visibilityReasonJa?: string;  // v11 — why the Visibility Guard downgraded (if it did)
+  /** v12.0.8 Part D: PARTIAL DATA の理由(上位2〜4件)+解消条件。 */
+  partialReasonsJa?: string[];
+  partialRaiseJa?: string;
   onNavigate?: (key: RouteKey) => void;
 }
 
@@ -40,7 +43,7 @@ const OWNER_DISPLAY: Record<string, string> = {
 // COMMAND-FIRST Today hero (v10.120): the actionable command (Action Level +
 // permissions) is the first thing; market context sits BELOW it; "Why" is the
 // detail. No ambiguous CLEAR; raw enums (EVENT_WAIT) are formatted for display.
-export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence, visibilityReasonJa, onNavigate }) => {
+export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence, visibilityReasonJa, partialReasonsJa, partialRaiseJa, onNavigate }) => {
   const ownerCode = overlay?.holderRiskOverlay;
   const ownerRisk = !!(ownerCode && ownerCode !== 'NONE');
   return (
@@ -62,6 +65,21 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
           margin: '8px 2px 0', fontSize: 12, color: 'var(--amber, #fbbf24)', lineHeight: 1.5,
         }}>⚠ {visibilityReasonJa}</p>
       ) : null}
+
+      {/* v12.0.8 Part D: PARTIAL DATAの理由を隠さない — なぜ部分的か+何で解消するか */}
+      {isPartialData && (partialReasonsJa?.length ?? 0) > 0 && (
+        <div style={{ margin: '6px 2px 0', fontSize: 11.5, color: 'var(--text-sub)', lineHeight: 1.6 }}>
+          <b style={{ color: 'var(--text-main)', fontSize: 11 }}>PARTIAL DATAの理由:</b>
+          {partialReasonsJa!.slice(0, 4).map((r, idx) => (
+            <span key={idx} style={{ display: 'block' }}>・{r}</span>
+          ))}
+          {partialRaiseJa && (
+            <span style={{ display: 'block', color: 'var(--text-faint)', fontSize: 10.5 }}>
+              解消条件: {partialRaiseJa}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* LOWER BLOCK (spec §2): IMPORTANT EVENTS inside the SAME command card,
           separated by a divider — so the owner learns why e.g. PCE matters right

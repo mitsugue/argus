@@ -17,6 +17,10 @@ interface Props {
   /** Override the four axis-end labels (defaults to the legacy
       Risk Off/On × Rates Relief/Pressure framing). */
   axisLabels?: AxisLabels;
+  /** v12.0.8 Part E: データが部分的な時は「現在地は暫定」を明示。 */
+  provisional?: boolean;
+  /** v12.0.8: 軸の意味と入力の説明(1〜2行・オーナー可読)。 */
+  axisHelpJa?: string;
 }
 
 const DEFAULT_AXIS_LABELS: AxisLabels = {
@@ -44,7 +48,7 @@ function plotY(y: number): number {
   return PAD_T + ((1 - y) / 2) * (H - PAD_T - PAD_B);
 }
 
-export const RegimeMatrix: React.FC<Props> = ({ state, compact = false, axisLabels = DEFAULT_AXIS_LABELS }) => {
+export const RegimeMatrix: React.FC<Props> = ({ state, compact = false, axisLabels = DEFAULT_AXIS_LABELS, provisional = false, axisHelpJa }) => {
   const cx = plotX(state.x);
   const cy = plotY(state.y);
   // Highlight the active quadrant with a faint tint.
@@ -150,10 +154,25 @@ export const RegimeMatrix: React.FC<Props> = ({ state, compact = false, axisLabe
         {/* Legend — the blue marker is the MARKET's current location, not your
             position. Grey dots are asset classes (also not holdings). */}
         <p className="matrix__legend">
-          <span className="matrix__legend-key"><i className="matrix__legend-dot matrix__legend-dot--current" />市場全体の現在地</span>
+          <span className="matrix__legend-key"><i className="matrix__legend-dot matrix__legend-dot--current" />市場全体の現在地{provisional ? '(暫定)' : ''}</span>
           <span className="matrix__legend-key"><i className="matrix__legend-dot matrix__legend-dot--asset" />各資産クラス</span>
           <span className="matrix__legend-note">※保有ポジションではありません</span>
         </p>
+        {/* v12.0.8 Part E: 軸の意味と入力を明示(「なぜここが現在地なのか」を隠さない) */}
+        {axisHelpJa && (
+          <p style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+            {axisHelpJa}{provisional ? ' データが部分的なため現在地は暫定です。' : ''}
+          </p>
+        )}
+        <details style={{ marginTop: 2 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>各点の座標(入力の内訳)を見る</summary>
+          <div style={{ fontSize: 10.5, color: 'var(--text-sub)', lineHeight: 1.7 }}>
+            <p style={{ margin: '2px 0' }}>現在地: x={state.x.toFixed(2)} / y={state.y.toFixed(2)}(±1に正規化・データ欠損は0=中立に写像し、根拠なく端に寄せません)</p>
+            {state.assets.map((a) => (
+              <span key={a.label} style={{ display: 'inline-block', marginRight: 10 }}>{a.label}: x={a.x.toFixed(2)} y={a.y.toFixed(2)}</span>
+            ))}
+          </div>
+        </details>
       </div>
 
       <aside className="matrix__sidebar">

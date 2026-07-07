@@ -39,6 +39,7 @@ import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { CollapsibleSection, resetTodayLayout } from '../components/common/CollapsibleSection';
+import { resolvePrimaryStance, type ResolvedStance } from '../domain/primaryStance';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { unreadCounts } from '../lib/notifications';
 import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
@@ -415,6 +416,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return plans;
   }, [assets, positionExposure, sdSignals, flowRecords, scenarioSets, apItems, impEvents, regime.data, portfolioStrategy]);
 
+
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
   useEffect(() => {
@@ -531,8 +533,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
 
   // v11.20.0: AI Review Pack用のイベント一行群(パック内でイベント要約は1回のみ)
   useEffect(() => {
+    // v12.0.8 Part B: パックにもイベント名だけでなく日付を必ず含める
     const lines = (impEvents?.events ?? []).slice(0, 6).map((ie) =>
-      `${ie.eventCode} ${ie.title} — ${ie.countdown}${ie.actual ? ` / 結果: ${ie.actual}` : ''}`);
+      `${ie.eventCode} ${ie.title} — ${ie.date ?? '日付未確認'}${ie.jstTime ? ` ${String(ie.jstTime).slice(11)}` : ''} (${ie.countdown})${ie.actual ? ` / 結果: ${ie.actual}` : ''}`);
     publishEventsJa(lines);
   }, [impEvents]);
 
@@ -576,6 +579,41 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     .filter((v): v is number => typeof v === 'number');
   const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
   const visLimited = !!guard && guard.visibilityLevel !== 'full';
+  // v12.0.8 Part C: 銘柄ごとの「単一の構え」(全カード共通チップ) — Session Brief /
+  // AP / Plan / カードの矛盾(P1なのに対応不要 等)を構造的に排除。売買指示ではない。
+  const stanceBySymbol = useMemo(() => {
+    const m = new Map<string, ResolvedStance>();
+    const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
+    const planBySym = new Map(positionPlans.map((pl) => [pl.symbol, pl]));
+    const scBySym = new Map(scenarioSets.map((sc) => [sc.symbol, sc]));
+    const sdBySym = new Map(sdSignals.map((sg) => [sg.symbol.toUpperCase(), sg]));
+    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r.flowClass]));
+    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
+    const heldSyms = new Set(positionExposure.notes ? Object.keys(positionExposure.notes) : []);
+    const eventSyms = new Set<string>();
+    for (const ie of impEvents?.events ?? []) {
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
+        for (const a of ie.linkedAssets ?? []) eventSyms.add(String(a).toUpperCase());
+      }
+    }
+    for (const a of assets) {
+      const sym = a.symbol.toUpperCase();
+      const ap = apBySym.get(sym);
+      const pl = planBySym.get(sym);
+      m.set(sym, resolvePrimaryStance({
+        isHeld: heldSyms.has(sym) || !!ap?.isHeld,
+        apRank: ap?.priorityRank, apLabel: ap?.actionLabel,
+        planStance: pl?.currentStance, scenarioDominant: scBySym.get(sym)?.dominant,
+        sdCondition: sdBySym.get(sym)?.condition, sdLevel: sdBySym.get(sym)?.supplyDemandLevel,
+        flowClass: flowBySym.get(sym), eventWait: eventSyms.has(sym),
+        riskLevel: riskBySym.get(sym), dataPartial: isPartial || visLimited,
+        baseConfidence: ap?.confidence,
+      }));
+    }
+    return m;
+  }, [assets, apItems, positionPlans, scenarioSets, sdSignals, flowRecords,
+      positionExposure, impEvents, isPartial, visLimited]);
+
 
   // ── Judgment log (device-local memory) ──
   // Record today's LIVE/PARTIAL call (mock is never logged — no fake history),
@@ -643,7 +681,19 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* Top page = the main hub (v10.140). Order: PRIMARY COMMAND (+ IMPORTANT
           EVENTS as its lower block) → per-stock category cards (JP first, watchlist
           before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
-      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial || visLimited} confidence={cappedConf} visibilityReasonJa={al.data?.visibility?.downgradeReasonJa} onNavigate={onNavigate} />
+      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial || visLimited} confidence={cappedConf} visibilityReasonJa={al.data?.visibility?.downgradeReasonJa}
+        partialReasonsJa={(() => {
+          // v12.0.8 Part D: 部分データの理由(実際に該当するものだけ・上位4件)
+          const rs: string[] = [];
+          if (guard?.coverageLineJa) rs.push(guard.coverageLineJa);
+          const dqc = latestDataQuality();
+          if (dqc && dqc.overallStatus !== 'ok') rs.push(`データ品質: ${dqc.overallStatusJa}(${dqc.topIssuesJa[0] ?? '一部ソースが古い/不明'})`);
+          rs.push('日本株リアルタイムはmoomoo側メンテナンス中(サポート確認済み) — 代替データで判定');
+          if (al.data?.status === 'partial') rs.push('判定ソースの一部が未取得(コールドキャッシュ/巡回待ち)');
+          return rs;
+        })()}
+        partialRaiseJa="JPリアルタイム復旧(ret=0確認後) / イベント・機関データの巡回更新 / 需給キャッシュのウォームで上限が上がります"
+        onNavigate={onNavigate} />
 
       {/* Structural coverage line (v10.195) — always present but MUTED (not an alarm):
           the owner is never falsely reassured that ARGUS sees everything. */}
@@ -729,7 +779,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       {/* v11.20.0: AI Review Pack — Todayから直接コピー(自動送信なし) */}
       <p style={{ margin: '0 0 6px' }}><ProHandoffButton /></p>
 
-      <ActionPrioritySection items={apItems}
+      <ActionPrioritySection items={apItems} stances={stanceBySymbol}
         scenarios={new Map(scenarioSets.map((s) => [s.symbol, s]))} />
 
       {/* POSITION PLAN (v11.18.0) — 今日の計画上位のみ(P0-P2/保有リスク/追いかけ注意/
@@ -776,8 +826,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         {() => <SupplyDemandSection signals={sdSignals} />}
       </CollapsibleSection>
 
-      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} />
-      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} />
+      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
+      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
 
       {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
           The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not
@@ -786,7 +836,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         conclusionJa="ウォッチリスト外の高確信候補(開いて確認)">
         {() => <BuyCandidates />}
       </CollapsibleSection>
-      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} />
+      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
 
       {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
       <CollapsibleSection title="FX / MACRO" persistKey="fxmacro" conclusionJa="ドル円・米金利・VIXの背景(開いて確認)">

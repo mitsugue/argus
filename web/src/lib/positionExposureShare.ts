@@ -65,3 +65,15 @@ export function latestDataQuality(): DataQualityShare | null { return latestDQx;
 let latestEV: string[] = [];
 export function publishEventsJa(lines: string[]): void { latestEV = lines; }
 export function latestEventsJa(): string[] { return latestEV; }
+
+// v12.0.8: 銘柄別OSINT帰属(候補原因) — OSINT Review Packが読む(端末内のみ)。
+export interface OsintShare {
+  symbol: string; headlineJa: string; osintConfidenceJa: string;
+  causes: { categoryJa: string; titleJa: string; source: string; whyWrongJa: string }[];
+  sourcesMissingJa: string[];
+}
+const latestOSINT = new Map<string, OsintShare>();
+export function publishOsint(o: OsintShare): void { latestOSINT.set(o.symbol.toUpperCase(), o); }
+export function latestOsint(symbol: string): OsintShare | null {
+  return latestOSINT.get(symbol.toUpperCase()) ?? null;
+}

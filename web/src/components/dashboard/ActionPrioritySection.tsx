@@ -5,6 +5,8 @@ import { jpDisplay } from '../../lib/displayName';
 import type { LocalScenarioSet } from '../../domain/scenario';
 import { DOM_TONE } from '../../domain/scenario';
 import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
+import type { ResolvedStance } from '../../domain/primaryStance';
+import { PRIMARY_STANCE_TONE } from '../../domain/primaryStance';
 
 // V11.12.0 — ACTION PRIORITY on Today (top area). アプリを開いた瞬間に
 // 「今日はこれを見る」が分かるための注意配分リスト。売買指示ではない。
@@ -12,7 +14,9 @@ import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
 // v11.17.0: P0〜P2のみ支配シナリオ一行を添える(P3以下はノイズになるので出さない)。
 
 export const ActionPrioritySection: React.FC<{ items: APItem[];
-  scenarios?: Map<string, LocalScenarioSet> }> = ({ items, scenarios }) => {
+  scenarios?: Map<string, LocalScenarioSet>;
+  /** v12.0.8: 単一の構え — APラベルと矛盾する時は構えを正とし上書き表示 */
+  stances?: Map<string, ResolvedStance> }> = ({ items, scenarios, stances }) => {
   const [showAll, setShowAll] = React.useState(false);
   const visible = items.filter((i) => i.priorityRank !== 'Ignore');
   const shown = showAll ? visible : visible.slice(0, 5);
@@ -42,9 +46,27 @@ export const ActionPrioritySection: React.FC<{ items: APItem[];
             <b style={{ marginLeft: 6 }}>{jpDisplay(it.symbol, it.assetName)}</b>
             {it.isHeld && <span style={{ marginLeft: 4, fontSize: 9.5, color: 'var(--amber, #fbbf24)',
                                          border: '1px solid var(--line)', borderRadius: 999, padding: '0 5px' }}>保有</span>}
-            <span style={{ marginLeft: 6, color: RANK_TONE[it.priorityRank], fontWeight: 600 }}>
-              {it.actionLabelJa}
-            </span>
+            {(() => {
+              // v12.0.8 Part C: 構え(単一)を正とする。APの生ラベルが構えと食い違う
+              // 場合(例: P1保有リスクなのに対応不要)は構えで上書きし、注記を出す。
+              const st = stances?.get(it.symbol.toUpperCase());
+              const conflict = !!st && st.stanceJa !== it.actionLabelJa;
+              const shown = st ? st.stanceJa : it.actionLabelJa;
+              return (
+                <>
+                  <span style={{ marginLeft: 6,
+                                 color: st ? PRIMARY_STANCE_TONE[st.primaryStance] : RANK_TONE[it.priorityRank],
+                                 fontWeight: 600 }}>
+                    {shown}
+                  </span>
+                  {conflict && (
+                    <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)' }}>
+                      (統一スタンス — 単層ラベル「{it.actionLabelJa}」を上書き)
+                    </span>
+                  )}
+                </>
+              );
+            })()}
             <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
               確度{Math.round(it.confidence * 100)}%
             </span>

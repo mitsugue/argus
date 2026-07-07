@@ -6,6 +6,7 @@ import type { APItem } from '../../domain/actionPriority';
 import type { LocalScenarioSet } from '../../domain/scenario';
 import type { LocalPlan } from '../../domain/positionPlan';
 import { UnifiedAssetCard } from './UnifiedAssetCard';
+import type { ResolvedStance } from '../../domain/primaryStance';
 import './AssetCategorySection.css';
 
 // A Today category container (v10.140): JAPAN WATCHLIST / US …, CRYPTO.
@@ -29,9 +30,11 @@ interface Props {
   scenarios?: LocalScenarioSet[];
   /** v11.18.0: 計画(端末内合成・売買指示なし). */
   plans?: LocalPlan[];
+  /** v12.0.8: 銘柄ごとの単一の構え(全カード共通チップ). */
+  stances?: Map<string, ResolvedStance>;
 }
 
-export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, emptyJa, positionNotes, supplyDemandSignals, actionPriorities, scenarios, plans }) => {
+export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, emptyJa, positionNotes, supplyDemandSignals, actionPriorities, scenarios, plans, stances }) => {
   const apBySym = React.useMemo(() => {
     const m = new Map<string, APItem>();
     for (const it of actionPriorities ?? []) m.set(it.symbol, it);
@@ -78,7 +81,8 @@ export const AssetCategorySection: React.FC<Props> = ({ title, sub, cards, empty
               supplyDemand={sdBySym.get(c.symbol.toUpperCase())}
               actionPriority={apBySym.get(c.symbol.toUpperCase())}
               scenario={scBySym.get(c.symbol.toUpperCase())}
-              plan={ppBySym.get(c.symbol.toUpperCase())} />
+              plan={ppBySym.get(c.symbol.toUpperCase())}
+              primaryStance={stances?.get(c.symbol.toUpperCase())} />
           ))}
           {cards.length > 5 && (
             <button className="acs-more" onClick={() => setExpanded((v) => !v)}>

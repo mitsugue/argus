@@ -39,6 +39,8 @@ const AI_BADGE: Record<string, { txt: string; tone: string }> = {
 const TONE: Record<string, string> = { up: 'var(--value-positive)', down: 'var(--value-negative)', flow: 'var(--event-medium)', news: 'var(--text-sub)', flat: 'var(--text-sub)' };
 
 import { AiExplanationBlock } from './AiExplanationBlock';
+import type { ResolvedStance } from '../../domain/primaryStance';
+import { PRIMARY_STANCE_TONE } from '../../domain/primaryStance';
 import type { PositionNote } from '../../domain/positionExposure';
 import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
 import { RANK_TONE } from '../../hooks/useSupplyDemand';
@@ -87,9 +89,11 @@ interface Props { card: AssetCardModel; open: boolean; onToggle: () => void;
   /** v11.17.0: 条件付きシナリオ(端末内合成・保有加味). */
   scenario?: LocalScenarioSet;
   /** v11.18.0: 計画(端末内合成・売買指示なし). */
-  plan?: LocalPlan; }
+  plan?: LocalPlan;
+  /** v12.0.8: 銘柄ごとの単一の構え(全カード共通・矛盾排除). */
+  primaryStance?: ResolvedStance; }
 
-export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg, actionPriority: apx, scenario: scn, plan: ppl }) => {
+export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, positionNote: pn, supplyDemand: sdg, actionPriority: apx, scenario: scn, plan: ppl, primaryStance: pst }) => {
   const sigColor = `var(${SIGNALS[c.signalCode].token})`;
   const ai = AI_BADGE[c.aiFreshness] ?? AI_BADGE.rule_only;
 
@@ -124,6 +128,25 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
 
       {open && (
         <div className="uac-body">
+          {/* v12.0.8 Part C: 単一の構え(PRIMARY STANCE) — Session Brief/AP/Plan/カードで
+              同一チップを表示し矛盾を排除。下のセクションは詳細説明であり別判断ではない。 */}
+          {pst && (
+            <p className="uac-next" style={{ margin: '0 0 4px', fontSize: 12 }}>
+              <b style={{ color: PRIMARY_STANCE_TONE[pst.primaryStance],
+                          border: `1px solid ${PRIMARY_STANCE_TONE[pst.primaryStance]}`,
+                          borderRadius: 999, padding: '1px 9px' }}>
+                構え: {pst.stanceJa}
+              </b>
+              <span style={{ marginLeft: 6, color: 'var(--text-faint)', fontSize: 10.5 }}>
+                確度{Math.round(pst.confidence * 100)}%{pst.capNotesJa.length > 0 ? ` · ${pst.capNotesJa[0]}` : ''}
+              </span>
+              {pst.reasonsJa.length > 0 && (
+                <span style={{ display: 'block', marginTop: 2, color: 'var(--text-sub)', fontSize: 10.5 }}>
+                  {pst.reasonsJa.join(' / ')}
+                </span>
+              )}
+            </p>
+          )}
           <div className="uac-av">
             <div className="uac-av-h"><b>ARGUS VIEW</b>{c.lastUpdate && <span> · {c.lastUpdate}</span>}</div>
             <p className="uac-av-t">{c.argusViewJa}</p>
@@ -355,7 +378,7 @@ export const UnifiedAssetCard: React.FC<Props> = ({ card: c, open, onToggle, pos
               詳細データ折りたたみの外に常時表示(v11.21の圧縮で埋まっていた)。 */}
           <div className="uac-sec">
             <div className="uac-sec-t">今の動きを調べる</div>
-            <AiExplanationBlock symbol={c.symbol} market={c.market} context="asset-card" dense />
+            <AiExplanationBlock symbol={c.symbol} market={c.market} context="asset-card" dense labelJa="この原因を再確認(公式・ニュース・検索を再走査)" />
           </div>
 
           {/* Named institutional views attached to THIS asset (public metadata).

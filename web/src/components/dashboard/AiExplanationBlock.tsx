@@ -17,6 +17,8 @@ interface Props {
   context: 'cause-stack' | 'mover-card' | 'downside-card' | string;
   /** compact styling for dense cards (downside/mover) */
   dense?: boolean;
+  /** v12.0.8: ボタン文言の上書き(例: 「この原因を再確認」)。 */
+  labelJa?: string;
 }
 
 function hhmm(iso?: string): string {
@@ -36,7 +38,7 @@ function sourceJa(s: string): string {
   return s;
 }
 
-export function AiExplanationBlock({ explanationJa, explanationStatus, symbol, market, context, dense }: Props) {
+export function AiExplanationBlock({ explanationJa, explanationStatus, symbol, market, context, dense, labelJa }: Props) {
   const [investigating, setInvestigating] = React.useState(false);
   const [result, setResult] = React.useState<InvestigateNowResult | null>(null);
   const disp = aiExplanationDisplay(explanationJa, explanationStatus);
@@ -77,7 +79,7 @@ export function AiExplanationBlock({ explanationJa, explanationStatus, symbol, m
           background: 'transparent', color: 'var(--accent)',
           border: '1px solid var(--line)', borderRadius: 6, padding: '3px 10px',
         }}
-      >{investigating ? '最新材料を調査中…' : '理由を詳しく調べる'}</button>
+      >{investigating ? '最新材料を調査中…' : (labelJa ?? '理由を詳しく調べる')}</button>
 
       {!result && !investigating && (
         <span style={{ ...faint, display: 'block', marginTop: 4 }}>

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useCauseAttribution } from '../../hooks/useCauseAttribution';
+import { publishOsint } from '../../lib/positionExposureShare';
 import { freshnessLineJa, marketConfLineJa } from './DownsideIncidentCard';
 import { aiExplanationDisplay, newsDisplayTitleJa } from '../../lib/aiExplanationState';
 import { AiExplanationBlock } from './AiExplanationBlock';
@@ -78,6 +79,19 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string;
   }, [symbol, market]);
   const ai = aiExplanationDisplay(expl?.text, expl?.status);
 
+  // v12.0.8: OSINT帰属をOSINT Review Packへ共有(端末内のみ・自動送信なし)
+  React.useEffect(() => {
+    const o = data?.osint;
+    if (!o) return;
+    publishOsint({
+      symbol: data?.symbol || symbol,
+      headlineJa: o.headlineJa, osintConfidenceJa: o.osintConfidenceJa,
+      causes: (o.causes || []).slice(0, 5).map((cz) => ({
+        categoryJa: cz.categoryJa, titleJa: cz.titleJa, source: cz.source, whyWrongJa: cz.whyWrongJa })),
+      sourcesMissingJa: o.sourcesMissingJa || [],
+    });
+  }, [data, symbol]);
+
   // v11.5.2: guarantee visible English news enters the translation queue. Once per
   // (symbol, session): POST the pending titles, then flip the chip to 翻訳リクエスト済み.
   const [newsRequested, setNewsRequested] = React.useState(false);
@@ -134,6 +148,37 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string;
           />
         )}
       </div>
+
+      {/* v12.0.8 Part A: 下落/上昇の候補原因(OSINT帰属) — 直接材料/テーマ連想/
+          マクロ/不明を分離し、弱い推測を事実として出さない。 */}
+      {data?.osint && (data.osint.causes || []).length > 0 && (
+        <div className="csc-trigger" style={{ display: 'block' }}>
+          <div>
+            <span className="csc-k">{typeof data.changePct === 'number' && data.changePct < 0 ? '下落の候補原因' : '上昇/変動の候補原因'}</span>
+            <span style={{ fontSize: 10.5, color: 'var(--text-faint)', marginLeft: 6 }}>
+              OSINT確度: {data.osint.osintConfidenceJa}(候補であり断定ではない)
+            </span>
+          </div>
+          <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-main)' }}>{data.osint.headlineJa}</p>
+          {(data.osint.causes || []).slice(0, 4).map((cz) => (
+            <p key={cz.rank} style={{ margin: '3px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>
+              {cz.rank}. <span style={{ fontSize: 9.5, border: '1px solid var(--line)', borderRadius: 999,
+                                        padding: '0 6px', color: cz.category.startsWith('direct') ? 'var(--value-positive)'
+                                          : cz.category === 'stale_background' ? 'var(--text-faint)' : 'var(--event-medium)' }}>
+                {cz.categoryJa}
+              </span> {cz.titleJa}
+              {cz.ageHours != null && <span style={{ color: 'var(--text-faint)', fontSize: 10, marginLeft: 4 }}>
+                ({cz.ageHours < 24 ? `${Math.floor(cz.ageHours)}h前` : `${Math.floor(cz.ageHours / 24)}日前`}
+                {cz.primaryEligible ? '' : ' · 主因候補外'})</span>}
+              <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>外れの可能性: {cz.whyWrongJa}</span>
+            </p>
+          ))}
+          {(data.osint.sourcesMissingJa || []).map((x, i) => (
+            <p key={`sm${i}`} style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--amber, #fbbf24)' }}>⚠ {x}</p>
+          ))}
+          <OsintPackCopy symbol={data.symbol || symbol} />
+        </div>
+      )}
 
       {data && (<>
       {/* v11.3.3 Mover Cause ladder — replaces the bare 確認できず/原因未確認 row */}
@@ -346,5 +391,30 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string;
       </>)}
       <p className="csc-foot">決定支援のみ・原因の断定や機関名の名指しはしません。</p>
     </section>
+  );
+};
+
+// v12.0.8 Part F: OSINT Review Pack — 外部AI(GPT/Gemini)にOSINT診断を頼むための
+// コピー専用パック(自動送信なし・redactedは保有情報ゼロ)。
+const OsintPackCopy: React.FC<{ symbol: string }> = ({ symbol }) => {
+  const [msg, setMsg] = React.useState<string | null>(null);
+  const doCopy = async (privacyMode: 'owner_copy' | 'redacted') => {
+    const { buildReviewPackMarkdown, copyPack } = await import('../../lib/reviewPack');
+    const md = buildReviewPackMarkdown({ packType: 'osint', privacyMode, length: 'full',
+      appVersion: __APP_VERSION__, symbol });
+    setMsg(await copyPack(md) ? '✓ OSINT診断用にコピーしました' : 'コピー失敗');
+    window.setTimeout(() => setMsg(null), 2500);
+  };
+  return (
+    <p style={{ margin: '4px 0 0', fontSize: 10.5 }}>
+      外部AIでOSINT診断:
+      <button type="button" style={{ fontSize: 10.5, cursor: 'pointer', marginLeft: 5,
+        background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
+        borderRadius: 5, padding: '1px 7px' }} onClick={() => void doCopy('owner_copy')}>コピー</button>
+      <button type="button" style={{ fontSize: 10.5, cursor: 'pointer', marginLeft: 5,
+        background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
+        borderRadius: 5, padding: '1px 7px' }} onClick={() => void doCopy('redacted')}>redacted</button>
+      {msg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{msg}</span>}
+    </p>
   );
 };

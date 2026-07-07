@@ -184,6 +184,8 @@ export const MarketRegime: React.FC = () => {
             state={matrix}
             compact
             axisLabels={{ xNeg: 'Defensive', xPos: 'Growth', yNeg: 'Duration', yPos: 'Risk' }}
+            provisional={data?.status !== 'live'}
+            axisHelpJa="横軸=グロース優位(右)↔ディフェンシブ優位(左)、縦軸=リスク選好(上)↔デュレーション/守り(下)。入力はUS ETF 8本(SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG)の資金フロー実測プロキシ。"
           />
         </section>
       )}
@@ -222,6 +224,8 @@ export const MarketRegime: React.FC = () => {
             state={jpMatrix}
             compact
             axisLabels={{ xNeg: 'Defensive', xPos: 'Growth', yNeg: 'Duration', yPos: 'Risk' }}
+            provisional={data?.status !== 'live'}
+            axisHelpJa="横軸=グロース優位↔ディフェンシブ優位、縦軸=リスク選好↔守り。入力はTOPIX-17セクターETFの資金フロー(取得できたセクターのみ・欠損は中立0に写像)。"
           />
         </section>
       )}

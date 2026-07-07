@@ -45,6 +45,18 @@ export interface CauseStack {
   }[];
   /** v11.7.0: evidence-based flow reading (可能性/推定 only; never a trade signal). */
   flowAttribution?: import('./useFlowAttribution').FlowAttribution | null;
+  /** v12.0.8: OSINT帰属レビュー — 候補原因の分類(直接/テーマ連想/マクロ/古い/不明)。 */
+  osint?: {
+    causes: { rank: number; titleJa: string; source: string; sourceClass: string;
+              publishedAt?: string | null; ageHours?: number | null;
+              category: string; categoryJa: string; primaryEligible: boolean;
+              whyWrongJa: string }[];
+    primary: { titleJa: string; category: string; categoryJa: string } | null;
+    osintConfidence: 'high' | 'medium' | 'low' | 'unknown';
+    osintConfidenceJa: string;
+    headlineJa: string;
+    sourcesMissingJa: string[];
+  } | null;
   explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
   explanationStatus?: 'cached' | 'not_generated' | 'pending' | 'disabled' | 'budget_limited' | 'error';
   explanationGeneratedAt?: string | null;
