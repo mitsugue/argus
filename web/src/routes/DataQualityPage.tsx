@@ -37,7 +37,11 @@ interface Console {
     recoveryEtaJa?: string | null; postRecoveryActionJa?: string | null };
   osintHealth?: { geminiProviderConfigured: boolean; gptProviderConfigured: boolean;
     agentQueueDepth: number; lastDeepDiveAt: string | null; lastAgentsRunAt: string | null;
-    canaryStatus: string; canaryMissedByArgus: number; canaryNoteJa: string; noteJa: string };
+    canaryStatus: string; canaryMissedByArgus: number; canaryNoteJa: string; noteJa: string;
+    // v12.1.1: 優位性/ベンチ/メモリ/パーサ
+    superiorityLatest?: string; unresolvedGeminiOnlyTotal?: number;
+    benchmarkWarnJa?: string | null; memoryRecords?: number;
+    memoryPersisted?: boolean; parserWarnings?: number };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -311,6 +315,23 @@ export const DataQualityPage: React.FC = () => {
                   {c.osintHealth.canaryMissedByArgus > 0 && ` (ARGUS見落とし ${c.osintHealth.canaryMissedByArgus}件)`}
                   {' '}— {c.osintHealth.canaryNoteJa}
                 </p>
+                {/* v12.1.1: 優位性・ベンチ・恒久メモリ・パーサ健全性 */}
+                <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                  優位性(最新): <b style={{ color: c.osintHealth.superiorityLatest === 'below_gemini'
+                    ? 'var(--amber, #fbbf24)' : 'var(--text-sub)' }}>
+                    {({ exceeds_gemini: 'Gemini超過', matches_gemini: 'Gemini同等',
+                        below_gemini: 'Gemini未満', insufficient_data: '判定保留',
+                        not_run: '未実行' } as Record<string, string>)[c.osintHealth.superiorityLatest ?? 'not_run'] ?? '未実行'}
+                  </b>
+                  {' '}· 未回収Gemini-only合計: {c.osintHealth.unresolvedGeminiOnlyTotal ?? 0}件
+                  {' '}· 恒久メモリ: {c.osintHealth.memoryRecords ?? 0}件{c.osintHealth.memoryPersisted ? '(永続化済み)' : ''}
+                  {' '}· パーサ警告: {c.osintHealth.parserWarnings ?? 0}
+                </p>
+                {c.osintHealth.benchmarkWarnJa && (
+                  <p className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>
+                    ⚠ {c.osintHealth.benchmarkWarnJa}
+                  </p>
+                )}
                 <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
                   {c.osintHealth.noteJa}
                 </p>

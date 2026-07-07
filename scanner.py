@@ -7245,6 +7245,25 @@ def _data_quality_console():
                              "ok" if cd else "not_run"),
             "canaryMissedByArgus": cd.get("missedByArgusCount", 0),
             "canaryNoteJa": cd.get("noteJa") or "canary未実行",
+            # v12.1.1: 優位性/ベンチ/メモリ/パーサ健全性
+            "superiorityLatest": (lambda invs: (
+                sorted({(i.get("superiority") or {}).get("superiorityStatus", "insufficient_data")
+                        for i in invs},
+                       key=lambda x: ["below_gemini", "insufficient_data",
+                                      "matches_gemini", "exceeds_gemini"].index(x)
+                       if x in ("below_gemini", "insufficient_data",
+                                "matches_gemini", "exceeds_gemini") else 1)[0]
+                if invs else "not_run"))(list(_OSINT_STORE.values())),
+            "unresolvedGeminiOnlyTotal": sum(
+                (i.get("superiority") or {}).get("argusMissedImportantCount", 0)
+                for i in _OSINT_STORE.values()),
+            "benchmarkWarnJa": ("Gemini級OSINTベンチマーク未達"
+                                if any(r.get("status") == "missed_by_argus"
+                                       and r.get("topic") == "samsung_anthropic_ai_chip"
+                                       for r in (cd.get("rows") or [])) else None),
+            "memoryRecords": len(_OSINT_MEMORY),
+            "memoryPersisted": os.path.exists(_OSINT_PERSIST_FILE),
+            "parserWarnings": len(_OSINT_PARSER_HEALTH.get("lastWarnings") or []),
             "noteJa": ("外部AIスカウトは管理側実行のみ(公開画面から起動しない)。"
                        "プロバイダ未設定時は『外部AIベンチマーク未実行』と表示。"),
         }
@@ -14553,7 +14572,159 @@ _OSINT_CANARY_TOPICS = [
     {"topic": "fomc", "expectedKeywords": ["FOMC"], "impactJa": "金融政策イベント"},
     {"topic": "jp_semis_theme",
      "expectedKeywords": ["半導体", "AI"], "impactJa": "日本の半導体/光半導体テーマ"},
+    # v12.1.1: ベンチ拡張(Gemini級基準)
+    {"topic": "hamamatsu_optical_value_chain",
+     "expectedKeywords": ["光半導体", "フォトニクス"],
+     "impactJa": "浜松型の光半導体/AIバリューチェーン検出"},
+    {"topic": "direct_company_disclosure",
+     "expectedKeywords": ["決算", "開示"], "impactJa": "直接開示の取り込み"},
+    {"topic": "global_ai_capex",
+     "expectedKeywords": ["capex", "AI投資"], "impactJa": "海外AI投資/採算ニュース"},
 ]
+
+# ── v12.1.1: 恒久メモリ+URL実検証キャッシュ+進捗 ───────────────────────────
+_OSINT_MEMORY = []                     # engine.memory_record(public_safeのみ)・有界
+_OSINT_MEMORY_MAX = 200
+_OSINT_URL_CACHE = {}                  # norm_url -> {title, publishedAt, domain, status, at}
+_OSINT_URL_CACHE_MAX = 120
+_OSINT_PROGRESS = {}                   # SYM -> {stage, loop, maxLoops, notesJa[], at}
+_OSINT_PERSIST_FILE = "/tmp/argus_osint_memory.json"
+_OSINT_PERSIST_STATE = {"restored": False}
+_OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
+_OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
+
+
+def _osint_persist():
+    try:
+        blob = {"termOverlay": _OSINT_TERM_OVERLAY, "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
+                "urlCache": dict(list(_OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
+                "canaryLast": _OSINT_CANARY_LAST}
+        tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(blob, f, ensure_ascii=False)
+        os.replace(tmp, _OSINT_PERSIST_FILE)
+    except Exception:
+        pass
+
+
+def _osint_restore_once():
+    """再デプロイ後の復元: ①/tmp(同一インスタンス再起動) ②ledgerブランチの
+    公開安全スナップショット(watchtowerが定期コミット)。私的情報は設計上入らない。"""
+    if _OSINT_PERSIST_STATE["restored"]:
+        return
+    _OSINT_PERSIST_STATE["restored"] = True
+    blob = None
+    try:
+        with open(_OSINT_PERSIST_FILE, encoding="utf-8") as f:
+            blob = json.load(f)
+    except Exception:
+        pass
+    if blob is None:
+        try:
+            r = requests.get(f"{_LEDGER_RAW_BASE}/osint/memory.json?cb={int(time.time())}", timeout=6)
+            if r.status_code == 200:
+                blob = r.json()
+        except Exception:
+            blob = None
+    if not isinstance(blob, dict):
+        return
+    try:
+        for k, v in (blob.get("termOverlay") or {}).items():
+            if isinstance(v, list):
+                cur = _OSINT_TERM_OVERLAY.get(k) or []
+                _OSINT_TERM_OVERLAY[k] = (cur + [t for t in v if t not in cur])[:12]
+        for rec in (blob.get("memory") or [])[:_OSINT_MEMORY_MAX]:
+            if isinstance(rec, dict) and rec.get("privacyLevel") == "public_safe":
+                _OSINT_MEMORY.append(rec)
+        for k, v in (blob.get("urlCache") or {}).items():
+            _OSINT_URL_CACHE[k] = v
+        cl = blob.get("canaryLast")
+        if isinstance(cl, dict) and cl.get("data") and not _OSINT_CANARY_LAST.get("data"):
+            _OSINT_CANARY_LAST.update(cl)
+    except Exception:
+        pass
+
+
+def _osint_fetch_url_meta(url):
+    """v12.1.1 Part C: 未知URLの公開メタデータ(title/日付)を安全に実取得。
+    admin worker経路のみから呼ばれる(公開GET/POSTからは呼ばない)。ペイウォール
+    本文は取らない — <title>とmetaのみ。失敗はinaccessible(捏造なし)。"""
+    key = argus_osint_engine._norm_url(url)
+    hit = _OSINT_URL_CACHE.get(key)
+    if hit:
+        return hit
+    meta = {"status": "inaccessible", "title": None, "publishedAt": None,
+            "domain": None, "at": _ai_now_iso()}
+    try:
+        m = re.match(r"^https?://([\w.\-]+)/", str(url).strip() + "/")
+        if not m:
+            _OSINT_URL_CACHE[key] = meta
+            return meta
+        meta["domain"] = m.group(1)[:60]
+        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0 (ARGUS OSINT verifier)"},
+                         stream=True)
+        if r.status_code != 200:
+            meta["status"] = "inaccessible"
+        else:
+            head = r.raw.read(40000, decode_content=True) or b""
+            txt = head.decode(r.encoding or "utf-8", errors="replace")
+            t = re.search(r"<title[^>]*>(.*?)</title>", txt, re.S | re.I)
+            og = re.search(r'property=["\']og:title["\'][^>]*content=["\']([^"\']+)', txt, re.I) or \
+                re.search(r'content=["\']([^"\']+)["\'][^>]*property=["\']og:title', txt, re.I)
+            dt = re.search(r'(?:article:published_time|datePublished)["\']?\s*(?:content=|:)\s*["\']([\dT:+\-Z.]{8,32})', txt, re.I)
+            title = (og.group(1) if og else (t.group(1) if t else "")).strip()[:160]
+            if title:
+                meta["status"] = "metadata_only"
+                meta["title"] = title
+                if dt:
+                    meta["publishedAt"] = dt.group(1)
+    except Exception:
+        meta["status"] = "inaccessible"
+    _OSINT_URL_CACHE[key] = meta
+    while len(_OSINT_URL_CACHE) > _OSINT_URL_CACHE_MAX:
+        _OSINT_URL_CACHE.pop(next(iter(_OSINT_URL_CACHE)), None)
+    return meta
+
+
+def _osint_live_upgrade(vs, claim, now_iso, sym="GLOBAL"):
+    """未検証claim(URLあり)をライブメタ取得で昇格: 取得titleがclaim titleと
+    十分重なればverified、取得できたがズレるならmetadata_only(実取得titleを表示)。"""
+    url = claim.get("url")
+    if not url or vs.get("verificationStatus") == "verified":
+        return vs
+    meta = _osint_fetch_url_meta(url)
+    if meta.get("status") == "inaccessible":
+        vs["labelJa"] = "未検証(参照不能/ペイウォール)"
+        return vs
+    fetched = str(meta.get("title") or "")
+    claimed = str(claim.get("titleJa") or claim.get("title") or "")
+    # 日本語は分かち書きが無いため文字bigramで類似判定(トークン比較は破綻する)
+    def _grams(t):
+        t2 = re.sub(r"[\s\W]+", "", t.lower())
+        return {t2[i:i + 2] for i in range(len(t2) - 1)} if len(t2) >= 2 else set()
+    g1, g2 = _grams(claimed), _grams(fetched)
+    overlap = (len(g1 & g2) / max(1, len(g1))) if g1 else 0.0
+    vs = dict(vs)
+    vs["fetchedTitle"] = fetched[:160] or None
+    vs["publishedAt"] = vs.get("publishedAt") or meta.get("publishedAt")
+    if fetched and overlap >= 0.35:
+        age_h = argus_news_freshness.age_hours(vs.get("publishedAt"), now_iso) \
+            if vs.get("publishedAt") else None
+        vs["verificationStatus"] = "verified"
+        vs["verifiedAt"] = now_iso
+        vs["labelJa"] = "検証済み(ライブ取得)"
+        vs["primaryEligible"] = age_h is not None and age_h <= 96
+        # 恒久メモリ+今後のindexに載せる(公開安全メタのみ)
+        rec = argus_osint_engine.memory_record(
+            symbol=sym, source_url=url,
+            source_title=fetched, learned_from="gemini", verified=True,
+            now_iso=now_iso)
+        if rec:
+            _OSINT_MEMORY.append(rec)
+    else:
+        vs["verificationStatus"] = "metadata_only"
+        vs["labelJa"] = "未検証(ライブtitle不一致)" if fetched else vs["labelJa"]
+    return vs
 
 
 def _osint_pool_items(cap=400):
@@ -14643,8 +14814,9 @@ def _gemini_osint(prompt):
                 if cfg else client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
                                                            contents=prompt))
         txt = getattr(resp, "text", None) or ""
-        out = safe_json(txt)
-        return (out if isinstance(out, dict) else {"claims": [], "rawLen": len(txt)}), "ok"
+        out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
+        out["parserWarnings"] = warns
+        return out, "ok"
     except Exception as e:
         add_log(f"[osint] gemini scout failed: {type(e).__name__}")
         return None, "failed"
@@ -14655,11 +14827,12 @@ def _gpt_osint(prompt):
     if not _OPENAI_API_KEY:
         return None, "disabled"
     try:
-        txt = _openai_research(prompt + "\n出力は上記JSONのみ。")
+        txt = _openai_research(prompt + "\n出力は必ず上記JSONを含めること(前置きの説明文があってもよい)。")
         if not txt:
             return None, "failed"
-        out = safe_json(txt)
-        return (out if isinstance(out, dict) else {"claims": [], "rawLen": len(txt)}), "ok"
+        out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
+        out["parserWarnings"] = warns
+        return out, "ok"
     except Exception as e:
         add_log(f"[osint] gpt scout failed: {type(e).__name__}")
         return None, "failed"
@@ -14677,6 +14850,7 @@ def _osint_agent_run(provider, status, out, now_iso, privacy_mode):
             if status == "ok" else None,
             "promptType": "osint_scout", "startedAt": now_iso, "completedAt": now_iso,
             "status": status, "claims": claims,
+            "parserWarnings": (out or {}).get("parserWarnings") or [],
             "citedSources": [c.get("url") or c.get("sourceName") for c in claims if c],
             "missingEvidence": (out or {}).get("notFoundJa") or [],
             "failureReasonRedacted": None if status in ("ok", "disabled") else "provider_error",
@@ -14694,13 +14868,19 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
             break
     plan = argus_osint_engine.build_query_plan(prof, move_pct=chg, extra_terms=extra)
     cands, counts, flow_hint = _osint_retrieve(symu, market, plan)
-    idx = argus_osint_engine.build_known_index(_osint_pool_items())
+    _osint_restore_once()
+    pool = _osint_pool_items()
+    # 恒久メモリの検証済み公開メタも既知indexへ(過去に回収したGemini-onlyは即verified)
+    pool += [{"titleJa": m.get("sourceTitle"), "url": m.get("sourceUrl"),
+              "publishedAt": None} for m in _OSINT_MEMORY if m.get("verified")]
+    idx = argus_osint_engine.build_known_index(pool)
     verified = [argus_osint_engine.verify_source(c, idx, now_iso) for c in cands]
     # 外部AIの主張も検証(LLM出力は検証まで証拠でない)
     for r in agent_runs:
         for c in (r.get("claims") or []):
             v = argus_osint_engine.verify_source(c, idx, now_iso)
             c["verified"] = v["verificationStatus"] == "verified"
+            c["_freshness"] = v["freshness"]
             verified.append(v)
     bench = argus_osint_engine.compare_benchmark(
         [c.get("titleJa") or "" for c in cands], agent_runs)
@@ -14710,6 +14890,12 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
         retrieved_counts=counts, verified=verified, agent_runs=agent_runs,
         benchmark=bench, flow_hint=flow_hint,
         canary_degraded=bool((_OSINT_CANARY_LAST.get("data") or {}).get("degraded")))
+    # v12.1.1 Part A: 優位性メトリクス(未回収Gemini-onlyがあればexceeds不可)
+    inv["superiority"] = argus_osint_engine.superiority_metrics(
+        verified, agent_runs, bench, inv["coverageScore"],
+        argus_titles=[c.get("titleJa") or "" for c in cands],
+        context_added=bool(flow_hint))
+    _osint_persist()
     # missed-by-argus → 探索語オーバーレイに自動追加(有界)
     if bench.get("missedByArgusCount"):
         terms = argus_osint_engine.extract_expansion_terms(agent_runs, cap=4)
@@ -14719,6 +14905,17 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
     while len(_OSINT_STORE) > _OSINT_STORE_MAX:
         _OSINT_STORE.pop(next(iter(_OSINT_STORE)), None)
     return inv
+
+
+def _osint_next_cron_eta_min():
+    """caos-scan cron(毎時:00/:30)までの分数 — 「いつ反映されるか」を正直に出す。"""
+    try:
+        now = datetime.now(pytz.utc)
+        mins = now.minute
+        nxt = 30 if mins < 30 else 60
+        return max(1, nxt - mins)
+    except Exception:
+        return None
 
 
 @app.route("/api/argus/osint/deep-dive", methods=["POST"])
@@ -14740,12 +14937,28 @@ def api_argus_osint_deep_dive():
                            "status": ("queued" if (_OPENAI_API_KEY if qr["provider"] == "gpt"
                                                    else (google_genai and GEMINI_API_KEY))
                                       else "disabled")})
+    # v12.1.1 Part E: 二重実行防止 — 既にキュー済み/実行中なら新規jobを作らない
+    pr = _OSINT_PROGRESS.get(sym) or {}
+    if sym in _OSINT_AGENT_QUEUE or pr.get("stage") in (
+            "planning", "gemini_scout", "gpt_scout", "verification", "research_loop"):
+        pos = (list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1
+               if sym in _OSINT_AGENT_QUEUE else 0)
+        return jsonify({"ok": True, "investigation": _OSINT_STORE.get(sym),
+                        "duplicate": True, "progress": pr,
+                        "queuePosition": pos, "nextCronEtaMin": _osint_next_cron_eta_min(),
+                        "agentNoteJa": "すでに調査ジョブが進行中です(二重実行はしません)。"})
     inv = _osint_build(sym, mkt, mode, priv, "owner_request", agent_runs, now_iso)
     if len(_OSINT_AGENT_QUEUE) < _OSINT_QUEUE_MAX:
         _OSINT_AGENT_QUEUE[sym] = {"market": mkt, "mode": mode,
                                    "privacyMode": priv, "queuedAt": now_iso}
+    _osint_set_progress(sym, "queued_for_agents", 0,
+                        _OSINT_LOOP_BUDGET.get(mode, 2),
+                        "決定論調査は完了。Gemini/GPTスカウトは管理側cronで実行されます。")
     _OSINT_LAST["deepAt"] = now_iso
     return jsonify({"ok": True, "investigation": inv,
+                    "progress": _OSINT_PROGRESS.get(sym),
+                    "queuePosition": list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1,
+                    "nextCronEtaMin": _osint_next_cron_eta_min(),
                     "agentNoteJa": "Gemini/GPTスカウトはキュー済み(管理側の定期実行で反映・"
                                    "公開画面から外部AIは起動しません)。"})
 
@@ -14754,9 +14967,14 @@ def api_argus_osint_deep_dive():
 def api_argus_osint_investigation():
     """公開GET: 最新のOSINT調査(cached-only・redacted設計)。無ければ正直にnone。"""
     sym = str(request.args.get("symbol") or "").strip().upper()
+    _osint_restore_once()
     inv = _OSINT_STORE.get(sym)
     return jsonify({"status": "live" if inv else "none", "symbol": sym or None,
                     "investigation": inv,
+                    "progress": _OSINT_PROGRESS.get(sym),
+                    "queuePosition": (list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1
+                                      if sym in _OSINT_AGENT_QUEUE else None),
+                    "nextCronEtaMin": _osint_next_cron_eta_min() if sym in _OSINT_AGENT_QUEUE else None,
                     "noteJa": None if inv else "深掘りOSINTは未実行です。"})
 
 
@@ -14781,36 +14999,93 @@ def api_argus_osint_terms():
                     "noteJa": "今後の探索語に追加しました(貼り戻し本文はサーバーに保存しません)。"})
 
 
+def _osint_set_progress(sym, stage, loop=0, max_loops=0, note=None):
+    pr = _OSINT_PROGRESS.setdefault(sym, {"notesJa": []})
+    pr.update({"stage": stage, "loop": loop, "maxLoops": max_loops, "at": _ai_now_iso()})
+    if note:
+        pr["notesJa"] = (pr.get("notesJa") or [])[-4:] + [note]
+
+
 def _osint_agents_worker(syms):
-    """バックグラウンドでGemini/GPTスカウトを実行(HTTPワーカーtimeout回避 —
-    v12.1.0実測: 同期実行はGemini+GPTで180秒超になりrequestが殺された)。"""
-    now_iso = _ai_now_iso()
+    """バックグラウンドでGemini/GPTスカウト→検証→再探索ループを実行。
+    v12.1.1: Gemini-onlyの未回収claimに追撃クエリ+URLライブ検証で回収を試み、
+    昇格件数/未回収件数を進捗として正直に出す。"""
     results = []
     try:
         for sym in syms:
+            now_iso = _ai_now_iso()
             meta = _OSINT_AGENT_QUEUE.pop(sym, None) or {
                 "market": "JP" if sym[:1].isdigit() else "US",
                 "mode": "deep", "privacyMode": "redacted"}
+            max_loops = _OSINT_LOOP_BUDGET.get(meta.get("mode"), 2)
+            _osint_set_progress(sym, "planning", 0, max_loops)
             prof = _osint_profile(sym, meta["market"])
             plan = argus_osint_engine.build_query_plan(
                 prof, extra_terms=_OSINT_TERM_OVERLAY.get(sym) or [])
             runs = [_osint_agent_run("deterministic", "ok", None, now_iso,
                                      meta["privacyMode"])]
             for prov, caller in (("gemini", _gemini_osint), ("gpt", _gpt_osint)):
+                _osint_set_progress(sym, f"{prov}_scout", 0, max_loops)
                 prompt = argus_osint_engine.build_scout_prompt(
                     prov, prof, plan, move_pct=None,
                     privacy_mode=meta["privacyMode"])
                 out, status = caller(prompt)
                 runs.append(_osint_agent_run(prov, status, out, now_iso,
                                              meta["privacyMode"]))
+            try:
+                _OSINT_PARSER_HEALTH["lastWarnings"] = [
+                    w for r in runs for w in (r.get("parserWarnings") or [])]
+                _OSINT_PARSER_HEALTH["at"] = now_iso
+            except Exception:
+                pass
+            _osint_set_progress(sym, "verification", 0, max_loops)
             inv = _osint_build(sym, meta["market"], meta["mode"],
                                meta["privacyMode"], "admin_agents_run", runs, now_iso)
+
+            # ── v12.1.1 Part D: 反復再探索(未回収Gemini/GPT-onlyの回収) ──
+            for loop_i in range(1, max_loops + 1):
+                argus_titles = [v.get("titleJa") or "" for v in inv["evidenceLedger"]]
+                unresolved = argus_osint_engine.unresolved_agent_claims(runs, argus_titles)
+                if not unresolved:
+                    break
+                _osint_set_progress(sym, "research_loop", loop_i, max_loops,
+                                    f"再探索{loop_i}/{max_loops}: Gemini-onlyニュースを回収中(未回収: {len(unresolved)}件)")
+                promoted = 0
+                # ①URLライブ検証で昇格を試みる(公開メタのみ・ペイウォール本文なし)
+                for c in unresolved[:4]:
+                    if not c.get("url"):
+                        continue
+                    vtmp = argus_osint_engine.verify_source(
+                        c, argus_osint_engine.build_known_index([]), _ai_now_iso())
+                    v2 = _osint_live_upgrade(vtmp, c, _ai_now_iso(), sym=sym)
+                    if v2.get("verificationStatus") == "verified":
+                        c["verified"] = True
+                        promoted += 1
+                # ②追撃語で決定論再探索(学習語にも積む)
+                follow = argus_osint_engine.followup_queries(unresolved)
+                if follow:
+                    cur = _OSINT_TERM_OVERLAY.get(sym) or []
+                    _OSINT_TERM_OVERLAY[sym] = (cur + [t for t in follow if t not in cur])[:12]
+                inv = _osint_build(sym, meta["market"], meta["mode"],
+                                   meta["privacyMode"], "admin_agents_run", runs,
+                                   _ai_now_iso())
+                still = inv["superiority"]["argusMissedImportantCount"]
+                _osint_set_progress(sym, "research_loop", loop_i, max_loops,
+                                    f"検証済みに昇格: {promoted}件 / 未回収: {still}件")
+                if promoted == 0 and not follow:
+                    break
+            _osint_set_progress(sym, "synthesis", max_loops, max_loops)
+            _osint_set_progress(sym, "complete", max_loops, max_loops,
+                                inv["superiority"]["ownerReadableVerdictJa"])
             results.append(sym)
-            add_log(f"[osint] agents done {sym}: missedByArgus={inv['benchmark']['missedByArgusCount']}")
+            add_log(f"[osint] agents done {sym}: {inv['superiority']['superiorityStatus']}")
         _OSINT_LAST["agentsAt"] = _ai_now_iso()
         _OSINT_LAST["agentsStatus"] = "ok" if results else "empty"
+        _osint_persist()
     except Exception as e:
         _OSINT_LAST["agentsStatus"] = f"failed:{type(e).__name__}"
+        for sym in syms:
+            _osint_set_progress(sym, "failed", 0, 0, f"スカウト実行失敗({type(e).__name__})")
         add_log(f"[osint] agents worker failed: {type(e).__name__}")
 
 
@@ -14868,6 +15143,20 @@ def api_argus_admin_osint_canary_run():
         return jsonify({"ok": True, **res})
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
+
+
+@app.route("/api/argus/osint/memory-snapshot")
+def api_argus_osint_memory_snapshot():
+    """公開GET: 恒久メモリの公開安全スナップショット(watchtowerがledgerへコミット)。
+    private_localレコード/貼り戻し本文/保有情報は設計上ここに存在しない。"""
+    _osint_restore_once()
+    return jsonify({"schemaVersion": "osint-memory-v1", "asOf": _ai_now_iso(),
+                    "termOverlay": _OSINT_TERM_OVERLAY,
+                    "memory": [m for m in _OSINT_MEMORY
+                               if m.get("privacyLevel") == "public_safe"][-_OSINT_MEMORY_MAX:],
+                    "urlCache": dict(list(_OSINT_URL_CACHE.items())[-60:]),
+                    "canaryLast": _OSINT_CANARY_LAST,
+                    "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 
 @app.route("/api/argus/osint/canary")

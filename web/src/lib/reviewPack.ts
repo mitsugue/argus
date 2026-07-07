@@ -206,6 +206,10 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
         L.push(`- 結論: ${dz.summaryJa}`);
         L.push(`- 探索カバレッジ: ${dz.coverageJa} / 信頼度: ${dz.reliabilityJa}`);
         L.push(`- ベンチマーク: ${dz.benchmarkJa}`);
+        // v12.1.1: 優位性メトリクス+未回収caveat
+        if (dz.superiorityJa) L.push(`- OSINT優位性: ${dz.superiorityJa} — ${dz.superiorityVerdictJa ?? ''}`);
+        if (dz.verificationRatePct != null) L.push(`- ソース検証率: ${dz.verificationRatePct}%`);
+        if ((dz.unresolvedCount ?? 0) > 0) L.push(`- 注意: Gemini単発に対して未回収のOSINTギャップ ${dz.unresolvedCount}件(検証されるまで証拠として扱っていません)`);
         if (dz.verifiedTitlesJa.length) L.push(`- 検証済みソース: ${dz.verifiedTitlesJa.join(' / ')}`);
         if (dz.disagreementJa.length) L.push(`- エージェント間の不一致: ${dz.disagreementJa.join(' / ')}`);
         if (dz.missingAreasJa.length) L.push(`- 不足領域: ${dz.missingAreasJa.join(' / ')}`);

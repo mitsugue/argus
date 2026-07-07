@@ -79,6 +79,9 @@ export interface OsintDeepShare {
   symbol: string; summaryJa: string; coverageJa: string; reliabilityJa: string;
   benchmarkJa: string; disagreementJa: string[]; verifiedTitlesJa: string[];
   missingAreasJa: string[];
+  // v12.1.1: 優位性メトリクス
+  superiorityJa?: string; superiorityVerdictJa?: string;
+  unresolvedCount?: number; verificationRatePct?: number;
 }
 const latestOSINTDeep = new Map<string, OsintDeepShare>();
 export function publishOsintDeep(o: OsintDeepShare): void { latestOSINTDeep.set(o.symbol.toUpperCase(), o); }

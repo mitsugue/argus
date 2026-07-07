@@ -35,7 +35,7 @@ function extractTerms(text: string): string[] {
 
 export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: boolean }>
   = ({ symbol, market, held }) => {
-  const { inv, running, runDeepDive, postTerms } = useOsintInvestigation(symbol, market);
+  const { inv, running, runDeepDive, postTerms, progress, queuePosition, etaMin, reload } = useOsintInvestigation(symbol, market);
   const [privacy, setPrivacy] = React.useState<'redacted' | 'owner_context' | 'full_private'>('redacted');
   const [msg, setMsg] = React.useState<string | null>(null);
   const [pasteOpen, setPasteOpen] = React.useState(false);
@@ -54,6 +54,10 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
       disagreementJa: inv.contradictionReport,
       verifiedTitlesJa: inv.verifiedSources.map((v) => v.titleJa).slice(0, 5),
       missingAreasJa: inv.missingAreasJa,
+      superiorityJa: inv.superiority?.superiorityJa,
+      superiorityVerdictJa: inv.superiority?.ownerReadableVerdictJa,
+      unresolvedCount: inv.superiority?.argusMissedImportantCount,
+      verificationRatePct: inv.superiority ? Math.round(inv.superiority.sourceVerificationRate * 100) : undefined,
     });
   }, [inv]);
 
@@ -76,8 +80,52 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
         </p>
       )}
 
+      {/* v12.1.1: 進捗(手動実行が黙って待たない) */}
+      {progress && progress.stage !== 'complete' && (
+        <p style={{ margin: '2px 0 4px', fontSize: 10.5, color: 'var(--accent)' }}>
+          進捗: {({ planning: '計画中', gemini_scout: 'Geminiスカウト実行中',
+                    gpt_scout: 'GPTスカウト実行中', verification: 'ソース検証中',
+                    research_loop: `再探索${progress.loop}/${progress.maxLoops}`,
+                    synthesis: '統合中', queued_for_agents: 'スカウト実行待ち',
+                    failed: '失敗' } as Record<string, string>)[progress.stage] ?? progress.stage}
+          {queuePosition != null && queuePosition > 0 && ` · キュー${queuePosition}番目`}
+          {etaMin != null && ` · 次回実行まで約${etaMin}分`}
+          {progress.notesJa.length > 0 && (
+            <span style={{ display: 'block', color: 'var(--text-faint)' }}>{progress.notesJa[progress.notesJa.length - 1]}</span>
+          )}
+          <button type="button" style={{ ...{ fontSize: 10, cursor: 'pointer', marginLeft: 6,
+            background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
+            borderRadius: 5, padding: '1px 6px' } }} onClick={() => reload()}>更新</button>
+        </p>
+      )}
+
       {inv && (
         <>
+          {/* v12.1.1: 優位性チップ(未回収があればGemini未満と正直表示) */}
+          {inv.superiority && (
+            <p style={{ margin: '0 0 3px', fontSize: 11.5 }}>
+              <b style={{ color: inv.superiority.superiorityStatus === 'exceeds_gemini' ? 'var(--value-positive)'
+                : inv.superiority.superiorityStatus === 'below_gemini' ? 'var(--amber, #fbbf24)'
+                : 'var(--text-sub)',
+                border: '1px solid var(--line)', borderRadius: 999, padding: '0 8px' }}>
+                {inv.superiority.superiorityJa}
+              </b>
+              <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+                検証率 {Math.round(inv.superiority.sourceVerificationRate * 100)}%
+                · 未回収 {inv.superiority.argusMissedImportantCount}件
+                · 重なり検証済み {inv.superiority.verifiedOverlapCount}件
+                · ARGUS独自検証済み {inv.superiority.argusOnlyVerifiedCount}件
+              </span>
+              <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-sub)' }}>
+                {inv.superiority.ownerReadableVerdictJa}
+              </span>
+              {inv.superiority.contextEdgeJa && (
+                <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>
+                  {inv.superiority.contextEdgeJa}
+                </span>
+              )}
+            </p>
+          )}
           <p style={{ margin: 0, fontSize: 12 }}>
             <b>{inv.catalystVerdict.verdictJa}</b>
             <span style={{ marginLeft: 6, fontSize: 10.5, color: COVERAGE_TONE[inv.coverageScore.totalCoverage] }}>
@@ -147,6 +195,11 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
             const r = await runDeepDive(privacy);
             flash(r ? '✓ 決定論調査を実行・Gemini/GPTスカウトをキューしました' : '実行失敗');
           }}>{running ? '調査中…' : '深掘りOSINTを実行'}</button>
+        <button type="button" style={btn} disabled={running}
+          onClick={async () => {
+            const r = await runDeepDive(privacy);
+            flash(r?.duplicate ? 'ジョブ進行中(二重実行しません)' : '✓ 再探索をキューしました');
+          }}>再探索する</button>
         <button type="button" style={btn} onClick={() => setPasteOpen((v) => !v)}>Gemini/GPT結果を貼り戻す</button>
         <button type="button" style={btn} onClick={() => setMissedOpen((v) => !v)}>このニュースが抜けている</button>
         {msg && <span style={{ marginLeft: 4, color: 'var(--value-positive)' }}>{msg}</span>}
@@ -188,7 +241,7 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
             await postTerms(extractTerms(missedTitle));
             setMissedTitle(''); setMissedOpen(false);
             flash('✓ 見逃しとして記録(端末内)・探索語に追加しました');
-          }}>見逃しとして記録</button>
+          }}>このニュースをARGUSに学習させる</button>
         </div>
       )}
 

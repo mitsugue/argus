@@ -37,19 +37,36 @@ export interface OsintInvestigation {
   ownerReadableSummaryJa: string;
   missingAreasJa: string[]; nextResearchJa: string[];
   privacyMode: string; costLabelJa?: string | null;
+  /** v12.1.1: OSINT優位性メトリクス(未回収Gemini-onlyがあればexceeds不可)。 */
+  superiority?: {
+    argusVerifiedSourceCount: number; geminiSourceCount: number; gptSourceCount: number;
+    geminiOnlyUnverifiedCount: number; gptOnlyUnverifiedCount: number;
+    argusMissedImportantCount: number; verifiedOverlapCount: number;
+    argusOnlyVerifiedCount: number; sourceVerificationRate: number;
+    superiorityStatus: 'exceeds_gemini' | 'matches_gemini' | 'below_gemini' | 'insufficient_data';
+    superiorityJa: string; ownerReadableVerdictJa: string; contextEdgeJa?: string | null;
+  };
 }
 
-interface State { inv: OsintInvestigation | null; loading: boolean; running: boolean; }
+export interface OsintProgress {
+  stage: string; loop: number; maxLoops: number; notesJa: string[]; at: string;
+}
+
+interface State { inv: OsintInvestigation | null; loading: boolean; running: boolean;
+  progress: OsintProgress | null; queuePosition: number | null; etaMin: number | null; }
 
 export function useOsintInvestigation(symbol: string, market: string) {
-  const [state, setState] = useState<State>({ inv: null, loading: true, running: false });
+  const [state, setState] = useState<State>({ inv: null, loading: true, running: false,
+    progress: null, queuePosition: null, etaMin: null });
   const backend = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
 
   const load = useCallback(() => {
     if (!backend) { setState((s) => ({ ...s, loading: false })); return; }
     fetch(`${backend}/api/argus/osint/investigation?symbol=${encodeURIComponent(symbol)}`)
       .then((r) => r.json())
-      .then((d) => setState((s) => ({ ...s, inv: d.investigation ?? null, loading: false })))
+      .then((d) => setState((s) => ({ ...s, inv: d.investigation ?? null, loading: false,
+        progress: d.progress ?? null, queuePosition: d.queuePosition ?? null,
+        etaMin: d.nextCronEtaMin ?? null })))
       .catch(() => setState((s) => ({ ...s, loading: false })));
   }, [backend, symbol]);
 
@@ -64,7 +81,9 @@ export function useOsintInvestigation(symbol: string, market: string) {
         body: JSON.stringify({ symbol, market, mode: 'deep', privacyMode }),
       });
       const d = await r.json();
-      setState((s) => ({ ...s, inv: d.investigation ?? s.inv, running: false }));
+      setState((s) => ({ ...s, inv: d.investigation ?? s.inv, running: false,
+        progress: d.progress ?? s.progress, queuePosition: d.queuePosition ?? s.queuePosition,
+        etaMin: d.nextCronEtaMin ?? s.etaMin }));
       return d;
     } catch {
       setState((s) => ({ ...s, running: false }));

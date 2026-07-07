@@ -60,6 +60,13 @@ BENCH_DISABLED_JA = "外部AIベンチマーク未実行"
 BENCH_FAILED_JA = "外部AIベンチマーク失敗"
 NO_DIRECT_JA = "直接材料は未確認"
 
+# v12.1.1: 優位性判定の正直文言(テストで固定)
+SUPERIORITY_STATUSES = ("exceeds_gemini", "matches_gemini", "below_gemini", "insufficient_data")
+SUPERIORITY_JA = {"exceeds_gemini": "Gemini超過", "matches_gemini": "Gemini同等",
+                  "below_gemini": "Gemini未満", "insufficient_data": "判定保留"}
+GAP_JA = "Gemini単発に対して未回収のOSINTギャップがあります。"
+CONTEXT_EDGE_JA = "Gemini単発との差分: ARGUSは保有/需給/Flow/イベント文脈を統合しています。"
+
 _NEGATIVE_JA = ("下落理由", "急落", "売られる", "懸念", "失望", "利益確定",
                 "採算", "需給悪化")
 _NEGATIVE_EN = ("downgrade", "selloff", "concern", "margin pressure", "profitability")
@@ -141,10 +148,14 @@ def build_scout_prompt(provider: str, profile: Dict[str, Any], plan: Dict[str, A
         f'"publishedAt":"YYYY-MM-DD","directness":"direct|sector_theme|value_chain|macro",'
         f'"summaryJa":"…"}}],"toVerifyJa":["…"],"notFoundJa":["…"]}}'
     )
+    base += ("\n探索対象を必ず含める: 英語の海外テック/半導体ニュース・日本語の市場コメンタリー・"
+             "公式開示(IR/TDnet/SEC)・顧客/供給網/競合のニュース。"
+             "「今日のこの値動きを説明できるものは何か」を軸に探すこと。")
     if provider == "gpt":
-        base += ("\n追加指示: クエリを自分でさらに拡張し、矛盾する報道・"
-                 "Geminiのような単発検索が見落としがちな公式開示(IR/TDnet/SEC)を"
-                 "重点確認してください。公式ソースのチェックリストも返してください。")
+        base += ("\n追加指示: 矛盾する報道と反証(negative evidence)を積極的に探し、"
+                 "古い記事の再掲に警告を付けること。Geminiのような単発検索が"
+                 "見落としがちな公式開示(IR/TDnet/SEC)を重点確認し、"
+                 "公式ソースのチェックリストも返してください。")
     if privacy_mode == "full_private" and owner_context_ja:
         base += f"\n(オーナー文脈: {owner_context_ja[:400]})"
     elif privacy_mode == "owner_context" and owner_context_ja:
@@ -528,3 +539,195 @@ def build_investigation(*, symbol: str, asset_name: str, as_of: str, mode: str,
         "costLabelJa": COST_LABEL_JA if mode in ("deep", "war_room") else None,
         "complianceNote": "OSINT調査の分類であり事実の断定・売買指示ではない。",
     }
+
+
+# ── v12.1.1 Part F: 頑健スカウト出力パーサ ──────────────────────────────────
+
+def parse_scout_output(text: str):
+    """LLM出力からclaimsを頑健に抽出。```fence/前置きprose耐性。JSONが壊れて
+    いてもURL/行からのフォールバック抽出で全損させない(捏造はしない — 元テキスト
+    にある文字列だけを使う)。returns (dict, warnings[])."""
+    warnings: List[str] = []
+    raw = str(text or "").strip()
+    if not raw:
+        return {"claims": []}, ["empty_output"]
+    body = re.sub(r"```(?:json)?", "", raw).strip()
+    # 最初の { から対応する } までを試す
+    cand = None
+    i = body.find("{")
+    if i >= 0:
+        depth = 0
+        for j in range(i, len(body)):
+            if body[j] == "{":
+                depth += 1
+            elif body[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    cand = body[i:j + 1]
+                    break
+    if cand:
+        try:
+            import json as _json
+            out = _json.loads(cand)
+            if isinstance(out, dict):
+                out.setdefault("claims", [])
+                return out, warnings
+        except Exception:
+            warnings.append("json_parse_failed")
+    # フォールバック: URL行/箇条書き行をclaims化(部分抽出・要検証扱い)
+    claims = []
+    for line in body.splitlines():
+        ln = line.strip(" -・*​")
+        if not ln or len(ln) < 8:
+            continue
+        m = re.search(r"https?://[\w./%\-?=&#]+", ln)
+        title = re.sub(r"https?://\S+", "", ln).strip()[:120]
+        if m or (len(title) >= 12 and not title.startswith("{")):
+            claims.append({"titleJa": title or (m.group(0) if m else "")[:120],
+                           "url": m.group(0) if m else None,
+                           "sourceName": None, "publishedAt": None,
+                           "directness": None})
+        if len(claims) >= 8:
+            break
+    if claims:
+        warnings.append("fallback_extraction")
+    else:
+        warnings.append("no_claims_extracted")
+    return {"claims": claims}, warnings
+
+
+# ── v12.1.1 Part B: 学習語のsanitize ────────────────────────────────────────
+
+def sanitize_query_term(term: str) -> Optional[str]:
+    t = str(term or "").strip()
+    if not t or len(t) < 2:
+        return None
+    if re.search(r"https?://|login_pwd|passphrase|token|保有中|取得単価|口数|積立", t, re.I):
+        return None
+    return t[:40]
+
+
+# ── v12.1.1 Part D: 追撃クエリ生成 ──────────────────────────────────────────
+
+def followup_queries(unresolved_claims: List[Dict[str, Any]], cap: int = 6) -> List[str]:
+    """Gemini/GPTだけが出した未回収claimから、決定論再探索用の追撃語を作る。"""
+    out: List[str] = []
+    for c in unresolved_claims:
+        t = str(c.get("titleJa") or c.get("title") or "")
+        for w in re.findall(r"[A-Z][A-Za-z0-9\-]{2,20}|[ァ-ヶー]{3,12}|[一-龠]{2,6}", t):
+            w2 = sanitize_query_term(w)
+            if w2 and w2 not in out:
+                out.append(w2)
+        u = str(c.get("url") or "")
+        m = re.search(r"https?://(?:www\.)?([\w\-]+)\.", u)
+        if m and sanitize_query_term(m.group(1)) and m.group(1) not in out:
+            out.append(m.group(1))
+        if len(out) >= cap:
+            break
+    return out[:cap]
+
+
+def unresolved_agent_claims(agent_runs: List[Dict[str, Any]],
+                            argus_titles: List[str]) -> List[Dict[str, Any]]:
+    """エージェントだけが出し、まだ検証されていない重要claim(=P1ギャップ)。
+    重要=日付が新しい(3営業日内)か、direct/value_chain主張。日付不明でも
+    direct主張は重要扱い(見逃すと危険な側に倒す)。"""
+    a_keys = {_title_hash(t) for t in argus_titles if t}
+    out = []
+    for r in agent_runs:
+        if r.get("provider") not in ("gemini", "gpt") or r.get("status") != "ok":
+            continue
+        for c in (r.get("claims") or []):
+            t = str(c.get("titleJa") or c.get("title") or "")
+            if not t or _title_hash(t) in a_keys:
+                continue
+            if c.get("verified"):
+                continue
+            fresh = c.get("_freshness")
+            important = fresh in ("today", "within_3_trading_days") or                 str(c.get("directness") or "") in ("direct", "direct_company", "value_chain")
+            if important or fresh is None:
+                out.append({**c, "provider": r["provider"]})
+    return out
+
+
+# ── v12.1.1 Part A: OSINT優位性メトリクス ───────────────────────────────────
+
+def superiority_metrics(verified: List[Dict[str, Any]], agent_runs: List[Dict[str, Any]],
+                        benchmark: Dict[str, Any], coverage: Dict[str, Any],
+                        *, argus_titles: List[str],
+                        context_added: bool = False) -> Dict[str, Any]:
+    agents_ok = [r for r in agent_runs if r.get("provider") in ("gemini", "gpt")
+                 and r.get("status") == "ok"]
+    ver = [v for v in verified if v.get("verificationStatus") == "verified"]
+    vrate = round(len(ver) / len(verified), 2) if verified else 0.0
+    unresolved = unresolved_agent_claims(agent_runs, argus_titles)
+    gem_unres = sum(1 for c in unresolved if c.get("provider") == "gemini")
+    gpt_unres = sum(1 for c in unresolved if c.get("provider") == "gpt")
+    a_keys = {_title_hash(t) for t in argus_titles if t}
+    agent_keys = {_title_hash(str(c.get("titleJa") or c.get("title") or ""))
+                  for r in agents_ok for c in (r.get("claims") or [])}
+    ver_keys = {_title_hash(v.get("titleJa") or "") for v in ver}
+    overlap_verified = len(a_keys & agent_keys & ver_keys)
+    argus_only_verified = len((a_keys - agent_keys) & ver_keys)
+
+    if not agents_ok:
+        status = "insufficient_data"
+    elif unresolved:
+        status = "below_gemini"
+    elif overlap_verified > 0 and (argus_only_verified > 0 or context_added):
+        status = "exceeds_gemini"
+    elif overlap_verified > 0 or benchmark.get("missedByArgusCount", 0) == 0:
+        status = "matches_gemini"
+    else:
+        status = "insufficient_data"
+
+    verdict_ja = {
+        "exceeds_gemini": "Gemini超過: 外部AIのソースを検証済みで回収し、ARGUS独自の検証済みソース/文脈を追加。",
+        "matches_gemini": "Gemini同等: 外部AIの検出を概ねカバー(未回収の重要ギャップなし)。",
+        "below_gemini": f"Gemini未満: {GAP_JA}(未回収 {len(unresolved)}件 — 再探索と学習で回収します)",
+        "insufficient_data": "判定保留: 外部AIベンチマーク未実行または材料不足。",
+    }[status]
+    return {
+        "argusVerifiedSourceCount": len(ver),
+        "geminiSourceCount": benchmark.get("geminiCount", 0),
+        "gptSourceCount": benchmark.get("gptCount", 0),
+        "geminiOnlyUnverifiedCount": gem_unres,
+        "gptOnlyUnverifiedCount": gpt_unres,
+        "argusMissedImportantCount": len(unresolved),
+        "verifiedOverlapCount": overlap_verified,
+        "argusOnlyVerifiedCount": argus_only_verified,
+        "sourceVerificationRate": vrate,
+        "retrievalCoverageScore": coverage.get("totalCoverage"),
+        "valueChainCoverageScore": coverage.get("valueChainCoverage"),
+        "officialCoverageScore": coverage.get("officialDisclosureCoverage"),
+        "globalNewsCoverageScore": coverage.get("globalNewsCoverage"),
+        "superiorityStatus": status,
+        "superiorityJa": SUPERIORITY_JA[status],
+        "ownerReadableVerdictJa": verdict_ja,
+        "contextEdgeJa": CONTEXT_EDGE_JA if context_added else None,
+    }
+
+
+# ── v12.1.1 Part B: 恒久メモリレコード ──────────────────────────────────────
+
+def memory_record(*, symbol: str, theme: str = "", query_term: str = "",
+                  source_url: str = "", source_title: str = "",
+                  learned_from: str, verified: bool, now_iso: str,
+                  privacy_level: str = "public_safe") -> Optional[Dict[str, Any]]:
+    qt = sanitize_query_term(query_term) if query_term else ""
+    if query_term and not qt:
+        return None                      # sanitize失敗語は保存しない
+    title = str(source_title or "")[:160]
+    dom = ""
+    m = re.search(r"https?://(?:www\.)?([\w.\-]+)/?", str(source_url or ""))
+    if m:
+        dom = m.group(1)[:60]
+    rid = hashlib.sha256(f"{symbol}|{qt}|{source_url}|{title}".encode()).hexdigest()[:12]
+    return {"id": f"om-{rid}", "symbol": str(symbol).upper(), "theme": str(theme)[:40],
+            "queryTerm": qt, "sourceUrl": str(source_url or "")[:200] or None,
+            "sourceTitle": title or None, "sourceDomain": dom or None,
+            "learnedFrom": learned_from if learned_from in
+            ("gemini", "gpt", "owner_feedback", "deterministic", "canary") else "deterministic",
+            "verified": bool(verified), "createdAt": now_iso, "lastUsedAt": now_iso,
+            "privacyLevel": privacy_level if privacy_level in
+            ("public_safe", "private_local", "redacted") else "public_safe"}

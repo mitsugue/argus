@@ -78,6 +78,9 @@ jobs:
             echo "retry patrol-health $i"; sleep 10
           done
           test -s "$RUNNER_TEMP/patrol-health.json"
+          # v12.1.1: OSINT恒久メモリ(公開安全メタのみ) — 再デプロイ後の復元源
+          curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
+            -o "$RUNNER_TEMP/osint-memory.json" || echo '{}' > "$RUNNER_TEMP/osint-memory.json"
           python3 - "$RUNNER_TEMP/patrol-health.json" <<'PY'
           import json, sys
           d = json.load(open(sys.argv[1]))
@@ -111,16 +114,18 @@ jobs:
             git rm -rq --cached . 2>/dev/null || true
             find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
           fi
-          mkdir -p ledger/caos-watchtower ledger/caos-patrol
+          mkdir -p ledger/caos-watchtower ledger/caos-patrol ledger/osint
           DAY=$(TZ=Asia/Tokyo date +%F)
           cp "$RUNNER_TEMP/watchtower-status.json" ledger/caos-watchtower/latest.json
           cp "$RUNNER_TEMP/watchtower-status.json" "ledger/caos-watchtower/$DAY.json"
           # V11.5.5: patrol soak-proof snapshot (restore source after dyno restarts)
           cp "$RUNNER_TEMP/patrol-health.json" ledger/caos-patrol/latest.json
           cp "$RUNNER_TEMP/patrol-health.json" "ledger/caos-patrol/$DAY.json"
+          # v12.1.1: OSINTメモリ(学習語/検証済み公開URL/canary)を恒久化
+          cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
-          git add ledger/caos-watchtower/ ledger/caos-patrol/
+          git add ledger/caos-watchtower/ ledger/caos-patrol/ ledger/osint/
           if git diff --cached --quiet; then
             echo "no change"
           else
