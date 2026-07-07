@@ -1,0 +1,45 @@
+name: osint-check
+# v12.1.3: OSINT調査結果の読み出し(公開GETのみ・レート制限された自宅IPの代替経路)。
+# 自宅IPはオーナー端末群とレート予算を共有するため、検証はGitHubランナー経由で行う。
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Symbol to inspect (e.g. 6965)"
+        required: true
+        default: "6965"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch investigation (public GET, cached-only)
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          curl -s --max-time 30 "$BE/api/argus/osint/investigation?symbol=${{ github.event.inputs.symbol }}" -o inv.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open("inv.json"))
+          pr = d.get("progress") or {}
+          inv = d.get("investigation") or {}
+          rp = inv.get("researchPower") or {}
+          sup = inv.get("superiority") or {}
+          print("== OSINT CHECK ==")
+          print("status:", d.get("status"), "| stage:", pr.get("stage"),
+                "| autopilot:", (pr.get("autopilot") or {}).get("status"),
+                (pr.get("autopilot") or {}).get("doneCount"))
+          print("researchPower:", rp.get("status"), "|", rp.get("displayJa"))
+          print("rpVerdict:", rp.get("ownerReadableVerdictJa"))
+          print("blockers:", rp.get("blockersJa"))
+          print("superiority:", sup.get("superiorityStatus"),
+                "| unresolvedImportant:", sup.get("argusMissedImportantCount"))
+          print("valueChain:", (inv.get("valueChainContext") or {}).get("theme"))
+          by = {}
+          for g in inv.get("gapLedger") or []:
+              by[g.get("resolutionStatus")] = by.get(g.get("resolutionStatus"), 0) + 1
+          print("gapLedger byStatus:", json.dumps(by, ensure_ascii=False))
+          for w in (inv.get("contradictionReportV2") or {}).get("ownerReadableWarningsJa") or []:
+              print("warn:", w)
+          PY
