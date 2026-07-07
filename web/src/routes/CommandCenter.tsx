@@ -40,6 +40,8 @@ import { PositionPlanSection } from '../components/dashboard/PositionPlanSection
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { CollapsibleSection, resetTodayLayout } from '../components/common/CollapsibleSection';
 import { resolvePrimaryStance, type ResolvedStance } from '../domain/primaryStance';
+import { resolveCommandSummary, SIGNALS as CS_SIGNALS } from '../domain/commandSummary';
+import { nextUpcomingEvent } from '../lib/eventClock';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { unreadCounts } from '../lib/notifications';
 import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
@@ -579,6 +581,29 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     .filter((v): v is number => typeof v === 'number');
   const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
   const visLimited = !!guard && guard.visibilityLevel !== 'full';
+
+  // v12.0.8追補: ヒーローと同じ解決器で総合コマンドの買い増し可否を一度だけ判定 —
+  // 下位の「小さく買い増し可」がヒーローの「買い増し: 禁止」と並ぶ矛盾を根治。
+  const globalAddProhibited = useMemo(() => {
+    try {
+      const gs = resolveCommandSummary({
+        legacyAction: judgment.overall, globalRegime: overlay?.globalRegime,
+        jpOverlay: overlay?.jpIntradayOverlay, ownerRisk: overlay?.holderRiskOverlay,
+        risk: judgment.risk, isPartial: isPartial || visLimited,
+        confidence: cappedConf, nextConditionJa: judgment.nextCondition,
+      });
+      return CS_SIGNALS[gs.signalCode].permissions.add === 'BLOCKED';
+    } catch { return false; }
+  }, [judgment, overlay, isPartial, visLimited, cappedConf]);
+
+  // v12.0.8追補: 保有リスクチップ(市場リスクと分離) — 保有×P0/P1件数から。
+  const positionRisk = useMemo(() => {
+    if (positionExposure.noHoldings) return { alert: false, ja: '保有数量未入力' };
+    const n = apItems.filter((it) => it.isHeld && (it.priorityRank === 'P0' || it.priorityRank === 'P1')).length
+      + positionExposure.risks.filter((r) => ['high', 'critical'].includes(r.riskLevel)).length;
+    return n > 0 ? { alert: true, ja: `保有銘柄に要確認あり(${n}件)` }
+                 : { alert: false, ja: '明確な警報なし' };
+  }, [positionExposure, apItems]);
   // v12.0.8 Part C: 銘柄ごとの「単一の構え」(全カード共通チップ) — Session Brief /
   // AP / Plan / カードの矛盾(P1なのに対応不要 等)を構造的に排除。売買指示ではない。
   const stanceBySymbol = useMemo(() => {
@@ -608,11 +633,12 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         flowClass: flowBySym.get(sym), eventWait: eventSyms.has(sym),
         riskLevel: riskBySym.get(sym), dataPartial: isPartial || visLimited,
         baseConfidence: ap?.confidence,
+        globalAddProhibited,
       }));
     }
     return m;
   }, [assets, apItems, positionPlans, scenarioSets, sdSignals, flowRecords,
-      positionExposure, impEvents, isPartial, visLimited]);
+      positionExposure, impEvents, isPartial, visLimited, globalAddProhibited]);
 
 
   // ── Judgment log (device-local memory) ──
@@ -682,6 +708,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           EVENTS as its lower block) → per-stock category cards (JP first, watchlist
           before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
       <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial || visLimited} confidence={cappedConf} visibilityReasonJa={al.data?.visibility?.downgradeReasonJa}
+        positionRisk={positionRisk}
         partialReasonsJa={(() => {
           // v12.0.8 Part D: 部分データの理由(実際に該当するものだけ・上位4件)
           const rs: string[] = [];
@@ -928,9 +955,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         ownerModeJa={sessionBrief.ownerModeJa}
         p0Count={apItems.filter((i) => i.priorityRank === 'P0').length}
         nextEventJa={(() => {
-          const ie = (impEvents?.events ?? []).find((e) => e.countdown === 'D' || e.countdown === 'D-1')
-            ?? (impEvents?.events ?? [])[0];
-          return ie ? `${ie.eventCode} ${ie.countdown === 'D' ? '当日' : ie.countdown}` : null;
+          // v12.0.8追補: スティッキーバーも単一のイベント時計(右上Next/カードと一致)
+          const pick = nextUpcomingEvent(impEvents?.events ?? [], Date.now());
+          return pick ? pick.shortJa : null;
         })()}
         unreadCount={unreadCounts().total}
       />

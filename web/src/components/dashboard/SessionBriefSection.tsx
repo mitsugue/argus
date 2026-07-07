@@ -24,11 +24,25 @@ export const SessionBriefSection: React.FC<{ brief: LocalBrief }> = ({ brief: b 
         <p style={{ margin: '6px 0 0', fontSize: 13.5, fontWeight: 600, lineHeight: 1.6 }}>
           {b.headlineJa}
         </p>
+        {/* v12.0.8追補: モバイルで最重要カードに内部スクロールを作らない —
+            先頭4件+「詳細を見る」の要約+展開型(内部スクロール系CSSは使わない)。 */}
         <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-          {b.bullets.map((x, i) => (
+          {b.bullets.slice(0, 4).map((x, i) => (
             <li key={i} style={{ fontSize: 12, color: 'var(--text-sub)', lineHeight: 1.7 }}>{x}</li>
           ))}
         </ul>
+        {b.bullets.length > 4 && (
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: 10.5, color: 'var(--accent)' }}>
+              詳細を見る(他{b.bullets.length - 4}件)
+            </summary>
+            <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
+              {b.bullets.slice(4).map((x, i) => (
+                <li key={i} style={{ fontSize: 12, color: 'var(--text-sub)', lineHeight: 1.7 }}>{x}</li>
+              ))}
+            </ul>
+          </details>
+        )}
         <p style={{ margin: '6px 0 0', fontSize: 11.5 }}>
           <b style={{ color: 'var(--value-negative)' }}>やらないこと:</b>
           <span style={{ marginLeft: 4, color: 'var(--text-sub)' }}>{b.whatNotToDoJa.join(' / ')}</span>

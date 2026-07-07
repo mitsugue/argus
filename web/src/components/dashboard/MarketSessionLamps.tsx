@@ -1,3 +1,4 @@
+import React from 'react';
 import { useEventsActive } from '../../hooks/useEventsActive';
 import './SystemHealthLamps.css';
 
@@ -9,6 +10,20 @@ import './SystemHealthLamps.css';
 // not prose (v10.132); the "MARKET STATUS" heading was redundant and is dropped.
 export function MarketSessionLamps() {
   const { status } = useEventsActive();
+  // v12.0.8追補: 「JP OPEN」は取引セッションの状態であり、JPリアルタイム価格の
+  // 稼働ではない — moomooメンテ中はJP開場中に注記を出す(bridge/statusから自動判定。
+  // 復旧してjpRealtimeStatus=okになれば自然に消える)。
+  const [jpRtDown, setJpRtDown] = React.useState(false);
+  React.useEffect(() => {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+    if (!backend) return;
+    let alive = true;
+    fetch(`${backend.replace(/\/$/, '')}/api/argus/bridge/status`)
+      .then((r) => r.json())
+      .then((d) => { if (alive) setJpRtDown(String(d?.jpRealtimeStatus ?? '') !== 'ok'); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const markets = [
     { key: 'jp', label: 'JP', state: status?.sessionJp == null ? null : (status.sessionJp ? 'OPEN' : 'CLOSED'), open: !!status?.sessionJp },
     { key: 'us', label: 'US', state: status?.sessionUs == null ? null : (status.sessionUs ? 'OPEN' : 'CLOSED'), open: !!status?.sessionUs },
@@ -17,11 +32,17 @@ export function MarketSessionLamps() {
   return (
     <div className="msl" role="status" aria-label="Market status">
       {markets.map((m) => (
-        <span key={m.key} className={`msl-item ${m.open ? 'msl-item--open' : 'msl-item--closed'}`}>
+        <span key={m.key} className={`msl-item ${m.open ? 'msl-item--open' : 'msl-item--closed'}`}
+          title={m.key === 'jp' && m.open && jpRtDown ? 'JPリアルタイムAPIはメンテ中・代替データで判定' : undefined}>
           <span className={`shl-dot ${m.open ? 'shl-dot--ok' : 'shl-dot--off'}`} />
-          {m.label} {m.state ?? '…'}
+          {m.key === 'jp' ? `${m.label} MARKET ${m.state ?? '…'}` : `${m.label} ${m.state ?? '…'}`}
         </span>
       ))}
+      {!!status?.sessionJp && jpRtDown && (
+        <span style={{ fontSize: 9.5, color: 'var(--amber, #fbbf24)', display: 'block', width: '100%' }}>
+          JPリアルタイムAPIはメンテ中・代替データで判定
+        </span>
+      )}
     </div>
   );
 }

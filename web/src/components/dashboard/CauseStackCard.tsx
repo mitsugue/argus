@@ -160,6 +160,12 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string;
             </span>
           </div>
           <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-main)' }}>{data.osint.headlineJa}</p>
+          {/* v12.0.8追補: 新鮮な直接材料が無い時は必ず明示(連想を事実にしない) */}
+          {data.osint.noDirectEvidenceNoteJa && (
+            <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--amber, #fbbf24)' }}>
+              {data.osint.noDirectEvidenceNoteJa}
+            </p>
+          )}
           {(data.osint.causes || []).slice(0, 4).map((cz) => (
             <p key={cz.rank} style={{ margin: '3px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>
               {cz.rank}. <span style={{ fontSize: 9.5, border: '1px solid var(--line)', borderRadius: 999,
@@ -167,9 +173,10 @@ export const CauseStackCard: React.FC<{ symbol: string; market?: string;
                                           : cz.category === 'stale_background' ? 'var(--text-faint)' : 'var(--event-medium)' }}>
                 {cz.categoryJa}
               </span> {cz.titleJa}
-              {cz.ageHours != null && <span style={{ color: 'var(--text-faint)', fontSize: 10, marginLeft: 4 }}>
-                ({cz.ageHours < 24 ? `${Math.floor(cz.ageHours)}h前` : `${Math.floor(cz.ageHours / 24)}日前`}
-                {cz.primaryEligible ? '' : ' · 主因候補外'})</span>}
+              <span style={{ color: 'var(--text-faint)', fontSize: 10, marginLeft: 4 }}>
+                ({cz.freshnessJa ?? '日付不明'}
+                {cz.ageHours != null ? ` · ${cz.ageHours < 24 ? `${Math.floor(cz.ageHours)}h前` : `${Math.floor(cz.ageHours / 24)}日前`}` : ''}
+                {cz.primaryEligible ? '' : ' · 主因候補外'})</span>
               <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>外れの可能性: {cz.whyWrongJa}</span>
             </p>
           ))}

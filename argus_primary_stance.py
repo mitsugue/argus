@@ -20,7 +20,8 @@ from typing import Any, Dict, List, Optional
 SCHEMA_VERSION = "primary-stance-v1"
 
 STANCES = ("risk_review", "trim_consideration", "wait_event", "avoid_chase",
-           "add_only_on_pullback", "small_add_allowed", "hold", "no_action", "unknown")
+           "add_only_on_pullback", "small_add_allowed", "deferred_today",
+           "hold", "no_action", "unknown")
 
 STANCE_JA = {
     "risk_review": "リスク確認が先",
@@ -29,6 +30,8 @@ STANCE_JA = {
     "avoid_chase": "追いかけ買い注意",
     "add_only_on_pullback": "買うなら押し目限定",
     "small_add_allowed": "小さく買い増し可",
+    # v12.0.8追補: 総合コマンドが買い増し禁止の日は、買い系を主表示にしない
+    "deferred_today": "候補だが今日は保留",
     "hold": "保有継続",
     "no_action": "対応不要",
     "unknown": "判定保留",
@@ -61,6 +64,7 @@ def resolve(i: Dict[str, Any]) -> Dict[str, Any]:
     flow = str(i.get("flowClass") or "unknown")
     risk = str(i.get("riskLevel") or "unknown")
     partial = bool(i.get("dataPartial"))
+    global_add_prohibited = bool(i.get("globalAddProhibited"))
     event_wait = bool(i.get("eventWait")) or plan in _EVENT_PLAN \
         or ap_label == "WAIT_EVENT" or dom == "wait_event"
     conf = float(i.get("baseConfidence") or 0.6)
@@ -135,6 +139,15 @@ def resolve(i: Dict[str, Any]) -> Dict[str, Any]:
     if event_wait and stance in ("small_add_allowed", "add_only_on_pullback") :
         stance = "wait_event"
         cap_notes.append("イベント通過まで買い増し系は保留")
+    # v12.0.8追補: 総合コマンドが買い増し禁止の日は、買い系を主表示にしない
+    # (「小さく買い増し可」がヒーローの「買い増し: 禁止」と並ぶ矛盾の根治)
+    if global_add_prohibited and stance in ("small_add_allowed", "add_only_on_pullback"):
+        cap_notes.append(f"通常なら{STANCE_JA[stance]}。ただし今日は総合コマンドが買い増し禁止のため保留")
+        stance = "deferred_today"
+    # v12.0.8追補: P0/P1は「対応不要」を構造的に禁止(スクショの P1 対応不要 矛盾)
+    if ap_rank in ("P0", "P1") and stance in ("no_action",):
+        stance = "risk_review" if held else "unknown"
+        cap_notes.append(f"優先度{ap_rank}のため対応不要にはしない")
 
     return {
         "schemaVersion": SCHEMA_VERSION,

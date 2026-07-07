@@ -50,12 +50,17 @@ export interface CauseStack {
     causes: { rank: number; titleJa: string; source: string; sourceClass: string;
               publishedAt?: string | null; ageHours?: number | null;
               category: string; categoryJa: string; primaryEligible: boolean;
-              whyWrongJa: string }[];
+              // v12.0.8追補: プロビナンス(出典タイプ/直接度/鮮度)
+              sourceType?: string; directness?: string;
+              freshness?: string; freshnessJa?: string;
+              whyWrongJa: string; whyThisMightBeWrongJa?: string }[];
     primary: { titleJa: string; category: string; categoryJa: string } | null;
     osintConfidence: 'high' | 'medium' | 'low' | 'unknown';
     osintConfidenceJa: string;
     headlineJa: string;
     sourcesMissingJa: string[];
+    evidenceCount?: number;
+    noDirectEvidenceNoteJa?: string | null;
   } | null;
   explanationJa?: string;   // cached AI explanation (v11.3.3: admin-generated only)
   explanationStatus?: 'cached' | 'not_generated' | 'pending' | 'disabled' | 'budget_limited' | 'error';

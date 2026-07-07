@@ -6,7 +6,8 @@
 
 export type PrimaryStance =
   | 'risk_review' | 'trim_consideration' | 'wait_event' | 'avoid_chase'
-  | 'add_only_on_pullback' | 'small_add_allowed' | 'hold' | 'no_action' | 'unknown';
+  | 'add_only_on_pullback' | 'small_add_allowed' | 'deferred_today'
+  | 'hold' | 'no_action' | 'unknown';
 
 export const PRIMARY_STANCE_JA: Record<PrimaryStance, string> = {
   risk_review: 'リスク確認が先',
@@ -15,6 +16,8 @@ export const PRIMARY_STANCE_JA: Record<PrimaryStance, string> = {
   avoid_chase: '追いかけ買い注意',
   add_only_on_pullback: '買うなら押し目限定',
   small_add_allowed: '小さく買い増し可',
+  // v12.0.8追補: 総合コマンドが買い増し禁止の日は、買い系を主表示にしない
+  deferred_today: '候補だが今日は保留',
   hold: '保有継続',
   no_action: '対応不要',
   unknown: '判定保留',
@@ -27,6 +30,7 @@ export const PRIMARY_STANCE_TONE: Record<PrimaryStance, string> = {
   avoid_chase: 'var(--amber, #fbbf24)',
   add_only_on_pullback: 'var(--accent)',
   small_add_allowed: 'var(--value-positive)',
+  deferred_today: 'var(--text-sub)',
   hold: 'var(--text-sub)',
   no_action: 'var(--text-muted)',
   unknown: 'var(--text-faint)',
@@ -50,6 +54,8 @@ export interface StanceInputs {
   riskLevel?: string | null;       // 'low'..'critical'
   dataPartial?: boolean;
   baseConfidence?: number | null;
+  /** v12.0.8追補: 総合コマンド(ヒーロー)が買い増し禁止の日 */
+  globalAddProhibited?: boolean;
 }
 
 export interface ResolvedStance {
@@ -142,6 +148,16 @@ export function resolvePrimaryStance(i: StanceInputs): ResolvedStance {
   if (eventWait && (stance === 'small_add_allowed' || stance === 'add_only_on_pullback')) {
     stance = 'wait_event';
     capNotes.push('イベント通過まで買い増し系は保留');
+  }
+  // v12.0.8追補: 総合コマンドが買い増し禁止の日は買い系を主表示にしない(Py同期)
+  if (i.globalAddProhibited && (stance === 'small_add_allowed' || stance === 'add_only_on_pullback')) {
+    capNotes.push(`通常なら${PRIMARY_STANCE_JA[stance]}。ただし今日は総合コマンドが買い増し禁止のため保留`);
+    stance = 'deferred_today';
+  }
+  // v12.0.8追補: P0/P1は「対応不要」を構造的に禁止(Py同期)
+  if ((apRank === 'P0' || apRank === 'P1') && stance === 'no_action') {
+    stance = held ? 'risk_review' : 'unknown';
+    capNotes.push(`優先度${apRank}のため対応不要にはしない`);
   }
 
   return {

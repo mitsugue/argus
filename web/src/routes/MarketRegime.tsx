@@ -79,8 +79,10 @@ function toMatrixState(data: MarketRegimeSnapshot): RegimeMatrixState {
 // JP Regime Matrix state (v10.192) — same 2 axes as US, built from the JP sector
 // matrix the backend derives from TOPIX flows. No JP regime label yet, so the
 // quadrant/tags are read straight off the axes.
-function toJpMatrixState(m: NonNullable<MarketRegimeSnapshot['jpMatrix']>): RegimeMatrixState {
-  const risk = m.y >= 0.15 ? 'Risk On' : m.y <= -0.15 ? 'Risk Off' : 'Neutral';
+function toJpMatrixState(m: NonNullable<MarketRegimeSnapshot['jpMatrix']>, provisional = false): RegimeMatrixState {
+  // v12.0.8追補: ザラ場データ取得待ち/部分データ中は現在地を断定しない(「暫定」明示)
+  const base = m.y >= 0.15 ? 'Risk On' : m.y <= -0.15 ? 'Risk Off' : 'Neutral';
+  const risk = provisional ? `${base} 暫定` : base;
   return {
     x: m.x,
     y: m.y,
@@ -121,7 +123,7 @@ export const MarketRegime: React.FC = () => {
   const jpRows = useMemo(() => (data?.jpRotationGroups ? toRotationRows(data.jpRotationGroups) : []), [data]);
   const matrix = useMemo(() => (data ? toMatrixState(data) : null), [data]);
   const jpMatrix = useMemo(
-    () => (data?.jpMatrix && data.jpMatrix.available !== false ? toJpMatrixState(data.jpMatrix) : null),
+    () => (data?.jpMatrix && data.jpMatrix.available !== false ? toJpMatrixState(data.jpMatrix, data?.status !== 'live') : null),
     [data],
   );
 

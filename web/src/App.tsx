@@ -10,8 +10,8 @@ import { DataQualityPage } from './routes/DataQualityPage';
 import { Guide } from './routes/Guide';
 import { AIReview } from './routes/AIReview';
 import { useActionLabels } from './hooks/useActionLabels';
-import { useEventRadar } from './hooks/useEventRadar';
-import { shortKind } from './lib/todayCall';
+import { useImportantEvents } from './hooks/useImportantEvents';
+import { nextUpcomingEvent } from './lib/eventClock';
 import { startCloudSync } from './lib/vault';
 
 interface RouteProps {
@@ -68,19 +68,18 @@ const App: React.FC = () => {
   // action-labels posture and the live event calendar (mock-safe defaults
   // while connecting; never a hand-written judgment).
   const al = useActionLabels();
-  const ev = useEventRadar();
   const lastUpdated = useMemo(() => new Date(), [al.data]);
 
+  // v12.0.8追補: 「次のイベント」は単一のイベント時計(eventClock)から —
+  // 発表済・日付不明は次に出さず、Important Events(公式日程)と必ず一致させる。
+  const impEv = useImportantEvents();
   const nextEvent = useMemo(() => {
-    const next = (ev.data?.events ?? [])
-      .filter((e) => e.impact === 'high' && e.daysUntil >= 0)
-      .slice()
-      .sort((a, b) => a.daysUntil - b.daysUntil)[0];
-    if (!next) return undefined;
+    const pick = nextUpcomingEvent(impEv.data?.events ?? [], Date.now(), { highImpactOnly: true });
+    if (!pick) return undefined;
     return {
-      title: next.title,
-      kind: shortKind(next.title),
-      daysAway: next.daysUntil,
+      title: pick.title,
+      kind: `${pick.eventCode} ${pick.dateJa}`,
+      daysAway: pick.daysUntil,
       impact: 'high' as const,
       onClick: () => {
         // Navigation only (v10.138): jump to the single Important Events source on
@@ -98,7 +97,7 @@ const App: React.FC = () => {
     };
     // exitReview is stable in practice (defined per render but only mutates state)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ev.data]);
+  }, [impEv.data]);
 
   const handleNavSelect = (key: RouteKey) => {
     exitReview();

@@ -38,6 +38,48 @@ CONFIDENCE_JA = {"high": "高", "medium": "中", "low": "低", "unknown": "不�
 
 SOURCE_CLASSES = ("official", "credible_news", "aggregator", "price_confirmation", "unknown")
 
+# v12.0.8追補: 出典プロビナンス(候補ごとに必ず付ける — 事実/連想/古さを混ぜない)
+SOURCE_TYPES = ("official_disclosure", "major_news", "market_commentary",
+                "sector_theme", "value_chain", "price_only", "unknown")
+DIRECTNESS = ("direct_company", "sector_theme", "value_chain_inference",
+              "macro", "background", "unsupported")
+FRESHNESS = ("today", "within_3_trading_days", "stale_14d_plus", "unknown")
+
+_CAT_TO_DIRECTNESS = {
+    "direct_official": "direct_company", "direct_news": "direct_company",
+    "value_chain": "value_chain_inference", "sector_theme": "sector_theme",
+    "macro": "macro", "stale_background": "background", "unknown": "unsupported",
+}
+_CAT_TO_SOURCE_TYPE = {
+    "direct_official": "official_disclosure", "value_chain": "value_chain",
+    "sector_theme": "sector_theme", "macro": "market_commentary",
+}
+FRESHNESS_JA = {"today": "本日", "within_3_trading_days": "3営業日内",
+                "stale_14d_plus": "14日超", "unknown": "日付不明"}
+NO_DIRECT_EVIDENCE_JA = "原因未特定。候補はテーマ連想であり、直接材料ではありません。"
+
+
+def _freshness(age_h):
+    if age_h is None:
+        return "unknown"
+    if age_h <= 24.0:
+        return "today"
+    if age_h <= PRIMARY_MAX_AGE_H:
+        return "within_3_trading_days"
+    if age_h > STALE_AGE_H:
+        return "stale_14d_plus"
+    return "within_3_trading_days" if age_h <= PRIMARY_MAX_AGE_H else "unknown"
+
+
+def _source_type(cat, src_cls):
+    if cat in _CAT_TO_SOURCE_TYPE:
+        return _CAT_TO_SOURCE_TYPE[cat]
+    if cat == "direct_news":
+        return "major_news" if src_cls == "credible_news" else "market_commentary"
+    if src_cls == "price_confirmation":
+        return "price_only"
+    return "unknown"
+
 _OFFICIAL_SOURCES = ("tdnet", "official", "edinet", "sec_edgar", "bls", "bea")
 _CREDIBLE_SOURCES = ("nikkei", "reuters", "nhk", "bloomberg", "cnbc", "wsj",
                      "coindesk", "cointelegraph", "kabutan", "finnhub")
@@ -148,16 +190,24 @@ def review(symbol: str, market: str, change_pct: Optional[float],
         cat = _category(c, names, themes, age_h)
         refetched = _refetched_today(c, now_iso)
         eligible = _primary_eligible(cat, age_h, refetched)
+        src_cls = _source_class(str(c.get("source") or c.get("sourceId") or ""))
+        fresh = _freshness(age_h)
+        why = _why_wrong_ja(cat, names)
         rows.append({
             "titleJa": str(c.get("titleJa") or c.get("titleOriginal") or c.get("title") or "")[:160],
             "source": str(c.get("source") or c.get("sourceId") or "")[:40],
-            "sourceClass": _source_class(str(c.get("source") or c.get("sourceId") or "")),
+            "sourceClass": src_cls,
             "publishedAt": c.get("publishedAt"),
             "ageHours": round(age_h, 1) if age_h is not None else None,
             "category": cat, "categoryJa": CATEGORY_JA[cat],
+            # v12.0.8追補: プロビナンス(出典タイプ/直接度/鮮度)を候補ごとに必須化
+            "sourceType": _source_type(cat, src_cls),
+            "directness": _CAT_TO_DIRECTNESS[cat],
+            "freshness": fresh, "freshnessJa": FRESHNESS_JA[fresh],
             "primaryEligible": eligible,
             "refetchedToday": refetched,
-            "whyWrongJa": _why_wrong_ja(cat, names),
+            "whyWrongJa": why,
+            "whyThisMightBeWrongJa": why,
         })
     rows.sort(key=lambda r: (rank_order.get(r["category"], 9),
                              r["ageHours"] if r["ageHours"] is not None else 9e9))
@@ -180,11 +230,16 @@ def review(symbol: str, market: str, change_pct: Optional[float],
     else:
         headline = f"候補原因: {primary['titleJa']}"
 
+    has_fresh_direct = any(r["directness"] == "direct_company" and r["primaryEligible"]
+                           for r in rows)
     return {
         "schemaVersion": SCHEMA_VERSION,
         "symbol": str(symbol).upper(), "market": str(market).upper(),
         "changePct": change_pct,
         "causes": rows[:8],
+        "evidenceCount": len(eligible_rows),
+        # v12.0.8追補: 新鮮な直接材料が無い時は必ずこの一文(連想を事実にしない)
+        "noDirectEvidenceNoteJa": (None if has_fresh_direct else NO_DIRECT_EVIDENCE_JA),
         "primary": primary,
         "osintConfidence": conf, "osintConfidenceJa": CONFIDENCE_JA[conf],
         "headlineJa": headline,

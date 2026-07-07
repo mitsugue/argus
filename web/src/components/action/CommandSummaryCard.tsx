@@ -14,7 +14,11 @@ const EXISTING_JA: Record<string, string> = {
 // abstract signal is secondary metadata; the labeled ladder lives only in help.
 // English chrome (owner preference); detailed ja rationale sits in Market Context.
 
-export const CommandSummaryCard: React.FC<SummaryInput> = (input) => {
+// v12.0.8追補: 保有リスクは市場リスクと別チップ(裸の LOW RISK が保有警報と
+// 矛盾して見える問題の根治)。
+type CardProps = SummaryInput & { positionRisk?: { alert: boolean; ja: string } };
+
+export const CommandSummaryCard: React.FC<CardProps> = ({ positionRisk, ...input }) => {
   const loc = useLocale();
   const s = resolveCommandSummary(input);
   const sigColor = `var(${SIGNALS[s.signalCode].token})`;
@@ -57,13 +61,29 @@ export const CommandSummaryCard: React.FC<SummaryInput> = (input) => {
 
       {/* One status line — RISK/DATA are short status keywords: English always
           (no カタカナ), even in Japanese mode (owner preference, v10.134). */}
+      {/* v12.0.8追補: リスクの分離チップ — 市場リスク/保有リスク/データ品質を
+          別概念として表示(保有×P1がある日に裸のLOW RISKを出さない)。 */}
       <div className="cs-status">
-        <span className={`cs-stat${s.riskLevel === 'HIGH' ? ' cs-stat--bad' : ''}`}>{s.riskLevel} {tEn('cmd.risk')}</span>
+        <span className={`cs-stat${s.riskLevel === 'HIGH' ? ' cs-stat--bad' : ''}`}>MARKET RISK: {s.riskLevel}</span>
         <span className="cs-stat-sep">·</span>
+        {positionRisk && (
+          <>
+            <span className={`cs-stat${positionRisk.alert ? ' cs-stat--bad' : ''}`}>POSITION RISK: {positionRisk.ja}</span>
+            <span className="cs-stat-sep">·</span>
+          </>
+        )}
         <span className={`cs-stat${partial ? ' cs-stat--warn' : ''}`}>{s.dataQuality} {tEn('cmd.data')}</span>
       </div>
       {partial && typeof s.confidence === 'number' && (
         <p className="cs-conf">{t('cmd.confCap')} {Math.round(s.confidence * 100)}%.</p>
+      )}
+      {/* v12.0.8追補: なぜHOLD/買い増し禁止なのかを一行で(保有リスクがある日) */}
+      {addBlocked && (
+        <p className="cs-conf">
+          {positionRisk?.alert
+            ? '新規・買い増しは保留。保有銘柄のリスク確認が先。'
+            : '新規・買い増しは保留(総合コマンド)。'}
+        </p>
       )}
 
       {/* WHY NOW — ≤3 drivers, one line */}

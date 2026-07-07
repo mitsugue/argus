@@ -20,6 +20,8 @@ interface Props {
   /** v12.0.8 Part D: PARTIAL DATA の理由(上位2〜4件)+解消条件。 */
   partialReasonsJa?: string[];
   partialRaiseJa?: string;
+  /** v12.0.8追補: 保有リスク(市場リスクと分離したチップ)。 */
+  positionRisk?: { alert: boolean; ja: string };
   onNavigate?: (key: RouteKey) => void;
 }
 
@@ -43,7 +45,7 @@ const OWNER_DISPLAY: Record<string, string> = {
 // COMMAND-FIRST Today hero (v10.120): the actionable command (Action Level +
 // permissions) is the first thing; market context sits BELOW it; "Why" is the
 // detail. No ambiguous CLEAR; raw enums (EVENT_WAIT) are formatted for display.
-export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence, visibilityReasonJa, partialReasonsJa, partialRaiseJa, onNavigate }) => {
+export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, confidence, visibilityReasonJa, partialReasonsJa, partialRaiseJa, positionRisk, onNavigate }) => {
   const ownerCode = overlay?.holderRiskOverlay;
   const ownerRisk = !!(ownerCode && ownerCode !== 'NONE');
   return (
@@ -58,6 +60,7 @@ export const HeroCard: React.FC<Props> = ({ judgment, overlay, isPartialData, co
         isPartial={isPartialData}
         confidence={confidence}
         nextConditionJa={judgment.nextCondition}
+        positionRisk={positionRisk}
       />
       {/* Visibility Guard live effect (v11): why judgment was downgraded, when it was. */}
       {visibilityReasonJa ? (

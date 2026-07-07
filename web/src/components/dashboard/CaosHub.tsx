@@ -222,13 +222,23 @@ export const CaosHub: React.FC = () => {
       : phStatus === 'stale' ? 'var(--amber, #fbbf24)'
       : phStatus === 'degraded' || phStatus === 'error' ? 'var(--value-negative, #f87171)'
       : 'var(--text-faint)';
+    // v12.0.8追補: 遅延判定と表示を数値で(目標15分・45分=3倍超で遅延)。
+    // 経過が目標以内なら「遅延」とは言わない(1hが正常か遅延か分からない問題の根治)。
+    const TARGET_MIN = 15;
+    const delayed = phStatus === 'stale' || (lagMin != null && lagMin > TARGET_MIN * 3);
+    const lagLabel = lagMin == null ? null : lagMin < 1 ? '1分未満' : `${Math.floor(lagMin)}分`;
     return {
       text: `C.A.O.S.確認 ${checked}UTC · 最新: ${grp('JP_EQUITY', 'JP')} / ${grp('US_EQUITY', 'US')} / ${grp('CRYPTO_BTC_ETH', '暗号')} / ${grp('FX_USDJPY', '為替')}`,
       patrolLabel, patrolTone,
       note: ph?.status === 'stale' ? 'C.A.O.S.監視が遅延しています'
         : (ph?.deepSweeps24h ?? 0) > 0 ? '急変銘柄を優先巡回中'
         : ph?.baselineOnly ? '現在は基準監視のみ。急変銘柄は検出時に優先巡回します' : null,
-      delayed: phStatus === 'stale' || (lagMin != null && lagMin > 45),
+      delayed,
+      delayDetailJa: delayed
+        ? `ニュース監視に遅延: 最終成功 ${checked}UTC / 目標${TARGET_MIN}分以内 / 現在${lagLabel ?? '不明'} — ニュース原因の確度を下げています。`
+        : lagLabel != null && lagMin != null && lagMin <= TARGET_MIN
+          ? `巡回正常: 最終成功 ${lagLabel}前 / 目標${TARGET_MIN}分以内`
+          : null,
       partial: ['GOLD_GLD', 'FX_USDJPY', 'CRYPTO_BTC_ETH'].some((ac) => cov[ac]?.status === 'partial'),
     };
   })();
@@ -247,7 +257,11 @@ export const CaosHub: React.FC = () => {
             </span>
           )}
           {wtLine.text}
-          {wtLine.delayed && <span style={{ color: 'var(--amber, #fbbf24)', marginLeft: 6 }}>⚠ ニュース監視に遅延</span>}
+          {wtLine.delayDetailJa && (
+            <span style={{ color: wtLine.delayed ? 'var(--amber, #fbbf24)' : 'var(--text-faint)', marginLeft: 6 }}>
+              {wtLine.delayed ? '⚠ ' : ''}{wtLine.delayDetailJa}
+            </span>
+          )}
           {wtLine.partial && <span style={{ marginLeft: 6 }}>· Gold/FX/Crypto監視はpartial</span>}
           {wtLine.note && !wtLine.delayed && (
             <span style={{ marginLeft: 6 }}>· {wtLine.note}</span>
