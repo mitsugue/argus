@@ -45,7 +45,20 @@ export interface OsintInvestigation {
     argusOnlyVerifiedCount: number; sourceVerificationRate: number;
     superiorityStatus: 'exceeds_gemini' | 'matches_gemini' | 'below_gemini' | 'insufficient_data';
     superiorityJa: string; ownerReadableVerdictJa: string; contextEdgeJa?: string | null;
+    // v12.1.2: ギャップ台帳サマリ
+    unresolvedImportant?: number;
+    gapByStatus?: Record<string, number>;
+    gapProgressLinesJa?: string[];
+    unresolvedItemsJa?: string[];
+    contextAdvantages?: string[];
   };
+  /** v12.1.2: 全未回収に理由を付けた台帳。 */
+  gapLedger?: {
+    id: string; sourceTitle: string; sourceUrl?: string | null; sourceDomain?: string | null;
+    providedBy: string; resolutionStatus: string; resolutionStatusJa: string;
+    resolutionReasonJa: string; followUpQueries: string[]; ownerReadableJa: string;
+  }[];
+  budget?: { maxUrls?: number; maxLoops?: number; maxSeconds?: number; maxCostLabel?: string };
 }
 
 export interface OsintProgress {
@@ -91,6 +104,30 @@ export function useOsintInvestigation(symbol: string, market: string) {
     }
   }, [backend, symbol, market]);
 
+  const verifyGaps = useCallback(async () => {
+    if (!backend) return null;
+    try {
+      const r = await fetch(`${backend}/api/argus/osint/verify-gaps`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol }),
+      });
+      const d = await r.json();
+      if (d.investigation) setState((s) => ({ ...s, inv: d.investigation }));
+      return d;
+    } catch { return null; }
+  }, [backend, symbol]);
+
+  const verifyUrl = useCallback(async (url: string) => {
+    if (!backend || !url) return null;
+    try {
+      const r = await fetch(`${backend}/api/argus/osint/url-verify`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      return await r.json();
+    } catch { return null; }
+  }, [backend]);
+
   const postTerms = useCallback(async (terms: string[]) => {
     if (!backend || !terms.length) return;
     try {
@@ -101,5 +138,5 @@ export function useOsintInvestigation(symbol: string, market: string) {
     } catch { /* enqueue-only — 失敗しても静かに */ }
   }, [backend, symbol]);
 
-  return { ...state, reload: load, runDeepDive, postTerms };
+  return { ...state, reload: load, runDeepDive, postTerms, verifyGaps, verifyUrl };
 }

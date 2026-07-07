@@ -41,7 +41,8 @@ interface Console {
     // v12.1.1: 優位性/ベンチ/メモリ/パーサ
     superiorityLatest?: string; unresolvedGeminiOnlyTotal?: number;
     benchmarkWarnJa?: string | null; memoryRecords?: number;
-    memoryPersisted?: boolean; parserWarnings?: number };
+    memoryPersisted?: boolean; parserWarnings?: number;
+    capReachedCount?: number; benchmarkVerdictJa?: string };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -327,6 +328,15 @@ export const DataQualityPage: React.FC = () => {
                   {' '}· 恒久メモリ: {c.osintHealth.memoryRecords ?? 0}件{c.osintHealth.memoryPersisted ? '(永続化済み)' : ''}
                   {' '}· パーサ警告: {c.osintHealth.parserWarnings ?? 0}
                 </p>
+                {c.osintHealth.benchmarkVerdictJa && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11,
+                    color: (c.osintHealth.benchmarkVerdictJa || '').includes('未達') ? 'var(--amber, #fbbf24)'
+                      : (c.osintHealth.benchmarkVerdictJa || '').includes('上回') ? 'var(--value-positive)'
+                      : 'var(--text-sub)' }}>
+                    {c.osintHealth.benchmarkVerdictJa}
+                    {(c.osintHealth.capReachedCount ?? 0) > 0 && ` · 検証上限到達 累計${c.osintHealth.capReachedCount}件`}
+                  </p>
+                )}
                 {c.osintHealth.benchmarkWarnJa && (
                   <p className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>
                     ⚠ {c.osintHealth.benchmarkWarnJa}

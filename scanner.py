@@ -7264,6 +7264,20 @@ def _data_quality_console():
             "memoryRecords": len(_OSINT_MEMORY),
             "memoryPersisted": os.path.exists(_OSINT_PERSIST_FILE),
             "parserWarnings": len(_OSINT_PARSER_HEALTH.get("lastWarnings") or []),
+            # v12.1.2: ベンチ文言v2+cap/クラスタ率
+            "capReachedCount": _OSINT_CAP_REACHED.get("count", 0),
+            "benchmarkVerdictJa": (lambda st: {
+                "below_gemini": "OSINTはGemini基準に未達です。未回収ソースがあります。",
+                "exceeds_gemini": "OSINTはGemini基準を上回りました。外部AIソースを回収し、ARGUS独自文脈を追加済み。",
+                "matches_gemini": "OSINTはGemini基準と同等です。",
+            }.get(st, "OSINTベンチマーク未実行"))(
+                (lambda invs: sorted({(i.get("superiority") or {}).get("superiorityStatus", "insufficient_data")
+                                      for i in invs},
+                                     key=lambda x: ["below_gemini", "insufficient_data",
+                                                    "matches_gemini", "exceeds_gemini"].index(x)
+                                     if x in ("below_gemini", "insufficient_data",
+                                              "matches_gemini", "exceeds_gemini") else 1)[0]
+                 if invs else "not_run")(list(_OSINT_STORE.values()))),
             "noteJa": ("外部AIスカウトは管理側実行のみ(公開画面から起動しない)。"
                        "プロバイダ未設定時は『外部AIベンチマーク未実行』と表示。"),
         }
@@ -14592,6 +14606,8 @@ _OSINT_PERSIST_FILE = "/tmp/argus_osint_memory.json"
 _OSINT_PERSIST_STATE = {"restored": False}
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
+_OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
+_OSINT_CAP_REACHED = {"count": 0}      # 検証上限到達の累計(DQ表示用)
 
 
 def _osint_persist():
@@ -14890,11 +14906,59 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
         retrieved_counts=counts, verified=verified, agent_runs=agent_runs,
         benchmark=bench, flow_hint=flow_hint,
         canary_degraded=bool((_OSINT_CANARY_LAST.get("data") or {}).get("degraded")))
-    # v12.1.1 Part A: 優位性メトリクス(未回収Gemini-onlyがあればexceeds不可)
-    inv["superiority"] = argus_osint_engine.superiority_metrics(
+    # v12.1.2 Part A/G: ギャップ台帳(全ての未回収に理由)+優位性v2
+    argus_clusters = argus_osint_engine.cluster_sources(cands)
+    theme_ents = set()
+    for t in (prof.get("themes") or []) + (prof.get("valueChain") or []) + [prof.get("nameJa") or "", symu]:
+        theme_ents |= argus_osint_engine._entities(str(t))
+    gap_ledger = []
+    for r in agent_runs:
+        if r.get("provider") not in ("gemini", "gpt") or r.get("status") != "ok":
+            continue
+        for c in (r.get("claims") or []):
+            t = str(c.get("titleJa") or c.get("title") or "")
+            if not t:
+                continue
+            gap_ledger.append(argus_osint_engine.resolve_gap(
+                c, r["provider"], argus_clusters,
+                symbol=symu, investigation_id=inv["id"], now_iso=now_iso,
+                live_meta=_OSINT_URL_CACHE.get(argus_osint_engine._norm_url(c.get("url") or "")) if c.get("url") else None,
+                verification_attempts=int(c.get("_attempts") or 0),
+                cap_reached=bool(c.get("_capReached")),
+                theme_entities=theme_ents))
+    inv["gapLedger"] = gap_ledger[:24]
+    ver_list = [v for v in verified if v.get("verificationStatus") == "verified"]
+    vrate = (len(ver_list) / len(verified)) if verified else 0.0
+    ctx_adv = []
+    if any(v.get("directness") == "direct_company" and v.get("primaryEligible") for v in verified):
+        ctx_adv.append("公式/直接ソース")
+    if flow_hint:
+        ctx_adv.append("Flow文脈")
+    if counts.get("official"):
+        ctx_adv.append("公式開示カバレッジ")
+    a_keys = {argus_osint_engine._title_hash(c.get("titleJa") or "") for c in cands}
+    agent_keys = {argus_osint_engine._title_hash(str(c.get("titleJa") or c.get("title") or ""))
+                  for r in agent_runs if r.get("provider") in ("gemini", "gpt") and r.get("status") == "ok"
+                  for c in (r.get("claims") or [])}
+    ver_keys = {argus_osint_engine._title_hash(v.get("titleJa") or "") for v in ver_list}
+    agents_ok = any(r.get("provider") in ("gemini", "gpt") and r.get("status") == "ok"
+                    for r in agent_runs)
+    sup2 = argus_osint_engine.superiority_v2(
+        gap_ledger, agents_ok=agents_ok,
+        argus_only_verified=len((a_keys - agent_keys) & ver_keys),
+        verified_overlap=len(a_keys & agent_keys & ver_keys),
+        context_advantages=ctx_adv,
+        coverage_total=inv["coverageScore"]["totalCoverage"],
+        verification_rate=vrate)
+    # 旧メトリクス(件数系)は残しつつ、判定はv2で上書き
+    legacy = argus_osint_engine.superiority_metrics(
         verified, agent_runs, bench, inv["coverageScore"],
         argus_titles=[c.get("titleJa") or "" for c in cands],
-        context_added=bool(flow_hint))
+        context_added=bool(ctx_adv))
+    legacy.update(sup2)
+    legacy["argusMissedImportantCount"] = sup2["unresolvedImportant"]
+    inv["superiority"] = legacy
+    inv["budget"] = dict(argus_osint_engine.OSINT_BUDGETS.get(mode, {}))
     _osint_persist()
     # missed-by-argus → 探索語オーバーレイに自動追加(有界)
     if bench.get("missedByArgusCount"):
@@ -15051,16 +15115,30 @@ def _osint_agents_worker(syms):
                 _osint_set_progress(sym, "research_loop", loop_i, max_loops,
                                     f"再探索{loop_i}/{max_loops}: Gemini-onlyニュースを回収中(未回収: {len(unresolved)}件)")
                 promoted = 0
+                budget = argus_osint_engine.OSINT_BUDGETS.get(meta.get("mode"), {})
+                max_urls = int(budget.get("maxUrls") or 4)
                 # ①URLライブ検証で昇格を試みる(公開メタのみ・ペイウォール本文なし)
-                for c in unresolved[:4]:
-                    if not c.get("url"):
-                        continue
+                # v12.1.2: モード別予算(war_room=20) — 上限到達は「未回収」でなく明示
+                with_url = [c for c in unresolved if c.get("url")]
+                for c in with_url[:max_urls]:
                     vtmp = argus_osint_engine.verify_source(
                         c, argus_osint_engine.build_known_index([]), _ai_now_iso())
                     v2 = _osint_live_upgrade(vtmp, c, _ai_now_iso(), sym=sym)
+                    c["_attempts"] = int(c.get("_attempts") or 0) + 1
                     if v2.get("verificationStatus") == "verified":
                         c["verified"] = True
                         promoted += 1
+                if len(with_url) > max_urls:
+                    for c in with_url[max_urls:]:
+                        c["_capReached"] = True
+                    _OSINT_CAP_REACHED["count"] += len(with_url) - max_urls
+                    _osint_set_progress(sym, "research_loop", loop_i, max_loops,
+                                        f"検証上限到達: 残り{len(with_url) - max_urls}件(予算 maxUrls={max_urls})")
+                # ①b オーナー依頼のURL検証キューも同予算内で消化
+                while _OSINT_URL_QUEUE and max_urls > 0:
+                    qurl = _OSINT_URL_QUEUE.pop(0)
+                    _osint_fetch_url_meta(qurl)
+                    max_urls -= 1
                 # ②追撃語で決定論再探索(学習語にも積む)
                 follow = argus_osint_engine.followup_queries(unresolved)
                 if follow:
@@ -15143,6 +15221,47 @@ def api_argus_admin_osint_canary_run():
         return jsonify({"ok": True, **res})
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
+
+
+@app.route("/api/argus/osint/verify-gaps", methods=["POST"])
+def api_argus_osint_verify_gaps():
+    """公開POST(決定論のみ): 保存済み調査のギャップ台帳を今すぐ再判定 —
+    重複クラスタ/stale/無関係は即時解決できる(外部AI・URL fetchはしない)。
+    URLライブ検証が必要な分はworker予算で消化される。"""
+    body = request.get_json(silent=True) or {}
+    sym = str(body.get("symbol") or "").strip().upper()
+    inv = _OSINT_STORE.get(sym)
+    if not inv:
+        return jsonify({"ok": False, "error": "no_investigation",
+                        "noteJa": "先に深掘りOSINTを実行してください。"}), 200
+    meta = {"market": "JP" if sym[:1].isdigit() else "US",
+            "mode": inv.get("mode") or "deep", "privacyMode": inv.get("privacyMode") or "redacted"}
+    runs = inv.get("agentRuns") or []
+    inv2 = _osint_build(sym, meta["market"], meta["mode"], meta["privacyMode"],
+                        "owner_verify_gaps", runs, _ai_now_iso())
+    # 標的クエリを学習語へ(次回の決定論探索が拾えるように)
+    for g in (inv2.get("gapLedger") or []):
+        if g["resolutionStatus"] == "still_unresolved_important":
+            cur = _OSINT_TERM_OVERLAY.get(sym) or []
+            _OSINT_TERM_OVERLAY[sym] = (cur + [t for t in g.get("followUpQueries") or []
+                                               if t not in cur])[:12]
+    return jsonify({"ok": True, "investigation": inv2,
+                    "noteJa": "重複/古い/無関係の即時解決を実行。URL検証が必要な分は次のスカウト実行(worker予算)で消化されます。"})
+
+
+@app.route("/api/argus/osint/url-verify", methods=["POST"])
+def api_argus_osint_url_verify():
+    """公開POST(enqueueのみ): オーナー指定URLの検証依頼。fetchはworker(admin経路)
+    だけが行う — 公開経路からサーバーに任意URLを踏ませない(SSRF防止)。"""
+    body = request.get_json(silent=True) or {}
+    url = str(body.get("url") or "").strip()[:200]
+    if not re.match(r"^https?://[\w.\-]+/", url + "/"):
+        return jsonify({"error": "url_invalid"}), 400
+    if url not in _OSINT_URL_QUEUE:
+        _OSINT_URL_QUEUE.append(url)
+        del _OSINT_URL_QUEUE[:-12]
+    return jsonify({"ok": True, "queued": len(_OSINT_URL_QUEUE),
+                    "noteJa": "検証キューに追加しました(次のスカウト実行で取得・公開経路からは取得しません)。"})
 
 
 @app.route("/api/argus/osint/memory-snapshot")

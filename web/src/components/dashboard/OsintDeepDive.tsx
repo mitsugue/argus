@@ -35,7 +35,17 @@ function extractTerms(text: string): string[] {
 
 export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: boolean }>
   = ({ symbol, market, held }) => {
-  const { inv, running, runDeepDive, postTerms, progress, queuePosition, etaMin, reload } = useOsintInvestigation(symbol, market);
+  const { inv, running, runDeepDive, postTerms, progress, queuePosition, etaMin, reload,
+          verifyGaps, verifyUrl } = useOsintInvestigation(symbol, market);
+  const [dismissed, setDismissed] = React.useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('argus.osintGapDismiss.v1') ?? '[]') as string[]); }
+    catch { return new Set(); }
+  });
+  const dismissGap = (id: string) => {
+    const next = new Set(dismissed); next.add(id);
+    setDismissed(next);
+    try { localStorage.setItem('argus.osintGapDismiss.v1', JSON.stringify([...next].slice(-60))); } catch { /* noop */ }
+  };
   const [privacy, setPrivacy] = React.useState<'redacted' | 'owner_context' | 'full_private'>('redacted');
   const [msg, setMsg] = React.useState<string | null>(null);
   const [pasteOpen, setPasteOpen] = React.useState(false);
@@ -155,6 +165,57 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
             <p key={i} style={{ margin: '1px 0 0', fontSize: 10.5,
                                 color: n.includes('未検出') ? 'var(--amber, #fbbf24)' : 'var(--text-faint)' }}>{n}</p>
           ))}
+
+          {/* v12.1.2 Part I: ギャップ台帳 — 未回収は必ず理由つき・曖昧な「未回収N件」を廃止 */}
+          {(inv.gapLedger?.length ?? 0) > 0 && (
+            <div style={{ marginTop: 3 }}>
+              {(inv.superiority?.gapProgressLinesJa ?? []).map((ln, i) => (
+                <p key={`gl${i}`} style={{ margin: '1px 0 0', fontSize: 10.5, color: 'var(--text-sub)' }}>{ln}</p>
+              ))}
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>
+                  ギャップ台帳を見る({inv.gapLedger!.length}件 · 予算: {inv.budget?.maxCostLabel ?? '—'})
+                </summary>
+                {inv.gapLedger!.filter((g) => !dismissed.has(g.id)).map((g) => (
+                  <div key={g.id} style={{ margin: '3px 0', fontSize: 10.5, borderLeft: '2px solid var(--line)', paddingLeft: 6 }}>
+                    <span style={{ color: g.resolutionStatus === 'still_unresolved_important'
+                      ? 'var(--amber, #fbbf24)' : g.resolutionStatus === 'verified_integrated'
+                        ? 'var(--value-positive)' : 'var(--text-faint)',
+                      border: '1px solid var(--line)', borderRadius: 999, padding: '0 6px', fontSize: 9.5 }}>
+                      {g.resolutionStatusJa}
+                    </span>
+                    <span style={{ marginLeft: 4, color: 'var(--text-sub)' }}>{g.sourceTitle.slice(0, 48)}</span>
+                    <span style={{ display: 'block', color: 'var(--text-faint)' }}>
+                      理由: {g.resolutionReasonJa}(提示: {g.providedBy})
+                    </span>
+                    {g.resolutionStatus === 'still_unresolved_important' && (
+                      <span style={{ display: 'block' }}>
+                        {g.sourceUrl && (
+                          <button type="button" style={btn} onClick={async () => {
+                            const r = await verifyUrl(g.sourceUrl!);
+                            flash(r?.ok ? '✓ URL検証キューに追加' : '追加失敗');
+                          }}>このURLを検証</button>
+                        )}
+                        <button type="button" style={btn} onClick={() => {
+                          dismissGap(g.id);
+                          flash('✓ 重要でないとして除外(端末内の判断・サーバー判定は不変)');
+                        }}>重要でないとして除外</button>
+                      </span>
+                    )}
+                  </div>
+                ))}
+                {inv.gapLedger!.some((g) => dismissed.has(g.id)) && (
+                  <p style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
+                    オーナー判断で除外: {inv.gapLedger!.filter((g) => dismissed.has(g.id)).length}件(端末内のみ)
+                  </p>
+                )}
+              </details>
+              <button type="button" style={btn} onClick={async () => {
+                const r = await verifyGaps();
+                flash(r?.ok ? '✓ 未回収を再判定しました(重複/古い/無関係は即時解決)' : '再判定失敗');
+              }}>未回収を再探索</button>
+            </div>
+          )}
 
           <details style={{ marginTop: 2 }}>
             <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>Gemini/GPT比較・証拠台帳を見る</summary>
