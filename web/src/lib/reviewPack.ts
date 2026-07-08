@@ -217,6 +217,11 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
         if (dz.conclusionJa) L.push(`- 結論: ${dz.conclusionJa}`);
         if (dz.causalJa) L.push(`- 因果関連度: ${dz.causalJa}`);
         if (dz.baselineJa) L.push(`- Gemini基準: ${dz.baselineJa}(比率は基準校正の状態に依存)`);
+        // v12.1.7: 2x準備状況はDQ由来(端末で最後に取得したもの)
+        {
+          const dq = latestDataQuality();
+          if (dq?.twoXReadinessJa) L.push(`- 2x準備: ${dq.twoXReadinessJa}`);
+        }
         if (dz.primarySourceJa) L.push(`- ${dz.primarySourceJa}`);
         if (dz.verificationRatePct != null) L.push(`- ソース検証率: ${dz.verificationRatePct}%`);
         if ((dz.unresolvedCount ?? 0) > 0) L.push(`- 注意: Gemini単発に対して未回収のOSINTギャップ ${dz.unresolvedCount}件(検証されるまで証拠として扱っていません)`);

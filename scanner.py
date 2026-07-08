@@ -7317,6 +7317,21 @@ def _data_quality_console():
             if _last else None)
         # v12.1.6: Gemini基準の校正状態(2x主張の可否)
         _bl = argus_osint_engine.baseline_from_runs(_OSINT_BASELINE_RUNS)
+        _case_results = [r.get("scores") for r in _OSINT_BENCHMARK_RUNS
+                         if isinstance(r.get("scores"), dict)]
+        _latest_rps = ((_last.get("researchPower") or {}) if _last else {})
+        console["osintHealth"]["calibrationPlan"] =             argus_osint_engine.calibration_plan(_OSINT_BASELINE_RUNS)
+        console["osintHealth"]["twoXReadiness"] = argus_osint_engine.two_x_readiness(
+            _OSINT_BASELINE_RUNS, _case_results, _latest_rps or None)
+        console["osintHealth"]["benchmarkRunsSummary"] = {
+            "total": len(_OSINT_BENCHMARK_RUNS),
+            "running": _OSINT_BENCH_STATE["running"],
+            "lastAt": _OSINT_BENCH_STATE["lastAt"],
+            "recent": [{"caseId": r.get("caseId"), "status": r.get("status"),
+                        "ownerReadableJa": r.get("ownerReadableJa")}
+                       for r in _OSINT_BENCHMARK_RUNS[-5:]],
+            "budget": _OSINT_BENCH_BUDGET,
+        }
         console["osintHealth"]["geminiBaseline"] = {
             "baselineType": _bl["baselineType"], "labelJa": _bl["labelJa"],
             "runCount": _bl["runCount"],
@@ -14682,6 +14697,10 @@ _OSINT_CAP_REACHED = {"count": 0}      # 検証上限到達の累計(DQ表示用
 _OSINT_RPS_HISTORY = []                # Research Powerスコア履歴(公開安全・有界40)
 _OSINT_BLOCKED_RECOVERY = {"attempted": 0, "recovered": 0}   # v12.1.4 代替回収の実績
 _OSINT_BASELINE_RUNS = []              # v12.1.6 Gemini基準run記録(public-safe・有界24)
+_OSINT_BENCHMARK_RUNS = []             # v12.1.7 ベンチ実行記録(public-safe・有界20)
+_OSINT_BENCH_STATE = {"running": False, "lastAt": None}
+_OSINT_BENCH_BUDGET = {"maxCasesPerInvocation": 2,
+                       "maxCostLabel": "Gemini呼び出し最大2回/実行"}
 _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
 
 
@@ -14691,7 +14710,8 @@ def _osint_persist():
                 "urlCache": dict(list(_OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
                 "canaryLast": _OSINT_CANARY_LAST,
                 "rpsHistory": _OSINT_RPS_HISTORY[-40:],
-                "baselineRuns": _OSINT_BASELINE_RUNS[-24:]}
+                "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
+                "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:]}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(blob, f, ensure_ascii=False)
@@ -14744,6 +14764,10 @@ def _osint_restore_once():
                     x.get("at") == h.get("at") and x.get("case") == h.get("case")
                     for x in _OSINT_BASELINE_RUNS):
                 _OSINT_BASELINE_RUNS.append(h)
+        for h in (blob.get("benchmarkRuns") or [])[-20:]:
+            if isinstance(h, dict) and not any(
+                    x.get("id") == h.get("id") for x in _OSINT_BENCHMARK_RUNS):
+                _OSINT_BENCHMARK_RUNS.append(h)
     except Exception:
         pass
 
@@ -15469,6 +15493,101 @@ def api_argus_admin_osint_agents_run():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
 
 
+def _osint_benchmark_worker(case_ids):
+    """v12.1.7: ベンチケースのGemini基準run実行(admin/cron専用・redacted固定)。
+    外部AI不在はskipped/insufficient_data — 偽passを作らない。"""
+    try:
+        for cid in case_ids:
+            case = next((c for c in argus_osint_engine.GEMINI_BENCHMARK_SUITE
+                         if (c.get("id") or c.get("case")) == cid), None)
+            if case is None:
+                continue
+            now_iso = _ai_now_iso()
+            rec = {"id": f"bench-{cid}-{int(time.time())}", "caseId": cid,
+                   "caseName": case.get("name"), "startedAt": now_iso,
+                   "completedAt": None, "status": "running",
+                   "mode": "calibration", "privacyMode": "redacted",
+                   "geminiRuns": [], "gptRun": None, "scores": None,
+                   "weakPillars": [], "blockersJa": [], "ownerReadableJa": None}
+            if not (google_genai and GEMINI_API_KEY):
+                rec["status"] = "skipped"
+                rec["ownerReadableJa"] = "Gemini未設定 — insufficient_data(偽passなし)"
+                rec["completedAt"] = _ai_now_iso()
+                _OSINT_BENCHMARK_RUNS.append(rec)
+                continue
+            prompt = argus_osint_engine.benchmark_prompt(case)
+            out, status = _gemini_osint(prompt)
+            grun = _osint_agent_run("gemini", status, out, now_iso, "redacted")
+            claims = grun.get("claims") or []
+            gscore = argus_osint_engine.external_rubric_score(claims) if claims else 0
+            rec["geminiRuns"].append({"score": gscore, "status": status,
+                                      "claimCount": len(claims)})
+            if status == "ok" and gscore:
+                _OSINT_BASELINE_RUNS.append({
+                    "score": gscore, "case": cid, "symbol": cid, "at": _ai_now_iso(),
+                    "promptVersion": argus_osint_engine.SCOUT_PROMPT_VERSION,
+                    "privacyMode": "redacted"})
+                while len(_OSINT_BASELINE_RUNS) > 24:
+                    _OSINT_BASELINE_RUNS.pop(0)
+            # ARGUS側: ケース関連銘柄の最新調査RPSがあれば比較(なければ判定材料不足)
+            argus_rps = None
+            if cid == "hamamatsu_seaj_optical":
+                argus_rps = (_OSINT_STORE.get("6965") or {}).get("researchPower")
+            cs = argus_osint_engine.benchmark_case_score(case, claims, argus_rps)
+            rec["scores"] = cs
+            rec["weakPillars"] = cs.get("weakPillars") or []
+            rec["status"] = ("complete" if status == "ok" else "failed_safe")
+            rec["ownerReadableJa"] = cs.get("ownerReadableJa")
+            rec["completedAt"] = _ai_now_iso()
+            _OSINT_BENCHMARK_RUNS.append(rec)
+            while len(_OSINT_BENCHMARK_RUNS) > 20:
+                _OSINT_BENCHMARK_RUNS.pop(0)
+        _osint_persist()
+        add_log(f"[osint] benchmark done: {case_ids}")
+    except Exception as e:
+        add_log(f"[osint] benchmark failed: {type(e).__name__}")
+    finally:
+        _OSINT_BENCH_STATE["running"] = False
+        _OSINT_BENCH_STATE["lastAt"] = _ai_now_iso()
+
+
+@app.route("/api/argus/admin/osint/benchmark-run", methods=["POST"])
+def api_argus_admin_osint_benchmark_run():
+    """Admin/cron専用: 固定ベンチスイートのGemini基準run実行(校正の加速)。
+    公開ルートからは絶対に起動しない・重複実行は既存jobを返す・予算可視。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        body = request.get_json(silent=True) or {}
+        if _OSINT_BENCH_STATE["running"]:
+            return jsonify({"ok": True, "duplicate": True,
+                            "noteJa": "ベンチ実行中 — 既存jobを再利用します。",
+                            "budget": _OSINT_BENCH_BUDGET}), 202
+        target = str(body.get("caseId") or "").strip()
+        if target:
+            case_ids = [target]
+        else:
+            # run数が最少のケースからround-robin(予算内)
+            counts = {}
+            for r in _OSINT_BASELINE_RUNS:
+                counts[r.get("case")] = counts.get(r.get("case"), 0) + 1
+            ordered = sorted(argus_osint_engine.GEMINI_BENCHMARK_SUITE,
+                             key=lambda c: counts.get(c.get("id") or c.get("case"), 0))
+            case_ids = [(c.get("id") or c.get("case"))
+                        for c in ordered[:_OSINT_BENCH_BUDGET["maxCasesPerInvocation"]]]
+        _OSINT_BENCH_STATE["running"] = True
+        import threading
+        threading.Thread(target=_osint_benchmark_worker, args=(case_ids,),
+                         daemon=True).start()
+        return jsonify({"ok": True, "started": case_ids,
+                        "budget": _OSINT_BENCH_BUDGET,
+                        "noteJa": "バックグラウンド実行(結果はDQのベンチ欄へ)。"}), 202
+    except Exception as e:
+        _OSINT_BENCH_STATE["running"] = False
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
+
+
 @app.route("/api/argus/admin/osint/canary-run", methods=["POST"])
 def api_argus_admin_osint_canary_run():
     """Admin/cron: canary(既知トピックを取りこぼしていないか)を評価。"""
@@ -15552,6 +15671,7 @@ def api_argus_osint_memory_snapshot():
                     "canaryLast": _OSINT_CANARY_LAST,
                     "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                     "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
+                    "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 

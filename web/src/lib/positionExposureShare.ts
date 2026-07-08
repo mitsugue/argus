@@ -55,6 +55,8 @@ export function latestFireCore(): LocalFireCore | null { return latestFC; }
 export interface DataQualityShare {
   overallStatus: string; overallStatusJa: string;
   topIssuesJa: string[]; expectedDisabledJa: string[];
+  // v12.1.7: 2x準備の一行(Pack用)
+  twoXReadinessJa?: string;
 }
 let latestDQx: DataQualityShare | null = null;
 export function publishDataQuality(d: DataQualityShare): void { latestDQx = d; }

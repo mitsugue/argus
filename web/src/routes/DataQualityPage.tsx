@@ -52,7 +52,20 @@ interface Console {
     // v12.1.6: Gemini基準の校正状態
     geminiBaseline?: { baselineType: string; labelJa: string; runCount: number;
       medianScore: number | null; variance: number | null; confidence: string;
-      lastCalibrationAt: string | null; twoXClaimAllowed: boolean; noteJa: string } };
+      lastCalibrationAt: string | null; twoXClaimAllowed: boolean; noteJa: string };
+    // v12.1.7: 校正計画+2x準備レポート+ベンチ実行
+    calibrationPlan?: { requiredCases: number; requiredRuns: number;
+      currentCasesCovered: number; currentRuns: number; remainingRuns: number;
+      estimatedCompletionJa: string; baselineConfidence: string;
+      canClaim2x: boolean; progressPct: number; variance: number | null };
+    twoXReadiness?: { overallStatus: string; overallJa: string;
+      currentRatio: number | null; calibratedRatio: number | null;
+      weakCases: { caseId: string; status: string; weakPillars: string[] }[];
+      weakPillars: string[]; topBlockersJa: string[];
+      fastestPathTo2xJa: string[]; recommendedNextEngineeringTasks: string[] };
+    benchmarkRunsSummary?: { total: number; running: boolean; lastAt: string | null;
+      recent: { caseId: string; status: string; ownerReadableJa: string | null }[];
+      budget: { maxCasesPerInvocation: number; maxCostLabel: string } } };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -91,7 +104,10 @@ export const DataQualityPage: React.FC = () => {
         setC(d); setErr(false);
         publishDataQuality({ overallStatus: d.overallStatus, overallStatusJa: d.overallStatusJa,
           topIssuesJa: d.topIssuesJa ?? [],
-          expectedDisabledJa: (d.expectedDisabled ?? []).map((x) => `${x.sourceName}: ${x.reasonJa}`) });
+          expectedDisabledJa: (d.expectedDisabled ?? []).map((x) => `${x.sourceName}: ${x.reasonJa}`),
+          twoXReadinessJa: d.osintHealth?.twoXReadiness
+            ? `${d.osintHealth.twoXReadiness.overallJa}${d.osintHealth.twoXReadiness.currentRatio != null ? `(現在比 ${d.osintHealth.twoXReadiness.currentRatio.toFixed(2)}x)` : ''}`
+            : undefined });
       })
       .catch(() => setErr(true));
   }, [backend]);
@@ -382,6 +398,60 @@ export const DataQualityPage: React.FC = () => {
                       {c.osintHealth.geminiBaseline.lastCalibrationAt &&
                         ` 最終校正: ${c.osintHealth.geminiBaseline.lastCalibrationAt}`}
                     </span>
+                  </p>
+                )}
+                {/* v12.1.7: 校正進捗+2x準備レポート */}
+                {c.osintHealth.calibrationPlan && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                    校正進捗: <b>{c.osintHealth.calibrationPlan.progressPct}%</b>
+                    (run {c.osintHealth.calibrationPlan.currentRuns}/{c.osintHealth.calibrationPlan.requiredRuns}
+                    ・ケース {c.osintHealth.calibrationPlan.currentCasesCovered}/{c.osintHealth.calibrationPlan.requiredCases})
+                    {' '}· {c.osintHealth.calibrationPlan.estimatedCompletionJa}
+                    <span style={{ display: 'block', height: 4, background: 'var(--line)',
+                                   borderRadius: 2, marginTop: 2 }}>
+                      <span style={{ display: 'block', height: 4, borderRadius: 2,
+                                     width: `${c.osintHealth.calibrationPlan.progressPct}%`,
+                                     background: c.osintHealth.calibrationPlan.canClaim2x
+                                       ? 'var(--value-positive)' : 'var(--accent)' }} />
+                    </span>
+                  </p>
+                )}
+                {c.osintHealth.twoXReadiness && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11,
+                    color: c.osintHealth.twoXReadiness.overallStatus === 'calibrated_2x'
+                      ? 'var(--value-positive)' : 'var(--text-sub)' }}>
+                    2x準備: <b>{c.osintHealth.twoXReadiness.overallJa}</b>
+                    {c.osintHealth.twoXReadiness.currentRatio != null &&
+                      ` · 現在比 ${c.osintHealth.twoXReadiness.currentRatio.toFixed(2)}x`}
+                    {c.osintHealth.twoXReadiness.weakPillars.length > 0 &&
+                      ` · 弱い柱: ${c.osintHealth.twoXReadiness.weakPillars.join('/')}`}
+                    {c.osintHealth.twoXReadiness.topBlockersJa.length > 0 && (
+                      <span style={{ display: 'block', color: 'var(--amber, #fbbf24)', fontSize: 10 }}>
+                        blocker: {c.osintHealth.twoXReadiness.topBlockersJa.join(' / ')}
+                      </span>
+                    )}
+                    {c.osintHealth.twoXReadiness.fastestPathTo2xJa.length > 0 && (
+                      <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>
+                        {c.osintHealth.twoXReadiness.fastestPathTo2xJa.join(' / ')}
+                      </span>
+                    )}
+                    {c.osintHealth.twoXReadiness.recommendedNextEngineeringTasks.length > 0 && (
+                      <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>
+                        推奨タスク: {c.osintHealth.twoXReadiness.recommendedNextEngineeringTasks.join(' / ')}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {c.osintHealth.benchmarkRunsSummary && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                    ベンチ実行: 累計{c.osintHealth.benchmarkRunsSummary.total}回
+                    {c.osintHealth.benchmarkRunsSummary.running && '(実行中)'}
+                    {' '}· 予算 {c.osintHealth.benchmarkRunsSummary.budget.maxCostLabel}
+                    {c.osintHealth.benchmarkRunsSummary.recent.slice(-2).map((r) => (
+                      <span key={r.caseId + r.status} style={{ display: 'block' }}>
+                        {r.caseId}: {r.status}{r.ownerReadableJa ? ` — ${r.ownerReadableJa}` : ''}
+                      </span>
+                    ))}
                   </p>
                 )}
                 {/* v12.1.3: ソースユニバース(unavailableも沈黙省略せず可視化) */}

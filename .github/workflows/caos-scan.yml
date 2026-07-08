@@ -36,6 +36,11 @@ jobs:
             -H "Content-Type: application/json" -d '{}' \
             "$BE/api/argus/admin/osint/agents-run" || echo '{"error":"unreachable"}')
           echo "osint-agents: $OS"
+          # v12.1.7: 基準校正の加速(run最少ケースを最大2件・Gemini 2呼び出し/回)
+          BM=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            -H "Content-Type: application/json" -d '{}' \
+            "$BE/api/argus/admin/osint/benchmark-run" || echo '{"error":"unreachable"}')
+          echo "osint-benchmark: $BM"
           # v12.1.0: canary(見落とし監視・cached評価のみで外部AIなし)
           CN=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             -H "Content-Type: application/json" -d '{}' \

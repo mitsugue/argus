@@ -2344,3 +2344,222 @@ def ratio_confidence(baseline_info: Dict[str, Any]) -> str:
     if bt in ("calibrated_baseline", "median_of_runs") and bc in ("high", "medium"):
         return "medium"
     return "low"
+
+
+# ━━━ v12.1.7 Phase 6 — ベンチマークケースの完全メタデータ ━━━━━━━━━━━━━━━━━
+
+_BENCH_EXTRA = {
+    # case -> (category, valueChainRequired, officialCalendarRequired,
+    #          knownCaveats, passFail, purposeJa)
+    "hamamatsu_seaj_optical": ("theme_symbol", True, False,
+        "ザラ場の新鮮ニュースで比率が変動する",
+        "SEAJ/公式一次への到達+仮説分離ができればpass",
+        "銘柄×業界テーマの複合調査力を測る"),
+    "samsung_anthropic_chip": ("global_tech", True, False,
+        "英語一次報道が主 — 日本語二次で満足しない",
+        "一次報道URL/日付を特定できればpass",
+        "海外バリューチェーン検出力を測る"),
+    "cpi_official_schedule": ("official_calendar", False, True,
+        "祝日ずれに注意", "公式日程の正確な日時でpass",
+        "公式マクロ日程の正確性を測る"),
+    "nfp_official_release": ("official_calendar", False, True,
+        "未発表値の断定は即fail", "公式日程+発表済み数値のみでpass",
+        "発表前後の規律を測る"),
+    "fomc_schedule": ("official_calendar", False, True,
+        "利下げ確率の断定は即fail", "公式日程のみでpass",
+        "金融政策イベントの規律を測る"),
+    "direct_company_disclosure": ("official_disclosure", False, False,
+        "開示は数分単位で増える", "TDnet一次の正確な引用でpass",
+        "直接開示の取り込みを測る"),
+    "stale_unrelated_article": ("discipline", False, False,
+        "古い記事が検索上位に出やすい", "stale却下できればpass",
+        "鮮度規律を測る"),
+    "pr_blocked_recovery": ("recovery", False, False,
+        "PRアグリゲータはbot遮断が多い", "企業公式経路で回収or正直にinaccessibleでpass",
+        "ブロックソース回収力を測る"),
+    "value_chain_inference_only": ("inference", True, False,
+        "連想を事実と混同しやすい", "推論の明示+確度制御でpass",
+        "推論規律を測る"),
+    "no_news_unknown_cause": ("honesty", False, False,
+        "物語の創作誘惑が最大のケース", "「探索範囲では未確認」と言えればpass",
+        "正直さを測る"),
+}
+
+for _c in GEMINI_BENCHMARK_SUITE:
+    _cat, _vc, _cal, _caveat, _pf, _purpose = _BENCH_EXTRA[_c["case"]]
+    _c.setdefault("id", _c["case"])
+    _c.setdefault("name", _c["case"].replace("_", " "))
+    _c.setdefault("category", _cat)
+    _c.setdefault("investigationQuestionJa", _c["investigationQuestion"])
+    _c.setdefault("expectedForbiddenBehaviors", [_c["expectedForbiddenBehavior"]])
+    _c.setdefault("primarySourceRequired", bool(_c["expectedPrimarySourceNeed"]))
+    _c.setdefault("valueChainRequired", _vc)
+    _c.setdefault("officialCalendarRequired", _cal)
+    _c.setdefault("knownCaveats", _caveat)
+    _c.setdefault("passFailConditions", _pf)
+    _c.setdefault("ownerReadablePurposeJa", _purpose)
+
+
+def benchmark_prompt(case: Dict[str, Any]) -> str:
+    """ベンチケースの固定プロンプト(redacted・保有情報なし・契約はスカウトと同一)。"""
+    return (
+        f"調査質問: {case['investigationQuestionJa']}\n"
+        "出力は必ずJSONのみ: {\"claims\": [{\"titleJa\", \"url\", \"publishedAt\","
+        " \"sourceName\", \"directness\", \"whyRelevant\", \"confidence\"}]}。"
+        "URL/日付が不明な場合はunknownと書く。ソースの捏造禁止。"
+        f"禁止行動: {' / '.join(case['expectedForbiddenBehaviors'])}。"
+        "投資助言・売買指示はしない。")
+
+
+# ━━━ v12.1.7 Phase 2 — Calibration Plan ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CALIBRATION_TARGET = {"requiredCases": 2, "requiredRuns": 5,
+                      "preferredCases": 3}
+
+
+def calibration_plan(baseline_runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    recs = [r for r in (baseline_runs or []) if isinstance(r, dict)]
+    cases = {str(r.get("case") or "") for r in recs if r.get("case")}
+    info = baseline_from_runs(recs)
+    n = info["runCount"]
+    remaining = max(0, CALIBRATION_TARGET["requiredRuns"] - n)
+    remaining_cases = max(0, CALIBRATION_TARGET["requiredCases"] - len(cases))
+    can2x = (info["baselineType"] == "calibrated_baseline"
+             and info["baselineConfidence"] in ("high", "medium"))
+    return {
+        "requiredCases": CALIBRATION_TARGET["requiredCases"],
+        "requiredRuns": CALIBRATION_TARGET["requiredRuns"],
+        "preferredCases": CALIBRATION_TARGET["preferredCases"],
+        "currentCasesCovered": len(cases),
+        "casesCoveredList": sorted(cases)[:12],
+        "currentRuns": n,
+        "remainingRuns": remaining,
+        "remainingCases": remaining_cases,
+        "estimatedCompletionJa": ("校正済み" if remaining == 0 and remaining_cases == 0
+                                  and can2x else
+                                  f"あとGemini run {remaining}回"
+                                  + (f"+新ケース{remaining_cases}種" if remaining_cases else "")
+                                  + "(cron/ベンチ実行で自動蓄積)"),
+        "baselineConfidence": info["baselineConfidence"],
+        "medianGeminiScore": info["medianGeminiScore"],
+        "variance": info["variance"],
+        "canClaim2x": can2x,
+        "progressPct": min(100, int(100 * n / CALIBRATION_TARGET["requiredRuns"])),
+    }
+
+
+# ━━━ v12.1.7 Phase 3 — ケース別採点 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CASE_STATUSES = ("argus_below", "argus_matches", "argus_exceeds", "argus_2x",
+                 "insufficient_data")
+
+_PILLAR_WEAK_THRESHOLDS = {"coverage": 8, "precision": 10, "reasoning": 4,
+                           "agenticCompletion": 5, "primarySourceStrength": 8}
+
+
+def weak_pillars_of(rps: Dict[str, Any]) -> List[str]:
+    pl = (rps or {}).get("pillars") or {}
+    return [k for k, th in _PILLAR_WEAK_THRESHOLDS.items()
+            if (pl.get(k) or 0) < th]
+
+
+def benchmark_case_score(case: Dict[str, Any],
+                         gemini_claims: List[Dict[str, Any]],
+                         argus_rps: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """ケース単位の比較採点。ARGUSの未検証は既にRPSで加点されない設計。"""
+    gem = external_rubric_score(gemini_claims) if gemini_claims else 0
+    if not gem or not argus_rps:
+        status = "insufficient_data"
+        pub = ctx = ratio = None
+        weak = []
+    else:
+        pub_score = max(0, (argus_rps.get("argusScore") or 0)
+                        - ((argus_rps.get("components") or {}).get("portfolioContextScore", 0)
+                           + (argus_rps.get("components") or {}).get("flowSupplyDemandContextScore", 0)
+                           + (argus_rps.get("components") or {}).get("eventContextScore", 0)))
+        pub = round(pub_score / gem, 2)
+        ctx = round((argus_rps.get("argusScore") or 0) / gem, 2)
+        ratio = ctx
+        weak = weak_pillars_of(argus_rps)
+        blocked = bool(argus_rps.get("blockersJa"))
+        if ratio >= 2.0 and not blocked and not weak:
+            status = "argus_2x"
+        elif ratio >= 1.15:
+            status = "argus_exceeds"
+        elif ratio >= 0.9:
+            status = "argus_matches"
+        else:
+            status = "argus_below"
+    return {"caseId": case.get("id") or case.get("case"),
+            "caseName": case.get("name"),
+            "geminiScore": gem or None,
+            "argusPublicScore": (None if ratio is None else
+                                 int((argus_rps or {}).get("argusScore") or 0)),
+            "publicRatio": pub, "contextRatio": ctx, "ratio": ratio,
+            "status": status,
+            "weakPillars": weak,
+            "ownerReadableJa": (case.get("ownerReadablePurposeJa") or "") +
+            (f" — {status}" if status != "insufficient_data"
+             else " — 判定材料不足(外部AI未実行)")}
+
+
+# ━━━ v12.1.7 Phase 4 — 2x Readiness Report ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_PILLAR_TASK_JA = {
+    "primarySourceStrength": "SEAJ公式PDF resolver / 公式開示canary強化",
+    "coverage": "ソースユニバース拡張(業界統計の定点巡回)",
+    "precision": "URLライブ検証の対象拡大",
+    "reasoning": "矛盾検出ルールの拡充",
+    "agenticCompletion": "PR TIMES代替取得 / 再探索ループ予算の調整",
+}
+
+
+def two_x_readiness(baseline_runs: List[Dict[str, Any]],
+                    case_results: List[Dict[str, Any]],
+                    latest_rps: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    plan = calibration_plan(baseline_runs)
+    info = baseline_from_runs(baseline_runs)
+    ratio = (latest_rps or {}).get("argusVsGeminiRatio")
+    calibrated = plan["canClaim2x"]
+    if not baseline_runs or plan["currentRuns"] == 0:
+        overall = "insufficient_data"
+    elif not calibrated:
+        overall = "not_calibrated"
+    elif ratio is None:
+        overall = "insufficient_data"
+    elif ratio >= 2.0 and (latest_rps or {}).get("status") == "exceeds_gemini_2x":
+        overall = "calibrated_2x"
+    elif ratio >= 1.0:
+        overall = "calibrated_exceeds_but_not_2x"
+    else:
+        overall = "calibrated_below"
+    weak_cases = [c for c in (case_results or [])
+                  if c.get("status") in ("argus_below", "insufficient_data")]
+    weak_pillars = weak_pillars_of(latest_rps or {})
+    blockers = list((latest_rps or {}).get("blockersJa") or [])
+    if overall == "not_calibrated":
+        blockers = ["未校正: Gemini runが不足"] + blockers
+    tasks = [_PILLAR_TASK_JA[p] for p in weak_pillars if p in _PILLAR_TASK_JA]
+    fastest = []
+    if plan["remainingRuns"]:
+        fastest.append(f"校正run残り{plan['remainingRuns']}回(cron/ベンチ実行)")
+    if "primarySourceStrength" in weak_pillars:
+        fastest.append("最短経路: SEAJ公式PDF resolver / PR TIMES代替取得 / 公式開示canary強化")
+    if "具体ソース未回収" in blockers:
+        fastest.append("残る具体未回収ソースのURL裁定(オーナーURL貼り付けが最速)")
+    return {"overallStatus": overall,
+            "overallJa": {"not_calibrated": "未校正: Gemini runが不足",
+                          "calibrated_below": "校正済み: Gemini未満",
+                          "calibrated_exceeds_but_not_2x": "校正済み: 超過だが2x未達",
+                          "calibrated_2x": "校正済み: 2x達成",
+                          "insufficient_data": "判定材料不足"}[overall],
+            "currentRatio": ratio,
+            "calibratedRatio": (ratio if calibrated else None),
+            "calibrationPlan": plan,
+            "weakCases": [{"caseId": c.get("caseId"), "status": c.get("status"),
+                           "weakPillars": c.get("weakPillars")}
+                          for c in weak_cases][:6],
+            "weakPillars": weak_pillars,
+            "topBlockersJa": blockers[:5],
+            "fastestPathTo2xJa": fastest[:4],
+            "recommendedNextEngineeringTasks": tasks[:4]}
