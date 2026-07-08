@@ -130,7 +130,7 @@ def test_rps_insufficient_data_without_agents():
     assert rps["statusJa"] == "判定保留"
 
 
-def test_rps_has_15_components_and_display():
+def test_rps_has_19_components_and_display():
     ver = [{"titleJa": "公式開示", "verificationStatus": "verified",
             "primaryEligible": True, "directness": "direct_company",
             "sourceType": "official_disclosure", "freshness": "today"}] * 4
@@ -140,7 +140,7 @@ def test_rps_has_15_components_and_display():
         coverage={"totalCoverage": "strong", "sectorCoverage": "medium",
                   "valueChainCoverage": "medium"},
         contradiction=cr, context_advantages=["需給文脈"], learning_updated=True)
-    assert len(rps["components"]) == 15
+    assert len(rps["components"]) == 19   # v12.1.4で+4成分
     assert "Gemini" in rps["displayJa"] and "ARGUS" in rps["displayJa"]
     assert rps["status"] in oe.RPS_STATUSES
     assert rps["argusVsGeminiRatio"] is None or rps["argusVsGeminiRatio"] > 0
@@ -302,7 +302,8 @@ def test_new_source_types_supported():
 
 
 def test_no_url_no_date_claim_exact_wording():
-    g = oe.resolve_gap({"titleJa": "浜松ホトニクスに関する重要な噂"}, "gemini", [],
+    # v12.1.4: 「噂」は仮説へ — 事実主張型でexact wordingを検査
+    g = oe.resolve_gap({"titleJa": "浜松ホトニクスが新型光半導体を発表"}, "gemini", [],
                        symbol="6965", investigation_id="i", now_iso=NOW,
                        theme_entities={"浜松ホトニクス"})
     assert g["resolutionStatus"] == "missing_url"

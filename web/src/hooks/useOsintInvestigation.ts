@@ -57,7 +57,11 @@ export interface OsintInvestigation {
     id: string; sourceTitle: string; sourceUrl?: string | null; sourceDomain?: string | null;
     providedBy: string; resolutionStatus: string; resolutionStatusJa: string;
     resolutionReasonJa: string; followUpQueries: string[]; ownerReadableJa: string;
+    claimType?: string;
   }[];
+  /** v12.1.4 Phase 4: 新鮮候補(検証前 — 決定的原因にしない)。 */
+  freshCandidateCount?: number;
+  freshCandidateAlertJa?: string | null;
   budget?: { maxUrls?: number; maxLoops?: number; maxSeconds?: number; maxCostLabel?: string };
   /** v12.1.3 Phase 2: Research Power Score(生件数では2xにならない測定)。 */
   researchPower?: {

@@ -74,6 +74,9 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
       sourceCoverageJa: inv.sourceCoverage
         ? `${inv.sourceCoverage.filter((r) => r.state === 'checked').length}/${inv.sourceCoverage.length}カテゴリ探索済み`
         : undefined,
+      gapGroupsJa: inv.gapLedger?.length
+        ? `具体未回収${inv.gapLedger.filter((g) => g.resolutionStatus === 'still_unresolved_important').length}件/未検証仮説${inv.gapLedger.filter((g) => g.resolutionStatus === 'hypothesis_not_source').length}件/探索方向${inv.gapLedger.filter((g) => g.resolutionStatus === 'search_direction_only').length}件/参照不能${inv.gapLedger.filter((g) => g.resolutionStatus === 'inaccessible').length}件`
+        : undefined,
     });
   }, [inv]);
 
@@ -195,6 +198,28 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
               )}
             </p>
           )}
+          {/* v12.1.4: 新鮮候補アラート(検証中 — 決定的原因にしない) */}
+          {inv.freshCandidateAlertJa && (
+            <p style={{ margin: '0 0 3px', fontSize: 10.5, color: 'var(--accent)' }}>
+              {inv.freshCandidateAlertJa}({inv.freshCandidateCount}件 — 検証されるまで原因として扱いません)
+            </p>
+          )}
+          {/* v12.1.4: 具体ソース欠落と仮説の分離表示 */}
+          {(inv.gapLedger?.length ?? 0) > 0 && (() => {
+            const n = (sts: string[]) => inv.gapLedger!.filter((g) => sts.includes(g.resolutionStatus)).length;
+            const concrete = n(['still_unresolved_important']);
+            const hyp = n(['hypothesis_not_source']);
+            const dir = n(['search_direction_only']);
+            const inf = n(['inference_only']);
+            const inac = n(['inaccessible']);
+            return (
+              <p style={{ margin: '0 0 3px', fontSize: 10, color: concrete > 0 ? 'var(--amber, #fbbf24)' : 'var(--text-faint)' }}>
+                未回収の具体ソース {concrete}件 · 未検証仮説 {hyp}件 · 探索方向 {dir}件
+                {inf > 0 && ` · 推論のみ ${inf}件`}{inac > 0 && ` · 参照不能 ${inac}件`}
+                (優位性をブロックするのは具体ソースのみ)
+              </p>
+            );
+          })()}
           {inv.valueChainGraph?.incomplete && inv.valueChainGraph.incompleteNoteJa && (
             <p style={{ margin: '0 0 3px', fontSize: 10, color: 'var(--text-faint)' }}>
               {inv.valueChainGraph.incompleteNoteJa}

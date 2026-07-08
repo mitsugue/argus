@@ -7294,6 +7294,19 @@ def _data_quality_console():
                              "displayJa": rp.get("displayJa")}
         console["osintHealth"]["researchPowerLatest"] = rp_latest
         console["osintHealth"]["rpsHistoryCount"] = len(_OSINT_RPS_HISTORY)
+        # v12.1.4: 仮説規律/代替回収/新鮮候補の健全性
+        _invs = list(_OSINT_STORE.values())
+        console["osintHealth"]["blockedRecoveryAttempted"] = _OSINT_BLOCKED_RECOVERY["attempted"]
+        console["osintHealth"]["blockedRecoveryRecovered"] = _OSINT_BLOCKED_RECOVERY["recovered"]
+        console["osintHealth"]["hypothesisNotSourceCount"] = sum(
+            1 for i in _invs for g in (i.get("gapLedger") or [])
+            if g.get("resolutionStatus") in ("hypothesis_not_source",
+                                             "search_direction_only", "inference_only"))
+        console["osintHealth"]["metadataOnlyCount"] = sum(
+            1 for i in _invs for v in (i.get("verifiedSources") or [])
+            if v.get("verificationStatus") == "metadata_only")
+        console["osintHealth"]["freshCandidateCount"] = sum(
+            int(i.get("freshCandidateCount") or 0) for i in _invs)
         uni = argus_osint_engine.source_universe_status(
             agents_configured=bool(_OPENAI_API_KEY or (google_genai and GEMINI_API_KEY)))
         console["osintHealth"]["sourceUniverse"] = {
@@ -14643,6 +14656,8 @@ _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
 _OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
 _OSINT_CAP_REACHED = {"count": 0}      # 検証上限到達の累計(DQ表示用)
 _OSINT_RPS_HISTORY = []                # Research Powerスコア履歴(公開安全・有界40)
+_OSINT_BLOCKED_RECOVERY = {"attempted": 0, "recovered": 0}   # v12.1.4 代替回収の実績
+_OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
 
 
 def _osint_persist():
@@ -14968,6 +14983,35 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
                 cap_reached=bool(c.get("_capReached")),
                 theme_entities=theme_ents))
     inv["gapLedger"] = gap_ledger[:24]
+    # ── v12.1.4 Phase 3: 参照不能ソースの代替回収(合法的な公開経路のみ) ──
+    for g in gap_ledger:
+        if g.get("resolutionStatus") == "inaccessible":
+            th = argus_osint_engine._title_hash(g.get("sourceTitle") or "")
+            if th not in _OSINT_INACCESSIBLE_TITLES:
+                _OSINT_INACCESSIBLE_TITLES.add(th)
+                _OSINT_BLOCKED_RECOVERY["attempted"] += 1
+                rq = argus_osint_engine.blocked_source_recovery_queries(
+                    g, company_ja=prof.get("nameJa") or "",
+                    company_en=prof.get("nameEn") or "")
+                if rq:
+                    cur = _OSINT_TERM_OVERLAY.get(symu) or []
+                    _OSINT_TERM_OVERLAY[symu] = (cur + [t for t in rq if t not in cur])[:12]
+        elif g.get("resolutionStatus") == "verified_integrated":
+            th = argus_osint_engine._title_hash(g.get("sourceTitle") or "")
+            if th in _OSINT_INACCESSIBLE_TITLES:
+                _OSINT_INACCESSIBLE_TITLES.discard(th)
+                _OSINT_BLOCKED_RECOVERY["recovered"] += 1
+    while len(_OSINT_INACCESSIBLE_TITLES) > 60:
+        _OSINT_INACCESSIBLE_TITLES.pop()
+    # ── v12.1.4 Phase 4: 予備状態の明示(検証前候補は決定的原因になれない) ──
+    fresh_candidates = 0
+    for v in verified:
+        v["preliminaryStatus"] = argus_osint_engine.preliminary_status(v)
+        if v["preliminaryStatus"] == "fresh_candidate":
+            fresh_candidates += 1
+    inv["freshCandidateCount"] = fresh_candidates
+    inv["freshCandidateAlertJa"] = (argus_osint_engine.FRESH_CANDIDATE_ALERT_JA
+                                    if fresh_candidates else None)
     ver_list = [v for v in verified if v.get("verificationStatus") == "verified"]
     vrate = (len(ver_list) / len(verified)) if verified else 0.0
     ctx_adv = []
@@ -15047,7 +15091,10 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
         coverage=inv["coverageScore"], contradiction=contr,
         context_advantages=ctx_adv,
         source_universe_missing=min(3, missing_n // 3) + min(2, cov_missing),
-        learning_updated=learning_updated)
+        learning_updated=learning_updated,
+        kwargs_recovery={"attempted": _OSINT_BLOCKED_RECOVERY["attempted"],
+                         "recovered": _OSINT_BLOCKED_RECOVERY["recovered"],
+                         "freshCandidates": fresh_candidates})
     inv["researchPower"] = rps
     # Phase 7差分: Research Powerスコア履歴(公開安全・有界・スナップショット同乗)
     if rps.get("status") != "insufficient_data":

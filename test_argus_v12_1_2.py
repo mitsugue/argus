@@ -196,10 +196,16 @@ def test_prompt_contract_fields():
 
 
 def test_no_url_claim_not_evidence_but_targeted():
+    # v12.1.4で「噂」はソース欠落でなく未検証仮説に分類(優位性は非ブロック)。
+    # 事実主張型(ヘッジ語なし)は従来どおりmissing_urlで標的再探索。
     g = oe.resolve_gap({"titleJa": "URLの無い浜松ホトニクスの噂"}, "gemini", [],
                        symbol="6965", investigation_id="i", now_iso=NOW,
                        theme_entities={"浜松ホトニクス"})
-    assert g["resolutionStatus"] == "missing_url"
+    assert g["resolutionStatus"] == "hypothesis_not_source"
+    g2 = oe.resolve_gap({"titleJa": "浜松ホトニクスが新型光半導体を発表"}, "gemini", [],
+                        symbol="6965", investigation_id="i", now_iso=NOW,
+                        theme_entities={"浜松ホトニクス"})
+    assert g2["resolutionStatus"] == "missing_url"
     assert g["followUpQueries"]                              # 標的再探索クエリは生成される
 
 
