@@ -7315,6 +7315,22 @@ def _data_quality_console():
         console["osintHealth"]["causalRelevanceLatestJa"] = (
             (_last.get("causalRelevanceSummary") or {}).get("ownerReadableJa")
             if _last else None)
+        # v12.1.6: Gemini基準の校正状態(2x主張の可否)
+        _bl = argus_osint_engine.baseline_from_runs(_OSINT_BASELINE_RUNS)
+        console["osintHealth"]["geminiBaseline"] = {
+            "baselineType": _bl["baselineType"], "labelJa": _bl["labelJa"],
+            "runCount": _bl["runCount"],
+            "medianScore": _bl["medianGeminiScore"],
+            "variance": _bl["variance"],
+            "confidence": _bl["baselineConfidence"],
+            "lastCalibrationAt": (_OSINT_BASELINE_RUNS[-1]["at"]
+                                  if _OSINT_BASELINE_RUNS else None),
+            "twoXClaimAllowed": (_bl["baselineType"] == "calibrated_baseline"
+                                 and _bl["baselineConfidence"] in ("high", "medium")),
+            "noteJa": ("2x達成の主張には校正済み基準(5run以上・2ケース以上・"
+                       "安定)が必要です。" if _bl["baselineType"] != "calibrated_baseline"
+                       else "校正済み — 2x判定が有効です。"),
+        }
         uni = argus_osint_engine.source_universe_status(
             agents_configured=bool(_OPENAI_API_KEY or (google_genai and GEMINI_API_KEY)))
         console["osintHealth"]["sourceUniverse"] = {
@@ -14665,6 +14681,7 @@ _OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(�
 _OSINT_CAP_REACHED = {"count": 0}      # 検証上限到達の累計(DQ表示用)
 _OSINT_RPS_HISTORY = []                # Research Powerスコア履歴(公開安全・有界40)
 _OSINT_BLOCKED_RECOVERY = {"attempted": 0, "recovered": 0}   # v12.1.4 代替回収の実績
+_OSINT_BASELINE_RUNS = []              # v12.1.6 Gemini基準run記録(public-safe・有界24)
 _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
 
 
@@ -14673,7 +14690,8 @@ def _osint_persist():
         blob = {"termOverlay": _OSINT_TERM_OVERLAY, "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
                 "urlCache": dict(list(_OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
                 "canaryLast": _OSINT_CANARY_LAST,
-                "rpsHistory": _OSINT_RPS_HISTORY[-40:]}
+                "rpsHistory": _OSINT_RPS_HISTORY[-40:],
+                "baselineRuns": _OSINT_BASELINE_RUNS[-24:]}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(blob, f, ensure_ascii=False)
@@ -14721,6 +14739,11 @@ def _osint_restore_once():
                     x.get("at") == h.get("at") and x.get("symbol") == h.get("symbol")
                     for x in _OSINT_RPS_HISTORY):
                 _OSINT_RPS_HISTORY.append(h)
+        for h in (blob.get("baselineRuns") or [])[-24:]:
+            if isinstance(h, dict) and not any(
+                    x.get("at") == h.get("at") and x.get("case") == h.get("case")
+                    for x in _OSINT_BASELINE_RUNS):
+                _OSINT_BASELINE_RUNS.append(h)
     except Exception:
         pass
 
@@ -15141,7 +15164,8 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
         kwargs_recovery={"attempted": _OSINT_BLOCKED_RECOVERY["attempted"],
                          "recovered": _OSINT_BLOCKED_RECOVERY["recovered"],
                          "freshCandidates": fresh_candidates},
-        causal_summary=causal_sum, primary_checks=pchecks)
+        causal_summary=causal_sum, primary_checks=pchecks,
+        baseline_info=argus_osint_engine.baseline_from_runs(_OSINT_BASELINE_RUNS))
     inv["researchPower"] = rps
     # v12.1.5 Phase 7: オーナー結論(曖昧な原因未特定を出さない)
     inv["ownerConclusion"] = argus_osint_engine.owner_conclusion(
@@ -15312,9 +15336,20 @@ def _osint_agents_worker(syms):
                     prov, prof, plan, move_pct=None,
                     privacy_mode=meta["privacyMode"])
                 out, status = caller(prompt)
-                runs.append(_osint_agent_run(prov, status, out, now_iso,
-                                             meta["privacyMode"]))
+                run_rec = _osint_agent_run(prov, status, out, now_iso,
+                                           meta["privacyMode"])
+                runs.append(run_rec)
                 _osint_autopilot_mark(sym, f"scout_{prov}")
+                # v12.1.6: Gemini基準run記録(同一ルーブリック採点・public-safe)
+                if prov == "gemini" and status == "ok":
+                    _OSINT_BASELINE_RUNS.append({
+                        "score": argus_osint_engine.external_rubric_score(
+                            run_rec.get("claims") or []),
+                        "case": sym, "symbol": sym, "at": _ai_now_iso(),
+                        "promptVersion": argus_osint_engine.SCOUT_PROMPT_VERSION,
+                        "privacyMode": meta["privacyMode"]})
+                    while len(_OSINT_BASELINE_RUNS) > 24:
+                        _OSINT_BASELINE_RUNS.pop(0)
             _osint_autopilot_mark(sym, "parse_normalize")
             try:
                 _OSINT_PARSER_HEALTH["lastWarnings"] = [
@@ -15516,6 +15551,7 @@ def api_argus_osint_memory_snapshot():
                     "urlCache": dict(list(_OSINT_URL_CACHE.items())[-60:]),
                     "canaryLast": _OSINT_CANARY_LAST,
                     "rpsHistory": _OSINT_RPS_HISTORY[-40:],
+                    "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 

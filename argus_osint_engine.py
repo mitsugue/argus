@@ -1151,7 +1151,8 @@ def research_power_score(*, verified: List[Dict[str, Any]],
                          learning_updated: bool = False,
                          kwargs_recovery: Optional[Dict[str, Any]] = None,
                          causal_summary: Optional[Dict[str, Any]] = None,
-                         primary_checks: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                         primary_checks: Optional[List[Dict[str, Any]]] = None,
+                         baseline_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Phase 2: 「Geminiの2倍」の測定。生件数では2xにならない —
     検証済み・公式/業界一次・文脈統合・矛盾規律・学習が積み上がって初めて2x。"""
     ver = [v for v in verified if v.get("verificationStatus") == "verified"]
@@ -1215,19 +1216,33 @@ def research_power_score(*, verified: List[Dict[str, Any]],
                 - source_universe_missing * 3
                 - (5 if weak_causal else 0)
                 + min(6, newsroom_verified * 3))
-    # 外部ベースライン: エージェントのclaim数×検証率ベース(検証済みでないclaimは弱い)
+    # v12.1.6 Part E: 外部ベースラインはARGUSと同一ルーブリックで採点
+    # (未検証claimは満点にならない・仮説は仮説・生件数は支配しない)
     def _base(prov):
         cs = [c for r in agent_runs if r.get("provider") == prov and r.get("status") == "ok"
               for c in (r.get("claims") or [])]
-        if not cs:
-            return 0
-        vr = sum(1 for c in cs if c.get("verified")) / len(cs)
-        return int(round(min(20, len(cs) * 4) * (0.5 + 0.5 * vr) + 60))   # 単発AIの基準力=60
+        return external_rubric_score(cs) if cs else 0
     gem_base = _base("gemini")
     gpt_base = _base("gpt")
     best_ext = max(gem_base, gpt_base)
-    ratio = round(argus / gem_base, 2) if gem_base else None
+    # v12.1.6 Part C/F: 校正済み基準があれば中央値を分母に使う(単発runは暫定)
+    binfo = baseline_info or {}
+    btype = binfo.get("baselineType") or "single_run"
+    bmedian = binfo.get("medianGeminiScore")
+    denom = (bmedian if btype in ("median_of_runs", "calibrated_baseline",
+                                  "rolling_case_average", "fixed_benchmark_case")
+             and bmedian else gem_base)
+    ratio = round(argus / denom, 2) if denom else None
     ratio_best = round(argus / best_ext, 2) if best_ext else None
+    rconf = ratio_confidence(binfo if binfo else
+                             {"baselineType": "single_run",
+                              "baselineConfidence": "unstable"})
+    # 公開リサーチ比と文脈強化比の分離(Part D)
+    ctx_score = (components["portfolioContextScore"]
+                 + components["flowSupplyDemandContextScore"]
+                 + components["eventContextScore"])
+    argus_public = max(0, argus - ctx_score)
+    public_ratio = round(argus_public / denom, 2) if denom else None
 
     agents_ok = gem_base > 0 or gpt_base > 0
     blockers = []
@@ -1252,7 +1267,9 @@ def research_power_score(*, verified: List[Dict[str, Any]],
         status = "below_gemini"
     elif ratio is not None and ratio >= 2.0 and not blockers and (
             primary_strength >= 15 or
-            (len(ver) >= 6 and vrate >= 0.7 and len(context_advantages) >= 2)):
+            (len(ver) >= 6 and vrate >= 0.7 and len(context_advantages) >= 2)) and (
+            btype == "calibrated_baseline" and
+            binfo.get("baselineConfidence") in ("high", "medium")):
         status = "exceeds_gemini_2x"
     elif context_advantages or len(ver) > 0:
         status = ("exceeds_gemini" if (official or industry or context_advantages)
@@ -1260,8 +1277,12 @@ def research_power_score(*, verified: List[Dict[str, Any]],
     else:
         status = "matches_gemini"
 
-    display = (f"Research Power: Gemini {gem_base or '—'} / ARGUS {argus}"
+    display = (f"Research Power: Gemini {int(denom) if denom else '—'} / ARGUS {argus}"
                + (f" / {ratio:.2f}x" if ratio else ""))
+    ratio_label = (BASELINE_LABEL_JA.get(btype, "単発Gemini基準のため参考値")
+                   + (f"・信頼度 {rconf}" if rconf != "provisional" else ""))
+    if ratio is not None and ratio >= 2.0 and btype != "calibrated_baseline":
+        blockers.append("Gemini基準が未校正")
     if status == "exceeds_gemini_2x":
         verdict = ("2x達成: 公式/業界一次情報 + 外部AI提示ソース回収 + "
                    f"{'/'.join(context_advantages[:3]) or '独自文脈'}を統合({display})")
@@ -1300,6 +1321,12 @@ def research_power_score(*, verified: List[Dict[str, Any]],
             "blockersJa": blockers[:5], "strengthsJa": strengths[:6],
             "warningsJa": warnings_ja[:3],
             "freshCandidates": fresh_candidates,
+            "baselineType": btype, "baselineLabelJa": BASELINE_LABEL_JA.get(btype),
+            "baselineConfidence": binfo.get("baselineConfidence") or "unstable",
+            "baselineRunCount": binfo.get("runCount") or 0,
+            "ratioConfidence": rconf, "ratioLabelJa": ratio_label,
+            "publicResearchRatio": public_ratio,
+            "ownerContextEnhancedRatio": ratio,
             "pillars": {
                 "coverage": (components["verifiedUsefulSourceScore"]
                              + components["sectorThemeCoverageScore"]
@@ -2142,3 +2169,178 @@ def source_acquisition_report(primary_checks: List[Dict[str, Any]],
                            "Research Qualityが下がります。検証済みの公式/業界一次は"
                            "一般見出しより重く加点されます。"),
     }
+
+
+# ━━━ v12.1.6 ADDENDUM — Gemini Baseline Calibration(基準1.0の校正) ━━━━━━━
+
+SCOUT_PROMPT_VERSION = "scout-prompt-v3"        # build_scout_promptの契約版
+BASELINE_INPUT_CONTEXT_VERSION = "redacted-profile-v2"
+
+BASELINE_TYPES = ("single_run", "median_of_runs", "fixed_benchmark_case",
+                  "rolling_case_average", "calibrated_baseline")
+
+BASELINE_LABEL_JA = {
+    "single_run": "単発Gemini基準のため参考値",
+    "median_of_runs": "複数run中央値基準(校正途中)",
+    "fixed_benchmark_case": "固定ベンチマークケース基準",
+    "rolling_case_average": "ローリング平均基準",
+    "calibrated_baseline": "校正済みGemini比",
+}
+
+RATIO_CONFIDENCES = ("high", "medium", "low", "provisional")
+
+# ── Part B: 固定Geminiベンチマークスイート(10ケース・決定論定義) ──────────────
+GEMINI_BENCHMARK_SUITE = [
+    {"case": "hamamatsu_seaj_optical", "investigationQuestion":
+     "6965 浜松ホトニクスの直近変動の材料は?(光半導体/SEAJ/装置サイクル)",
+     "expectedSourceCategories": ["company_newsroom", "industry_association",
+                                  "japanese_market_news"],
+     "expectedClaimTypes": ["concrete_source_claim", "sector_theme_inference"],
+     "expectedForbiddenBehavior": "テーマ一般論をdirect_companyとして断定",
+     "expectedPrimarySourceNeed": True,
+     "scoringRubric": "公式/業界一次への到達と仮説分離"},
+    {"case": "samsung_anthropic_chip", "investigationQuestion":
+     "Samsung/AnthropicのカスタムAIチップ報道の一次確認",
+     "expectedSourceCategories": ["global_tech_news"],
+     "expectedClaimTypes": ["concrete_source_claim"],
+     "expectedForbiddenBehavior": "未確認の契約金額の断定",
+     "expectedPrimarySourceNeed": True,
+     "scoringRubric": "海外一次報道のURL/日付特定"},
+    {"case": "cpi_official_schedule", "investigationQuestion":
+     "次回CPIの公式発表日時(BLS)",
+     "expectedSourceCategories": ["official_macro_calendar"],
+     "expectedClaimTypes": ["official_disclosure_claim"],
+     "expectedForbiddenBehavior": "日付の捏造",
+     "expectedPrimarySourceNeed": True,
+     "scoringRubric": "公式日程の正確な日時"},
+    {"case": "nfp_official_release", "investigationQuestion":
+     "次回米雇用統計の公式日程と直近結果",
+     "expectedSourceCategories": ["official_macro_calendar"],
+     "expectedClaimTypes": ["official_disclosure_claim"],
+     "expectedForbiddenBehavior": "未発表数値の断定",
+     "expectedPrimarySourceNeed": True,
+     "scoringRubric": "公式日程+発表済み数値のみ"},
+    {"case": "fomc_schedule", "investigationQuestion": "次回FOMCの公式日程",
+     "expectedSourceCategories": ["official_macro_calendar"],
+     "expectedClaimTypes": ["official_disclosure_claim"],
+     "expectedForbiddenBehavior": "利下げ確率の断定",
+     "expectedPrimarySourceNeed": True,
+     "scoringRubric": "公式日程のみ・確率断定なし"},
+    {"case": "direct_company_disclosure", "investigationQuestion":
+     "ウォッチ銘柄の直近適時開示の検出",
+     "expectedSourceCategories": ["tdnet", "company_ir"],
+     "expectedClaimTypes": ["official_disclosure_claim"],
+     "expectedForbiddenBehavior": "開示の見落とし・翻案",
+     "expectedPrimarySourceNeed": True,
+     "scoringRubric": "TDnet一次の正確な引用"},
+    {"case": "stale_unrelated_article", "investigationQuestion":
+     "14日超の古い記事を当日の主因として出さないか",
+     "expectedSourceCategories": [],
+     "expectedClaimTypes": [],
+     "expectedForbiddenBehavior": "古い記事を当日主因として提示",
+     "expectedPrimarySourceNeed": False,
+     "scoringRubric": "stale却下の規律"},
+    {"case": "pr_blocked_recovery", "investigationQuestion":
+     "PR TIMES等bot遮断ソースを企業公式経路で回収できるか",
+     "expectedSourceCategories": ["company_newsroom", "product_newsroom"],
+     "expectedClaimTypes": ["concrete_source_claim"],
+     "expectedForbiddenBehavior": "遮断本文の推測・捏造",
+     "expectedPrimarySourceNeed": True,
+     "scoringRubric": "代替経路の回収と非捏造"},
+    {"case": "value_chain_inference_only", "investigationQuestion":
+     "直接材料がないテーマ連想日の扱い",
+     "expectedSourceCategories": ["value_chain_metadata"],
+     "expectedClaimTypes": ["value_chain_inference", "sector_theme_inference"],
+     "expectedForbiddenBehavior": "連想を事実として断定",
+     "expectedPrimarySourceNeed": False,
+     "scoringRubric": "推論の明示と確度制御"},
+    {"case": "no_news_unknown_cause", "investigationQuestion":
+     "材料が本当に無い日の正直な回答",
+     "expectedSourceCategories": [],
+     "expectedClaimTypes": [],
+     "expectedForbiddenBehavior": "物語の創作",
+     "expectedPrimarySourceNeed": False,
+     "scoringRubric": "「探索範囲では未確認」の正直さ"},
+]
+
+# ── Part E: 同一ルーブリックでの外部AI採点(未検証claimは満点にならない) ──────
+def external_rubric_score(claims: List[Dict[str, Any]]) -> int:
+    """Gemini/GPTのclaim群をARGUSと同じ規律で採点。
+    検証済み>URL+日付つき具体>URLのみ>仮説(僅少)。生件数は支配しない。"""
+    if not claims:
+        return 0
+    verified_n = url_date_n = url_only_n = hyp_n = 0
+    for c in claims:
+        ct = classify_agent_claim(c)
+        if c.get("verified"):
+            verified_n += 1
+        elif ct in ("concrete_source_claim", "official_disclosure_claim"):
+            if c.get("url") and c.get("publishedAt") not in (None, "", "unknown"):
+                url_date_n += 1
+            elif c.get("url") or c.get("sourceName"):
+                url_only_n += 1
+        else:
+            hyp_n += 1                      # 仮説/推論は仮説として僅少加点
+    score = (60                              # 単発AIの基準力
+             + min(20, verified_n * 5)
+             + min(12, url_date_n * 3)
+             + min(6, url_only_n * 1)
+             + min(2, hyp_n))               # 仮説は証拠でない
+    return int(score)
+
+
+# ── Part C: 反復runの統計と信頼度 ────────────────────────────────────────────
+def baseline_stats(scores: List[float]) -> Dict[str, Any]:
+    xs = [float(x) for x in (scores or []) if isinstance(x, (int, float))]
+    n = len(xs)
+    if n == 0:
+        return {"runCount": 0, "medianGeminiScore": None, "meanGeminiScore": None,
+                "variance": None, "bestRun": None, "worstRun": None,
+                "baselineConfidence": "unstable"}
+    xs_sorted = sorted(xs)
+    median = (xs_sorted[n // 2] if n % 2 == 1
+              else (xs_sorted[n // 2 - 1] + xs_sorted[n // 2]) / 2)
+    mean = sum(xs) / n
+    var = sum((x - mean) ** 2 for x in xs) / n
+    rel = (var ** 0.5) / mean if mean else 1.0   # 変動係数で安定性判定
+    conf = ("high" if n >= 5 and rel <= 0.10 else
+            "medium" if n >= 3 and rel <= 0.20 else
+            "low" if n >= 2 else "unstable")
+    return {"runCount": n, "medianGeminiScore": round(median, 1),
+            "meanGeminiScore": round(mean, 1), "variance": round(var, 2),
+            "bestRun": max(xs), "worstRun": min(xs),
+            "baselineConfidence": conf}
+
+
+def baseline_from_runs(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """蓄積したGemini run記録(public-safe)から基準タイプと中央値を決める。
+    単発は暫定・中央値は3run以上・校正済みは5run以上かつ2ケース以上。"""
+    recs = [r for r in (records or []) if isinstance(r, dict)
+            and isinstance(r.get("score"), (int, float))]
+    stats = baseline_stats([r["score"] for r in recs])
+    cases = {r.get("case") or r.get("symbol") for r in recs}
+    n = stats["runCount"]
+    if n >= 5 and len(cases) >= 2 and stats["baselineConfidence"] in ("high", "medium"):
+        btype = "calibrated_baseline"
+    elif n >= 3:
+        btype = "median_of_runs"
+    elif n >= 1:
+        btype = "single_run"
+    else:
+        btype = "single_run"
+    return {"baselineType": btype, "labelJa": BASELINE_LABEL_JA[btype],
+            "promptVersion": SCOUT_PROMPT_VERSION,
+            "inputContextVersion": BASELINE_INPUT_CONTEXT_VERSION,
+            **stats}
+
+
+def ratio_confidence(baseline_info: Dict[str, Any]) -> str:
+    bt = (baseline_info or {}).get("baselineType") or "single_run"
+    bc = (baseline_info or {}).get("baselineConfidence") or "unstable"
+    if bt == "single_run" or bc == "unstable":
+        return "provisional"
+    if bt == "calibrated_baseline" and bc == "high":
+        return "high"
+    if bt in ("calibrated_baseline", "median_of_runs") and bc in ("high", "medium"):
+        return "medium"
+    return "low"

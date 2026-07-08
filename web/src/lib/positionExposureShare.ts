@@ -90,6 +90,8 @@ export interface OsintDeepShare {
   gapGroupsJa?: string;
   // v12.1.5: 結論/因果/一次ソース
   conclusionJa?: string; causalJa?: string; primarySourceJa?: string;
+  // v12.1.6: Gemini基準の校正状態
+  baselineJa?: string;
 }
 const latestOSINTDeep = new Map<string, OsintDeepShare>();
 export function publishOsintDeep(o: OsintDeepShare): void { latestOSINTDeep.set(o.symbol.toUpperCase(), o); }

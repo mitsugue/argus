@@ -78,6 +78,7 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
         ? `${inv.ownerConclusion.directCompanyEvidenceJa} / ${inv.ownerConclusion.whyJa}`
         : undefined,
       causalJa: inv.causalRelevanceSummary?.ownerReadableJa,
+      baselineJa: inv.researchPower?.ratioLabelJa,
       primarySourceJa: inv.primarySourceChecks
         ? `一次ソース検証済み${inv.primarySourceChecks.filter((c) => c.status === 'verified').length}/${inv.primarySourceChecks.length}カテゴリ`
         : undefined,
@@ -175,6 +176,18 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
               <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--text-sub)' }}>
                 {inv.researchPower.displayJa}
               </span>
+              {/* v12.1.6: 基準の校正状態(単発は暫定・参考値と明示) */}
+              {inv.researchPower.ratioLabelJa && (
+                <span style={{ display: 'block', fontSize: 10, color:
+                  inv.researchPower.ratioConfidence === 'provisional'
+                    ? 'var(--amber, #fbbf24)' : 'var(--text-faint)' }}>
+                  {inv.researchPower.ratioLabelJa}
+                  {inv.researchPower.publicResearchRatio != null &&
+                    inv.researchPower.ownerContextEnhancedRatio != null &&
+                    inv.researchPower.publicResearchRatio !== inv.researchPower.ownerContextEnhancedRatio &&
+                    ` · 公開リサーチ比 ${inv.researchPower.publicResearchRatio.toFixed(2)}x / 文脈強化比 ${inv.researchPower.ownerContextEnhancedRatio.toFixed(2)}x`}
+                </span>
+              )}
               <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-sub)' }}>
                 {inv.researchPower.ownerReadableVerdictJa}
               </span>

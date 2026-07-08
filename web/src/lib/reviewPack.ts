@@ -216,6 +216,7 @@ export function buildReviewPackMarkdown(o: PackOptions): string {
         // v12.1.5: 結論/因果/一次ソース取得状況
         if (dz.conclusionJa) L.push(`- 結論: ${dz.conclusionJa}`);
         if (dz.causalJa) L.push(`- 因果関連度: ${dz.causalJa}`);
+        if (dz.baselineJa) L.push(`- Gemini基準: ${dz.baselineJa}(比率は基準校正の状態に依存)`);
         if (dz.primarySourceJa) L.push(`- ${dz.primarySourceJa}`);
         if (dz.verificationRatePct != null) L.push(`- ソース検証率: ${dz.verificationRatePct}%`);
         if ((dz.unresolvedCount ?? 0) > 0) L.push(`- 注意: Gemini単発に対して未回収のOSINTギャップ ${dz.unresolvedCount}件(検証されるまで証拠として扱っていません)`);

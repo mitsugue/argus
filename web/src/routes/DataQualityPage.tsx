@@ -48,7 +48,11 @@ interface Console {
       argusScore: number; geminiBaselineScore: number; ratio: number | null;
       displayJa: string } | null;
     sourceUniverse?: { total: number; live: number; viaAgents: number; unavailable: number;
-      categories: { key: string; labelJa: string; availability: string; noteJa: string }[] } };
+      categories: { key: string; labelJa: string; availability: string; noteJa: string }[] };
+    // v12.1.6: Gemini基準の校正状態
+    geminiBaseline?: { baselineType: string; labelJa: string; runCount: number;
+      medianScore: number | null; variance: number | null; confidence: string;
+      lastCalibrationAt: string | null; twoXClaimAllowed: boolean; noteJa: string } };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -358,6 +362,26 @@ export const DataQualityPage: React.FC = () => {
                     Research Power(最新 {c.osintHealth.researchPowerLatest.symbol}):{' '}
                     <b>{c.osintHealth.researchPowerLatest.statusJa}</b>
                     {' '}— {c.osintHealth.researchPowerLatest.displayJa}
+                  </p>
+                )}
+                {/* v12.1.6: Gemini基準の校正状態(2x主張の可否) */}
+                {c.osintHealth.geminiBaseline && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11,
+                    color: c.osintHealth.geminiBaseline.twoXClaimAllowed
+                      ? 'var(--value-positive)' : 'var(--text-sub)' }}>
+                    Gemini基準: <b>{c.osintHealth.geminiBaseline.labelJa}</b>
+                    {' '}· run {c.osintHealth.geminiBaseline.runCount}回
+                    {c.osintHealth.geminiBaseline.medianScore != null &&
+                      ` · 中央値 ${c.osintHealth.geminiBaseline.medianScore}`}
+                    {c.osintHealth.geminiBaseline.variance != null &&
+                      ` · 分散 ${c.osintHealth.geminiBaseline.variance}`}
+                    {' '}· 信頼度 {c.osintHealth.geminiBaseline.confidence}
+                    {' '}· 2x判定 {c.osintHealth.geminiBaseline.twoXClaimAllowed ? '有効' : '不可'}
+                    <span style={{ display: 'block', fontSize: 10, color: 'var(--text-faint)' }}>
+                      {c.osintHealth.geminiBaseline.noteJa}
+                      {c.osintHealth.geminiBaseline.lastCalibrationAt &&
+                        ` 最終校正: ${c.osintHealth.geminiBaseline.lastCalibrationAt}`}
+                    </span>
                   </p>
                 )}
                 {/* v12.1.3: ソースユニバース(unavailableも沈黙省略せず可視化) */}

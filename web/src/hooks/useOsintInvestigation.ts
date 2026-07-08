@@ -73,6 +73,13 @@ export interface OsintInvestigation {
     statusJa: string; displayJa: string; ownerReadableVerdictJa: string;
     ownerReadableJa?: string;
     blockersJa: string[]; strengthsJa?: string[];
+    /** v12.1.6: Gemini基準の校正状態(単発runは暫定・参考値)。 */
+    baselineType?: string; baselineLabelJa?: string;
+    baselineConfidence?: string; baselineRunCount?: number;
+    ratioConfidence?: 'high' | 'medium' | 'low' | 'provisional';
+    ratioLabelJa?: string;
+    publicResearchRatio?: number | null;
+    ownerContextEnhancedRatio?: number | null;
   };
   /** v12.1.3 Phase 3差分: この調査で実際に見たカテゴリ(checkedの捏造なし)。 */
   sourceCoverage?: { key: string; labelJa: string; state: string;
