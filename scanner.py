@@ -7307,6 +7307,14 @@ def _data_quality_console():
             if v.get("verificationStatus") == "metadata_only")
         console["osintHealth"]["freshCandidateCount"] = sum(
             int(i.get("freshCandidateCount") or 0) for i in _invs)
+        # v12.1.5: 一次ソース強度(最新)+因果関連度
+        _last = list(_invs)[-1] if _invs else None
+        console["osintHealth"]["primarySourceStrengthLatest"] = (
+            ((_last.get("researchPower") or {}).get("pillars") or {})
+            .get("primarySourceStrength") if _last else None)
+        console["osintHealth"]["causalRelevanceLatestJa"] = (
+            (_last.get("causalRelevanceSummary") or {}).get("ownerReadableJa")
+            if _last else None)
         uni = argus_osint_engine.source_universe_status(
             agents_configured=bool(_OPENAI_API_KEY or (google_genai and GEMINI_API_KEY)))
         console["osintHealth"]["sourceUniverse"] = {
@@ -14975,6 +14983,24 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
             t = str(c.get("titleJa") or c.get("title") or "")
             if not t:
                 continue
+            # v12.1.5 Phase 2: SEAJ型claimの特化解決(公式=industry_forecast)
+            ifr = argus_osint_engine.resolve_industry_forecast(
+                c, live_meta=_OSINT_URL_CACHE.get(
+                    argus_osint_engine._norm_url(c.get("url") or "")) if c.get("url") else None)
+            if ifr["matched"]:
+                if ifr["sourceType"]:
+                    c["sourceType"] = ifr["sourceType"]
+                cur = _OSINT_TERM_OVERLAY.get(symu) or []
+                _OSINT_TERM_OVERLAY[symu] = (cur + [q for q in ifr["queries"][:4]
+                                                    if q not in cur])[:12]
+            # v12.1.5 Phase 3: 製品/ニュースclaimは企業ニュースルーム経路で追撃
+            elif not c.get("verified") and any(w in t for w in ("発売", "製品", "新型",
+                                                                "launch", "release")):
+                nq = argus_osint_engine.company_newsroom_queries(c, prof)
+                if nq:
+                    cur = _OSINT_TERM_OVERLAY.get(symu) or []
+                    _OSINT_TERM_OVERLAY[symu] = (cur + [q for q in nq[:3]
+                                                        if q not in cur])[:12]
             gap_ledger.append(argus_osint_engine.resolve_gap(
                 c, r["provider"], argus_clusters,
                 symbol=symu, investigation_id=inv["id"], now_iso=now_iso,
@@ -15086,6 +15112,26 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
     cov_missing = sum(1 for r in src_cov if r["coverageImpact"] == "lowers_score")
     # Phase 4差分: バリューチェーングラフ(不完全は正直表示・保有情報なし)
     inv["valueChainGraph"] = argus_osint_engine.value_chain_graph(prof)
+    # v12.1.5 Phase 5: 因果関連度(検証済み=真実であって主因ではない)
+    relevances = []
+    for v in verified:
+        rel = argus_osint_engine.causal_relevance(
+            v, theme_entities=theme_ents, flow_hint=flow_hint,
+            event_near="イベント文脈" in ctx_adv)
+        v["causalRelevance"] = rel["relevance"]
+        v["causalReasonJa"] = rel["ownerReadableReasonJa"]
+        relevances.append(rel)
+    causal_sum = argus_osint_engine.causal_relevance_summary(relevances)
+    inv["causalRelevanceSummary"] = causal_sum
+    # v12.1.5 Phase 1: 一次ソース取得チェック+不在主張ガード
+    pchecks = argus_osint_engine.primary_source_checks(
+        prof, plan, verified, counts, events_checked=True)
+    pguards = argus_osint_engine.primary_absence_guards(pchecks)
+    inv["primarySourceChecks"] = pchecks
+    inv["primaryAbsenceGuardsJa"] = pguards
+    # v12.1.5 Phase 6: ソース取得レポート
+    inv["sourceAcquisitionReport"] = argus_osint_engine.source_acquisition_report(
+        pchecks, src_cov, pguards + inv.get("coverageGuardsJa", []))
     rps = argus_osint_engine.research_power_score(
         verified=verified, agent_runs=agent_runs, gap_ledger=gap_ledger,
         coverage=inv["coverageScore"], contradiction=contr,
@@ -15094,8 +15140,14 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
         learning_updated=learning_updated,
         kwargs_recovery={"attempted": _OSINT_BLOCKED_RECOVERY["attempted"],
                          "recovered": _OSINT_BLOCKED_RECOVERY["recovered"],
-                         "freshCandidates": fresh_candidates})
+                         "freshCandidates": fresh_candidates},
+        causal_summary=causal_sum, primary_checks=pchecks)
     inv["researchPower"] = rps
+    # v12.1.5 Phase 7: オーナー結論(曖昧な原因未特定を出さない)
+    inv["ownerConclusion"] = argus_osint_engine.owner_conclusion(
+        verified=verified, relevances=relevances, rps=rps,
+        gap_summary=argus_osint_engine.gap_ledger_summary(gap_ledger),
+        context_advantages=ctx_adv, agent_runs=agent_runs)
     # Phase 7差分: Research Powerスコア履歴(公開安全・有界・スナップショット同乗)
     if rps.get("status") != "insufficient_data":
         _OSINT_RPS_HISTORY.append({

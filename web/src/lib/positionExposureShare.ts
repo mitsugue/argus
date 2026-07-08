@@ -88,6 +88,8 @@ export interface OsintDeepShare {
   sourceCoverageJa?: string;
   // v12.1.4: 具体ソース欠落と仮説の分離要約
   gapGroupsJa?: string;
+  // v12.1.5: 結論/因果/一次ソース
+  conclusionJa?: string; causalJa?: string; primarySourceJa?: string;
 }
 const latestOSINTDeep = new Map<string, OsintDeepShare>();
 export function publishOsintDeep(o: OsintDeepShare): void { latestOSINTDeep.set(o.symbol.toUpperCase(), o); }

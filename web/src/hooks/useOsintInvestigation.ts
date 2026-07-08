@@ -94,6 +94,19 @@ export interface OsintInvestigation {
     rolesJa: Record<string, string>; cautionJa: string } | null;
   /** v12.1.3 Phase 3: 探索ソースユニバース(unavailableも可視)。 */
   sourceUniverse?: { key: string; labelJa: string; availability: string; noteJa: string }[];
+  /** v12.1.5 Phase 1: 一次ソース取得チェック(未チェックで不在主張しない)。 */
+  primarySourceChecks?: { sourceCategory: string; sourceCategoryJa: string;
+    status: string; resultCount: number; verifiedResultCount: number;
+    ownerReadableJa: string }[];
+  primaryAbsenceGuardsJa?: string[];
+  /** v12.1.5 Phase 5: 因果関連度(検証済み=真実であって主因ではない)。 */
+  causalRelevanceSummary?: { byRelevance: Record<string, number>;
+    hasHighRelevance: boolean; weakCausalOnly: boolean; ownerReadableJa: string };
+  /** v12.1.5 Phase 7: オーナー結論。 */
+  ownerConclusion?: { bottomLineJa: string; directCompanyEvidenceJa: string;
+    industryEvidenceJa: string; valueChainEvidenceJa: string; contextJa: string;
+    externalFoundJa: string; argusVerifiedJa: string; unverifiedJa: string;
+    ratioJa: string; whyJa: string; nextActionJa: string; statusJa: string };
 }
 
 export interface OsintProgress {

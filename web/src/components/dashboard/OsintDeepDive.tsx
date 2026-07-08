@@ -74,6 +74,13 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
       sourceCoverageJa: inv.sourceCoverage
         ? `${inv.sourceCoverage.filter((r) => r.state === 'checked').length}/${inv.sourceCoverage.length}カテゴリ探索済み`
         : undefined,
+      conclusionJa: inv.ownerConclusion
+        ? `${inv.ownerConclusion.directCompanyEvidenceJa} / ${inv.ownerConclusion.whyJa}`
+        : undefined,
+      causalJa: inv.causalRelevanceSummary?.ownerReadableJa,
+      primarySourceJa: inv.primarySourceChecks
+        ? `一次ソース検証済み${inv.primarySourceChecks.filter((c) => c.status === 'verified').length}/${inv.primarySourceChecks.length}カテゴリ`
+        : undefined,
       gapGroupsJa: inv.gapLedger?.length
         ? `具体未回収${inv.gapLedger.filter((g) => g.resolutionStatus === 'still_unresolved_important').length}件/未検証仮説${inv.gapLedger.filter((g) => g.resolutionStatus === 'hypothesis_not_source').length}件/探索方向${inv.gapLedger.filter((g) => g.resolutionStatus === 'search_direction_only').length}件/参照不能${inv.gapLedger.filter((g) => g.resolutionStatus === 'inaccessible').length}件`
         : undefined,
@@ -220,6 +227,50 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
               </p>
             );
           })()}
+          {/* v12.1.5: オーナー結論(直接/業界/VCを区別・曖昧な原因未特定なし) */}
+          {inv.ownerConclusion && (
+            <div style={{ margin: '0 0 4px', fontSize: 10.5, color: 'var(--text-sub)',
+                          border: '1px solid var(--line)', borderRadius: 6, padding: '4px 8px' }}>
+              <b style={{ fontSize: 11 }}>結論</b>
+              <span style={{ display: 'block' }}>{inv.ownerConclusion.directCompanyEvidenceJa}</span>
+              <span style={{ display: 'block', color: 'var(--text-faint)' }}>
+                {inv.ownerConclusion.industryEvidenceJa} · {inv.ownerConclusion.valueChainEvidenceJa}
+              </span>
+              <span style={{ display: 'block', color: 'var(--text-faint)' }}>
+                {inv.ownerConclusion.externalFoundJa} · {inv.ownerConclusion.argusVerifiedJa} · {inv.ownerConclusion.unverifiedJa}
+              </span>
+              <span style={{ display: 'block' }}>{inv.ownerConclusion.whyJa}</span>
+              <span style={{ display: 'block', color: 'var(--text-faint)' }}>
+                次アクション: {inv.ownerConclusion.nextActionJa}
+              </span>
+            </div>
+          )}
+          {/* v12.1.5: 因果関連度(ソースはあっても主因とは限らない) */}
+          {inv.causalRelevanceSummary && (
+            <p style={{ margin: '0 0 3px', fontSize: 10, color: inv.causalRelevanceSummary.weakCausalOnly
+              ? 'var(--amber, #fbbf24)' : 'var(--text-faint)' }}>
+              因果関連度: {inv.causalRelevanceSummary.ownerReadableJa}
+            </p>
+          )}
+          {(inv.primaryAbsenceGuardsJa?.length ?? 0) > 0 && (
+            <p style={{ margin: '0 0 3px', fontSize: 10, color: 'var(--amber, #fbbf24)' }}>
+              {inv.primaryAbsenceGuardsJa!.join(' / ')}
+            </p>
+          )}
+          {/* v12.1.5: 一次ソース取得状況(折りたたみ) */}
+          {inv.primarySourceChecks && (
+            <details style={{ fontSize: 10, margin: '0 0 3px' }}>
+              <summary style={{ cursor: 'pointer', color: 'var(--text-faint)' }}>
+                一次ソース取得: 検証済み{inv.primarySourceChecks.filter((c) => c.status === 'verified').length}
+                /{inv.primarySourceChecks.length}カテゴリ
+              </summary>
+              {inv.primarySourceChecks.map((c) => (
+                <span key={c.sourceCategory} style={{ display: 'block', color: 'var(--text-faint)' }}>
+                  {c.ownerReadableJa}
+                </span>
+              ))}
+            </details>
+          )}
           {inv.valueChainGraph?.incomplete && inv.valueChainGraph.incompleteNoteJa && (
             <p style={{ margin: '0 0 3px', fontSize: 10, color: 'var(--text-faint)' }}>
               {inv.valueChainGraph.incompleteNoteJa}

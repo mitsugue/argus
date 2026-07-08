@@ -198,7 +198,7 @@ def test_official_absence_blocker_wording():
         verified=[], agent_runs=_runs(), gap_ledger=[],
         coverage={"totalCoverage": "weak"},
         contradiction={}, context_advantages=[])
-    assert "公式一次情報不足" in rps["blockersJa"]
+    assert "公式/業界一次情報が不足" in rps["blockersJa"]   # v12.1.5文言
 
 
 def test_official_unrelated_source_not_inflating():

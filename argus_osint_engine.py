@@ -1149,7 +1149,9 @@ def research_power_score(*, verified: List[Dict[str, Any]],
                          context_advantages: List[str],
                          source_universe_missing: int = 0,
                          learning_updated: bool = False,
-                         kwargs_recovery: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                         kwargs_recovery: Optional[Dict[str, Any]] = None,
+                         causal_summary: Optional[Dict[str, Any]] = None,
+                         primary_checks: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Phase 2: 「Geminiの2倍」の測定。生件数では2xにならない —
     検証済み・公式/業界一次・文脈統合・矛盾規律・学習が積み上がって初めて2x。"""
     ver = [v for v in verified if v.get("verificationStatus") == "verified"]
@@ -1173,6 +1175,7 @@ def research_power_score(*, verified: List[Dict[str, Any]],
     rejected_unsup = sum(1 for g in (gap_ledger or [])
                          if g.get("resolutionStatus") == "unsupported_rejected")
     recovery = kwargs_recovery if isinstance(kwargs_recovery, dict) else {}
+    weak_causal = bool((causal_summary or {}).get("weakCausalOnly"))
     fresh_verified = sum(1 for v in ver if v.get("freshness") in
                          ("today", "within_3_trading_days"))
     fresh_candidates = int(recovery.get("freshCandidates") or 0)
@@ -1199,7 +1202,19 @@ def research_power_score(*, verified: List[Dict[str, Any]],
             0, min(12, 10 - int(contradiction.get("unsupportedClaims") or 0)
                    + rejected_unsup * 2)),
     }
-    argus = max(0, sum(components.values()) + cov_rank * 5 - source_universe_missing * 3)
+    # v12.1.5: 一次ソース強度(公式/業界/検証済みニュースルーム)
+    pc = primary_checks or []
+    newsroom_verified = sum(int(c.get("verifiedResultCount") or 0) for c in pc
+                            if c.get("sourceCategory") in
+                            ("company_ir", "company_newsroom", "product_newsroom",
+                             "tdnet", "exchange_disclosure"))
+    primary_strength = (components["officialPrimarySourceScore"]
+                        + components["industrySourceScore"]
+                        + min(6, newsroom_verified * 3))
+    argus = max(0, sum(components.values()) + cov_rank * 5
+                - source_universe_missing * 3
+                - (5 if weak_causal else 0)
+                + min(6, newsroom_verified * 3))
     # 外部ベースライン: エージェントのclaim数×検証率ベース(検証済みでないclaimは弱い)
     def _base(prov):
         cs = [c for r in agent_runs if r.get("provider") == prov and r.get("status") == "ok"
@@ -1219,9 +1234,11 @@ def research_power_score(*, verified: List[Dict[str, Any]],
     if unresolved > 0:
         blockers.append("具体ソース未回収")
     if not official and not industry:
-        blockers.append("公式一次情報不足")
+        blockers.append("公式/業界一次情報が不足")
     if fresh_candidates > 0:
         blockers.append("新鮮候補が未検証")
+    if weak_causal:
+        blockers.append("ソースはあるが株価因果の直接性が弱い")
     if vrate < 0.5:
         blockers.append("ソース検証率が不足(<50%)")
     if not context_advantages:
@@ -1233,7 +1250,9 @@ def research_power_score(*, verified: List[Dict[str, Any]],
         status = "insufficient_data"
     elif unresolved > 0:
         status = "below_gemini"
-    elif ratio is not None and ratio >= 2.0 and not blockers:
+    elif ratio is not None and ratio >= 2.0 and not blockers and (
+            primary_strength >= 15 or
+            (len(ver) >= 6 and vrate >= 0.7 and len(context_advantages) >= 2)):
         status = "exceeds_gemini_2x"
     elif context_advantages or len(ver) > 0:
         status = ("exceeds_gemini" if (official or industry or context_advantages)
@@ -1244,7 +1263,8 @@ def research_power_score(*, verified: List[Dict[str, Any]],
     display = (f"Research Power: Gemini {gem_base or '—'} / ARGUS {argus}"
                + (f" / {ratio:.2f}x" if ratio else ""))
     if status == "exceeds_gemini_2x":
-        verdict = f"2x達成: 外部AIソース回収 + {'+'.join(context_advantages[:3])}を追加({display})"
+        verdict = ("2x達成: 公式/業界一次情報 + 外部AI提示ソース回収 + "
+                   f"{'/'.join(context_advantages[:3]) or '独自文脈'}を統合({display})")
     elif blockers:
         verdict = f"2x未達: {blockers[0]}({display})"
     else:
@@ -1277,9 +1297,26 @@ def research_power_score(*, verified: List[Dict[str, Any]],
             "status": status, "statusJa": RPS_JA[status],
             "displayJa": display, "ownerReadableVerdictJa": verdict,
             "ownerReadableJa": verdict,
-            "blockersJa": blockers[:4], "strengthsJa": strengths[:6],
+            "blockersJa": blockers[:5], "strengthsJa": strengths[:6],
             "warningsJa": warnings_ja[:3],
-            "freshCandidates": fresh_candidates}
+            "freshCandidates": fresh_candidates,
+            "pillars": {
+                "coverage": (components["verifiedUsefulSourceScore"]
+                             + components["sectorThemeCoverageScore"]
+                             + components["valueChainCoverageScore"] + cov_rank * 5),
+                "precision": (components["sourceVerificationRateScore"]
+                              + components["hypothesisDisciplineScore"]
+                              + components["staleSourceRejectionScore"]
+                              + components["hallucinationResistanceScore"]),
+                "reasoning": (components["contradictionDetectionScore"]
+                              + components["directEvidenceScore"]),
+                "agenticCompletion": (components["gapClosureScore"]
+                                      + components["learningMemoryScore"]
+                                      + components["blockedSourceRecoveryScore"]
+                                      + components["alternateSourceRecoveryScore"]
+                                      + components["freshNewsLatencyScore"]),
+                "primarySourceStrength": primary_strength,
+            }}
 
 
 # ━━━ v12.1.3 Phase 3 — Source Universe(探索対象カテゴリの明示・沈黙省略の禁止) ━━━
@@ -1754,3 +1791,354 @@ def preliminary_status(vs: Dict[str, Any]) -> str:
 
 
 FRESH_CANDIDATE_ALERT_JA = "新鮮な候補ニュースを検出。検証中。"
+
+
+# ━━━ v12.1.5 Phase 1 — Primary Source Acquisition(一次ソース取得の可視化) ━━━
+
+PRIMARY_SOURCE_CATEGORIES = [
+    # (key, ja) — 一次情報の取得先。未チェックのカテゴリについて「不在」を主張しない
+    ("company_ir", "企業IR"),
+    ("company_newsroom", "企業ニュースルーム"),
+    ("product_newsroom", "製品ニュース"),
+    ("tdnet", "TDnet適時開示"),
+    ("exchange_disclosure", "取引所開示"),
+    ("industry_association", "業界団体(SEAJ等)"),
+    ("industry_forecast", "業界予測・統計"),
+    ("trade_association", "工業会"),
+    ("public_forecast_metadata", "公開予測メタ"),
+    ("government_statistics", "官公庁統計"),
+    ("official_macro_calendar", "公式マクロ日程"),
+    ("official_product_page", "公式製品ページ"),
+]
+
+_PRIMARY_TYPE_MAP = {
+    "company_ir": ("official_disclosure",),
+    "company_newsroom": ("official_disclosure",),
+    "product_newsroom": ("official_disclosure",),
+    "tdnet": ("official_disclosure",),
+    "exchange_disclosure": ("official_disclosure",),
+    "industry_association": ("industry_association", "trade_association"),
+    "industry_forecast": ("industry_forecast",),
+    "trade_association": ("trade_association",),
+    "public_forecast_metadata": ("public_forecast_metadata",),
+    "government_statistics": ("official_gov",),
+}
+
+
+def primary_source_checks(profile: Dict[str, Any], plan: Dict[str, Any],
+                          verified: List[Dict[str, Any]],
+                          counts: Dict[str, int],
+                          *, events_checked: bool = True) -> List[Dict[str, Any]]:
+    """調査ごとの一次ソースチェック台帳。checkedの捏造なし —
+    クエリが計画に載り決定論収集が走ったカテゴリだけchecked。"""
+    name = profile.get("nameJa") or profile.get("symbol") or ""
+    joined = " ".join(plan.get("all") or [])
+    ver = [v for v in verified if v.get("verificationStatus") == "verified"]
+    out = []
+    for key, ja in PRIMARY_SOURCE_CATEGORIES:
+        want_types = _PRIMARY_TYPE_MAP.get(key, ())
+        n_ver = sum(1 for v in ver if v.get("sourceType") in want_types)
+        n_all = sum(1 for v in verified if v.get("sourceType") in want_types)
+        if key in ("company_ir", "company_newsroom", "product_newsroom"):
+            checked = bool(name) and ("IR" in joined or "ニュース" in joined)
+            query = f"{name} IR/ニュース/製品発表"
+        elif key in ("tdnet", "exchange_disclosure"):
+            checked = int(counts.get("official") or 0) >= 0   # 決定論収集は開示ストア横断
+            query = f"{name} 適時開示"
+        elif key in ("industry_association", "industry_forecast",
+                     "trade_association", "public_forecast_metadata"):
+            checked = ("SEAJ" in joined or "協会" in joined or "業界" in joined
+                       or "予測" in joined)
+            query = "SEAJ/業界団体 予測"
+        elif key == "government_statistics":
+            checked = False                     # 専用取得は未実装 — 正直にnot_checked
+            query = "官公庁統計"
+        elif key == "official_macro_calendar":
+            checked = bool(events_checked)
+            query = "公式イベント日程"
+        else:                                   # official_product_page
+            checked = "製品発表" in joined
+            query = f"{name} 製品ページ"
+        if n_ver > 0:
+            status = "verified"
+        elif n_all > 0:
+            status = "metadata_only"
+        elif not checked:
+            status = "not_checked"
+        else:
+            status = "unavailable"
+        out.append({
+            "sourceCategory": key, "sourceCategoryJa": ja,
+            "sourceName": name if key.startswith(("company", "product", "official_product")) else ja,
+            "query": query, "checked": checked,
+            "resultCount": n_all, "verifiedResultCount": n_ver,
+            "status": status,
+            "failureReasonRedacted": ("未チェック(このカテゴリの不在は主張できない)"
+                                      if not checked else
+                                      "該当ソース未到達" if status == "unavailable" else None),
+            "ownerReadableJa": f"{ja}: " + {
+                "verified": f"検証済み{n_ver}件",
+                "metadata_only": f"メタデータのみ{n_all}件",
+                "unavailable": "未到達",
+                "not_checked": "未チェック(不在主張不可)",
+            }[status],
+        })
+    return out
+
+
+def primary_absence_guards(checks: List[Dict[str, Any]]) -> List[str]:
+    """未チェック一次カテゴリの「不在」主張を禁止するガード文。"""
+    st = {c["sourceCategory"]: c for c in checks}
+    g = []
+    if st.get("company_ir", {}).get("status") == "not_checked" and             st.get("company_newsroom", {}).get("status") == "not_checked":
+        g.append("企業公式未チェック — 直接材料なしとは言えない")
+    if st.get("industry_association", {}).get("status") == "not_checked":
+        g.append("業界団体未チェック — 業界材料なしとは言えない")
+    return g
+
+
+# ━━━ v12.1.5 Phase 2 — SEAJ / Industry Forecast Resolver ━━━━━━━━━━━━━━━━━━
+
+INDUSTRY_FORECAST_QUERIES = (
+    "SEAJ 2026 販売高 予測", "SEAJ 半導体製造装置 販売高 予測",
+    "SEAJ 日本製半導体製造装置 2026", "日本半導体製造装置協会 2026 販売高予測",
+    "日本半導体製造装置協会 需要予測 上方修正", "半導体製造装置 販売高 2026 予測 日本製",
+    "半導体製造装置 需要予測 上方修正",
+    "semiconductor equipment sales forecast Japan 2026 SEAJ",
+    "Japan semiconductor equipment forecast 2026",
+    "semiconductor manufacturing equipment sales forecast Japan",
+    "book-to-bill Japan semiconductor equipment",
+)
+
+_INDUSTRY_OFFICIAL_DOMAINS = ("seaj.or.jp", "semi.org", "jeita.or.jp")
+
+SEAJ_CONFIRM_JA = "SEAJ公式または業界予測ソースを確認"
+SEAJ_THEME_NOTE_JA = ("6965への直接材料ではなく、半導体製造装置・検査計測サイクルの"
+                      "テーマ材料")
+
+
+def industry_forecast_claim_match(title: str) -> bool:
+    t = str(title or "")
+    return ("SEAJ" in t.upper() or "半導体製造装置協会" in t or
+            ("半導体製造装置" in t and ("予測" in t or "販売高" in t)))
+
+
+def resolve_industry_forecast(claim: Dict[str, Any],
+                              live_meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """SEAJ型claimの特化解決: 公式ドメイン=industry_forecast・
+    報道メタ参照のみ=public_forecast_metadata・URL/日付なしは捏造せず現状維持。"""
+    url = str(claim.get("url") or "").lower()
+    out = {"matched": industry_forecast_claim_match(
+        claim.get("titleJa") or claim.get("title") or ""),
+        "sourceType": None, "ownerReadableJa": None,
+        "queries": list(INDUSTRY_FORECAST_QUERIES)}
+    if not out["matched"]:
+        return out
+    if any(d in url for d in _INDUSTRY_OFFICIAL_DOMAINS):
+        out["sourceType"] = "industry_forecast"
+        out["ownerReadableJa"] = SEAJ_CONFIRM_JA + " — " + SEAJ_THEME_NOTE_JA
+    elif url or (live_meta or {}).get("status") == "metadata_only":
+        out["sourceType"] = "public_forecast_metadata"
+        out["ownerReadableJa"] = ("報道メタデータがSEAJ予測に言及 — 公式一次は未確認・"
+                                  + SEAJ_THEME_NOTE_JA)
+    else:
+        out["ownerReadableJa"] = ("URL・日付なし — SEAJの日付やソースを捏造しない。"
+                                  + SEAJ_THEME_NOTE_JA)
+    return out
+
+
+# ━━━ v12.1.5 Phase 3 — Company/Product Newsroom Resolver ━━━━━━━━━━━━━━━━━━
+
+def company_newsroom_queries(claim: Dict[str, Any], profile: Dict[str, Any]) -> List[str]:
+    """製品/ニュースclaimを企業公式経路で裏取りするためのクエリ生成。
+    製品語(カタカナ/英数モデル名)を抽出し、日英ニュースルーム変種を作る。"""
+    title = str(claim.get("titleJa") or claim.get("title") or "")
+    name_ja = str(profile.get("nameJa") or "")
+    name_en = str(profile.get("nameEn") or "")
+    prods = []
+    for m in re.finditer(r"[A-Za-z][A-Za-z0-9\-]{2,20}|[ァ-ヶー]{3,16}", title):
+        w = m.group(0)
+        if w.lower() not in ("news", "japan") and w not in prods:
+            prods.append(w)
+    out = []
+    for w in prods[:3]:
+        if name_ja:
+            out.append(f"{name_ja} {w}")
+        if name_en:
+            out.append(f"{name_en} {w}")
+    if name_ja:
+        out += [f"{name_ja} ニュースルーム", f"{name_ja} 製品ニュース"]
+    if name_en:
+        out += [f"{name_en} newsroom", f"{name_en} product news"]
+    seen, dedup = set(), []
+    for q in out:
+        q2 = sanitize_query_term(q)
+        if q2 and q2 not in seen:
+            seen.add(q2)
+            dedup.append(q2)
+    return dedup[:10]
+
+
+PRODUCT_RELEASE_NOTE_JA = ("企業固有の製品発表 — 直接ニュースだが、それだけでは"
+                           "株価変動の主因にしない(重要性の裏取りが必要)")
+
+
+# ━━━ v12.1.5 Phase 5 — Causal Relevance(ソース≠株価因果) ━━━━━━━━━━━━━━━━
+
+RELEVANCE_LEVELS = ("high", "medium", "low", "background", "irrelevant")
+
+_MATERIAL_WORDS = ("決算", "業績予想", "上方修正", "下方修正", "大型受注", "買収",
+                   "提携", "増配", "自社株買", "格付け", "行政処分", "リコール")
+_PRODUCT_WORDS = ("発売", "製品発表", "新製品", "リリース", "product", "launch")
+
+
+def causal_relevance(source: Dict[str, Any], *, theme_entities: Optional[set] = None,
+                     flow_hint: Optional[str] = None,
+                     event_near: bool = False) -> Dict[str, Any]:
+    """検証済みソースの株価因果関連度。検証済み=真実であって主因ではない。"""
+    title = str(source.get("titleJa") or "")
+    dirn = str(source.get("directness") or "")
+    fresh = source.get("freshness")
+    verified = source.get("verificationStatus") == "verified"
+    ents = _entities(title)
+    th = set()
+    for t in (theme_entities or set()):
+        th |= _entities(str(t))
+        th.add(str(t))
+    theme_hit = bool(ents & th) or any(str(t) in title for t in (theme_entities or set()))
+
+    comp = {
+        "directCompanyImpact": dirn == "direct_company",
+        "sectorImpact": dirn == "sector_theme" and theme_hit,
+        "valueChainImpact": dirn == "value_chain" and theme_hit,
+        "timingRelevance": fresh in ("today", "within_3_trading_days"),
+        "magnitudeRelevance": any(w in title for w in _MATERIAL_WORDS),
+        "marketAttentionRelevance": theme_hit,
+        "flowSupplyConfirmation": bool(flow_hint),
+        "eventProximity": bool(event_near),
+        "contradictionPenalty": source.get("verificationStatus") == "contradicted",
+    }
+    if not verified or comp["contradictionPenalty"]:
+        level = "irrelevant" if comp["contradictionPenalty"] else "background"
+        reason = ("矛盾あり — 因果に使えない" if comp["contradictionPenalty"]
+                  else "未検証 — 因果評価の対象外(検証されるまで背景扱い)")
+    elif not theme_hit and not comp["directCompanyImpact"]:
+        level, reason = "irrelevant", "銘柄/テーマとの接点なし — 検証済みでも因果に使えない"
+    elif comp["directCompanyImpact"] and comp["magnitudeRelevance"] and comp["timingRelevance"]:
+        level, reason = "high", "直接材料+重要性+タイミング一致"
+    elif comp["directCompanyImpact"] and any(w in title for w in _PRODUCT_WORDS)             and not comp["magnitudeRelevance"]:
+        level, reason = "low", PRODUCT_RELEASE_NOTE_JA
+    elif comp["directCompanyImpact"]:
+        level, reason = "medium", "直接材料だが重要性/タイミングの裏取りが不足"
+    elif comp["sectorImpact"] or comp["valueChainImpact"]:
+        level = "medium" if comp["timingRelevance"] else "low"
+        reason = ("業界/テーマ材料 — 銘柄への波及は仮説(直接材料ではない)"
+                  if comp["sectorImpact"] else
+                  "バリューチェーン材料 — 銘柄への経路説明が必要")
+    else:
+        level, reason = "background", "背景情報 — 主因を駆動しない"
+    return {"relevance": level, "ownerReadableReasonJa": reason,
+            "components": comp}
+
+
+def causal_relevance_summary(relevances: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by = {}
+    for r in relevances:
+        by[r["relevance"]] = by.get(r["relevance"], 0) + 1
+    strong = by.get("high", 0)
+    weak_only = strong == 0 and (by.get("medium", 0) + by.get("low", 0)) > 0
+    return {"byRelevance": by, "hasHighRelevance": strong > 0,
+            "weakCausalOnly": weak_only,
+            "ownerReadableJa": ("株価因果の直接性が高い材料あり" if strong
+                                else "ソースはあるが株価因果の直接性が弱い"
+                                if weak_only else "因果評価対象のソースなし")}
+
+
+# ━━━ v12.1.5 Phase 7 — War Room オーナー結論(直接/業界/VCを区別) ━━━━━━━━━
+
+def owner_conclusion(*, verified: List[Dict[str, Any]],
+                     relevances: List[Dict[str, Any]],
+                     rps: Dict[str, Any],
+                     gap_summary: Dict[str, Any],
+                     context_advantages: List[str],
+                     agent_runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """曖昧な「原因未特定」を出さない最終結論。検証済みテーマ材料があるなら明示。"""
+    ver = [v for v in verified if v.get("verificationStatus") == "verified"]
+    direct = [v for v in ver if v.get("directness") == "direct_company"]
+    industry = [v for v in ver if v.get("sourceType") in
+                ("industry_association", "industry_forecast", "trade_association",
+                 "public_forecast_metadata") or v.get("directness") == "sector_theme"]
+    vchain = [v for v in ver if v.get("directness") == "value_chain"]
+    gem_n = sum(len(r.get("claims") or []) for r in agent_runs
+                if r.get("provider") == "gemini" and r.get("status") == "ok")
+    gpt_n = sum(len(r.get("claims") or []) for r in agent_runs
+                if r.get("provider") == "gpt" and r.get("status") == "ok")
+    unresolved_items = gap_summary.get("unresolvedImportantItems") or []
+
+    if direct:
+        direct_ja = f"直接材料{len(direct)}件を検証済み: " +             " / ".join((v.get("titleJa") or "")[:40] for v in direct[:2])
+    elif industry:
+        direct_ja = ("直接材料は未確認。ただし、業界/テーマ材料としては"
+                     + " / ".join((v.get("titleJa") or "")[:36] for v in industry[:2])
+                     + "が確認されています。")
+    else:
+        direct_ja = "直接材料は未確認"
+
+    bottom = rps.get("ownerReadableVerdictJa") or rps.get("displayJa") or ""
+    status = rps.get("status")
+    why = ("2x達成: " + (rps.get("ownerReadableVerdictJa") or "")
+           if status == "exceeds_gemini_2x"
+           else "2x未達: " + " / ".join(rps.get("blockersJa") or ["判定材料不足"]))
+    next_ja = (unresolved_items[0] if unresolved_items else
+               ("公式/業界一次ソースの回収を継続" if "公式/業界一次情報が不足" in
+                (rps.get("blockersJa") or []) else "次回War Roomで再測定"))
+    return {
+        "bottomLineJa": bottom,
+        "directCompanyEvidenceJa": direct_ja,
+        "industryEvidenceJa": (f"業界/セクター材料{len(industry)}件検証済み"
+                               if industry else "業界材料は未確認"),
+        "valueChainEvidenceJa": (f"バリューチェーン材料{len(vchain)}件(波及経路は仮説)"
+                                 if vchain else "バリューチェーン材料は未確認"),
+        "contextJa": ("統合済み文脈: " + "/".join(context_advantages[:4])
+                      if context_advantages else "独自文脈は未統合"),
+        "externalFoundJa": f"Gemini {gem_n}件 / GPT {gpt_n}件の提示を追跡",
+        "argusVerifiedJa": f"ARGUS検証済み {len(ver)}件",
+        "unverifiedJa": (f"未検証(具体未回収): {len(unresolved_items)}件"
+                         if unresolved_items else "具体未回収なし"),
+        "ratioJa": rps.get("displayJa"),
+        "whyJa": why,
+        "nextActionJa": next_ja,
+        "statusJa": rps.get("statusJa"),
+    }
+
+
+# ━━━ v12.1.5 Phase 6 — Source Acquisition Report(何を見たかを正確に) ━━━━━━
+
+def source_acquisition_report(primary_checks: List[Dict[str, Any]],
+                              coverage_rows: List[Dict[str, Any]],
+                              guards: List[str]) -> Dict[str, Any]:
+    def _sec(keys, rows, keyname):
+        return [r for r in rows if r.get(keyname) in keys]
+    official = _sec(("company_ir", "company_newsroom", "product_newsroom", "tdnet",
+                     "exchange_disclosure", "official_product_page"),
+                    primary_checks, "sourceCategory")
+    industry = _sec(("industry_association", "industry_forecast", "trade_association",
+                     "public_forecast_metadata"), primary_checks, "sourceCategory")
+    news = _sec(("japanese_market_news", "sector_report_metadata"),
+                coverage_rows, "key")
+    global_vc = _sec(("global_tech_news", "value_chain_metadata"),
+                     coverage_rows, "key")
+    meta_only = [c for c in primary_checks if c.get("status") == "metadata_only"]
+    unchecked = [c for c in primary_checks
+                 if c.get("status") in ("not_checked", "unavailable")] +         [r for r in coverage_rows if r.get("state") in ("not_checked", "unavailable",
+                                                        "failed")]
+    return {
+        "officialCompany": official, "industryAssociation": industry,
+        "newsAggregator": news, "globalValueChain": global_vc,
+        "metadataOnlyOrInaccessible": meta_only,
+        "uncheckedOrUnavailable": unchecked,
+        "guardsJa": guards,
+        "whyItMattersJa": ("未チェックのカテゴリについて「材料なし」とは言えず、"
+                           "Research Qualityが下がります。検証済みの公式/業界一次は"
+                           "一般見出しより重く加点されます。"),
+    }
