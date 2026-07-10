@@ -8,18 +8,20 @@ on:
 jobs:
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.11"}
-      - uses: actions/setup-node@v4
-        with: {node-version: "20"}
-      - run: pip install -q flask requests pytz feedparser || true
-      - run: pip install -q -r requirements.txt 2>/dev/null || true
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - uses: actions/setup-node@v5
+        with: {node-version: "22"}
+      - name: Install deps (ci.ymlと同一セット)
+        run: pip install --quiet anthropic flask flask-cors requests pytz python-dotenv json-repair pytest
+      - name: Install web deps
+        run: cd web && npm ci --no-audit --no-fund
       - name: Full gate for exact SHA
         run: |
-          bash scripts/release_gate.sh || echo "GATE_FAILED=1" >> "$GITHUB_ENV"
+          bash scripts/release_gate.sh
           cat release_manifest.json
       - name: Fail if ineligible
         run: |
