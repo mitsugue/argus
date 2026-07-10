@@ -263,3 +263,44 @@ def detect_missed_jobs(jobs: List[Dict[str, Any]], now_iso: str,
 
 def is_duplicate_job(jobs: List[Dict[str, Any]], idempotency_key: str) -> bool:
     return any(j.get("idempotencyKey") == idempotency_key for j in jobs or [])
+
+
+# ── v12.2.2 Phase 7/8: challenger影走行+履歴影響shadow ─────────────────────
+
+def challenger_evaluation(*, proposal: Dict[str, Any], champion_version: str,
+                          challenger_version: str, sample_count: int,
+                          metric_before: Optional[float],
+                          metric_after: Optional[float],
+                          now_iso: str = "") -> Dict[str, Any]:
+    """shadow challenger評価レコード。昇格はしない(オーナー承認まで)。"""
+    return {"championVersion": champion_version,
+            "challengerVersion": challenger_version,
+            "proposalType": proposal.get("proposalType"),
+            "sampleCount": int(sample_count),
+            "metricsBefore": metric_before, "metricsAfter": metric_after,
+            "recommendation": ("insufficient_sample" if sample_count <
+                               _MATERIAL_MIN_SAMPLES else "review"),
+            "ownerDecision": "pending", "state": "shadow",
+            "rollbackTarget": champion_version, "at": now_iso,
+            "noteJa": "shadow走行のみ — 本番判断は不変・昇格はオーナー承認後"}
+
+
+def future_decision_context_shadow(*, symbol: str,
+                                   confirming_cases: int,
+                                   disconfirming_cases: int,
+                                   sample_count: int,
+                                   applied_learning_ids: Optional[list] = None) -> Dict[str, Any]:
+    """履歴影響のshadow文脈。疎な履歴は影響なし・反証例を必ず数える。"""
+    n = int(sample_count)
+    influence = ("none" if n < MIN_SAMPLES["provisional"] else
+                 "weak" if n < MIN_SAMPLES["usable"] else "moderate")
+    return {"symbol": str(symbol).upper(),
+            "confirmingCases": int(confirming_cases),
+            "disconfirmingCases": int(disconfirming_cases),
+            "sampleCount": n,
+            "learningInfluence": influence,
+            "appliedLearningIds": list(applied_learning_ids or [])[:6],
+            "shadowOnly": True,
+            "caveatJa": ("履歴不足 — 影響なし" if influence == "none" else
+                         "shadow表示のみ — 本番の構えは変更しない。"
+                         "反証例も同時に提示(確証バイアス防止)")}

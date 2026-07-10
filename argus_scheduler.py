@@ -77,6 +77,66 @@ def generate_daily_missions(*, session_date: str, now_iso: str,
     return out
 
 
+def generate_periodic_missions(*, session_date: str, weekday: int,
+                               day_of_month: int,
+                               existing: Optional[List[Dict[str, Any]]] = None,
+                               model_epoch: str = "",
+                               rubric_version: str = "") -> List[Dict[str, Any]]:
+    """週次(月曜)/月次(1日)ミッションの冪等生成。"""
+    have = {m.get("idempotencyKey") for m in (existing or [])}
+    out = []
+    plans = []
+    if weekday == 0:
+        plans.append(("weekly_learning_review", "ALL", "07:30"))
+    if day_of_month == 1:
+        plans.append(("monthly_model_review", "ALL", "07:45"))
+        plans.append(("benchmark_calibration", "ALL", "07:50"))
+    for mtype, market, hhmm in plans:
+        m = mission(mission_type=mtype, market=market, session_date=session_date,
+                    scheduled_for=f"{session_date}T{hhmm}:00+09:00",
+                    model_epoch=model_epoch, rubric_version=rubric_version)
+        if m and m["idempotencyKey"] not in have:
+            out.append(m)
+            have.add(m["idempotencyKey"])
+    return out
+
+
+SOAK_REQUIRED_HOURS = 72
+SOAK_STATUSES = ("architecture_ready", "active_unproven", "soak_in_progress",
+                 "operationally_verified", "degraded")
+
+
+def soak_status(*, started_at: Optional[str], now_iso: str,
+                summary: Dict[str, Any]) -> Dict[str, Any]:
+    """24-72h soak判定。短期稼働から実証を主張しない。"""
+    if not started_at:
+        return {"status": "architecture_ready", "elapsedHours": 0,
+                "requiredHours": SOAK_REQUIRED_HOURS,
+                "ownerReadableJa": "soak未開始"}
+    hrs = _min_between(started_at, now_iso) / 60.0
+    missed = int(summary.get("missed") or 0)
+    failed = int(summary.get("failedSafe") or 0)
+    if missed > 2 or failed > 3:
+        st = "degraded"
+    elif hrs >= SOAK_REQUIRED_HOURS:
+        st = "operationally_verified"
+    elif hrs >= 1:
+        st = "soak_in_progress"
+    else:
+        st = "active_unproven"
+    return {"status": st, "elapsedHours": round(hrs, 1),
+            "requiredHours": SOAK_REQUIRED_HOURS,
+            "startedAt": started_at,
+            "ownerReadableJa": {
+                "architecture_ready": "soak未開始",
+                "active_unproven": "稼働開始直後 — 実証未了",
+                "soak_in_progress": f"soak進行中({round(hrs,1)}h/"
+                                    f"{SOAK_REQUIRED_HOURS}h) — 完了まで実証を主張しない",
+                "operationally_verified": "72時間soak完了 — 運用実証済み",
+                "degraded": "見逃し/失敗が閾値超過 — degraded",
+            }[st]}
+
+
 def claim(m: Dict[str, Any], now_iso: str, lease_min: int = 20) -> bool:
     """lease取得。claimed/runningで心拍が新しければ取れない(分散安全)。"""
     if m.get("status") in ("complete", "skipped"):

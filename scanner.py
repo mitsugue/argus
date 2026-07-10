@@ -7320,7 +7320,19 @@ def _data_quality_console():
             (_last.get("causalRelevanceSummary") or {}).get("ownerReadableJa")
             if _last else None)
         # v12.1.6: Gemini基準の校正状態(2x主張の可否)
-        _bl = argus_osint_engine.baseline_from_runs(_OSINT_BASELINE_RUNS)
+        _bl = argus_osint_engine.baseline_from_runs(_baseline_current_epoch())
+        _legacy = argus_osint_engine.baseline_from_runs(_baseline_legacy_runs())
+        console["currentResearchEpoch"] = {
+            "epochId": _current_epoch_id(),
+            "requalified": _bl["baselineType"] == "calibrated_baseline",
+            "statusJa": ("現行エポックで校正済み"
+                         if _bl["baselineType"] == "calibrated_baseline" else
+                         "not_requalified — 現行エポックの校正が未完(旧比率は使わない)"),
+            "currentEpochRuns": _bl["runCount"],
+            "legacyRuns": _legacy["runCount"],
+            "legacyNoteJa": ("旧エポック(v12.1.7)の0.92xはlegacy履歴 — "
+                             "現行比として表示しない" if _legacy["runCount"] else None),
+        }
         _case_results = [r.get("scores") for r in _OSINT_BENCHMARK_RUNS
                          if isinstance(r.get("scores"), dict)]
         _latest_rps = ((_last.get("researchPower") or {}) if _last else {})
@@ -7351,11 +7363,26 @@ def _data_quality_console():
         }
         console["agentOps"] = {
             **argus_scheduler.ops_summary(_MISSIONS),
+            "soak": argus_scheduler.soak_status(
+                started_at=_SOAK["startedAt"], now_iso=_ai_now_iso(),
+                summary=argus_scheduler.ops_summary(_MISSIONS)),
+            "periodicReports": len(_PERIODIC_REPORTS),
+            "challengerRuns": [{"state": c.get("state"),
+                                "ownerDecision": c.get("ownerDecision")}
+                               for c in _CHALLENGER_RUNS[-2:]],
             "postmortems": len(_POSTMORTEMS),
             "noteJa": "見逃しミッションは検知・回収され、沈黙消失しません。",
         }
         console["dualPlane"] = argus_dual_plane.dual_plane_status(
             scheduler_alive=bool(_MISSIONS) or True)
+        _fr = ("insufficient_data" if not _OSINT_STORE else "ready")
+        console["forecastReadiness"] = {
+            "readiness": _fr,
+            "liveForecasts": sum(1 for f in _FORECAST_LEDGER
+                                 if f.get("origin") == "forward_live"),
+            "blockerJa": ("OSINT調査ゼロ(デプロイ直後等) — ウォームアップを"
+                          "自動キュー済み・次のcronで発行" if _fr != "ready" else None),
+        }
         console["decisionLedger"] = {
             "forecastCount": len(_FORECAST_LEDGER),
             "outcomeCount": len(_OUTCOME_LEDGER),
@@ -15377,7 +15404,7 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
                          "recovered": _OSINT_BLOCKED_RECOVERY["recovered"],
                          "freshCandidates": fresh_candidates},
         causal_summary=causal_sum, primary_checks=pchecks,
-        baseline_info=argus_osint_engine.baseline_from_runs(_OSINT_BASELINE_RUNS),
+        baseline_info=argus_osint_engine.baseline_from_runs(_baseline_current_epoch()),
         warmth=inv["storeWarmth"], official_docs=official_docs,
         pairings=pairings)
     inv["researchPower"] = rps
@@ -15692,8 +15719,30 @@ _OUTCOME_LEDGER = []                   # 成果レコード(append-only・有界
 _DL_JOBS = []                          # 24x365ジョブ台帳(有界60)
 
 
+def _current_epoch_id():
+    return argus_ai_gate.model_epoch_id(
+        provider="gemini", model=GEMINI_MODEL_ID,
+        prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+        tool_mode="grounding")
+
+
+def _baseline_current_epoch():
+    """v12.2.2: 基準runを現行エポックに限定 — 旧エポック(v12.1.7の0.92x等)は
+    legacy履歴であり現行比に混入させない。"""
+    return argus_ai_gate.filter_runs_to_epoch(
+        _OSINT_BASELINE_RUNS, _current_epoch_id())
+
+
+def _baseline_legacy_runs():
+    cur = _current_epoch_id()
+    return [r for r in _OSINT_BASELINE_RUNS if r.get("epochId") != cur]
+
+
 _MISSIONS = []                          # v12.2.1 永続ミッション台帳(有界300)
 _POSTMORTEMS = []                       # 日次ポストモーテム(有界30)
+_PERIODIC_REPORTS = []                  # 週次/月次レポート(有界12)
+_CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
+_SOAK = {"startedAt": None}
 
 
 def _missions_persist_blob():
@@ -15750,10 +15799,17 @@ def api_argus_admin_missions_tick():
         prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
         tool_mode="grounding")
     jp_holiday = now.weekday() >= 5
+    if not _SOAK["startedAt"]:
+        _SOAK["startedAt"] = now_iso
     created = argus_scheduler.generate_daily_missions(
         session_date=session_date, now_iso=now_iso,
         jp_holiday=jp_holiday, us_holiday=now.weekday() in (5, 6),
         existing=_MISSIONS, model_epoch=epoch,
+        rubric_version=argus_decision_ledger.RUBRIC_VERSION)
+    created += argus_scheduler.generate_periodic_missions(
+        session_date=session_date, weekday=now.weekday(),
+        day_of_month=now.day, existing=_MISSIONS + created,
+        model_epoch=epoch,
         rubric_version=argus_decision_ledger.RUBRIC_VERSION)
     _MISSIONS.extend(created)
     executed, recovered = [], 0
@@ -15769,6 +15825,19 @@ def api_argus_admin_missions_tick():
         try:
             mt = m["missionType"]
             if mt in ("pre_session_forecast", "post_session_snapshot"):
+                # v12.2.2 Phase 2: プリフライト — コールド/調査ゼロなら発行せず
+                # 決定論ウォームアップ(deep-diveキュー・外部AIなし・無料)を仕込む
+                if not _OSINT_STORE:
+                    for wsym in ("6965", "5803"):
+                        if wsym not in _OSINT_AGENT_QUEUE and                                 len(_OSINT_AGENT_QUEUE) < _OSINT_QUEUE_MAX:
+                            _OSINT_AGENT_QUEUE[wsym] = {
+                                "market": "JP", "mode": "deep",
+                                "privacyMode": "redacted",
+                                "queuedAt": now_iso}
+                    m["checkpoint"] = "warmup_queued"
+                    argus_scheduler.complete(m, now_iso)
+                    executed.append(m["missionId"])
+                    continue
                 # 不変予測発行(成果を知る前・冪等はミッションキーで保証)
                 for sym, inv in list(_OSINT_STORE.items())[:8]:
                     rec = argus_decision_ledger.forecast_record(
@@ -15812,6 +15881,43 @@ def api_argus_admin_missions_tick():
                     _POSTMORTEMS.append(pm)
                 while len(_POSTMORTEMS) > 30:
                     _POSTMORTEMS.pop(0)
+            elif mt == "weekly_learning_review":
+                rep = {"type": "WEEKLY LEARNING REVIEW",
+                       "sessionDate": session_date,
+                       "resolvedSamples": sum(1 for o in _OUTCOME_LEDGER
+                                              if o.get("status") == "resolved"),
+                       "ownerReadableJa": ("週次レビュー: 解決サンプル"
+                                           f"{sum(1 for o in _OUTCOME_LEDGER if o.get('status') == 'resolved')}件"
+                                           " — 不足時は学習主張なし"),
+                       "origin": "forward_live"}
+                if not any(r.get("sessionDate") == session_date and
+                           r.get("type") == rep["type"] for r in _PERIODIC_REPORTS):
+                    _PERIODIC_REPORTS.append(rep)
+                # v12.2.2 Phase 7: 低リスクproposalのshadow challenger走行
+                prop = argus_decision_ledger.learning_proposal(
+                    proposal_type="query_expansion",
+                    proposed_change="週次: 未回収由来の追撃語を検証",
+                    sample_count=len(_OSINT_TERM_OVERLAY))
+                if prop and prop["canAutoPromote"]:
+                    _CHALLENGER_RUNS.append(
+                        argus_decision_ledger.challenger_evaluation(
+                            proposal=prop, champion_version="prod",
+                            challenger_version="shadow-qx",
+                            sample_count=len(_OUTCOME_LEDGER),
+                            metric_before=None, metric_after=None,
+                            now_iso=now_iso))
+                    while len(_CHALLENGER_RUNS) > 8:
+                        _CHALLENGER_RUNS.pop(0)
+            elif mt in ("monthly_model_review", "benchmark_calibration"):
+                rep = {"type": "MONTHLY AGENT REVIEW", "sessionDate": session_date,
+                       "epochId": epoch,
+                       "ownerReadableJa": "月次: エポック/校正/ドリフトの点検対象を記録",
+                       "origin": "forward_live"}
+                if not any(r.get("sessionDate") == session_date and
+                           r.get("type") == rep["type"] for r in _PERIODIC_REPORTS):
+                    _PERIODIC_REPORTS.append(rep)
+                while len(_PERIODIC_REPORTS) > 12:
+                    _PERIODIC_REPORTS.pop(0)
             # それ以外(OSINT等)は既存cronが担う — ここでは完了マークのみ
             if m.get("status") == "missed":
                 argus_scheduler.recover(m, now_iso)
