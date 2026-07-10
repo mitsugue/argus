@@ -26,6 +26,8 @@ import argus_ai_gate  # v12.2.0 AI Integrity Gate(中央実行規律・fail-clos
 import argus_decision_ledger  # v12.2.0 ADDENDUM: 不変予測台帳/成果解決/適正スコア(純)
 import argus_dual_plane  # v12.2.1 Phase 0: 二面実行(リサーチ面/私的判断面・偽24x365禁止)
 import argus_scheduler  # v12.2.1 Phase 1: セッション対応スケジューラ(冪等/lease/見逃し検知)
+import argus_state_journal  # v12.2.7: write-through運用ジャーナル(buffered・正直な保証)
+import argus_schemas  # v12.2.7: Structured Outputsスキーマ検証(feature-flagged)
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
@@ -7436,6 +7438,25 @@ def _data_quality_console():
             "legacyNoteJa": "旧0.92x(v12.1.7)はlegacy — 現行比ではない",
         }
         console["incidents"] = _INCIDENTS[-6:]
+        console["operationalJournal"] = {
+            "schemaVersion": argus_state_journal.JOURNAL_SCHEMA_VERSION,
+            "events": len(_OPS_JOURNAL),
+            "lastEventAt": (_OPS_JOURNAL[-1].get("occurredAt")
+                            if _OPS_JOURNAL else None),
+            "corruptCount": _DURABLE_STATE.get("journalCorrupt", 0),
+            "durabilityJa": ("ローカル即時WAL+30分毎ledger flush — "
+                             "リモート最大損失窓≦30分(buffered write-through・"
+                             "厳密write-throughとは主張しない)"),
+        }
+        _now_hhmm = datetime.now(TZ_JST).strftime("%H:%M")
+        console["forecastIssuanceDecision"] =             argus_state_journal.forecast_issuance_decision(
+                store_ready=bool(_OSINT_STORE), mock_data=False,
+                already_issued_today=any(
+                    f.get("origin") == "forward_live" and
+                    str(f.get("issuedAt", ""))[:10] ==
+                    datetime.now(TZ_JST).strftime("%Y-%m-%d")
+                    for f in _FORECAST_LEDGER),
+                now_hhmm=_now_hhmm, market="JP")
         console["forecastReadiness"] = {
             "readiness": _fr,
             "liveForecasts": sum(1 for f in _FORECAST_LEDGER
@@ -14947,7 +14968,8 @@ def _osint_persist():
                 "soak": _SOAK, "missions": _MISSIONS[-120:],
                 "forecasts": _FORECAST_LEDGER[-200:],
                 "outcomes": _OUTCOME_LEDGER[-200:],
-                "incidents": _INCIDENTS[-20:]}
+                "incidents": _INCIDENTS[-20:],
+                "opsJournal": _OPS_JOURNAL[-400:]}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(blob, f, ensure_ascii=False)
@@ -15031,6 +15053,13 @@ def _osint_restore_once():
         for h in (blob.get("incidents") or [])[-20:]:
             if isinstance(h, dict) and h not in _INCIDENTS:
                 _INCIDENTS.append(h)
+        _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
+        for h in _jr["events"]:
+            argus_state_journal.append(_OPS_JOURNAL, h)
+        _DURABLE_STATE["journalCorrupt"] = _jr["corruptCount"]
+        for h in _OPS_JOURNAL:
+            k = f"{h.get('aggregateType')}:{h.get('aggregateId')}"
+            _OPS_SEQ[k] = max(_OPS_SEQ.get(k, 0), int(h.get("sequence") or 0))
     except Exception:
         pass
 
@@ -15843,6 +15872,23 @@ _PERIODIC_REPORTS = []                  # 週次/月次レポート(有界12)
 _CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
 _SOAK = {"startedAt": None}
 _INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
+_OPS_JOURNAL = []                       # v12.2.7 運用イベントジャーナル(有界400)
+_OPS_SEQ = {}                           # aggregate毎の単調sequence
+
+
+def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
+    """クリティカル遷移の即時ジャーナル(ローカル即時+30分ledger flush)。"""
+    try:
+        key = f"{agg_type}:{agg_id}"
+        _OPS_SEQ[key] = _OPS_SEQ.get(key, 0) + 1
+        ev = argus_state_journal.event(
+            event_type=event_type, aggregate_type=agg_type,
+            aggregate_id=agg_id, sequence=_OPS_SEQ[key],
+            occurred_at=_ai_now_iso(), payload=payload, origin=origin)
+        if argus_state_journal.append(_OPS_JOURNAL, ev):
+            _osint_persist()            # ローカルWAL即時書き込み
+    except Exception:
+        pass
 
 
 def _missions_persist_blob():
@@ -15877,6 +15923,9 @@ def _dl_resolve_matured(now_iso):
             forecast=fc, outcome_as_of=now_iso, start_price=start,
             end_price=end, now_iso=now_iso)
         _OUTCOME_LEDGER.append(o)
+        _journal("outcome_resolved", "outcome", str(fc.get("id")),
+                 {"status": o.get("status")},
+                 origin=fc.get("origin") or "scheduler")
         if o.get("status") == "resolved":
             resolved += 1
     while len(_OUTCOME_LEDGER) > 200:
@@ -16012,6 +16061,12 @@ def api_argus_admin_missions_tick():
                             for f in _FORECAST_LEDGER):
                         rec["origin"] = "forward_live"
                         _FORECAST_LEDGER.append(rec)
+                        _journal("forecast_issued", "forecast",
+                                 f"{rec['symbol']}:{session_date}:{rec['targetType']}",
+                                 {"symbol": rec["symbol"],
+                                  "targetType": rec["targetType"],
+                                  "horizon": rec["forecastHorizon"]},
+                                 origin="forward_live")
                 while len(_FORECAST_LEDGER) > 200:
                     _FORECAST_LEDGER.pop(0)
             elif mt == "forecast_outcome_resolution":
