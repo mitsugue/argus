@@ -7380,6 +7380,39 @@ def _data_quality_console():
         for i in _OSINT_STORE.values():
             if i.get("researchPower"):
                 _rp_cur = i["researchPower"]
+        # v12.2.4: deploy後もRPS履歴(現行エポック・ledger復元)から測定を復元
+        _hist_cur = [h for h in _OSINT_RPS_HISTORY
+                     if h.get("epochId") == _current_epoch_id()
+                     and h.get("ratio") is not None]
+        if _rp_cur is None and _hist_cur:
+            h = _hist_cur[-1]
+            _rp_cur = {"argusScore": h.get("argusScore"),
+                       "argusVsGeminiRatio": h.get("ratio"),
+                       "ratioLabelJa": "復元された現行エポック測定(履歴由来)"}
+        # 安定度: 現行エポックのeligible run群から中央値/分散/信頼度
+        _ratios = [h["ratio"] for h in _hist_cur]
+        _stab = argus_osint_engine.baseline_stats(_ratios) if _ratios else None
+        _rs = sorted(_ratios)
+        _med = (None if not _rs else round(
+            _rs[len(_rs) // 2] if len(_rs) % 2 == 1 else
+            (_rs[len(_rs) // 2 - 1] + _rs[len(_rs) // 2]) / 2, 3))
+        console["researchMeasurementStability"] = {
+            "runCount": len(_ratios),
+            "medianRatio": _med,
+            "variance": (_stab or {}).get("variance"),
+            "minRatio": min(_ratios) if _ratios else None,
+            "maxRatio": max(_ratios) if _ratios else None,
+            "confidence": ("insufficient" if len(_ratios) < 3 else
+                           (_stab or {}).get("baselineConfidence", "low")),
+            "currentRatioEligible": len(_ratios) >= 3 and
+            (_stab or {}).get("baselineConfidence") in ("high", "medium"),
+            "statusJa": ("measurement_in_progress — 安定判定には現行エポックで"
+                         f"3run以上必要(現在{len(_ratios)}run)"
+                         if len(_ratios) < 3 else "安定判定可能"),
+            "observedNoteJa": ("1.43xは観測run — 安定した現行比ではない"
+                               if len(_ratios) < 3 else None),
+        }
+        console["durableState"] = dict(_DURABLE_STATE)
         console["researchMeasurement"] = {
             "epochId": _current_epoch_id(),
             "geminiBaseline": (argus_osint_engine.baseline_from_runs(
@@ -14887,6 +14920,11 @@ _OSINT_BENCH_BUDGET = {"maxCasesPerInvocation": 2,
 _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
 
 
+_DURABLE_STATE = {"schemaVersion": "argus-durable-v2", "lastWriteAt": None,
+                  "lastRestoreAt": None, "integrityStatus": "unknown",
+                  "lastKnownGoodAt": None, "restoreSource": None}
+
+
 def _osint_persist():
     try:
         blob = {"termOverlay": _OSINT_TERM_OVERLAY, "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
@@ -14895,6 +14933,7 @@ def _osint_persist():
                 "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                 "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                 "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
+                "schemaVersion": _DURABLE_STATE["schemaVersion"],
                 "soak": _SOAK, "missions": _MISSIONS[-120:],
                 "forecasts": _FORECAST_LEDGER[-200:],
                 "outcomes": _OUTCOME_LEDGER[-200:],
@@ -14903,8 +14942,11 @@ def _osint_persist():
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(blob, f, ensure_ascii=False)
         os.replace(tmp, _OSINT_PERSIST_FILE)
+        _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
+        _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
+        _DURABLE_STATE["integrityStatus"] = "ok"
     except Exception:
-        pass
+        _DURABLE_STATE["integrityStatus"] = "write_failed"
 
 
 def _osint_restore_once():
@@ -14927,7 +14969,11 @@ def _osint_restore_once():
         except Exception:
             blob = None
     if not isinstance(blob, dict):
-        return
+        _DURABLE_STATE["integrityStatus"] = "corrupt_ignored"
+        return                          # 壊れた状態を信頼しない(last known good維持)
+    _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
+    _DURABLE_STATE["restoreSource"] = ("tmp" if os.path.exists(_OSINT_PERSIST_FILE)
+                                       else "ledger")
     try:
         for k, v in (blob.get("termOverlay") or {}).items():
             if isinstance(v, list):
@@ -15460,6 +15506,8 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
             "symbol": symu, "at": now_iso, "status": rps["status"],
             "argusScore": rps["argusScore"],
             "geminiBaselineScore": rps["geminiBaselineScore"],
+            "epochId": _current_epoch_id(),
+            "warm": (inv.get("storeWarmth") or {}).get("storeWarmth"),
             "ratio": rps.get("argusVsGeminiRatio")})
         while len(_OSINT_RPS_HISTORY) > 40:
             _OSINT_RPS_HISTORY.pop(0)
@@ -16302,6 +16350,11 @@ def api_argus_osint_memory_snapshot():
                     "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                     "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                     "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
+                    "soak": _SOAK, "missions": _MISSIONS[-120:],
+                    "forecasts": _FORECAST_LEDGER[-200:],
+                    "outcomes": _OUTCOME_LEDGER[-200:],
+                    "incidents": _INCIDENTS[-20:],
+                    "schemaVersion": _DURABLE_STATE["schemaVersion"],
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 

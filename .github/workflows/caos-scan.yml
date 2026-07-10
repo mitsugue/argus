@@ -87,6 +87,9 @@ jobs:
           [ -s "$RUNNER_TEMP/news-ja.json" ] && \
             COUNT=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/news-ja.json')).get('count',0))" 2>/dev/null || echo 0)
           echo "news-ja cache entries: $COUNT"
+          # v12.2.4: osint耐久状態も30分毎にledgerへ(watchtower毎時の補完)
+          curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
+            -o "$RUNNER_TEMP/osint-memory.json" || true
           # never overwrite the ledger with an empty cache (e.g. right after deploy)
           if [ "$COUNT" != "0" ] && [ -n "$COUNT" ]; then echo "PERSIST=1" >> "$GITHUB_ENV"; fi
 
@@ -107,11 +110,13 @@ jobs:
             echo "::warning::origin/ledger not found — skip (never create ledger from here)"
             exit 0
           fi
-          mkdir -p ledger/news-ja
+          mkdir -p ledger/news-ja ledger/osint
           cp "$RUNNER_TEMP/news-ja.json" ledger/news-ja/latest.json
+          [ -s "$RUNNER_TEMP/osint-memory.json" ] && \
+            cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json || true
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
-          git add ledger/news-ja/
+          git add ledger/news-ja/ ledger/osint/ 2>/dev/null || git add ledger/news-ja/
           if git diff --cached --quiet; then
             echo "no change"
           else

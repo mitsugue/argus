@@ -1,0 +1,26 @@
+name: release-gate
+# v12.2.4: mainへのpush毎に完全ゲートを実行し、正確なSHAの適格性を記録する。
+# (Render auto-deployの停止はオーナー側設定 — 本workflowはSHA適格性の監査証跡)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - uses: actions/setup-node@v4
+        with: {node-version: "20"}
+      - run: pip install -q flask requests pytz feedparser || true
+      - run: pip install -q -r requirements.txt 2>/dev/null || true
+      - name: Full gate for exact SHA
+        run: |
+          bash scripts/release_gate.sh || echo "GATE_FAILED=1" >> "$GITHUB_ENV"
+          cat release_manifest.json
+      - name: Fail if ineligible
+        run: |
+          python3 -c "import json,sys; m=json.load(open('release_manifest.json')); sys.exit(0 if m['eligibleForDeploy'] else 1)"
