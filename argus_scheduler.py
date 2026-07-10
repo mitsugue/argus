@@ -139,8 +139,8 @@ def soak_status(*, started_at: Optional[str], now_iso: str,
 
 def claim(m: Dict[str, Any], now_iso: str, lease_min: int = 20) -> bool:
     """lease取得。claimed/runningで心拍が新しければ取れない(分散安全)。"""
-    if m.get("status") in ("complete", "skipped"):
-        return False
+    if m.get("status") in ("complete", "skipped", "recovered", "failed_safe"):
+        return False                    # 終端状態は再claim不可(重複実行防止)
     hb = m.get("lastHeartbeatAt")
     if m.get("status") in ("claimed", "running") and hb and \
             _min_between(hb, now_iso) < lease_min:

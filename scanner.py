@@ -15945,8 +15945,13 @@ def api_argus_admin_missions_tick():
                         confidence=(inv.get("researchPower") or {}).get(
                             "statusJa", ""),
                         now_iso=now_iso)
-                    if rec and not any(f.get("id") == rec["id"]
-                                       for f in _FORECAST_LEDGER):
+                    # 冪等: 同一symbol×セッション日×targetTypeは1日1回
+                    # (rec idは発行時刻を含むためcron毎に変わる — idでは重複を防げない)
+                    if rec and not any(
+                            f.get("symbol") == rec["symbol"] and
+                            str(f.get("issuedAt", ""))[:10] == session_date and
+                            f.get("targetType") == rec["targetType"]
+                            for f in _FORECAST_LEDGER):
                         rec["origin"] = "forward_live"
                         _FORECAST_LEDGER.append(rec)
                 while len(_FORECAST_LEDGER) > 200:
