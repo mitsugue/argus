@@ -1,0 +1,16 @@
+# ARGUS Operational State Durability Map (v12.2.6)
+
+| ストア | 分類 | 生存経路 |
+|---|---|---|
+| Gemini基準run(_OSINT_BASELINE_RUNS) | write-through+snapshot | persist毎+30分ledger |
+| ARGUS RQ履歴(_OSINT_RPS_HISTORY・epochId付) | write-through+snapshot | 同上(DQ測定復元の源) |
+| エポック(model/prompt/rubric/source) | 決定論再計算 | コードから再導出(安全rebuildable) |
+| 学習語(_OSINT_TERM_OVERLAY)/検証済みメタ(_OSINT_MEMORY) | snapshot | 30分ledger+毎時watchtower |
+| ミッション台帳(_MISSIONS)/soak(_SOAK) | snapshot | 30分ledger(redeploy非リセット) |
+| 予測(_FORECAST_LEDGER)/成果(_OUTCOME_LEDGER)/インシデント | snapshot | 30分ledger |
+| ポストモーテム/週次月次/challenger | process-memory→snapshot(部分) | 有界・rebuildable |
+| OSINT調査本文(_OSINT_STORE) | process-memory | 意図的揮発(warmupで再構築・測定は履歴から復元) |
+| 私的データ(保有/数量/単価/PnL/FIRE) | local/vault only | サーバ非保存(構造保証) |
+
+- schemaVersion=argus-durable-v2・整合性=_DURABLE_STATE・corrupt=corrupt_ignored(last known good維持)。
+- 私的フィールドはpublic-safe耐久状態に一切入らない(横断漏洩テスト固定)。

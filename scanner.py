@@ -7413,6 +7413,16 @@ def _data_quality_console():
                                if len(_ratios) < 3 else None),
         }
         console["durableState"] = dict(_DURABLE_STATE)
+        # v12.2.6: リリース安全(deployed SHA=真実はデプロイ環境値・manifestはCI artifact)
+        console["releaseSafety"] = {
+            "deployedSha": os.environ.get("RENDER_GIT_COMMIT", "")[:7] or "unknown",
+            "manifestSource": "CI artifact(コミットされたmanifestは真実にしない)",
+            "gateJa": "release_gate.sh=クリーンツリー+全緑SHAのみ適格",
+            "ownerSettingsPending": {
+                "githubBranchProtection": "owner-pending(APIで未設定を確認済み)",
+                "renderAfterCiChecks": "owner-pending(サーバから検証不可)",
+            },
+        }
         console["researchMeasurement"] = {
             "epochId": _current_epoch_id(),
             "geminiBaseline": (argus_osint_engine.baseline_from_runs(
