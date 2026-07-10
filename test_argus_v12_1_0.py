@@ -246,6 +246,7 @@ def test_public_investigation_get_leak_free(monkeypatch):
 
 
 def test_terms_endpoint_sanitizes_and_bounds(monkeypatch):
+    scanner._OSINT_TERM_OVERLAY.clear()   # 順序依存防止(他テストの自動学習で満杯化)
     with scanner.app.test_client() as c:
         r = c.post("/api/argus/osint/terms", json={
             "symbol": "6965",
