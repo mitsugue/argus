@@ -2563,3 +2563,257 @@ def two_x_readiness(baseline_runs: List[Dict[str, Any]],
             "topBlockersJa": blockers[:5],
             "fastestPathTo2xJa": fastest[:4],
             "recommendedNextEngineeringTasks": tasks[:4]}
+
+
+# ━━━ v12.1.8 Phase 1 — Official Document Resolver(公式PDF/統計ページ) ━━━━━
+
+OFFICIAL_DOC_TYPES = ("official_pdf", "official_statistics_page",
+                      "official_press_release_pdf", "industry_forecast_pdf",
+                      "association_statistics", "public_forecast_metadata",
+                      "official_calendar_page", "company_ir_pdf",
+                      "company_news_pdf", "product_release_pdf")
+
+_OFFICIAL_DOMAINS = ("seaj.or.jp", "semi.org", "jeita.or.jp", "meti.go.jp",
+                     "stat.go.jp", "boj.or.jp", "bls.gov", "federalreserve.gov",
+                     "jpx.co.jp")
+_FORECAST_FILE_HINTS = ("forecast", "seajforecast", "forecastforpress", "予測",
+                        "販売高", "需要予測", "statistics")
+
+
+def classify_official_document(url: str, title: str = "",
+                               company_domain: str = "") -> Optional[str]:
+    """URL/タイトル/ファイル名から公式文書タイプを決定論分類。該当なしはNone(捏造なし)。"""
+    u = str(url or "").lower()
+    t = str(title or "")
+    if not u:
+        return None
+    fname = u.rsplit("/", 1)[-1]
+    is_pdf = u.endswith(".pdf") or ".pdf?" in u
+    official = any(d in u for d in _OFFICIAL_DOMAINS)
+    company = bool(company_domain) and company_domain.lower() in u
+    forecast_hit = any(h in u for h in _FORECAST_FILE_HINTS) or         any(h in t for h in ("販売高予測", "需要予測", "半導体・FPD製造装置"))
+    if official and is_pdf and forecast_hit:
+        return "industry_forecast_pdf"
+    if official and "/statistics" in u:
+        return "official_statistics_page"
+    if official and is_pdf and ("press" in fname or "リリース" in t):
+        return "official_press_release_pdf"
+    if official and is_pdf:
+        return "official_pdf"
+    if official and ("calendar" in u or "schedule" in u):
+        return "official_calendar_page"
+    if official and forecast_hit:
+        return "association_statistics"
+    if company and is_pdf and ("ir" in u.split("/") or "/ir/" in u):
+        return "company_ir_pdf"
+    if company and is_pdf and ("news" in u or "product" in u):
+        return ("product_release_pdf" if "product" in u else "company_news_pdf")
+    return None
+
+
+def official_document_record(*, url: str, title: str = "",
+                             published_at: Optional[str] = None,
+                             now_iso: str = "",
+                             live_meta: Optional[Dict[str, Any]] = None,
+                             company_domain: str = "",
+                             theme_entities: Optional[set] = None) -> Optional[Dict[str, Any]]:
+    """公式文書候補の台帳レコード。PDF本文抽出は行わない —
+    存在確認(metadata_only)はできるが内容の過大主張はしない。"""
+    dtype = classify_official_document(url, title, company_domain)
+    if dtype is None:
+        return None
+    meta = live_meta or {}
+    fetched_ok = meta.get("status") in ("metadata_only",)
+    inaccessible = meta.get("status") == "inaccessible"
+    pub = published_at or meta.get("publishedAt")
+    age_h = argus_news_freshness.age_hours(pub, now_iso) if pub and now_iso else None
+    if fetched_ok or (pub and title):
+        vstatus = "metadata_only"       # 存在は確認・内容は未抽出
+    elif inaccessible:
+        vstatus = "inaccessible"
+    else:
+        vstatus = "unknown"
+    if age_h is not None and age_h > 90 * 24:
+        vstatus = "stale"
+    strength = ("medium" if vstatus == "metadata_only" and dtype in
+                ("industry_forecast_pdf", "official_statistics_page",
+                 "association_statistics", "company_ir_pdf")
+                else "weak" if vstatus == "metadata_only"
+                else "insufficient")
+    ents = _entities(str(title or "") + " " + url)
+    th = set()
+    for t in (theme_entities or set()):
+        th |= _entities(str(t))
+    relevant = bool(ents & th) if th else True
+    return {
+        "url": url, "normalizedUrl": _norm_url(url),
+        "domain": (re.search(r"https?://(?:www\.)?([\w.\-]+)/", url + "/") or [None, None])[1],
+        "title": str(title or "")[:160] or None,
+        "fileName": url.rsplit("/", 1)[-1][:80],
+        "publishedDate": pub, "detectedDate": now_iso,
+        "documentType": dtype,
+        "sourceCategory": ("industry_forecast" if "forecast" in dtype or
+                           dtype == "association_statistics"
+                           else "official_disclosure"),
+        "verificationStatus": vstatus,
+        "extractedMetadataJa": (f"文書の存在をメタデータで確認({dtype})"
+                                if vstatus == "metadata_only"
+                                else "参照不能" if vstatus == "inaccessible"
+                                else "未確認"),
+        "supportsClaim": vstatus == "metadata_only" and relevant,
+        "supportStrength": strength,
+        "causalRelevance": ("medium" if relevant and dtype in
+                            ("industry_forecast_pdf", "official_statistics_page")
+                            else "background" if relevant else "irrelevant"),
+        "caveatJa": ("PDF本文は未抽出 — 存在確認のみで内容の断定はしない"
+                     if vstatus == "metadata_only"
+                     else "参照不能 — 内容を推測しない"),
+    }
+
+
+# ━━━ v12.1.8 Phase 2 — SEAJ Official Resolver v3 ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SEAJ_OFFICIAL_QUERIES = (
+    "site:seaj.or.jp/file seajforecast 2026 pdf",
+    "site:seaj.or.jp/file forecastforpress 2026 pdf",
+    "site:seaj.or.jp/statistics 半導体 FPD 製造装置 需要予測",
+    "SEAJ 2026 6兆5502億円", "SEAJ 2026 6.5502 trillion yen",
+    "SEAJ 上方修正 6兆5502億円",
+    "日本半導体製造装置協会 2026 販売高予測",
+    "日本半導体製造装置協会 需要予測 上方修正",
+    "MyNavi SEAJ 6兆5502億円",
+    "半導体製造装置 販売高 2026 予測 日本製",
+)
+
+SEAJ_THEME_WORDING_JA = ("SEAJ業界予測は確認。ただし6965固有の直接材料ではなく、"
+                         "半導体製造装置・検査計測サイクルのテーマ材料です。")
+
+
+def seaj_official_resolve(claim: Dict[str, Any],
+                          candidates: Optional[List[Dict[str, Any]]] = None,
+                          now_iso: str = "") -> Dict[str, Any]:
+    """SEAJ予測claimのv3解決: 公式URL/統計ページ→industry_forecast、
+    記事のみ→public_forecast_metadata、両方→ペアリング。捏造なし・6965非direct。"""
+    title = str(claim.get("titleJa") or claim.get("title") or "")
+    out = {"matched": industry_forecast_claim_match(title),
+           "sourceType": None, "pairing": None, "queries": list(SEAJ_OFFICIAL_QUERIES),
+           "ownerReadableJa": None, "exactReasonJa": None}
+    if not out["matched"]:
+        return out
+    official = None
+    article = None
+    pool = [claim] + list(candidates or [])
+    for c in pool:
+        u = str(c.get("url") or "").lower()
+        if not u:
+            continue
+        if "seaj.or.jp" in u or classify_official_document(
+                u, c.get("titleJa") or "") in ("industry_forecast_pdf",
+                                               "official_statistics_page",
+                                               "association_statistics"):
+            official = c
+        elif industry_forecast_claim_match(str(c.get("titleJa") or c.get("title") or "")):
+            article = c
+    if official is not None:
+        out["sourceType"] = ("official_statistics_page"
+                             if "/statistics" in str(official.get("url") or "")
+                             else "industry_forecast")
+        out["ownerReadableJa"] = SEAJ_THEME_WORDING_JA
+        if article is not None:
+            out["pairing"] = pair_sources(official, article)
+    elif article is not None:
+        out["sourceType"] = "public_forecast_metadata"
+        out["ownerReadableJa"] = ("公開記事がSEAJ予測を報道 — 公式一次は未確認。"
+                                  + SEAJ_THEME_WORDING_JA)
+    else:
+        out["exactReasonJa"] = ("公式URLなし・日付なし — SEAJ公式/記事のどちらにも"
+                                "到達できず未回収(捏造しない)")
+        out["ownerReadableJa"] = out["exactReasonJa"]
+    return out
+
+
+# ━━━ v12.1.8 Phase 3 — Source Pairing(公式+記事要約) ━━━━━━━━━━━━━━━━━━━━
+
+PAIR_TYPES = ("official_plus_article_summary", "official_plus_metadata",
+              "article_only", "official_only")
+
+
+def pair_sources(primary: Dict[str, Any],
+                 summary: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """公式ソース(存在確認)+記事(詳細要約)のペアリング。
+    トピック/エンティティが一致しないペアは却下(無関係の合成をしない)。"""
+    if not primary:
+        return None
+    pt = str(primary.get("titleJa") or primary.get("title") or "")
+    pu = str(primary.get("url") or "")
+    if summary is None:
+        return {"pairType": "official_only", "supportsClaim": True,
+                "confidence": "low",
+                "caveatJa": "公式ソースの存在のみ確認 — 詳細内容は記事裏取りが必要",
+                "ownerReadableJa": f"公式のみ: {pt[:40] or pu[:40]}"}
+    st = str(summary.get("titleJa") or summary.get("title") or "")
+    # トピック一致判定: エンティティ重なり or タイトルbigram
+    ents_p = _entities(pt + " " + pu)
+    ents_s = _entities(st)
+    sim = title_similarity(pt, st) if pt and st else 0.0
+    topic_ok = bool(ents_p & ents_s) or sim >= 0.25 or (
+        industry_forecast_claim_match(pt) and industry_forecast_claim_match(st))
+    if not topic_ok:
+        return {"pairType": "article_only", "supportsClaim": False,
+                "confidence": "low",
+                "caveatJa": "公式ソースと記事のトピックが不一致 — ペア却下(合成しない)",
+                "ownerReadableJa": "不一致ペアを却下"}
+    return {"pairType": "official_plus_article_summary", "supportsClaim": True,
+            "confidence": "high" if summary.get("verified") else "medium",
+            "primaryTitle": pt[:80] or None, "summaryTitle": st[:80],
+            "caveatJa": ("公式が存在を確認・記事が詳細を要約 — 公式本文の断定はしない"),
+            "ownerReadableJa": f"ペア確認: 公式({(pt or pu)[:30]}…)+記事({st[:30]}…)"}
+
+
+# ━━━ v12.1.8 Phase 5 — Disclosure Resolver(cached-only・捏造なし) ━━━━━━━━━
+
+def disclosure_check_record(*, status: str, result_count: int = 0,
+                            latest_date: Optional[str] = None,
+                            relevant_count: int = 0) -> Dict[str, Any]:
+    st = status if status in ("checked", "unavailable", "failed",
+                              "not_configured") else "unavailable"
+    return {"status": st, "resultCount": result_count,
+            "latestDisclosureDate": latest_date,
+            "relevantDisclosureCount": relevant_count,
+            "ownerReadableJa": {
+                "checked": (f"公式開示を確認: {result_count}件"
+                            + (f"(関連{relevant_count}件)" if relevant_count else "")),
+                "unavailable": "開示フィード未到達 — 直接開示なしとは言えない",
+                "failed": "開示チェック失敗 — 直接開示なしとは言えない",
+                "not_configured": "開示フィード未設定 — 直接開示なしとは言えない",
+            }[st]}
+
+
+# ━━━ v12.1.8 Phase 6 — Warm Store(コールド測定の正直ラベル) ━━━━━━━━━━━━━━
+
+WARMTH_LEVELS = ("warm", "warming", "cold", "unknown")
+
+
+def warmth_status(*, pool_count: int, intel_age_min: Optional[float],
+                  memory_count: int = 0) -> Dict[str, Any]:
+    """OSINTストアの温度判定。cold測定はprovisionalラベル必須・2x不可。"""
+    if pool_count >= 60 and intel_age_min is not None and intel_age_min <= 45:
+        w = "warm"
+    elif pool_count >= 20:
+        w = "warming"
+    elif pool_count >= 0 and intel_age_min is None and memory_count == 0:
+        w = "unknown"
+    else:
+        w = "cold"
+    return {"storeWarmth": w,
+            "poolCount": pool_count,
+            "intelAgeMin": (round(intel_age_min, 1)
+                            if intel_age_min is not None else None),
+            "warmEnoughForBenchmark": w == "warm",
+            "ownerReadableJa": {
+                "warm": "ストアはウォーム — 通常測定",
+                "warming": "ストアはウォーム中 — 測定はやや保守的に読む",
+                "cold": "ストアがコールド(デプロイ直後等) — cold-store provisional・"
+                        "この測定から2x判定はしない",
+                "unknown": "ストア温度不明 — 保守的に読む",
+            }[w]}
