@@ -17,4 +17,6 @@ data/
 .DS_Store
 
 # Claude Code per-user
-.claude/settings.local.json
+# v12.2.5: リリースゲート生成物(コミットしない — 古いmanifestを真実にしない)
+artifacts/
+release_manifest.json

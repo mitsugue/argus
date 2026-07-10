@@ -94,7 +94,8 @@ def test_release_gate_manifest_logic():
     src = open(os.path.join(ROOT, "scripts", "release_gate.sh"),
                encoding="utf-8").read()
     assert 'ELIGIBLE=false' in src
-    assert '[ "$PY" = pass ] || ELIGIBLE=false' in src
+    import re
+    assert re.search(r'\[ "\$PY" = pass \]\s+\|\| ELIGIBLE=false', src)
     assert "pushしない" in src
 
 

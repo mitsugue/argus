@@ -1,8 +1,12 @@
 name: release-gate
-# v12.2.4: mainへのpush毎に完全ゲートを実行し、正確なSHAの適格性を記録する。
-# (Render auto-deployの停止はオーナー側設定 — 本workflowはSHA適格性の監査証跡)
+# v12.2.5: main push+PRで完全ゲート。manifestはCIのGITHUB_SHAに対して生成し
+# artifactとして公開(コミットされた古いmanifestを真実にしない)。
+# オーナー設定要件(手動): main branch protectionでci/release-gateを必須化+
+# Render Auto-Deploy = "After CI Checks Pass"。
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch: {}
 jobs:
@@ -21,8 +25,22 @@ jobs:
         run: cd web && npm ci --no-audit --no-fund
       - name: Full gate for exact SHA
         run: |
-          bash scripts/release_gate.sh
-          cat release_manifest.json
-      - name: Fail if ineligible
+          bash scripts/release_gate.sh || true
+          cat artifacts/release_manifest.json
+      - name: Verify manifest matches exact CI SHA (stale=ineligible)
         run: |
-          python3 -c "import json,sys; m=json.load(open('release_manifest.json')); sys.exit(0 if m['eligibleForDeploy'] else 1)"
+          python3 - <<'PY'
+          import json, os, sys
+          m = json.load(open("artifacts/release_manifest.json"))
+          if m["commitSha"] != os.environ["GITHUB_SHA"]:
+              print("STALE MANIFEST: manifest sha != CI sha"); sys.exit(1)
+          sys.exit(0 if m["eligibleForDeploy"] else 1)
+          PY
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+      - name: Publish manifest artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ github.sha }}
+          path: artifacts/release_manifest.json
