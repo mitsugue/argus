@@ -36,6 +36,11 @@ jobs:
             -H "Content-Type: application/json" -d '{}' \
             "$BE/api/argus/admin/osint/agents-run" || echo '{"error":"unreachable"}')
           echo "osint-agents: $OS"
+          # v12.2.1: セッション対応ミッションtick(冪等・予測発行/成果解決/回収)
+          MT=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            -H "Content-Type: application/json" -d '{}' \
+            "$BE/api/argus/admin/missions/tick" || echo '{"error":"unreachable"}')
+          echo "missions-tick: $MT"
           # v12.1.7: 基準校正の加速(run最少ケースを最大2件・Gemini 2呼び出し/回)
           BM=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             -H "Content-Type: application/json" -d '{}' \

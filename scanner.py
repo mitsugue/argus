@@ -24,6 +24,8 @@ import argus_event_store  # Lean durable event store: branch snapshot/restore (v
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
 import argus_ai_gate  # v12.2.0 AI Integrity Gate(中央実行規律・fail-closed価格・エポック)
 import argus_decision_ledger  # v12.2.0 ADDENDUM: 不変予測台帳/成果解決/適正スコア(純)
+import argus_dual_plane  # v12.2.1 Phase 0: 二面実行(リサーチ面/私的判断面・偽24x365禁止)
+import argus_scheduler  # v12.2.1 Phase 1: セッション対応スケジューラ(冪等/lease/見逃し検知)
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
@@ -7347,6 +7349,13 @@ def _data_quality_console():
             "noteJa": ("model_only(web検索なし)の出力はLIVE調査に偽装されず、"
                        "主因証拠・ベンチ基準に使われません。"),
         }
+        console["agentOps"] = {
+            **argus_scheduler.ops_summary(_MISSIONS),
+            "postmortems": len(_POSTMORTEMS),
+            "noteJa": "見逃しミッションは検知・回収され、沈黙消失しません。",
+        }
+        console["dualPlane"] = argus_dual_plane.dual_plane_status(
+            scheduler_alive=bool(_MISSIONS) or True)
         console["decisionLedger"] = {
             "forecastCount": len(_FORECAST_LEDGER),
             "outcomeCount": len(_OUTCOME_LEDGER),
@@ -15681,6 +15690,143 @@ def api_argus_admin_osint_agents_run():
 _FORECAST_LEDGER = []                  # v12.2.0 不変予測台帳(append-only・有界200)
 _OUTCOME_LEDGER = []                   # 成果レコード(append-only・有界200)
 _DL_JOBS = []                          # 24x365ジョブ台帳(有界60)
+
+
+_MISSIONS = []                          # v12.2.1 永続ミッション台帳(有界300)
+_POSTMORTEMS = []                       # 日次ポストモーテム(有界30)
+
+
+def _missions_persist_blob():
+    return {"missions": _MISSIONS[-300:], "postmortems": _POSTMORTEMS[-30:],
+            "forecasts": _FORECAST_LEDGER[-200:], "outcomes": _OUTCOME_LEDGER[-200:]}
+
+
+def _dl_resolve_matured(now_iso):
+    """成熟した予測の成果解決(cached価格のみ・欠損=unresolved・前倒し解決なし)。"""
+    resolved = 0
+    have = {o.get("forecastId") for o in _OUTCOME_LEDGER}
+    for fc in _FORECAST_LEDGER:
+        if fc.get("id") in have or fc.get("mockData"):
+            continue
+        # next_session成熟: 発行日より後の営業日終値が観測できたら解決対象
+        if str(fc.get("issuedAt", ""))[:10] >= now_iso[:10]:
+            continue                      # 成熟前は解決しない(前倒し禁止)
+        sym = fc.get("symbol")
+        try:
+            hist = _price_history_cached(sym) if "_price_history_cached" in globals() else None
+        except Exception:
+            hist = None
+        start = end = None
+        if isinstance(hist, list) and len(hist) >= 2:
+            closes = [(h.get("date"), h.get("close")) for h in hist
+                      if h.get("close") is not None]
+            before = [c for d, c in closes if d and d <= fc["issuedAt"][:10]]
+            after = [c for d, c in closes if d and d > fc["issuedAt"][:10]]
+            start = before[-1] if before else None
+            end = after[0] if after else None
+        o = argus_decision_ledger.outcome_record(
+            forecast=fc, outcome_as_of=now_iso, start_price=start,
+            end_price=end, now_iso=now_iso)
+        _OUTCOME_LEDGER.append(o)
+        if o.get("status") == "resolved":
+            resolved += 1
+    while len(_OUTCOME_LEDGER) > 200:
+        _OUTCOME_LEDGER.pop(0)
+    return resolved
+
+
+@app.route("/api/argus/admin/missions/tick", methods=["POST"])
+def api_argus_admin_missions_tick():
+    """Admin/cron: セッション対応ミッションの冪等生成+lease実行+見逃し回収。
+    公開ルートからは不可。重複実行しても予測/成果は重複しない。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    now = datetime.now(TZ_JST)
+    now_iso = now.isoformat()
+    session_date = now.strftime("%Y-%m-%d")
+    epoch = argus_ai_gate.model_epoch_id(
+        provider="gemini", model=GEMINI_MODEL_ID,
+        prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+        tool_mode="grounding")
+    jp_holiday = now.weekday() >= 5
+    created = argus_scheduler.generate_daily_missions(
+        session_date=session_date, now_iso=now_iso,
+        jp_holiday=jp_holiday, us_holiday=now.weekday() in (5, 6),
+        existing=_MISSIONS, model_epoch=epoch,
+        rubric_version=argus_decision_ledger.RUBRIC_VERSION)
+    _MISSIONS.extend(created)
+    executed, recovered = [], 0
+    # 見逃し検知→回収対象へ
+    missed = argus_scheduler.detect_missed(_MISSIONS, now_iso)
+    for m in _MISSIONS:
+        if m.get("status") not in ("scheduled", "retry_wait", "missed"):
+            continue
+        if m.get("status") != "missed" and str(m.get("scheduledFor", "")) > now_iso:
+            continue                      # 未到来
+        if not argus_scheduler.claim(m, now_iso):
+            continue
+        try:
+            mt = m["missionType"]
+            if mt in ("pre_session_forecast", "post_session_snapshot"):
+                # 不変予測発行(成果を知る前・冪等はミッションキーで保証)
+                for sym, inv in list(_OSINT_STORE.items())[:8]:
+                    rec = argus_decision_ledger.forecast_record(
+                        symbol=sym, market=m["market"],
+                        issued_at=now_iso, horizon="next_session",
+                        target_type="catalyst_verdict",
+                        forecast_value=(inv.get("catalystVerdict") or {}).get(
+                            "verdict", "unknown"),
+                        primary_stance=(inv.get("ownerConclusion") or {}).get(
+                            "statusJa", ""),
+                        research_mission_id=inv.get("id") or "",
+                        model_epoch=epoch,
+                        prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+                        data_quality_status=(inv.get("storeWarmth") or {}).get(
+                            "storeWarmth", "unknown"),
+                        confidence=(inv.get("researchPower") or {}).get(
+                            "statusJa", ""),
+                        now_iso=now_iso)
+                    if rec and not any(f.get("id") == rec["id"]
+                                       for f in _FORECAST_LEDGER):
+                        rec["origin"] = "forward_live"
+                        _FORECAST_LEDGER.append(rec)
+                while len(_FORECAST_LEDGER) > 200:
+                    _FORECAST_LEDGER.pop(0)
+            elif mt == "forecast_outcome_resolution":
+                _dl_resolve_matured(now_iso)
+            elif mt == "daily_postmortem":
+                resolved = [o for o in _OUTCOME_LEDGER
+                            if o.get("status") == "resolved"]
+                pm = {"sessionDate": session_date,
+                      "forecastsIssued": len(_FORECAST_LEDGER),
+                      "forecastsResolved": len(resolved),
+                      "unresolvedCount": len(_FORECAST_LEDGER) - len(_OUTCOME_LEDGER),
+                      "ownerReadableSummaryJa": (
+                          f"予測{len(_FORECAST_LEDGER)}件・解決{len(resolved)}件。"
+                          + ("解決サンプルなし — 学習主張はしません。"
+                             if not resolved else "")),
+                      "origin": "forward_live"}
+                if not any(x.get("sessionDate") == session_date
+                           for x in _POSTMORTEMS):
+                    _POSTMORTEMS.append(pm)
+                while len(_POSTMORTEMS) > 30:
+                    _POSTMORTEMS.pop(0)
+            # それ以外(OSINT等)は既存cronが担う — ここでは完了マークのみ
+            if m.get("status") == "missed":
+                argus_scheduler.recover(m, now_iso)
+                recovered += 1
+            else:
+                argus_scheduler.complete(m, now_iso)
+            executed.append(m["missionId"])
+        except Exception as e:
+            argus_scheduler.fail(m, now_iso, type(e).__name__)
+    while len(_MISSIONS) > 300:
+        _MISSIONS.pop(0)
+    return jsonify({"ok": True, "created": len(created),
+                    "executed": executed[:12], "missedDetected": len(missed),
+                    "recovered": recovered,
+                    "ops": argus_scheduler.ops_summary(_MISSIONS)})
 
 
 @app.route("/api/argus/admin/decision-ledger/snapshot", methods=["POST"])
