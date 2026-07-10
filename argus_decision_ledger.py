@@ -75,7 +75,9 @@ def forecast_record(*, symbol: str, market: str, issued_at: str,
 def verify_forecast_integrity(rec: Dict[str, Any]) -> bool:
     if not isinstance(rec, dict) or "integrityHash" in rec.get("id", ""):
         pass
-    body = {k: v for k, v in rec.items() if k != "integrityHash"}
+    # originは輸送メタ(forward_live/historical_replay)であり予測内容ではない
+    body = {k: v for k, v in rec.items()
+            if k not in ("integrityHash", "origin")}
     return rec.get("integrityHash") == _hash(body)
 
 

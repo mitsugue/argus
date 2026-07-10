@@ -7376,6 +7376,23 @@ def _data_quality_console():
         console["dualPlane"] = argus_dual_plane.dual_plane_status(
             scheduler_alive=bool(_MISSIONS) or True)
         _fr = ("insufficient_data" if not _OSINT_STORE else "ready")
+        _rp_cur = None
+        for i in _OSINT_STORE.values():
+            if i.get("researchPower"):
+                _rp_cur = i["researchPower"]
+        console["researchMeasurement"] = {
+            "epochId": _current_epoch_id(),
+            "geminiBaseline": (argus_osint_engine.baseline_from_runs(
+                _baseline_current_epoch()) or {}).get("medianGeminiScore"),
+            "argusScore": (_rp_cur or {}).get("argusScore"),
+            "currentRatio": (_rp_cur or {}).get("argusVsGeminiRatio"),
+            "ratioLabelJa": (_rp_cur or {}).get("ratioLabelJa"),
+            "status": ("measured" if _rp_cur else "not_measured"),
+            "blockerJa": (None if _rp_cur else
+                          "現行エポックのARGUS調査が未実行(ウォームアップ後のcronで測定)"),
+            "legacyNoteJa": "旧0.92x(v12.1.7)はlegacy — 現行比ではない",
+        }
+        console["incidents"] = _INCIDENTS[-6:]
         console["forecastReadiness"] = {
             "readiness": _fr,
             "liveForecasts": sum(1 for f in _FORECAST_LEDGER
@@ -14877,7 +14894,11 @@ def _osint_persist():
                 "canaryLast": _OSINT_CANARY_LAST,
                 "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                 "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
-                "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:]}
+                "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
+                "soak": _SOAK, "missions": _MISSIONS[-120:],
+                "forecasts": _FORECAST_LEDGER[-200:],
+                "outcomes": _OUTCOME_LEDGER[-200:],
+                "incidents": _INCIDENTS[-20:]}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(blob, f, ensure_ascii=False)
@@ -14934,6 +14955,26 @@ def _osint_restore_once():
             if isinstance(h, dict) and not any(
                     x.get("id") == h.get("id") for x in _OSINT_BENCHMARK_RUNS):
                 _OSINT_BENCHMARK_RUNS.append(h)
+        sk = blob.get("soak")
+        if isinstance(sk, dict) and sk.get("startedAt") and not _SOAK["startedAt"]:
+            _SOAK.update(sk)               # redeployでsoakをリセットしない
+        for h in (blob.get("missions") or [])[-120:]:
+            if isinstance(h, dict) and not any(
+                    x.get("idempotencyKey") == h.get("idempotencyKey")
+                    for x in _MISSIONS):
+                _MISSIONS.append(h)
+        for h in (blob.get("forecasts") or [])[-200:]:
+            if isinstance(h, dict) and not any(
+                    x.get("id") == h.get("id") for x in _FORECAST_LEDGER):
+                _FORECAST_LEDGER.append(h)
+        for h in (blob.get("outcomes") or [])[-200:]:
+            if isinstance(h, dict) and not any(
+                    x.get("forecastId") == h.get("forecastId")
+                    for x in _OUTCOME_LEDGER):
+                _OUTCOME_LEDGER.append(h)
+        for h in (blob.get("incidents") or [])[-20:]:
+            if isinstance(h, dict) and h not in _INCIDENTS:
+                _INCIDENTS.append(h)
     except Exception:
         pass
 
@@ -15743,6 +15784,7 @@ _POSTMORTEMS = []                       # 日次ポストモーテム(有界30)
 _PERIODIC_REPORTS = []                  # 週次/月次レポート(有界12)
 _CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
 _SOAK = {"startedAt": None}
+_INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
 
 
 def _missions_persist_blob():
@@ -15813,18 +15855,65 @@ def api_argus_admin_missions_tick():
         rubric_version=argus_decision_ledger.RUBRIC_VERSION)
     _MISSIONS.extend(created)
     executed, recovered = [], 0
+    # v12.2.3: コールド時に消費された当日予測ミッションの回収発行
+    # (実調査がストアに存在し、当日のforward-live予測がゼロの場合のみ・冪等)
+    if _OSINT_STORE and not any(
+            f.get("origin") == "forward_live" and
+            str(f.get("issuedAt", ""))[:10] == session_date
+            for f in _FORECAST_LEDGER):
+        warm_consumed = any(m.get("checkpoint") == "warmup_queued"
+                            for m in _MISSIONS
+                            if m.get("sessionDate") == session_date)
+        rk = f"recovery_issuance:{session_date}"
+        if warm_consumed and not any(m.get("idempotencyKey") == rk
+                                     for m in _MISSIONS):
+            rm = argus_scheduler.mission(
+                mission_type="missed_mission_recovery", market="ALL",
+                session_date=session_date, scheduled_for=now_iso,
+                model_epoch=epoch,
+                rubric_version=argus_decision_ledger.RUBRIC_VERSION)
+            rm["idempotencyKey"] = rk
+            rm["missionId"] = f"m-{rk}"
+            _MISSIONS.append(rm)
+    # v12.2.3: 週次/月次の検証実行(validation_run — 本番実行のふりをしない)
+    _validate = str((body or {}).get("validate") or "") if isinstance(
+        (body := request.get_json(silent=True) or {}), dict) else ""
+    if _validate in ("weekly", "monthly"):
+        rep = {"type": ("WEEKLY LEARNING REVIEW" if _validate == "weekly"
+                        else "MONTHLY AGENT REVIEW"),
+               "sessionDate": session_date, "origin": "validation_run",
+               "resolvedSamples": sum(1 for o in _OUTCOME_LEDGER
+                                      if o.get("status") == "resolved"),
+               "ownerReadableJa": ("検証実行(validation_run) — 定期実行ではない。"
+                                   "解決サンプル不足時は学習主張なし")}
+        if not any(r.get("sessionDate") == session_date and
+                   r.get("type") == rep["type"] and
+                   r.get("origin") == "validation_run"
+                   for r in _PERIODIC_REPORTS):
+            _PERIODIC_REPORTS.append(rep)
     # 見逃し検知→回収対象へ
     missed = argus_scheduler.detect_missed(_MISSIONS, now_iso)
+    for _mm in missed:
+        _INCIDENTS.append({"id": f"inc-{_mm.get('missionId')}",
+                           "severity": "warning", "component": "scheduler",
+                           "detectedAt": now_iso, "status": "open",
+                           "missionType": _mm.get("missionType"),
+                           "ownerImpactJa": "ミッション見逃し — 回収を試行",
+                           "resolvedAt": None})
+    while len(_INCIDENTS) > 20:
+        _INCIDENTS.pop(0)
     for m in _MISSIONS:
         if m.get("status") not in ("scheduled", "retry_wait", "missed"):
             continue
         if m.get("status") != "missed" and str(m.get("scheduledFor", "")) > now_iso:
             continue                      # 未到来
+        _was_missed = m.get("status") == "missed"
         if not argus_scheduler.claim(m, now_iso):
             continue
         try:
             mt = m["missionType"]
-            if mt in ("pre_session_forecast", "post_session_snapshot"):
+            if mt in ("pre_session_forecast", "post_session_snapshot",
+                      "missed_mission_recovery"):
                 # v12.2.2 Phase 2: プリフライト — コールド/調査ゼロなら発行せず
                 # 決定論ウォームアップ(deep-diveキュー・外部AIなし・無料)を仕込む
                 if not _OSINT_STORE:
@@ -15919,9 +16008,14 @@ def api_argus_admin_missions_tick():
                 while len(_PERIODIC_REPORTS) > 12:
                     _PERIODIC_REPORTS.pop(0)
             # それ以外(OSINT等)は既存cronが担う — ここでは完了マークのみ
-            if m.get("status") == "missed":
-                argus_scheduler.recover(m, now_iso)
+            if _was_missed:
+                m["status"] = "recovered"
+                m["completedAt"] = now_iso
                 recovered += 1
+                for inc in _INCIDENTS:
+                    if inc.get("id") == f"inc-{m.get('missionId')}" and                             inc.get("status") == "open":
+                        inc["status"] = "resolved"
+                        inc["resolvedAt"] = now_iso
             else:
                 argus_scheduler.complete(m, now_iso)
             executed.append(m["missionId"])
