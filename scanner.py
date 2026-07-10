@@ -22,6 +22,8 @@ import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 import argus_research  # evidence-first deterministic research dossier (v10.41)
 import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
+import argus_ai_gate  # v12.2.0 AI Integrity Gate(中央実行規律・fail-closed価格・エポック)
+import argus_decision_ledger  # v12.2.0 ADDENDUM: 不変予測台帳/成果解決/適正スコア(純)
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
@@ -7332,6 +7334,40 @@ def _data_quality_console():
                        for r in _OSINT_BENCHMARK_RUNS[-5:]],
             "budget": _OSINT_BENCH_BUDGET,
         }
+        # v12.2.0: AI Integrity + Provider/Cost(公開安全 — 秘密/私的値なし)
+        console["aiIntegrity"] = {
+            "storeDisabledEnforced": True,     # 全Responses呼び出しstore=False(テスト固定)
+            "modelOnlyResearchCount": _AI_INTEGRITY["modelOnlyCount"],
+            "searchFailedCount": _AI_INTEGRITY["searchFailedCount"],
+            "degradedFallbackCount": _AI_INTEGRITY["degradedFallbackCount"],
+            "schemaFailedCount": _AI_INTEGRITY["schemaFailedCount"],
+            "unknownPriceBlockCount": _AI_INTEGRITY["unknownPriceBlockCount"],
+            "budgetLimitedCount": _AI_INTEGRITY["budgetLimitedCount"],
+            "lastExec": _AI_INTEGRITY["lastExec"],
+            "noteJa": ("model_only(web検索なし)の出力はLIVE調査に偽装されず、"
+                       "主因証拠・ベンチ基準に使われません。"),
+        }
+        console["decisionLedger"] = {
+            "forecastCount": len(_FORECAST_LEDGER),
+            "outcomeCount": len(_OUTCOME_LEDGER),
+            "unresolvedForecasts": max(0, len(_FORECAST_LEDGER) - len(_OUTCOME_LEDGER)),
+            "missedJobs": argus_decision_ledger.detect_missed_jobs(
+                _DL_JOBS, _ai_now_iso()),
+            "rubricVersion": argus_decision_ledger.RUBRIC_VERSION,
+            "noteJa": ("不変予測台帳(v2基盤・shadow) — 既存Calibration Ledger v4が"
+                       "本番採点として継続。"),
+        }
+        console["providerCost"] = {
+            "activeModels": {k: v for k, v in _OPENAI_MODEL_ROLES.items()},
+            "shadowEnabled": _OPENAI_SHADOW["enabled"],
+            "shadowCandidate": _OPENAI_SHADOW["candidate"],
+            "daySpentUsd": round(_AI_COST_STATE.get("daySpentUsd", 0.0), 4),
+            "dayBudgetUsd": _AI_DAILY_BUDGET_USD,
+            "modelEpoch": argus_ai_gate.model_epoch_id(
+                provider="gemini", model=GEMINI_MODEL_ID,
+                prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+                tool_mode="grounding"),
+        }
         console["osintHealth"]["geminiBaseline"] = {
             "baselineType": _bl["baselineType"], "labelJa": _bl["labelJa"],
             "runCount": _bl["runCount"],
@@ -10597,7 +10633,7 @@ def _openai_judge(snapshot):
         try:
             # Current best practice for gpt-5.x: the Responses API.
             resp = client.responses.create(model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM,
-                                            input=user, timeout=60)
+                                            input=user, timeout=60, store=False)
             text = getattr(resp, "output_text", None)
         except Exception:
             # Fallback for SDKs/models without the Responses API.
@@ -11030,7 +11066,7 @@ def _openai_prose(user, max_out=600, system=None):
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         try:
             resp = client.responses.create(model=_OPENAI_MODEL, instructions=sys_prompt,
-                                            input=user, timeout=60)
+                                            input=user, timeout=60, store=False)
             text = getattr(resp, "output_text", None)
         except Exception:
             resp = client.chat.completions.create(
@@ -12704,7 +12740,8 @@ def api_argus_ai_provider_ping():
             client = openai.OpenAI(api_key=_OPENAI_API_KEY)
             try:
                 r = client.responses.create(model=_OPENAI_MODEL,
-                                            input="Reply with the single word: pong", timeout=30)
+                                            input="Reply with the single word: pong",
+                                            timeout=30, store=False)
                 reply = (getattr(r, "output_text", "") or "")[:40]
             except Exception:
                 r = client.chat.completions.create(
@@ -14330,35 +14367,128 @@ def api_argus_downside_incidents():
 # integrity (no future-earnings-as-cause, no stale-report-as-trigger, no named
 # whale without a filing, short-volume ≠ short-interest). Reuses watchlists,
 # catalysts, TDnet, flow, and the contagion theme groups. Decision-support only.
-def _openai_research(user):
-    """GPT with LIVE web search (Responses API web_search tool) → plain-text answer. This is
-    what makes the なぜ動いた? button research today's cause (no new key — uses OPENAI_API_KEY).
-    Falls back through tool-name variants, then a no-tool call, then None. Bills usage."""
+# ── v12.2.0 Phase 2: モデルrole設定(GPT-5.6系は能力プローブ確認まで使わない) ──
+_OPENAI_MODEL_ROLES = {
+    "extract":  os.environ.get("ARGUS_OPENAI_MODEL_EXTRACT")  or _OPENAI_MODEL,
+    "standard": os.environ.get("ARGUS_OPENAI_MODEL_STANDARD") or _OPENAI_MODEL,
+    "war_room": os.environ.get("ARGUS_OPENAI_MODEL_WAR_ROOM") or _OPENAI_MODEL,
+    "referee":  os.environ.get("ARGUS_OPENAI_MODEL_REFEREE")  or _OPENAI_MODEL,
+    "rollback": os.environ.get("ARGUS_OPENAI_MODEL_ROLLBACK") or _OPENAI_MODEL,
+}
+_OPENAI_SHADOW = {
+    "enabled": os.environ.get("ARGUS_OPENAI_SHADOW_ENABLED", "0") == "1",
+    "ratePct": int(os.environ.get("ARGUS_OPENAI_SHADOW_SAMPLE_RATE", "10") or 10),
+    "candidate": os.environ.get("ARGUS_OPENAI_MODEL_SHADOW") or None,
+}
+GEMINI_MODEL_ID = os.environ.get("GEMINI_OSINT_MODEL", "") or "gemini-2.5-pro"
+_AI_SHADOW_RUNS = []                    # シャドウ結果(オーナー判断に不使用・有界12)
+_AI_INTEGRITY = {"modelOnlyCount": 0, "searchFailedCount": 0,
+                 "degradedFallbackCount": 0, "schemaFailedCount": 0,
+                 "unknownPriceBlockCount": 0, "budgetLimitedCount": 0,
+                 "lastExec": None}
+
+
+def _openai_model_for(role):
+    return _OPENAI_MODEL_ROLES.get(role) or _OPENAI_MODEL
+
+
+def _openai_research_ex(user, role="standard"):
+    """v12.2.0 中央実行: GPT LIVE web調査。(text, AiExecutionResult)を返す。
+    - store=False固定・usageは同一応答から取得
+    - 価格不明モデルはfail-closed(呼ばない)
+    - no-toolフォールバックは status=model_only(検証済み調査に偽装不可)"""
+    started = _ai_now_iso()
+    model = _openai_model_for(role)
     if not _OPENAI_API_KEY:
-        return None
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="disabled", started_at=started, completed_at=started)
+    gate = argus_ai_gate.can_execute_external(
+        model, _AI_PRICING,
+        allow_unknown_price=os.environ.get("ARGUS_ALLOW_UNKNOWN_PRICE") == "1")
+    if not gate["allowed"]:
+        _AI_INTEGRITY["unknownPriceBlockCount"] += 1
+        add_log(f"[ai-gate] unknown price blocked: {model}")
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="unavailable", started_at=started, completed_at=_ai_now_iso(),
+            cost_status="unknown", failure_reason_redacted="price_unknown")
+    # 予算予約(worst-case見積り・超過なら外部を呼ばず決定論継続)
+    try:
+        _ai_cost_roll(datetime.now(TZ_JST))
+        est = argus_ai_cost.estimate_cost(model, 6000, 2000, _AI_PRICING)
+        rsv = argus_ai_gate.reserve_budget(
+            day_spent=_AI_COST_STATE["daySpentUsd"],
+            day_budget=_AI_DAILY_BUDGET_USD,
+            estimated_max_cost=(est or 0.05))
+        if not rsv["allowed"]:
+            _AI_INTEGRITY["budgetLimitedCount"] += 1
+            return None, argus_ai_gate.ai_execution_result(
+                provider="openai", model=model, role=role, mode="research",
+                status="budget_limited", started_at=started,
+                completed_at=_ai_now_iso(), cost_status="estimated",
+                estimated_cost=est, failure_reason_redacted="budget_reserved")
+    except Exception:
+        pass
     try:
         import openai
     except Exception:
-        return None
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="unavailable", started_at=started, completed_at=_ai_now_iso())
     client = openai.OpenAI(api_key=_OPENAI_API_KEY)
     sysmsg = ("あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
               "出所のない断定はせず、不明なら正直に不明と言う。投資助言・利益保証はしない。")
-    for tools in ([{"type": "web_search"}], [{"type": "web_search_preview"}], None):
+    for tools, st_ok in (([{"type": "web_search"}], "ok"),
+                         ([{"type": "web_search_preview"}], "ok"),
+                         (None, "model_only")):
         try:
-            kw = {"model": _OPENAI_MODEL, "instructions": sysmsg, "input": user, "timeout": 90}
+            kw = {"model": model, "instructions": sysmsg, "input": user,
+                  "timeout": 90, "store": False}
             if tools:
                 kw["tools"] = tools
             resp = client.responses.create(**kw)
             txt = getattr(resp, "output_text", None)
-            if txt:
-                try:
-                    _ai_record_cost(_ai_now_iso(), "live", "unavailable", False)
-                except Exception:
-                    pass
-                return txt
+            if not txt:
+                continue
+            u = _usage_tokens(resp) or (0, 0)
+            usage = {"inputTokens": u[0], "outputTokens": u[1]}
+            cost = None
+            try:
+                cost = argus_ai_cost.estimate_cost(model, u[0], u[1], _AI_PRICING)
+                _ai_record_cost(_ai_now_iso(), "live", "unavailable", False)
+            except Exception:
+                pass
+            if st_ok == "model_only":
+                _AI_INTEGRITY["modelOnlyCount"] += 1
+            res = argus_ai_gate.ai_execution_result(
+                provider="openai", model=model, role=role, mode="research",
+                status=st_ok, started_at=started, completed_at=_ai_now_iso(),
+                prompt_version="research-v1", privacy_mode="redacted",
+                store_disabled=True,
+                tool_calls=[t["type"] for t in (tools or [])],
+                usage=usage, estimated_cost=cost,
+                cost_status="estimated" if cost is not None else "unknown",
+                response_id=getattr(resp, "id", None))
+            _AI_INTEGRITY["lastExec"] = {
+                "model": model, "status": res["status"], "at": res["completedAt"]}
+            return txt, res
         except Exception:
             continue
-    return None
+    _AI_INTEGRITY["searchFailedCount"] += 1
+    return None, argus_ai_gate.ai_execution_result(
+        provider="openai", model=model, role=role, mode="research",
+        status="search_failed", started_at=started, completed_at=_ai_now_iso(),
+        failure_reason_redacted="provider_error")
+
+
+def _openai_research(user):
+    """互換ラッパ(text-only)。model_onlyの場合は本文にモデル記憶注記を付ける —
+    無言でweb調査に偽装しない(v12.2.0 AI Integrity)。"""
+    txt, res = _openai_research_ex(user, role="standard")
+    if txt and res.get("status") == "model_only":
+        return txt + "\n\n" + argus_ai_gate.MODEL_ONLY_NOTE_JA
+    return txt if res.get("status") == "ok" else (txt if txt else None)
 
 
 def _cause_explain(sym, name, market, chg):
@@ -15179,6 +15309,55 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
     # v12.1.5 Phase 6: ソース取得レポート
     inv["sourceAcquisitionReport"] = argus_osint_engine.source_acquisition_report(
         pchecks, src_cov, pguards + inv.get("coverageGuardsJa", []))
+    # ── v12.2.0 Phase 5: 公式文書/SEAJ v3/ペアリング/開示/ウォーム ──
+    official_docs, pairings = [], 0
+    all_claims = list(cands) + [c for r in agent_runs
+                                for c in (r.get("claims") or [])]
+    for c in all_claims:
+        u = c.get("url")
+        if not u:
+            continue
+        rec = argus_osint_engine.official_document_record(
+            url=u, title=c.get("titleJa") or c.get("title") or "",
+            published_at=c.get("publishedAt"), now_iso=now_iso,
+            live_meta=_OSINT_URL_CACHE.get(argus_osint_engine._norm_url(u)),
+            theme_entities=theme_ents)
+        if rec:
+            official_docs.append(rec)
+    inv["officialDocuments"] = official_docs[:10]
+    seaj_pairs = []
+    for r in agent_runs:
+        for c in (r.get("claims") or []):
+            t = str(c.get("titleJa") or c.get("title") or "")
+            if argus_osint_engine.industry_forecast_claim_match(t):
+                sr = argus_osint_engine.seaj_official_resolve(c, all_claims, now_iso)
+                if sr.get("pairing") and sr["pairing"].get("supportsClaim"):
+                    seaj_pairs.append(sr["pairing"])
+                    pairings += 1
+                if sr.get("sourceType"):
+                    c["sourceType"] = sr["sourceType"]
+    inv["sourcePairings"] = seaj_pairs[:6]
+    try:
+        ev = _official_events_by_symbol(symu) or []
+        inv["disclosureCheck"] = argus_osint_engine.disclosure_check_record(
+            status="checked", result_count=len(ev),
+            latest_date=(ev[0].get("date") if ev else None),
+            relevant_count=len(ev))
+    except Exception:
+        inv["disclosureCheck"] = argus_osint_engine.disclosure_check_record(
+            status="unavailable")
+    try:
+        _pool_n = len(_osint_pool_items())
+        _intel_age = None
+        _ts = (_INTEL_LAST or {}).get("ts")
+        if _ts:
+            _intel_age = max(0.0, (time.time() - float(_ts)) / 60.0)
+        inv["storeWarmth"] = argus_osint_engine.warmth_status(
+            pool_count=_pool_n, intel_age_min=_intel_age,
+            memory_count=len(_OSINT_MEMORY))
+    except Exception:
+        inv["storeWarmth"] = argus_osint_engine.warmth_status(
+            pool_count=0, intel_age_min=None, memory_count=0)
     rps = argus_osint_engine.research_power_score(
         verified=verified, agent_runs=agent_runs, gap_ledger=gap_ledger,
         coverage=inv["coverageScore"], contradiction=contr,
@@ -15189,7 +15368,9 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
                          "recovered": _OSINT_BLOCKED_RECOVERY["recovered"],
                          "freshCandidates": fresh_candidates},
         causal_summary=causal_sum, primary_checks=pchecks,
-        baseline_info=argus_osint_engine.baseline_from_runs(_OSINT_BASELINE_RUNS))
+        baseline_info=argus_osint_engine.baseline_from_runs(_OSINT_BASELINE_RUNS),
+        warmth=inv["storeWarmth"], official_docs=official_docs,
+        pairings=pairings)
     inv["researchPower"] = rps
     # v12.1.5 Phase 7: オーナー結論(曖昧な原因未特定を出さない)
     inv["ownerConclusion"] = argus_osint_engine.owner_conclusion(
@@ -15371,6 +15552,10 @@ def _osint_agents_worker(syms):
                             run_rec.get("claims") or []),
                         "case": sym, "symbol": sym, "at": _ai_now_iso(),
                         "promptVersion": argus_osint_engine.SCOUT_PROMPT_VERSION,
+                        "epochId": argus_ai_gate.model_epoch_id(
+                            provider="gemini", model=GEMINI_MODEL_ID,
+                            prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+                            tool_mode="grounding"),
                         "privacyMode": meta["privacyMode"]})
                     while len(_OSINT_BASELINE_RUNS) > 24:
                         _OSINT_BASELINE_RUNS.pop(0)
@@ -15493,6 +15678,58 @@ def api_argus_admin_osint_agents_run():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
 
 
+_FORECAST_LEDGER = []                  # v12.2.0 不変予測台帳(append-only・有界200)
+_OUTCOME_LEDGER = []                   # 成果レコード(append-only・有界200)
+_DL_JOBS = []                          # 24x365ジョブ台帳(有界60)
+
+
+@app.route("/api/argus/admin/decision-ledger/snapshot", methods=["POST"])
+def api_argus_admin_dl_snapshot():
+    """Admin/cron: 当日判断の不変スナップショット(成果を知る前に発行)。
+    冪等キーで重複発行を防止。公開ルートからは発行不可。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    now_iso = _ai_now_iso()
+    idem = f"dl-{now_iso[:10]}-{str(body.get('session') or 'daily')}"
+    if argus_decision_ledger.is_duplicate_job(_DL_JOBS, idem):
+        return jsonify({"ok": True, "duplicate": True,
+                        "noteJa": "本日分は発行済み(冪等)。"})
+    _DL_JOBS.append(argus_decision_ledger.job_record(
+        job_id=idem, mission_type="forecast_snapshot", scheduled_at=now_iso,
+        idempotency_key=idem, status="complete"))
+    made = 0
+    for sym, inv in list(_OSINT_STORE.items())[:12]:
+        rp = inv.get("researchPower") or {}
+        rec = argus_decision_ledger.forecast_record(
+            symbol=sym, market=("JP" if sym[:1].isdigit() else "US"),
+            issued_at=now_iso, horizon="next_session",
+            target_type="catalyst_verdict",
+            forecast_value=(inv.get("catalystVerdict") or {}).get("verdict", "unknown"),
+            primary_stance=(inv.get("ownerConclusion") or {}).get("statusJa", ""),
+            research_mission_id=inv.get("id") or "",
+            model_epoch=argus_ai_gate.model_epoch_id(
+                provider="gemini", model=GEMINI_MODEL_ID,
+                prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+                tool_mode="grounding"),
+            prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+            data_quality_status=(inv.get("storeWarmth") or {}).get("storeWarmth",
+                                                                   "unknown"),
+            confidence=rp.get("statusJa") or "",
+            mock_data=False, now_iso=now_iso)
+        if rec:
+            _FORECAST_LEDGER.append(rec)
+            made += 1
+    while len(_FORECAST_LEDGER) > 200:
+        _FORECAST_LEDGER.pop(0)
+    while len(_DL_JOBS) > 60:
+        _DL_JOBS.pop(0)
+    return jsonify({"ok": True, "issued": made,
+                    "ledgerSize": len(_FORECAST_LEDGER),
+                    "noteJa": "予測は発行後に編集不可(成果は別レコードで解決)。"})
+
+
 def _osint_benchmark_worker(case_ids):
     """v12.1.7: ベンチケースのGemini基準run実行(admin/cron専用・redacted固定)。
     外部AI不在はskipped/insufficient_data — 偽passを作らない。"""
@@ -15526,6 +15763,10 @@ def _osint_benchmark_worker(case_ids):
                 _OSINT_BASELINE_RUNS.append({
                     "score": gscore, "case": cid, "symbol": cid, "at": _ai_now_iso(),
                     "promptVersion": argus_osint_engine.SCOUT_PROMPT_VERSION,
+                    "epochId": argus_ai_gate.model_epoch_id(
+                        provider="gemini", model=GEMINI_MODEL_ID,
+                        prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
+                        tool_mode="grounding"),
                     "privacyMode": "redacted"})
                 while len(_OSINT_BASELINE_RUNS) > 24:
                     _OSINT_BASELINE_RUNS.pop(0)
@@ -15549,6 +15790,44 @@ def _osint_benchmark_worker(case_ids):
     finally:
         _OSINT_BENCH_STATE["running"] = False
         _OSINT_BENCH_STATE["lastAt"] = _ai_now_iso()
+
+
+def _ai_capability_probe(model):
+    """v12.2.0: モデル能力プローブ(admin/cron専用・私的文脈なし・秘密非出力)。"""
+    out = {"model": model, "accessible": False, "responsesSupported": False,
+           "structuredOutputsSupported": "unknown", "webSearchSupported": "unknown",
+           "usageReturned": False, "errorClass": None}
+    if not _OPENAI_API_KEY:
+        out["errorClass"] = "no_api_key"
+        return out
+    try:
+        import openai
+        client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        r = client.responses.create(model=model, input="Reply: ok",
+                                    timeout=30, store=False)
+        out["accessible"] = bool(getattr(r, "output_text", None))
+        out["responsesSupported"] = True
+        u = _usage_tokens(r)
+        out["usageReturned"] = bool(u and (u[0] or u[1]))
+    except Exception as e:
+        out["errorClass"] = type(e).__name__[:40]
+    return out
+
+
+@app.route("/api/argus/admin/ai/capability-probe", methods=["POST"])
+def api_argus_admin_ai_capability_probe():
+    """Admin専用: GPT-5.6等の可用性プローブ。仮定で昇格しない — 実測のみ。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    models = body.get("models") or [m for m in {
+        _OPENAI_MODEL_ROLES.get("extract"), _OPENAI_MODEL_ROLES.get("standard"),
+        _OPENAI_MODEL_ROLES.get("war_room"), _OPENAI_SHADOW.get("candidate")} if m]
+    return jsonify({"ok": True,
+                    "results": [_ai_capability_probe(str(m)[:60])
+                                for m in models[:5]],
+                    "noteJa": "実測プローブのみ — 可用性を仮定した昇格はしない。"})
 
 
 @app.route("/api/argus/admin/osint/benchmark-run", methods=["POST"])

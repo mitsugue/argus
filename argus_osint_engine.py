@@ -1152,7 +1152,12 @@ def research_power_score(*, verified: List[Dict[str, Any]],
                          kwargs_recovery: Optional[Dict[str, Any]] = None,
                          causal_summary: Optional[Dict[str, Any]] = None,
                          primary_checks: Optional[List[Dict[str, Any]]] = None,
-                         baseline_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                         baseline_info: Optional[Dict[str, Any]] = None,
+                         warmth: Optional[Dict[str, Any]] = None,
+                         official_docs: Optional[List[Dict[str, Any]]] = None,
+                         pairings: int = 0,
+                         degraded_fallback: bool = False,
+                         budget_limited: bool = False) -> Dict[str, Any]:
     """Phase 2: 「Geminiの2倍」の測定。生件数では2xにならない —
     検証済み・公式/業界一次・文脈統合・矛盾規律・学習が積み上がって初めて2x。"""
     ver = [v for v in verified if v.get("verificationStatus") == "verified"]
@@ -1209,13 +1214,18 @@ def research_power_score(*, verified: List[Dict[str, Any]],
                             if c.get("sourceCategory") in
                             ("company_ir", "company_newsroom", "product_newsroom",
                              "tdnet", "exchange_disclosure"))
+    docs = official_docs or []
+    doc_meta = sum(1 for d in docs if d.get("verificationStatus") == "metadata_only")
     primary_strength = (components["officialPrimarySourceScore"]
                         + components["industrySourceScore"]
-                        + min(6, newsroom_verified * 3))
+                        + min(6, newsroom_verified * 3)
+                        + min(4, doc_meta * 2)          # 存在確認=部分点のみ
+                        + min(4, int(pairings) * 2))    # 公式+記事ペア
     argus = max(0, sum(components.values()) + cov_rank * 5
                 - source_universe_missing * 3
                 - (5 if weak_causal else 0)
-                + min(6, newsroom_verified * 3))
+                + min(6, newsroom_verified * 3)
+                + min(4, doc_meta * 2) + min(4, int(pairings) * 2))
     # v12.1.6 Part E: 外部ベースラインはARGUSと同一ルーブリックで採点
     # (未検証claimは満点にならない・仮説は仮説・生件数は支配しない)
     def _base(prov):
@@ -1254,6 +1264,13 @@ def research_power_score(*, verified: List[Dict[str, Any]],
         blockers.append("新鮮候補が未検証")
     if weak_causal:
         blockers.append("ソースはあるが株価因果の直接性が弱い")
+    cold = (warmth or {}).get("storeWarmth") == "cold"
+    if cold:
+        blockers.append("cold-store provisional(ストア未ウォーム)")
+    if budget_limited:
+        blockers.append("budget_limited(必要段階が予算スキップ)")
+    if degraded_fallback:
+        blockers.append("degraded fallback経路 — 2x不適格")
     if vrate < 0.5:
         blockers.append("ソース検証率が不足(<50%)")
     if not context_advantages:
@@ -1269,7 +1286,7 @@ def research_power_score(*, verified: List[Dict[str, Any]],
             primary_strength >= 15 or
             (len(ver) >= 6 and vrate >= 0.7 and len(context_advantages) >= 2)) and (
             btype == "calibrated_baseline" and
-            binfo.get("baselineConfidence") in ("high", "medium")):
+            binfo.get("baselineConfidence") in ("high", "medium")) and             not cold and not budget_limited and not degraded_fallback:
         status = "exceeds_gemini_2x"
     elif context_advantages or len(ver) > 0:
         status = ("exceeds_gemini" if (official or industry or context_advantages)
@@ -2398,6 +2415,15 @@ for _c in GEMINI_BENCHMARK_SUITE:
     _c.setdefault("knownCaveats", _caveat)
     _c.setdefault("passFailConditions", _pf)
     _c.setdefault("ownerReadablePurposeJa", _purpose)
+
+
+# v12.2.0 Phase 10: ブラインドホールドアウト(プロンプト/規則のチューニングに不使用)
+HOLDOUT_CASE_IDS = ("stale_unrelated_article", "no_news_unknown_cause",
+                    "direct_company_disclosure")
+for _c in GEMINI_BENCHMARK_SUITE:
+    _c["holdout"] = (_c.get("id") or _c.get("case")) in HOLDOUT_CASE_IDS
+
+RUBRIC_VERSION = "rubric-v2"            # 重みの無言変更禁止 — 版で管理
 
 
 def benchmark_prompt(case: Dict[str, Any]) -> str:
