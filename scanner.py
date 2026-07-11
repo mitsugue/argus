@@ -7238,7 +7238,8 @@ def _data_quality_console():
         "jpApiContext": _JP_API_CONTEXT,
         "publicLeakSafe": True, "backupUnsafeWithData": None,
         "eventNear": False,
-    }, now_iso, app_version="")
+    }, now_iso, app_version=os.environ.get("RENDER_GIT_COMMIT", "")[:7]
+        or "unknown")
     # v12.1.0: OSINTエンジンの健全性(プロバイダ設定/キュー/canary — 秘密ゼロ)
     try:
         cd = _OSINT_CANARY_LAST.get("data") or {}
@@ -7456,6 +7457,30 @@ def _data_quality_console():
             configured=bool(os.environ.get("ARGUS_OPENAI_MODEL_WAR_ROOM")),
             pricing_known=False, budget_ok=True)
         console["structuredOutputs"] = argus_schemas.structured_output_metrics()
+        _stab = d if isinstance((d := console.get(
+            "researchMeasurementStability")), dict) else {}
+        _rm = console.get("researchMeasurement") or {}
+        _oh = console.get("osintHealth") or {}
+        console["researchMeasurementSummary"] = \
+            argus_remote_durability.research_measurement_summary(
+                latest=({"symbol": (_oh.get("researchPowerLatest") or {}).get("symbol"),
+                         "ratio": _rm.get("currentRatio")}
+                        if _rm.get("currentRatio") is not None else None),
+                stability=_stab or {},
+                unresolved_important=int(_oh.get("unresolvedGeminiOnlyTotal") or 0),
+                primary_strength=_oh.get("primarySourceStrengthLatest"),
+                fresh_pending=int(_oh.get("freshCandidateCount") or 0),
+                canary_misses=int(_oh.get("canaryMissedByArgus") or 0))
+        console["decisionLedgerOrigins"] = \
+            argus_remote_durability.decision_ledger_origin_summary(
+                _FORECAST_LEDGER, _OUTCOME_LEDGER)
+        console["agentReliability"] = \
+            argus_remote_durability.agent_reliability_summary(
+                _MISSIONS, now_iso=_ai_now_iso())
+        console["buildIdentity"] = argus_remote_durability.build_identity(
+            app_version=os.environ.get("RENDER_GIT_COMMIT", "")[:7],
+            backend_sha=os.environ.get("RENDER_GIT_COMMIT", "")[:7],
+            frontend_version="")
         console["rcBlockers"] = [
             "リモート耐久(60秒級)未実測", "forward-live初証拠待ち",
             "初成熟成果待ち", "72h soak未完", "オーナー2設定(branch protection/Render)",

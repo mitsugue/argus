@@ -209,3 +209,155 @@ def shadow_comparison(*, champion: Dict[str, Any], challenger: Dict[str, Any],
             "sampleCount": sample_count, "recommendation": rec,
             "ownerApprovalRequired": True, "productionChanged": False,
             "ownerReadableJa": "Shadow比較 — 本番判断は不変・昇格はオーナー承認必須"}
+
+
+# ── v12.2.8 ADDENDUM: 意味論の明確化(測定/台帳origin/信頼性式/版同一性) ──────
+
+def research_measurement_summary(*, latest: Optional[Dict[str, Any]],
+                                 stability: Dict[str, Any],
+                                 unresolved_important: int,
+                                 primary_strength: Optional[int],
+                                 fresh_pending: int,
+                                 canary_misses: int) -> Dict[str, Any]:
+    """最新run/安定測定/証拠ゲート/正式2x認定を別概念として明示する。
+    生の比>1.0でも証拠blockerを上書きできない。"""
+    ev_blockers = []
+    if unresolved_important > 0:
+        ev_blockers.append(f"未回収ソース{unresolved_important}件")
+    if not primary_strength:
+        ev_blockers.append("一次情報不足")
+    if fresh_pending > 0:
+        ev_blockers.append(f"新鮮候補未検証{fresh_pending}件")
+    if canary_misses > 0:
+        ev_blockers.append(f"canary見逃し{canary_misses}件")
+    ev_status = "blocked" if ev_blockers else (
+        "passed" if latest else "insufficient")
+    stable_ok = bool(stability.get("currentRatioEligible")) and         stability.get("confidence") in ("medium", "high")
+    two_x = {
+        "calibrated": bool(stability.get("runCount", 0) >= 3),
+        "ratioThresholdPassed": bool((stability.get("medianRatio") or 0) >= 2.0),
+        "evidenceGatePassed": ev_status == "passed",
+        "primarySourceGatePassed": bool(primary_strength),
+        "eligible": False,
+    }
+    two_x["eligible"] = all(v for k, v in two_x.items() if k != "eligible")
+    lines = []
+    if latest:
+        lines.append(f"最新run: {latest.get('ratio')}x({latest.get('symbol')})")
+    if stability.get("medianRatio") is not None:
+        lines.append(f"安定中央値: {stability['medianRatio']}x")
+    lines.append(f"安定信頼度: {stability.get('confidence')}")
+    lines.append("正式倍率認定: " + ("可" if stable_ok else "不可"))
+    if ev_blockers:
+        lines.append("理由: " + " / ".join(ev_blockers))
+    return {"latestRun": latest,
+            "stableMeasurement": {**stability, "formallyEligible": stable_ok},
+            "evidenceGate": {"unresolvedImportantSources": unresolved_important,
+                             "primarySourceStrength": primary_strength,
+                             "freshCandidatesPending": fresh_pending,
+                             "canaryMisses": canary_misses,
+                             "status": ev_status, "blockers": ev_blockers},
+            "twoXReadinessGate": two_x,
+            "ownerReadableJa": " / ".join(lines),
+            "semanticsJa": ("最新run=単発の生値・安定測定=3run以上の中央値・"
+                            "証拠ゲート=一次/未回収/新鮮/canary・"
+                            "正式認定=安定+medium以上 — 4概念は別物")}
+
+
+def decision_ledger_origin_summary(forecasts: List[Dict[str, Any]],
+                                   outcomes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """forecastCount=2がlive 2件を意味しないことを構造的に明示する。"""
+    def _by(rows):
+        c = {"forward_live": 0, "historical_replay": 0, "shadow": 0,
+             "fixture": 0}
+        for r in (rows or []):
+            o = r.get("origin")
+            c[o if o in c else "fixture"] = c.get(
+                o if o in c else "fixture", 0) + 1
+        c["total"] = len(rows or [])
+        return c
+    fc = _by(forecasts)
+    oc = _by(outcomes)
+    live_pending = sum(1 for f in (forecasts or [])
+                       if f.get("origin") == "forward_live" and
+                       not any(o.get("forecastId") == f.get("id")
+                               for o in (outcomes or [])))
+    live_resolved = sum(1 for o in (outcomes or [])
+                        if o.get("origin") == "forward_live" and
+                        o.get("status") == "resolved")
+    return {"forecastCounts": fc, "outcomeCounts": oc,
+            "forwardLive": {"pending": live_pending,
+                            "resolved": live_resolved,
+                            "scoreEligible": live_resolved},
+            "scoreEligibleForecastCount": fc["forward_live"],
+            "scoreEligibleOutcomeCount": live_resolved,
+            "ownerReadableJa": (f"Forward-live予測: {fc['forward_live']}件 / "
+                                f"replay: {fc['historical_replay']}件 / "
+                                f"本番採点可能サンプル: {live_resolved}件")}
+
+
+def agent_reliability_summary(missions: List[Dict[str, Any]],
+                              now_iso: str = "") -> Dict[str, Any]:
+    """完遂率の分母を式つきで明示。将来分/祝日skipは失敗ではない・分母0=insufficient。"""
+    total = len(missions or [])
+    by = {}
+    future = 0
+    for m in (missions or []):
+        by[m.get("status")] = by.get(m.get("status"), 0) + 1
+        if m.get("status") == "scheduled" and now_iso and                 str(m.get("scheduledFor", "")) > now_iso:
+            future += 1
+    completed = by.get("complete", 0)
+    recovered = by.get("recovered", 0)
+    skipped = by.get("skipped", 0)
+    missed = by.get("missed", 0)
+    failed = by.get("failed_safe", 0)
+    denom = total - future - skipped
+    if denom <= 0:
+        rate = {"percent": None, "formulaJa": "分母0 — insufficient(100%とは言わない)"}
+    else:
+        rate = {"numerator": completed + recovered, "denominator": denom,
+                "percent": int(100 * (completed + recovered) / denom),
+                "formulaJa": ("(complete+recovered)÷(総数−未来予定−祝日skip) — "
+                              "将来分と祝日は失敗に数えない・recoveredは別掲")}
+    return {"totalMissions": total, "completedNormally": completed,
+            "recovered": recovered, "skippedExpected": skipped,
+            "scheduledFuture": future, "missedUnrecovered": missed,
+            "failedSafe": failed, "completionRate": rate,
+            "ownerReadableJa": (f"正常完了{completed}+回収{recovered} / "
+                                f"対象{max(denom,0)}(将来{future}・skip{skipped}除外)")}
+
+
+def build_identity(*, app_version: str, backend_sha: str,
+                   frontend_version: str) -> Dict[str, Any]:
+    """版同一性 — 空値は捏造せずincomplete。"""
+    incomplete = not app_version or not backend_sha
+    mismatch = (bool(app_version) and bool(frontend_version)
+                and app_version != frontend_version)
+    return {"appVersion": app_version or "unknown",
+            "backendBuildSha": backend_sha or "unknown",
+            "frontendVersion": frontend_version or "unknown",
+            "consistency": ("mismatch" if mismatch else
+                            "incomplete" if incomplete else "consistent"),
+            "ownerReadableJa": ("版不一致 — 要確認" if mismatch else
+                                "版情報が不完全(捏造しない)" if incomplete
+                                else "版整合")}
+
+
+def recovery_candidate_compatible(original: Dict[str, Any],
+                                  candidate: Dict[str, Any]) -> bool:
+    """回収候補の互換性: タイトル類似だけでは回収と主張しない —
+    エンティティ+日付近接が必須。"""
+    ot = str(original.get("titleJa") or original.get("sourceTitle") or "")
+    ct = str(candidate.get("titleJa") or "")
+    import re as _re
+    _GENERIC = {"発売", "発表", "開催", "公開", "提供", "開始", "ニュース",
+                "リリース", "本日", "予定"}
+    def ents(t):
+        return {w for w in _re.findall(r"[A-Za-z][A-Za-z0-9\-]{2,}|[ァ-ヶー]{3,}|[一-龠]{2,}", t) if w not in _GENERIC}
+    if not (ents(ot) & ents(ct)):
+        return False
+    od = str(original.get("publishedAt") or "")[:10]
+    cd = str(candidate.get("publishedAt") or "")[:10]
+    if od and cd and od != cd:
+        return False                    # 日付不一致は別ニュース扱い
+    return True
