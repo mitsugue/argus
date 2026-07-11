@@ -7238,8 +7238,7 @@ def _data_quality_console():
         "jpApiContext": _JP_API_CONTEXT,
         "publicLeakSafe": True, "backupUnsafeWithData": None,
         "eventNear": False,
-    }, now_iso, app_version=os.environ.get("RENDER_GIT_COMMIT", "")[:7]
-        or "unknown")
+    }, now_iso, app_version=_semantic_app_version() or "unknown")
     # v12.1.0: OSINTエンジンの健全性(プロバイダ設定/キュー/canary — 秘密ゼロ)
     try:
         cd = _OSINT_CANARY_LAST.get("data") or {}
@@ -7478,9 +7477,9 @@ def _data_quality_console():
             argus_remote_durability.agent_reliability_summary(
                 _MISSIONS, now_iso=_ai_now_iso())
         console["buildIdentity"] = argus_remote_durability.build_identity(
-            app_version=os.environ.get("RENDER_GIT_COMMIT", "")[:7],
+            app_version=_semantic_app_version(),
             backend_sha=os.environ.get("RENDER_GIT_COMMIT", "")[:7],
-            frontend_version="")
+            frontend_version=_semantic_app_version())
         console["rcBlockers"] = [
             "リモート耐久(60秒級)未実測", "forward-live初証拠待ち",
             "初成熟成果待ち", "72h soak未完", "オーナー2設定(branch protection/Render)",
@@ -15920,6 +15919,16 @@ _PERIODIC_REPORTS = []                  # 週次/月次レポート(有界12)
 _CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
 _SOAK = {"startedAt": None}
 _INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
+def _semantic_app_version():
+    """セマンティック版(12.2.x)。Git SHAをappVersionとして表示しない。"""
+    try:
+        import json as _j
+        return _j.load(open(os.path.join(os.path.dirname(__file__),
+                                         "web", "package.json")))["version"]
+    except Exception:
+        return ""
+
+
 _OPS_JOURNAL = []                       # v12.2.7 運用イベントジャーナル(有界400)
 _OPS_SEQ = {}                           # aggregate毎の単調sequence
 

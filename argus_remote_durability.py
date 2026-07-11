@@ -269,11 +269,12 @@ def decision_ledger_origin_summary(forecasts: List[Dict[str, Any]],
     """forecastCount=2がlive 2件を意味しないことを構造的に明示する。"""
     def _by(rows):
         c = {"forward_live": 0, "historical_replay": 0, "shadow": 0,
-             "fixture": 0}
+             "fixture": 0, "unknown_legacy": 0}
         for r in (rows or []):
             o = r.get("origin")
-            c[o if o in c else "fixture"] = c.get(
-                o if o in c else "fixture", 0) + 1
+            # originなしの旧レコードは捏造せずunknown_legacy(採点対象外)
+            key = o if o in c else "unknown_legacy"
+            c[key] += 1
         c["total"] = len(rows or [])
         return c
     fc = _by(forecasts)
@@ -361,3 +362,47 @@ def recovery_candidate_compatible(original: Dict[str, Any],
     if od and cd and od != cd:
         return False                    # 日付不一致は別ニュース扱い
     return True
+
+
+def agent_reliability_rates(*, complete: int, recovered: int,
+                            scheduled_future: int, skipped_expected: int,
+                            total: int, missed_unrecovered: int,
+                            failed_safe: int) -> Dict[str, Any]:
+    """4レート分離(式つき)。分母0=insufficient≠100%。"""
+    due = total - scheduled_future - skipped_expected
+    def pct(n, d):
+        return int(round(100 * n / d)) if d > 0 else None
+    recoverable = recovered + missed_unrecovered
+    return {"dueMissions": due,
+            "normalCompletionRate": {"percent": pct(complete, due),
+                                     "formulaJa": "complete÷due"},
+            "effectiveCompletionRate": {"percent": pct(complete + recovered, due),
+                                        "formulaJa":
+                                        "(complete+recovered)÷(総数−未来−skip)"},
+            "recoveryRate": {"percent": pct(recovered, recoverable),
+                             "formulaJa": "recovered÷(recovered+未回収missed)"},
+            "failureRate": {"percent": pct(missed_unrecovered + failed_safe, due),
+                            "formulaJa": "(未回収missed+failed_safe)÷due"},
+            "insufficientJa": ("分母0 — insufficient" if due <= 0 else None)}
+
+
+def canary_miss_diagnostic(row: Dict[str, Any]) -> Dict[str, Any]:
+    """canary見逃しの失敗段階診断(数字だけにしない)。"""
+    found_g = bool(row.get("foundByGemini")) or bool(row.get("foundByGPT"))
+    found_a = bool(row.get("foundByArgus"))
+    if found_a:
+        stage = None
+    elif found_g:
+        stage = "source_coverage"       # 外部AIは見つけた=収集範囲/取得の問題
+    else:
+        stage = "unknown"
+    return {"caseId": row.get("topic"),
+            "expectedEntities": row.get("expectedKeywords") or [],
+            "failureStage": stage,
+            "exactReasonJa": ("外部AIは検出・ARGUS未検出 — ソース網/取得の欠落"
+                              if stage == "source_coverage" else
+                              "双方未検出 — ケース自体の再検証が必要"
+                              if stage == "unknown" else "検出済み"),
+            "proposedFixJa": ("該当カテゴリのフィード/クエリ拡張を学習提案へ"
+                              if stage == "source_coverage" else None),
+            "blocksConfidence": stage is not None}
