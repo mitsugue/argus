@@ -17,6 +17,13 @@ def test_recovery_issuance_idempotent(monkeypatch):
     scanner._OUTCOME_LEDGER.clear()
     scanner._OSINT_STORE.clear()
     scanner._OSINT_AGENT_QUEUE.clear()
+    import argus_scheduler as _sc
+    from datetime import datetime as _dt
+    _sd = _dt.now(scanner.TZ_JST).strftime("%Y-%m-%d")
+    _due = _sc.mission(mission_type="pre_session_forecast", market="JP",
+                       session_date=_sd,
+                       scheduled_for=f"{_sd}T00:01:00+09:00")
+    scanner._MISSIONS.append(_due)   # 壁時計非依存: 到来済み発行ミッションを注入
     with scanner.app.test_client() as c:
         c.post("/api/argus/admin/missions/tick", json={})   # コールド→warmup消費
         assert len(scanner._FORECAST_LEDGER) == 0
