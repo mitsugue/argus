@@ -66,6 +66,8 @@ def forecast_record(*, symbol: str, market: str, issued_at: str,
         "confidence": confidence[:20], "mockData": bool(mock_data),
         "supersedesForecastId": supersedes,
         "immutableCreatedAt": now_iso or issued_at,
+        # v12.2.9: 情報カットオフ=発行実時刻(look-ahead拒否済み=backdate不可)
+        "informationCutoffAt": issued_at,
     }
     body["id"] = f"fc-{_hash(body)}"
     body["integrityHash"] = _hash(body)

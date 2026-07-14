@@ -9,3 +9,4 @@ json-repair
 google-genai
 moomoo-api
 xlrd
+gunicorn==23.0.0

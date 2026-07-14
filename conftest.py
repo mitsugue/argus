@@ -30,6 +30,19 @@ def _reset_rate_limit_buckets():
         # across tests (single-IP test client) — clear per test.
         if isinstance(getattr(scanner, "_SWEEP_STATE", None), dict):
             scanner._SWEEP_STATE["bySymbol"] = {}
+        # V12.2.9: the startup bootstrap (before_request) would otherwise run a
+        # real /tmp+ledger restore on the suite's first request — nondeterministic
+        # across machines. Normalize to a completed test-mode startup; tests that
+        # exercise the bootstrap reset _STARTUP/_OSINT_PERSIST_STATE themselves.
+        if isinstance(getattr(scanner, "_STARTUP", None), dict) and \
+                scanner._STARTUP.get("state") == "bootstrapping":
+            scanner._OSINT_PERSIST_STATE["restored"] = True
+            now = scanner._ai_now_iso()
+            scanner._STARTUP.update({"state": "ready",
+                                     "restoreStartedAt": now,
+                                     "restoreCompletedAt": now,
+                                     "restoreOutcome": "test_mode"})
+            scanner._RUNTIME["firstReadyAt"] = now
     except Exception:
         pass
     yield

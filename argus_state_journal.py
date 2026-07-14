@@ -19,7 +19,10 @@ EVENT_TYPES = ("mission_scheduled", "mission_claimed", "mission_checkpointed",
                "weekly_report_created", "monthly_report_created",
                "learning_proposal_created", "challenger_created",
                "challenger_updated", "research_measurement_recorded",
-               "calibration_updated")
+               "calibration_updated",
+               # v12.2.9: 遷移→イベント行列の完全化(soak中断/承認/昇格系)
+               "soak_interrupted", "material_learning_approved",
+               "champion_promoted", "champion_rolled_back")
 ORIGINS = ("forward_live", "historical_replay", "scheduler",
            "admin_validation", "recovery")
 _PRIVATE_FIELDS = ("quantity", "avgCost", "acquisitionPrice", "pnl",
