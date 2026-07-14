@@ -29,6 +29,18 @@ def _h(o):
                                      ensure_ascii=False).encode()).hexdigest()[:16]
 
 
+def _ep(iso):
+    """ISO→epoch(TZ混在の文字列比較は禁止 — v12.2.9でbackdate判定を修正)。"""
+    if not iso:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(
+            str(iso).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
 def receipt(*, event: Dict[str, Any], local_at: str,
             backend_type: str = "github_ledger_cron",
             remote_at: Optional[str] = None,
@@ -139,7 +151,10 @@ def first_forward_live_evidence(forecasts: List[Dict[str, Any]],
         "originForwardLive": f.get("origin") == "forward_live",
         "nonMock": not f.get("mockData"),
         "hasResearchMission": bool(f.get("researchMissionId")),
-        "noBackdate": (f.get("issuedAt") or "") <= (now_iso or "9999"),
+        # v12.2.9: JST発行時刻とUTC nowの文字列比較はbackdate誤判定を生む
+        # (JST 09時以降が常にineligible化する欠陥) — epoch比較に修正
+        "noBackdate": (_ep(f.get("issuedAt")) is None or _ep(now_iso) is None
+                       or _ep(f.get("issuedAt")) <= _ep(now_iso) + 60),
         "hashValid": bool(f.get("integrityHash")),
     }
     if not all(checks.values()):

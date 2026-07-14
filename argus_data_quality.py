@@ -91,6 +91,11 @@ def build_source(raw: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     cadence = raw.get("cadence") if raw.get("cadence") in CADENCES else "unknown"
     bucket = freshness_bucket(age, cadence)
 
+    # v12.2.9: カレンダー/cadence対応の鮮度較正(呼び出し側が計算して渡す)。
+    # 「市場休場で次回公表が未到来なだけ」の日次/週次/cron収集をstaleにしない。
+    # 本物の遅延(cal=stale_overdue/critical_overdue)は較正で格下げしない。
+    cal = raw.get("calendarFreshness") \
+        if isinstance(raw.get("calendarFreshness"), dict) else None
     if raw.get("expectedDisabled"):
         status = "disabled_expected"
         status_ja = "意図的に無効(エラーではない)"
@@ -100,9 +105,15 @@ def build_source(raw: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     elif bucket in ("fresh", "recent"):
         status = "ok"
         status_ja = f"正常({BUCKET_JA[bucket]})"
+    elif bucket in ("stale", "very_stale") and cal and \
+            cal.get("status") in ("ok_fresh", "ok_not_due"):
+        status = "ok"
+        status_ja = f"正常(カレンダー較正: {cal.get('exactReasonJa') or ''})"
     elif bucket in ("stale", "very_stale"):
         status = "stale"
         status_ja = f"データが{BUCKET_JA[bucket]}(最終成功: {str(raw.get('lastSuccessAt'))[:16]})"
+        if cal and cal.get("status") in ("stale_overdue", "critical_overdue"):
+            status_ja += f" — {cal.get('exactReasonJa') or ''}"
     else:
         status = "unknown"
         status_ja = "鮮度不明(タイムスタンプ未取得 — 捏造しません)"
@@ -126,6 +137,7 @@ def build_source(raw: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
         "failureReasonRedacted": (str(raw.get("failureClass"))[:40]
                                   if raw.get("failureClass") else None),
         "isExpectedDisabled": bool(raw.get("expectedDisabled")),
+        "calendarFreshness": cal,
         "privacyLevel": "public_safe",
     }
 
