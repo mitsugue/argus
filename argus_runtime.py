@@ -17,11 +17,14 @@ JST = timezone(timedelta(hours=9))
 
 
 def _ep(iso: Optional[str]) -> Optional[float]:
+    """naive時刻はJSTとして解釈(ARGUS慣行) — 実行マシンTZ非依存の決定論。"""
     if not iso:
         return None
     try:
-        return datetime.fromisoformat(
-            str(iso).replace("Z", "+00:00")).timestamp()
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=JST)
+        return d.timestamp()
     except Exception:
         return None
 

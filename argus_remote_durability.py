@@ -30,13 +30,16 @@ def _h(o):
 
 
 def _ep(iso):
-    """ISO→epoch(TZ混在の文字列比較は禁止 — v12.2.9でbackdate判定を修正)。"""
+    """ISO→epoch(TZ混在の文字列比較は禁止 — v12.2.9でbackdate判定を修正)。
+    naive時刻はJSTとして解釈(ARGUS慣行) — 実行マシンのTZに依存させない。"""
     if not iso:
         return None
     try:
-        from datetime import datetime
-        return datetime.fromisoformat(
-            str(iso).replace("Z", "+00:00")).timestamp()
+        from datetime import datetime, timedelta, timezone
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone(timedelta(hours=9)))
+        return d.timestamp()
     except Exception:
         return None
 

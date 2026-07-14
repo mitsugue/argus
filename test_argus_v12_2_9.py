@@ -670,6 +670,12 @@ def test_unknown_cadence_stays_unknown():
     assert "捏造しない" in f["exactReasonJa"]
 
 
+def test_naive_timestamp_is_jst_machine_independent():
+    # naive時刻はJST解釈で決定論 — CI(UTC)とローカル(JST)で判定が変わらない
+    assert rd._ep("2026-07-11T08:30") == rd._ep("2026-07-10T23:30:00Z")
+    assert rt._ep("2026-07-11T08:30") == rt._ep("2026-07-11T08:30:00+09:00")
+
+
 def test_timezone_boundary_equivalence():
     # Z表記と+09:00表記で同一瞬間 — 判定が変わらない
     a = rt.freshness_status(policy=_daily_policy(),
