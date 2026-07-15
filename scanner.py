@@ -30,6 +30,7 @@ import argus_state_journal  # v12.2.7: write-through運用ジャーナル(buffer
 import argus_schemas  # v12.2.7: Structured Outputsスキーマ検証(feature-flagged)
 import argus_remote_durability  # v12.2.8: ローカル/リモート耐久の明示区別(正直な保証)
 import argus_runtime  # v12.2.9: Runtime Truth(build-scoped soak/起動復元/鮮度カレンダー)
+import argus_remote_journal  # v12.2.10: journalリモート同乗+検証済みread-back ack+SLO
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
@@ -7476,18 +7477,37 @@ def _data_quality_console():
             "legacyNoteJa": "旧0.92x(v12.1.7)はlegacy — 現行比ではない",
         }
         console["incidents"] = _INCIDENTS[-6:]
+        # v12.2.10: backend状態=経過時間/SLO基準(UTC暦日比較を廃止)・
+        # criticalPending=検証済みack未取得のcriticalのみ
         console["durabilityLevel"] = {
-            "backend": argus_remote_durability.backend_status(
-                last_remote_ack_iso=_DURABLE_STATE.get("lastRestoreAt"),
-                now_iso=_ai_now_iso()),
+            "backend": argus_remote_journal.backend_state_v3(
+                last_verified_read_back_at=
+                _REMOTE_ACK["lastVerifiedRemoteAckAt"],
+                now_iso=_ai_now_iso(),
+                legacy_remote=bool(_REMOTE_ACK.get("legacyRemote"))),
             "criticalPendingEvents": sum(
                 1 for e in _OPS_JOURNAL
                 if e.get("eventType") in
-                argus_remote_durability.CRITICAL_EVENT_TYPES),
-            "maxLossWindowJa": "ローカル即時/リモート≦30分(60秒保証は未実測=主張しない)",
+                argus_remote_durability.CRITICAL_EVENT_TYPES
+                and str(e.get("idempotencyKey"))
+                not in set(_REMOTE_ACK["ackedKeys"])),
+            "maxLossWindowJa": ("損失窓は実測SLO(remoteJournalTruth)でのみ主張 — "
+                                "60秒保証は未実測のため主張しない"),
         }
+        # v12.2.10 Phase 5: FFLへ検証済みレシートを配線 —
+        # forecast_issuedイベントのread-back ackがある予測のみremotely_proven可
+        _ffl_rec = _ffl_receipts()
         console["firstForwardLiveEvidence"] =             argus_remote_durability.first_forward_live_evidence(
-                _FORECAST_LEDGER, now_iso=_ai_now_iso())
+                _FORECAST_LEDGER, receipts=_ffl_rec, now_iso=_ai_now_iso())
+        console["fflDurability"] = {
+            "localProof": bool(_FORECAST_LEDGER) and any(
+                f.get("origin") == "forward_live" for f in _FORECAST_LEDGER),
+            "remoteReceiptCount": len(_ffl_rec),
+            "readBackVerified": bool(_ffl_rec),
+            "exactBlockerJa": (None if _ffl_rec else
+                               ("forecast_issuedイベントの検証済みリモートack待ち"
+                                "(snapshotに予測レコードが載るだけでは不十分)")),
+        }
         console["gpt56"] = argus_remote_durability.capability_probe_record(
             requested_model=os.environ.get("ARGUS_OPENAI_MODEL_WAR_ROOM", ""),
             configured=bool(os.environ.get("ARGUS_OPENAI_MODEL_WAR_ROOM")),
@@ -7507,9 +7527,32 @@ def _data_quality_console():
                 primary_strength=_oh.get("primarySourceStrengthLatest"),
                 fresh_pending=int(_oh.get("freshCandidateCount") or 0),
                 canary_misses=int(_oh.get("canaryMissedByArgus") or 0))
+        # v12.2.10 Phase 8: 統計算出可能性≠優位性認定≠2x認定の構造分離
+        _rms = console["researchMeasurementSummary"]
+        _evg = _rms.get("evidenceGate") or {}
+        console["researchClaimReadiness"] = \
+            argus_remote_durability.research_claim_readiness(
+                stable_median_ratio=(_stab or {}).get("medianRatio"),
+                latest_run_ratio=_rm.get("currentRatio"),
+                statistical_confidence=(_stab or {}).get("confidence")
+                or "insufficient",
+                run_count=int((_stab or {}).get("runCount") or 0),
+                evidence_gate_passed=_evg.get("status") == "passed",
+                holdout_passed=None,   # 未実施=主張不可(捏造しない)
+                primary_source_gate_passed=bool(
+                    _oh.get("primarySourceStrengthLatest")),
+                canary_gate_passed=int(
+                    _oh.get("canaryMissedByArgus") or 0) == 0,
+                blockers_ja=list(_evg.get("blockers") or []))
         console["decisionLedgerOrigins"] = \
             argus_remote_durability.decision_ledger_origin_summary(
                 _FORECAST_LEDGER, _OUTCOME_LEDGER)
+        # v12.2.10 Phase 7: 将来採点適格と完了採点サンプルを同名にしない
+        console["decisionScoringReadiness"] = \
+            argus_decision_ledger.decision_scoring_readiness(
+                _FORECAST_LEDGER, _OUTCOME_LEDGER, now_iso=_ai_now_iso())
+        # v12.2.10 Phase 12F: デプロイパイプライン(smoke循環の実測状態)
+        console["deploymentPipeline"] = _deployment_pipeline_status()
         console["agentReliability"] = \
             argus_remote_durability.agent_reliability_summary(
                 _MISSIONS, now_iso=_ai_now_iso())
@@ -7532,12 +7575,57 @@ def _data_quality_console():
                              "リモート最大損失窓≦30分(buffered write-through・"
                              "厳密write-throughとは主張しない)"),
             # v12.2.9: active WALと歴代合計を分離(compact済みをゼロ表示しない)
+            # v12.2.10: ackは検証済みread-backの冪等キーのみ(復元時刻プロキシ廃止)
             **argus_runtime.journal_summary(
                 events=_OPS_JOURNAL,
                 total_observed=_OPS_JOURNAL_META["totalObserved"],
                 corrupt_count=_DURABLE_STATE.get("journalCorrupt", 0),
-                last_remote_ack_at=_DURABLE_STATE.get("lastRestoreAt"),
+                last_remote_ack_at=_REMOTE_ACK["lastVerifiedRemoteAckAt"],
+                acked_keys=_REMOTE_ACK["ackedKeys"],
+                compacted_type_counts=argus_remote_journal
+                .compacted_type_counts(_OPS_JOURNAL_COMPACT),
                 now_iso=_ai_now_iso()),
+        }
+        # v12.2.10 Phase 12A/B: リモートジャーナル真実+イベント内訳
+        _crit_types = argus_remote_journal.CRITICAL_EVENT_TYPES
+        _acked_set = set(_REMOTE_ACK["ackedKeys"])
+        console["remoteJournalTruth"] = {
+            **argus_remote_journal.remote_durability_summary(
+                local_events=_OPS_JOURNAL,
+                acked_keys=_REMOTE_ACK["ackedKeys"],
+                last_verified_ack_at=_REMOTE_ACK["lastVerifiedRemoteAckAt"],
+                now_iso=_ai_now_iso(),
+                legacy_remote=bool(_REMOTE_ACK.get("legacyRemote")),
+                failed_count=int(_REMOTE_ACK.get("readbackFailures") or 0)),
+            "schemaVersion": argus_remote_journal.SCHEMA_V3,
+            "slo": argus_remote_journal.persistence_slo(
+                target_interval_sec=1800,
+                last_snapshot_generated_at=_REMOTE_ACK.get("remoteGeneratedAt"),
+                last_remote_commit_at=_REMOTE_ACK.get("remoteGeneratedAt"),
+                last_verified_read_back_at=
+                _REMOTE_ACK["lastVerifiedRemoteAckAt"],
+                now_iso=_ai_now_iso(),
+                max_observed_lag_sec=_REMOTE_ACK.get("maxObservedLagSec")),
+        }
+        console["journalEventBreakdown"] = {
+            "criticalByType": {t: sum(1 for e in _OPS_JOURNAL
+                                      if e.get("eventType") == t)
+                               for t in _crit_types
+                               if any(e.get("eventType") == t
+                                      for e in _OPS_JOURNAL)},
+            "nonCriticalByType": {t: c for t, c in (
+                (t2, sum(1 for e in _OPS_JOURNAL
+                         if e.get("eventType") == t2))
+                for t2 in {e.get("eventType") for e in _OPS_JOURNAL})
+                if t not in _crit_types and c},
+            "criticalPending": sum(
+                1 for e in _OPS_JOURNAL
+                if e.get("eventType") in _crit_types
+                and str(e.get("idempotencyKey")) not in _acked_set),
+            "compactedTotals": argus_remote_journal.compacted_type_counts(
+                _OPS_JOURNAL_COMPACT),
+            "compactedBatches": len(_OPS_JOURNAL_COMPACT),
+            "corruptCount": _DURABLE_STATE.get("journalCorrupt", 0),
         }
         # v12.2.9 Phase 9: Runtime Truthセクション(公開安全・秘密/私的値なし)
         _ops929 = argus_scheduler.ops_summary(_MISSIONS)
@@ -15127,6 +15215,8 @@ def _osint_persist():
                 "incidents": _INCIDENTS[-20:],
                 "opsJournal": _OPS_JOURNAL[-400:],
                 "opsJournalMeta": dict(_OPS_JOURNAL_META),
+                "opsJournalCompacted": _OPS_JOURNAL_COMPACT[-40:],
+                "remoteAck": dict(_REMOTE_ACK),   # レシートは再起動を生存(v12.2.10)
                 "soakLastPersistAt": _ai_now_iso()}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -15238,6 +15328,25 @@ def _osint_restore_once():
         _OPS_JOURNAL_META["totalObserved"] = max(
             _OPS_JOURNAL_META["totalObserved"],
             int(_jm.get("totalObserved") or 0), len(_OPS_JOURNAL))
+        # v12.2.10: compactバッチ+検証済みackレシートの復元(冪等マージ)
+        global _OPS_JOURNAL_COMPACT
+        _OPS_JOURNAL_COMPACT = argus_remote_journal.merge_compacted(
+            _OPS_JOURNAL_COMPACT,
+            [b for b in (blob.get("opsJournalCompacted") or [])
+             if isinstance(b, dict)])
+        _ra = blob.get("remoteAck")
+        if isinstance(_ra, dict) and isinstance(_ra.get("ackedKeys"), list):
+            merged_keys = list(_REMOTE_ACK["ackedKeys"])
+            for k in _ra["ackedKeys"]:
+                if k not in set(merged_keys):
+                    merged_keys.append(k)
+            _REMOTE_ACK["ackedKeys"] = merged_keys[-800:]
+            if _ra.get("lastVerifiedRemoteAckAt") and \
+                    not _REMOTE_ACK["lastVerifiedRemoteAckAt"]:
+                _REMOTE_ACK["lastVerifiedRemoteAckAt"] = \
+                    _ra["lastVerifiedRemoteAckAt"]
+        if "opsJournal" not in blob:
+            _REMOTE_ACK["legacyRemote"] = True   # v2 snapshot=journal未同乗
         for h in _OPS_JOURNAL:
             k = f"{h.get('aggregateType')}:{h.get('aggregateId')}"
             _OPS_SEQ[k] = max(_OPS_SEQ.get(k, 0), int(h.get("sequence") or 0))
@@ -16072,6 +16181,13 @@ _OPS_SEQ = {}                           # aggregate毎の単調sequence
 
 
 _OPS_JOURNAL_META = {"totalObserved": 0}   # v12.2.9: compact後も歴代件数を失わない
+_OPS_JOURNAL_COMPACT = []                  # v12.2.10: 非critical・ack済みの決定論バッチ
+# v12.2.10: 検証済みread-back ack(復元時刻プロキシの廃止) — remote_committedは
+# 「ledgerから読み戻したsnapshotに当該冪等キー+一致hashが存在」した場合のみ。
+_REMOTE_ACK = {"ackedKeys": [], "lastVerifiedRemoteAckAt": None,
+               "lastReceiptStatus": None, "remoteGeneratedAt": None,
+               "legacyRemote": False, "maxObservedLagSec": 0,
+               "readbackFailures": 0}
 
 
 def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
@@ -16199,6 +16315,112 @@ def _owner_controls_status():
     return out
 
 
+# ── v12.2.10: 検証済みread-back ack+compaction(tick=30分cron文脈から実行) ──
+
+def _remote_readback_ack(now_iso=None, blob=None):
+    """ledgerへ実際にコミットされたsnapshotを読み戻し、ローカルWALイベントの
+    冪等キー+整合hashを照合してackを導出する。復元時刻・HTTP書込成功は
+    ackにならない。冪等 — 再実行してもackは重複しない。"""
+    now_iso = now_iso or _ai_now_iso()
+    if blob is None:
+        try:
+            r = requests.get(f"{_LEDGER_RAW_BASE}/osint/memory.json"
+                             f"?cb={int(time.time())}", timeout=8)
+            blob = r.json() if r.status_code == 200 else None
+        except Exception:
+            blob = None
+    if blob is None:
+        _REMOTE_ACK["readbackFailures"] += 1
+        return None
+    rec = argus_remote_journal.read_back_receipt(
+        remote_blob=blob, local_events=_OPS_JOURNAL, read_back_at=now_iso)
+    _REMOTE_ACK["lastReceiptStatus"] = rec["verificationStatus"]
+    _REMOTE_ACK["remoteGeneratedAt"] = rec.get("remoteGeneratedAt")
+    if rec["verificationStatus"] == "legacy_snapshot":
+        _REMOTE_ACK["legacyRemote"] = True
+        return rec
+    _REMOTE_ACK["legacyRemote"] = False
+    new_keys = [k for k in rec.get("ackedIdempotencyKeys") or []
+                if k not in set(_REMOTE_ACK["ackedKeys"])]
+    if new_keys:
+        _REMOTE_ACK["ackedKeys"] = (_REMOTE_ACK["ackedKeys"] + new_keys)[-800:]
+    if rec.get("ackedIdempotencyKeys"):
+        _REMOTE_ACK["lastVerifiedRemoteAckAt"] = now_iso
+        g = argus_remote_journal._ep(rec.get("remoteGeneratedAt"))
+        n = argus_remote_journal._ep(now_iso)
+        if g and n:
+            _REMOTE_ACK["maxObservedLagSec"] = max(
+                int(_REMOTE_ACK.get("maxObservedLagSec") or 0),
+                int(max(0, n - g)))
+    return rec
+
+
+def _journal_compact(now_iso=None):
+    """非critical・検証済みack済みイベントの決定論compaction。criticalは
+    ack前に絶対compactしない。歴代件数は_OPS_JOURNAL_METAが保持(ゼロ化なし)。"""
+    now_iso = now_iso or _ai_now_iso()
+    keep, batches = argus_remote_journal.compact_events(
+        events=_OPS_JOURNAL, acked_keys=_REMOTE_ACK["ackedKeys"],
+        now_iso=now_iso)
+    if not batches:
+        return 0
+    global _OPS_JOURNAL_COMPACT
+    _OPS_JOURNAL_COMPACT = argus_remote_journal.merge_compacted(
+        _OPS_JOURNAL_COMPACT, batches)
+    removed = len(_OPS_JOURNAL) - len(keep)
+    _OPS_JOURNAL[:] = keep
+    _osint_persist()
+    return removed
+
+
+def _ffl_receipts():
+    """FFLゲート用の耐久レシート: forecast_issuedイベントが検証済みリモート
+    ackを持つ予測のみremote_committed(snapshotに予測レコードが載っている
+    だけでは不十分 — journalイベントのack必須)。"""
+    ak = set(_REMOTE_ACK["ackedKeys"])
+    ev_by_agg = {}
+    for e in _OPS_JOURNAL:
+        if e.get("eventType") == "forecast_issued":
+            ev_by_agg[str(e.get("aggregateId"))] = \
+                str(e.get("idempotencyKey")) in ak
+    out = {}
+    for f in _FORECAST_LEDGER:
+        if f.get("origin") != "forward_live":
+            continue
+        agg = (f"{f.get('symbol')}:{str(f.get('issuedAt', ''))[:10]}:"
+               f"{f.get('targetType')}")
+        if ev_by_agg.get(agg):
+            out[str(f.get("id"))] = "remote_committed"
+    return out
+
+
+def _deployment_pipeline_status():
+    """デプロイパイプラインの実測状態(smoke-test.ymlの実トリガから判定 —
+    主張ではなくファイルの事実)。"""
+    mode, cycle = "unknown", "unknown"
+    try:
+        txt = open(os.path.join(os.path.dirname(__file__), ".github",
+                                "workflows", "smoke-test.yml"),
+                   encoding="utf-8").read()
+        on_sec = txt.split("\non:", 1)[1].split("\njobs:", 1)[0]
+        has_push = "push:" in on_sec
+        cycle = "detected" if has_push else "clear"
+        mode = ("push_and_wait(循環リスク)" if has_push
+                else "schedule_and_manual(post-deploy)")
+    except Exception:
+        pass
+    return {"preDeployRequiredChecks": ["backend-rules", "frontend", "gate"],
+            "postDeploySmokeMode": mode,
+            "cycleStatus": cycle,
+            "ownerReadableJa": {
+                "clear": ("smokeはmain pushのcheckではない — Render After-CIは"
+                          "backend-rules/frontend/gateのみを待つ(循環なし)"),
+                "detected": ("smokeがmain pushトリガ — Renderと相互待ちの"
+                             "循環リスクあり"),
+                "unknown": "workflowファイル未確認(デプロイ環境に非同梱等)",
+            }[cycle]}
+
+
 def _graceful_shutdown():
     """終了時の最終ローカルWAL flush(安全な場合のみ・冪等)。"""
     if _SHUTDOWN["done"]:
@@ -16272,6 +16494,15 @@ def api_argus_admin_missions_tick():
         prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
         tool_mode="grounding")
     jp_holiday = now.weekday() >= 5
+    # v12.2.10: 30分cron文脈で検証済みread-back ack+非criticalのcompaction。
+    # (GETからは実行されない — ackとcompactはこの遷移文脈のみ。テストは
+    # disabledフラグでネットワークを遮断し、blob注入で直接検証する)
+    try:
+        if not _REMOTE_ACK.get("disabled"):
+            _remote_readback_ack(now_iso)
+            _journal_compact(now_iso)
+    except Exception:
+        pass
     # v12.2.9: soak開始はゲート付き(build識別+起動復元完了+整合ok後のみ)。
     # tick壁時計を無条件に書かない — startedAtはboot/復元完了より前に遡らない。
     if not _SOAK["startedAt"]:
@@ -16768,7 +16999,25 @@ def api_argus_osint_memory_snapshot():
     """公開GET: 恒久メモリの公開安全スナップショット(watchtowerがledgerへコミット)。
     private_localレコード/貼り戻し本文/保有情報は設計上ここに存在しない。"""
     _osint_restore_once()
-    return jsonify({"schemaVersion": "osint-memory-v1", "asOf": _ai_now_iso(),
+    # v12.2.10 argus-durable-v3: 運用ジャーナル+メタ+soak永続時刻を同乗 —
+    # ledgerコミット(caos-scan/watchtower)がこの応答をそのまま保存するため、
+    # ここに無いデータはリモート永続されない(v12.2.9でjournal 146件消失の根因)。
+    _now = _ai_now_iso()
+    _jsec = argus_remote_journal.snapshot_journal_section(
+        events=_OPS_JOURNAL, meta=_OPS_JOURNAL_META,
+        compacted=_OPS_JOURNAL_COMPACT, now_iso=_now)
+    return jsonify({"schemaVersion": argus_remote_journal.SCHEMA_V3,
+                    "generatedAt": _now, "asOf": _now,
+                    "buildIdentity": {"appVersion": _semantic_app_version(),
+                                      "buildSha": _backend_sha()},
+                    "durableState": {"integrityStatus":
+                                     _DURABLE_STATE.get("integrityStatus"),
+                                     "restoreSource":
+                                     _DURABLE_STATE.get("restoreSource")},
+                    "missionState": {"count": len(_MISSIONS)},
+                    "forecastStore": {"count": len(_FORECAST_LEDGER)},
+                    "decisionLedger": {"forecastCount": len(_FORECAST_LEDGER),
+                                       "outcomeCount": len(_OUTCOME_LEDGER)},
                     "termOverlay": _OSINT_TERM_OVERLAY,
                     "memory": [m for m in _OSINT_MEMORY
                                if m.get("privacyLevel") == "public_safe"][-_OSINT_MEMORY_MAX:],
@@ -16777,11 +17026,12 @@ def api_argus_osint_memory_snapshot():
                     "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                     "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                     "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
-                    "soak": _SOAK, "missions": _MISSIONS[-120:],
+                    "soak": _SOAK, "soakLastPersistAt": _now,
+                    "missions": _MISSIONS[-120:],
                     "forecasts": _FORECAST_LEDGER[-200:],
                     "outcomes": _OUTCOME_LEDGER[-200:],
                     "incidents": _INCIDENTS[-20:],
-                    "schemaVersion": _DURABLE_STATE["schemaVersion"],
+                    **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 

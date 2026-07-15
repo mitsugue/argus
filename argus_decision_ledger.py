@@ -92,16 +92,27 @@ def outcome_record(*, forecast: Dict[str, Any], outcome_as_of: str,
                    invalidation_triggered: bool = False,
                    conditions_triggered: Optional[List[str]] = None,
                    now_iso: str = "") -> Dict[str, Any]:
-    """成果解決。必要価格が欠けていればunresolved(0リターン扱い禁止・捏造なし)。"""
+    """成果解決。必要価格が欠けていればunresolved(0リターン扱い禁止・捏造なし)。
+    v12.2.10: originを予測から構造的に継承 — 既知originの新規outcomeが
+    unknown_legacyへ落ちない(旧レコードのみunknown_legacyのまま)。"""
+    _origin = forecast.get("origin")
+    _origin = _origin if _origin in ("forward_live", "historical_replay",
+                                     "shadow", "fixture") else "unknown_legacy"
+    _inherit = {"origin": _origin,
+                "forecastIntegrityHash": forecast.get("integrityHash"),
+                "informationCutoffAt": forecast.get("informationCutoffAt")
+                or forecast.get("issuedAt"),
+                "resolutionSource": "price_history_cached",
+                "resolvedRecordedAt": now_iso or outcome_as_of}
     if start_price is None or end_price is None or not start_price:
         return {"forecastId": forecast.get("id"), "status": "unresolved",
                 "missingOutcomeDataJa": ["価格データ欠損 — 0%扱いにしない"],
-                "immutableCreatedAt": now_iso or outcome_as_of}
+                "immutableCreatedAt": now_iso or outcome_as_of, **_inherit}
     ret = (end_price - start_price) / start_price * 100.0
     rec = {"forecastId": forecast.get("id"), "status": "resolved",
            "symbol": forecast.get("symbol"),
            "horizon": forecast.get("forecastHorizon"),
-           "outcomeAsOf": outcome_as_of,
+           "outcomeAsOf": outcome_as_of, **_inherit,
            "absoluteReturnPct": round(ret, 3),
            "benchmarkRelativeReturnPct": (round(ret - benchmark_return, 3)
                                           if benchmark_return is not None else None),
@@ -308,3 +319,48 @@ def future_decision_context_shadow(*, symbol: str,
             "caveatJa": ("履歴不足 — 影響なし" if influence == "none" else
                          "shadow表示のみ — 本番の構えは変更しない。"
                          "反証例も同時に提示(確証バイアス防止)")}
+
+
+# ── v12.2.10 Phase 7: Decision Scoring Readiness(採点語彙の構造分離) ─────────
+
+def decision_scoring_readiness(forecasts: List[Dict[str, Any]],
+                               outcomes: List[Dict[str, Any]],
+                               now_iso: str = "") -> Dict[str, Any]:
+    """「将来採点に適格な予測」と「完了採点サンプル」を同名にしない。
+    forward_live以外(replay/shadow/fixture/unknown_legacy)は本番採点から除外。"""
+    live = [f for f in (forecasts or [])
+            if f.get("origin") == "forward_live" and not f.get("mockData")]
+    excluded_fc = len(forecasts or []) - len(live)
+    o_by_fid = {}
+    for o in (outcomes or []):
+        o_by_fid.setdefault(o.get("forecastId"), o)
+    pending_maturity = matured_awaiting = completed = 0
+    for f in live:
+        o = o_by_fid.get(f.get("id"))
+        if o is None:
+            pending_maturity += 1
+        elif o.get("status") == "resolved" and o.get("origin") == "forward_live":
+            completed += 1                # 成熟+正当解決+origin継承の三条件
+        else:
+            matured_awaiting += 1         # 成熟したが未解決(価格欠損等)
+    excluded_oc = sum(1 for o in (outcomes or [])
+                      if o.get("origin") != "forward_live")
+    return {"forwardLiveForecastsIssued": len(live),
+            "forecastEligibleForFutureScoring": len(live),
+            "pendingMaturity": pending_maturity,
+            "maturedAwaitingResolution": matured_awaiting,
+            "resolvedEligibleOutcomes": completed,
+            "completedScoreableSamples": completed,
+            "excludedForecasts": excluded_fc,
+            "excludedOutcomes": excluded_oc,
+            "deprecatedFieldNoteJa": ("旧scoreEligibleForecastCount=将来採点適格・"
+                                      "旧forwardLive.scoreEligible=完了サンプル — "
+                                      "同名異義のため本モデルへ移行"),
+            "ownerReadableJa": (
+                f"Forward-live予測{len(live)}件。"
+                f"うち将来採点に適格{len(live)}件。"
+                f"完了採点サンプル{completed}件"
+                + ("" if completed else
+                   " — 成熟または成果解決を待っています")
+                + (f"(成熟待ち{pending_maturity}件/解決待ち"
+                   f"{matured_awaiting}件)"))}

@@ -112,8 +112,17 @@ jobs:
           fi
           mkdir -p ledger/news-ja ledger/osint
           cp "$RUNNER_TEMP/news-ja.json" ledger/news-ja/latest.json
-          [ -s "$RUNNER_TEMP/osint-memory.json" ] && \
-            cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json || true
+          # v12.2.10 stale-writer guard: 複数workflow(caos-scan/watchtower)が
+          # memory.jsonを書く — 古いsnapshotで新しいものを上書きする逆行を防ぐ
+          # (generatedAt/asOfは同一Z形式=文字列比較可)。
+          NEW_ASOF=$(python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || echo "")
+          OLD_ASOF=$(python3 -c "import json;d=json.load(open('ledger/osint/memory.json'));print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || echo "")
+          if [ -s "$RUNNER_TEMP/osint-memory.json" ] && [ -n "$NEW_ASOF" ] && \
+             { [ -z "$OLD_ASOF" ] || [ "$NEW_ASOF" \> "$OLD_ASOF" ]; }; then
+            cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json
+          else
+            echo "skip osint/memory.json: not newer (new=$NEW_ASOF old=$OLD_ASOF)"
+          fi
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
           git add ledger/news-ja/ ledger/osint/ 2>/dev/null || git add ledger/news-ja/

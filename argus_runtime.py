@@ -359,21 +359,27 @@ TRANSITION_EVENT_MATRIX: Dict[str, Dict[str, Any]] = {
 def journal_summary(*, events: List[Dict[str, Any]],
                     total_observed: int = 0, corrupt_count: int = 0,
                     last_remote_ack_at: Optional[str] = None,
+                    acked_keys=None,
+                    compacted_type_counts: Optional[Dict[str, int]] = None,
                     now_iso: str = "") -> Dict[str, Any]:
     """OperationalJournalSummary。compact済みの歴代件数をゼロ表示しない
-    (active WALと歴代合計を分離ラベル)。"""
+    (active WALと歴代合計を分離ラベル)。
+    v12.2.10: remote committed/pendingは検証済みread-back ackの冪等キー
+    (acked_keys)のみから導出 — 復元時刻/生成時刻のプロキシ比較は廃止。"""
     evs = [e for e in (events or []) if isinstance(e, dict)]
     counts: Dict[str, int] = {}
     for e in evs:
         k = e.get("eventType") or "unknown"
         counts[k] = counts.get(k, 0) + 1
+    for k, v in (compacted_type_counts or {}).items():
+        counts[k] = counts.get(k, 0) + int(v or 0)
     active = len(evs)
-    total = max(int(total_observed or 0), active)
-    compacted = max(0, total - active)
-    ack_ep = _ep(last_remote_ack_at)
+    compact_n = sum(int(v or 0) for v in (compacted_type_counts or {}).values())
+    total = max(int(total_observed or 0), active + compact_n)
+    compacted = max(compact_n, total - active)
+    ak = set(acked_keys or ())
     remote_committed = sum(
-        1 for e in evs
-        if ack_ep is not None and (_ep(e.get("occurredAt")) or 9e18) <= ack_ep)
+        1 for e in evs if str(e.get("idempotencyKey")) in ak)
     remote_pending = active - remote_committed
     last_local = evs[-1].get("occurredAt") if evs else None
     recon = ("not_run" if not last_remote_ack_at else

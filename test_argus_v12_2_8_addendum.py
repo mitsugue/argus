@@ -12,7 +12,10 @@ def test_latest_and_stable_and_formal_are_distinct():
         fresh_pending=4, canary_misses=1)
     ja = s["ownerReadableJa"]
     assert "最新run: 1.5" in ja and "安定中央値: 1.265" in ja
-    assert "安定信頼度: low" in ja and "正式倍率認定: 不可" in ja
+    # v12.2.10: 「正式倍率認定」の曖昧文言は廃止 — 算出可能性と優位性認定を分離
+    assert "安定信頼度: low" in ja and "安定倍率算出: 不可" in ja
+    assert "Gemini優位性の正式認定: 不可" in ja and "2x認定: 不可" in ja
+    assert "正式倍率認定" not in ja
     assert "一次情報不足" in ja and "未回収ソース3件" in ja
     assert s["evidenceGate"]["status"] == "blocked"
     assert s["twoXReadinessGate"]["eligible"] is False
