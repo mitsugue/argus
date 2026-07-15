@@ -1,19 +1,19 @@
 {
- "asOf": "2026-07-14T09:11:17Z",
+ "asOf": "2026-07-15T09:17:30Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-07-14",
+ "day": "2026-07-15",
  "dayRemainingUsd": 5.0,
  "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
  "lastRun": {
-  "at": "2026-07-14T08:54:18Z",
+  "at": "2026-07-15T09:01:20Z",
   "estimated": true,
   "gemStatus": "unavailable",
   "oaiStatus": "live",
   "rows": [],
-  "runId": "2026-07-14T08:54:18Z",
+  "runId": "2026-07-15T09:01:20Z",
   "totalUsd": 0.0
  },
  "lastRunCostUsd": 0.0,
@@ -38,183 +38,39 @@
  },
  "recentRuns": [
   {
-   "at": "2026-07-14T08:54:18Z",
+   "at": "2026-07-15T09:01:20Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-07-14T08:54:18Z",
+   "runId": "2026-07-15T09:01:20Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-07-14T07:00:43Z",
+   "at": "2026-07-15T07:04:51Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-07-14T07:00:43Z",
+   "runId": "2026-07-15T07:04:51Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-07-14T07:00:11Z",
+   "at": "2026-07-15T07:03:38Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-07-14T07:00:11Z",
+   "runId": "2026-07-15T07:03:38Z",
    "totalUsd": 0.0
   },
   {
-   "at": "2026-07-14T06:59:32Z",
+   "at": "2026-07-15T07:02:48Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [],
-   "runId": "2026-07-14T06:59:32Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T06:41:38Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T06:41:38Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T06:40:53Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T06:40:53Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T06:39:57Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T06:39:57Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T06:39:04Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T06:39:04Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T06:37:59Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T06:37:59Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T06:33:41Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T06:33:41Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T06:32:25Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T06:32:25Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T03:52:17Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T03:52:17Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T03:51:18Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T03:51:18Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T03:50:04Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T03:50:04Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T03:49:06Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T03:49:06Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T03:48:16Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T03:48:16Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T03:47:14Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T03:47:14Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T03:46:11Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T03:46:11Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-14T01:28:17Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-14T01:28:17Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-13T21:50:19Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-13T21:50:19Z",
+   "runId": "2026-07-15T07:02:48Z",
    "totalUsd": 0.0
   }
  ]

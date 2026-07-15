@@ -1,0 +1,1293 @@
+{
+ "asOf": "2026-07-15T09:17:31Z",
+ "classPredictions": [
+  {
+   "assetClass": "US_BROAD",
+   "changePct": 0.36,
+   "price": 751.83002,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "SPY"
+  },
+  {
+   "assetClass": "US_GROWTH",
+   "changePct": 1.12,
+   "price": 719.71002,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "QQQ"
+  },
+  {
+   "assetClass": "SMALL_CAPS",
+   "changePct": 0.35,
+   "price": 294.51001,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "IWM"
+  },
+  {
+   "assetClass": "TECH",
+   "changePct": 1.29,
+   "price": 183.62,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "XLK"
+  },
+  {
+   "assetClass": "DEFENSIVE",
+   "changePct": -0.07,
+   "price": 45.69,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "XLU"
+  },
+  {
+   "assetClass": "GOLD",
+   "changePct": 1.37,
+   "price": 372.14999,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "GLD"
+  },
+  {
+   "assetClass": "BOND",
+   "changePct": 0.13,
+   "price": 84.080002,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "TLT"
+  },
+  {
+   "assetClass": "CREDIT",
+   "changePct": 0.2,
+   "price": 79.68,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "HYG"
+  },
+  {
+   "assetClass": "REIT",
+   "changePct": -0.49,
+   "price": 44.48,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "XLRE"
+  },
+  {
+   "assetClass": "CRYPTO_BTC",
+   "changePct": 3.47,
+   "price": 64783.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "bitcoin"
+  },
+  {
+   "assetClass": "CRYPTO_ETH",
+   "changePct": 5.39,
+   "price": 1881.62,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 45
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "ethereum"
+  }
+ ],
+ "context": {
+  "aiStatus": "none",
+  "backdrop": "tightening",
+  "posture": "CAUTIOUS",
+  "regimeConfidence": 0.72,
+  "vixLevel": 17.2,
+  "vixZone": "normal"
+ },
+ "contextVariables": [
+  {
+   "asOf": null,
+   "changePct": -0.09,
+   "contextId": "fx_usdjpy",
+   "name": "USD/JPY",
+   "role": "context_variable",
+   "symbol": "USDJPY",
+   "value": 162.29
+  },
+  {
+   "asOf": null,
+   "changePct": -1.7,
+   "contextId": "volatility_vix",
+   "name": "VIX",
+   "role": "context_variable",
+   "symbol": "VIX",
+   "value": 16.22
+  }
+ ],
+ "dateJst": "2026-07-15",
+ "engineVersion": "ledger-v3",
+ "factorGroupVersion": "factor_groups_v2",
+ "posturePrediction": {
+  "posture": "CAUTIOUS",
+  "price": 751.83002,
+  "proxy": "SPY",
+  "rule": null
+ },
+ "predictions": [
+  {
+   "action": "HOLD",
+   "ai": null,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 4.0633,
+   "cohortId": "tactical_benchmark_fixed",
+   "confidence": 0.5,
+   "experimentalFlags": [],
+   "factorGroup": "us_ai_semiconductor",
+   "flowRatio": 0.0093,
+   "layer": 2,
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "NVIDIA",
+   "price": 211.8,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "NVDA"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "calibrationSchema": "calibration-v4",
+   "changePct": -0.7721,
+   "cohortId": "tactical_benchmark_fixed",
+   "confidence": 0.45,
+   "experimentalFlags": [],
+   "factorGroup": "us_quality_growth",
+   "flowRatio": 0.001,
+   "layer": 2,
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "Apple",
+   "price": 314.86,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "AAPL"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.3597,
+   "cohortId": "tactical_benchmark_fixed",
+   "confidence": 0.45,
+   "experimentalFlags": [],
+   "factorGroup": "us_high_beta_event",
+   "flowRatio": 0.0116,
+   "layer": 2,
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "Tesla",
+   "price": 396.18,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "TSLA"
+  },
+  {
+   "action": "HOLD",
+   "ai": null,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.6563,
+   "cohortId": "experimental_cohort",
+   "confidence": 0.45,
+   "experimentalFlags": [],
+   "factorGroup": null,
+   "flowRatio": 0.0134,
+   "layer": 2,
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "Meta Platforms",
+   "price": 661.04,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "META"
+  },
+  {
+   "benchmarkOnly": true,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 2.5,
+   "cohortId": "tactical_benchmark_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_financials",
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "JPMorgan Chase",
+   "price": 342.89,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "symbol": "JPM"
+  },
+  {
+   "benchmarkOnly": true,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.4,
+   "cohortId": "tactical_benchmark_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_energy",
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "Exxon Mobil",
+   "price": 145.09,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "XOM"
+  },
+  {
+   "benchmarkOnly": true,
+   "calibrationSchema": "calibration-v4",
+   "changePct": -1.54,
+   "cohortId": "tactical_benchmark_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_defensive_consumer",
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "Procter & Gamble",
+   "price": 146.08,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "PG"
+  },
+  {
+   "benchmarkOnly": true,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.2,
+   "cohortId": "tactical_benchmark_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_industrial_cyclical",
+   "market": "US",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "Caterpillar",
+   "price": 933.34,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "symbol": "CAT"
+  }
+ ],
+ "scoringRule": {
+  "bucketsNote": "per-row bandPct (≈daily sigma): downside < -band, sideways within ±band, rebound > +band; legacy rows band=2%",
+  "horizonsTradingDays": [
+   1,
+   3,
+   5
+  ],
+  "metrics": [
+   "argmaxHit",
+   "brier"
+  ]
+ },
+ "sensors": [
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.36,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_broad_equity",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "SPY",
+   "price": 751.83002,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "SPY"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 1.12,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_growth",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "QQQ",
+   "price": 719.71002,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "QQQ"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.35,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_small_cap",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "IWM",
+   "price": 294.51001,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "IWM"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 2.51,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_semiconductor",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "SMH",
+   "price": 600.31,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "sensor": "SMH"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.2,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_financials",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "XLF",
+   "price": 56.18,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "XLF"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.37,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_energy",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "XLE",
+   "price": 56.95,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "XLE"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": -0.07,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "us_defensive",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "XLU",
+   "price": 45.69,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "XLU"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.13,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "duration",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "TLT",
+   "price": 84.080002,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "TLT"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.23,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "investment_grade_credit",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "LQD",
+   "price": 107.21,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "LQD"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 0.2,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "high_yield_credit",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "HYG",
+   "price": 79.68,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "HYG"
+  },
+  {
+   "bandPct": 2.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 1.37,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "safe_haven",
+   "kind": "etf_us",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "US_EQUITY",
+    "marketCalendar": "NYSE_NASDAQ",
+    "originTradingDate": "2026-07-14",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetClose": "2026-07-15T20:00:00+00:00",
+      "targetTradingDate": "2026-07-15"
+     },
+     {
+      "horizon": "3d",
+      "targetClose": "2026-07-17T20:00:00+00:00",
+      "targetTradingDate": "2026-07-17"
+     },
+     {
+      "horizon": "5d",
+      "targetClose": "2026-07-21T20:00:00+00:00",
+      "targetTradingDate": "2026-07-21"
+     }
+    ],
+    "timezone": "ET"
+   },
+   "name": "GLD",
+   "price": 372.14999,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 30
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 20
+    }
+   ],
+   "sensor": "GLD"
+  },
+  {
+   "bandPct": 3.0,
+   "calibrationSchema": "calibration-v4",
+   "changePct": 3.47,
+   "cohortId": "regime_sensor_fixed",
+   "experimentalFlags": [],
+   "factorGroup": "crypto_liquidity",
+   "kind": "crypto",
+   "marketClock": {
+    "calendarVersion": "cal-2026.1",
+    "market": "CRYPTO",
+    "marketCalendar": "crypto_utc_24_7",
+    "originTradingDate": "2026-07-15",
+    "targets": [
+     {
+      "horizon": "1d",
+      "targetTimestamp": "2026-07-16T09:00:00+00:00"
+     },
+     {
+      "horizon": "3d",
+      "targetTimestamp": "2026-07-18T09:00:00+00:00"
+     },
+     {
+      "horizon": "5d",
+      "targetTimestamp": "2026-07-20T09:00:00+00:00"
+     }
+    ],
+    "timezone": "UTC"
+   },
+   "name": "Bitcoin",
+   "price": 64783.0,
+   "scenarios": [
+    {
+     "label": "downside_continuation",
+     "p": 25
+    },
+    {
+     "label": "sideways_stabilization",
+     "p": 50
+    },
+    {
+     "label": "rebound_attempt",
+     "p": 25
+    }
+   ],
+   "sensor": "BTC"
+  }
+ ],
+ "tacticalBenchmarkVersion": "tactical_benchmark_v2",
+ "universeVersion": "regime_sensor_v2"
+}
