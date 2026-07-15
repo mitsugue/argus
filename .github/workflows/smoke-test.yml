@@ -1,18 +1,18 @@
-# ARGUS production smoke test (v10.38) — the refactor safety net.
-# After every push to main it WAITS for Render to deploy that exact commit
-# (polling /healthz buildSha), then asserts every critical endpoint still
-# returns the fields the app depends on. Also runs every 6h as a health
-# monitor. A failure pushes a phone alert (NTFY_TOPIC) so a bad deploy /
-# refactor regression is caught in minutes, not by the user.
+# ARGUS production smoke test — POST-DEPLOY health monitor (v12.2.10).
+# v12.2.9までの罠: mainへのpushで起動しRenderのデプロイ完了を待つcheckだったが、
+# RenderのAuto-Deploy(After CI Checks Pass)はコミット上の全checkのpassを待つ —
+# smoke⇄Renderの相互待ちでsmokeが12分timeoutでcancelされ、Renderは永遠に
+# 自動デプロイしない循環依存になっていた(v12.2.8/v12.2.9で実際に発生)。
+# 恒久対策: smokeをmain pushのcheckにしない。pre-deploy必須check=
+# backend-rules/frontend/gateのまま。smokeはpost-deploy監視として
+# 6時間毎スケジュール+手動dispatchでのみ実行(将来deployment_status等の
+# 非循環トリガが安全に用意できたら追加 — secrets/hookの自動追加はしない)。
 
 name: smoke-test
 
 on:
-  push:
-    branches: [main]
-    paths: ['scanner.py', 'argus_rules.py', 'argus_events.py', 'argus_research.py', 'argus_event_store.py', 'argus_ledger.py', 'smoke_test.py', '.github/workflows/smoke-test.yml']
   schedule:
-    - cron: '0 */6 * * *'   # every 6 hours
+    - cron: '0 */6 * * *'   # every 6 hours — post-deploy health monitor
   workflow_dispatch: {}
 
 permissions:
@@ -27,23 +27,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      # On push, don't test the OLD build: wait until Render reports this commit
-      # live via /healthz buildSha. Falls through after ~10 min (Render slow) and
-      # tests whatever is live rather than hanging.
-      - name: Wait for Render to deploy this commit
-        if: github.event_name == 'push'
-        run: |
-          BE="https://argus-backend-3j2m.onrender.com"
-          WANT="${GITHUB_SHA:0:7}"
-          for i in $(seq 1 40); do
-            SHA=$(curl -s --max-time 30 "$BE/healthz" \
-              | python3 -c "import sys,json;print(json.load(sys.stdin).get('buildSha') or '')" 2>/dev/null || echo "")
-            echo "attempt $i: live=$SHA want=$WANT"
-            if [ "$SHA" = "$WANT" ]; then echo "deployed ✓"; exit 0; fi
-            sleep 15
-          done
-          echo "::warning::deploy SHA not matched in 10m — smoking whatever is live"
 
       # A deploy RESTARTS the dyno, so every cache (regime/rates/watchlist/news) is
       # cold right after buildSha flips. Prime the key endpoints + a short settle so

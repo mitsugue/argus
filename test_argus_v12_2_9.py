@@ -373,14 +373,21 @@ def test_private_payload_rejected_by_journal_helper():
 def test_journal_summary_compaction_totals():
     ev = sj.event(event_type="incident_opened", aggregate_type="incident",
                   aggregate_id="i1", sequence=1, occurred_at=NOW, payload={})
+    # v12.2.10: remoteCommittedは検証済みack冪等キーのみ(時刻プロキシ廃止)
     s = rt.journal_summary(events=[ev], total_observed=412, corrupt_count=1,
-                           last_remote_ack_at=NOW, now_iso=NOW)
+                           last_remote_ack_at=NOW,
+                           acked_keys={ev["idempotencyKey"]}, now_iso=NOW)
     assert s["activeWalEvents"] == 1
     assert s["totalEventsObserved"] == 412               # compact後もゼロにしない
     assert s["compactedEventCount"] == 411
     assert s["eventTypeCounts"]["incident_opened"] == 1
     assert s["remoteCommittedCount"] == 1
     assert s["corruptCount"] == 1
+    # ackキーなし=リモート未検証 → 時刻が過去でもcommittedにならない
+    s2 = rt.journal_summary(events=[ev], total_observed=1,
+                            last_remote_ack_at=NOW, acked_keys=set(),
+                            now_iso=NOW)
+    assert s2["remoteCommittedCount"] == 0
 
 
 def test_transition_event_matrix_complete():
@@ -821,10 +828,13 @@ def test_dq_runtime_truth_sections_and_no_leak():
         assert banned not in body, banned
 
 
-def test_semantic_version_is_12_2_9():
-    assert scanner._semantic_app_version() == "12.2.9"
-    # Git SHAはappVersionにならない(v12.2.8監査の恒久ガード維持)
-    assert not scanner._semantic_app_version().startswith("565")
+def test_semantic_version_format():
+    # v12.2.10で12.2.9からbump — 正確な値はtest_argus_v12_2_10が固定。
+    # ここでは恒久不変条件のみ: セマンティック形式でありGit SHAではない。
+    v = scanner._semantic_app_version()
+    assert v.startswith("12.2.")
+    import re
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v), v       # SHAはappVersion不可
 
 
 def test_soak_snapshot_carries_build_scope_fields():

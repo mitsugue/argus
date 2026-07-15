@@ -17,9 +17,12 @@ DURABILITY_STATES = ("not_persisted", "local_committed", "remote_pending",
                      "integrity_failed")
 CRITICAL_EVENT_TYPES = ("forecast_issued", "forecast_superseded",
                         "outcome_resolved", "incident_opened",
-                        "incident_resolved", "soak_started", "soak_invalidated",
+                        "incident_resolved", "soak_started",
+                        "soak_interrupted",  # v12.2.10: 中断もcritical(隠さない)
+                        "soak_invalidated",
                         "soak_completed", "learning_proposal_created",
-                        "challenger_updated")
+                        "challenger_updated", "material_learning_approved",
+                        "champion_promoted", "champion_rolled_back")
 BACKEND_STATES = ("configured", "not_configured", "unavailable", "degraded",
                   "healthy")
 
@@ -259,27 +262,88 @@ def research_measurement_summary(*, latest: Optional[Dict[str, Any]],
         "eligible": False,
     }
     two_x["eligible"] = all(v for k, v in two_x.items() if k != "eligible")
+    # v12.2.10: 「正式倍率認定」の曖昧文言を廃止 — 統計的算出可能性と
+    # 優位性主張の許可は別概念。統計安定だけでは優位性を正式主張できない。
+    superiority_allowed = (stable_ok and ev_status == "passed"
+                           and bool(primary_strength)
+                           and (stability.get("medianRatio") or 0) > 1.0)
     lines = []
     if latest:
         lines.append(f"最新run: {latest.get('ratio')}x({latest.get('symbol')})")
     if stability.get("medianRatio") is not None:
         lines.append(f"安定中央値: {stability['medianRatio']}x")
     lines.append(f"安定信頼度: {stability.get('confidence')}")
-    lines.append("正式倍率認定: " + ("可" if stable_ok else "不可"))
+    lines.append("安定倍率算出: " + ("可" if stable_ok else "不可"))
+    lines.append("Gemini優位性の正式認定: "
+                 + ("可" if superiority_allowed else "不可"))
+    lines.append("2x認定: " + ("可" if two_x["eligible"] else "不可"))
     if ev_blockers:
         lines.append("理由: " + " / ".join(ev_blockers))
     return {"latestRun": latest,
-            "stableMeasurement": {**stability, "formallyEligible": stable_ok},
+            # formallyEligible=deprecated(=統計算出可のみの旧名・値は維持)
+            "stableMeasurement": {**stability, "formallyEligible": stable_ok,
+                                  "statisticallyStable": stable_ok,
+                                  "formallyEligibleDeprecatedJa":
+                                      "旧名 — 統計的算出可能性のみを意味する"},
             "evidenceGate": {"unresolvedImportantSources": unresolved_important,
                              "primarySourceStrength": primary_strength,
                              "freshCandidatesPending": fresh_pending,
                              "canaryMisses": canary_misses,
                              "status": ev_status, "blockers": ev_blockers},
+            "superiorityClaimAllowed": superiority_allowed,
             "twoXReadinessGate": two_x,
             "ownerReadableJa": " / ".join(lines),
             "semanticsJa": ("最新run=単発の生値・安定測定=3run以上の中央値・"
                             "証拠ゲート=一次/未回収/新鮮/canary・"
-                            "正式認定=安定+medium以上 — 4概念は別物")}
+                            "統計算出可≠優位性正式認定≠2x認定 — 4概念は別物")}
+
+
+def research_claim_readiness(*, stable_median_ratio: Optional[float],
+                             latest_run_ratio: Optional[float],
+                             statistical_confidence: str,
+                             run_count: int,
+                             evidence_gate_passed: bool,
+                             holdout_passed: Optional[bool],
+                             primary_source_gate_passed: bool,
+                             canary_gate_passed: bool,
+                             blockers_ja: Optional[List[str]] = None
+                             ) -> Dict[str, Any]:
+    """v12.2.10 Phase 8: 統計的算出可能性と優位性/2x主張を構造分離。
+    統計安定のみでは優位性を主張できない。最新の生runは主張ゲートを
+    上書きできない。holdout未実施はFalse扱い(未実施で主張しない)。"""
+    measurable = (run_count >= 3 and stable_median_ratio is not None
+                  and statistical_confidence in ("medium", "high"))
+    superiority = bool(measurable and evidence_gate_passed
+                       and bool(holdout_passed)
+                       and primary_source_gate_passed and canary_gate_passed
+                       and (stable_median_ratio or 0) > 1.0)
+    two_x = bool(superiority and (stable_median_ratio or 0) >= 2.0)
+    lines = []
+    if measurable:
+        lines.append(f"安定倍率を算出可能: {stable_median_ratio}x"
+                     f"(信頼度{statistical_confidence})")
+    else:
+        lines.append("安定倍率を算出不能(run不足/分散/信頼度)")
+    lines.append("Gemini優位性の正式認定: " + ("可" if superiority else "不可"))
+    lines.append("2x認定: " + ("可" if two_x else "不可"))
+    if blockers_ja:
+        lines.append("理由: " + "・".join(blockers_ja[:6]))
+    return {"statisticalRatioMeasurable": measurable,
+            "statisticalConfidence": statistical_confidence,
+            "stableMedianRatio": stable_median_ratio,
+            "latestRunRatio": latest_run_ratio,
+            "evidenceGatePassed": bool(evidence_gate_passed),
+            "holdoutPassed": (bool(holdout_passed)
+                              if holdout_passed is not None else False),
+            "holdoutStatus": ("passed" if holdout_passed else
+                              "failed" if holdout_passed is not None
+                              else "not_run"),
+            "primarySourceGatePassed": bool(primary_source_gate_passed),
+            "canaryGatePassed": bool(canary_gate_passed),
+            "superiorityClaimAllowed": superiority,
+            "twoXClaimAllowed": two_x,
+            "exactBlockersJa": list(blockers_ja or []),
+            "ownerReadableJa": " / ".join(lines)}
 
 
 def decision_ledger_origin_summary(forecasts: List[Dict[str, Any]],

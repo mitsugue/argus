@@ -34,6 +34,11 @@ def _reset_rate_limit_buckets():
         # real /tmp+ledger restore on the suite's first request — nondeterministic
         # across machines. Normalize to a completed test-mode startup; tests that
         # exercise the bootstrap reset _STARTUP/_OSINT_PERSIST_STATE themselves.
+        # V12.2.10: the tick-context remote read-back would hit the real GitHub
+        # ledger from tests — disable per test; read-back tests inject a blob
+        # directly into scanner._remote_readback_ack(blob=...).
+        if isinstance(getattr(scanner, "_REMOTE_ACK", None), dict):
+            scanner._REMOTE_ACK["disabled"] = True
         if isinstance(getattr(scanner, "_STARTUP", None), dict) and \
                 scanner._STARTUP.get("state") == "bootstrapping":
             scanner._OSINT_PERSIST_STATE["restored"] = True
