@@ -458,7 +458,7 @@ export const MarketRegime: React.FC = () => {
               <p style={{ margin: 0, fontSize: 12, color: 'var(--text-faint)' }}>
                 {!pe
                   ? 'Todayページを一度開くと、保有構成と今日の地合いの突き合わせを表示します(端末内計算)。'
-                  : '保有数量・取得単価が未入力のため、地合いとの突き合わせは暫定です(Watchlistで入力・端末内のみ)。'}
+                  : '保有数量・取得単価が未入力のため、地合いとの突き合わせは暫定です(Asset Deskで入力・端末内のみ)。'}
               </p>
             ) : (
               <>

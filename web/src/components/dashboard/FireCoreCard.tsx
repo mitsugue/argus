@@ -35,7 +35,7 @@ export const FireCoreCard: React.FC<{ assetsApi: UseAssets }> = ({ assetsApi }) 
 
         {!f || !funds.length ? (
           <p className="cmd-alloc__note">
-            投資信託が未登録です。Watchlistでファンドを追加し口数を入力するか、
+            投資信託が未登録です。Asset Deskでファンドを追加し口数を入力するか、
             追加後にこの欄で現在評価額を手動入力してください(リアルタイム価格は不要です)。
           </p>
         ) : (

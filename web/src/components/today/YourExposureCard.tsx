@@ -10,7 +10,9 @@ export const YourExposureCard: React.FC<{
   exposures: TodayExposureView[];
   noHoldings: boolean;
   onNavigate: (key: RouteKey) => void;
-}> = ({ exposures, noHoldings, onNavigate }) => (
+  /** V12.2.12: 銘柄行→Asset Deskの当該カードを開く(テーマ行はnull symbolで不発)。 */
+  onOpenAsset?: (symbol: string) => void;
+}> = ({ exposures, noHoldings, onNavigate, onOpenAsset }) => (
   <section className="tcard tg-span-5" aria-label="Your exposure">
     <div className="tcard__head">
       <span className="tcard__title">Your Exposure</span>
@@ -32,7 +34,13 @@ export const YourExposureCard: React.FC<{
         {exposures.map((e) => (
           <div className="texp__row" key={e.id}>
             <div className="texp__top">
-              <span className="texp__name">{e.titleJa}</span>
+              {e.symbol && onOpenAsset ? (
+                <button type="button" className="texp__name texp__name--link"
+                        title="Asset Deskでこの銘柄を開く"
+                        onClick={() => onOpenAsset(e.symbol!)}>{e.titleJa} ↗</button>
+              ) : (
+                <span className="texp__name">{e.titleJa}</span>
+              )}
               <span className={`texp__impact texp__impact--${e.severityEn.toLowerCase()}`}>
                 {e.impactEn} / {e.severityEn}
               </span>

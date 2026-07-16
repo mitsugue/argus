@@ -13724,7 +13724,7 @@ def get_action_alerts():
                 pts.append(f"大口フロー平均 {sum(flows)/len(flows):+.1%} ({len(flows)}銘柄)")
             add(f"{mkt}_STOCK", name, dominant, conf, risk,
                 f"ウォッチ銘柄の多数派は{dominant}。姿勢は{posture}。",
-                pts, "個別はWatchlistの戦略カードで確認。", sstatus)
+                pts, "個別はAsset Deskの銘柄カードで確認。", sstatus)
         else:
             add(f"{mkt}_STOCK", name, "WAIT", "low", "med",
                 "ライブ価格が未取得のため中立。", [], "データ復帰後に再評価。", "partial")

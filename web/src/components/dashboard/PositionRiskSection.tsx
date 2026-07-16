@@ -24,7 +24,7 @@ export const PositionRiskSection: React.FC<{ exposure: PortfolioExposure }> = ({
       {pe.noHoldings ? (
         <p style={{ fontSize: 12, color: 'var(--text-sub)', margin: '4px 0', lineHeight: 1.7 }}>
           ポジション数量・取得単価が未入力のため、保有リスクは暫定です。
-          Watchlistの銘柄行で数量と取得単価を入力すると、集中度・テーマ偏り・買い増し余地を判定します
+          Asset Deskの銘柄カード(OWNER POSITION)で数量と取得単価を入力すると、集中度・テーマ偏り・買い増し余地を判定します
           (データは端末内のみ・どこにも送信されません)。
         </p>
       ) : pe.base.holdings.length === 0 ? (

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
-import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
 import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
 import { TodayStanceCard } from '../components/today/TodayStanceCard';
 import { OvernightChangesCard } from '../components/today/OvernightChangesCard';
@@ -9,67 +8,43 @@ import { TodayActionQueue } from '../components/today/TodayActionQueue';
 import { NextCheckCard } from '../components/today/NextCheckCard';
 import { TodayDetails, type DetailGroup } from '../components/today/TodayDetails';
 import { TodayAttention } from '../components/today/TodayAttention';
+import { TodayAssetExceptions, type AssetExceptionRow } from '../components/today/TodayAssetExceptions';
+import { PRIMARY_EN } from '../components/assetDesk/deskFormat';
 import { buildTodayOverview } from '../domain/todayOverview';
 import { FxMacroSection } from '../components/dashboard/FxMacroSection';
 import { CaosHub } from '../components/dashboard/CaosHub';
 import { FlowAttributionSection } from '../components/dashboard/FlowAttributionSection';
 import { BuyCandidates } from '../components/dashboard/BuyCandidates';
-import { useDownsideIncidents } from '../hooks/useDownsideIncidents';
-import { useVisibilityGuard } from '../hooks/useVisibilityGuard';
-import { useEventsActive } from '../hooks/useEventsActive';
-import { useImportantEvents } from '../hooks/useImportantEvents';
-import { groupAssetCards, type LinkedEventTag, type AiFreshness } from '../domain/assetCard';
 import { useLocale, t, tEn } from '../i18n';
 import { MarketSessionLamps } from '../components/dashboard/MarketSessionLamps';
 import { ActionPill } from '../components/action/ActionBadge';
 import { recordJudgment, previousJudgment, recentJudgments } from '../lib/judgmentLog';
 import { useLedgerSummary } from '../hooks/useLedgerSummary';
-import { useAIJudgment } from '../hooks/useAIJudgment';
-import { useActionLabels } from '../hooks/useActionLabels';
-import { useMarketRegime } from '../hooks/useMarketRegime';
-import { useEventRadar } from '../hooks/useEventRadar';
-import { useAssets } from '../hooks/useAssets';
-import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
-import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
-import { useUSWatchlist } from '../hooks/useUSWatchlist';
-import { useFlowAttributionList } from '../hooks/useFlowAttribution';
-import { useSupplyDemandList } from '../hooks/useSupplyDemand';
+import { useAssetIntel } from '../hooks/useAssetIntel';
 import { SupplyDemandSection } from '../components/dashboard/SupplyDemandSection';
-import { buildPositionExposure } from '../domain/positionExposure';
-import { publishExposure, publishActionPriorities, latestActionPriorities, publishSessionBrief, latestSessionBrief, publishScenarios, publishPlans, publishStrategy, publishFireCore, latestFireCore, publishEventsJa, publishDataQuality, latestDataQuality } from '../lib/positionExposureShare';
+import { latestActionPriorities, latestSessionBrief, latestFireCore, publishEventsJa, publishDataQuality, latestDataQuality } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
-import { maybeUpdateOutcomes, listDQ } from '../lib/decisionQuality';
-import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
+import { maybeUpdateOutcomes } from '../lib/decisionQuality';
 import { ActionPrioritySection } from '../components/dashboard/ActionPrioritySection';
-import { buildLocalBrief } from '../domain/sessionBrief';
-import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
-import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
-import { resolvePrimaryStance, type ResolvedStance } from '../domain/primaryStance';
-import { resolveCommandSummary, SIGNALS as CS_SIGNALS } from '../domain/commandSummary';
 import { nextUpcomingEvent } from '../lib/eventClock';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { unreadCounts } from '../lib/notifications';
-import { classifyRole, buildStrategy, todayStrategicNoteJa, type LocalStrategy } from '../domain/portfolioStrategy';
-import { themeOf } from '../domain/positionExposure';
-import { buildLocalFireCore, fireCoreTodayNoteJa } from '../lib/fireCore';
+import { todayStrategicNoteJa } from '../domain/portfolioStrategy';
+import { fireCoreTodayNoteJa } from '../lib/fireCore';
 import { SessionBriefSection } from '../components/dashboard/SessionBriefSection';
 import { runNotificationEngine, listNotifications, SEV_TONE, SEV_JA } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
 import { listSnapshots } from '../lib/portfolioSync';
 import { PositionRiskSection } from '../components/dashboard/PositionRiskSection';
-import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
-import { coingeckoIdOf } from '../lib/cryptoIds';
-import {
-  deriveTodayJudgment, combinePhase,
-  type TodayPhase,
-} from '../lib/todayCall';
 import type { RouteKey } from '../components/NavRail';
 import '../components/dashboard/Dashboard.css';
 
 interface Props {
   onNavigate: (key: RouteKey) => void;
+  /** V12.2.12: Asset Deskの当該銘柄カードを開いてスクロール(App.tsx state経由)。 */
+  onNavigateToAsset?: (symbol: string, section?: string) => void;
 }
 
 // Today is a SUMMARY composed from LIVE data (action-labels + market-regime +
@@ -81,11 +56,19 @@ const formatDate = (iso: string) => {
   });
 };
 
-export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
+export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }) => {
   useLocale();   // re-render Today on locale switch
-  const { assets } = useAssets();
   const ledger = useLedgerSummary();
-  const aiJ = useAIJudgment();
+  // V12.2.12: 個別銘柄系のデータ組み立ては useAssetIntel(Today/Asset Desk共有の
+  // 正本)へ移設。Todayは publish:true — 共有ストアへのpublish副作用(Exposure/AP/
+  // Brief/Scenarios/Plans/Strategy/FireCore)は従来どおりTodayだけが実行する。
+  const {
+    assets, aiJ, al, guard, regime, downside, impEvents, rates,
+    flowRecords, sdSignals, cardGroups, ownerCritical, positionExposure,
+    apItems, sessionBrief, scenarioSets, portfolioStrategy, fireCore, positionPlans,
+    phase, judgment, isPartial, visLimited, cappedConf, commandSummary,
+    positionRisk, stanceBySymbol, decisionBySym,
+  } = useAssetIntel({ publish: true });
   const aiStateJa = useMemo(() => {
     if (aiJ.phase === 'connecting') return null;
     if (aiJ.data && (aiJ.data.status === 'live' || aiJ.data.status === 'partial')) {
@@ -103,328 +86,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       const models = d.models?.primary ? ` [${d.models.primary}+${d.models.checker}]` : '';
       return `🤖 AI見解: ${age}の実行・${tag}${models}。ルール判定が主・AIは時刻付きの第二意見。次回 平日16:05。`;
     }
-    return '🤖 AI見解: まだ未実行(平日16:05に自動実行。それまではルール判定で稼働中)。';
+    // v12.2.12: 実行を保証できない状態では16:05を約束しない(状態別の正確な文言)。
+    const st = aiJ.data?.status;
+    if (st === 'disabled') return '🤖 AI見解: 無効化中(自動実行なし) — ルール判定で稼働中。';
+    if (st === 'no_cached_result') return '🤖 AI見解: まだ未実行(次の平日16:05に自動実行。それまではルール判定で稼働中)。';
+    return '🤖 AI見解: 未取得(接続待ちまたは取得失敗) — ルール判定で稼働中。';
   }, [aiJ.data, aiJ.phase]);
-  // The engine follows the USER's actual watchlist (dynamic symbols, v9.8).
-  const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
-  const usSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
-  const al = useActionLabels({ jp: jpSyms, us: usSyms });
-  // Crypto has no Action Label; pull its live quote separately so the top-screen
-  // crypto cards show the day-change like JP/US (was always "—" before).
-  const cryptoAssets = useMemo(() => assets.filter((a) => a.market === 'CRYPTO'), [assets]);
-  const cryptoIds = useMemo(
-    () => cryptoAssets.map((a) => coingeckoIdOf(a)).filter(Boolean),
-    [cryptoAssets]);
-  const cw = useCryptoWatchlist(cryptoIds);
-  const cryptoQuotes = useMemo(() => {
-    const m: Record<string, { price?: number | null; changePct?: number | null }> = {};
-    for (const a of cryptoAssets) {
-      const id = coingeckoIdOf(a);
-      const q = id ? cw.byId?.[id] : undefined;
-      if (q) m[a.symbol.toUpperCase()] = { price: q.priceUsd ?? null, changePct: q.changePct ?? null };
-    }
-    return m;
-  }, [cryptoAssets, cw.byId]);
-  const regime = useMarketRegime();
-  const ev = useEventRadar();
-  const { data: downside } = useDownsideIncidents();
-  const guard = useVisibilityGuard();   // Visibility Risk Guard (v10.195)
-  const { events: events247 } = useEventsActive();
-  const { data: impEvents } = useImportantEvents();
-
-  // Unified per-stock cards (v10.140): merge action-labels + downside + 24/7 events
-  // + linked macro-event tags into ONE card per stock, grouped + sorted per market.
-  const cardGroups = useMemo(() => {
-    const linked: Record<string, LinkedEventTag[]> = {};
-    for (const ie of impEvents?.events ?? []) {
-      for (const a of ie.linkedAssets ?? []) {
-        const k = String(a).toUpperCase();
-        (linked[k] ??= []).push({ code: ie.eventCode, countdown: ie.countdown, impact: ie.displayImpact.toUpperCase() });
-      }
-    }
-    const aiF = aiJ.data as undefined | { freshness?: string; status?: string };
-    const aiFreshness: AiFreshness = aiF?.freshness === 'fresh' ? 'fresh'
-      : aiF?.freshness === 'persisted' || aiF?.freshness === 'stale' ? 'stale'
-      : aiJ.data ? 'unavailable' : 'rule_only';
-    // (a) AI-AS-PRIMARY (v10.160): when a recent AI run exists (live/partial + fresh/
-    // persisted), the displayed per-stock call IS the GPT+Gemini arbitrated judgment
-    // (aiFinalAction + the AI's reason). The rule engine is the guardrail fallback
-    // (stale/cold/budget-paused → shown as ルール暫定). Holdings stay device-local;
-    // this only swaps which judgment the card shows.
-    const aiPrimary = !!aiJ.data && (aiF?.status === 'live' || aiF?.status === 'partial')
-      && (aiF?.freshness === 'fresh' || aiF?.freshness === 'persisted');
-    const aiBySym = new Map((aiJ.data?.labels ?? []).map((l) => [l.symbol.toUpperCase(), l]));
-    const labels = (al.data?.labels ?? []).map((rl) => {
-      const ai = aiPrimary ? aiBySym.get(rl.symbol.toUpperCase()) : undefined;
-      if (ai && ai.aiFinalAction) {
-        return { ...rl, action: ai.aiFinalAction, reasonJa: ai.reasonJa || rl.reasonJa,
-                 confidence: ai.confidence ?? rl.confidence, judgmentSource: 'ai' as const };
-      }
-      return { ...rl, judgmentSource: 'rule' as const };
-    });
-    return groupAssetCards({
-      assets, labels, incidents: downside?.incidents ?? [],
-      events: events247 ?? [], linked, aiFreshness, cryptoQuotes,
-    });
-  }, [assets, al.data, downside, events247, impEvents, aiJ.data, cryptoQuotes]);
-
-  // OWNER CRITICAL (spec): a held asset on the most defensive signals (EXIT/DEFEND)
-  // gets a small top banner so a held emergency is never buried below the fold.
-  const ownerCritical = useMemo(() =>
-    [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]
-      .filter((c) => c.held && (c.signalCode === 'EXIT' || c.signalCode === 'DEFEND')),
-    [cardGroups]);
-
-  // ── V11.8.0 Position / Exposure — device-local. Prices come from the cards
-  // already built for Today; quantities/costs never leave localStorage.
-  const rates = useRatesSnapshot();
-  const { records: flowRecords } = useFlowAttributionList();
-  // v12.0.6 (owner: 保有銘柄の需給が全く出ない): デバイスのウォッチリスト銘柄を
-  // サーバーへ渡し、固定リスト外(6965/7011等)にも需給ランクを出す。ソート済み
-  // カンマ結合で参照安定化(不要な再fetchを防ぐ)。
-  const sdExtraSymbols = useMemo(() =>
-    assets.filter((a) => a.market === 'JP' || a.market === 'US')
-      .map((a) => a.symbol.toUpperCase()).sort().join(','),
-    [assets]);
-  const { signals: sdSignals } = useSupplyDemandList(sdExtraSymbols);   // v11.10.0 需給ランク
-  // Card prices vanish outside sessions (labels carry no price) — fall back to
-  // the same real quote hooks Core Portfolio uses (delayed close = real data).
-  const peJpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
-  const peUsSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
-  const peJp = useJapanWatchlist(peJpSyms);
-  const peUs = useUSWatchlist(peUsSyms);
-  const positionExposure = useMemo(() => {
-    const priceMap = new Map<string, number>();
-    const okSt = (st?: string) => st != null && st !== 'mock';
-    for (const s of peJp.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
-    for (const s of peUs.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
-    for (const c of [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]) {
-      if (c.price != null && Number.isFinite(c.price)) priceMap.set(c.symbol.toUpperCase(), c.price);
-    }
-    const flowBySymbol: Record<string, string> = {};
-    for (const r of flowRecords) flowBySymbol[r.symbol.toUpperCase()] = r.flowClass;
-    const eventSymbols = new Set<string>();
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSymbols.add(String(a).toUpperCase());
-      }
-    }
-    const regLabel = regime.data?.regime?.label ?? null;
-    const sdRankBySymbol: Record<string, string> = {};
-    for (const s of sdSignals) sdRankBySymbol[s.symbol.toUpperCase()] = s.supplyDemandRank;
-    const pe = buildPositionExposure(
-      assets,
-      (a) => priceMap.get(a.symbol.toUpperCase()),
-      rates.data?.usdJpy?.latestValue ?? null,
-      { regimeLabel: regLabel, riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
-        flowBySymbol, eventSymbols, sdRankBySymbol },
-    );
-    publishExposure(pe);   // Pro Handoff / AI Review read this at copy time (device-local)
-    return pe;
-  }, [assets, cardGroups, rates.data, flowRecords, sdSignals, impEvents, regime.data, peJp.data, peUs.data]);
-
-  // v11.12.0: ACTION PRIORITY — 全レイヤーを「今日これを見る」に統合(端末内・保有加味)。
-  const apItems: APItem[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
-    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
-    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
-    const regLabel = regime.data?.regime?.label ?? null;
-    const riskOff = regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT';
-    const eventSyms = new Map<string, string>();
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
-      }
-    }
-    // DQ modifier (modest): symbols whose past avoid_chase was contradicted
-    const dqContra = new Set<string>();
-    const dqSupp = new Set<string>();
-    for (const r of listDQ()) {
-      const it = r.outcome?.outcomeInterpretation;
-      if (r.decisionContext === 'avoid_chase' && it === 'contradicted') dqContra.add(r.symbol.toUpperCase());
-      if (it === 'supported') dqSupp.add(r.symbol.toUpperCase());
-    }
-    const items = assets.map((a) => {
-      const sym = a.symbol.toUpperCase();
-      const note = positionExposure.notes[sym];
-      const sd = sdBySym.get(sym);
-      const fl = flowBySym.get(sym);
-      const missing: string[] = [];
-      if (note?.held && note.pnlPct == null) missing.push(a.avgCost == null ? '取得単価' : '価格');
-      return buildAPItem({
-        symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
-        isHeld: !!note?.held, weightPct: note?.weightPct ?? null,
-        concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
-        positionRiskLevel: riskBySym.get(sym) ?? null,
-        readiness: note?.readiness ?? null,
-        sdRank: sd?.supplyDemandRank ?? null, sdCondition: sd?.condition ?? null,
-        flowClass: fl?.flowClass ?? null,
-        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
-        regimeRiskOff: riskOff, changePct: fl?.changePct ?? null,
-        dataMissing: missing,
-        dqContradictedAvoidChase: dqContra.has(sym), dqSupported: dqSupp.has(sym),
-      });
-    });
-    const ranked = rankAPItems(items, 20);
-    publishActionPriorities(ranked);   // Handoff/AIReview read at copy time
-    return ranked;
-  }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data]);
-
-  // v11.13.0: SESSION BRIEF — 今日の作戦(端末内合成・保有加味)。
-  const sessionBrief = useMemo(() => {
-    const eventNames: string[] = [];
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') eventNames.push(ie.eventCode);
-    }
-    const regLabel = regime.data?.regime?.label ?? null;
-    const missing: string[] = [];
-    if (!positionExposure.noHoldings && positionExposure.unpriced.length) {
-      missing.push(`価格未取得: ${positionExposure.unpriced.slice(0, 2).join('/')}`);
-    }
-    const b = buildLocalBrief(apItems, {
-      eventNames: [...new Set(eventNames)].slice(0, 3),
-      riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
-      missingDataJa: missing,
-    });
-    publishSessionBrief(b);
-    return b;
-  }, [apItems, impEvents, regime.data, positionExposure]);
-
-  // v11.17.0: SCENARIOS — 条件付きの分岐(端末内合成・保有加味)。単一予測ではなく
-  // ベース/強気/弱気/踏み上げ失速/イベント待ちを全レイヤーから決定論合成。帯のみ。
-  const scenarioSets: LocalScenarioSet[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
-    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
-    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
-    const regLabel = regime.data?.regime?.label ?? null;
-    const riskOff = regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT';
-    const eventSyms = new Map<string, string>();
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
-      }
-    }
-    const sets = assets.map((a) => {
-      const sym = a.symbol.toUpperCase();
-      const sd = sdBySym.get(sym);
-      const fl = flowBySym.get(sym);
-      return buildScenarioSet({
-        symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
-        isHeld: !!positionExposure.notes[sym]?.held,
-        sdRank: sd?.supplyDemandRank ?? null, sdCondition: sd?.condition ?? null,
-        sdLevel: (sd as { supplyDemandLevel?: string } | undefined)?.supplyDemandLevel ?? null,
-        sdDirection: (sd as { direction?: string } | undefined)?.direction ?? null,
-        flowClass: fl?.flowClass ?? null,
-        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
-        regimeRiskOff: riskOff, changePct: fl?.changePct ?? null,
-        positionRiskLevel: riskBySym.get(sym) ?? null,
-        missing: sd || fl ? [] : ['需給/フロー未取得'],
-      });
-    });
-    publishScenarios(sets);   // Handoff/AIReview/Regime/CorePortfolio read at render/copy time
-    return sets;
-  }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data]);
-
-  // v11.19.0: PORTFOLIO STRATEGY — 役割分類(コア/サテライト/戦術枠/ヘッジ)と
-  // FIRE整合・リスク予算を端末内で合成。計画層(下)へ制約を供給する。
-  const portfolioStrategy: LocalStrategy = useMemo(() => {
-    const eventSyms = new Set<string>();
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.add(String(a).toUpperCase());
-      }
-    }
-    const roles = assets.map((a) => {
-      const sym = a.symbol.toUpperCase();
-      const note = positionExposure.notes[sym];
-      return classifyRole({
-        symbol: sym, assetName: a.displayNameJa || a.displayName,
-        theme: themeOf(a), assetType: a.assetType,
-        isHeld: !!note?.held, weightPct: note?.weightPct ?? null,
-        concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
-        eventPending: eventSyms.has(sym),
-      });
-    });
-    // v11.19.1: FIRE Core(投信=本丸資産)を先に合成し、戦略へ文脈供給
-    const fc = buildLocalFireCore(assets, positionExposure, roles);
-    publishFireCore(fc);
-    const s = buildStrategy(positionExposure, roles, {
-      eventPending: eventSyms.size > 0,
-      recurringAccumulationKnown: fc.contributionDataStatus === 'complete',
-      fireCore: { known: fc.fireCoreTotal != null,
-        tacticalToCoreBand: fc.tacticalToCoreBand,
-        contributionKnown: fc.contributionDataStatus === 'complete' },
-    });
-    publishStrategy(s);   // CorePortfolio/Handoff/AIReview read at render/copy time
-    return s;
-  }, [assets, positionExposure, impEvents]);
-
-  // v11.18.0: POSITION PLAN — 「入っていいか/買い増しか/利確検討か/持ち越しか」を
-  // 計画として合成(端末内・保有加味・執行語なし)。売買指示ではない。
-  const positionPlans: LocalPlan[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
-    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
-    const scBySym = new Map(scenarioSets.map((s) => [s.symbol, s]));
-    const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
-    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
-    const regLabel = regime.data?.regime?.label ?? null;
-    const eventSyms = new Map<string, string>();
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
-      }
-    }
-    const tacticalStretched = ['stretched', 'exceeded'].includes(portfolioStrategy.tacticalBudget);
-    const themeHigh = ['high', 'critical'].includes(portfolioStrategy.themeRisk);
-    const roleBySym = new Map(portfolioStrategy.roles.map((r) => [r.symbol, r]));
-    const plans = assets.map((a) => {
-      const sym = a.symbol.toUpperCase();
-      const note = positionExposure.notes[sym];
-      const sd = sdBySym.get(sym);
-      const fl = flowBySym.get(sym);
-      const role = roleBySym.get(sym);
-      const aiTheme = role ? ['ai_infrastructure', 'physical_ai_robotics', 'semiconductor_photonics'].includes(role.theme) : false;
-      return buildPlan({
-        symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
-        isHeld: !!note?.held,
-        sdRank: sd?.supplyDemandRank ?? null, sdCondition: sd?.condition ?? null,
-        sdLevel: (sd as { supplyDemandLevel?: string } | undefined)?.supplyDemandLevel ?? null,
-        flowClass: fl?.flowClass ?? null,
-        scenarioDominant: scBySym.get(sym)?.dominant ?? null,
-        apCategory: apBySym.get(sym)?.category ?? null,
-        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
-        regimeRiskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
-        weightPct: note?.weightPct ?? null,
-        concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
-        positionRiskLevel: riskBySym.get(sym) ?? null,
-        pnlPct: note?.pnlPct ?? null,
-        priorRunupPct: null,
-        marketOpen: marketOpenNow(a.market),
-        missing: sd || fl ? [] : ['需給/フロー未取得'],
-        portfolioTacticalStretched: tacticalStretched,
-        themeConcentrationHigh: themeHigh && aiTheme,
-      });
-    });
-    // v11.19.0: 戦略上の役割をカード表示用に付与(端末内のみ)
-    // v11.19.1: 投信はFIRE Core注記(積立/評価額の鮮度)を追記
-    const fcPos = new Map((latestFireCore()?.positions ?? []).map((x) => [x.symbol, x]));
-    for (const p of plans) {
-      const r = roleBySym.get(p.symbol);
-      if (r) {
-        let reason = r.roleReasonJa;
-        const fp = fcPos.get(p.symbol);
-        if (fp) {
-          reason = `FIRE Core(本丸資産)。積立${fp.monthlyContribution != null ? `月${fp.monthlyContribution.toLocaleString()}円` : '未入力'}`
-            + `・評価額${fp.marketValue != null ? (fp.stale ? '更新が古い' : '追跡中') : '未入力'}(${fp.accountTypeJa})`;
-        }
-        p.strategicRole = { roleJa: fp ? 'FIRE Core' : r.roleJa, roleReasonJa: reason,
-          addPolicyJa: r.addPolicyJa, strategyFit: r.strategyFit };
-      }
-    }
-    publishPlans(plans);   // Handoff/AIReview/CorePortfolio read at render/copy time
-    return plans;
-  }, [assets, positionExposure, sdSignals, flowRecords, scenarioSets, apItems, impEvents, regime.data, portfolioStrategy]);
-
+  // (個別銘柄カード/OWNER CRITICAL/Exposure/AP/Brief/Scenarios/Plans/Strategy/
+  //  FireCore/構え/判断コンテキストは全て useAssetIntel から供給 — v12.2.12)
 
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
@@ -557,97 +226,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return () => clearTimeout(t);
   }, []);
 
-  const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
-  const judgment = useMemo(
-    () => deriveTodayJudgment(al.data, regime.data, ev.data, Date.now()),
-    [al.data, regime.data, ev.data],
-  );
-
-  // 3-layer risk overlay for the hero (v10.103): a green global regime must not
-  // hide a weak Japan tape or holder risk.
-  const overlay = useMemo(() => {
-    // Prefer the downside engine's globalRegime, but treat "UNKNOWN"/empty as a
-    // miss and fall back to the regime endpoint's label (fixes Global=UNKNOWN
-    // while Market Regime=Mixed when the downside read hit a cold cache, v10.112).
-    const ds = downside?.globalRegime;
-    const global = (ds && ds !== 'UNKNOWN') ? ds : (regime.data?.regime?.label || ds || 'UNKNOWN');
-    return {
-      globalRegime: global,
-      jpIntradayOverlay: downside?.jpIntradayOverlay || 'NORMAL',
-      holderRiskOverlay: downside?.holderRiskOverlay || 'NONE',
-    };
-  }, [downside, regime.data]);
-  // Partial-data discipline: when data is incomplete, cap confidence at 0.60 and
-  // flag PARTIAL so a HOLD never looks high-confidence on thin data.
-  const isPartial = phase === 'partial';
-  const baseConf = regime.data?.regime?.confidence ?? null;
-  // v10.195: fold the Visibility Risk Guard cap into the SAME confidence the hero +
-  // judgment log use. Intersect base, the partial-0.60, and the guard cap — ignoring
-  // nulls (a naive Math.min(...,undefined) would blank the hero as NaN).
-  const capCandidates = [baseConf, isPartial ? 0.60 : null, guard?.confidenceCap ?? null]
-    .filter((v): v is number => typeof v === 'number');
-  const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
-  const visLimited = !!guard && guard.visibilityLevel !== 'full';
-
-  // v12.0.8追補: ヒーローと同じ解決器で総合コマンドを一度だけ解決 —
-  // v12.2.11: Today's Stanceカードとadd可否判定が同一のsummaryを共有する
-  // (判定条件は不変・resolveCommandSummaryの呼び出し内容も従来と同一)。
-  const commandSummary = useMemo(() => resolveCommandSummary({
-    legacyAction: judgment.overall, globalRegime: overlay?.globalRegime,
-    jpOverlay: overlay?.jpIntradayOverlay, ownerRisk: overlay?.holderRiskOverlay,
-    risk: judgment.risk, isPartial: isPartial || visLimited,
-    confidence: cappedConf, nextConditionJa: judgment.nextCondition,
-  }), [judgment, overlay, isPartial, visLimited, cappedConf]);
-  const globalAddProhibited = useMemo(() => {
-    try {
-      return CS_SIGNALS[commandSummary.signalCode].permissions.add === 'BLOCKED';
-    } catch { return false; }
-  }, [commandSummary]);
-
-  // v12.0.8追補: 保有リスクチップ(市場リスクと分離) — 保有×P0/P1件数から。
-  const positionRisk = useMemo(() => {
-    if (positionExposure.noHoldings) return { alert: false, ja: '保有数量未入力' };
-    const n = apItems.filter((it) => it.isHeld && (it.priorityRank === 'P0' || it.priorityRank === 'P1')).length
-      + positionExposure.risks.filter((r) => ['high', 'critical'].includes(r.riskLevel)).length;
-    return n > 0 ? { alert: true, ja: `保有銘柄に要確認あり(${n}件)` }
-                 : { alert: false, ja: '明確な警報なし' };
-  }, [positionExposure, apItems]);
-  // v12.0.8 Part C: 銘柄ごとの「単一の構え」(全カード共通チップ) — Session Brief /
-  // AP / Plan / カードの矛盾(P1なのに対応不要 等)を構造的に排除。売買指示ではない。
-  const stanceBySymbol = useMemo(() => {
-    const m = new Map<string, ResolvedStance>();
-    const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
-    const planBySym = new Map(positionPlans.map((pl) => [pl.symbol, pl]));
-    const scBySym = new Map(scenarioSets.map((sc) => [sc.symbol, sc]));
-    const sdBySym = new Map(sdSignals.map((sg) => [sg.symbol.toUpperCase(), sg]));
-    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r.flowClass]));
-    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
-    const heldSyms = new Set(positionExposure.notes ? Object.keys(positionExposure.notes) : []);
-    const eventSyms = new Set<string>();
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.add(String(a).toUpperCase());
-      }
-    }
-    for (const a of assets) {
-      const sym = a.symbol.toUpperCase();
-      const ap = apBySym.get(sym);
-      const pl = planBySym.get(sym);
-      m.set(sym, resolvePrimaryStance({
-        isHeld: heldSyms.has(sym) || !!ap?.isHeld,
-        apRank: ap?.priorityRank, apLabel: ap?.actionLabel,
-        planStance: pl?.currentStance, scenarioDominant: scBySym.get(sym)?.dominant,
-        sdCondition: sdBySym.get(sym)?.condition, sdLevel: sdBySym.get(sym)?.supplyDemandLevel,
-        flowClass: flowBySym.get(sym), eventWait: eventSyms.has(sym),
-        riskLevel: riskBySym.get(sym), dataPartial: isPartial || visLimited,
-        baseConfidence: ap?.confidence,
-        globalAddProhibited,
-      }));
-    }
-    return m;
-  }, [assets, apItems, positionPlans, scenarioSets, sdSignals, flowRecords,
-      positionExposure, impEvents, isPartial, visLimited, globalAddProhibited]);
-
 
   // ── Judgment log (device-local memory) ──
   // Record today's LIVE/PARTIAL call (mock is never logged — no fake history),
@@ -729,6 +307,41 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return rs;
   }, [guard, al.data]);
 
+  // ── V12.2.12: 銘柄の例外サマリー(Todayの銘柄カード全リストの置き換え) ──
+  // 個別銘柄の正本はAsset Desk。ここは例外(保有×撤退/防衛・保有×P0/P1・急落・
+  // AIとルールの不一致)の選択のみ — 判断はuseAssetIntel(Asset Deskと同一)。
+  const assetExceptions: AssetExceptionRow[] = useMemo(() => {
+    const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
+    const rows: (AssetExceptionRow & { rank: number })[] = [];
+    for (const c of [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]) {
+      const sym = c.symbol.toUpperCase();
+      const dec = decisionBySym.get(sym);
+      const ap = apBySym.get(sym);
+      const tags: string[] = [];
+      let rank = 9;
+      if (c.held && (c.signalCode === 'EXIT' || c.signalCode === 'DEFEND')) {
+        tags.push(c.signalCode === 'EXIT' ? '保有×撤退判断' : '保有×資金防衛'); rank = Math.min(rank, 0);
+      }
+      if (c.held && ap?.priorityRank === 'P0') { tags.push('P0'); rank = Math.min(rank, 1); }
+      else if (c.held && ap?.priorityRank === 'P1') { tags.push('P1'); rank = Math.min(rank, 2); }
+      if (c.hasIncident) { tags.push('急落対応中'); rank = Math.min(rank, 3); }
+      if (dec?.rule.disagreementJa) { tags.push(`AIとルール不一致(${dec.rule.disagreementJa})`); rank = Math.min(rank, 4); }
+      if (!tags.length) continue;
+      rows.push({ symbol: c.symbol, nameJa: c.name, tagJa: tags.join(' / '),
+        actionEn: PRIMARY_EN[c.signalCode],
+        sourceTagEn: dec ? dec.sourceTagEn : 'RULE',
+        reasonJa: dec?.reasonJa && dec.reasonJa !== '判断根拠を取得中' ? dec.reasonJa : (c.causeOneLineJa ?? ''),
+        rank });
+    }
+    // 決定論: 深刻度→symbol(入力順に依存しない)
+    return rows.sort((a, b) => a.rank - b.rank || (a.symbol < b.symbol ? -1 : 1))
+      .slice(0, 8).map(({ rank: _r, ...row }) => row);
+  }, [cardGroups, decisionBySym, apItems]);
+  const assetCountsJa = useMemo(() => {
+    const f = assets.filter((a) => a.market !== 'JP' && a.market !== 'US' && a.market !== 'CRYPTO').length;
+    return `JP ${cardGroups.jpWatch.length} · US ${cardGroups.usWatch.length} · 暗号 ${cardGroups.crypto.length}${f ? ` · 投信等 ${f}` : ''}`;
+  }, [assets, cardGroups]);
+
   // ── Details / Deep Dive(役割別5グループ・初期は閉じる) ─────────────────────
   const detailGroups: DetailGroup[] = [
     {
@@ -771,15 +384,18 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         const bad = flowRecords.filter((r) => ['panic_selling', 'distribution'].includes(r.flowClass)).length;
         const de = sdSignals.filter((s) => ['D', 'E'].includes(s.supplyDemandRank)).length;
         const parts = [bad ? `売り圧力推定${bad}件` : '', de ? `需給D/E ${de}件` : ''].filter(Boolean);
-        return parts.length ? `${parts.join(' / ')} / 銘柄カード・発掘` : '銘柄カード・フロー・需給・発掘(開いて確認)';
+        return parts.length ? `${parts.join(' / ')} / 例外サマリー・発掘` : '例外サマリー・フロー・需給・発掘(開いて確認)';
       })(),
       render: () => (
         <>
           <FlowAttributionSection />
           <SupplyDemandSection signals={sdSignals} />
-          <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
-          <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
-          <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
+          {/* V12.2.12: 銘柄カード全リストはAsset Deskへ一本化(情報マトリクスで
+              全項目の移設を確認済み)。Todayは例外サマリー+deep-linkのみ。 */}
+          <TodayAssetExceptions rows={assetExceptions} totalCount={assets.length}
+            countsJa={assetCountsJa} aiStateJa={aiStateJa}
+            onOpenAsset={(sym) => onNavigateToAsset?.(sym)}
+            onOpenDesk={() => onNavigate('watchlist')} />
           <BuyCandidates />
         </>
       ),
@@ -892,7 +508,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           <span className="owner-critical__tag">OWNER CRITICAL</span>
           <span className="owner-critical__items">
             {ownerCritical.map((c) => (
-              <span key={c.id} className="owner-critical__item">{c.symbol} {c.name} · {c.signalCode === 'EXIT' ? '撤退判断' : '資金防衛'}</span>
+              <button type="button" key={c.id} className="owner-critical__item owner-critical__item--link"
+                title="Asset Deskでこの銘柄を開く"
+                onClick={() => onNavigateToAsset?.(c.symbol)}>
+                {c.symbol} {c.name} · {c.signalCode === 'EXIT' ? '撤退判断' : '資金防衛'} ↗
+              </button>
             ))}
           </span>
         </div>
@@ -924,14 +544,16 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
               titleJa: `[${SEV_JA[n.severity]}] ${n.titleJa}`, bodyJa: n.bodyJa }))}
           backupUnprotected={assessBackupSafety(assets).protectionLevel === 'unprotected'}
           strategyNote={todayStrategicNoteJa(portfolioStrategy)}
-          fireNote={fireCoreTodayNoteJa(latestFireCore())}
+          fireNote={fireCoreTodayNoteJa(fireCore)}
           onNavigate={onNavigate}
         />
 
         <OvernightChangesCard headingEn={overview.sessionHeadingEn} changes={overview.changes} />
         <YourExposureCard exposures={overview.exposures}
-          noHoldings={positionExposure.noHoldings} onNavigate={onNavigate} />
-        <TodayActionQueue actions={overview.actions} />
+          noHoldings={positionExposure.noHoldings} onNavigate={onNavigate}
+          onOpenAsset={(sym) => onNavigateToAsset?.(sym)} />
+        <TodayActionQueue actions={overview.actions}
+          onOpenAsset={(sym) => onNavigateToAsset?.(sym)} />
         <NextCheckCard nextCheck={overview.nextCheck} />
       </div>
 

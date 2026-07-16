@@ -186,7 +186,7 @@ export function buildAssetCard(asset: AssetLike, ctx: BuildCtx): AssetCardModel 
 const EXISTING_JA: Record<SignalCode, string> = {
   EXIT: '撤退判断', DEFEND: '資金防衛', REVIEW: '再点検', PAUSE: '監視', HOLD_ONLY: '維持', PREPARE: '維持', ENTER: '維持',
 };
-function existingJa(code: SignalCode): string { return EXISTING_JA[code] ?? '維持'; }
+export function existingJa(code: SignalCode): string { return EXISTING_JA[code] ?? '維持'; }
 
 // Lower signal level = more defensive = higher concern. Held + incident bumps it.
 function severityRank(code: SignalCode, sev?: string, held?: boolean): number {

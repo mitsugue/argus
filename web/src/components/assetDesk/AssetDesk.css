@@ -1,0 +1,66 @@
+/* V12.2.12 — Asset Desk(個別銘柄の正本ページ)。カード内部はuac-*/asset-*の
+   既存スタイルを再利用し、ここでは閉じたカードのヘッダ行(ad-*)とリスト枠のみ。 */
+
+.ad-card { position: relative; }
+.ad-handle {
+  position: absolute; left: 2px; top: 10px; z-index: 2;
+  background: transparent; border: none; color: var(--text-faint);
+  cursor: grab; font-size: 12px; padding: 2px 4px; touch-action: none;
+}
+
+.ad-head {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: none; cursor: pointer; padding: 8px 10px 7px; color: var(--text-main);
+}
+.ad-card .ad-head { padding-left: 18px; }
+
+.ad-l1, .ad-l2, .ad-foot { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.ad-l1 { margin-bottom: 3px; }
+.ad-held {
+  font-size: 9px; color: var(--bg, #0b0e13); background: var(--accent);
+  border-radius: 3px; padding: 0 4px; font-weight: 700;
+}
+.ad-watch { font-size: 9px; color: var(--text-faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.ad-sym { font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
+.ad-name { font-size: 11.5px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch; }
+.ad-mkt { font-size: 9px; color: var(--text-faint); border: 1px solid var(--line); border-radius: 999px; padding: 0 5px; }
+.ad-price { font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
+.ad-chg { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.ad-fresh { font-size: 9.5px; }
+.ad-asof { font-size: 9.5px; color: var(--text-faint); }
+
+.ad-l2 { margin-bottom: 3px; }
+.ad-cmd { font-weight: 800; font-size: 12px; letter-spacing: 0.04em; }
+.ad-src { font-size: 9px; border-radius: 3px; padding: 0 5px; font-weight: 700; letter-spacing: 0.03em; }
+.ad-src--ai { color: var(--value-positive); border: 1px solid var(--value-positive); }
+.ad-src--rule { color: var(--amber, #fbbf24); border: 1px solid var(--amber, #fbbf24); }
+.ad-meta { font-size: 10px; color: var(--text-faint); }
+.ad-prio { font-size: 10px; font-weight: 700; }
+
+.ad-reason {
+  display: block; font-size: 11px; color: var(--text-sub); margin: 0 0 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ad-foot { font-size: 10px; color: var(--text-faint); }
+.ad-next { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
+.ad-warn { font-weight: 600; }
+.ad-event { border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; margin-right: 4px; }
+
+.ad-rank-head {
+  font-size: 9.5px; color: var(--text-faint); letter-spacing: 0.06em;
+  padding: 7px 8px 2px; border-bottom: 1px dashed var(--line);
+}
+.ad-filter-sep { color: var(--line); margin: 0 2px; }
+.ad-list { padding: 0 0 4px; }
+.ad-sec { scroll-margin-top: 64px; }
+#asset-anchor-none { display: none; }
+.ad-card { scroll-margin-top: 60px; }
+
+@media (max-width: 640px) {
+  .ad-name { max-width: 18ch; }
+  .ad-next { max-width: 100%; }
+}
+
+/* リサーチメモ/Holdingのラベルは縦flex内で130px基底が高さになる(旧行レイアウト用) — 打ち消し */
+.ad-card .asset-detail__note .asset-detail__k,
+.ad-card .asset-hold .asset-detail__k { flex: 0 0 auto; }

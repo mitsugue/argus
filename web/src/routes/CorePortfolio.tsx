@@ -10,7 +10,14 @@ import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
 import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
 import { useFundNav } from '../hooks/useFundNav';
+import { useActionLabels } from '../hooks/useActionLabels';
+import { useCatalysts } from '../hooks/useCatalysts';
 import { buildExposure } from '../lib/portfolio';
+import { PortfolioExposureCard } from '../components/dashboard/PortfolioExposureCard';
+import { WhatIfPanel } from '../components/dashboard/WhatIfPanel';
+import type { QuoteLite } from '../lib/assetStrategy';
+import type { ActionLabel } from '../types/actionLabels';
+import type { CatalystItem } from '../types/catalysts';
 import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
 import { buildPositionExposure } from '../domain/positionExposure';
@@ -75,6 +82,41 @@ export const CorePortfolio: React.FC = () => {
   }, [jp.data, us.data, crypto.byId, cryptoPairs]);
 
   const exp = useMemo(() => buildExposure(assets, priceOf, usdJpy), [assets, priceOf, usdJpy]);
+  // V12.2.12: What-if用のQuoteLite/ラベル/材料マップ(旧AssetStrategySectionの
+  // maps相当・計算不変)。数量/単価は端末内のみ。
+  const al = useActionLabels({ jp: jpSyms, us: usSyms });
+  const cat = useCatalysts();
+  const mountTs = useMemo(() => Date.now(), []);
+  const whatIfMaps = useMemo(() => {
+    const quotes = new Map<string, QuoteLite>();
+    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
+    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
+    for (const p of cryptoPairs) {
+      const q = crypto.byId[p.id];
+      if (q) quotes.set(p.symbol, { price: q.priceUsd, changePct: q.changePct, volume: q.volume, date: q.date, status: q.status });
+    }
+    const labels = new Map<string, ActionLabel>();
+    for (const l of al.data?.labels ?? []) labels.set(l.symbol, l);
+    const cats = new Map<string, CatalystItem>();
+    for (const c of cat.data?.items ?? []) cats.set(c.symbol, c);
+    // 投信(基準価額)もWhat-if候補に含める(旧実装のname寄せそのまま)
+    for (const a of assets) {
+      if (genreOf(a) !== 'funds') continue;
+      const sym = (a.symbol || '').toUpperCase();
+      const nm = `${a.displayName || ''} ${a.displayNameJa || ''}`.toLowerCase();
+      const want = (kw: string) => sym.includes(kw) || nm.includes(kw.toLowerCase());
+      for (const f of navFunds) {
+        const fn = (f.name || '').toLowerCase();
+        if ((fn.includes('全世界') && (want('ACWI') || nm.includes('全世界') || nm.includes('オルカン') || nm.includes('オール')))
+          || (fn.includes('s&p500') && (want('SP500') || want('S&P') || nm.includes('米国')))
+          || (fn.includes('国内') && (want('N225') || want('NIKKEI') || nm.includes('国内') || nm.includes('日経')))) {
+          quotes.set(a.symbol, { price: f.navYen, changePct: f.changePct ?? 0, volume: 0, date: f.date, status: 'live' });
+          break;
+        }
+      }
+    }
+    return { quotes, labels, cats };
+  }, [jp.data, us.data, crypto.byId, cryptoPairs, al.data, cat.data, assets, navFunds]);
   // V11.8.0 exposure dashboard — themes/currency/top positions/risk flags.
   // Device-local math over localStorage holdings; nothing is uploaded.
   const pe = useMemo(() => {
@@ -144,6 +186,12 @@ export const CorePortfolio: React.FC = () => {
         </div>
       </section>
 
+      {/* V12.2.12: Portfolio Exposure + What-if(旧Watchlistから移設・計算不変)。
+          ポートフォリオ横断機能はこのページに集約(Asset Deskは個別銘柄専用)。 */}
+      <PortfolioExposureCard assets={assets} exp={exp} />
+      <WhatIfPanel assets={assets} quotes={whatIfMaps.quotes} labels={whatIfMaps.labels}
+                   cats={whatIfMaps.cats} exp={exp} usdJpy={usdJpy} mountTs={mountTs} />
+
       {/* PORTFOLIO SCENARIO (v11.17.0) — 保有全体の条件付き分岐(端末内合成)。
           Todayを開いた後に計算済みシナリオから合成。単一予測・売買指示なし。 */}
       {(() => {
@@ -161,7 +209,7 @@ export const CorePortfolio: React.FC = () => {
                 <p className="cmd-alloc__note">
                   {allSets.length === 0
                     ? 'Todayページを一度開くと、保有銘柄の支配シナリオからポートフォリオ全体の分岐を表示します(端末内計算)。'
-                    : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Watchlistで保有数量を入力すると端末内で合成されます。捏造しません)。'}
+                    : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Asset Deskで保有数量を入力すると端末内で合成されます。捏造しません)。'}
                 </p>
               ) : (
                 <>
@@ -171,7 +219,7 @@ export const CorePortfolio: React.FC = () => {
                   </p>
                   <p className="cmd-alloc__note" style={{ color: 'var(--text-faint)' }}>{ps.detailJa}</p>
                   <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はTodayの各カード→SCENARIOSで。
+                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はAsset Deskの各カード→SCENARIOSで。
                   </p>
                 </>
               )}
@@ -292,7 +340,7 @@ export const CorePortfolio: React.FC = () => {
                 </p>
               ))}
               <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                比率の高い銘柄は追加より先にリスク確認。詳細条件はTodayの各カード→POSITION PLANで。
+                比率の高い銘柄は追加より先にリスク確認。詳細条件はAsset Deskの各カード→DECISIONで。
                 これは計画であり売買指示ではありません(注文機能はありません)。
               </p>
             </div>
@@ -324,7 +372,7 @@ export const CorePortfolio: React.FC = () => {
           {pe.noHoldings ? (
             <p className="cmd-alloc__empty">
               ポジション数量・取得単価が未入力のため、保有リスクは暫定です。
-              Watchlistの銘柄行で入力すると、テーマ集中・通貨偏り・銘柄集中を判定します(端末内のみ)。
+              Asset Deskの銘柄カードで入力すると、テーマ集中・通貨偏り・銘柄集中を判定します(端末内のみ)。
             </p>
           ) : (
             <>

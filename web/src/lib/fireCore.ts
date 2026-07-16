@@ -155,7 +155,7 @@ export function buildLocalFireCore(assets: AssetItem[], pe: PortfolioExposure,
   ].slice(0, 4);
 
   const summaryJa = fireCoreTotal == null
-    ? 'FIRE Core(投資信託)の評価額が未入力です。Watchlistで投信の口数を入力するか、下の欄で現在評価額を手動入力してください。'
+    ? 'FIRE Core(投資信託)の評価額が未入力です。Asset Deskで投信の口数を入力するか、下の欄で現在評価額を手動入力してください。'
     : `${share != null ? `FIRE Core合計は既知資産の${share.toFixed(0)}%です。` : ''}${tacRatio != null ? `戦術枠/FIRE Core比は${tacRatio.toFixed(2)}(${RATIO_BAND_JA[tacBand]})。` : ''}投資信託はFIREの本丸資産として追跡中です。`;
 
   return {
