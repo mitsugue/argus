@@ -1,22 +1,14 @@
 {
- "asOf": "2026-07-15T09:17:30Z",
+ "asOf": "2026-07-16T09:22:14Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-07-15",
+ "day": "2026-07-16",
  "dayRemainingUsd": 5.0,
  "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
- "lastRun": {
-  "at": "2026-07-15T09:01:20Z",
-  "estimated": true,
-  "gemStatus": "unavailable",
-  "oaiStatus": "live",
-  "rows": [],
-  "runId": "2026-07-15T09:01:20Z",
-  "totalUsd": 0.0
- },
- "lastRunCostUsd": 0.0,
+ "lastRun": null,
+ "lastRunCostUsd": null,
  "month": "2026-07",
  "monthRemainingUsd": 80.0,
  "monthSpentUsd": 0.1336,
@@ -36,42 +28,5 @@
    "out": 10.0
   }
  },
- "recentRuns": [
-  {
-   "at": "2026-07-15T09:01:20Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-15T09:01:20Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-15T07:04:51Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-15T07:04:51Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-15T07:03:38Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-15T07:03:38Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-07-15T07:02:48Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-07-15T07:02:48Z",
-   "totalUsd": 0.0
-  }
- ]
+ "recentRuns": []
 }

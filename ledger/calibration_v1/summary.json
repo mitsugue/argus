@@ -3,72 +3,72 @@
   "cohorts": {
     "tactical_benchmark_fixed": {
       "1d": {
-        "n": 98,
-        "hitRate": 0.6327,
-        "brierMean": 0.19,
-        "rpsMean": 0.1628
+        "n": 105,
+        "hitRate": 0.6381,
+        "brierMean": 0.1889,
+        "rpsMean": 0.161
       },
       "3d": {
-        "n": 84,
-        "hitRate": 0.5,
-        "brierMean": 0.2098,
-        "rpsMean": 0.1878
+        "n": 91,
+        "hitRate": 0.4835,
+        "brierMean": 0.2129,
+        "rpsMean": 0.1926
       },
       "5d": {
-        "n": 70,
-        "hitRate": 0.4429,
-        "brierMean": 0.2246,
-        "rpsMean": 0.2146
+        "n": 77,
+        "hitRate": 0.4286,
+        "brierMean": 0.2274,
+        "rpsMean": 0.2185
       }
     },
     "experimental_cohort": {
       "1d": {
-        "n": 14,
-        "hitRate": 0.2857,
-        "brierMean": 0.2526,
-        "rpsMean": 0.2602
+        "n": 15,
+        "hitRate": 0.2667,
+        "brierMean": 0.2576,
+        "rpsMean": 0.2672
       },
       "3d": {
-        "n": 12,
-        "hitRate": 0.1667,
-        "brierMean": 0.2826,
-        "rpsMean": 0.3043
+        "n": 13,
+        "hitRate": 0.2308,
+        "brierMean": 0.2726,
+        "rpsMean": 0.2867
       },
       "5d": {
-        "n": 10,
+        "n": 11,
         "hitRate": 0.0,
-        "brierMean": 0.3107,
-        "rpsMean": 0.3524
+        "brierMean": 0.3121,
+        "rpsMean": 0.3535
       }
     },
     "regime_sensor_fixed": {
       "1d": {
-        "n": 150,
-        "hitRate": 0.88,
-        "brierMean": 0.1471,
-        "rpsMean": 0.0964
+        "n": 162,
+        "hitRate": 0.8889,
+        "brierMean": 0.1456,
+        "rpsMean": 0.0941
       },
       "3d": {
-        "n": 126,
-        "hitRate": 0.746,
-        "brierMean": 0.1699,
-        "rpsMean": 0.1288
+        "n": 137,
+        "hitRate": 0.7518,
+        "brierMean": 0.1688,
+        "rpsMean": 0.1273
       },
       "5d": {
-        "n": 104,
-        "hitRate": 0.6635,
-        "brierMean": 0.1854,
-        "rpsMean": 0.1538
+        "n": 115,
+        "hitRate": 0.687,
+        "brierMean": 0.1815,
+        "rpsMean": 0.1479
       }
     }
   },
   "epochId": "calibration_v1",
   "status": "dry_run",
-  "updated": "2026-07-15",
+  "updated": "2026-07-16",
   "recorded": 20,
-  "scored": 60,
+  "scored": 58,
   "held": 0,
-  "totalRows": 282,
-  "tradingDays": 15,
+  "totalRows": 302,
+  "tradingDays": 16,
   "noteJa": "v4のparallel dry-run(本番ヘッドラインではない)。v3とは別ディレクトリ。市場別クロックでJPを採点、US/cryptoは正しい時刻のジョブ実装まで保留。"
 }
