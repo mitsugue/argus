@@ -209,13 +209,18 @@ def test_fe_osint_pack_and_ui():
 
 
 def test_fe_unified_stance_chip_everywhere():
-    card = _read("components", "dashboard", "UnifiedAssetCard.tsx")
-    assert "primaryStance" in card and "構え:" in card
+    # v12.2.12: 銘柄カードはAsset Deskへ・構え解決はuseAssetIntel(共有正本)へ移設。
+    # ガード意図(単一の構えチップが全カード+APで同一ソース)は不変。
+    card = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
+    assert "pst" in card and "構え:" in card
     ap = _read("components", "dashboard", "ActionPrioritySection.tsx")
     assert "stances" in ap and "統一スタンス" in ap
+    intel = _read("hooks", "useAssetIntel.ts")
+    assert "resolvePrimaryStance" in intel and "stanceBySymbol" in intel
     cc = _read("routes", "CommandCenter.tsx")
-    assert "resolvePrimaryStance" in cc
-    assert cc.count("stances={stanceBySymbol}") >= 3          # JP/US/CRYPTO/AP
+    assert "stances={stanceBySymbol}" in cc                   # Today AP
+    desk = _read("components", "assetDesk", "AssetDeskList.tsx")
+    assert "stanceBySymbol.get(sym)" in desk                  # Asset Deskカード
 
 
 # ── 非漏洩/文言(新規面) ─────────────────────────────────────────────────────
@@ -240,9 +245,12 @@ def test_addendum_risk_chips_split_in_fe():
     assert "MARKET RISK:" in src
     assert "POSITION RISK:" in src
     assert "保有銘柄のリスク確認が先" in src          # HOLD理由の一行
+    # v12.2.12: 保有リスクチップの算出はuseAssetIntel(Today/Asset Desk共有)へ移設。
+    intel = _read("hooks", "useAssetIntel.ts")
+    assert "保有銘柄に要確認あり" in intel
+    assert "保有数量未入力" in intel
     cc = _read("routes", "CommandCenter.tsx")
-    assert "保有銘柄に要確認あり" in cc
-    assert "保有数量未入力" in cc
+    assert "positionRisk" in cc                               # チップはTodayに残存
 
 
 # ── 追補2: JP OPEN ≠ JPリアルタイム ─────────────────────────────────────────

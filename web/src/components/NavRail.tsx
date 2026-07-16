@@ -19,14 +19,15 @@ interface NavItem {
   label: string;
 }
 
-// Order = the professional decision flow (V12.2.11): 1) Today = stance/changes/
-// actions, 2) Positions & Risk = what it means for MY assets, 3) Watchlist =
-// individual entries, 4) Market Context = the backdrop. Route keys are UNCHANGED
-// (command/core/watchlist/regime) — only labels and order are display concerns.
+// Order = the professional decision flow (V12.2.12): 1) Today = stance/changes/
+// actions, 2) Asset Desk = per-asset judgment + evidence (the single canonical
+// per-stock page, ex-Watchlist), 3) Positions & Risk = portfolio-wide meaning,
+// 4) Market Context = the backdrop. Route keys are UNCHANGED
+// (command/watchlist/core/regime) — only labels and order are display concerns.
 const NAV: NavItem[] = [
   { key: 'command',   label: 'Today' },
+  { key: 'watchlist', label: 'Asset Desk' },
   { key: 'core',      label: 'Positions & Risk' },
-  { key: 'watchlist', label: 'Watchlist' },
   { key: 'regime',    label: 'Market Context' },
 ];
 

@@ -181,7 +181,7 @@ export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
     totalRiskLevel: totalRisk, themeRisk, singleNameRisk: singleRisk,
     drawdownSensitivity: ddSens,
     summaryJa: noHold
-      ? '保有数量が未入力のため、戦略判定は保留です(Watchlistで入力すると端末内で判定します)。'
+      ? '保有数量が未入力のため、戦略判定は保留です(Asset Deskで入力すると端末内で判定します)。'
       : `現在の構成は${MODE_JA[mode]}(コア+ヘッジ約${Math.round(coreLike)}% / サテライト約${Math.round(sat)}% / 戦術枠約${Math.round(tac)}%)。FIRE整合は「${FIRE_JA[fire]}」、短期勝負枠は${BUDGET_JA[tacBudget]}です。`,
     riskJa,
     warningsJa,

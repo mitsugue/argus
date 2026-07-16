@@ -8,7 +8,9 @@ import './Today.css';
 
 export const TodayActionQueue: React.FC<{
   actions: TodayActionView[];
-}> = ({ actions }) => (
+  /** V12.2.12: 銘柄付きアクション→Asset Deskの当該カードを開く。 */
+  onOpenAsset?: (symbol: string) => void;
+}> = ({ actions, onOpenAsset }) => (
   <section className="tcard tg-span-8" aria-label="Action queue">
     <div className="tcard__head">
       <span className="tcard__title">Action Queue</span>
@@ -23,7 +25,13 @@ export const TodayActionQueue: React.FC<{
               {a.timing}
             </span>
             <span className="tq__action">
-              {a.targetJa && <span className="tq__target">{a.targetJa}</span>}
+              {a.targetJa && (a.symbol && onOpenAsset ? (
+                <button type="button" className="tq__target tq__target--link"
+                        title="Asset Deskでこの銘柄を開く"
+                        onClick={() => onOpenAsset(a.symbol!)}>{a.targetJa} ↗</button>
+              ) : (
+                <span className="tq__target">{a.targetJa}</span>
+              ))}
               {a.actionJa}
               {a.priorityRank && (a.priorityRank === 'P0' || a.priorityRank === 'P1') && (
                 <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}

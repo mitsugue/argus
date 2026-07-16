@@ -287,7 +287,8 @@ def test_fe_osint_deep_dive_ui():
                    "ニュース探索が不十分です。深掘りOSINTまたはGemini/GPT比較を推奨。",
                    "argus.osintPaste.v1", "検証されるまで証拠として扱いません"):
         assert needle in src, needle
-    card = _read("components", "dashboard", "UnifiedAssetCard.tsx")
+    # v12.2.12: 銘柄カードはAsset Desk(AssetResearchPanel)へ移設 — ガード意図は不変。
+    card = _read("components", "assetDesk", "AssetResearchPanel.tsx")
     assert "OsintDeepDive" in card
 
 

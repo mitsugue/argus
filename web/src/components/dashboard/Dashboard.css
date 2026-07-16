@@ -1479,3 +1479,10 @@
 .mdepth__status { font-weight: 700; font-size: 11px; letter-spacing: .03em; flex: none; }
 
 .mdepth__probed { font-size: 9px; font-weight: 700; color: var(--value-positive, #34d399); margin-left: 5px; padding: 0 4px; border:1px solid color-mix(in srgb, var(--value-positive,#34d399) 40%, transparent); border-radius: 4px; }
+
+/* V12.2.12 — OWNER CRITICAL: 銘柄をAsset Deskへ飛ばすボタン化 */
+.owner-critical__item--link {
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  color: inherit; font: inherit; text-decoration: underline dotted;
+}
+.owner-critical__item--link:hover { text-decoration: underline; }

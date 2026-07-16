@@ -179,7 +179,8 @@ def test_fe_fire_core_manual_update_wording():
 
 
 def test_fe_investigate_button_outside_details():
-    src = _read("components", "dashboard", "UnifiedAssetCard.tsx")
+    # v12.2.12: 銘柄カードはAsset Desk(AssetWhyPanel)へ移設 — ガード意図は不変。
+    src = _read("components", "assetDesk", "AssetWhyPanel.tsx")
     btn = src.index("AiExplanationBlock symbol=")
     details = src.index("詳細データ(値動き・原因分析)を見る")
     assert btn < details, "即時調査ボタンは詳細データ折りたたみの外(前)に出す"

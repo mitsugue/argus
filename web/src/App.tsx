@@ -14,8 +14,14 @@ import { useImportantEvents } from './hooks/useImportantEvents';
 import { nextUpcomingEvent } from './lib/eventClock';
 import { startCloudSync } from './lib/vault';
 
+import type { AssetFocusIntent } from './components/assetDesk/AssetDeskList';
+
 interface RouteProps {
   onNavigate: (key: RouteKey) => void;
+  /** V12.2.12: Asset Deskの銘柄カードを開いてスクロールする遷移(Today等から)。 */
+  onNavigateToAsset?: (symbol: string, section?: string) => void;
+  /** V12.2.12: Asset Deskへ渡す展開対象(state経由 — CustomEventだけに依存しない)。 */
+  assetFocus?: AssetFocusIntent | null;
 }
 
 const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
@@ -30,6 +36,10 @@ const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
 
 const App: React.FC = () => {
   const [route, setRoute] = useState<RouteKey>('command');
+  // V12.2.12: Asset Desk deep-link intent — Today(OWNER CRITICAL/Your Exposure/
+  // Action Queue/例外サマリー)から「この銘柄を開く」。nonceで同一銘柄の再クリック
+  // も再スクロールされる。localStorageには保存しない(一時的なUI意図のみ)。
+  const [assetFocus, setAssetFocus] = useState<AssetFocusIntent | null>(null);
   // The AI review sheet lives outside the main 6 routes — accessible only
   // via #review in the URL hash so it can be shared without polluting the
   // nav. Reviewers paste the URL into ChatGPT (or click "Copy markdown").
@@ -121,13 +131,20 @@ const App: React.FC = () => {
     setRoute(key);
   };
 
+  // V12.2.12: Todayの銘柄行→Asset Deskの当該カードを開いてスクロール。
+  const navigateToAsset = (symbol: string, section?: string) => {
+    exitReview();
+    setAssetFocus({ symbol: symbol.toUpperCase(), section, nonce: Date.now() });
+    setRoute('watchlist');
+  };
+
   // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
-  // Keep in sync with NavRail's NAV order (V12.2.11: Today → Positions & Risk →
-  // Watchlist → Market Context; route keys unchanged).
-  const NAV_ORDER: RouteKey[] = ['command', 'core', 'watchlist', 'regime', 'backup', 'quality', 'guide'];
+  // Keep in sync with NavRail's NAV order (V12.2.12: Today → Asset Desk →
+  // Positions & Risk → Market Context; route keys unchanged).
+  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'core', 'regime', 'backup', 'quality', 'guide'];
   const NAV_LABEL: Record<RouteKey, string> = {
     command: 'Today', regime: 'Market Context',
-    watchlist: 'Watchlist', core: 'Positions & Risk', backup: 'Backup',
+    watchlist: 'Asset Desk', core: 'Positions & Risk', backup: 'Backup',
     quality: 'Data Quality', guide: 'Guide',
   };
   const curIdx = NAV_ORDER.indexOf(route);
@@ -159,7 +176,7 @@ const App: React.FC = () => {
       overscrollPrev={overscrollPrev}
       pageKey={isReview ? 'review' : route}
     >
-      {isReview ? <AIReview /> : <Active onNavigate={handleNavSelect} />}
+      {isReview ? <AIReview /> : <Active onNavigate={handleNavSelect} onNavigateToAsset={navigateToAsset} assetFocus={assetFocus} />}
     </AppShell>
   );
 };

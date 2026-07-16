@@ -184,3 +184,22 @@
 @media (prefers-reduced-motion: reduce) {
   .today-grid * { transition: none !important; animation: none !important; }
 }
+
+/* V12.2.12 — Asset Deskへのdeep-linkボタン(銘柄行) */
+.texp__name--link, .tq__target--link {
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font: inherit; text-align: left;
+}
+.texp__name--link:hover, .tq__target--link:hover { text-decoration: underline; }
+
+/* V12.2.12 — RESEARCH & SIGNALS内の例外サマリー */
+.tex-sum__row { display: flex; align-items: baseline; gap: 7px; padding: 3px 0; flex-wrap: wrap; }
+.tex-sum__sym {
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font-weight: 700; font-size: 12px;
+}
+.tex-sum__sym:hover { text-decoration: underline; }
+.tex-sum__tag { font-size: 10px; color: var(--value-negative); }
+.tex-sum__src { font-size: 9px; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--text-faint); }
+.tex-sum__reason { font-size: 10.5px; color: var(--text-sub); flex-basis: 100%; margin: 0; }
+.tex-sum__foot { margin: 6px 0 0; font-size: 11px; }
