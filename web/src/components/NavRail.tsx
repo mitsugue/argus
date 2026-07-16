@@ -19,14 +19,15 @@ interface NavItem {
   label: string;
 }
 
-// Order = the user's decision flow (2026-06-13): 1) Today = whole-market
-// grasp, 2) Watchlist = individual entries (⚡ entry scout lives here),
-// 3+) everything else is supporting information.
+// Order = the professional decision flow (V12.2.11): 1) Today = stance/changes/
+// actions, 2) Positions & Risk = what it means for MY assets, 3) Watchlist =
+// individual entries, 4) Market Context = the backdrop. Route keys are UNCHANGED
+// (command/core/watchlist/regime) — only labels and order are display concerns.
 const NAV: NavItem[] = [
   { key: 'command',   label: 'Today' },
+  { key: 'core',      label: 'Positions & Risk' },
   { key: 'watchlist', label: 'Watchlist' },
   { key: 'regime',    label: 'Market Context' },
-  { key: 'core',      label: 'Core Portfolio' },
 ];
 
 interface Props {

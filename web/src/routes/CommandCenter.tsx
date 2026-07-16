@@ -1,7 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
-import { HeroCard } from '../components/dashboard/HeroCard';
 import { AssetCategorySection } from '../components/dashboard/AssetCategorySection';
+import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
+import { TodayStanceCard } from '../components/today/TodayStanceCard';
+import { OvernightChangesCard } from '../components/today/OvernightChangesCard';
+import { YourExposureCard } from '../components/today/YourExposureCard';
+import { TodayActionQueue } from '../components/today/TodayActionQueue';
+import { NextCheckCard } from '../components/today/NextCheckCard';
+import { TodayDetails, type DetailGroup } from '../components/today/TodayDetails';
+import { TodayAttention } from '../components/today/TodayAttention';
+import { buildTodayOverview } from '../domain/todayOverview';
 import { FxMacroSection } from '../components/dashboard/FxMacroSection';
 import { CaosHub } from '../components/dashboard/CaosHub';
 import { FlowAttributionSection } from '../components/dashboard/FlowAttributionSection';
@@ -38,7 +46,6 @@ import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
 import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
-import { CollapsibleSection, resetTodayLayout } from '../components/common/CollapsibleSection';
 import { resolvePrimaryStance, type ResolvedStance } from '../domain/primaryStance';
 import { resolveCommandSummary, SIGNALS as CS_SIGNALS } from '../domain/commandSummary';
 import { nextUpcomingEvent } from '../lib/eventClock';
@@ -582,19 +589,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
   const visLimited = !!guard && guard.visibilityLevel !== 'full';
 
-  // v12.0.8追補: ヒーローと同じ解決器で総合コマンドの買い増し可否を一度だけ判定 —
-  // 下位の「小さく買い増し可」がヒーローの「買い増し: 禁止」と並ぶ矛盾を根治。
+  // v12.0.8追補: ヒーローと同じ解決器で総合コマンドを一度だけ解決 —
+  // v12.2.11: Today's Stanceカードとadd可否判定が同一のsummaryを共有する
+  // (判定条件は不変・resolveCommandSummaryの呼び出し内容も従来と同一)。
+  const commandSummary = useMemo(() => resolveCommandSummary({
+    legacyAction: judgment.overall, globalRegime: overlay?.globalRegime,
+    jpOverlay: overlay?.jpIntradayOverlay, ownerRisk: overlay?.holderRiskOverlay,
+    risk: judgment.risk, isPartial: isPartial || visLimited,
+    confidence: cappedConf, nextConditionJa: judgment.nextCondition,
+  }), [judgment, overlay, isPartial, visLimited, cappedConf]);
   const globalAddProhibited = useMemo(() => {
     try {
-      const gs = resolveCommandSummary({
-        legacyAction: judgment.overall, globalRegime: overlay?.globalRegime,
-        jpOverlay: overlay?.jpIntradayOverlay, ownerRisk: overlay?.holderRiskOverlay,
-        risk: judgment.risk, isPartial: isPartial || visLimited,
-        confidence: cappedConf, nextConditionJa: judgment.nextCondition,
-      });
-      return CS_SIGNALS[gs.signalCode].permissions.add === 'BLOCKED';
+      return CS_SIGNALS[commandSummary.signalCode].permissions.add === 'BLOCKED';
     } catch { return false; }
-  }, [judgment, overlay, isPartial, visLimited, cappedConf]);
+  }, [commandSummary]);
 
   // v12.0.8追補: 保有リスクチップ(市場リスクと分離) — 保有×P0/P1件数から。
   const positionRisk = useMemo(() => {
@@ -676,203 +684,110 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return { diffLineJa: line, recent: recentJudgments(7) };
   }, [logTick, judgment, phase, al.data]);
 
-  return (
-    <PageShell
-      title={tEn('page.today')}
-      subtitle={<span>{formatDate(judgment.date)}</span>}
-    >
-      <MarketSessionLamps />
-
-      {/* LIMITED VISIBILITY (v10.207, owner request): the big yellow "監視に穴があります"
-          banner was removed — the owner wants only the plain "PARTIAL DATA" keyword in its
-          usual place (the hero status line). A situational degradation (visLimited) is now
-          folded into the hero's data-quality below, so it still surfaces as PARTIAL DATA
-          without a dominating card. The guard's confidence cap + ENTER suppression are
-          unchanged (they flow through cappedConf / the signal), and the muted structural
-          coverage line still sits below the hero — nothing loud, nothing lost. */}
-
-      {/* OWNER CRITICAL — a held position on EXIT/DEFEND is surfaced at the very top
-          (small), so a held emergency is never missed below the fold (v10.145). */}
-      {ownerCritical.length > 0 && (
-        <div className="owner-critical" role="alert">
-          <span className="owner-critical__tag">OWNER CRITICAL</span>
-          <span className="owner-critical__items">
-            {ownerCritical.map((c) => (
-              <span key={c.id} className="owner-critical__item">{c.symbol} {c.name} · {c.signalCode === 'EXIT' ? '撤退判断' : '資金防衛'}</span>
-            ))}
-          </span>
-        </div>
-      )}
-
-      {/* Top page = the main hub (v10.140). Order: PRIMARY COMMAND (+ IMPORTANT
-          EVENTS as its lower block) → per-stock category cards (JP first, watchlist
-          before emerging) → FX/MACRO → news → history. ONE unified card per stock. */}
-      <HeroCard judgment={judgment} overlay={overlay} isPartialData={isPartial || visLimited} confidence={cappedConf} visibilityReasonJa={al.data?.visibility?.downgradeReasonJa}
-        positionRisk={positionRisk}
-        partialReasonsJa={(() => {
-          // v12.0.8 Part D: 部分データの理由(実際に該当するものだけ・上位4件)
-          const rs: string[] = [];
-          if (guard?.coverageLineJa) rs.push(guard.coverageLineJa);
-          const dqc = latestDataQuality();
-          if (dqc && dqc.overallStatus !== 'ok') rs.push(`データ品質: ${dqc.overallStatusJa}(${dqc.topIssuesJa[0] ?? '一部ソースが古い/不明'})`);
-          rs.push('日本株リアルタイムはmoomoo側メンテナンス中(サポート確認済み) — 代替データで判定');
-          if (al.data?.status === 'partial') rs.push('判定ソースの一部が未取得(コールドキャッシュ/巡回待ち)');
-          return rs;
-        })()}
-        partialRaiseJa="JPリアルタイム復旧(ret=0確認後) / イベント・機関データの巡回更新 / 需給キャッシュのウォームで上限が上がります"
-        onNavigate={onNavigate} />
-
-      {/* Structural coverage line (v10.195) — always present but MUTED (not an alarm):
-          the owner is never falsely reassured that ARGUS sees everything. */}
-      {guard?.coverageLineJa && (
-        <p className="visibility-coverage">{guard.coverageLineJa}</p>
-      )}
-
-      {/* C.A.O.S. — the 2nd card, ALWAYS present. One intelligence hub folding three tiers:
-          機関シグナル (institutional views) + イベント分析 (pre/post) + ニュース (market news).
-          News is always live, so the card never disappears even when intel/events are empty. */}
-      {/* v11.14.0: 新着のcritical/high通知だけ最上部に一帯表示(全リストはベル) */}
-      {(() => {
-        const hot = listNotifications().filter((n) => n.deliveryState === 'new'
-          && (n.severity === 'critical' || n.severity === 'high')).slice(0, 2);
-        if (!hot.length) return null;
-        return hot.map((n) => (
-          <p key={n.id} style={{ margin: '0 0 4px', fontSize: 12, padding: '5px 9px',
-                                 border: `1px solid ${SEV_TONE[n.severity]}`, borderRadius: 8 }}>
-            <b style={{ color: SEV_TONE[n.severity] }}>[{SEV_JA[n.severity]}]</b>
-            <b style={{ marginLeft: 5 }}>{n.titleJa}</b>
-            <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{n.bodyJa}</span>
-          </p>
-        ));
-      })()}
-
-      {/* v11.16.0: バックアップ未保護×保有あり → 一行警告(保護済みなら非表示) */}
-      {(() => {
-        const b = assessBackupSafety(assets);
-        if (b.protectionLevel === 'unprotected') {
-          return (
-            <p style={{ margin: '0 0 4px', fontSize: 12, padding: '5px 9px',
-                        border: '1px solid var(--value-negative)', borderRadius: 8 }}>
-              <b style={{ color: 'var(--value-negative)' }}>バックアップ未保護：</b>
-              <span style={{ color: 'var(--text-sub)' }}>保有データはこの端末内にあります。暗号化バックアップを有効化してください(Backupページ)。</span>
-            </p>
-          );
+  // ── V12.2.11: Today Overview view model(表示用の選択・優先順位付け・重複排除
+  // のみ — 新しい投資判断は生成しない。既存レイヤーの出力を渡すだけ)。
+  const eventLinkedHeldSymbols = useMemo(() => {
+    const held = new Set(Object.entries(positionExposure.notes)
+      .filter(([, n]) => n.held).map(([sym]) => sym));
+    const out = new Set<string>();
+    for (const ie of impEvents?.events ?? []) {
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
+        for (const a of ie.linkedAssets ?? []) {
+          const sym = String(a).toUpperCase();
+          if (held.has(sym)) out.add(sym);
         }
-        return null;
-      })()}
+      }
+    }
+    return [...out];
+  }, [impEvents, positionExposure]);
+  const overview = useMemo(() => {
+    void logTick;   // 判断ログ記録後に前回比較を再読込
+    return buildTodayOverview({
+      sessionType: sessionBrief.sessionType,
+      marketStatusJa: sessionBrief.marketStatusJa,
+      prevJudgment: previousJudgment(judgment.date),
+      todayOverall: judgment.overall,
+      todayPosture: al.data?.marketPosture?.label ?? '—',
+      usdJpy: rates.data?.usdJpy ?? null,
+      us10y: rates.data?.us10y ?? null,
+      nextEvent: nextUpcomingEvent(impEvents?.events ?? [], Date.now(), { highImpactOnly: true }),
+      apItems, plans: positionPlans, brief: sessionBrief,
+      exposure: positionExposure, strategy: portfolioStrategy,
+      eventLinkedHeldSymbols,
+    });
+  }, [logTick, judgment, al.data, rates.data, impEvents, apItems, positionPlans,
+      sessionBrief, positionExposure, portfolioStrategy, eventLinkedHeldSymbols]);
 
-      {/* SESSION BRIEF (v11.13.0) — 今日の作戦。Brief=作戦/AP=見る順番 */}
-      <SessionBriefSection brief={sessionBrief} />
+  // PARTIAL DATAの理由(実際に該当するものだけ・上位4件) — 判断の詳細で表示
+  const partialReasonsJa = useMemo(() => {
+    const rs: string[] = [];
+    if (guard?.coverageLineJa) rs.push(guard.coverageLineJa);
+    const dqc = latestDataQuality();
+    if (dqc && dqc.overallStatus !== 'ok') rs.push(`データ品質: ${dqc.overallStatusJa}(${dqc.topIssuesJa[0] ?? '一部ソースが古い/不明'})`);
+    rs.push('日本株リアルタイムはmoomoo側メンテナンス中(サポート確認済み) — 代替データで判定');
+    if (al.data?.status === 'partial') rs.push('判定ソースの一部が未取得(コールドキャッシュ/巡回待ち)');
+    return rs;
+  }, [guard, al.data]);
 
-      {/* v11.19.0: 戦略の一行注意 — 出すべき警告がある時だけ(通常は非表示)。 */}
-      {(() => {
-        const note = todayStrategicNoteJa(portfolioStrategy);
-        if (!note) return null;
-        return (
-          <p style={{ margin: '0 0 6px', fontSize: 12, borderLeft: `2px solid ${note.tone}`,
-                      paddingLeft: 8, color: 'var(--text-sub)' }}>
-            <b style={{ color: note.tone }}>{note.textJa}</b>
-            <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
-              詳細はCore Portfolio→PORTFOLIO STRATEGY(助言ではない)
-            </span>
-          </p>
-        );
-      })()}
-
-      {/* v11.22.0: データ品質の一行警告 — warning/critical時のみ(静かな日は非表示) */}
-      {dqNote && (
-        <p style={{ margin: '0 0 6px', fontSize: 12, borderLeft: `2px solid ${dqNote.tone}`,
-                    paddingLeft: 8, color: 'var(--text-sub)' }}>
-          <b style={{ color: dqNote.tone }}>{dqNote.textJa}</b>
-          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
-            詳細はData Qualityページ(古いデータのレイヤーは確度を割引く)
-          </span>
-        </p>
-      )}
-
-      {/* v11.19.1: FIRE Coreの一行注意 — 評価額未更新/未入力/戦術枠比の時だけ。 */}
-      {(() => {
-        const note = fireCoreTodayNoteJa(latestFireCore());
-        if (!note) return null;
-        return (
-          <p style={{ margin: '0 0 6px', fontSize: 12, borderLeft: `2px solid ${note.tone}`,
-                      paddingLeft: 8, color: 'var(--text-sub)' }}>
-            <b style={{ color: note.tone }}>{note.textJa}</b>
-          </p>
-        );
-      })()}
-
-      {/* ACTION PRIORITY (v11.12.0) — 開いた瞬間「今日これを見る」。売買指示なし */}
-      {/* v11.20.0: AI Review Pack — Todayから直接コピー(自動送信なし) */}
-      <p style={{ margin: '0 0 6px' }}><ProHandoffButton /></p>
-
-      <ActionPrioritySection items={apItems} stances={stanceBySymbol}
-        scenarios={new Map(scenarioSets.map((s) => [s.symbol, s]))} />
-
-      {/* POSITION PLAN (v11.18.0) — 今日の計画上位のみ(P0-P2/保有リスク/追いかけ注意/
-          追加候補/イベント待ち)。Todayを溢れさせない。売買指示ではない。 */}
-      <PositionPlanSection plans={positionPlans} apItems={apItems} />
-
-      <CaosHub />
-
-      {/* v11.21.0: 低優先セクションは「件数+一行結論」に圧縮(既定折りたたみ・
-          開くまでレンダリングしない)。P0/P1と保有リスクは上のAP/PLANで既出。 */}
-      <CollapsibleSection title="BIG MONEY / FLOW" persistKey="flow"
-        countLabel={`${flowRecords.filter((r) => r.flowClass !== 'unknown').length}件`}
-        severityTone={flowRecords.some((r) => ['panic_selling', 'distribution'].includes(r.flowClass))
-          ? 'var(--amber, #fbbf24)' : undefined}
-        conclusionJa={(() => {
-          const bad = flowRecords.filter((r) => ['panic_selling', 'distribution'].includes(r.flowClass)).length;
-          const acc = flowRecords.filter((r) => r.flowClass === 'institutional_accumulation').length;
-          return bad || acc ? `売り圧力推定${bad}件 / 大口買い推定${acc}件` : '本日の大きなフロー推定はありません';
-        })()}>
-        {() => <FlowAttributionSection />}
-      </CollapsibleSection>
-
-      <CollapsibleSection title="PORTFOLIO EXPOSURE" persistKey="exposure"
-        countLabel={positionExposure.noHoldings ? '未入力' : `リスク${positionExposure.risks.length}件`}
-        severityTone={positionExposure.risks.some((r) => ['high', 'critical'].includes(r.riskLevel))
-          ? 'var(--value-negative)' : undefined}
-        defaultOpen={positionExposure.risks.some((r) => ['high', 'critical'].includes(r.riskLevel))}
-        conclusionJa={positionExposure.noHoldings ? '保有数量未入力(監視のみ)'
-          : `集中度: ${positionExposure.singleNameRisk ?? '不明'} / 詳細は展開`}>
-        {() => <PositionRiskSection exposure={positionExposure} />}
-      </CollapsibleSection>
-
-      <CollapsibleSection title="SUPPLY / DEMAND" persistKey="sd"
-        countLabel={`${sdSignals.filter((s) => s.supplyDemandRank !== 'Unknown').length}件`}
-        severityTone={sdSignals.some((s) => ['D', 'E'].includes(s.supplyDemandRank))
-          ? 'var(--amber, #fbbf24)' : undefined}
-        conclusionJa={(() => {
-          const de = sdSignals.filter((s) => ['D', 'E'].includes(s.supplyDemandRank)).length;
-          const sq = sdSignals.filter((s) => s.condition === 'squeeze_prone').length;
-          const heavy = sdSignals.filter((s) => s.condition === 'improving_but_heavy').length;
-          const parts = [de ? `D/E ${de}件` : '', sq ? `踏み上げ候補${sq}件` : '', heavy ? `改善中だが重い${heavy}件` : ''].filter(Boolean);
-          return parts.length ? parts.join(' / ') : '需給に大きな偏りなし';
-        })()}>
-        {() => <SupplyDemandSection signals={sdSignals} />}
-      </CollapsibleSection>
-
-      <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
-      <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
-
-      {/* RECOMMEND — what ARGUS judges is the best to BUY NOW (high-conviction buy signal).
-          The raw surge/stop-high feed was removed (v10.180): the goal is "buy now", not
-          "what spiked". Watchlist-外の発掘。 */}
-      <CollapsibleSection title="RECOMMEND / 発掘" persistKey="recommend"
-        conclusionJa="ウォッチリスト外の高確信候補(開いて確認)">
-        {() => <BuyCandidates />}
-      </CollapsibleSection>
-      <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
-
-      {/* FX / MACRO — the macro backdrop (USDJPY / US10Y / VIX). */}
-      <CollapsibleSection title="FX / MACRO" persistKey="fxmacro" conclusionJa="ドル円・米金利・VIXの背景(開いて確認)">
-        {() => <FxMacroSection />}
-      </CollapsibleSection>
-
-      <CollapsibleSection title="HISTORY / JUDGMENT LOG" persistKey="history"
-        conclusionJa="自己採点と判断履歴(開いて確認)">
-        {() => (
+  // ── Details / Deep Dive(役割別5グループ・初期は閉じる) ─────────────────────
+  const detailGroups: DetailGroup[] = [
+    {
+      title: 'MARKET DETAILS', persistKey: 'g-market',
+      conclusionJa: 'セッション・重要イベント・FX/金利・ニュース/機関シグナル(開いて確認)',
+      render: () => (
+        <>
+          <MarketSessionLamps />
+          <ImportantEventsCard onNavigate={onNavigate} />
+          <CaosHub />
+          <FxMacroSection />
+        </>
+      ),
+    },
+    {
+      title: 'POSITION DETAILS', persistKey: 'g-position',
+      countLabel: positionExposure.noHoldings ? '未入力' : `リスク${positionExposure.risks.length}件`,
+      severityTone: positionExposure.risks.some((r) => ['high', 'critical'].includes(r.riskLevel))
+        ? 'var(--value-negative)' : undefined,
+      defaultOpen: positionExposure.risks.some((r) => ['high', 'critical'].includes(r.riskLevel)),
+      conclusionJa: positionExposure.noHoldings ? '保有数量未入力(監視のみ)'
+        : `集中度: ${positionExposure.singleNameRisk ?? '不明'} / 作戦・優先度・計画・リスクの全詳細`,
+      render: () => (
+        <>
+          <SessionBriefSection brief={sessionBrief} />
+          <ActionPrioritySection items={apItems} stances={stanceBySymbol}
+            scenarios={new Map(scenarioSets.map((s) => [s.symbol, s]))} />
+          <PositionPlanSection plans={positionPlans} apItems={apItems} />
+          <PositionRiskSection exposure={positionExposure} />
+        </>
+      ),
+    },
+    {
+      title: 'RESEARCH & SIGNALS', persistKey: 'g-research',
+      countLabel: `${sdSignals.filter((s) => s.supplyDemandRank !== 'Unknown').length + flowRecords.filter((r) => r.flowClass !== 'unknown').length}件`,
+      severityTone: flowRecords.some((r) => ['panic_selling', 'distribution'].includes(r.flowClass))
+        || sdSignals.some((s) => ['D', 'E'].includes(s.supplyDemandRank))
+        ? 'var(--amber, #fbbf24)' : undefined,
+      conclusionJa: (() => {
+        const bad = flowRecords.filter((r) => ['panic_selling', 'distribution'].includes(r.flowClass)).length;
+        const de = sdSignals.filter((s) => ['D', 'E'].includes(s.supplyDemandRank)).length;
+        const parts = [bad ? `売り圧力推定${bad}件` : '', de ? `需給D/E ${de}件` : ''].filter(Boolean);
+        return parts.length ? `${parts.join(' / ')} / 銘柄カード・発掘` : '銘柄カード・フロー・需給・発掘(開いて確認)';
+      })(),
+      render: () => (
+        <>
+          <FlowAttributionSection />
+          <SupplyDemandSection signals={sdSignals} />
+          <AssetCategorySection title="JAPAN · WATCHLIST" cards={cardGroups.jpWatch} emptyJa="日本株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
+          <AssetCategorySection title="US · WATCHLIST" cards={cardGroups.usWatch} emptyJa="米国株の登録銘柄はありません" positionNotes={positionExposure.notes} supplyDemandSignals={sdSignals} actionPriorities={apItems} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
+          <AssetCategorySection title="CRYPTO" cards={cardGroups.crypto} emptyJa="暗号資産の登録はありません" positionNotes={positionExposure.notes} scenarios={scenarioSets} plans={positionPlans} stances={stanceBySymbol} />
+          <BuyCandidates />
+        </>
+      ),
+    },
+    {
+      title: 'DECISION REVIEW', persistKey: 'g-review',
+      conclusionJa: '自己採点と判断履歴(開いて確認)',
+      render: () => (
         <div className="card jlog">
           <p className="jlog__diff">{diffLineJa}</p>
           {aiStateJa && <p className="jlog__diff" style={{ marginTop: 6 }}>{aiStateJa}</p>}
@@ -937,18 +852,96 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
             </div>
           )}
         </div>
-        )}
-      </CollapsibleSection>
+      ),
+    },
+    {
+      title: 'DATA & SYSTEM', persistKey: 'g-system',
+      severityTone: dqNote ? dqNote.tone : undefined,
+      conclusionJa: dqNote ? dqNote.textJa : 'データ品質・バックアップ・監視カバレッジ(開いて確認)',
+      render: () => {
+        const b = assessBackupSafety(assets);
+        const dqc = latestDataQuality();
+        return (
+          <div className="card" style={{ fontSize: 12, color: 'var(--text-sub)', lineHeight: 1.7 }}>
+            <p style={{ margin: 0 }}>
+              <b style={{ color: 'var(--text-main)' }}>データ品質:</b> {dqc ? `${dqc.overallStatusJa}${dqc.topIssuesJa[0] ? ` — ${dqc.topIssuesJa[0]}` : ''}` : '未取得(Data Qualityページで確認)'}
+            </p>
+            {guard?.coverageLineJa && <p style={{ margin: '4px 0 0' }}>{guard.coverageLineJa}</p>}
+            <p style={{ margin: '4px 0 0' }}>
+              <b style={{ color: 'var(--text-main)' }}>バックアップ:</b> {b.protectionLevelJa ?? b.protectionLevel}
+            </p>
+            <p style={{ margin: '8px 0 0' }}>
+              <button type="button" className="texp__cta" onClick={() => onNavigate('quality')}>Data Quality</button>
+              <button type="button" className="texp__cta" style={{ marginLeft: 8 }} onClick={() => onNavigate('backup')}>Backup</button>
+            </p>
+          </div>
+        );
+      },
+    },
+  ];
 
-      {/* v12.0.6: 折りたたみ状態は端末内に記憶(argus.todayCollapse.v1) — リセットで既定へ */}
-      <p style={{ margin: '4px 0 0', textAlign: 'right' }}>
-        <button type="button"
-          onClick={() => { resetTodayLayout(); window.location.reload(); }}
-          style={{ fontSize: 10, color: 'var(--text-faint)', background: 'transparent',
-                   border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-          セクションの開閉状態をリセット
-        </button>
-      </p>
+  return (
+    <PageShell
+      title={tEn('page.today')}
+      subtitle={<span>{formatDate(judgment.date)}</span>}
+    >
+      {/* OWNER CRITICAL — a held position on EXIT/DEFEND is surfaced at the very top
+          (small), so a held emergency is never missed below the fold (v10.145). */}
+      {ownerCritical.length > 0 && (
+        <div className="owner-critical" role="alert">
+          <span className="owner-critical__tag">OWNER CRITICAL</span>
+          <span className="owner-critical__items">
+            {ownerCritical.map((c) => (
+              <span key={c.id} className="owner-critical__item">{c.symbol} {c.name} · {c.signalCode === 'EXIT' ? '撤退判断' : '資金防衛'}</span>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {/* ── V12.2.11 ファーストビュー: 姿勢→変化→保有影響→行動→次の確認 ── */}
+      <div className="today-grid">
+        <div className="tg-span-12">
+          <TodayStanceCard summary={commandSummary} positionRisk={positionRisk}
+            isPartial={isPartial || visLimited}
+            partialReasonsJa={partialReasonsJa}
+            partialRaiseJa="JPリアルタイム復旧(ret=0確認後) / イベント・機関データの巡回更新 / 需給キャッシュのウォームで上限が上がります"
+            visibilityReasonJa={al.data?.visibility?.downgradeReasonJa}
+            coverageLineJa={guard?.coverageLineJa ?? null}
+            judgment={judgment}
+            sessionStatusJa={overview.sessionStatusJa} />
+        </div>
+
+        {/* ── ATTENTION(v12.2.11): 非critical警告を1領域に集約。構造上の最大4行
+            (通知は1行に集約・展開で全文到達/他の行は対応ページへ遷移) — 項目が
+            無言で消えることはない。同一問題の重複表示はしない(通知はnewのみ・
+            戦略/FIRE/バックアップは各1行のソース関数が唯一の出所)。 */}
+        <TodayAttention
+          notifications={listNotifications()
+            .filter((x) => x.deliveryState === 'new'
+              && (x.severity === 'critical' || x.severity === 'high'))
+            .map((n) => ({ id: n.id, severity: n.severity,
+              toneVar: SEV_TONE[n.severity],
+              titleJa: `[${SEV_JA[n.severity]}] ${n.titleJa}`, bodyJa: n.bodyJa }))}
+          backupUnprotected={assessBackupSafety(assets).protectionLevel === 'unprotected'}
+          strategyNote={todayStrategicNoteJa(portfolioStrategy)}
+          fireNote={fireCoreTodayNoteJa(latestFireCore())}
+          onNavigate={onNavigate}
+        />
+
+        <OvernightChangesCard headingEn={overview.sessionHeadingEn} changes={overview.changes} />
+        <YourExposureCard exposures={overview.exposures}
+          noHoldings={positionExposure.noHoldings} onNavigate={onNavigate} />
+        <TodayActionQueue actions={overview.actions} />
+        <NextCheckCard nextCheck={overview.nextCheck} />
+      </div>
+
+      {/* v11.20.0: AI Review Pack — Todayから直接コピー(自動送信なし) */}
+      <p style={{ margin: '0 0 6px' }}><ProHandoffButton /></p>
+
+      {/* ── Details / Deep Dive(役割別グループ・既存セクションを内包) ──
+          重要イベントはMARKET DETAILS内(ヘッダーNextチップは
+          argus:open-today-sectionイベントでグループを開いてからスクロール)。 */}
+      <TodayDetails groups={detailGroups} />
 
       {/* v11.21.0: モバイル専用の下部要約バー(10秒把握・720px以下のみ) */}
       <MobileStickyCommand

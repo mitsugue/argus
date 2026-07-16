@@ -187,7 +187,7 @@ export function fireCoreTodayNoteJa(f: LocalFireCore | null):
     return { tone: 'var(--amber, #fbbf24)', textJa: 'FIRE Coreの評価額が未更新です。投資信託の現在価値を更新すると、戦術枠の取りすぎを正確に判定できます。' };
   }
   if (f.valuationDataStatus === 'missing') {
-    return { tone: 'var(--amber, #fbbf24)', textJa: 'FIRE Core(投資信託)の評価額が未入力です。Core Portfolio→FIRE COREで入力できます。' };
+    return { tone: 'var(--amber, #fbbf24)', textJa: 'FIRE Core(投資信託)の評価額が未入力です。Positions & Risk→FIRE COREで入力できます。' };
   }
   if (f.tacticalToCoreBand === 'stretched' || f.tacticalToCoreBand === 'exceeded') {
     return { tone: 'var(--value-negative)', textJa: `FIRE Core注意: 戦術枠がFIRE Coreの${(f.tacticalToCoreRatio ?? 0).toFixed(1)}倍に達しています。個別株の追加より本丸(投信)側の確認が先です。` };

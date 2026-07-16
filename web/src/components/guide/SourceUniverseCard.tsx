@@ -36,7 +36,7 @@ export const SourceUniverseCard: React.FC = () => {
     <section className="card">
       <h2 style={{ margin: '0 0 4px', fontSize: 15 }}>C.A.O.S.はどの情報源を見ているのか</h2>
       <p style={{ margin: '4px 0 10px', color: 'var(--text-sub)', fontSize: 12, lineHeight: 1.8 }}>
-        ARGUS Proでは、Core Portfolioの投資対象ごとに監視ソースを分けています。日本個別株は
+        ARGUS Proでは、Positions & Riskの投資対象ごとに監視ソースを分けています。日本個別株は
         TDnet/EDINET/企業IR/日銀・経産省/日経・ロイター・NHK等の公開メタデータ、米国個別株は
         SEC/Fed/Finnhub/Bloomberg・CNBC・MarketWatch・Yahoo Finance等、金は金利・ドル・公式マクロ指標、
         債券はFed/財務省/FRED、REITは金利・SEC提出書類、暗号資産はCoinGecko/CoinDesk/Cointelegraph、

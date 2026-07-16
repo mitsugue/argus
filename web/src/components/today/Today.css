@@ -1,0 +1,186 @@
+/* V12.2.11 — Today first-view (stance / overnight / exposure / queue / next).
+   Calm, dark-navy, information-dense but not crowded. Reuses existing tokens
+   (--card, --line, --text-*, --accent, --value-*) — no new palette. */
+
+.today-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 10px;
+  margin: 0 0 10px;
+}
+.today-grid > * { min-width: 0; }
+.tg-span-12 { grid-column: span 12; }
+.tg-span-7 { grid-column: span 7; }
+.tg-span-5 { grid-column: span 5; }
+.tg-span-8 { grid-column: span 8; }
+.tg-span-4 { grid-column: span 4; }
+@media (max-width: 960px) {
+  .tg-span-7, .tg-span-5, .tg-span-8, .tg-span-4 { grid-column: span 12; }
+}
+
+/* ── Shared card chrome ── */
+.tcard {
+  background: var(--card, rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.tcard__head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0 0 8px;
+}
+.tcard__title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+  color: var(--text-muted, #8ea0b5); text-transform: uppercase;
+}
+.tcard__meta {
+  margin-left: auto; font-size: 10px; color: var(--text-faint, #5b6b7d);
+  white-space: nowrap;
+}
+
+/* ── Today's Stance ── */
+.tstance { padding: 18px 20px 14px; }
+.tstance__primary {
+  font-size: 36px; font-weight: 800; letter-spacing: 0.02em;
+  line-height: 1.1; margin: 2px 0 6px;
+}
+@media (max-width: 720px) { .tstance__primary { font-size: 30px; } }
+.tstance__reason {
+  margin: 0 0 10px; font-size: 14px; line-height: 1.55;
+  color: var(--text-main, #dbe4ee);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tstance__chips { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 8px; }
+.tstance__chip { font-size: 11px; color: var(--text-sub, #a8b6c6); }
+.tstance__chip b {
+  font-weight: 700; color: var(--text-main, #dbe4ee); margin-left: 5px;
+  letter-spacing: 0.04em;
+}
+.tstance__chip--warn b { color: var(--amber, #fbbf24); }
+.tstance__chip--bad b { color: var(--value-negative, #f87171); }
+.tstance__drivers {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 4px;
+}
+.tstance__driver {
+  font-size: 11px; color: var(--text-sub, #a8b6c6);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 999px; padding: 2px 9px;
+}
+.tstance__partial {
+  margin: 6px 0 0; font-size: 12px; color: var(--text-sub, #a8b6c6);
+}
+.tstance__coverage {
+  margin: 8px 0 0; font-size: 10.5px; color: var(--text-faint, #5b6b7d);
+}
+
+/* ── Attention(非critical警告の集約領域) ── */
+.tattn { padding: 10px 14px; }
+.tattn__row {
+  margin: 4px 0 0; font-size: 12px; line-height: 1.5;
+  color: var(--text-sub, #a8b6c6);
+  border-left: 2px solid var(--line, rgba(255, 255, 255, 0.08));
+  padding-left: 8px;
+}
+.tattn__row--btn {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: transparent; border-top: none; border-right: none;
+  border-bottom: none; min-height: 34px; padding-top: 4px; padding-bottom: 4px;
+}
+.tattn__row--btn:hover .tattn__hint { color: var(--accent, #7aa2f7); }
+.tattn__hint {
+  margin-left: 8px; font-size: 10px; color: var(--text-faint, #5b6b7d);
+  white-space: nowrap;
+}
+.tattn__expand { margin-left: 10px; }
+
+/* ── Overnight Changes ── */
+.tchg { display: grid; gap: 8px; }
+.tchg__row {
+  display: grid; grid-template-columns: 96px 1fr; gap: 4px 12px;
+  align-items: baseline; min-height: 34px;
+}
+.tchg__label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--text-muted, #8ea0b5);
+}
+.tchg__main { font-size: 13px; color: var(--text-main, #dbe4ee); }
+.tchg__main--up { color: var(--value-positive, #34d399); }
+.tchg__main--down { color: var(--value-negative, #f87171); }
+.tchg__main--risk { color: var(--amber, #fbbf24); }
+.tchg__sub {
+  grid-column: 2; font-size: 11px; color: var(--text-sub, #a8b6c6);
+}
+.tchg__asof { margin-left: 8px; font-size: 10px; color: var(--text-faint, #5b6b7d); }
+
+/* ── Your Exposure ── */
+.texp { display: grid; gap: 10px; }
+.texp__row { min-width: 0; }
+.texp__top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.texp__name { font-size: 13px; font-weight: 700; color: var(--text-main, #dbe4ee); }
+.texp__impact {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  border-radius: 999px; padding: 1px 8px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  color: var(--text-sub, #a8b6c6);
+}
+.texp__impact--high { color: var(--value-negative, #f87171); border-color: var(--value-negative, #f87171); }
+.texp__impact--medium { color: var(--amber, #fbbf24); border-color: var(--amber, #fbbf24); }
+.texp__why {
+  margin: 2px 0 0; font-size: 12px; line-height: 1.5;
+  color: var(--text-sub, #a8b6c6);
+}
+.texp__empty { font-size: 12px; color: var(--text-sub, #a8b6c6); line-height: 1.6; }
+.texp__empty-title { font-size: 13px; font-weight: 700; color: var(--text-main, #dbe4ee); margin: 0 0 4px; }
+.texp__cta {
+  margin-top: 8px; font-size: 12px; color: var(--accent, #7aa2f7);
+  background: transparent; border: 1px solid var(--line, rgba(255,255,255,0.12));
+  border-radius: 8px; padding: 7px 12px; cursor: pointer; min-height: 34px;
+}
+.texp__cta:hover { border-color: var(--accent, #7aa2f7); }
+
+/* ── Action Queue ── */
+.tq { display: grid; gap: 10px; }
+.tq__row { display: grid; grid-template-columns: 74px 1fr; gap: 2px 12px; }
+.tq__timing {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--accent, #7aa2f7); padding-top: 2px; white-space: nowrap;
+}
+.tq__timing--now { color: var(--value-negative, #f87171); }
+.tq__action { font-size: 13px; font-weight: 600; color: var(--text-main, #dbe4ee); }
+.tq__target { font-weight: 700; margin-right: 6px; }
+.tq__reason {
+  grid-column: 2; margin: 0; font-size: 12px; line-height: 1.5;
+  color: var(--text-sub, #a8b6c6);
+}
+.tq__cond { color: var(--text-faint, #5b6b7d); }
+.tq__note {
+  margin: 6px 0 0; font-size: 10px; color: var(--text-faint, #5b6b7d);
+}
+.tq__empty { font-size: 12.5px; color: var(--text-sub, #a8b6c6); }
+
+/* ── Next Check ── */
+.tnext__when {
+  font-size: 22px; font-weight: 800; letter-spacing: 0.02em;
+  color: var(--text-main, #dbe4ee); margin: 2px 0 6px;
+}
+.tnext__what { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-sub, #a8b6c6); }
+
+/* ── Details ── */
+.tdetails { margin-top: 6px; }
+.tdetails__caption {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+  color: var(--text-faint, #5b6b7d); margin: 12px 0 2px;
+}
+.tdetails__note {
+  margin: 10px 0 0; font-size: 10px; color: var(--text-faint, #5b6b7d);
+  line-height: 1.6;
+}
+
+/* stance detail fold internals reuse existing cs-* styles */
+.tstance__detail-block { margin-top: 8px; font-size: 12px; color: var(--text-sub, #a8b6c6); line-height: 1.6; }
+.tstance__detail-block b { color: var(--text-main, #dbe4ee); font-size: 11px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .today-grid * { transition: none !important; animation: none !important; }
+}

@@ -56,6 +56,17 @@ export const CollapsibleSection: React.FC<{
   React.useEffect(() => {
     if (defaultOpen) setOpenRaw(true);
   }, [defaultOpen]);
+  // v12.2.11: ヘッダーの「次のイベント」チップ等からの プログラム的オープン。
+  // window CustomEvent('argus:open-today-section', {detail: persistKey}) で
+  // 該当セクションだけ開く(記憶は書き換えない — 一時的なナビゲーション扱い)。
+  React.useEffect(() => {
+    if (!persistKey) return;
+    const onOpen = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === persistKey) setOpenRaw(true);
+    };
+    window.addEventListener('argus:open-today-section', onOpen);
+    return () => window.removeEventListener('argus:open-today-section', onOpen);
+  }, [persistKey]);
   const setOpen = (fn: (v: boolean) => boolean) => setOpenRaw((v) => {
     const nv = fn(v);
     if (persistKey) writeCollapseState(persistKey, nv);
