@@ -216,7 +216,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'strategy_risk', severity: 'high', symbol: null,
         assetName: null, titleJa: `戦略注意：${title}`,
         bodyJa: inp.strategyState.summaryJa?.slice(0, 80) || body,
-        whyJa: body, checkNextJa: 'Core Portfolio → PORTFOLIO STRATEGYで詳細確認(助言ではない)',
+        whyJa: body, checkNextJa: 'Positions & Risk → PORTFOLIO STRATEGYで詳細確認(助言ではない)',
         dedupeKey: `strat|${key}`, isPrivate: true });
     }
   }
@@ -228,20 +228,20 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
         titleJa: 'FIRE Core: 投信の評価額が未更新です',
         bodyJa: '投資信託の現在価値を更新すると、戦術枠の取りすぎを正確に判定できます。',
-        whyJa: '評価額の更新が7日を超えました。', checkNextJa: 'Core Portfolio → FIRE COREで更新',
+        whyJa: '評価額の更新が7日を超えました。', checkNextJa: 'Positions & Risk → FIRE COREで更新',
         dedupeKey: 'fc|stale', isPrivate: true });
     } else if (['stretched', 'exceeded'].includes(cur.ratio ?? '')
       && !['stretched', 'exceeded'].includes(was.ratio ?? '')) {
       cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
         titleJa: 'FIRE Core: 戦術枠が本丸資産に対して大きくなっています',
         bodyJa: '個別株の追加より、FIRE Core(投信)とのバランス確認が先です。',
-        whyJa: '戦術枠/FIRE Core比が悪化しました。', checkNextJa: 'Core Portfolio → FIRE COREで確認',
+        whyJa: '戦術枠/FIRE Core比が悪化しました。', checkNextJa: 'Positions & Risk → FIRE COREで確認',
         dedupeKey: 'fc|ratio', isPrivate: true });
     } else if (cur.contribution === 'missing' && was.contribution !== 'missing') {
       cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
         titleJa: 'FIRE Core: 毎月積立額が未入力です',
         bodyJa: '積立額を入力すると長期入金整合の判定精度が上がります(捏造はしません)。',
-        whyJa: '積立データが欠落しています。', checkNextJa: 'Core Portfolio → FIRE COREで入力',
+        whyJa: '積立データが欠落しています。', checkNextJa: 'Positions & Risk → FIRE COREで入力',
         dedupeKey: 'fc|contrib', isPrivate: true });
     }
   }

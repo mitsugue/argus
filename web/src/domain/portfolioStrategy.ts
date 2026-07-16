@@ -210,7 +210,7 @@ export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
       'テーマ集中と1銘柄集中の週次確認',
     ].slice(0, 3),
     missingDataJa: [
-      ...(ctx.fireCore?.known === false ? ['投資信託(FIRE Core)の評価額が未入力 — Core Portfolioで入力可'] : []),
+      ...(ctx.fireCore?.known === false ? ['投資信託(FIRE Core)の評価額が未入力 — Positions & Riskで入力可'] : []),
       '現金比率(証券口座外の現金は未入力)',
       ...(!ctx.recurringAccumulationKnown ? ['毎月の積立額・入金力(未入力)'] : []),
       '住宅ローン・生活キャッシュフロー(未入力)',

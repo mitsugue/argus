@@ -9,7 +9,7 @@ const en = {
   'nav.today': 'Today',
   'nav.watchlist': 'Watchlist',
   'nav.marketContext': 'Market Context',
-  'nav.corePortfolio': 'Core Portfolio',
+  'nav.corePortfolio': 'Positions & Risk',
   'nav.guide': 'Glossary / Guide',
   'nav.todaysCall': "Today's call",
   // page titles

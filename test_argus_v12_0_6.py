@@ -159,11 +159,15 @@ def test_fe_collapse_persistence_local_only():
     assert "localStorage" in src
     assert "fetch(" not in src                       # 端末内のみ(サーバー送信なし)
     assert "resetTodayLayout" in src
+    # v12.2.11: Today再構築でセクションはDETAILSの5グループへ統合 —
+    # ガードの意図(開閉状態の端末内記憶+リセット導線)は不変・キー名のみ更新。
     cc = _read("routes", "CommandCenter.tsx")
-    for key in ('persistKey="flow"', 'persistKey="exposure"', 'persistKey="sd"',
-                'persistKey="recommend"', 'persistKey="fxmacro"', 'persistKey="history"'):
+    for key in ("persistKey: 'g-market'", "persistKey: 'g-position'",
+                "persistKey: 'g-research'", "persistKey: 'g-review'",
+                "persistKey: 'g-system'"):
         assert key in cc, key
-    assert "resetTodayLayout" in cc
+    td = _read("components", "today", "TodayDetails.tsx")
+    assert "resetTodayLayout" in td
 
 
 def test_fe_fire_core_manual_update_wording():

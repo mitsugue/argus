@@ -84,15 +84,32 @@ const App: React.FC = () => {
       onClick: () => {
         // Navigation only (v10.138): jump to the single Important Events source on
         // Today and focus it — no second countdown/explanation lives in the chip.
+        // v12.2.11: 重要イベントはDETAILS/MARKET DETAILS内(lazy)のため、
+        // まずグループを開くイベントを送ってから、要素の出現をリトライで待つ。
         exitReview();
         setRoute('command');
-        setTimeout(() => {
+        // 開く指示(CustomEvent)は毎リトライで再送する — Today未マウントで
+        // 最初の発火が失われても、マウント後のリトライが確実に届く(要素検索
+        // だけのリトライにしない)。チップが出る時点でイベントfeedは取得済みの
+        // ため、~4.5秒のリトライ窓でカードの出現まで十分カバーする。
+        let tries = 0;
+        const tryScroll = () => {
+          window.dispatchEvent(new CustomEvent('argus:open-today-section', { detail: 'g-market' }));
           const el = document.getElementById('important-events');
           if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // 即時スクロール(グループ内の遅延ロードで高さが変わるとsmoothは
+            // 中断されるため)+700ms後に一度だけ位置を再固定(settle pass)。
+            el.scrollIntoView({ block: 'start' });
             el.querySelector('details')?.setAttribute('open', '');
+            setTimeout(() => {
+              document.getElementById('important-events')
+                ?.scrollIntoView({ block: 'start' });
+            }, 700);
+          } else if (tries++ < 30) {
+            setTimeout(tryScroll, 150);
           }
-        }, 140);
+        };
+        setTimeout(tryScroll, 140);
       },
     };
     // exitReview is stable in practice (defined per render but only mutates state)
@@ -105,11 +122,12 @@ const App: React.FC = () => {
   };
 
   // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
-  // Keep in sync with NavRail's NAV order (1=全体把握 2=個別 3+=その他情報).
-  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'regime', 'core', 'backup', 'quality', 'guide'];
+  // Keep in sync with NavRail's NAV order (V12.2.11: Today → Positions & Risk →
+  // Watchlist → Market Context; route keys unchanged).
+  const NAV_ORDER: RouteKey[] = ['command', 'core', 'watchlist', 'regime', 'backup', 'quality', 'guide'];
   const NAV_LABEL: Record<RouteKey, string> = {
     command: 'Today', regime: 'Market Context',
-    watchlist: 'Watchlist', core: 'Core Portfolio', backup: 'Backup',
+    watchlist: 'Watchlist', core: 'Positions & Risk', backup: 'Backup',
     quality: 'Data Quality', guide: 'Guide',
   };
   const curIdx = NAV_ORDER.indexOf(route);

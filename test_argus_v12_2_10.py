@@ -656,8 +656,31 @@ def test_snapshot_v3_public_safe_and_carries_journal():
         assert banned not in body, banned
 
 
-def test_semantic_version_is_12_2_10():
-    assert scanner._semantic_app_version() == "12.2.10"
+def test_semantic_version_format():
+    # v12.2.11(Today UI再構築)でbump — 恒久不変条件のみ:
+    # セマンティック形式でありGit SHAをappVersionにしない。
+    import re
+    v = scanner._semantic_app_version()
+    assert re.fullmatch(r"12\.\d+\.\d+", v), v
+
+
+def test_version_consistency_dynamic():
+    """版数の整合(動的 — 特定版数をハードコードしない):
+    package.json = lock root = lock packages[""] = Guide先頭エントリ = runtime。"""
+    import json as _j
+    import re as _re
+    pj = _j.load(open(os.path.join(ROOT, "web", "package.json")))["version"]
+    lock = _j.load(open(os.path.join(ROOT, "web", "package-lock.json")))
+    assert lock["version"] == pj
+    assert lock["packages"][""]["version"] == pj
+    guide = open(os.path.join(ROOT, "web", "src", "routes", "Guide.tsx"),
+                 encoding="utf-8").read()
+    m = _re.search(
+        r"const RECENT_UPDATES: \[string, string\]\[\] = \[\s*\n\s*\['v([0-9.]+)'",
+        guide)
+    assert m, "RECENT_UPDATES先頭エントリが見つからない"
+    assert m.group(1) == pj, (m.group(1), pj)
+    assert scanner._semantic_app_version() == pj
 
 
 def test_qualification_docs_exist():
