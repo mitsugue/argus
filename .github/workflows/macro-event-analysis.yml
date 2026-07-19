@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v5
       - name: Refresh official results + generate analyses (admin; token never logged)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -42,36 +43,29 @@ jobs:
           else
             BE="https://argus-backend-3j2m.onrender.com"
             curl -s --max-time 60 "$BE/healthz" > /dev/null || true    # warm dyno
-            RES=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/macro-event-analysis/refresh-results" || echo '{"error":"unreachable"}')
+            RES=$(python3 scripts/workflow_http.py --name macro-refresh-results --method POST --timeout 120 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/macro-event-analysis/refresh-results")
             echo "refresh-results: ${RES:0:200}"
-            GEN=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/macro-event-analysis/generate" || echo '{"error":"unreachable"}')
+            GEN=$(python3 scripts/workflow_http.py --name macro-generate --method POST --timeout 240 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/macro-event-analysis/generate")
             echo "generate: ${GEN:0:200}"
             # V11.5: quantify the post-release market reaction (rates/FX/indices/VIX/BTC).
             # No LLM; baseline captured on first observation, reaction merged into the store.
-            RX=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/macro-event-analysis/refresh-market-reaction" || echo '{"error":"unreachable"}')
+            RX=$(python3 scripts/workflow_http.py --name macro-market-reaction --method POST --timeout 180 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/macro-event-analysis/refresh-market-reaction")
             echo "refresh-market-reaction: ${RX:0:200}"
             # V11.4.1: repair stuck post-release displays (fetch result, recompute phase,
             # generate/repair the answer-check where actual+pre exist). Preserves pre.
-            REP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/macro-event-analysis/repair-post-release" || echo '{"error":"unreachable"}')
+            REP=$(python3 scripts/workflow_http.py --name macro-repair --method POST --timeout 240 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/macro-event-analysis/repair-post-release")
             echo "repair-post-release: ${REP:0:200}"
             # V11.5.2: drain the on-screen translation request queue FIRST (what the owner
             # actually sees), then the inferred visible pool. Enqueue-only public POSTs feed
             # this queue; the LLM call lives here. No article bodies / prompts persisted.
-            TRV=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/news/translate-visible" || echo '{"error":"unreachable"}')
+            TRV=$(python3 scripts/workflow_http.py --name macro-translate-visible --method POST --timeout 120 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/news/translate-visible")
             echo "news-translate-visible: ${TRV:0:200}"
             # V11.5: then translate any remaining queued English headlines (owner rule).
-            TR=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/news/translate" || echo '{"error":"unreachable"}')
+            TR=$(python3 scripts/workflow_http.py --name macro-news-translate --method POST --timeout 120 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/news/translate")
             echo "news-translate: ${TR:0:200}"
             # V11.5.2: drain owner AI-explanation requests ("理由を詳しく調べる"), then the
             # priority queue's budgeted top-unresolved movers. Cooldown/budget-guarded.
-            EXR=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/mover-causes/explain/run" || echo '{"error":"unreachable"}')
+            EXR=$(python3 scripts/workflow_http.py --name macro-mover-explain --method POST --timeout 240 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/mover-causes/explain/run")
             echo "mover-explain-run: ${EXR:0:200}"
           fi
 

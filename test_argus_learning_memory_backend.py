@@ -139,15 +139,30 @@ def test_action_label_carries_learning_memory_used(monkeypatch):
     _seed(monkeypatch, obs=[{"cohortType": "market", "cohortKey": "JP", "outcome": "miss"}
                             for _ in range(40)])
     _forbid_fetches(monkeypatch)
-    try:
-        al = scanner.get_action_labels(jp_symbols=["8058"], us_symbols=[])
-    except Exception:
-        al = None
-    if not al or not al.get("labels"):
-        return  # environment couldn't produce a label (no cached quote) — skip
+    quote = {"symbol": "8058", "name": "三菱商事", "status": "delayed",
+             "price": 3200.0, "changePct": -1.0, "volume": 1_000_000,
+             "date": "2026-07-14"}
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
+                        lambda symbols=None: {"status": "delayed",
+                                              "asOf": "2026-07-14",
+                                              "stocks": [quote]})
+    monkeypatch.setattr(scanner, "get_us_watchlist_snapshot",
+                        lambda symbols=None: {"status": "delayed", "stocks": []})
+    monkeypatch.setattr(scanner, "get_rates_snapshot",
+                        lambda: {"ratesPressure": "Neutral"})
+    monkeypatch.setattr(scanner, "get_events_snapshot",
+                        lambda: {"status": "live", "events": []})
+    monkeypatch.setattr(scanner, "get_market_regime_snapshot",
+                        lambda: {"status": "partial", "regime": {"label": "NEUTRAL"}})
+    monkeypatch.setattr(scanner, "_visibility_guard", lambda: {})
+    monkeypatch.setattr(scanner, "_ledger_summary", lambda: None)
+    monkeypatch.setattr(scanner, "_events_active_list", lambda: [])
+    al = scanner.get_action_labels(jp_symbols=["8058"], us_symbols=[])
+    assert len(al.get("labels") or []) == 1
     for L in al["labels"]:
         refs = L.get("decisionRefs") or {}
         assert "learningMemoryUsed" in refs
+        assert refs["learningMemoryUsed"] is True
         caps = [c_.get("cap") for c_ in
                 (LM.compact_for_evidence(scanner._LEARNING_MEMORY["doc"],
                                          market=L.get("market")).get("confidenceCaps") or [])

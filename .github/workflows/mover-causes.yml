@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v5
       - name: Refresh mover causes (admin)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -31,13 +32,15 @@ jobs:
             echo "::warning::ARGUS_ADMIN_TOKEN not set — skipping refresh (snapshot only)"
           else
             curl -s --max-time 60 "$BE/healthz" > /dev/null || true
-            RES=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/mover-causes/refresh" || echo '{"error":"unreachable"}')
+            RES=$(python3 scripts/workflow_http.py --name mover-causes-refresh --method POST --timeout 180 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --url "$BE/api/argus/admin/mover-causes/refresh")
             echo "refresh: ${RES:0:200}"
             # AI explanation for the biggest unresolved movers only (cost-bounded).
-            EXP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              -H "Content-Type: application/json" -d '{"max": 3}' \
-              "$BE/api/argus/admin/mover-causes/explain" || echo '{"error":"unreachable"}')
+            EXP=$(python3 scripts/workflow_http.py --name mover-causes-explain --method POST --timeout 240 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --header 'Content-Type: application/json' --data '{"max": 3}' \
+              --url "$BE/api/argus/admin/mover-causes/explain")
             echo "explain: ${EXP:0:200}"
           fi
 

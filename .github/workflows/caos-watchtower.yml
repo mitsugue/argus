@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v5
       - name: Watchtower refresh + visible translation (admin; token never logged)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -41,12 +42,14 @@ jobs:
             echo "::warning::ARGUS_ADMIN_TOKEN missing — skipping refresh (status snapshot only)"
           else
             curl -s --max-time 60 "$BE/healthz" > /dev/null || true    # warm dyno
-            REF=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/caos-watchtower/refresh" || echo '{"error":"unreachable"}')
+            REF=$(python3 scripts/workflow_http.py --name watchtower-refresh --method POST --timeout 240 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --url "$BE/api/argus/admin/caos-watchtower/refresh")
             echo "watchtower-refresh: ${REF:0:300}"
             # translate what the owner actually sees FIRST (headlines only)
-            TRV=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/news/translate-visible" || echo '{"error":"unreachable"}')
+            TRV=$(python3 scripts/workflow_http.py --name translate-visible --method POST --timeout 120 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --url "$BE/api/argus/admin/news/translate-visible")
             echo "translate-visible: ${TRV:0:200}"
           fi
 
@@ -79,8 +82,13 @@ jobs:
           done
           test -s "$RUNNER_TEMP/patrol-health.json"
           # v12.1.1: OSINT恒久メモリ(公開安全メタのみ) — 再デプロイ後の復元源
-          curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
-            -o "$RUNNER_TEMP/osint-memory.json" || echo '{}' > "$RUNNER_TEMP/osint-memory.json"
+          for i in 1 2 3; do
+            curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
+              -o "$RUNNER_TEMP/osint-memory.json" && break
+            echo "retry memory $i"; sleep 10
+          done
+          test -s "$RUNNER_TEMP/osint-memory.json"
+          python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));assert d.get('schemaVersion')=='argus-durable-v3'"
           python3 - "$RUNNER_TEMP/patrol-health.json" <<'PY'
           import json, sys
           d = json.load(open(sys.argv[1]))

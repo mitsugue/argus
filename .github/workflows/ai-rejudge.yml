@@ -28,47 +28,59 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v5
       - name: Trigger AI re-judgment (admin-gated; bounded by the AI budget)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
+          # success=HTTP 2xx+valid JSON+business ok; expected_skip=missing
+          # secret or explicit budget/rate gate; degraded/failure=non-zero step.
           BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
           curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
           # checker=flash: the frequent 15-min refresh uses the cheap double-check
           # tier (routine verification ≈ pro). The daily scored run uses pro.
-          RESP=$(curl -s --max-time 240 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/ai-judgment/run?checker=flash" || echo '{"error":"unreachable"}')
+          RESP=$(python3 scripts/workflow_http.py --name ai-rejudge --method POST --timeout 240 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status disabled --expected-status budget_exceeded \
+            --expected-status rate_limited \
+            --url "$BE/api/argus/ai-judgment/run?checker=flash")
           echo "ai-rejudge(flash): ${RESP:0:240}"
           # C.A.O.S. event lifecycle — pre/post analyses. Self-limited (6h cache per
           # event; regenerates only on a phase flip or staleness), so calling every
           # 15 min mostly returns cached (made=0) and costs nothing.
-          EVT=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/event-analysis/generate" || echo '{"error":"unreachable"}')
+          EVT=$(python3 scripts/workflow_http.py --name caos-events --method POST --timeout 180 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/event-analysis/generate")
           echo "caos-events: ${EVT:0:200}"
           # Official-event lifecycle (v11.3): fill pending market-reaction windows from
           # cached daily bars. No LLM, cheap; most calls update 0 records.
-          OFE=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/official-events/track" || echo '{"error":"unreachable"}')
+          OFE=$(python3 scripts/workflow_http.py --name official-events-track --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/official-events/track")
           echo "official-events-track: ${OFE:0:160}"
           # Entity profiles (association engine): generates only missing/stale watchlist
           # profiles (seeds + fresh ones skipped), so this is near-free until a NEW stock
           # is added — then it auto-profiles it for relationship-aware news linking.
-          PROF=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/entity-profiles/generate" || echo '{"error":"unreachable"}')
+          PROF=$(python3 scripts/workflow_http.py --name entity-profiles --method POST --timeout 180 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/entity-profiles/generate")
           echo "entity-profiles: ${PROF:0:200}"
           # Mover-cause ladder (v11.3.3): deterministic evidence refresh for today's sharp
           # movers (both directions) — no LLM, cheap, and placed BEFORE the LLM-heavy
           # buy-candidates call so a slow AI run can't starve it of the job timeout.
-          MCR=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/admin/mover-causes/refresh" || echo '{"error":"unreachable"}')
+          MCR=$(python3 scripts/workflow_http.py --name mover-causes --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/admin/mover-causes/refresh")
           echo "mover-causes: ${MCR:0:200}"
           # Buy candidates (本日の注目候補): screens today's movers into a high-bar watch list.
-          BUY=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/buy-candidates/generate" || echo '{"error":"unreachable"}')
+          BUY=$(python3 scripts/workflow_http.py --name buy-candidates --method POST --timeout 180 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/buy-candidates/generate")
           echo "buy-candidates: ${BUY:0:200}"
           # V11.5: translate queued English news headlines to JP (every 15 min so any
           # page's news is shown translated). Cheap Gemini call; no article bodies.
-          TR=$(curl -s --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/admin/news/translate" || echo '{"error":"unreachable"}')
+          TR=$(python3 scripts/workflow_http.py --name news-translate --method POST --timeout 90 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/admin/news/translate")
           echo "news-translate: ${TR:0:120}"

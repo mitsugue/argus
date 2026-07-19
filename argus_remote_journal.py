@@ -19,7 +19,8 @@ JST = timezone(timedelta(hours=9))
 
 # v12.2.10: criticalイベント分類(Phase 3 — soak_interruptedをcriticalへ)
 CRITICAL_EVENT_TYPES = ("forecast_issued", "forecast_superseded",
-                        "outcome_resolved", "incident_opened",
+                        "outcome_unresolved", "outcome_retry_scheduled",
+                        "outcome_resolved", "outcome_expired", "incident_opened",
                         "incident_resolved", "soak_started",
                         "soak_interrupted", "soak_invalidated",
                         "soak_completed", "material_learning_approved",
@@ -67,6 +68,33 @@ def _event_public_safe(ev: Dict[str, Any]) -> Optional[str]:
 def _verify_event(ev: Dict[str, Any]) -> bool:
     body = {k: v for k, v in ev.items() if k != "integrityHash"}
     return ev.get("integrityHash") == _h(body)
+
+
+def outcome_read_back_receipt(*, remote_blob: Any,
+                              local_outcomes: List[Dict[str, Any]],
+                              read_back_at: str = "") -> Dict[str, Any]:
+    """remote snapshot内のOutcome ID+integrity hash一致だけをackする。"""
+    if not isinstance(remote_blob, dict):
+        return {"verificationStatus": "invalid_remote",
+                "ackedOutcomeIds": [], "readBackAt": read_back_at}
+    remote = {str(o.get("id")): o for o in (remote_blob.get("outcomes") or [])
+              if isinstance(o, dict) and o.get("id")}
+    acked = []
+    for local in (local_outcomes or []):
+        oid = str(local.get("id") or "")
+        other = remote.get(oid)
+        local_hash = local.get("integrityHash")
+        local_valid = local_hash and local_hash == _h({
+            k: v for k, v in local.items() if k != "integrityHash"})
+        remote_valid = other and other.get("integrityHash") == _h({
+            k: v for k, v in other.items() if k != "integrityHash"})
+        if oid and local_valid and remote_valid and \
+                other.get("integrityHash") == local_hash:
+            acked.append(oid)
+    return {"verificationStatus": ("verified" if acked else "no_match"),
+            "ackedOutcomeIds": acked, "readBackAt": read_back_at,
+            "remoteGeneratedAt": remote_blob.get("generatedAt")
+            or remote_blob.get("asOf")}
 
 
 # ── Phase 1: Remote Snapshot Schema v3 ──────────────────────────────────────

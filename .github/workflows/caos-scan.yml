@@ -21,35 +21,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v5
       - name: Collect C.A.O.S. public sources
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
+          # success=2xx+valid JSON+business ok; expected_skip=missing secret;
+          # degraded/failure=non-zero step (401/403/5xx/timeout/invalid JSON含む)。
           BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
           curl -s --max-time 60 "$BE/healthz" > /dev/null || true   # warm dyno
-          RESP=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/institutional-intelligence/collect" || echo '{"error":"unreachable"}')
+          RESP=$(python3 scripts/workflow_http.py --name caos-collect --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/institutional-intelligence/collect")
           echo "caos-collect: $RESP"
           # v12.1.0: OSINTスカウトのキュー消化(キューが空なら外部AIは呼ばれない=無料)
-          OS=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            -H "Content-Type: application/json" -d '{}' \
-            "$BE/api/argus/admin/osint/agents-run" || echo '{"error":"unreachable"}')
+          OS=$(python3 scripts/workflow_http.py --name osint-agents --method POST --timeout 180 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header 'Content-Type: application/json' --data '{}' \
+            --url "$BE/api/argus/admin/osint/agents-run")
           echo "osint-agents: $OS"
           # v12.2.1: セッション対応ミッションtick(冪等・予測発行/成果解決/回収)
-          MT=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            -H "Content-Type: application/json" -d '{}' \
-            "$BE/api/argus/admin/missions/tick" || echo '{"error":"unreachable"}')
+          MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 60 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header 'Content-Type: application/json' --data '{}' \
+            --url "$BE/api/argus/admin/missions/tick")
           echo "missions-tick: $MT"
           # v12.1.7: 基準校正の加速(run最少ケースを最大2件・Gemini 2呼び出し/回)
-          BM=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            -H "Content-Type: application/json" -d '{}' \
-            "$BE/api/argus/admin/osint/benchmark-run" || echo '{"error":"unreachable"}')
+          BM=$(python3 scripts/workflow_http.py --name osint-benchmark --method POST --timeout 60 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header 'Content-Type: application/json' --data '{}' \
+            --url "$BE/api/argus/admin/osint/benchmark-run")
           echo "osint-benchmark: $BM"
           # v12.1.0: canary(見落とし監視・cached評価のみで外部AIなし)
-          CN=$(curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            -H "Content-Type: application/json" -d '{}' \
-            "$BE/api/argus/admin/osint/canary-run" || echo '{"error":"unreachable"}')
+          CN=$(python3 scripts/workflow_http.py --name osint-canary --method POST --timeout 60 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header 'Content-Type: application/json' --data '{}' \
+            --url "$BE/api/argus/admin/osint/canary-run")
           echo "osint-canary: $CN"
 
       # v11.9.1 (owner: 「ニュースが全部翻訳待ち」): the ONLY translate drain used
@@ -61,10 +69,11 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
           for i in 1 2 3 4; do
-            TRV=$(curl -s --max-time 120 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/news/translate-visible" || echo '{"error":"unreachable"}')
+            TRV=$(python3 scripts/workflow_http.py --name translate-visible --method POST --timeout 120 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --url "$BE/api/argus/admin/news/translate-visible")
             echo "translate-visible[$i]: ${TRV:0:200}"
             TRANSLATED=$(echo "$TRV" | python3 -c "import sys,json;print(json.load(sys.stdin).get('translated',0))" 2>/dev/null || echo 0)
             PENDING=$(echo "$TRV" | python3 -c "import sys,json;print(json.load(sys.stdin).get('pending',0))" 2>/dev/null || echo 0)
@@ -83,13 +92,17 @@ jobs:
               -o "$RUNNER_TEMP/news-ja.json" && break
             echo "retry $i"; sleep 10
           done
-          COUNT=0
-          [ -s "$RUNNER_TEMP/news-ja.json" ] && \
-            COUNT=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/news-ja.json')).get('count',0))" 2>/dev/null || echo 0)
+          test -s "$RUNNER_TEMP/news-ja.json"
+          COUNT=$(python3 -c "import json;d=json.load(open('$RUNNER_TEMP/news-ja.json'));assert d.get('schemaVersion')=='news-ja-cache-v1';print(d.get('count',0))")
           echo "news-ja cache entries: $COUNT"
           # v12.2.4: osint耐久状態も30分毎にledgerへ(watchtower毎時の補完)
-          curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
-            -o "$RUNNER_TEMP/osint-memory.json" || true
+          for i in 1 2 3; do
+            curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
+              -o "$RUNNER_TEMP/osint-memory.json" && break
+            echo "retry memory $i"; sleep 10
+          done
+          test -s "$RUNNER_TEMP/osint-memory.json"
+          python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));assert d.get('schemaVersion')=='argus-durable-v3'"
           # never overwrite the ledger with an empty cache (e.g. right after deploy)
           if [ "$COUNT" != "0" ] && [ -n "$COUNT" ]; then echo "PERSIST=1" >> "$GITHUB_ENV"; fi
 

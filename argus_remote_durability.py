@@ -16,7 +16,8 @@ DURABILITY_STATES = ("not_persisted", "local_committed", "remote_pending",
                      "recovered_from_local_wal", "recovered_from_remote",
                      "integrity_failed")
 CRITICAL_EVENT_TYPES = ("forecast_issued", "forecast_superseded",
-                        "outcome_resolved", "incident_opened",
+                        "outcome_unresolved", "outcome_retry_scheduled",
+                        "outcome_resolved", "outcome_expired", "incident_opened",
                         "incident_resolved", "soak_started",
                         "soak_interrupted",  # v12.2.10: 中断もcritical(隠さない)
                         "soak_invalidated",

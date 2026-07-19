@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v5
       - name: Scan crypto for shocks (admin-gated)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -29,8 +30,9 @@ jobs:
             echo "::warning::ARGUS_ADMIN_TOKEN absent — crypto scan skipped"; exit 0
           fi
           curl -s --max-time 90 "$BE/api/argus/rates" > /dev/null || true   # warm the dyno
-          RESP=$(curl -s --max-time 60 -X POST \
-            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/crypto-scan" || echo '{"error":"unreachable"}')
+          RESP=$(python3 scripts/workflow_http.py --name crypto-scan --method POST --timeout 60 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-value backbone_disabled \
+            --url "$BE/api/argus/crypto-scan")
           echo "crypto-scan: $RESP"
           echo "🪙 crypto-scan: \`${RESP}\`" >> "$GITHUB_STEP_SUMMARY"
