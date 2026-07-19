@@ -13,6 +13,7 @@ LOOP B(判断学習ループ)の土台:
 """
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 HORIZONS = ("intraday", "next_session", "1d", "3d", "5d", "20d",
@@ -24,11 +25,43 @@ TARGET_TYPES = ("direction", "return_band", "volatility", "drawdown_risk",
 _FORBIDDEN_FORECAST_FIELDS = ("outcome", "endPrice", "absoluteReturn",
                               "realizedVolatility", "outcomeAsOf")
 RUBRIC_VERSION = "decision-rubric-v1"
+JST = timezone(timedelta(hours=9))
 
 
 def _hash(obj: Dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True,
                                      ensure_ascii=False).encode()).hexdigest()[:16]
+
+
+def _ep(iso: Optional[str]) -> Optional[float]:
+    if not iso:
+        return None
+    try:
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=JST)
+        return d.timestamp()
+    except Exception:
+        return None
+
+
+def _iso_after(iso: str, seconds: int) -> Optional[str]:
+    ep = _ep(iso)
+    if ep is None:
+        return None
+    return datetime.fromtimestamp(ep + max(0, int(seconds)), JST).isoformat()
+
+
+def outcome_id(forecast_id: Any) -> str:
+    """Forecastごとに一意な安定Outcome ID。再試行で変化しない。"""
+    return f"oc-{_hash({'forecastId': str(forecast_id or 'unknown')})}"
+
+
+def seal_outcome(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """可変な解決状態を更新した後のintegrity hashを再計算する。"""
+    rec["integrityHash"] = _hash({k: v for k, v in rec.items()
+                                  if k != "integrityHash"})
+    return rec
 
 
 def forecast_record(*, symbol: str, market: str, issued_at: str,
@@ -104,12 +137,24 @@ def outcome_record(*, forecast: Dict[str, Any], outcome_as_of: str,
                 or forecast.get("issuedAt"),
                 "resolutionSource": "price_history_cached",
                 "resolvedRecordedAt": now_iso or outcome_as_of}
+    _oid = outcome_id(forecast.get("id"))
     if start_price is None or end_price is None or not start_price:
-        return {"forecastId": forecast.get("id"), "status": "unresolved",
+        rec = {"id": _oid, "forecastId": forecast.get("id"),
+                "status": "unresolved",
+                "resolutionState": "unresolved_missing_price",
+                "retryCount": 0, "lastRetryAt": None, "nextRetryAt": None,
+                "missingOutcomeReason": "missing_price",
                 "missingOutcomeDataJa": ["価格データ欠損 — 0%扱いにしない"],
+                "transitionHistory": [{"from": "matured",
+                                       "to": "unresolved_missing_price",
+                                       "at": now_iso or outcome_as_of,
+                                       "reason": "missing_price"}],
                 "immutableCreatedAt": now_iso or outcome_as_of, **_inherit}
+        return seal_outcome(rec)
     ret = (end_price - start_price) / start_price * 100.0
-    rec = {"forecastId": forecast.get("id"), "status": "resolved",
+    rec = {"id": _oid, "forecastId": forecast.get("id"), "status": "resolved",
+           "resolutionState": "resolved", "retryCount": 0,
+           "lastRetryAt": None, "nextRetryAt": None,
            "symbol": forecast.get("symbol"),
            "horizon": forecast.get("forecastHorizon"),
            "outcomeAsOf": outcome_as_of, **_inherit,
@@ -123,8 +168,88 @@ def outcome_record(*, forecast: Dict[str, Any], outcome_as_of: str,
            "invalidationTriggered": bool(invalidation_triggered),
            "scenarioConditionsTriggered": list(conditions_triggered or [])[:6],
            "immutableCreatedAt": now_iso or outcome_as_of}
-    rec["integrityHash"] = _hash(rec)
-    return rec
+    return seal_outcome(rec)
+
+
+def schedule_outcome_retry(outcome: Dict[str, Any], *, now_iso: str,
+                           retry_interval_seconds: int) -> Dict[str, Any]:
+    """初回unresolvedに次回時刻を付与。同一Outcome ID/作成時刻を維持する。"""
+    rec = dict(outcome)
+    rec.setdefault("id", outcome_id(rec.get("forecastId")))
+    rec.setdefault("retryCount", 0)
+    rec.setdefault("lastRetryAt", None)
+    rec["nextRetryAt"] = _iso_after(now_iso, retry_interval_seconds)
+    rec.setdefault("missingOutcomeReason", "missing_price")
+    rec.setdefault("resolutionState", "unresolved_missing_price")
+    rec.setdefault("transitionHistory", [])
+    return seal_outcome(rec)
+
+
+def outcome_retry_due(outcome: Dict[str, Any], *, now_iso: str) -> bool:
+    """resolved/expiredは対象外。legacyで時刻なしのunresolvedは再試行可能。"""
+    if outcome.get("status") == "resolved" or \
+            outcome.get("resolutionState") == "unresolved_expired":
+        return False
+    nxt = _ep(outcome.get("nextRetryAt"))
+    now = _ep(now_iso)
+    return now is not None and (nxt is None or now >= nxt)
+
+
+def retry_outcome_record(*, existing: Dict[str, Any], forecast: Dict[str, Any],
+                         outcome_as_of: str, start_price: Optional[float],
+                         end_price: Optional[float], now_iso: str,
+                         retry_interval_seconds: int,
+                         expire_after_seconds: int = 0) -> Dict[str, Any]:
+    """同じOutcomeを再解決。ID/作成時刻/履歴を維持し、0価格は採点しない。"""
+    if not outcome_retry_due(existing, now_iso=now_iso):
+        return dict(existing)
+    created_at = existing.get("immutableCreatedAt") or now_iso
+    created_ep, now_ep = _ep(created_at), _ep(now_iso)
+    retry_count = int(existing.get("retryCount") or 0) + 1
+    history = list(existing.get("transitionHistory") or [])
+    stable_id = existing.get("id") or outcome_id(existing.get("forecastId")
+                                                   or forecast.get("id"))
+    if expire_after_seconds > 0 and created_ep is not None and now_ep is not None \
+            and now_ep - created_ep >= expire_after_seconds:
+        rec = dict(existing)
+        history.append({"from": rec.get("resolutionState") or "unresolved",
+                        "to": "unresolved_expired", "at": now_iso,
+                        "reason": "retry_window_expired"})
+        rec.update({"id": stable_id, "status": "unresolved",
+                    "resolutionState": "unresolved_expired",
+                    "retryCount": retry_count, "lastRetryAt": now_iso,
+                    "nextRetryAt": None,
+                    "missingOutcomeReason": "retry_window_expired",
+                    "transitionHistory": history})
+        return seal_outcome(rec)
+    candidate = outcome_record(
+        forecast=forecast, outcome_as_of=outcome_as_of,
+        start_price=start_price, end_price=end_price, now_iso=now_iso)
+    if candidate.get("status") == "resolved":
+        rec = dict(existing)
+        rec.update(candidate)
+        history.append({"from": existing.get("resolutionState") or "unresolved",
+                        "to": "resolved", "at": now_iso,
+                        "reason": "price_available"})
+        rec.update({"id": stable_id, "immutableCreatedAt": created_at,
+                    "retryCount": retry_count, "lastRetryAt": now_iso,
+                    "nextRetryAt": None, "transitionHistory": history})
+        rec.pop("missingOutcomeDataJa", None)
+        rec.pop("missingOutcomeReason", None)
+        return seal_outcome(rec)
+    rec = dict(existing)
+    history.append({"from": existing.get("resolutionState")
+                            or "unresolved_missing_price",
+                    "to": "retry_pending", "at": now_iso,
+                    "reason": "missing_price"})
+    rec.update({"id": stable_id, "status": "unresolved",
+                "resolutionState": "retry_pending",
+                "retryCount": retry_count, "lastRetryAt": now_iso,
+                "nextRetryAt": _iso_after(now_iso, retry_interval_seconds),
+                "missingOutcomeReason": "missing_price",
+                "missingOutcomeDataJa": ["価格データ欠損 — 0%扱いにしない"],
+                "transitionHistory": history})
+    return seal_outcome(rec)
 
 
 # ── スコア族(分離・混同禁止) ─────────────────────────────────────────────────

@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v5
       - name: Build learning memory (admin, no LLM)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -30,8 +31,9 @@ jobs:
             echo "::warning::ARGUS_ADMIN_TOKEN not set — skipping build (snapshot only)"
           else
             curl -s --max-time 60 "$BE/healthz" > /dev/null || true
-            RES=$(curl -s --max-time 180 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/admin/learning-memory/build" || echo '{"error":"unreachable"}')
+            RES=$(python3 scripts/workflow_http.py --name learning-memory-build --method POST --timeout 180 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --url "$BE/api/argus/admin/learning-memory/build")
             echo "build: ${RES:0:200}"
           fi
 

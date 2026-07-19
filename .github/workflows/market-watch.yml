@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v5
       - name: Trigger US market scan
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -35,11 +36,12 @@ jobs:
           BE="https://argus-backend-3j2m.onrender.com"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
           curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
-          RESP=$(curl -s --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/market-scan" || echo '{"error":"unreachable"}')
+          RESP=$(python3 scripts/workflow_http.py --name market-scan --method POST --timeout 90 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/market-scan")
           echo "market-scan: $RESP"
           # Institutional Intelligence — collect allow-listed public feeds (LAYER 2,
           # metadata only, SSRF-hardened, admin-gated). The public GET never fetches.
-          INTEL=$(curl -s --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "$BE/api/argus/institutional-intelligence/collect" || echo '{"error":"unreachable"}')
+          INTEL=$(python3 scripts/workflow_http.py --name intel-collect --method POST --timeout 90 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/institutional-intelligence/collect")
           echo "intel-collect: $INTEL"

@@ -7711,7 +7711,11 @@ def _data_quality_console():
         console["decisionLedger"] = {
             "forecastCount": len(_FORECAST_LEDGER),
             "outcomeCount": len(_OUTCOME_LEDGER),
-            "unresolvedForecasts": max(0, len(_FORECAST_LEDGER) - len(_OUTCOME_LEDGER)),
+            "unresolvedForecasts": sum(
+                1 for f in _FORECAST_LEDGER
+                if not any(o.get("forecastId") == f.get("id") and
+                           o.get("status") == "resolved"
+                           for o in _OUTCOME_LEDGER)),
             "missedJobs": argus_decision_ledger.detect_missed_jobs(
                 _DL_JOBS, _ai_now_iso()),
             "rubricVersion": argus_decision_ledger.RUBRIC_VERSION,
@@ -15313,10 +15317,15 @@ def _osint_restore_once():
                     x.get("id") == h.get("id") for x in _FORECAST_LEDGER):
                 _FORECAST_LEDGER.append(h)
         for h in (blob.get("outcomes") or [])[-200:]:
-            if isinstance(h, dict) and not any(
-                    x.get("forecastId") == h.get("forecastId")
-                    for x in _OUTCOME_LEDGER):
+            if not isinstance(h, dict):
+                continue
+            existing = next((x for x in _OUTCOME_LEDGER
+                             if x.get("forecastId") == h.get("forecastId")), None)
+            if existing is None:
                 _OUTCOME_LEDGER.append(h)
+            elif _outcome_restore_is_newer(existing, h):
+                existing.clear()
+                existing.update(h)
         for h in (blob.get("incidents") or [])[-20:]:
             if isinstance(h, dict) and h not in _INCIDENTS:
                 _INCIDENTS.append(h)
@@ -15345,6 +15354,15 @@ def _osint_restore_once():
                     not _REMOTE_ACK["lastVerifiedRemoteAckAt"]:
                 _REMOTE_ACK["lastVerifiedRemoteAckAt"] = \
                     _ra["lastVerifiedRemoteAckAt"]
+            for oid in (_ra.get("outcomeAckedIds") or []):
+                if oid not in _REMOTE_ACK["outcomeAckedIds"]:
+                    _REMOTE_ACK["outcomeAckedIds"].append(oid)
+            _REMOTE_ACK["outcomeAckedIds"] = \
+                _REMOTE_ACK["outcomeAckedIds"][-400:]
+            if _ra.get("lastVerifiedOutcomeReadBackAt") and \
+                    not _REMOTE_ACK["lastVerifiedOutcomeReadBackAt"]:
+                _REMOTE_ACK["lastVerifiedOutcomeReadBackAt"] = \
+                    _ra["lastVerifiedOutcomeReadBackAt"]
         if "opsJournal" not in blob:
             _REMOTE_ACK["legacyRemote"] = True   # v2 snapshot=journal未同乗
         for h in _OPS_JOURNAL:
@@ -16187,7 +16205,34 @@ _OPS_JOURNAL_COMPACT = []                  # v12.2.10: 非critical・ack済み�
 _REMOTE_ACK = {"ackedKeys": [], "lastVerifiedRemoteAckAt": None,
                "lastReceiptStatus": None, "remoteGeneratedAt": None,
                "legacyRemote": False, "maxObservedLagSec": 0,
-               "readbackFailures": 0}
+               "readbackFailures": 0, "outcomeAckedIds": [],
+               "lastVerifiedOutcomeReadBackAt": None}
+
+# Outcome再解決ポリシー。intervalは環境変数で調整可。期限は既存ポリシーが
+# 無かったため既定0=失効無効。運用合意後のみ正数へ設定する。
+def _outcome_policy_seconds(name, default, minimum):
+    try:
+        return max(minimum, int(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _outcome_restore_is_newer(existing, incoming):
+    """復元側の古いunresolvedでローカルresolvedを巻き戻さない。"""
+    if existing.get("status") == "resolved":
+        return False
+    if incoming.get("status") == "resolved":
+        return True
+    return (int(incoming.get("retryCount") or 0) >
+            int(existing.get("retryCount") or 0) or
+            str(incoming.get("lastRetryAt") or "") >
+            str(existing.get("lastRetryAt") or ""))
+
+
+_OUTCOME_RETRY_INTERVAL_SECONDS = max(
+    60, _outcome_policy_seconds("ARGUS_OUTCOME_RETRY_INTERVAL_SECONDS", 1800, 60))
+_OUTCOME_RETRY_EXPIRE_SECONDS = _outcome_policy_seconds(
+    "ARGUS_OUTCOME_RETRY_EXPIRE_SECONDS", 0, 0)
 
 
 def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
@@ -16334,6 +16379,9 @@ def _remote_readback_ack(now_iso=None, blob=None):
         return None
     rec = argus_remote_journal.read_back_receipt(
         remote_blob=blob, local_events=_OPS_JOURNAL, read_back_at=now_iso)
+    outcome_rec = argus_remote_journal.outcome_read_back_receipt(
+        remote_blob=blob, local_outcomes=_OUTCOME_LEDGER,
+        read_back_at=now_iso)
     _REMOTE_ACK["lastReceiptStatus"] = rec["verificationStatus"]
     _REMOTE_ACK["remoteGeneratedAt"] = rec.get("remoteGeneratedAt")
     if rec["verificationStatus"] == "legacy_snapshot":
@@ -16352,6 +16400,14 @@ def _remote_readback_ack(now_iso=None, blob=None):
             _REMOTE_ACK["maxObservedLagSec"] = max(
                 int(_REMOTE_ACK.get("maxObservedLagSec") or 0),
                 int(max(0, n - g)))
+    new_outcomes = [oid for oid in outcome_rec.get("ackedOutcomeIds") or []
+                    if oid not in set(_REMOTE_ACK["outcomeAckedIds"])]
+    if new_outcomes:
+        _REMOTE_ACK["outcomeAckedIds"] = (
+            _REMOTE_ACK["outcomeAckedIds"] + new_outcomes)[-400:]
+    if outcome_rec.get("ackedOutcomeIds"):
+        _REMOTE_ACK["lastVerifiedOutcomeReadBackAt"] = now_iso
+    rec["outcomeReadBack"] = outcome_rec
     return rec
 
 
@@ -16443,15 +16499,23 @@ def _missions_persist_blob():
 
 
 def _dl_resolve_matured(now_iso):
-    """成熟した予測の成果解決(cached価格のみ・欠損=unresolved・前倒し解決なし)。"""
+    """成熟成果を同一Outcomeで再解決。cached価格のみ・0値採点なし・冪等。"""
     resolved = 0
-    have = {o.get("forecastId") for o in _OUTCOME_LEDGER}
     for fc in _FORECAST_LEDGER:
-        if fc.get("id") in have or fc.get("mockData"):
+        fid = fc.get("id")
+        issued_date = str(fc.get("issuedAt") or "")[:10]
+        if not fid or fc.get("mockData"):
             continue
         # next_session成熟: 発行日より後の営業日終値が観測できたら解決対象
-        if str(fc.get("issuedAt", ""))[:10] >= now_iso[:10]:
-            continue                      # 成熟前は解決しない(前倒し禁止)
+        if not issued_date or issued_date >= now_iso[:10]:
+            continue                      # 成熟前/legacy時刻不明は解決しない
+        existing = next((o for o in _OUTCOME_LEDGER
+                         if o.get("forecastId") == fid), None)
+        if existing and existing.get("status") == "resolved":
+            continue                      # 解決済みは絶対に再計算しない
+        if existing and not argus_decision_ledger.outcome_retry_due(
+                existing, now_iso=now_iso):
+            continue                      # 同一tick/interval内は再試行しない
         sym = fc.get("symbol")
         try:
             hist = _price_history_cached(sym) if "_price_history_cached" in globals() else None
@@ -16461,17 +16525,47 @@ def _dl_resolve_matured(now_iso):
         if isinstance(hist, list) and len(hist) >= 2:
             closes = [(h.get("date"), h.get("close")) for h in hist
                       if h.get("close") is not None]
-            before = [c for d, c in closes if d and d <= fc["issuedAt"][:10]]
-            after = [c for d, c in closes if d and d > fc["issuedAt"][:10]]
+            before = [c for d, c in closes if d and d <= issued_date]
+            after = [c for d, c in closes if d and d > issued_date]
             start = before[-1] if before else None
             end = after[0] if after else None
-        o = argus_decision_ledger.outcome_record(
-            forecast=fc, outcome_as_of=now_iso, start_price=start,
-            end_price=end, now_iso=now_iso)
-        _OUTCOME_LEDGER.append(o)
-        _journal("outcome_resolved", "outcome", str(fc.get("id")),
-                 {"status": o.get("status")},
-                 origin=fc.get("origin") or "scheduler")
+        event_origin = (fc.get("origin") if fc.get("origin") in
+                        ("forward_live", "historical_replay") else "scheduler")
+        if existing is None:
+            o = argus_decision_ledger.outcome_record(
+                forecast=fc, outcome_as_of=now_iso, start_price=start,
+                end_price=end, now_iso=now_iso)
+            if o.get("status") == "unresolved":
+                o = argus_decision_ledger.schedule_outcome_retry(
+                    o, now_iso=now_iso,
+                    retry_interval_seconds=_OUTCOME_RETRY_INTERVAL_SECONDS)
+            _OUTCOME_LEDGER.append(o)
+            ev_type = ("outcome_resolved" if o.get("status") == "resolved"
+                       else "outcome_unresolved")
+            _journal(ev_type, "outcome", str(fid),
+                     {"status": o.get("status"),
+                      "resolutionState": o.get("resolutionState"),
+                      "outcomeId": o.get("id")}, origin=event_origin)
+        else:
+            old_state = existing.get("resolutionState") or existing.get("status")
+            o = argus_decision_ledger.retry_outcome_record(
+                existing=existing, forecast=fc, outcome_as_of=now_iso,
+                start_price=start, end_price=end, now_iso=now_iso,
+                retry_interval_seconds=_OUTCOME_RETRY_INTERVAL_SECONDS,
+                expire_after_seconds=_OUTCOME_RETRY_EXPIRE_SECONDS)
+            if o == existing:
+                continue
+            existing.clear()
+            existing.update(o)           # ID/list位置を維持、重複生成なし
+            ev_type = ("outcome_resolved" if o.get("status") == "resolved"
+                       else "outcome_expired"
+                       if o.get("resolutionState") == "unresolved_expired"
+                       else "outcome_retry_scheduled")
+            _journal(ev_type, "outcome", str(fid),
+                     {"status": o.get("status"), "fromState": old_state,
+                      "resolutionState": o.get("resolutionState"),
+                      "outcomeId": o.get("id"),
+                      "retryCount": o.get("retryCount")}, origin=event_origin)
         if o.get("status") == "resolved":
             resolved += 1
     while len(_OUTCOME_LEDGER) > 200:
@@ -16661,7 +16755,11 @@ def api_argus_admin_missions_tick():
                 pm = {"sessionDate": session_date,
                       "forecastsIssued": len(_FORECAST_LEDGER),
                       "forecastsResolved": len(resolved),
-                      "unresolvedCount": len(_FORECAST_LEDGER) - len(_OUTCOME_LEDGER),
+                      "unresolvedCount": sum(
+                          1 for f in _FORECAST_LEDGER
+                          if not any(o.get("forecastId") == f.get("id") and
+                                     o.get("status") == "resolved"
+                                     for o in _OUTCOME_LEDGER)),
                       "ownerReadableSummaryJa": (
                           f"予測{len(_FORECAST_LEDGER)}件・解決{len(resolved)}件。"
                           + ("解決サンプルなし — 学習主張はしません。"
