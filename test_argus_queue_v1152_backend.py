@@ -103,6 +103,7 @@ def test_admin_explain_run_requires_token():
 
 def test_admin_explain_run_drains_requests_first(monkeypatch):
     _restore(monkeypatch)
+    monkeypatch.setattr(scanner, "_scheduled_ai_skip", lambda *args: None)
     monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "tok")
     monkeypatch.setattr(scanner, "_MC_AI_ENABLED", True)
     seen = []
@@ -169,6 +170,7 @@ def test_admin_translate_visible_requires_token():
 
 def test_translate_visible_drains_queue_first(monkeypatch):
     _restore(monkeypatch)
+    monkeypatch.setattr(scanner, "_scheduled_ai_skip", lambda *args: None)
     monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "tok")
     monkeypatch.setattr(scanner, "_NEWS_JA_CACHE", {})
     monkeypatch.setattr(scanner, "_translate_headlines_ja",
@@ -202,6 +204,7 @@ def test_translation_status_includes_visible_queue(monkeypatch):
 
 def test_cause_attribution_ionq_pending_then_translated(monkeypatch):
     _restore(monkeypatch)
+    monkeypatch.setattr(scanner, "_scheduled_ai_skip", lambda *args: None)
     monkeypatch.setattr(scanner, "_NEWS_JA_CACHE", {})
     monkeypatch.setattr(scanner, "get_company_news",
                         lambda *a, **k: [{"headline": "IonQ shares soar on quantum computing milestone",

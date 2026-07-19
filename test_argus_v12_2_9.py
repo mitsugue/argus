@@ -840,7 +840,6 @@ def test_semantic_version_format():
     # v12.2.10で12.2.9からbump — 正確な値はtest_argus_v12_2_10が固定。
     # ここでは恒久不変条件のみ: セマンティック形式でありGit SHAではない。
     v = scanner._semantic_app_version()
-    assert v.startswith("12.2.")
     import re
     assert re.fullmatch(r"\d+\.\d+\.\d+", v), v       # SHAはappVersion不可
 

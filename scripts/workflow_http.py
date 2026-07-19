@@ -19,7 +19,8 @@ FAILURE = "failure"
 _FAIL_STATUSES = {"error", "failed", "failure", "unreachable", "unauthorized",
                   "forbidden", "blocked", "invalid"}
 _DEGRADED_STATUSES = {"degraded", "partial"}
-_SKIP_STATUSES = {"expected_skip", "skipped", "no_work", "noop"}
+_SKIP_STATUSES = {"expected_skip", "skipped", "no_work", "noop",
+                  "deterministic_mode"}
 _SECRET_KEYS = ("token", "secret", "password", "passphrase", "credential",
                 "authorization", "apikey", "api_key", "hmac")
 _SAFE_OUTPUT_KEYS = ("ok", "status", "count", "translated", "pending", "made",
