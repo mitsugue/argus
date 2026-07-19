@@ -98,7 +98,7 @@ jobs:
           RESP=$(python3 scripts/workflow_http.py --name ledger-ai-run --method POST --timeout 240 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status disabled --expected-status budget_exceeded \
-            --expected-status rate_limited \
+            --expected-status rate_limited --expected-status deterministic_mode \
             --url "$BE/api/argus/ai-judgment/run?checker=pro")
           SHORT=$(echo "$RESP" | head -c 300)
           echo "ai run: $SHORT"

@@ -39,6 +39,7 @@ jobs:
             # AI explanation for the biggest unresolved movers only (cost-bounded).
             EXP=$(python3 scripts/workflow_http.py --name mover-causes-explain --method POST --timeout 240 \
               --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --expected-status deterministic_mode \
               --header 'Content-Type: application/json' --data '{"max": 3}' \
               --url "$BE/api/argus/admin/mover-causes/explain")
             echo "explain: ${EXP:0:200}"

@@ -43,7 +43,7 @@ jobs:
           RESP=$(python3 scripts/workflow_http.py --name ai-rejudge --method POST --timeout 240 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status disabled --expected-status budget_exceeded \
-            --expected-status rate_limited \
+            --expected-status rate_limited --expected-status deterministic_mode \
             --url "$BE/api/argus/ai-judgment/run?checker=flash")
           echo "ai-rejudge(flash): ${RESP:0:240}"
           # C.A.O.S. event lifecycle — pre/post analyses. Self-limited (6h cache per
@@ -51,6 +51,7 @@ jobs:
           # 15 min mostly returns cached (made=0) and costs nothing.
           EVT=$(python3 scripts/workflow_http.py --name caos-events --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status deterministic_mode \
             --url "$BE/api/argus/event-analysis/generate")
           echo "caos-events: ${EVT:0:200}"
           # Official-event lifecycle (v11.3): fill pending market-reaction windows from
@@ -64,6 +65,7 @@ jobs:
           # is added — then it auto-profiles it for relationship-aware news linking.
           PROF=$(python3 scripts/workflow_http.py --name entity-profiles --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status deterministic_mode \
             --url "$BE/api/argus/entity-profiles/generate")
           echo "entity-profiles: ${PROF:0:200}"
           # Mover-cause ladder (v11.3.3): deterministic evidence refresh for today's sharp
@@ -76,11 +78,13 @@ jobs:
           # Buy candidates (本日の注目候補): screens today's movers into a high-bar watch list.
           BUY=$(python3 scripts/workflow_http.py --name buy-candidates --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status deterministic_mode \
             --url "$BE/api/argus/buy-candidates/generate")
           echo "buy-candidates: ${BUY:0:200}"
           # V11.5: translate queued English news headlines to JP (every 15 min so any
           # page's news is shown translated). Cheap Gemini call; no article bodies.
           TR=$(python3 scripts/workflow_http.py --name news-translate --method POST --timeout 90 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status deterministic_mode \
             --url "$BE/api/argus/admin/news/translate")
           echo "news-translate: ${TR:0:120}"

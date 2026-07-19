@@ -32,6 +32,10 @@ class WorkflowHttpTests(unittest.TestCase):
             expected_values=["private_store_not_configured"])
         self.assertEqual(r["outcome"], wh.EXPECTED_SKIP)
         self.assertEqual(wh.classify_response(200, json.dumps({"status": "partial"}))["outcome"], wh.DEGRADED)
+        self.assertEqual(wh.classify_response(
+            200, json.dumps({"ok": True, "status": "deterministic_mode",
+                             "reason": "deterministic_mode"}))["outcome"],
+            wh.EXPECTED_SKIP)
 
     def test_timeout_is_failure_and_secret_not_logged(self):
         with mock.patch.object(wh, "request_json", side_effect=socket.timeout()), \

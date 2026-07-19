@@ -7,6 +7,7 @@ import { bestAssetName } from '../../lib/assetStrategy';
 import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import { decisionHistoryFor } from '../../lib/decisionQuality';
 import { pastPatternLineJa } from '../../lib/learningReview';
+import { refreshMarketLedger } from '../../hooks/useMarketLedger';
 
 // V12.2.12 — RESEARCH & NOTES(§7-9)。旧Watchlistのリサーチメモ/AI相談/Removeと
 // 旧TodayのReview Packコピー/OSINT Deep Dive/DECISION HISTORYを統合。
@@ -18,11 +19,14 @@ const aiBtn: React.CSSProperties = { fontSize: 10.5, cursor: 'pointer', marginLe
 
 // LLM相談 (v10.30): ONE handoff prompt — ARGUSにしか見えない情報(大口フロー/
 // 日証金/開示空売り/校正実績)を先頭に置くモート起点プロンプト。移設のみ。
-async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState): Promise<boolean> {
+async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
+                                   provider: 'ChatGPT' | 'Gemini'): Promise<boolean> {
   const name0 = bestAssetName(d.asset, d.liveName ?? d.card?.name);
   const sc = (scoutState && typeof scoutState === 'object' && scoutState.status === 'live') ? scoutState as ScoutData : null;
   const strat = d.strat;
   const L: string[] = [];
+  const market = await refreshMarketLedger().then((s) => s.ledger).catch(() => null);
+  L.push(`# ${provider} consultation pack (clipboard only — API call 0)`);
   L.push(`あなたは投資の専門家です。私の判断支援アプリARGUSが出した「${d.asset.symbol} ${name0}」(${d.asset.market})の診断を渡します。`);
   L.push('大前提: ニュースや一般的な地合いはあなたの方が詳しい。だからここでは、ARGUSが掴んでいる「Web検索だけでは取れない情報」を軸に判断してほしい。');
   L.push('');
@@ -42,16 +46,23 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState): Pro
   if (sc?.postureCalibration?.hitRate != null) L.push(`■ この地合い(${sc.postureCalibration.posture})のエンジン的中率: ${Math.round(sc.postureCalibration.hitRate * 100)}%（n=${sc.postureCalibration.n}）`);
   else if (sc?.engineCalibration?.hitRate != null) L.push(`■ ARGUSエンジン全体の的中率: ${Math.round(sc.engineCalibration.hitRate * 100)}%（n=${sc.engineCalibration.n}）`);
   if (sc?.callJa) L.push(`■ ARGUSの一言コール: ${sc.callJa}`);
+  L.push(`■ ARGUS姿勢: ${d.pst?.stanceJa ?? d.decision?.rule.action ?? strat.action ?? '未確認'}`);
+  L.push(`■ ルール判断: ${d.decision?.rule.action ?? strat.action ?? '未確認'}`);
+  L.push(`■ 保有情報(端末内から手動コピー): ${d.pn?.held ? `保有中・数量${d.pn.quantity ?? '未入力'}・取得単価${d.pn.avgCost ?? '未入力'}・損益${d.pn.pnlPct ?? '未計算'}%` : '未保有/監視'}`);
+  if (d.eventTags.length) L.push(`■ 主要イベント: ${d.eventTags.map((e) => `${e.code} ${e.countdown}`).join(' / ')}`);
+  if (market) L.push(`■ Market Ledger要約: ${Object.entries(market.summary).map(([k, v]) => `${k}=${v}`).join(' / ')}`);
   L.push('');
   L.push('【参考(あなたの方が詳しいはず)】');
   if (strat.status !== 'mock' && strat.price != null) L.push(`■ 現在値 ${strat.price}（前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}）・ARGUS判断 ${strat.action}`);
   if (sc?.metrics) L.push(`■ テクニカル: RSI14=${sc.metrics.rsi14}・25日線乖離${sc.metrics.ma25DiffPct ?? '—'}%`);
+  L.push(`■ データ品質: quote=${strat.status} / scout=${sc?.status ?? '未取得'} / market-ledger=${market ? market.remoteReadBack.verificationStatus : '未取得'}`);
   if (strat.catalystNoteJa) L.push(`■ 直近の材料(ARGUS把握分): ${strat.catalystNoteJa}`);
   L.push('');
   L.push('依頼:');
   L.push('(1) Web/Deep ResearchのOSINT(直近2週の開示・決算・大株主/空売り/自社株買い・業界/国策)で、上のARGUSの需給読みを「補強 or 反証」して');
   L.push('(2) 強気材料と弱気材料を対比');
   L.push('(3) 最後に必ず:【新規買い/買い戻し/様子見/回避】の確率配分(%)・確信度(高/中/低)・根拠・出典URL・次に確認する条件。断定でなく確率で。');
+  L.push(`(4) ${provider}として、上のMarket Ledgerと個別チャートが矛盾する点、不足している確認事項を列挙して。`);
   L.push('売買指示ではなく判断材料の整理として。');
   const text = L.join('\n');
   try {
@@ -70,7 +81,7 @@ export const AssetResearchPanel: React.FC<{
 }> = ({ d, scout, onRemove }) => {
   const [note, setNote] = useState(() => getNote(d.asset.symbol)?.text ?? '');
   const [noteSaved, setNoteSaved] = useState(false);
-  const [llmCopied, setLlmCopied] = useState(false);
+  const [llmCopied, setLlmCopied] = useState<string | null>(null);
   const [packMsg, setPackMsg] = useState<string | null>(null);
   const doCopyPack = async (privacyMode: 'owner_copy' | 'redacted', length: 'full' | 'short') => {
     const md = buildReviewPackMarkdown({ packType: 'asset', privacyMode, length,
@@ -99,13 +110,13 @@ export const AssetResearchPanel: React.FC<{
         <button type="button" style={aiBtn} onClick={() => void doCopyPack('owner_copy', 'full')}>フル</button>
         <button type="button" style={aiBtn} onClick={() => void doCopyPack('owner_copy', 'short')}>短縮</button>
         <button type="button" style={aiBtn} onClick={() => void doCopyPack('redacted', 'full')}>redacted</button>
-        <button type="button" style={aiBtn}
-                title="フロー・信用需給・ARGUS校正実績を先頭に置いたモート起点プロンプト(先に⚡診断を押すと中身が濃くなります)"
-                onClick={() => void buildAndCopyConsult(d, scout).then((ok) => {
-                  if (ok) { setLlmCopied(true); window.setTimeout(() => setLlmCopied(false), 2500); }
+        {(['ChatGPT', 'Gemini'] as const).map((provider) => <button key={provider} type="button" style={aiBtn}
+                title={`${provider}用の相談文をコピーします。APIは呼びません。`}
+                onClick={() => void buildAndCopyConsult(d, scout, provider).then((ok) => {
+                  if (ok) { setLlmCopied(provider); window.setTimeout(() => setLlmCopied(null), 2500); }
                 })}>
-          {llmCopied ? '✓ Copied' : '🧠 需給起点プロンプト'}
-        </button>
+          {llmCopied === provider ? '✓ コピー完了' : `${provider}に相談`}
+        </button>)}
         {packMsg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{packMsg}</span>}
       </p>
 

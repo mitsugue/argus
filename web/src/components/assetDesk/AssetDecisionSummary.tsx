@@ -89,8 +89,8 @@ export const AssetDecisionSummary: React.FC<{
         {warns.slice(0, 2).map((w) => (
           <span key={w.textJa} className="ad-warn" style={{ color: w.tone }}>{w.textJa}</span>
         ))}
-        {d.eventTags.slice(0, 2).map((le) => (
-          <span key={le.code} className="ad-event" title="関連イベント">{linkedTagJa(le)}</span>
+        {d.eventTags.slice(0, 2).map((le, index) => (
+          <span key={`${le.code}:${le.countdown}:${index}`} className="ad-event" title="関連イベント">{linkedTagJa(le)}</span>
         ))}
       </span>
     </button>

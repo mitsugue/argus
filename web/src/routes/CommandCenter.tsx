@@ -29,6 +29,7 @@ import { ActionPrioritySection } from '../components/dashboard/ActionPrioritySec
 import { PositionPlanSection } from '../components/dashboard/PositionPlanSection';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { nextUpcomingEvent } from '../lib/eventClock';
+import { MarketLedgerChanges } from '../components/regime/MarketLedgerPanel';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { unreadCounts } from '../lib/notifications';
 import { todayStrategicNoteJa } from '../domain/portfolioStrategy';
@@ -519,6 +520,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
       )}
 
       {/* ── V12.2.11 ファーストビュー: 姿勢→変化→保有影響→行動→次の確認 ── */}
+      <MarketLedgerChanges onOpen={() => {
+        try { sessionStorage.setItem('argus.scrollTo', 'market-ledger'); } catch { /* ignore */ }
+        onNavigate('regime');
+      }} />
       <div className="today-grid">
         <div className="tg-span-12">
           <TodayStanceCard summary={commandSummary} positionRisk={positionRisk}

@@ -95,6 +95,8 @@ import argus_market_depth         # Market Depth capability report (feeds the gu
 import argus_mission_trigger       # §12 research-mission trigger gating (pure, v10.198)
 import argus_event_card            # EventCard v2 canonical research object (pure, ARGUS Pro v11)
 import argus_caos_audit            # CAOS association audit trail (pure, ARGUS Pro v11)
+import argus_cost_policy           # v12.3.0: centralized generative-AI execution policy
+import argus_market_ledger          # v12.3.0: append-only SHO-style market ledger
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -114,6 +116,69 @@ NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "mitsugu-stock-scanner")
 MOOMOO_HOST       = os.environ.get("MOOMOO_HOST", "127.0.0.1")
 MOOMOO_PORT       = int(os.environ.get("MOOMOO_PORT", 11111))
 PORT              = int(os.environ.get("PORT", 8080))
+
+# v12.3.0: generated-AI is fail-closed by default.  Market-data adapters are
+# deliberately outside this policy and continue to run in DETERMINISTIC mode.
+_COST_POLICY = argus_cost_policy.default_state(
+    os.environ.get("ARGUS_COST_POLICY_MODE", "DETERMINISTIC").strip().upper(),
+    os.environ.get("ARGUS_EVENT_AI_OPT_IN", "0") == "1")
+_MARKET_LEDGER = argus_market_ledger.empty_state()
+_MARKET_LEDGER_REMOTE = {"lastVerifiedReadBackAt": None,
+                         "verificationStatus": "not_verified"}
+
+
+def _cost_policy_authorize(provider, purpose, *, automatic=True,
+                           event_id="", event_phase="", confirmation=False,
+                           estimated_cost_usd=None, estimated_tokens=None):
+    """Central gate for every generated-AI provider call (no I/O)."""
+    return argus_cost_policy.authorize(
+        _COST_POLICY, provider=provider, purpose=purpose,
+        automatic=automatic,
+        now_iso=datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        event_id=event_id, event_phase=event_phase,
+        confirmation=confirmation,
+        estimated_cost_usd=estimated_cost_usd,
+        estimated_tokens=estimated_tokens,
+        provider_enabled=True)
+
+
+def _deterministic_skip_payload(purpose):
+    return {"ok": True, "status": "deterministic_mode",
+            "reason": "deterministic_mode", "classification": "expected_skip",
+            "purpose": purpose,
+            "noteJa": "決定論モードのため生成AIは実行していません。"}
+
+
+def _scheduled_ai_skip(provider, purpose):
+    if (purpose == "event_analysis" and _COST_POLICY.get("mode") == "EVENT_OPT_IN"
+            and _COST_POLICY.get("eventOptIn")):
+        if any((ev or {}).get("enabled") for ev in
+               (_COST_POLICY.get("events") or {}).values()):
+            return None  # each event is authorized again with ID/phase at call time
+    decision = _cost_policy_authorize(
+        provider, purpose, automatic=True,
+        estimated_cost_usd=0.10, estimated_tokens=8000)
+    if decision["allowed"]:
+        return None
+    return {**_deterministic_skip_payload(purpose),
+            "status": decision.get("status"),
+            "reason": decision.get("reason")}
+
+
+def _cost_policy_record(provider, purpose, *, event_id="", event_phase="",
+                        estimated_cost_usd=0.0):
+    updated = argus_cost_policy.record_execution(
+        _COST_POLICY, provider=provider, purpose=purpose,
+        at=datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        estimated_cost_usd=estimated_cost_usd,
+        event_id=event_id, event_phase=event_phase)
+    _COST_POLICY.clear()
+    _COST_POLICY.update(updated)
+    # Usage counters and the event phase de-duplication guard are durable state.
+    # Persist immediately so a restart cannot silently re-authorize the same run.
+    persist = globals().get("_osint_persist")
+    if callable(persist):
+        persist()
 
 # ━━━ DST Auto-Detection & Market Time ━━━
 TZ_ET  = pytz.timezone("US/Eastern")
@@ -958,6 +1023,11 @@ def classify_catalyst_grade(reason_text):
     return "C"
 
 def gemini_score_stocks(stocks, context=""):
+    if not _cost_policy_authorize(
+            "gemini", "legacy_crosscheck", automatic=True,
+            estimated_cost_usd=0.05, estimated_tokens=4000)["allowed"]:
+        add_log("[cost-policy] Gemini legacy cross-check skipped: deterministic_mode")
+        return {}
     if not google_genai or not GEMINI_API_KEY:
         add_log("[WARN] Gemini not available")
         return {}
@@ -1117,6 +1187,15 @@ PHILOSOPHY: All or Nothing. Whale tracking. Risk visualization.{dry_run_ctx}
 Select TOP 20 most likely to surge {'at next open' if DRY_RUN_MODE else 'after 09:30 ET open'}.
 IMPORTANT: "reason" and "sell_trigger" fields MUST be written in JAPANESE (日本語で記述せよ).
 Return ONLY JSON array: [{{"symbol":"TICKER","name":"Company Name","change_pct":X.XX,"reason":"日本語で買い根拠を1行で","confidence":1-5,"theme":"sector","sell_trigger":"日本語で損切り条件"}}]"""
+    if not _cost_policy_authorize(
+            "anthropic", "legacy_broad_scan", automatic=True,
+            estimated_cost_usd=0.25, estimated_tokens=9000)["allowed"]:
+        # Preserve the market-data scan without fabricating an AI ranking.
+        top20 = []
+        state["phase"] = 1; state["top20"] = top20
+        state["aiStatus"] = "deterministic_mode"; save_state(state)
+        add_log("[cost-policy] Claude broad scan skipped: deterministic_mode")
+        return
     add_log(f"🤖 Claude analyzing{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=3000, messages=[{"role":"user","content":prompt}])
@@ -1155,6 +1234,13 @@ def phase2_rescore():
                "Evaluate based on confirmed closing prices and technical setup for next session." if DRY_RUN_MODE else "")
     prompt = f"""Re-score TOP20→TOP10 for US stocks.{dry_ctx}\nTOP20:\n{top20_text}\nUPDATED QUOTES:\n{refresh_text}\nConsider: {'technical setup and catalyst strength for next open' if DRY_RUN_MODE else 'momentum change, volatility, priced-in moves'}.\nIMPORTANT: "reason" and "sell_trigger" MUST be in JAPANESE (日本語).
 Return ONLY JSON array of TOP 10: [{{"symbol":"TICKER","name":"Name","score":0-100,"change_pct":X.XX,"reason":"日本語で根拠","confidence":1-5,"theme":"theme","sell_trigger":"日本語で損切り条件","volatility":"high/med/low"}}]"""
+    if not _cost_policy_authorize(
+            "anthropic", "legacy_rescore", automatic=True,
+            estimated_cost_usd=0.20, estimated_tokens=7000)["allowed"]:
+        state["phase"] = 2; state["top10"] = top20[:10]
+        state["aiStatus"] = "deterministic_mode"; save_state(state)
+        add_log("[cost-policy] Claude rescore skipped: deterministic_mode")
+        return
     add_log(f"🤖 Claude re-scoring{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
@@ -1196,6 +1282,14 @@ def phase3_crosscheck():
                 "Evaluate catalyst quality and institutional signals for the next trading session." if DRY_RUN_MODE else "")
     prompt = f"""Cross-check TOP10→TOP5.{dry_ctx3}\nCRITICAL: "Buy without volume"=TRAP(penalize). "Price target raise+vol>300%"=REAL(boost).\nTOP10:\n{top10_text}\nWHALE RATINGS:\n{whale_text}\nGEMINI:\n{gemini_text}\nRules: red_flag→EXCLUDE, score<40→EXCLUDE, 40-59→warn, Combined=Claude70%+Gemini30%\nIMPORTANT: "reason" and "sell_trigger" MUST be in JAPANESE (日本語).
 Return ONLY JSON array TOP5: [{{"symbol":"TICKER","name":"Name","score":0-100,"combined_score":0-100,"reason":"日本語で買い根拠","confidence":1-5,"theme":"theme","sell_trigger":"日本語で損切り条件","grade":"A/B/C/D","whale_signal":"","gemini_score":0-100}}]"""
+    if not _cost_policy_authorize(
+            "anthropic", "legacy_crosscheck", automatic=True,
+            estimated_cost_usd=0.20, estimated_tokens=7000)["allowed"]:
+        state["phase"] = 3; state["top5"] = top10[:5]
+        state["whale_signals"] = whale_signals
+        state["aiStatus"] = "deterministic_mode"; save_state(state)
+        add_log("[cost-policy] Claude cross-check skipped: deterministic_mode")
+        return
     add_log(f"🤖 Claude cross-checking{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
@@ -1376,6 +1470,17 @@ def phase5_post_open():
     prices_final = get_realtime_prices(codes)
     top3_text = "\n".join([f"{s.get('symbol','')} Grade:{contexts.get(s.get('symbol',''),{}).get('catalyst_grade','?')} State:{contexts.get(s.get('symbol',''),{}).get('state','?')} "
         + (f"Price:{prices_final[s.get('symbol','')].get('change_pct',0)}%" if s.get('symbol','') in prices_final else "") for s in top3])
+    if not _cost_policy_authorize(
+            "anthropic", "legacy_final_tracking", automatic=True,
+            estimated_cost_usd=0.05, estimated_tokens=2500)["allowed"]:
+        state["phase"] = 5
+        state["post_open_result"] = {"status": "deterministic_mode",
+                                     "evaluations": [],
+                                     "overall": "自動AI評価は停止中"}
+        state["realtime_prices"] = prices_final
+        save_state(state)
+        add_log("[cost-policy] Claude final tracking skipped: deterministic_mode")
+        return
     try:
         prompt = f"Final 30min US stock tracking eval.\n[TOP3]\n{top3_text}\nReturn JSON:{{\"evaluations\":[{{\"code\":\"TICKER\",\"status\":\"HOLD/SELL\",\"message\":\"summary\",\"action_advice\":\"advice\"}}],\"overall\":\"assessment\"}}"
         res = claude.messages.create(model="claude-haiku-4-5-20251001", max_tokens=800, messages=[{"role":"user","content":prompt}])
@@ -10983,6 +11088,10 @@ def _usage_tokens(resp):
 
 def _openai_judge(snapshot):
     _AI_LAST_RUN["oaiUsage"] = None
+    if not _cost_policy_authorize(
+            "openai", "ai_judgment", automatic=True,
+            estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
+        return None, "deterministic_mode"
     if not _OPENAI_API_KEY:
         return None, "unavailable"
     user = ("Review these rule-based ARGUS labels and return STRICT JSON with keys: status, model, "
@@ -11079,6 +11188,10 @@ def _build_gemini_challenge(openai_out, gemini_out):
 def _gemini_check(snapshot, openai_out, checker_model=None):
     """Returns (out|None, status, grounding_enabled)."""
     _AI_LAST_RUN["gemUsage"] = None
+    if not _cost_policy_authorize(
+            "gemini", "ai_double_check", automatic=True,
+            estimated_cost_usd=0.05, estimated_tokens=8000)["allowed"]:
+        return None, "deterministic_mode", False
     if not google_genai or not GEMINI_API_KEY:
         return None, "unavailable", False
     grounding_enabled = False
@@ -11420,9 +11533,15 @@ _CAOS_EVENT_SYSTEM = (
 )
 
 
-def _openai_prose(user, max_out=600, system=None):
+def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
+                  event_id="", event_phase=""):
     """Generic GPT STRICT-JSON call. Returns a non-empty dict or None. Used by the C.A.O.S.
     event analyzer (default system) and the entity-profile generator (system= override)."""
+    if not _cost_policy_authorize(
+            "openai", purpose, automatic=True, event_id=event_id,
+            event_phase=event_phase, estimated_cost_usd=0.08,
+            estimated_tokens=max(1200, max_out * 3))["allowed"]:
+        return None
     if not _OPENAI_API_KEY:
         return None
     sys_prompt = system or _CAOS_EVENT_SYSTEM
@@ -11444,7 +11563,12 @@ def _openai_prose(user, max_out=600, system=None):
         except Exception:
             pass
         out = safe_json(text or "")
-        return out if isinstance(out, dict) and out else None
+        if isinstance(out, dict) and out:
+            _cost_policy_record("openai", purpose, event_id=event_id,
+                                event_phase=event_phase,
+                                estimated_cost_usd=0.08)
+            return out
+        return None
     except Exception as e:
         add_log(f"[caos] event prose failed: {type(e).__name__}")
         return None
@@ -11507,7 +11631,8 @@ def _caos_event_generate(limit=5):
         if phase == "post" and prev_pre:
             prompt += ("\n発表前のARGUS事前予想: " + prev_pre +
                        "\npostJaでは必ずこの事前予想との答え合わせ（概ね当たり/部分的/外れ＋一言の理由）を含めること。")
-        pr = _openai_prose(prompt)
+        pr = _openai_prose(prompt, purpose="event_analysis",
+                           event_id=str(eid), event_phase=phase)
         if not pr:
             if prev:
                 out[eid] = prev
@@ -12064,6 +12189,9 @@ def api_argus_admin_macro_generate():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("openai", "event_analysis")
+    if skipped:
+        return jsonify(skipped)
     return jsonify(_generate_macro_event_analysis())
 
 
@@ -12096,6 +12224,9 @@ def api_argus_admin_news_translate():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("gemini", "headline_translation")
+    if skipped:
+        return jsonify(skipped)
     body = request.get_json(silent=True) or {}
     try:
         cap = max(1, min(120, int(body.get("max") or 60)))
@@ -12154,6 +12285,9 @@ def api_argus_admin_news_translate_visible():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("gemini", "headline_translation")
+    if skipped:
+        return jsonify(skipped)
     body = request.get_json(silent=True) or {}
     try:
         cap = max(1, min(120, int(body.get("max") or 60)))
@@ -12333,6 +12467,9 @@ def api_argus_admin_macro_repair_post_release():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("openai", "event_analysis")
+    if skipped:
+        return jsonify({**skipped, "results": _refresh_macro_results()})
     try:
         return jsonify(_repair_post_release())
     except Exception as e:
@@ -12364,6 +12501,9 @@ def api_argus_event_analysis_generate():
     if not ok:
         return jsonify(err), code
     res = _refresh_macro_results()
+    skipped = _scheduled_ai_skip("openai", "event_analysis")
+    if skipped:
+        return jsonify({**skipped, "results": res})
     gen = _generate_macro_event_analysis()
     return jsonify({"results": res, "generated": gen})
 
@@ -12384,6 +12524,9 @@ def api_argus_entity_profiles_generate():
     ok, err, code = _require_owner_sync(body_token=body.get("ownerToken"))
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("openai", "entity_profiles")
+    if skipped:
+        return jsonify(skipped)
     sym = str(body.get("symbol") or "").strip().upper()
     if sym:
         prev = _ENTITY_PROFILES.get(sym)
@@ -12442,6 +12585,9 @@ def api_argus_buy_candidates_generate():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("openai", "buy_candidates")
+    if skipped:
+        return jsonify(skipped)
     return jsonify(_buy_candidates_generate())
 
 
@@ -12519,6 +12665,11 @@ def _ai_run_gate(force=False):
     """(allowed, payload, http_code). Validates enabled/locked/country/interval/
     daily-count AND the ARGUS-side USD hard budget. Records the run when allowed.
     force=True (admin) may dip into the small monthly emergency reserve only."""
+    policy = _cost_policy_authorize(
+        "openai", "ai_judgment", automatic=True,
+        estimated_cost_usd=0.15, estimated_tokens=12000)
+    if not policy["allowed"]:
+        return False, _deterministic_skip_payload("ai_judgment"), 200
     now = time.time()
     meta = _client_meta()
     if not _AI_JUDGE_ENABLED:
@@ -13088,18 +13239,42 @@ def api_argus_ai_provider_status():
 
 @app.route("/api/argus/ai-provider-status/ping", methods=["POST"])
 def api_argus_ai_provider_ping():
-    """Admin-only MINIMAL test call to each AI provider ("reply: pong") so a
-    renewed key can be verified in one command without burning a full judgment
-    run. Costs a few tokens. Never returns key values; error type + a short
-    provider message only."""
+    """Admin-only, explicitly confirmed MINIMAL call to one selected provider."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    out = {"asOf": _ai_now_iso()}
+    body = request.get_json(silent=True) or {}
+    provider = str(body.get("provider") or "").strip().lower()
+    reason = str(body.get("reason") or "").strip()[:160]
+    if _COST_POLICY.get("mode") != "MANUAL":
+        policy = _cost_policy_authorize(
+            provider if provider in ("openai", "gemini") else "openai",
+            "manual_api", automatic=False,
+            confirmation=body.get("confirm") is True,
+            estimated_cost_usd=0.002, estimated_tokens=100)
+        return jsonify({**_deterministic_skip_payload("provider_ping"),
+                        "reason": policy.get("reason"),
+                        "status": policy.get("status")}), 200
+    if provider not in ("openai", "gemini"):
+        return jsonify({"ok": False, "error": "provider_required",
+                        "allowedProviders": ["openai", "gemini"]}), 400
+    if not reason:
+        return jsonify({"ok": False, "error": "execution_reason_required"}), 400
+    policy = _cost_policy_authorize(
+        provider, "manual_api", automatic=False,
+        confirmation=body.get("confirm") is True,
+        estimated_cost_usd=0.002, estimated_tokens=100)
+    if not policy["allowed"]:
+        return jsonify({**_deterministic_skip_payload("provider_ping"),
+                        "reason": policy.get("reason"),
+                        "status": policy.get("status")}), 200
+    model = _OPENAI_MODEL if provider == "openai" else _GEMINI_JUDGE_MODEL
+    out = {"asOf": _ai_now_iso(), "provider": provider, "model": model,
+           "estimatedCostUsd": 0.002, "reason": reason}
 
-    if not _OPENAI_API_KEY:
+    if provider == "openai" and not _OPENAI_API_KEY:
         out["openai"] = {"ok": False, "error": "missing_key"}
-    else:
+    elif provider == "openai":
         try:
             import openai
             client = openai.OpenAI(api_key=_OPENAI_API_KEY)
@@ -13115,21 +13290,23 @@ def api_argus_ai_provider_ping():
                     timeout=30)
                 reply = (r.choices[0].message.content or "")[:40]
             out["openai"] = {"ok": True, "model": _OPENAI_MODEL, "reply": reply}
+            _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["openai"] = {"ok": False, "model": _OPENAI_MODEL,
                              "error": type(e).__name__, "message": str(e)[:140]}
 
-    if not GEMINI_API_KEY:
+    if provider == "gemini" and not GEMINI_API_KEY:
         out["gemini"] = {"ok": False, "error": "missing_key"}
-    elif not google_genai:
+    elif provider == "gemini" and not google_genai:
         out["gemini"] = {"ok": False, "error": "sdk_unavailable"}
-    else:
+    elif provider == "gemini":
         try:
             client = google_genai.Client(api_key=GEMINI_API_KEY)
             r = client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
                                                contents="Reply with the single word: pong")
             out["gemini"] = {"ok": True, "model": _GEMINI_JUDGE_MODEL,
                              "reply": (getattr(r, "text", "") or "")[:40]}
+            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["gemini"] = {"ok": False, "model": _GEMINI_JUDGE_MODEL,
                              "error": type(e).__name__, "message": str(e)[:140]}
@@ -13251,6 +13428,10 @@ def _translate_headlines_ja(headlines):
     """Batch-translate headlines via the cheap Gemini flash model. Best-effort:
     any failure returns {} and the UI falls back to English. Called at most
     once per news-cache refill (10 min), so cost is negligible."""
+    if not _cost_policy_authorize(
+            "gemini", "headline_translation", automatic=True,
+            estimated_cost_usd=0.02, estimated_tokens=3000)["allowed"]:
+        return {}
     if not google_genai or not GEMINI_API_KEY or not headlines:
         return {}
     try:
@@ -14764,6 +14945,13 @@ def _openai_research_ex(user, role="standard"):
     - no-toolフォールバックは status=model_only(検証済み調査に偽装不可)"""
     started = _ai_now_iso()
     model = _openai_model_for(role)
+    if not _cost_policy_authorize(
+            "openai", "osint_research", automatic=True,
+            estimated_cost_usd=0.15, estimated_tokens=8000)["allowed"]:
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="deterministic_mode", started_at=started,
+            completed_at=started, failure_reason_redacted="deterministic_mode")
     if not _OPENAI_API_KEY:
         return None, argus_ai_gate.ai_execution_result(
             provider="openai", model=model, role=role, mode="research",
@@ -15221,6 +15409,9 @@ def _osint_persist():
                 "opsJournalMeta": dict(_OPS_JOURNAL_META),
                 "opsJournalCompacted": _OPS_JOURNAL_COMPACT[-40:],
                 "remoteAck": dict(_REMOTE_ACK),   # レシートは再起動を生存(v12.2.10)
+                "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
+                "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
+                "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
                 "soakLastPersistAt": _ai_now_iso()}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -15329,6 +15520,34 @@ def _osint_restore_once():
         for h in (blob.get("incidents") or [])[-20:]:
             if isinstance(h, dict) and h not in _INCIDENTS:
                 _INCIDENTS.append(h)
+        _cp = blob.get("costPolicy")
+        if isinstance(_cp, dict):
+            _restored_cp = argus_cost_policy.normalize_state(_cp)
+            # Runtime mode is an operator policy; persisted usage/events are restored,
+            # but an old snapshot cannot silently re-enable automatic AI.
+            _restored_cp["mode"] = _COST_POLICY["mode"]
+            _restored_cp["eventOptIn"] = _COST_POLICY["eventOptIn"]
+            _COST_POLICY.clear()
+            _COST_POLICY.update(_restored_cp)
+        _ml = blob.get("marketLedger")
+        if isinstance(_ml, dict):
+            _restored_ml = argus_market_ledger.normalize_state(_ml)
+            # Ledger is append-only.  A remote snapshot can add records, but cannot
+            # delete a newer local record from the same process.
+            for _key, _id in (("observations", "id"),
+                              ("derivedMetrics", "id"),
+                              ("turningPoints", "id"),
+                              ("imports", "importId")):
+                _seen = {x.get(_id) for x in _MARKET_LEDGER.get(_key, [])}
+                _MARKET_LEDGER.setdefault(_key, []).extend(
+                    x for x in _restored_ml.get(_key, [])
+                    if x.get(_id) not in _seen)
+            for _iid in _restored_ml.get("rolledBackImports", []):
+                if _iid not in _MARKET_LEDGER["rolledBackImports"]:
+                    _MARKET_LEDGER["rolledBackImports"].append(_iid)
+            _MARKET_LEDGER["lastUpdatedAt"] = max(
+                str(_MARKET_LEDGER.get("lastUpdatedAt") or ""),
+                str(_restored_ml.get("lastUpdatedAt") or "")) or None
         _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
         for h in _jr["events"]:
             argus_state_journal.append(_OPS_JOURNAL, h)
@@ -15526,6 +15745,10 @@ _OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONの�
 
 def _gemini_osint(prompt):
     """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
+    if not _cost_policy_authorize(
+            "gemini", "osint_research", automatic=True,
+            estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
+        return None, "deterministic_mode"
     if not google_genai or not GEMINI_API_KEY:
         return None, "disabled"
     try:
@@ -16132,6 +16355,10 @@ def api_argus_admin_osint_agents_run():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("gemini", "osint_research")
+    if skipped:
+        _OSINT_LAST["agentsStatus"] = "deterministic_mode"
+        return jsonify(skipped)
     try:
         body = request.get_json(silent=True) or {}
         target = str(body.get("symbol") or "").strip().upper()
@@ -16407,7 +16634,18 @@ def _remote_readback_ack(now_iso=None, blob=None):
             _REMOTE_ACK["outcomeAckedIds"] + new_outcomes)[-400:]
     if outcome_rec.get("ackedOutcomeIds"):
         _REMOTE_ACK["lastVerifiedOutcomeReadBackAt"] = now_iso
+    remote_ledger = blob.get("marketLedger") if isinstance(blob, dict) else None
+    if isinstance(remote_ledger, dict) and argus_market_ledger.read_back_verified(
+            _MARKET_LEDGER, remote_ledger):
+        _MARKET_LEDGER_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_ledger, dict):
+        _MARKET_LEDGER_REMOTE["verificationStatus"] = "hash_mismatch"
+    else:
+        _MARKET_LEDGER_REMOTE["verificationStatus"] = "not_present"
     rec["outcomeReadBack"] = outcome_rec
+    rec["marketLedgerReadBack"] = dict(_MARKET_LEDGER_REMOTE)
     return rec
 
 
@@ -16496,6 +16734,21 @@ _atexit.register(_graceful_shutdown)
 def _missions_persist_blob():
     return {"missions": _MISSIONS[-300:], "postmortems": _POSTMORTEMS[-30:],
             "forecasts": _FORECAST_LEDGER[-200:], "outcomes": _OUTCOME_LEDGER[-200:]}
+
+
+def _market_ledger_tick(now_iso):
+    """Rebuild derived rows and turning points without network or AI calls."""
+    before = argus_market_ledger.state_hash(_MARKET_LEDGER)
+    rebuilt = argus_market_ledger.rebuild(_MARKET_LEDGER, now_iso)
+    after = argus_market_ledger.state_hash(rebuilt)
+    _MARKET_LEDGER.clear()
+    _MARKET_LEDGER.update(rebuilt)
+    if before != after:
+        _journal("market_ledger_updated", "market_ledger", "phase1",
+                 {"stateHash": after,
+                  "observationCount": len(_MARKET_LEDGER["observations"]),
+                  "turningPointCount": len(_MARKET_LEDGER["turningPoints"])})
+    return {"changed": before != after, "stateHash": after}
 
 
 def _dl_resolve_matured(now_iso):
@@ -16588,6 +16841,7 @@ def api_argus_admin_missions_tick():
         prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
         tool_mode="grounding")
     jp_holiday = now.weekday() >= 5
+    ledger_tick = _market_ledger_tick(now_iso)
     # v12.2.10: 30分cron文脈で検証済みread-back ack+非criticalのcompaction。
     # (GETからは実行されない — ackとcompactはこの遷移文脈のみ。テストは
     # disabledフラグでネットワークを遮断し、blob注入で直接検証する)
@@ -16835,6 +17089,7 @@ def api_argus_admin_missions_tick():
     return jsonify({"ok": True, "created": len(created),
                     "executed": executed[:12], "missedDetected": len(missed),
                     "recovered": recovered,
+                    "marketLedger": ledger_tick,
                     "ops": argus_scheduler.ops_summary(_MISSIONS)})
 
 
@@ -16947,11 +17202,16 @@ def _osint_benchmark_worker(case_ids):
         _OSINT_BENCH_STATE["lastAt"] = _ai_now_iso()
 
 
-def _ai_capability_probe(model):
+def _ai_capability_probe(model, *, confirmation=False):
     """v12.2.0: モデル能力プローブ(admin/cron専用・私的文脈なし・秘密非出力)。"""
     out = {"model": model, "accessible": False, "responsesSupported": False,
            "structuredOutputsSupported": "unknown", "webSearchSupported": "unknown",
            "usageReturned": False, "errorClass": None}
+    if not _cost_policy_authorize(
+            "openai", "manual_api", automatic=False, confirmation=confirmation,
+            estimated_cost_usd=0.001, estimated_tokens=50)["allowed"]:
+        out["errorClass"] = "cost_policy_blocked"
+        return out
     if not _OPENAI_API_KEY:
         out["errorClass"] = "no_api_key"
         return out
@@ -16960,6 +17220,7 @@ def _ai_capability_probe(model):
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         r = client.responses.create(model=model, input="Reply: ok",
                                     timeout=30, store=False)
+        _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
         out["accessible"] = bool(getattr(r, "output_text", None))
         out["responsesSupported"] = True
         u = _usage_tokens(r)
@@ -16976,12 +17237,19 @@ def api_argus_admin_ai_capability_probe():
     if not ok:
         return jsonify(err), code
     body = request.get_json(silent=True) or {}
+    if (_COST_POLICY.get("mode") == "MANUAL"
+            and (body.get("confirm") is not True
+                 or not str(body.get("reason") or "").strip())):
+        return jsonify({"ok": False,
+                        "error": "explicit_confirmation_and_reason_required"}), 400
     models = body.get("models") or [m for m in {
         _OPENAI_MODEL_ROLES.get("extract"), _OPENAI_MODEL_ROLES.get("standard"),
         _OPENAI_MODEL_ROLES.get("war_room"), _OPENAI_SHADOW.get("candidate")} if m]
+    results = [_ai_capability_probe(str(m)[:60], confirmation=True)
+               for m in models[:5]]
     return jsonify({"ok": True,
-                    "results": [_ai_capability_probe(str(m)[:60])
-                                for m in models[:5]],
+                    "provider": "openai", "estimatedCostUsdPerModel": 0.001,
+                    "reason": str(body.get("reason"))[:160], "results": results,
                     "noteJa": "実測プローブのみ — 可用性を仮定した昇格はしない。"})
 
 
@@ -16992,6 +17260,9 @@ def api_argus_admin_osint_benchmark_run():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("gemini", "osint_benchmark")
+    if skipped:
+        return jsonify(skipped)
     try:
         body = request.get_json(silent=True) or {}
         if _OSINT_BENCH_STATE["running"]:
@@ -17128,9 +17399,97 @@ def api_argus_osint_memory_snapshot():
                     "missions": _MISSIONS[-120:],
                     "forecasts": _FORECAST_LEDGER[-200:],
                     "outcomes": _OUTCOME_LEDGER[-200:],
+                    "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
+                    "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
+                    "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
+
+
+@app.route("/api/argus/cost-policy")
+def api_argus_cost_policy_status():
+    """Public-safe status only: no keys, tokens, prompts, or private context."""
+    return jsonify(argus_cost_policy.public_status(_COST_POLICY, _ai_now_iso()))
+
+
+@app.route("/api/argus/admin/cost-policy", methods=["POST"])
+def api_argus_admin_cost_policy():
+    """Explicit operator opt-in. No provider is called by this configuration route."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") is not True:
+        return jsonify({"ok": False, "error": "explicit_confirmation_required"}), 400
+    try:
+        updated = argus_cost_policy.configure(
+            _COST_POLICY, mode=str(body.get("mode") or "DETERMINISTIC").upper(),
+            event_opt_in=body.get("eventOptIn") is True,
+            event_id=str(body.get("eventId") or "")[:120],
+            event_enabled=body.get("eventEnabled") is True,
+            providers=body.get("providers") if isinstance(body.get("providers"), list) else [],
+            event_budget_usd=float(body.get("eventBudgetUsd") or 1.0),
+            event_token_limit=int(body.get("eventTokenLimit") or 12000))
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    _COST_POLICY.clear()
+    _COST_POLICY.update(updated)
+    _journal("cost_policy_configured", "cost_policy", "central",
+             {"mode": _COST_POLICY["mode"],
+              "eventOptIn": _COST_POLICY["eventOptIn"]}, origin="admin")
+    _osint_persist()
+    return jsonify({"ok": True, **argus_cost_policy.public_status(
+        _COST_POLICY, _ai_now_iso())})
+
+
+@app.route("/api/argus/market-ledger")
+def api_argus_market_ledger_view():
+    view = argus_market_ledger.public_view(_MARKET_LEDGER, _ai_now_iso())
+    view["remoteReadBack"] = dict(_MARKET_LEDGER_REMOTE)
+    return jsonify(view)
+
+
+@app.route("/api/argus/admin/market-ledger/import", methods=["POST"])
+def api_argus_admin_market_ledger_import():
+    """Validated append-only CSV import. Dry-run is the default."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    now_iso = _ai_now_iso()
+    try:
+        if body.get("action") == "rollback":
+            updated = argus_market_ledger.rollback_import(
+                _MARKET_LEDGER, str(body.get("importId") or ""), now_iso)
+            _MARKET_LEDGER.clear()
+            _MARKET_LEDGER.update(updated)
+            _journal("market_ledger_import_rolled_back", "market_ledger",
+                     str(body.get("importId") or "unknown"),
+                     {"stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER)},
+                     origin="admin")
+            _osint_persist()
+            return jsonify({"ok": True, "status": "rolled_back",
+                            "importId": body.get("importId"),
+                            "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER)})
+        rows = argus_market_ledger.parse_csv(str(body.get("csv") or ""))
+        result = argus_market_ledger.import_rows(
+            _MARKET_LEDGER, rows, now_iso=now_iso,
+            dry_run=body.get("dryRun") is not False)
+        if result["ok"] and not result["dryRun"]:
+            _MARKET_LEDGER.clear()
+            _MARKET_LEDGER.update(result.pop("state"))
+            _journal("market_ledger_import_committed", "market_ledger",
+                     result["importId"],
+                     {"rowCount": len(result["preview"]),
+                      "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER)},
+                     origin="admin")
+            _osint_persist()
+        else:
+            result.pop("state", None)
+        return jsonify(result), (200 if result["ok"] else 400)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.route("/api/argus/osint/canary")
@@ -18036,6 +18395,9 @@ def api_argus_admin_mover_causes_explain():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("openai", "mover_explanation")
+    if skipped:
+        return jsonify(skipped)
     body = request.get_json(silent=True) or {}
     syms = [str(s).upper() for s in (body.get("symbols") or [])][:_MC_AI_MAX_PER_RUN]
     market = str(body.get("market") or "JP").upper()
@@ -18123,6 +18485,9 @@ def api_argus_admin_mover_causes_explain_run():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    skipped = _scheduled_ai_skip("openai", "mover_explanation")
+    if skipped:
+        return jsonify(skipped)
     _mover_causes_restore_once()
     _mc_explain_req_restore_once()
     now_iso = _ai_now_iso()

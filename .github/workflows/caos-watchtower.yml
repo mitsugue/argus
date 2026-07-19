@@ -49,6 +49,7 @@ jobs:
             # translate what the owner actually sees FIRST (headlines only)
             TRV=$(python3 scripts/workflow_http.py --name translate-visible --method POST --timeout 120 \
               --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --expected-status deterministic_mode \
               --url "$BE/api/argus/admin/news/translate-visible")
             echo "translate-visible: ${TRV:0:200}"
           fi

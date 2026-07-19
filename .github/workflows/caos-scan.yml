@@ -38,6 +38,7 @@ jobs:
           # v12.1.0: OSINTスカウトのキュー消化(キューが空なら外部AIは呼ばれない=無料)
           OS=$(python3 scripts/workflow_http.py --name osint-agents --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status deterministic_mode \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/agents-run")
           echo "osint-agents: $OS"
@@ -50,6 +51,7 @@ jobs:
           # v12.1.7: 基準校正の加速(run最少ケースを最大2件・Gemini 2呼び出し/回)
           BM=$(python3 scripts/workflow_http.py --name osint-benchmark --method POST --timeout 60 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status deterministic_mode \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/benchmark-run")
           echo "osint-benchmark: $BM"
@@ -73,6 +75,7 @@ jobs:
           for i in 1 2 3 4; do
             TRV=$(python3 scripts/workflow_http.py --name translate-visible --method POST --timeout 120 \
               --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --expected-status deterministic_mode \
               --url "$BE/api/argus/admin/news/translate-visible")
             echo "translate-visible[$i]: ${TRV:0:200}"
             TRANSLATED=$(echo "$TRV" | python3 -c "import sys,json;print(json.load(sys.stdin).get('translated',0))" 2>/dev/null || echo 0)

@@ -7,6 +7,7 @@ import { jpIntradayJa } from '../lib/regimeLabels';
 import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
 import { LedgerHistory } from '../components/regime/LedgerHistory';
+import { MarketLedgerPanel } from '../components/regime/MarketLedgerPanel';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useMarketMovers } from '../hooks/useMarketMovers';
 import type {
@@ -109,14 +110,25 @@ export const MarketRegime: React.FC = () => {
   useEffect(() => {
     let target: string | null = null;
     try { target = sessionStorage.getItem('argus.scrollTo'); } catch { /* ignore */ }
-    if (target !== 'full-board') return;
-    try { sessionStorage.removeItem('argus.scrollTo'); } catch { /* ignore */ }
-    const id = requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        document.getElementById('full-board')?.scrollIntoView({ block: 'start' });
-      }),
-    );
-    return () => cancelAnimationFrame(id);
+    if (!target) return;
+    // The ledger owns its deep-link because its async table and the event strip
+    // above it can still change page height after this route first mounts.
+    if (target === 'market-ledger') return;
+    let innerId = 0;
+    const outerId = requestAnimationFrame(() => {
+      innerId = requestAnimationFrame(() => {
+        const element = document.getElementById(target);
+        if (!element) return;
+        element.scrollIntoView({ block: 'start' });
+        // Remove only after the scroll succeeds. In development StrictMode the
+        // first effect is deliberately cancelled before the second effect runs.
+        try { sessionStorage.removeItem('argus.scrollTo'); } catch { /* ignore */ }
+      });
+    });
+    return () => {
+      cancelAnimationFrame(outerId);
+      if (innerId) cancelAnimationFrame(innerId);
+    };
   }, []);
 
   const rows = useMemo(() => (data ? toRotationRows(data.rotationGroups) : []), [data]);
@@ -135,6 +147,9 @@ export const MarketRegime: React.FC = () => {
       title={tEn('nav.marketContext')}
       subtitle="今の地合い(レジーム・資金ローテーション・金利)と、これから来る予定イベント・危機ニュースを1画面に。アクションラベルの裏付けであって、それ自体は売買シグナルではない。ETFローテーションは資金フローのproxy。"
     >
+      {/* Event clock is the first context surface; it remains deterministic. */}
+      <MarketEventsSections />
+
       {/* Status + regime header */}
       <div className="card regime-head">
         <div className="regime-head__main">
@@ -174,6 +189,12 @@ export const MarketRegime: React.FC = () => {
           </div>
         )}
       </div>
+
+      <MarketLedgerPanel />
+
+      {/* Existing decision/rotation history remains available after the canonical
+          market ledger, without duplicating the ledger table. */}
+      <LedgerHistory />
 
       {/* ── US block (v10.192): Regime Matrix (現在地) → Capital Rotation Board ── */}
       {matrix && (
@@ -375,14 +396,6 @@ export const MarketRegime: React.FC = () => {
           )}
         </div>
       </section>
-
-      {/* Forward-looking context: scheduled events + escalation + crisis news
-          (merged from the old Event Radar page, v10.57). */}
-      <MarketEventsSections />
-
-      {/* 履歴/台帳 read-back (v10.185): the daily ledgers (rotation Δ / downside / attribution)
-          were accumulating with no UI — surfaced here. */}
-      <LedgerHistory />
 
       {data && data.dataLimitations.length > 0 && (
         <section>

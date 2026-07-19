@@ -74,6 +74,7 @@ def test_unavailable_gemini_gives_skipped_not_false_pass(monkeypatch):
 
 def test_duplicate_run_reuses_existing_job(monkeypatch):
     monkeypatch.setattr(scanner, "_require_admin", lambda: (True, None, 200))
+    monkeypatch.setattr(scanner, "_scheduled_ai_skip", lambda *args: None)
     scanner._OSINT_BENCH_STATE["running"] = True
     try:
         with scanner.app.test_client() as c:
