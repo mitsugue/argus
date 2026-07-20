@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.6.0', 'Foundation Final Closure — J-Quants騰落breadthの安全な再開可能job、unresolved Outcomeを含むRemote Journal再検証、正式benchmarkのexact model証拠と現行料金を追加。Nikkei PER/PBRは許諾確認まで自動取得・本番表示を停止。'],
   ['v12.5.0', 'SHO Production Phase 3 — 市場別公式カレンダー、J-Quants投資主体別backfill、16項目Daily Operating Sheet、Daily Changes、Anomaly Desk、判断変更条件、SHO経験則分類とfuture-leakage禁止walk-forward基盤、Source of Truth Matrixを追加。欠損値を捏造せず自動AI/自動売買は0。'],
   ['v12.4.0', 'Chart Intelligence + SHO Method Phase 2 — OHLCVから移動平均・Bollinger・一目・RSI・MACD・ATR、支持抵抗帯、相対強弱、テクニカル転換点、価格反応異常、最大5行批評を決定論的に計算。Market Context／Asset Desk／Todayへ統合し、自動生成AIは0のまま維持。'],
   ['v12.3.3', 'Formal Gemini 2X Benchmark Infrastructure — calibration 6件とone-shot holdout 12件、盲検評価、費用上限、確認hash、append-only resultを実装。未実行時はnot_run/provider_blocked、twoXClaimAllowed=falseを維持。'],

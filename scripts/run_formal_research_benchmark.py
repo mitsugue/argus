@@ -56,7 +56,8 @@ def _request_json(url: str, *, token: Optional[str] = None,
 
 def _safe_status(body: Dict[str, Any]) -> Dict[str, Any]:
     keys = ("status", "mode", "benchmarkId", "datasetHash", "benchmarkDate",
-            "researchEpoch", "geminiModel", "argusVersion", "holdoutCaseCount",
+            "researchEpoch", "geminiModel", "argusModel", "refereeModel",
+            "pricingVersion", "argusVersion", "calibrationCaseCount", "holdoutCaseCount",
             "geminiScore", "argusScore", "medianRatio", "geometricMeanRatio",
             "twoXClaimAllowed", "totalApiCostJpy", "resultClassification")
     return {key: body.get(key) for key in keys if key in body}
