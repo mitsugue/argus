@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.6.2', 'Gemini preflight証拠のstable候補をtext Proモデルに限定し、画像・TTS・custom-toolsモデルを正式baselineのfailover候補から除外。'],
   ['v12.6.1', 'Foundation Two-Blocker Closure — J-Quants V2の日付を公式YYYYMMDD形式へ正規化し、秘密非表示のrequest matrixと公式client比較を追加。Geminiはraw candidate/finishReason/thinking tokenを検査するbounded preflightへ変更し、正式benchmark前の空応答を原因分類。'],
   ['v12.6.0', 'Foundation Final Closure — J-Quants騰落breadthの安全な再開可能job、unresolved Outcomeを含むRemote Journal再検証、正式benchmarkのexact model証拠と現行料金を追加。Nikkei PER/PBRは許諾確認まで自動取得・本番表示を停止。'],
   ['v12.5.0', 'SHO Production Phase 3 — 市場別公式カレンダー、J-Quants投資主体別backfill、16項目Daily Operating Sheet、Daily Changes、Anomaly Desk、判断変更条件、SHO経験則分類とfuture-leakage禁止walk-forward基盤、Source of Truth Matrixを追加。欠損値を捏造せず自動AI/自動売買は0。'],

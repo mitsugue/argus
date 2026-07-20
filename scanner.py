@@ -100,7 +100,7 @@ import argus_market_ledger          # v12.3.0: append-only SHO-style market ledg
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
 import argus_sho_phase3             # v12.5.0: deterministic SHO operating sheet/backfill mapping
-import argus_foundation_jobs        # v12.6.1: breadth request proof + Gemini raw preflight
+import argus_foundation_jobs        # v12.6.2: exact text-Pro failover candidate filter
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
