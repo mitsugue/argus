@@ -163,6 +163,29 @@ class BudgetAndModeTests(unittest.TestCase):
         self.assertFalse(blocked["allowed"])
         self.assertEqual(blocked["status"], "execution_limit_reached")
 
+    def test_legacy_ready_overwrite_is_recoverable_only_before_holdout(self):
+        dry = _dry()
+        legacy = bench.begin(
+            bench.default_state(), dry_run=dry, benchmark_id="legacy-failed",
+            trigger_source="manual", confirmed=True, started_at=NOW)["state"]
+        legacy = bench.fail_closed(
+            legacy, status="provider_failed", completed_at=NOW)
+        legacy["status"] = "ready"  # v12.6.3 dry-run overwrite persisted form
+        recovered = bench.begin(
+            legacy, dry_run=dry, benchmark_id="legacy-recovery",
+            trigger_source="manual", confirmed=True, started_at=NOW)
+        self.assertTrue(recovered["allowed"])
+        self.assertEqual(recovered["state"]["preHoldoutRecoveryCount"], 1)
+        consumed = bench.consume_holdout(
+            recovered["state"], benchmark_id="legacy-recovery")
+        failed = bench.fail_closed(
+            consumed["state"], status="provider_failed", completed_at=NOW)
+        blocked = bench.begin(
+            failed, dry_run=dry, benchmark_id="after-holdout",
+            trigger_source="manual", confirmed=True, started_at=NOW)
+        self.assertFalse(blocked["allowed"])
+
+
 
 class ScoringTests(unittest.TestCase):
     def test_future_leakage_fabrication_and_missing_source_penalized(self):

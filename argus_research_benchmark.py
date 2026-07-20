@@ -291,8 +291,12 @@ def begin(state: Dict[str, Any], *, dry_run: Dict[str, Any], benchmark_id: str,
         return {"allowed": False, "status": "already_running", "state": st}
     pre_holdout_recovery = bool(
         int(st.get("executionCount") or 0) >= MAX_EXECUTIONS
+        # v12.6.3 stored a replacement dry-run by overwriting the preceding
+        # provider_failed status with ready.  The remaining fields uniquely
+        # identify that pre-holdout abort, so it receives the same one-time
+        # recovery without permitting a second holdout.
         and st.get("status") in ("provider_failed", "input_budget_exceeded",
-                                 "invalid_evaluator_json")
+                                 "invalid_evaluator_json", "ready")
         and not st.get("holdoutConsumedBy")
         and not st.get("results")
         and int(st.get("preHoldoutRecoveryCount") or 0)
