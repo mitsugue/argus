@@ -26,6 +26,7 @@ APPROVED_CALL_SITES = {
     "_gemini_osint",            # OSINTスカウト(grounding)
     "_translate_headlines_ja",  # 翻訳fallback(gemini flash)
     "_ai_capability_probe",     # v12.2.0 モデル能力プローブ(admin)
+    "_formal_blind_evaluate",  # v12.3.2 手動限定・匿名固定rubric評価
 }
 
 BENCH_ELIGIBLE_STATUSES = ("ok",)          # ok以外はベンチ基準に使えない

@@ -28,7 +28,7 @@ class MissionWindowTests(unittest.TestCase):
         package = json.loads((ROOT / "web/package.json").read_text())
         lock = json.loads((ROOT / "web/package-lock.json").read_text())
         guide = (ROOT / "web/src/routes/Guide.tsx").read_text()
-        self.assertEqual(package["version"], "12.3.2")
+        self.assertEqual(package["version"], "12.3.3")
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertIn("['v12.3.1'", guide)

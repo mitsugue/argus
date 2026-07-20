@@ -22,6 +22,7 @@ EVENT_TYPES = ("mission_scheduled", "mission_claimed", "mission_checkpointed",
                "learning_proposal_created", "challenger_created",
                "challenger_updated", "research_measurement_recorded",
                "calibration_updated",
+               "research_benchmark_completed", "research_benchmark_failed",
                # v12.2.9: 遷移→イベント行列の完全化(soak中断/承認/昇格系)
                "soak_interrupted", "material_learning_approved",
                "champion_promoted", "champion_rolled_back")

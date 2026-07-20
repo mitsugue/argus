@@ -65,7 +65,14 @@ interface Console {
       fastestPathTo2xJa: string[]; recommendedNextEngineeringTasks: string[] };
     benchmarkRunsSummary?: { total: number; running: boolean; lastAt: string | null;
       recent: { caseId: string; status: string; ownerReadableJa: string | null }[];
-      budget: { maxCasesPerInvocation: number; maxCostLabel: string } } };
+      budget: { maxCasesPerInvocation: number; maxCostLabel: string } };
+    formalGeminiTwoX?: { status: string; mode: string; benchmarkDate: string | null;
+      researchEpoch: string | null; geminiModel: string | null; argusVersion: string | null;
+      holdoutCaseCount: number; medianRatio: number | null; geometricMeanRatio: number | null;
+      primarySourceGatePassed: boolean; evidenceGatePassed: boolean;
+      temporalIntegrityGatePassed: boolean; twoXClaimAllowed: boolean;
+      totalApiCostJpy: number; resultClassification: string | null;
+      limitations: string[]; noteJa: string } };
   rebootSafety?: { systemRestartRequired: boolean | 'unknown';
     opendAutostartConfigured: boolean | 'unknown';
     bridgeAutostartConfigured: boolean | 'unknown';
@@ -542,6 +549,28 @@ export const DataQualityPage: React.FC = () => {
                         {r.caseId}: {r.status}{r.ownerReadableJa ? ` — ${r.ownerReadableJa}` : ''}
                       </span>
                     ))}
+                  </p>
+                )}
+                {c.osintHealth.formalGeminiTwoX && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 10,
+                    color: c.osintHealth.formalGeminiTwoX.twoXClaimAllowed
+                      ? 'var(--value-positive)' : 'var(--text-faint)' }}>
+                    <b>GEMINI 2X — {c.osintHealth.formalGeminiTwoX.twoXClaimAllowed
+                      ? 'ACHIEVED' : c.osintHealth.formalGeminiTwoX.resultClassification
+                        ? 'NOT ACHIEVED' : 'FORMAL BENCHMARK NOT RUN'}</b>
+                    {c.osintHealth.formalGeminiTwoX.medianRatio != null && (
+                      <span style={{ display: 'block' }}>
+                        Measured median: {c.osintHealth.formalGeminiTwoX.medianRatio.toFixed(2)}x
+                        {' '}· geometric mean: {c.osintHealth.formalGeminiTwoX.geometricMeanRatio?.toFixed(2) ?? '—'}x
+                        {' '}· holdout {c.osintHealth.formalGeminiTwoX.holdoutCaseCount}/12
+                      </span>
+                    )}
+                    <span style={{ display: 'block' }}>
+                      primary {c.osintHealth.formalGeminiTwoX.primarySourceGatePassed ? 'PASS' : 'BLOCK'}
+                      {' '}· evidence {c.osintHealth.formalGeminiTwoX.evidenceGatePassed ? 'PASS' : 'BLOCK'}
+                      {' '}· temporal {c.osintHealth.formalGeminiTwoX.temporalIntegrityGatePassed ? 'PASS' : 'BLOCK'}
+                      {' '}· cost ¥{c.osintHealth.formalGeminiTwoX.totalApiCostJpy.toFixed(0)}
+                    </span>
                   </p>
                 )}
                 {/* v12.1.3: ソースユニバース(unavailableも沈黙省略せず可視化) */}

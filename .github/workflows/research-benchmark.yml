@@ -1,0 +1,28 @@
+name: formal-research-benchmark
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-research-benchmark-one-shot
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Dry-run, execute once, and verify deterministic restore
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: >-
+          python3 scripts/run_formal_research_benchmark.py
+          --ceiling-jpy 800
+          --max-wait-seconds 3000
