@@ -228,6 +228,25 @@ def test_jquants_v2_auth_pagination_and_429_recovery(monkeypatch):
     assert "configured-test-value" not in json.dumps(proof)
 
 
+def test_jquants_calendar_uses_provider_confirmed_seven_day_windows(monkeypatch):
+    import scanner
+    calls = []
+
+    def fake_rows(path, params, *, proof, max_pages=200):
+        calls.append((path, dict(params)))
+        return [{"Date": params["from"], "HolDiv": "1"}]
+
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", fake_rows)
+    dates = scanner._jquants_calendar_dates(
+        "2026-07-01", "2026-07-20", {})
+    assert dates == ["2026-07-01", "2026-07-08", "2026-07-15"]
+    assert [x[1] for x in calls] == [
+        {"from": "2026-07-01", "to": "2026-07-07"},
+        {"from": "2026-07-08", "to": "2026-07-14"},
+        {"from": "2026-07-15", "to": "2026-07-20"},
+    ]
+
+
 def test_journal_reverify_job_records_verified_ack(monkeypatch):
     import scanner
     previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)

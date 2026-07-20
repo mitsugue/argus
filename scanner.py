@@ -18778,15 +18778,19 @@ def _jquants_secure_rows(path, params, *, proof, max_pages=200):
 
 def _jquants_calendar_dates(start_date, end_date, proof):
     rows = []
-    # Keep each request bounded; endpoint paging is still followed inside a year.
-    year = int(start_date[:4])
-    last_year = int(end_date[:4])
-    while year <= last_year:
-        frm = max(start_date, f"{year}-01-01")
-        to = min(end_date, f"{year}-12-31")
+    # The production entitlement probe proves this endpoint with a seven-day
+    # window.  Longer historical windows can return HTTP 400 even on the Premium
+    # plan, so reuse that provider-confirmed contract instead of guessing a
+    # larger range. Pagination is still followed within every bounded window.
+    cursor = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    while cursor <= end:
+        window_end = min(cursor + timedelta(days=6), end)
+        frm = cursor.strftime("%Y-%m-%d")
+        to = window_end.strftime("%Y-%m-%d")
         rows.extend(_jquants_secure_rows(
             "/markets/calendar", {"from": frm, "to": to}, proof=proof))
-        year += 1
+        cursor = window_end + timedelta(days=1)
     return argus_foundation_jobs.trading_dates(rows, start=start_date, end=end_date)
 
 
