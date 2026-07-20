@@ -9,12 +9,16 @@ name: caos-scan
 
 on:
   schedule:
-    - cron: '*/30 * * * *'      # every 30 min, 24/7
+    - cron: '7,37 * * * *'      # every 30 min, offset from the congested :00/:30
   workflow_dispatch: {}
 
 # v11.9.1: the news-ja snapshot step pushes to the ledger branch.
 permissions:
   contents: write
+
+concurrency:
+  group: caos-scan-scheduled-missions
+  cancel-in-progress: false
 
 jobs:
   scan:
@@ -22,6 +26,28 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+      - name: Scheduled mission tick and Soak heartbeat
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
+          HEALTH=$(python3 scripts/workflow_http.py --name backend-health --timeout 60 \
+            --url "$BE/healthz")
+          echo "backend-health: $HEALTH"
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            TRIGGER_SOURCE="schedule"
+          else
+            TRIGGER_SOURCE="manual"
+          fi
+          export TRIGGER_SOURCE
+          TICK_PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"triggerSource":os.environ["TRIGGER_SOURCE"],"expectedBuildSha":os.environ["GITHUB_SHA"],"runId":os.environ["GITHUB_RUN_ID"]},separators=(",",":")))')
+          MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header 'Content-Type: application/json' --data "$TICK_PAYLOAD" \
+            --url "$BE/api/argus/admin/missions/tick")
+          echo "missions-tick: $MT"
+
       - name: Collect C.A.O.S. public sources
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -30,7 +56,6 @@ jobs:
           # degraded/failure=non-zero step (401/403/5xx/timeout/invalid JSON含む)。
           BE="https://argus-backend-3j2m.onrender.com"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
-          curl -s --max-time 60 "$BE/healthz" > /dev/null || true   # warm dyno
           RESP=$(python3 scripts/workflow_http.py --name caos-collect --method POST --timeout 120 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --url "$BE/api/argus/institutional-intelligence/collect")
@@ -42,12 +67,6 @@ jobs:
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/agents-run")
           echo "osint-agents: $OS"
-          # v12.2.1: セッション対応ミッションtick(冪等・予測発行/成果解決/回収)
-          MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 60 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --header 'Content-Type: application/json' --data '{}' \
-            --url "$BE/api/argus/admin/missions/tick")
-          echo "missions-tick: $MT"
           # v12.1.7: 基準校正の加速(run最少ケースを最大2件・Gemini 2呼び出し/回)
           BM=$(python3 scripts/workflow_http.py --name osint-benchmark --method POST --timeout 60 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
@@ -90,6 +109,7 @@ jobs:
       - name: Fetch translation-cache snapshot
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
+          cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
           for i in 1 2 3; do
             curl -sf --max-time 60 "$BE/api/argus/news/ja-cache-snapshot" \
               -o "$RUNNER_TEMP/news-ja.json" && break
@@ -98,6 +118,7 @@ jobs:
           test -s "$RUNNER_TEMP/news-ja.json"
           COUNT=$(python3 -c "import json;d=json.load(open('$RUNNER_TEMP/news-ja.json'));assert d.get('schemaVersion')=='news-ja-cache-v1';print(d.get('count',0))")
           echo "news-ja cache entries: $COUNT"
+          echo "NEWS_JA_COUNT=$COUNT" >> "$GITHUB_ENV"
           # v12.2.4: osint耐久状態も30分毎にledgerへ(watchtower毎時の補完)
           for i in 1 2 3; do
             curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
@@ -106,8 +127,8 @@ jobs:
           done
           test -s "$RUNNER_TEMP/osint-memory.json"
           python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));assert d.get('schemaVersion')=='argus-durable-v3'"
-          # never overwrite the ledger with an empty cache (e.g. right after deploy)
-          if [ "$COUNT" != "0" ] && [ -n "$COUNT" ]; then echo "PERSIST=1" >> "$GITHUB_ENV"; fi
+          # durable state/journalはnews件数に依存せず毎回flushする。
+          echo "PERSIST=1" >> "$GITHUB_ENV"
 
       - name: Checkout (main)
         if: env.PERSIST == '1'
@@ -117,6 +138,8 @@ jobs:
 
       - name: Commit news-ja snapshot to ledger branch
         if: env.PERSIST == '1'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
             || git fetch origin ledger 2>/dev/null || true
@@ -127,7 +150,10 @@ jobs:
             exit 0
           fi
           mkdir -p ledger/news-ja ledger/osint
-          cp "$RUNNER_TEMP/news-ja.json" ledger/news-ja/latest.json
+          # never overwrite the ledger with an empty cache (durable state still flushes)
+          if [ "$NEWS_JA_COUNT" != "0" ] && [ -n "$NEWS_JA_COUNT" ]; then
+            cp "$RUNNER_TEMP/news-ja.json" ledger/news-ja/latest.json
+          fi
           # v12.2.10 stale-writer guard: 複数workflow(caos-scan/watchtower)が
           # memory.jsonを書く — 古いsnapshotで新しいものを上書きする逆行を防ぐ
           # (generatedAt/asOfは同一Z形式=文字列比較可)。
@@ -148,4 +174,14 @@ jobs:
             git commit -m "news-ja: $(date -u +%FT%TZ) translation-cache snapshot"
             git push origin HEAD:ledger \
               || { git pull --rebase origin ledger && git push origin HEAD:ledger; }
+            REMOTE_COMMIT_SHA=$(git rev-parse HEAD)
+            EXPECTED_HASH=$(python3 -c "import json; print(json.load(open('ledger/osint/memory.json'))['integrityManifest']['manifestHash'])")
+            export REMOTE_COMMIT_SHA EXPECTED_HASH
+            RECEIPT_PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"]},separators=(",",":")))')
+            RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" --name remote-journal-commit-receipt \
+              --method POST --timeout 60 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --header 'Content-Type: application/json' --data "$RECEIPT_PAYLOAD" \
+              --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/remote-journal/commit-receipt")
+            echo "remote-journal-commit-receipt: $RECEIPT"
           fi
