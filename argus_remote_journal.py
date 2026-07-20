@@ -24,7 +24,9 @@ CRITICAL_EVENT_TYPES = ("forecast_issued", "forecast_superseded",
                         "incident_resolved", "soak_started",
                         "soak_interrupted", "soak_invalidated",
                         "soak_completed", "material_learning_approved",
-                        "champion_promoted", "champion_rolled_back")
+                        "champion_promoted", "champion_rolled_back",
+                        "research_benchmark_completed",
+                        "research_benchmark_failed")
 _PRIVATE_FIELDS = ("quantity", "avgCost", "acquisitionPrice", "pnl",
                    "fundValue", "passphrase", "hmac", "token", "apiKey",
                    "secret", "credential")

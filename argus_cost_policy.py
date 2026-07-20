@@ -8,7 +8,7 @@ no OpenAI/Gemini/Anthropic request is authorized automatically.
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-MODES = ("DETERMINISTIC", "EVENT_OPT_IN", "MANUAL")
+MODES = ("DETERMINISTIC", "EVENT_OPT_IN", "MANUAL", "RESEARCH_BENCHMARK")
 PROVIDERS = ("openai", "gemini", "anthropic")
 EVENT_PHASES = ("pre", "post")
 SCHEMA_VERSION = "argus-cost-policy-v1"
@@ -92,6 +92,13 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
             return _skip(mode, "confirmation_required", purpose)
         if purpose != "manual_api":
             return _skip(mode, "manual_api_only", purpose)
+    if mode == "RESEARCH_BENCHMARK":
+        if automatic:
+            return _skip(mode, "manual_only", purpose)
+        if not confirmation:
+            return _skip(mode, "confirmation_required", purpose)
+        if purpose != "research_benchmark":
+            return _skip(mode, "benchmark_scope_required", purpose)
     if mode == "EVENT_OPT_IN":
         if not st.get("eventOptIn"):
             return _skip(mode, "event_opt_in_disabled", purpose)
@@ -157,6 +164,7 @@ def public_status(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     mode = st["mode"]
     next_allowed = ("重要イベントの明示opt-in後" if mode == "EVENT_OPT_IN"
                     else "明示確認付きmanual APIのみ" if mode == "MANUAL"
+                    else "固定benchmark実行中のみ" if mode == "RESEARCH_BENCHMARK"
                     else "なし(相談パックはAPIなしで随時生成可)")
     return {
         "schemaVersion": SCHEMA_VERSION, "asOf": now_iso, "mode": mode,
@@ -173,5 +181,6 @@ def public_status(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
             "DETERMINISTIC": "市場データ、イベント、台帳、ルール判断は動作します。自動AIは実行しません。",
             "EVENT_OPT_IN": "有効化した重要イベントの前後だけAIを実行します。",
             "MANUAL": "明示的に深掘りを実行した場合だけAIを使用します。",
+            "RESEARCH_BENCHMARK": "固定済み研究benchmarkだけを上限内で手動実行します。",
         }[mode],
     }
