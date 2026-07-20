@@ -16939,13 +16939,22 @@ def api_argus_admin_missions_tick():
         body = {}
     now = datetime.now(TZ_JST)
     now_iso = now.isoformat()
-    trigger_source = ("schedule" if body.get("triggerSource") == "schedule"
-                      else "manual")
+    requested_source = str(body.get("triggerSource") or "manual")
+    trigger_source = argus_scheduler.normalize_trigger_source(requested_source)
+    if trigger_source is None:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "invalid_trigger_source"}), 400
     window = argus_scheduler.mission_window(
-        observed_at=now_iso, trigger_source=trigger_source)
+        observed_at=now_iso, trigger_source=trigger_source,
+        scheduled_for=(str(body.get("scheduledFor"))
+                       if body.get("scheduledFor") else None))
     if window is None:
         return jsonify({"ok": False, "status": "failed",
                         "error": "invalid_mission_window"}), 400
+    supplied_window_id = str(body.get("missionWindowId") or "")
+    if supplied_window_id and supplied_window_id != window["missionWindowId"]:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "mission_window_id_mismatch"}), 400
     if trigger_source == "manual":
         # workflow_dispatch/legacy admin検証は自然scheduleを抑止しない。
         # GitHub run内の再送だけは同じrunIdで冪等になる。
@@ -16954,11 +16963,11 @@ def api_argus_admin_missions_tick():
                        "delaySeconds": 0, "delayClassification": "on_time"})
     window = argus_scheduler.apply_window_history(window, _MISSION_WINDOWS)
     prior_windows = [r for r in _MISSION_WINDOWS
-                     if r.get("triggerSource") == trigger_source and
+                     if r.get("triggerSource") != "manual" and
                      r.get("scheduledFor") < window["scheduledFor"]]
     window_record, should_run = argus_scheduler.begin_mission_window(
         _MISSION_WINDOWS, window=window, build_sha=_backend_sha(),
-        started_at=now_iso)
+        started_at=now_iso, runtime_version=_semantic_app_version())
     if not should_run:
         _osint_persist()
         return jsonify({"ok": True, "status": "expected_skip",
@@ -17242,8 +17251,7 @@ def api_argus_admin_missions_tick():
         soak_id=_SOAK.get("soakId") or "", build_sha=_backend_sha(),
         runtime_version=_semantic_app_version() or "unknown",
         expected_at=window["scheduledFor"], observed_at=heartbeat_at,
-        source=("github_actions_schedule" if trigger_source == "schedule"
-                else "workflow_dispatch"),
+        source=trigger_source,
         health_status=("ok" if build_matches else "build_mismatch"),
         ready_status=("ready" if _STARTUP["state"] in
                       ("ready", "ready_degraded") else "not_ready"),
