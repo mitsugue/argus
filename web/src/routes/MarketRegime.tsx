@@ -8,6 +8,7 @@ import { RegimeMatrix } from '../components/regime/RegimeMatrix';
 import { MarketEventsSections } from '../components/regime/MarketEventsSections';
 import { LedgerHistory } from '../components/regime/LedgerHistory';
 import { MarketLedgerPanel } from '../components/regime/MarketLedgerPanel';
+import { ChartIntelligencePanel } from '../components/chart/ChartIntelligencePanel';
 import { useMarketRegime } from '../hooks/useMarketRegime';
 import { useMarketMovers } from '../hooks/useMarketMovers';
 import type {
@@ -191,6 +192,10 @@ export const MarketRegime: React.FC = () => {
       </div>
 
       <MarketLedgerPanel />
+
+      {/* Phase 2 extends the canonical Market Context with deterministic price
+          structure.  It reuses the ledger/rotation inputs and never calls AI. */}
+      <ChartIntelligencePanel scope="market" />
 
       {/* Existing decision/rotation history remains available after the canonical
           market ledger, without duplicating the ledger table. */}

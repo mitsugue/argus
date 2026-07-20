@@ -13,6 +13,7 @@ import { AssetEntryScout, fetchScout, type ScoutState } from './AssetEntryScout'
 import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
 import { AssetDataQuality } from './AssetDataQuality';
+import { ChartIntelligencePanel } from '../chart/ChartIntelligencePanel';
 import '../dashboard/UnifiedAssetCard.css';
 import '../dashboard/Dashboard.css';
 import './AssetDesk.css';
@@ -62,6 +63,7 @@ export const AssetDecisionCard: React.FC<Props> = ({ d, open, onToggle, onRemove
           <Sec symbol={sym} id="flow-supply" title="FLOW & SUPPLY"><AssetFlowPanel d={d} /></Sec>
           <Sec symbol={sym} id="events" title="EVENTS & CATALYSTS"><AssetEventsPanel d={d} /></Sec>
           <Sec symbol={sym} id="technical" title="TECHNICAL & ENTRY">
+            <ChartIntelligencePanel scope="asset" symbol={d.asset.symbol} market={d.asset.market} />
             <AssetEntryScout market={d.asset.market} scout={scout} onRun={runScout} />
           </Sec>
           <Sec symbol={sym} id="scenarios" title="SCENARIOS"><AssetScenarioPanel d={d} /></Sec>

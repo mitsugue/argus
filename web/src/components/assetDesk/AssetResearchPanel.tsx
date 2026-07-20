@@ -25,7 +25,18 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
   const sc = (scoutState && typeof scoutState === 'object' && scoutState.status === 'live') ? scoutState as ScoutData : null;
   const strat = d.strat;
   const L: string[] = [];
-  const market = await refreshMarketLedger().then((s) => s.ledger).catch(() => null);
+  const [market, chart] = await Promise.all([
+    refreshMarketLedger().then((s) => s.ledger).catch(() => null),
+    (() => {
+      const backend = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
+      if (!backend) return Promise.resolve(null);
+      const params = new URLSearchParams({ scope: 'asset', symbol: d.asset.symbol,
+        market: d.asset.market, timeframe: 'daily' });
+      return fetch(`${backend}/api/argus/chart-intelligence?${params}`, { method: 'GET' })
+        .then((r) => r.ok ? r.json() as Promise<{ critique?: Array<{ label: string; text: string }> }> : null)
+        .catch(() => null);
+    })(),
+  ]);
   L.push(`# ${provider} consultation pack (clipboard only — API call 0)`);
   L.push(`あなたは投資の専門家です。私の判断支援アプリARGUSが出した「${d.asset.symbol} ${name0}」(${d.asset.market})の診断を渡します。`);
   L.push('大前提: ニュースや一般的な地合いはあなたの方が詳しい。だからここでは、ARGUSが掴んでいる「Web検索だけでは取れない情報」を軸に判断してほしい。');
@@ -51,10 +62,12 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
   L.push(`■ 保有情報(端末内から手動コピー): ${d.pn?.held ? `保有中・数量${d.pn.quantity ?? '未入力'}・取得単価${d.pn.avgCost ?? '未入力'}・損益${d.pn.pnlPct ?? '未計算'}%` : '未保有/監視'}`);
   if (d.eventTags.length) L.push(`■ 主要イベント: ${d.eventTags.map((e) => `${e.code} ${e.countdown}`).join(' / ')}`);
   if (market) L.push(`■ Market Ledger要約: ${Object.entries(market.summary).map(([k, v]) => `${k}=${v}`).join(' / ')}`);
+  else L.push('■ Market Ledger要約: 未取得');
   L.push('');
   L.push('【参考(あなたの方が詳しいはず)】');
   if (strat.status !== 'mock' && strat.price != null) L.push(`■ 現在値 ${strat.price}（前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}）・ARGUS判断 ${strat.action}`);
   if (sc?.metrics) L.push(`■ テクニカル: RSI14=${sc.metrics.rsi14}・25日線乖離${sc.metrics.ma25DiffPct ?? '—'}%`);
+  L.push(`■ Chart Intelligence: ${chart?.critique?.map((x) => `${x.label}: ${x.text}`).join(' / ') || '未取得'}`);
   L.push(`■ データ品質: quote=${strat.status} / scout=${sc?.status ?? '未取得'} / market-ledger=${market ? market.remoteReadBack.verificationStatus : '未取得'}`);
   if (strat.catalystNoteJa) L.push(`■ 直近の材料(ARGUS把握分): ${strat.catalystNoteJa}`);
   L.push('');
