@@ -100,7 +100,7 @@ import argus_market_ledger          # v12.3.0: append-only SHO-style market ledg
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
 import argus_sho_phase3             # v12.5.0: deterministic SHO operating sheet/backfill mapping
-import argus_foundation_jobs        # v12.6.2: exact text-Pro failover candidate filter
+import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -10680,6 +10680,8 @@ _BENCHMARK_PRICING_CATALOG = {
         "outputUsdPer1MAboveBoundary": 15.0,
     },
 }
+_BENCHMARK_MAX_OUTPUT_TOKENS = 4096
+_BENCHMARK_REASONING_EFFORT = "low"
 _AI_GROUNDING_USD = _float_env("GEMINI_GROUNDING_USD_PER_CALL", argus_ai_cost.DEFAULT_GROUNDING_USD)
 _AI_COST_STATE = {
     "month": None, "monthSpentUsd": 0.0,     # the monthly hard-stop bucket
@@ -15090,6 +15092,8 @@ def _openai_research_ex(user, role="standard", benchmark=False):
         ([{"type": "web_search"}], "ok"),
         ([{"type": "web_search_preview"}], "ok"),
         (None, "model_only"))
+    last_error_class = None
+    last_response_status = None
     for tools, st_ok in tool_modes:
         try:
             kw = {"model": model, "instructions": sysmsg, "input": user,
@@ -15097,10 +15101,17 @@ def _openai_research_ex(user, role="standard", benchmark=False):
             if tools:
                 kw["tools"] = tools
             if benchmark:
-                kw["max_output_tokens"] = 1800
+                # GPT-5.6 defaults to medium reasoning.  Search-backed formal
+                # cases need a bounded but explicit effort so hidden reasoning
+                # cannot consume the entire answer allowance.
+                kw["reasoning"] = {"effort": _BENCHMARK_REASONING_EFFORT}
+                kw["max_output_tokens"] = _BENCHMARK_MAX_OUTPUT_TOKENS
             resp = client.responses.create(**kw)
             txt = getattr(resp, "output_text", None)
             if not txt:
+                last_error_class = "empty_output"
+                last_response_status = str(
+                    getattr(resp, "status", None) or "unknown")[:40]
                 continue
             u = _usage_tokens(resp) or (0, 0)
             usage = {"inputTokens": u[0], "outputTokens": u[1]}
@@ -15125,13 +15136,16 @@ def _openai_research_ex(user, role="standard", benchmark=False):
             _AI_INTEGRITY["lastExec"] = {
                 "model": model, "status": res["status"], "at": res["completedAt"]}
             return txt, res
-        except Exception:
+        except Exception as exc:
+            last_error_class = type(exc).__name__[:80]
             continue
     _AI_INTEGRITY["searchFailedCount"] += 1
     return None, argus_ai_gate.ai_execution_result(
         provider="openai", model=model, role=role, mode="research",
         status="search_failed", started_at=started, completed_at=_ai_now_iso(),
-        failure_reason_redacted="provider_error")
+        failure_reason_redacted=(
+            (last_error_class or "provider_error")
+            + (f":{last_response_status}" if last_response_status else "")))
 
 
 def _openai_research(user, benchmark=False):
@@ -15933,14 +15947,21 @@ _OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONの�
                     "根拠のない断定禁止。投資助言・売買指示はしない。")
 
 
-def _gemini_osint(prompt, benchmark=False, model_override=None):
+def _gemini_osint(prompt, benchmark=False, model_override=None,
+                  diagnostic_context=None):
     """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
     if not _cost_policy_authorize(
             "gemini", "research_benchmark" if benchmark else "osint_research",
             automatic=not benchmark, confirmation=benchmark,
             estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "deterministic_mode",
+                                       "errorClass": "authorization_blocked"})
         return None, "deterministic_mode"
     if not google_genai or not GEMINI_API_KEY:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "disabled",
+                                       "errorClass": "provider_not_configured"})
         return None, "disabled"
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
@@ -15949,7 +15970,8 @@ def _gemini_osint(prompt, benchmark=False, model_override=None):
             from google.genai import types as _gt
             benchmark_kwargs = {
                 "tools": [_gt.Tool(google_search=_gt.GoogleSearch())],
-                "temperature": 0, "max_output_tokens": 4096}
+                "temperature": 0,
+                "max_output_tokens": _BENCHMARK_MAX_OUTPUT_TOKENS}
             try:
                 benchmark_kwargs["thinking_config"] = _gt.ThinkingConfig(
                     thinking_level="low")
@@ -15979,15 +16001,28 @@ def _gemini_osint(prompt, benchmark=False, model_override=None):
                 "createdAt": _ai_now_iso(),
                 "pricingVersion": _BENCHMARK_PRICING_VERSION,
             }
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({
+                "status": "ok", "errorClass": None,
+                "requestedModel": selected_model,
+                "responseModel": ((out.get("_providerMeta") or {})
+                                  .get("responseModel")),
+                "usage": ((out.get("_providerMeta") or {}).get("usage"))})
         return out, "ok"
     except Exception as e:
         add_log(f"[osint] gemini scout failed: {type(e).__name__}")
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "failed",
+                                       "errorClass": type(e).__name__[:80]})
         return None, "failed"
 
 
-def _gpt_osint(prompt, benchmark=False):
+def _gpt_osint(prompt, benchmark=False, diagnostic_context=None):
     """GPT scout(web_search付き・admin経路のみ)。"""
     if not _OPENAI_API_KEY:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "disabled",
+                                       "errorClass": "provider_not_configured"})
         return None, "disabled"
     try:
         full_prompt = prompt + "\n出力は必ず上記JSONを含めること(前置きの説明文があってもよい)。"
@@ -15995,6 +16030,14 @@ def _gpt_osint(prompt, benchmark=False):
             txt, execution = _openai_research_ex(
                 full_prompt, role="standard", benchmark=True)
             if not txt or execution.get("status") != "ok":
+                if isinstance(diagnostic_context, dict):
+                    diagnostic_context.update({
+                        "status": execution.get("status") or "failed",
+                        "errorClass": execution.get("failureReasonRedacted"),
+                        "requestedModel": execution.get("requestedModel"),
+                        "responseModel": execution.get("responseModel"),
+                        "providerResponseStatus": execution.get(
+                            "providerResponseStatus")})
                 return None, "failed"
         else:
             txt, execution = _openai_research(full_prompt), None
@@ -16011,9 +16054,20 @@ def _gpt_osint(prompt, benchmark=False):
                 "createdAt": execution.get("completedAt"),
                 "pricingVersion": _BENCHMARK_PRICING_VERSION,
             }
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({
+                "status": "ok", "errorClass": None,
+                "requestedModel": ((out.get("_providerMeta") or {})
+                                   .get("requestedModel")),
+                "responseModel": ((out.get("_providerMeta") or {})
+                                  .get("responseModel")),
+                "usage": ((out.get("_providerMeta") or {}).get("usage"))})
         return out, "ok"
     except Exception as e:
         add_log(f"[osint] gpt scout failed: {type(e).__name__}")
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "failed",
+                                       "errorClass": type(e).__name__[:80]})
         return None, "failed"
 
 
@@ -17938,7 +17992,8 @@ def _formal_claims(out, case=None):
     return rows
 
 
-def _formal_blind_evaluate(case, benchmark_id, claims_by_provider):
+def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
+                           diagnostic_context=None):
     """One OpenAI evaluator call, provider names hidden; no retry/fallback."""
     order = argus_research_benchmark.blind_order(benchmark_id, case["caseId"])
     answers = {label: claims_by_provider[provider] for label, provider in order.items()}
@@ -17946,6 +18001,9 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider):
         "openai", "research_benchmark", automatic=False, confirmation=True,
         estimated_cost_usd=0.10, estimated_tokens=8000)
     if not policy["allowed"] or not _OPENAI_API_KEY:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "provider_blocked",
+                                       "errorClass": "authorization_blocked"})
         return None, "provider_blocked", None
     prompt = (
         "固定rubricでA/Bを独立採点。提供元を推測せず、各軸0-100。JSONのみ。"
@@ -17957,6 +18015,9 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider):
     # conservative fail-closed guard and prevents an unexpectedly large source
     # payload from escaping the fixed per-call budget.
     if len(prompt.encode("utf-8")) > 24_000:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "input_budget_exceeded",
+                                       "errorClass": "input_budget_exceeded"})
         return None, "input_budget_exceeded", None
     try:
         import openai
@@ -17964,10 +18025,17 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider):
         evaluator_model = _openai_model_for("referee")
         response = client.responses.create(
             model=evaluator_model, input=prompt, timeout=90, store=False,
-            max_output_tokens=1800)
+            reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
+            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
         parsed = safe_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
                 isinstance(parsed.get(k), dict) for k in ("A", "B")):
+            if isinstance(diagnostic_context, dict):
+                diagnostic_context.update({
+                    "status": "invalid_evaluator_json",
+                    "errorClass": "invalid_evaluator_json",
+                    "responseStatus": str(
+                        getattr(response, "status", None) or "unknown")[:40]})
             return None, "invalid_evaluator_json", None
         usage = _usage_tokens(response) or (0, 0)
         meta = {"provider": "openai", "apiEndpoint": "responses",
@@ -17976,9 +18044,18 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider):
                 "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
                 "createdAt": _ai_now_iso(),
                 "pricingVersion": _BENCHMARK_PRICING_VERSION}
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({
+                "status": "ok", "errorClass": None,
+                "requestedModel": evaluator_model,
+                "responseModel": meta.get("responseModel"),
+                "usage": meta.get("usage")})
         return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
     except Exception as exc:
         add_log(f"[formal-benchmark] evaluator failed: {type(exc).__name__}")
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "provider_failed",
+                                       "errorClass": type(exc).__name__[:80]})
         return None, "provider_failed", None
 
 
@@ -18006,6 +18083,8 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
     results = []
     provider_calls = []
     failure = None
+    diagnostic = {"failureStage": None, "failureCaseId": None,
+                  "provider": {}}
     try:
         for case in argus_research_benchmark.execution_plan():
             if case["phase"] == "holdout" and not \
@@ -18019,31 +18098,51 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
                 _FORMAL_BENCHMARK.update(consumed["state"])
                 _osint_persist()
             prompt = _formal_benchmark_prompt(case)
+            baseline_diag = {}
             baseline_out, baseline_status = _gemini_osint(
-                prompt, benchmark=True, model_override=gemini_model)
+                prompt, benchmark=True, model_override=gemini_model,
+                diagnostic_context=baseline_diag)
+            diagnostic["provider"]["geminiBaseline"] = baseline_diag
             if baseline_status != "ok":
                 failure = "provider_blocked" if baseline_status in (
                     "disabled", "deterministic_mode") else "provider_failed"
+                diagnostic.update({"failureStage": "gemini_baseline",
+                                   "failureCaseId": case.get("caseId")})
                 break
             provider_calls.append(dict((baseline_out or {}).get("_providerMeta") or {}))
             # ARGUS platform comparison: same question/cutoff, two scouts plus
             # deterministic source/temporal checks. Tool asymmetry is recorded.
+            argus_gemini_diag, argus_gpt_diag = {}, {}
             argus_gemini, ag_status = _gemini_osint(
-                prompt, benchmark=True, model_override=gemini_model)
-            argus_gpt, ao_status = _gpt_osint(prompt, benchmark=True)
+                prompt, benchmark=True, model_override=gemini_model,
+                diagnostic_context=argus_gemini_diag)
+            argus_gpt, ao_status = _gpt_osint(
+                prompt, benchmark=True,
+                diagnostic_context=argus_gpt_diag)
+            diagnostic["provider"]["argusGemini"] = argus_gemini_diag
+            diagnostic["provider"]["argusOpenAI"] = argus_gpt_diag
             if ag_status != "ok" or ao_status != "ok":
                 failure = "provider_blocked" if "disabled" in (ag_status, ao_status) \
                     else "provider_failed"
+                diagnostic.update({
+                    "failureStage": ("argus_gemini" if ag_status != "ok"
+                                     else "argus_openai"),
+                    "failureCaseId": case.get("caseId")})
                 break
             provider_calls.append(dict((argus_gemini or {}).get("_providerMeta") or {}))
             provider_calls.append(dict((argus_gpt or {}).get("_providerMeta") or {}))
             claims = {"gemini": _formal_claims(baseline_out, case),
                       "argus": (_formal_claims(argus_gemini, case)
                                 + _formal_claims(argus_gpt, case))[:30]}
+            referee_diag = {}
             axes, eval_status, evaluator_meta = _formal_blind_evaluate(
-                case, benchmark_id, claims)
+                case, benchmark_id, claims,
+                diagnostic_context=referee_diag)
+            diagnostic["provider"]["referee"] = referee_diag
             if eval_status != "ok":
                 failure = eval_status
+                diagnostic.update({"failureStage": "referee",
+                                   "failureCaseId": case.get("caseId")})
                 break
             provider_calls.append(dict(evaluator_meta or {}))
             results.append(argus_research_benchmark.case_result(
@@ -18091,7 +18190,12 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
                 provider_settings={"temperature": {"gemini": 0,
                                    "openai": "provider_default",
                                    "evaluator": "provider_default"},
-                                   "maximumOutputTokensPerCall": 1800,
+                                   "reasoningEffort": {
+                                       "openai": _BENCHMARK_REASONING_EFFORT,
+                                       "evaluator": _BENCHMARK_REASONING_EFFORT,
+                                       "gemini": "low"},
+                                   "maximumOutputTokensPerCall":
+                                       _BENCHMARK_MAX_OUTPUT_TOKENS,
                                    "baselineTools": ["google_search"],
                                    "argusTools": ["google_search", "web_search",
                                                   "deterministic_source_checks"],
@@ -18131,6 +18235,11 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
         _COST_POLICY.clear()
         _COST_POLICY.update(restored)
         _osint_persist()
+    diagnostic["completedCaseCount"] = len(results)
+    diagnostic["holdoutConsumed"] = bool(
+        _FORMAL_BENCHMARK.get("holdoutConsumedBy"))
+    diagnostic["finalStatus"] = _FORMAL_BENCHMARK.get("status")
+    return diagnostic
 
 
 @app.route("/api/argus/research-benchmark")
@@ -18159,15 +18268,19 @@ def _formal_benchmark_dry_run_value(gemini_model=None):
     pricing = dict(_AI_PRICING)
     if evaluator not in pricing and _OPENAI_MODEL in pricing:
         pricing[evaluator] = dict(pricing[_OPENAI_MODEL])
-    remaining_usd = max(0.0, _AI_DAILY_BUDGET_USD
-                        - float(_AI_COST_STATE.get("daySpentUsd") or 0))
+    fx = max(1.0, _float_env("ARGUS_BENCHMARK_USDJPY_CEILING", 160.0))
+    # The owner-approved formal-run ceiling is independent of the ordinary
+    # daily generated-AI budget.  This does not alter scheduled/interactive AI
+    # guards; only this frozen one-shot estimate receives the explicit JPY cap.
+    benchmark_budget_usd = argus_research_benchmark.HARD_BUDGET_JPY / fx
     dry = argus_research_benchmark.estimate_cost(
         gemini_model=gemini_model or _GEMINI_JUDGE_MODEL,
         argus_model=_OPENAI_MODEL_ROLES.get("standard") or _OPENAI_MODEL,
         evaluator_model=evaluator, pricing=pricing,
-        usd_jpy_ceiling=_float_env("ARGUS_BENCHMARK_USDJPY_CEILING", 160.0),
+        usd_jpy_ceiling=fx,
+        output_tokens_per_call=_BENCHMARK_MAX_OUTPUT_TOKENS,
         grounding_usd_per_call=_AI_GROUNDING_USD,
-        existing_budget_usd=remaining_usd,
+        existing_budget_usd=benchmark_budget_usd,
         providers_configured=bool(google_genai and GEMINI_API_KEY
                                   and _OPENAI_API_KEY))
     dry["pricingVersion"] = _BENCHMARK_PRICING_VERSION
@@ -18211,6 +18324,83 @@ def api_argus_admin_research_benchmark_execute():
     return jsonify({"ok": True, "status": "running",
                     "benchmarkId": benchmark_id,
                     "datasetHash": argus_research_benchmark.DATASET_HASH}), 202
+
+
+def _research_pipeline_preflight_worker(job_id):
+    """Exercise each formal provider path without touching benchmark state.
+
+    This is a paid but bounded connectivity/contract check: one Gemini search,
+    one OpenAI search, and one Terra referee call.  It never scores a dataset
+    case, consumes the holdout, or persists provider text/claims.
+    """
+    result = {"status": "failed", "caseId": None, "stages": {},
+              "holdoutConsumed": bool(
+                  _FORMAL_BENCHMARK.get("holdoutConsumedBy"))}
+    try:
+        _foundation_job_update(job_id, status="running")
+        if _COST_POLICY.get("mode") != "DETERMINISTIC":
+            raise RuntimeError("normal_mode_not_deterministic")
+        prior_preflight = next((
+            (x.get("result") or {}) for x in reversed(
+                _FOUNDATION_JOBS.get("jobs", []))
+            if x.get("jobType") == "GEMINI_PREFLIGHT"
+            and x.get("status") == "completed"
+            and (x.get("result") or {}).get("status") == "verified"
+            and (x.get("result") or {}).get("selectedBaselineModel")), None)
+        gemini_model = (prior_preflight or {}).get("selectedBaselineModel")
+        if not gemini_model:
+            raise RuntimeError("gemini_preflight_required")
+        case = argus_research_benchmark.execution_plan()[0]
+        result["caseId"] = case.get("caseId")
+        result["baselineModel"] = gemini_model
+        prompt = _formal_benchmark_prompt(case)
+        enabled = argus_cost_policy.configure(
+            _COST_POLICY, mode="RESEARCH_BENCHMARK", event_opt_in=False)
+        _COST_POLICY.clear()
+        _COST_POLICY.update(enabled)
+        try:
+            gemini_diag, openai_diag, referee_diag = {}, {}, {}
+            gemini_out, gemini_status = _gemini_osint(
+                prompt, benchmark=True, model_override=gemini_model,
+                diagnostic_context=gemini_diag)
+            result["stages"]["geminiSearch"] = gemini_diag
+            if gemini_status != "ok":
+                raise RuntimeError("gemini_search_failed")
+            openai_out, openai_status = _gpt_osint(
+                prompt, benchmark=True, diagnostic_context=openai_diag)
+            result["stages"]["openaiSearch"] = openai_diag
+            if openai_status != "ok":
+                raise RuntimeError("openai_search_failed")
+            claims = {
+                "gemini": _formal_claims(gemini_out, case),
+                "argus": (_formal_claims(gemini_out, case)
+                          + _formal_claims(openai_out, case))[:30]}
+            _, referee_status, _ = _formal_blind_evaluate(
+                case, "pipeline-preflight", claims,
+                diagnostic_context=referee_diag)
+            result["stages"]["referee"] = referee_diag
+            if referee_status != "ok":
+                raise RuntimeError(referee_status)
+        finally:
+            restored = argus_cost_policy.configure(
+                _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+            _COST_POLICY.clear()
+            _COST_POLICY.update(restored)
+            _osint_persist()
+        result.update({"status": "verified", "reasoningEffort":
+                       _BENCHMARK_REASONING_EFFORT,
+                       "maximumOutputTokens": _BENCHMARK_MAX_OUTPUT_TOKENS})
+        _foundation_job_update(job_id, status="completed", result=result)
+    except Exception as exc:
+        restored = argus_cost_policy.configure(
+            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+        _COST_POLICY.clear()
+        _COST_POLICY.update(restored)
+        _osint_persist()
+        error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        result["errorClass"] = error_class[:80]
+        _foundation_job_update(job_id, status="failed", result=result,
+                               error_class=error_class[:80])
 
 
 def _research_benchmark_job_worker(job_id):
@@ -18272,7 +18462,8 @@ def _research_benchmark_job_worker(job_id):
         _COST_POLICY.clear()
         _COST_POLICY.update(enabled)
         _osint_persist()
-        _formal_benchmark_worker(benchmark_id, dry, proof, gemini_model)
+        benchmark_diagnostic = _formal_benchmark_worker(
+            benchmark_id, dry, proof, gemini_model)
         final_status = str(_FORMAL_BENCHMARK.get("status") or "invalid")
         latest = ((_FORMAL_BENCHMARK.get("results") or [None])[-1] or {})
         result = {"benchmarkId": benchmark_id, "status": final_status,
@@ -18281,7 +18472,8 @@ def _research_benchmark_job_worker(job_id):
                   "formalBaselineModel": gemini_model,
                   "resultClassification": latest.get("resultClassification"),
                   "twoXClaimAllowed": bool(latest.get("twoXClaimAllowed")),
-                  "totalCostJpy": latest.get("totalCostJpy")}
+                  "totalCostJpy": latest.get("totalCostJpy"),
+                  "pipelineDiagnostic": benchmark_diagnostic}
         if final_status not in ("achieved", "not_achieved"):
             raise RuntimeError(final_status)
         _foundation_job_update(job_id, status="completed", result=result)
@@ -18292,7 +18484,9 @@ def _research_benchmark_job_worker(job_id):
         _COST_POLICY.update(restored)
         error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
         _foundation_job_update(job_id, status="failed",
-                               result={"modelAvailabilityProof": proof},
+                               result={"modelAvailabilityProof": proof,
+                                       "pipelineDiagnostic": locals().get(
+                                           "benchmark_diagnostic")},
                                error_class=error_class[:80])
 
 
@@ -18305,6 +18499,8 @@ def _foundation_job_dispatch(job_id):
         _jquants_request_matrix_worker(job_id)
     elif job_type == "GEMINI_PREFLIGHT":
         _gemini_preflight_worker(job_id)
+    elif job_type == "RESEARCH_PIPELINE_PREFLIGHT":
+        _research_pipeline_preflight_worker(job_id)
     elif job_type == "RESEARCH_BENCHMARK":
         _research_benchmark_job_worker(job_id)
     elif job_type == "JOURNAL_REVERIFY":

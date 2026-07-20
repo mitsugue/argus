@@ -14,6 +14,7 @@ on:
           - provider_probe
           - jquants_matrix
           - gemini_preflight
+          - pipeline_preflight
           - breadth_backfill
           - breadth_incremental
           - journal_reverify
@@ -27,7 +28,7 @@ concurrency:
 
 jobs:
   foundation-diagnostics:
-    if: inputs.operation == 'jquants_matrix' || inputs.operation == 'gemini_preflight'
+    if: inputs.operation == 'jquants_matrix' || inputs.operation == 'gemini_preflight' || inputs.operation == 'pipeline_preflight'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -45,6 +46,8 @@ jobs:
           job_type=JQUANTS_REQUEST_MATRIX
           if [ "$OPERATION" = "gemini_preflight" ]; then
             job_type=GEMINI_PREFLIGHT
+          elif [ "$OPERATION" = "pipeline_preflight" ]; then
+            job_type=RESEARCH_PIPELINE_PREFLIGHT
           fi
           python3 scripts/run_foundation_job.py \
             --job-type "$job_type" \

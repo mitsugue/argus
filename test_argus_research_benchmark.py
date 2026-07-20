@@ -140,7 +140,7 @@ class BudgetAndModeTests(unittest.TestCase):
                             started_at=NOW)
         self.assertEqual(again["status"], "execution_limit_reached")
 
-    def test_calibration_failure_also_consumes_the_single_execution(self):
+    def test_pre_holdout_provider_failure_allows_one_bounded_recovery(self):
         dry = _dry()
         begun = bench.begin(bench.default_state(), dry_run=dry,
                             benchmark_id="calibration-failed",
@@ -149,11 +149,19 @@ class BudgetAndModeTests(unittest.TestCase):
         self.assertEqual(begun["state"]["executionCount"], 1)
         failed = bench.fail_closed(begun["state"], status="provider_failed",
                                    completed_at=NOW)
-        again = bench.begin(failed, dry_run=dry, benchmark_id="never-rerun",
+        again = bench.begin(failed, dry_run=dry, benchmark_id="recovery",
                             trigger_source="manual", confirmed=True,
                             started_at=NOW)
-        self.assertFalse(again["allowed"])
-        self.assertEqual(again["status"], "execution_limit_reached")
+        self.assertTrue(again["allowed"])
+        self.assertEqual(again["state"]["executionCount"], 2)
+        self.assertEqual(again["state"]["preHoldoutRecoveryCount"], 1)
+        failed_again = bench.fail_closed(
+            again["state"], status="provider_failed", completed_at=NOW)
+        blocked = bench.begin(
+            failed_again, dry_run=dry, benchmark_id="never-rerun",
+            trigger_source="manual", confirmed=True, started_at=NOW)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["status"], "execution_limit_reached")
 
 
 class ScoringTests(unittest.TestCase):
@@ -296,6 +304,53 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(dry.status_code, 200)
         gemini.assert_not_called(); gpt.assert_not_called()
 
+    def test_gpt56_benchmark_calls_use_low_reasoning_and_4096_output(self):
+        captured = []
+
+        class Responses:
+            @staticmethod
+            def create(**kwargs):
+                captured.append(kwargs)
+                if kwargs.get("model") == scanner._OPENAI_MODEL_ROLES["referee"]:
+                    body = {label: _axes(80) for label in ("A", "B")}
+                    text = json.dumps(body)
+                else:
+                    text = '{"claims":[]}'
+                return types.SimpleNamespace(
+                    output_text=text, status="completed", id="response-test",
+                    model=kwargs.get("model"), usage=types.SimpleNamespace(
+                        input_tokens=10, output_tokens=10,
+                        input_tokens_details=None, output_tokens_details=None))
+
+        fake_openai = types.SimpleNamespace(
+            OpenAI=lambda api_key: types.SimpleNamespace(responses=Responses()))
+        old_key = scanner._OPENAI_API_KEY
+        old_cost = copy.deepcopy(scanner._COST_POLICY)
+        scanner._OPENAI_API_KEY = "configured-test-key"
+        scanner._COST_POLICY.clear()
+        scanner._COST_POLICY.update(cost.default_state("RESEARCH_BENCHMARK"))
+        try:
+            with mock.patch.dict(sys.modules, {"openai": fake_openai}), \
+                    mock.patch.object(scanner, "_ai_record_cost"):
+                text, execution = scanner._openai_research_ex(
+                    "bounded test", role="standard", benchmark=True)
+                axes, status, _ = scanner._formal_blind_evaluate(
+                    bench.FORMAL_DATASET[0], "test-benchmark",
+                    {"gemini": [], "argus": []})
+            self.assertTrue(text)
+            self.assertEqual(execution["status"], "ok")
+            self.assertEqual(status, "ok")
+            self.assertEqual(set(axes), {"A", "B"})
+            self.assertEqual(len(captured), 2)
+            for request in captured:
+                self.assertEqual(request["reasoning"], {"effort": "low"})
+                self.assertEqual(request["max_output_tokens"], 4096)
+                self.assertFalse(request["store"])
+        finally:
+            scanner._OPENAI_API_KEY = old_key
+            scanner._COST_POLICY.clear()
+            scanner._COST_POLICY.update(old_cost)
+
     def test_execute_requires_matching_dry_run_and_never_from_schedule(self):
         headers = {"X-ARGUS-ADMIN-TOKEN": "test-admin"}
         scanner._FORMAL_BENCHMARK["dryRun"] = _dry()
@@ -347,7 +402,7 @@ class RouteTests(unittest.TestCase):
             return answer("openai", scanner._OPENAI_MODEL_ROLES["standard"],
                           "gpt-5.6-sol-2026-07-01")
 
-        def evaluate(case, benchmark_id, claims):
+        def evaluate(case, benchmark_id, claims, diagnostic_context=None):
             order = bench.blind_order(benchmark_id, case["caseId"])
             return ({label: _axes(80 if provider == "argus" else 60)
                      for label, provider in order.items()}, "ok",
