@@ -1,4 +1,4 @@
-# Research Benchmark (v12.6.3)
+# Research Benchmark (v12.6.4)
 - 基準runにepochId刻印(provider:model:promptVersion:toolMode:schemaVersion)。異エポック比較禁止。
 - rubric-v2(argus_osint_engine.RUBRIC_VERSION)— 重みの無言変更禁止。
 - ホールドアウト3ケース(stale/no_news/direct_disclosure)=チューニング不使用。

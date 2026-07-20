@@ -304,6 +304,25 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(dry.status_code, 200)
         gemini.assert_not_called(); gpt.assert_not_called()
 
+    def test_recovery_dry_run_preserves_provider_failed_until_begin(self):
+        dry = _dry()
+        begun = bench.begin(
+            bench.default_state(), dry_run=dry, benchmark_id="failed-first",
+            trigger_source="manual", confirmed=True, started_at=NOW)["state"]
+        failed = bench.fail_closed(
+            begun, status="provider_failed", completed_at=NOW)
+        scanner._FORMAL_BENCHMARK.clear()
+        scanner._FORMAL_BENCHMARK.update(failed)
+        scanner._store_formal_dry_run(dry)
+        self.assertEqual(scanner._FORMAL_BENCHMARK["status"],
+                         "provider_failed")
+        recovery = bench.begin(
+            scanner._FORMAL_BENCHMARK, dry_run=dry,
+            benchmark_id="recovery", trigger_source="manual",
+            confirmed=True, started_at=NOW)
+        self.assertTrue(recovery["allowed"])
+        self.assertEqual(recovery["state"]["preHoldoutRecoveryCount"], 1)
+
     def test_gpt56_benchmark_calls_use_low_reasoning_and_4096_output(self):
         captured = []
 

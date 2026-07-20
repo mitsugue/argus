@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.6.4', 'pre-holdout recovery用dry-runが既存provider failure状態を上書きしないよう修正し、holdout未消費時だけの復旧判定を維持。'],
   ['v12.6.3', '正式benchmarkのGPT-5.6生成・refereeをlow reasoning＋十分な出力上限へ固定し、holdoutを消費しないpipeline preflightと安全な失敗段階証拠を追加。'],
   ['v12.6.2', 'Gemini preflight証拠のstable候補をtext Proモデルに限定し、画像・TTS・custom-toolsモデルを正式baselineのfailover候補から除外。'],
   ['v12.6.1', 'Foundation Two-Blocker Closure — J-Quants V2の日付を公式YYYYMMDD形式へ正規化し、秘密非表示のrequest matrixと公式client比較を追加。Geminiはraw candidate/finishReason/thinking tokenを検査するbounded preflightへ変更し、正式benchmark前の空応答を原因分類。'],

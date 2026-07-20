@@ -18257,10 +18257,16 @@ def api_argus_admin_research_benchmark_dry_run():
     if body.get("triggerSource") != "manual":
         return jsonify({"ok": False, "status": "scheduled_execution_rejected"}), 400
     dry = _formal_benchmark_dry_run_value()
-    _FORMAL_BENCHMARK["dryRun"] = dry
-    _FORMAL_BENCHMARK["status"] = dry["status"]
+    _store_formal_dry_run(dry)
     _osint_persist()
     return jsonify({"ok": dry["status"] == "ready", **dry})
+
+
+def _store_formal_dry_run(dry):
+    """Persist confirmation data without erasing a recoverable terminal state."""
+    _FORMAL_BENCHMARK["dryRun"] = dry
+    if int(_FORMAL_BENCHMARK.get("executionCount") or 0) == 0:
+        _FORMAL_BENCHMARK["status"] = dry["status"]
 
 
 def _formal_benchmark_dry_run_value(gemini_model=None):
@@ -18445,8 +18451,7 @@ def _research_benchmark_job_worker(job_id):
         if dry.get("status") != "ready" or float(
                 dry.get("estimatedCostJpy") or 999999) > 2000:
             raise RuntimeError(str(dry.get("status") or "dry_run_blocked"))
-        _FORMAL_BENCHMARK["dryRun"] = dry
-        _FORMAL_BENCHMARK["status"] = dry["status"]
+        _store_formal_dry_run(dry)
         benchmark_id = "gemini-2x-" + argus_research_benchmark.digest({
             "datasetHash": argus_research_benchmark.DATASET_HASH,
             "startedAt": _ai_now_iso()})[:16]
