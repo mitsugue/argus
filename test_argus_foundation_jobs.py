@@ -138,6 +138,84 @@ def test_job_lifecycle_idempotency_cancel_and_checkpoint_restore():
     assert cancelled["jobs"][-1]["cancelRequested"] is True
 
 
+def test_pipeline_preflight_is_registered_without_consuming_benchmark_state():
+    started = jobs.start_job(
+        jobs.empty_state(), job_type="RESEARCH_PIPELINE_PREFLIGHT",
+        now_iso="2026-07-20T00:00:00Z")
+    assert started["created"] is True
+    assert started["job"]["jobType"] == "RESEARCH_PIPELINE_PREFLIGHT"
+
+
+def test_pipeline_preflight_exercises_stages_and_preserves_holdout(monkeypatch):
+    import scanner
+    import argus_cost_policy as cost_policy
+
+    previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
+    previous_benchmark = copy.deepcopy(scanner._FORMAL_BENCHMARK)
+    previous_cost = copy.deepcopy(scanner._COST_POLICY)
+    state = jobs.empty_state()
+    gemini = jobs.start_job(
+        state, job_type="GEMINI_PREFLIGHT",
+        now_iso="2026-07-20T00:00:00Z")
+    state = jobs.update_job(
+        gemini["state"], gemini["job"]["jobId"],
+        now_iso="2026-07-20T00:00:01Z", status="completed",
+        result={"status": "verified",
+                "selectedBaselineModel": "gemini-3.1-pro-preview"})
+    pipeline = jobs.start_job(
+        state, job_type="RESEARCH_PIPELINE_PREFLIGHT",
+        now_iso="2026-07-20T00:00:02Z")
+    scanner._FOUNDATION_JOBS.clear()
+    scanner._FOUNDATION_JOBS.update(pipeline["state"])
+    scanner._FORMAL_BENCHMARK.clear()
+    scanner._FORMAL_BENCHMARK.update({
+        **previous_benchmark, "holdoutConsumedBy": None})
+    scanner._COST_POLICY.clear()
+    scanner._COST_POLICY.update(cost_policy.default_state())
+
+    provider_meta = {"requestedModel": "requested",
+                     "responseModel": "response",
+                     "usage": {"inputTokens": 1, "outputTokens": 1}}
+
+    def gemini_call(*args, diagnostic_context=None, **kwargs):
+        if diagnostic_context is not None:
+            diagnostic_context.update({"status": "ok", "errorClass": None})
+        return {"claims": [], "_providerMeta": {
+            "provider": "gemini", **provider_meta}}, "ok"
+
+    def openai_call(*args, diagnostic_context=None, **kwargs):
+        if diagnostic_context is not None:
+            diagnostic_context.update({"status": "ok", "errorClass": None})
+        return {"claims": [], "_providerMeta": {
+            "provider": "openai", **provider_meta}}, "ok"
+
+    def referee(*args, diagnostic_context=None, **kwargs):
+        if diagnostic_context is not None:
+            diagnostic_context.update({"status": "ok", "errorClass": None})
+        return {"A": {}, "B": {}}, "ok", {"provider": "openai"}
+
+    monkeypatch.setattr(scanner, "_gemini_osint", gemini_call)
+    monkeypatch.setattr(scanner, "_gpt_osint", openai_call)
+    monkeypatch.setattr(scanner, "_formal_blind_evaluate", referee)
+    monkeypatch.setattr(scanner, "_osint_persist", lambda: None)
+    try:
+        scanner._research_pipeline_preflight_worker(pipeline["job"]["jobId"])
+        final = scanner._foundation_job(pipeline["job"]["jobId"])
+        assert final["status"] == "completed"
+        assert final["result"]["status"] == "verified"
+        assert set(final["result"]["stages"]) == {
+            "geminiSearch", "openaiSearch", "referee"}
+        assert scanner._FORMAL_BENCHMARK.get("holdoutConsumedBy") is None
+        assert scanner._COST_POLICY["mode"] == "DETERMINISTIC"
+    finally:
+        scanner._FOUNDATION_JOBS.clear()
+        scanner._FOUNDATION_JOBS.update(previous_jobs)
+        scanner._FORMAL_BENCHMARK.clear()
+        scanner._FORMAL_BENCHMARK.update(previous_benchmark)
+        scanner._COST_POLICY.clear()
+        scanner._COST_POLICY.update(previous_cost)
+
+
 def test_bounded_backoff_honors_provider_and_has_deterministic_jitter():
     assert jobs.bounded_backoff_seconds(2, "12", "x") == 12
     assert jobs.bounded_backoff_seconds(2, seed="same") == \
@@ -173,6 +251,8 @@ def test_exact_model_pricing_and_response_model_contract(monkeypatch):
                               "argus": "gpt-5.6-sol",
                               "evaluator": "gpt-5.6-terra"}
     assert dry["estimatedCostJpy"] <= 2000
+    assert dry["effectiveBudgetJpy"] == 2000
+    assert dry["outputTokensPerCall"] == 4096
     assert dry["pricingVersion"] == "official-2026-07-20-v1"
 
 

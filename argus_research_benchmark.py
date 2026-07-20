@@ -21,6 +21,7 @@ MODE = "RESEARCH_BENCHMARK"
 DEFAULT_MODE = "DETERMINISTIC"
 HARD_BUDGET_JPY = 2000.0
 MAX_EXECUTIONS = 1
+MAX_PRE_HOLDOUT_RECOVERIES = 1
 CALIBRATION_CASES = 6
 HOLDOUT_CASES = 12
 TOTAL_CASES = CALIBRATION_CASES + HOLDOUT_CASES
@@ -245,6 +246,7 @@ def default_state() -> Dict[str, Any]:
             "status": "not_run", "datasetHash": DATASET_HASH,
             "rubricVersion": RUBRIC_VERSION, "dryRun": None,
             "executionCount": 0, "firstStartedAt": None,
+            "preHoldoutRecoveryCount": 0,
             "runningBenchmarkId": None, "holdoutConsumedBy": None,
             "results": [], "lastCompletedAt": None}
 
@@ -259,6 +261,11 @@ def normalize_state(value: Any) -> Dict[str, Any]:
         out["executionCount"] = max(0, int(src.get("executionCount") or 0))
     except (TypeError, ValueError):
         out["executionCount"] = 0
+    try:
+        out["preHoldoutRecoveryCount"] = max(
+            0, int(src.get("preHoldoutRecoveryCount") or 0))
+    except (TypeError, ValueError):
+        out["preHoldoutRecoveryCount"] = 0
     out["firstStartedAt"] = src.get("firstStartedAt")
     out["runningBenchmarkId"] = src.get("runningBenchmarkId")
     out["holdoutConsumedBy"] = src.get("holdoutConsumedBy")
@@ -282,10 +289,22 @@ def begin(state: Dict[str, Any], *, dry_run: Dict[str, Any], benchmark_id: str,
         return {"allowed": False, "status": "dry_run_hash_mismatch", "state": st}
     if st.get("runningBenchmarkId"):
         return {"allowed": False, "status": "already_running", "state": st}
-    if int(st.get("executionCount") or 0) >= MAX_EXECUTIONS:
+    pre_holdout_recovery = bool(
+        int(st.get("executionCount") or 0) >= MAX_EXECUTIONS
+        and st.get("status") in ("provider_failed", "input_budget_exceeded",
+                                 "invalid_evaluator_json")
+        and not st.get("holdoutConsumedBy")
+        and not st.get("results")
+        and int(st.get("preHoldoutRecoveryCount") or 0)
+        < MAX_PRE_HOLDOUT_RECOVERIES)
+    if int(st.get("executionCount") or 0) >= MAX_EXECUTIONS \
+            and not pre_holdout_recovery:
         return {"allowed": False, "status": "execution_limit_reached", "state": st}
     if st.get("holdoutConsumedBy"):
         return {"allowed": False, "status": "holdout_already_consumed", "state": st}
+    if pre_holdout_recovery:
+        st["preHoldoutRecoveryCount"] = int(
+            st.get("preHoldoutRecoveryCount") or 0) + 1
     st.update({"mode": MODE, "status": "running", "dryRun": deepcopy(dry_run),
                "executionCount": int(st.get("executionCount") or 0) + 1,
                "firstStartedAt": st.get("firstStartedAt") or started_at,
