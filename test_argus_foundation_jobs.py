@@ -247,6 +247,13 @@ def test_jquants_calendar_uses_provider_confirmed_seven_day_windows(monkeypatch)
     ]
 
 
+def test_historical_candidates_exclude_weekends_but_do_not_claim_holidays():
+    assert jobs.weekday_candidates("2026-07-17", "2026-07-21") == [
+        "2026-07-17", "2026-07-20", "2026-07-21"]
+    # Marine Day remains only a candidate; the worker requires non-empty
+    # official bars before treating it as a trading date.
+
+
 def test_journal_reverify_job_records_verified_ack(monkeypatch):
     import scanner
     previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)

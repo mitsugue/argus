@@ -18832,23 +18832,24 @@ def _jquants_breadth_worker(job_id):
                                checkpoint={"providerProof": proof})
         if not _JQUANTS_API_KEY:
             raise RuntimeError("jquants_not_configured_in_runtime")
-        calendar_start = (datetime.strptime(start_date, "%Y-%m-%d")
-                          - timedelta(days=14)).strftime("%Y-%m-%d")
-        dates_with_seed = _jquants_calendar_dates(calendar_start, end_date, proof)
+        # Calendar V2 is probed in its production-confirmed current window. Its
+        # history does not extend to the 2008 Premium price start, so historical
+        # trading dates are proven by the existence of official adjusted daily
+        # bars, not by inventing holiday rows or treating weekdays as trades.
+        calendar_probe_start = (datetime.strptime(end_date, "%Y-%m-%d")
+                                - timedelta(days=6)).strftime("%Y-%m-%d")
+        _jquants_calendar_dates(calendar_probe_start, end_date, proof)
+        candidate_start = (datetime.strptime(start_date, "%Y-%m-%d")
+                           - timedelta(days=14)).strftime("%Y-%m-%d")
+        dates_with_seed = argus_foundation_jobs.weekday_candidates(
+            candidate_start, end_date)
         dates = [d for d in dates_with_seed if d >= start_date]
         if not dates:
             raise RuntimeError("jquants_no_trading_dates")
         previous = {}
-        prior_dates = [d for d in dates_with_seed if d < dates[0]]
-        if prior_dates:
-            seed_date = prior_dates[-1]
-            seed_rows = _jquants_secure_rows(
-                "/equities/bars/daily", {"date": seed_date}, proof=proof,
-                max_pages=200)
-            previous = {str(x.get("Code") or x.get("code") or ""):
-                        float(x.get("AdjC")) for x in seed_rows
-                        if x.get("AdjC") is not None and float(x.get("AdjC")) > 0}
         total = len(dates)
+        trading_date_count = 0
+        closed_or_no_bars = 0
         committed = 0
         duplicate_count = 0
         revision_count = 0
@@ -18858,7 +18859,9 @@ def _jquants_breadth_worker(job_id):
         issue_counts = {uid: [] for uid in argus_foundation_jobs.UNIVERSES}
         topix_prices = []
         oldest = newest = None
-        for index, date_text in enumerate(dates, 1):
+        processing_dates = dates_with_seed
+        processed_target = 0
+        for date_text in processing_dates:
             current = _foundation_job(job_id) or {}
             if current.get("cancelRequested"):
                 _foundation_job_update(job_id, status="cancelled",
@@ -18866,15 +18869,28 @@ def _jquants_breadth_worker(job_id):
                                                "lastDate": newest})
                 return
             try:
-                master = _jquants_secure_rows(
-                    "/equities/master", {"date": date_text}, proof=proof,
-                    max_pages=100)
                 bars = _jquants_secure_rows(
                     "/equities/bars/daily", {"date": date_text}, proof=proof,
                     max_pages=200)
             except RuntimeError:
                 failed_requests += 1
                 raise
+            if not bars:
+                if date_text >= start_date:
+                    processed_target += 1
+                    closed_or_no_bars += 1
+                continue
+            if date_text < start_date:
+                previous = {str(x.get("Code") or x.get("code") or ""):
+                            close for x in bars
+                            if (close := argus_foundation_jobs._adjusted_close(x))
+                            is not None}
+                continue
+            processed_target += 1
+            trading_date_count += 1
+            master = _jquants_secure_rows(
+                "/equities/master", {"date": date_text}, proof=proof,
+                max_pages=100)
             daily = argus_foundation_jobs.calculate_daily(
                 date=date_text, master_rows=master, bar_rows=bars,
                 previous_adjusted_closes=previous)
@@ -18898,23 +18914,44 @@ def _jquants_breadth_worker(job_id):
                 issue_counts[uid].append(row["issueCount"])
             oldest = oldest or date_text
             newest = date_text
-            if len(batch) >= 200 or index == total:
+            if len(batch) >= 200 or processed_target == total:
                 before = len(_MARKET_LEDGER.get("observations") or [])
                 added, revisions = _breadth_commit_rows(batch, _ai_now_iso())
                 committed += added
                 revision_count += revisions
                 duplicate_count += max(0, len(batch) - added)
                 batch = []
-                percent = round(index / total * 100.0, 2)
+                percent = round(processed_target / total * 100.0, 2)
                 _foundation_job_update(
                     job_id,
-                    progress={"completedUnits": index, "totalUnits": total,
+                    progress={"completedUnits": processed_target,
+                              "totalUnits": total,
                               "percent": percent},
                     checkpoint={"lastCommittedDate": date_text,
                                 "providerProof": dict(proof),
                                 "marketLedgerRowsBeforeBatch": before,
                                 "marketLedgerRowsAfterBatch": len(
                                     _MARKET_LEDGER.get("observations") or [])})
+        # The requested end date may be a weekend/holiday (for example Marine
+        # Day). Flush the final residue even when the last candidate has no bars.
+        if batch:
+            before = len(_MARKET_LEDGER.get("observations") or [])
+            added, revisions = _breadth_commit_rows(batch, _ai_now_iso())
+            committed += added
+            revision_count += revisions
+            duplicate_count += max(0, len(batch) - added)
+            batch = []
+            _foundation_job_update(
+                job_id,
+                progress={"completedUnits": total, "totalUnits": total,
+                          "percent": 100.0},
+                checkpoint={"lastCommittedDate": newest,
+                            "providerProof": dict(proof),
+                            "marketLedgerRowsBeforeBatch": before,
+                            "marketLedgerRowsAfterBatch": len(
+                                _MARKET_LEDGER.get("observations") or [])})
+        if trading_date_count == 0:
+            raise RuntimeError("jquants_no_daily_bars_in_range")
         points = [x for x in (_MARKET_LEDGER.get("turningPoints") or [])
                   if x.get("ruleId") == "BREADTH_TURN"]
         backtests = {}
@@ -18945,8 +18982,9 @@ def _jquants_breadth_worker(job_id):
             "rowCount": committed,
             "oldestDate": oldest,
             "newestDate": newest,
-            "tradingDateCount": total,
+            "tradingDateCount": trading_date_count,
             "missingDates": [],
+            "closedOrNoBarsCandidateCount": closed_or_no_bars,
             "duplicateCount": duplicate_count,
             "revisionCount": revision_count,
             "failedRequestCount": failed_requests,
