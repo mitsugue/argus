@@ -18839,11 +18839,9 @@ def _jquants_breadth_worker(job_id):
         calendar_probe_start = (datetime.strptime(end_date, "%Y-%m-%d")
                                 - timedelta(days=6)).strftime("%Y-%m-%d")
         _jquants_calendar_dates(calendar_probe_start, end_date, proof)
-        candidate_start = (datetime.strptime(start_date, "%Y-%m-%d")
-                           - timedelta(days=14)).strftime("%Y-%m-%d")
-        dates_with_seed = argus_foundation_jobs.weekday_candidates(
-            candidate_start, end_date)
-        dates = [d for d in dates_with_seed if d >= start_date]
+        candidate_dates = argus_foundation_jobs.weekday_candidates(
+            start_date, end_date)
+        dates = list(candidate_dates)
         if not dates:
             raise RuntimeError("jquants_no_trading_dates")
         previous = {}
@@ -18859,7 +18857,7 @@ def _jquants_breadth_worker(job_id):
         issue_counts = {uid: [] for uid in argus_foundation_jobs.UNIVERSES}
         topix_prices = []
         oldest = newest = None
-        processing_dates = dates_with_seed
+        processing_dates = candidate_dates
         processed_target = 0
         for date_text in processing_dates:
             current = _foundation_job(job_id) or {}
@@ -18879,12 +18877,6 @@ def _jquants_breadth_worker(job_id):
                 if date_text >= start_date:
                     processed_target += 1
                     closed_or_no_bars += 1
-                continue
-            if date_text < start_date:
-                previous = {str(x.get("Code") or x.get("code") or ""):
-                            close for x in bars
-                            if (close := argus_foundation_jobs._adjusted_close(x))
-                            is not None}
                 continue
             processed_target += 1
             trading_date_count += 1

@@ -254,6 +254,12 @@ def test_historical_candidates_exclude_weekends_but_do_not_claim_holidays():
     # official bars before treating it as a trading date.
 
 
+def test_provider_history_boundary_never_requires_a_pre_start_seed():
+    dates = jobs.weekday_candidates("2008-05-07", "2008-05-09")
+    assert dates[0] == "2008-05-07"
+    assert all(date >= "2008-05-07" for date in dates)
+
+
 def test_journal_reverify_job_records_verified_ack(monkeypatch):
     import scanner
     previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
