@@ -12,6 +12,8 @@ on:
           - benchmark
           - jpx_credit_import
           - provider_probe
+          - jquants_matrix
+          - gemini_preflight
           - breadth_backfill
           - breadth_incremental
           - journal_reverify
@@ -24,6 +26,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  foundation-diagnostics:
+    if: inputs.operation == 'jquants_matrix' || inputs.operation == 'gemini_preflight'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Run secret-safe provider diagnostics
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          OPERATION: ${{ inputs.operation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          job_type=JQUANTS_REQUEST_MATRIX
+          if [ "$OPERATION" = "gemini_preflight" ]; then
+            job_type=GEMINI_PREFLIGHT
+          fi
+          python3 scripts/run_foundation_job.py \
+            --job-type "$job_type" \
+            --poll-seconds 5 --max-wait-seconds 1200
+
   benchmark:
     if: inputs.operation == 'benchmark'
     runs-on: ubuntu-latest

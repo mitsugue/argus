@@ -100,7 +100,7 @@ import argus_market_ledger          # v12.3.0: append-only SHO-style market ledg
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
 import argus_sho_phase3             # v12.5.0: deterministic SHO operating sheet/backfill mapping
-import argus_foundation_jobs        # v12.6.0: secure resumable breadth/benchmark/journal jobs
+import argus_foundation_jobs        # v12.6.1: breadth request proof + Gemini raw preflight
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -10659,6 +10659,7 @@ _AI_PRICING = {
     "gpt-5.6-sol": {"in": 5.0, "out": 30.0},
     "gpt-5.6-terra": {"in": 2.5, "out": 15.0},
     "gemini-3.1-pro-preview": {"in": 2.0, "out": 12.0},
+    "gemini-2.5-pro": {"in": 1.25, "out": 10.0},
 }
 _BENCHMARK_PRICING_VERSION = "official-2026-07-20-v1"
 _BENCHMARK_PRICING_CATALOG = {
@@ -10670,6 +10671,13 @@ _BENCHMARK_PRICING_CATALOG = {
         "outputUsdPer1MAtOrBelowBoundary": 12.0,
         "inputUsdPer1MAboveBoundary": 4.0,
         "outputUsdPer1MAboveBoundary": 18.0,
+    },
+    "gemini-2.5-pro": {
+        "contextTierBoundaryTokens": 200000,
+        "inputUsdPer1MAtOrBelowBoundary": 1.25,
+        "outputUsdPer1MAtOrBelowBoundary": 10.0,
+        "inputUsdPer1MAboveBoundary": 2.5,
+        "outputUsdPer1MAboveBoundary": 15.0,
     },
 }
 _AI_GROUNDING_USD = _float_env("GEMINI_GROUNDING_USD_PER_CALL", argus_ai_cost.DEFAULT_GROUNDING_USD)
@@ -15925,7 +15933,7 @@ _OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONの�
                     "根拠のない断定禁止。投資助言・売買指示はしない。")
 
 
-def _gemini_osint(prompt, benchmark=False):
+def _gemini_osint(prompt, benchmark=False, model_override=None):
     """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
     if not _cost_policy_authorize(
             "gemini", "research_benchmark" if benchmark else "osint_research",
@@ -15939,16 +15947,23 @@ def _gemini_osint(prompt, benchmark=False):
         cfg = None
         try:
             from google.genai import types as _gt
-            cfg = (_gt.GenerateContentConfig(
-                tools=[_gt.Tool(google_search=_gt.GoogleSearch())],
-                temperature=0, max_output_tokens=1800)
+            benchmark_kwargs = {
+                "tools": [_gt.Tool(google_search=_gt.GoogleSearch())],
+                "temperature": 0, "max_output_tokens": 4096}
+            try:
+                benchmark_kwargs["thinking_config"] = _gt.ThinkingConfig(
+                    thinking_level="low")
+            except (AttributeError, TypeError, ValueError):
+                pass
+            cfg = (_gt.GenerateContentConfig(**benchmark_kwargs)
                 if benchmark else _gt.GenerateContentConfig(
                     tools=[_gt.Tool(google_search=_gt.GoogleSearch())]))
         except Exception:
             cfg = None
-        resp = (client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
+        selected_model = model_override or _GEMINI_JUDGE_MODEL
+        resp = (client.models.generate_content(model=selected_model,
                                                contents=prompt, config=cfg)
-                if cfg else client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
+                if cfg else client.models.generate_content(model=selected_model,
                                                            contents=prompt))
         txt = getattr(resp, "text", None) or ""
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
@@ -15957,7 +15972,7 @@ def _gemini_osint(prompt, benchmark=False):
             usage = _gemini_usage_tokens(resp) or (0, 0)
             out["_providerMeta"] = {
                 "provider": "gemini", "apiEndpoint": "models.generateContent",
-                "requestedModel": _GEMINI_JUDGE_MODEL,
+                "requestedModel": selected_model,
                 "responseModel": (getattr(resp, "model_version", None)
                                   or getattr(resp, "model", None)),
                 "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
@@ -17639,38 +17654,231 @@ def _ai_capability_probe(model, *, confirmation=False):
     return out
 
 
-def _gemini_capability_probe(model, *, confirmation=False):
-    out = {"model": model, "requestedModel": model, "responseModel": None,
-           "apiEndpoint": "models.generateContent", "accessible": False,
-           "usageReturned": False, "usage": None,
-           "pricingVersion": _BENCHMARK_PRICING_VERSION,
-           "createdAt": _ai_now_iso(), "errorClass": None}
+def _gemini_enum(value):
+    if value is None:
+        return None
+    name = getattr(value, "name", None)
+    return str(name or value).split(".")[-1]
+
+
+def _gemini_response_metadata(response, requested_model, expected_text=None):
+    """Extract only provider/control metadata; never retain prompts or response text."""
+    candidates_out = []
+    all_text = []
+    for candidate in (getattr(response, "candidates", None) or []):
+        parts = list(getattr(getattr(candidate, "content", None), "parts", None) or [])
+        part_types = []
+        text_count = 0
+        nonempty_count = 0
+        for part in parts:
+            part_type = "unknown"
+            text_value = getattr(part, "text", None)
+            if text_value is not None:
+                part_type = "text"
+                text_count += 1
+                if str(text_value):
+                    nonempty_count += 1
+                    all_text.append(str(text_value))
+            elif getattr(part, "function_call", None) is not None:
+                part_type = "function_call"
+            elif getattr(part, "inline_data", None) is not None:
+                part_type = "inline_data"
+            elif getattr(part, "file_data", None) is not None:
+                part_type = "file_data"
+            if getattr(part, "thought", False):
+                part_type += ":thought"
+            part_types.append(part_type)
+        safety = []
+        for rating in (getattr(candidate, "safety_ratings", None) or []):
+            safety.append({"category": _gemini_enum(getattr(rating, "category", None)),
+                           "probability": _gemini_enum(getattr(
+                               rating, "probability", None)),
+                           "blocked": bool(getattr(rating, "blocked", False))})
+        candidates_out.append({
+            "finishReason": _gemini_enum(getattr(candidate, "finish_reason", None)),
+            "finishMessage": str(getattr(candidate, "finish_message", None) or "")[:240] or None,
+            "partsCount": len(parts), "partTypes": part_types,
+            "textPartCount": text_count,
+            "nonEmptyTextPartCount": nonempty_count,
+            "safetyRatings": safety})
+    feedback = getattr(response, "prompt_feedback", None)
+    prompt_safety = []
+    for rating in (getattr(feedback, "safety_ratings", None) or []):
+        prompt_safety.append({"category": _gemini_enum(getattr(rating, "category", None)),
+                              "probability": _gemini_enum(getattr(
+                                  rating, "probability", None)),
+                              "blocked": bool(getattr(rating, "blocked", False))})
+    usage = getattr(response, "usage_metadata", None)
+    token_counts = {
+        "promptTokenCount": int(getattr(usage, "prompt_token_count", 0) or 0),
+        "thoughtsTokenCount": int(getattr(usage, "thoughts_token_count", 0) or 0),
+        "candidatesTokenCount": int(getattr(usage, "candidates_token_count", 0) or 0),
+        "totalTokenCount": int(getattr(usage, "total_token_count", 0) or 0),
+    }
+    joined = "".join(all_text).strip()
+    return {"model": requested_model, "requestedModel": requested_model,
+            "responseModel": (getattr(response, "model_version", None)
+                              or getattr(response, "model", None)),
+            "modelVersion": getattr(response, "model_version", None),
+            "responseId": getattr(response, "response_id", None),
+            "apiEndpoint": "models.generateContent",
+            "candidateCount": len(candidates_out), "candidates": candidates_out,
+            "partsCount": sum(x["partsCount"] for x in candidates_out),
+            "textPartExists": any(x["textPartCount"] > 0 for x in candidates_out),
+            "nonEmptyTextPartExists": any(
+                x["nonEmptyTextPartCount"] > 0 for x in candidates_out),
+            "matchedExpectedText": (joined == expected_text if expected_text else None),
+            "promptFeedback": {
+                "blockReason": _gemini_enum(getattr(feedback, "block_reason", None)),
+                "blockReasonMessage": str(getattr(
+                    feedback, "block_reason_message", None) or "")[:240] or None,
+                "safetyRatings": prompt_safety},
+            "tokenCounts": token_counts,
+            "usageReturned": any(token_counts.values()),
+            "usage": {"inputTokens": token_counts["promptTokenCount"],
+                      "outputTokens": (token_counts["candidatesTokenCount"]
+                                       + token_counts["thoughtsTokenCount"])},
+            "pricingVersion": _BENCHMARK_PRICING_VERSION,
+            "createdAt": _ai_now_iso(), "errorClass": None}
+
+
+def _gemini_probe_config():
+    if not genai_types:
+        return None
+    kwargs = {"temperature": 0, "max_output_tokens": 1024,
+              "candidate_count": 1, "response_mime_type": "text/plain"}
+    try:
+        kwargs["thinking_config"] = genai_types.ThinkingConfig(
+            thinking_level="low")
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return genai_types.GenerateContentConfig(**kwargs)
+
+
+def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1):
+    base = {"model": model, "requestedModel": model, "responseModel": None,
+            "apiEndpoint": "models.generateContent", "accessible": False,
+            "usageReturned": False, "usage": None, "attempts": [],
+            "pricingVersion": _BENCHMARK_PRICING_VERSION,
+            "createdAt": _ai_now_iso(), "errorClass": None,
+            "classification": None}
     if not _cost_policy_authorize(
             "gemini", "manual_api", automatic=False, confirmation=confirmation,
-            estimated_cost_usd=0.001, estimated_tokens=50)["allowed"]:
-        out["errorClass"] = "cost_policy_blocked"
-        return out
+            estimated_cost_usd=0.01, estimated_tokens=1200)["allowed"]:
+        base["errorClass"] = "cost_policy_blocked"
+        base["classification"] = "malformed_request"
+        return base
+    if not google_genai or not GEMINI_API_KEY:
+        base["errorClass"] = "no_api_key"
+        base["classification"] = "malformed_request"
+        return base
+    client = google_genai.Client(api_key=GEMINI_API_KEY)
+    expected = "ARGUS_GEMINI_OK"
+    for attempt in range(1, max(1, min(int(max_attempts), 3)) + 1):
+        try:
+            response = client.models.generate_content(
+                model=model, contents="Reply with exactly: ARGUS_GEMINI_OK",
+                config=_gemini_probe_config())
+            row = _gemini_response_metadata(response, model, expected)
+            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.01)
+        except Exception as exc:
+            row = {**base, "attempts": None,
+                   "errorClass": type(exc).__name__[:80]}
+        row["attempt"] = attempt
+        row["classification"] = argus_foundation_jobs.classify_gemini_preflight(
+            row, expected_text=expected)
+        row["accessible"] = row["classification"] == "success"
+        base["attempts"].append(row)
+        base.update({k: v for k, v in row.items() if k != "attempts"})
+        if row["accessible"] or row["classification"] in {
+                "safety_block", "malformed_request", "recitation"}:
+            break
+        if attempt < max_attempts:
+            time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
+                attempt, seed=f"gemini-preflight:{model}:{attempt}"))
+    return base
+
+
+def _gemini_models_proof():
+    out = {"modelsApiAccessible": False, "models": [], "errorClass": None}
     if not google_genai or not GEMINI_API_KEY:
         out["errorClass"] = "no_api_key"
         return out
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
-        cfg = None
-        if genai_types:
-            cfg = genai_types.GenerateContentConfig(
-                temperature=0, max_output_tokens=16)
-        response = client.models.generate_content(
-            model=model, contents="Reply with exactly: ok", config=cfg)
-        usage = _gemini_usage_tokens(response) or (0, 0)
-        out["accessible"] = bool(getattr(response, "text", None))
-        out["usageReturned"] = bool(usage[0] or usage[1])
-        out["usage"] = {"inputTokens": usage[0], "outputTokens": usage[1]}
-        out["responseModel"] = (getattr(response, "model_version", None)
-                                or getattr(response, "model", None))
-        _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
+        for model in client.models.list():
+            name = str(getattr(model, "name", None) or "")
+            if "gemini" not in name.lower() or "pro" not in name.lower():
+                continue
+            actions = (getattr(model, "supported_actions", None)
+                       or getattr(model, "supported_generation_methods", None) or [])
+            out["models"].append({
+                "name": name, "displayName": getattr(model, "display_name", None),
+                "stage": _gemini_enum(getattr(model, "stage", None)),
+                "inputTokenLimit": getattr(model, "input_token_limit", None),
+                "outputTokenLimit": getattr(model, "output_token_limit", None),
+                "supportedActions": [str(x) for x in actions]})
+        out["modelsApiAccessible"] = True
     except Exception as exc:
-        out["errorClass"] = type(exc).__name__[:40]
+        out["errorClass"] = type(exc).__name__[:80]
     return out
+
+
+def _gemini_preflight_value():
+    preview = _gemini_capability_probe(
+        "gemini-3.1-pro-preview", confirmation=True, max_attempts=3)
+    models = _gemini_models_proof()
+    stable_id = argus_foundation_jobs.select_latest_stable_gemini_pro(
+        models.get("models") or [])
+    stable = None
+    preview_attempts = preview.get("attempts") or []
+    defect_classes = {"max_tokens", "no_text_part", "preview_empty_output",
+                      "transient_provider_error"}
+    preview_defect = (len(preview_attempts) == 3 and all(
+        x.get("classification") in defect_classes for x in preview_attempts))
+    if not preview.get("accessible") and stable_id:
+        stable = _gemini_capability_probe(
+            stable_id, confirmation=True, max_attempts=1)
+    stable_path = bool(preview_defect and stable and stable.get("accessible"))
+    selected = ("gemini-3.1-pro-preview" if preview.get("accessible")
+                else stable_id if stable_path else None)
+    return {"status": "verified" if selected else "failed",
+            "preview": preview, "modelsApi": models,
+            "stable": stable, "stableModel": stable_id,
+            "previewProviderDefect": preview_defect,
+            "stableProviderPath": stable_path,
+            "selectedBaselineModel": selected,
+            "baselineSwapReason": ("preview_provider_defect"
+                                   if stable_path else None)}
+
+
+def _gemini_preflight_worker(job_id):
+    try:
+        _foundation_job_update(job_id, status="running")
+        if _COST_POLICY.get("mode") != "DETERMINISTIC":
+            raise RuntimeError("normal_mode_not_deterministic")
+        manual = argus_cost_policy.configure(
+            _COST_POLICY, mode="MANUAL", event_opt_in=False)
+        _COST_POLICY.clear()
+        _COST_POLICY.update(manual)
+        try:
+            result = _gemini_preflight_value()
+        finally:
+            restored = argus_cost_policy.configure(
+                _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+            _COST_POLICY.clear()
+            _COST_POLICY.update(restored)
+        if result.get("status") != "verified":
+            raise RuntimeError("gemini_preflight_failed")
+        _foundation_job_update(job_id, status="completed", result=result)
+    except Exception as exc:
+        restored = argus_cost_policy.configure(
+            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+        _COST_POLICY.clear()
+        _COST_POLICY.update(restored)
+        error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        _foundation_job_update(job_id, status="failed",
+                               error_class=error_class[:80])
 
 
 @app.route("/api/argus/admin/ai/capability-probe", methods=["POST"])
@@ -17792,7 +18000,8 @@ def _benchmark_usage_cost_jpy(calls, usd_jpy):
     return round(total_usd * float(usd_jpy), 2), round(total_usd, 6)
 
 
-def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None):
+def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
+                             gemini_model=None):
     """Frozen calibration then one-shot holdout. Always returns to DETERMINISTIC."""
     results = []
     provider_calls = []
@@ -17810,7 +18019,8 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None):
                 _FORMAL_BENCHMARK.update(consumed["state"])
                 _osint_persist()
             prompt = _formal_benchmark_prompt(case)
-            baseline_out, baseline_status = _gemini_osint(prompt, benchmark=True)
+            baseline_out, baseline_status = _gemini_osint(
+                prompt, benchmark=True, model_override=gemini_model)
             if baseline_status != "ok":
                 failure = "provider_blocked" if baseline_status in (
                     "disabled", "deterministic_mode") else "provider_failed"
@@ -17818,7 +18028,8 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None):
             provider_calls.append(dict((baseline_out or {}).get("_providerMeta") or {}))
             # ARGUS platform comparison: same question/cutoff, two scouts plus
             # deterministic source/temporal checks. Tool asymmetry is recorded.
-            argus_gemini, ag_status = _gemini_osint(prompt, benchmark=True)
+            argus_gemini, ag_status = _gemini_osint(
+                prompt, benchmark=True, model_override=gemini_model)
             argus_gpt, ao_status = _gpt_osint(prompt, benchmark=True)
             if ag_status != "ok" or ao_status != "ok":
                 failure = "provider_blocked" if "disabled" in (ag_status, ao_status) \
@@ -17943,7 +18154,7 @@ def api_argus_admin_research_benchmark_dry_run():
     return jsonify({"ok": dry["status"] == "ready", **dry})
 
 
-def _formal_benchmark_dry_run_value():
+def _formal_benchmark_dry_run_value(gemini_model=None):
     evaluator = _openai_model_for("referee")
     pricing = dict(_AI_PRICING)
     if evaluator not in pricing and _OPENAI_MODEL in pricing:
@@ -17951,7 +18162,7 @@ def _formal_benchmark_dry_run_value():
     remaining_usd = max(0.0, _AI_DAILY_BUDGET_USD
                         - float(_AI_COST_STATE.get("daySpentUsd") or 0))
     dry = argus_research_benchmark.estimate_cost(
-        gemini_model=_GEMINI_JUDGE_MODEL,
+        gemini_model=gemini_model or _GEMINI_JUDGE_MODEL,
         argus_model=_OPENAI_MODEL_ROLES.get("standard") or _OPENAI_MODEL,
         evaluator_model=evaluator, pricing=pricing,
         usd_jpy_ceiling=_float_env("ARGUS_BENCHMARK_USDJPY_CEILING", 160.0),
@@ -18003,7 +18214,7 @@ def api_argus_admin_research_benchmark_execute():
 
 
 def _research_benchmark_job_worker(job_id):
-    proof = {"openai": [], "gemini": []}
+    proof = {"openai": [], "geminiPreflight": None}
     try:
         _foundation_job_update(job_id, status="running")
         if _COST_POLICY.get("mode") != "DETERMINISTIC":
@@ -18017,22 +18228,30 @@ def _research_benchmark_job_worker(job_id):
                 _ai_capability_probe("gpt-5.6-sol", confirmation=True),
                 _ai_capability_probe("gpt-5.6-terra", confirmation=True),
             ]
-            proof["gemini"] = [
-                _gemini_capability_probe("gemini-3.1-pro-preview",
-                                         confirmation=True)]
+            prior_preflight = next((
+                (x.get("result") or {}) for x in reversed(
+                    _FOUNDATION_JOBS.get("jobs", []))
+                if x.get("jobType") == "GEMINI_PREFLIGHT"
+                and x.get("status") == "completed"
+                and (x.get("result") or {}).get("status") == "verified"
+                and (x.get("result") or {}).get("selectedBaselineModel")), None)
+            proof["geminiPreflight"] = prior_preflight or _gemini_preflight_value()
         finally:
             restored = argus_cost_policy.configure(
                 _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
             _COST_POLICY.clear()
             _COST_POLICY.update(restored)
-        all_probes = proof["openai"] + proof["gemini"]
         if not all(x.get("accessible") and x.get("usageReturned")
                    and x.get("errorClass") is None and x.get("responseModel")
-                   for x in all_probes):
+                   for x in proof["openai"]):
             raise RuntimeError("model_availability_probe_failed")
+        preflight = proof["geminiPreflight"] or {}
+        gemini_model = preflight.get("selectedBaselineModel")
+        if preflight.get("status") != "verified" or not gemini_model:
+            raise RuntimeError("gemini_preflight_failed")
         if proof["openai"][0]["responseModel"] == proof["openai"][1]["responseModel"]:
             raise RuntimeError("evaluator_not_independent")
-        dry = _formal_benchmark_dry_run_value()
+        dry = _formal_benchmark_dry_run_value(gemini_model)
         if dry.get("status") != "ready" or float(
                 dry.get("estimatedCostJpy") or 999999) > 2000:
             raise RuntimeError(str(dry.get("status") or "dry_run_blocked"))
@@ -18053,12 +18272,13 @@ def _research_benchmark_job_worker(job_id):
         _COST_POLICY.clear()
         _COST_POLICY.update(enabled)
         _osint_persist()
-        _formal_benchmark_worker(benchmark_id, dry, proof)
+        _formal_benchmark_worker(benchmark_id, dry, proof, gemini_model)
         final_status = str(_FORMAL_BENCHMARK.get("status") or "invalid")
         latest = ((_FORMAL_BENCHMARK.get("results") or [None])[-1] or {})
         result = {"benchmarkId": benchmark_id, "status": final_status,
                   "datasetHash": argus_research_benchmark.DATASET_HASH,
                   "dryRun": dry, "modelAvailabilityProof": proof,
+                  "formalBaselineModel": gemini_model,
                   "resultClassification": latest.get("resultClassification"),
                   "twoXClaimAllowed": bool(latest.get("twoXClaimAllowed")),
                   "totalCostJpy": latest.get("totalCostJpy")}
@@ -18081,6 +18301,10 @@ def _foundation_job_dispatch(job_id):
     job_type = job.get("jobType")
     if job_type in ("JQUANTS_BREADTH_BACKFILL", "JQUANTS_BREADTH_INCREMENTAL"):
         _jquants_breadth_worker(job_id)
+    elif job_type == "JQUANTS_REQUEST_MATRIX":
+        _jquants_request_matrix_worker(job_id)
+    elif job_type == "GEMINI_PREFLIGHT":
+        _gemini_preflight_worker(job_id)
     elif job_type == "RESEARCH_BENCHMARK":
         _research_benchmark_job_worker(job_id)
     elif job_type == "JOURNAL_REVERIFY":
@@ -18707,19 +18931,47 @@ def _foundation_job_update(job_id, *, status=None, progress=None,
 
 def _jquants_secure_page(path, params, *, proof, max_attempts=4):
     """Secret-safe J-Quants V2 request with bounded 429/5xx recovery."""
+    query = argus_foundation_jobs.normalize_jquants_query(params)
+    safe_query = {str(k): ("[present]" if k == "pagination_key" else v)
+                  for k, v in query.items()}
     last_class = "request_failed"
     for attempt in range(1, max_attempts + 1):
         started = _ai_now_iso()
+        started_monotonic = time.monotonic()
         try:
+            # One foundation job is active at a time; retain an explicit,
+            # configurable request floor so a historical run never becomes an
+            # unbounded burst even when every response is successful.
+            try:
+                minimum_interval = max(0.0, min(5.0, float(os.environ.get(
+                    "JQUANTS_FOUNDATION_MIN_REQUEST_INTERVAL_SECONDS", "0.35"))))
+            except (TypeError, ValueError):
+                minimum_interval = 0.35
+            previous_at = getattr(_jquants_secure_page, "_last_request_at", 0.0)
+            remaining = minimum_interval - (time.monotonic() - previous_at)
+            if remaining > 0:
+                time.sleep(remaining)
             response = requests.get(
                 f"{_JQUANTS_BASE}{path}",
-                headers={"x-api-key": _JQUANTS_API_KEY}, params=params,
+                headers={"x-api-key": _JQUANTS_API_KEY}, params=query,
                 timeout=30)
-            request_id = (response.headers.get("x-request-id")
-                          or response.headers.get("x-amzn-requestid"))
-            request_proof = {"endpoint": path, "apiVersion": "v2",
+            _jquants_secure_page._last_request_at = time.monotonic()
+            response_headers = getattr(response, "headers", {}) or {}
+            request_id = (response_headers.get("x-request-id")
+                          or response_headers.get("x-amzn-requestid"))
+            content_type = str(response_headers.get("content-type") or "").split(";")[0]
+            request_proof = {"endpoint": path, "method": "GET",
+                             "query": safe_query, "apiVersion": "v2",
+                             "dateFormat": ("YYYYMMDD" if any(
+                                 k in safe_query for k in ("date", "from", "to"))
+                                            else None),
+                             "codePresent": bool(query.get("code")),
                              "httpStatus": response.status_code,
-                             "requestId": request_id, "lastRequestAt": started,
+                             "requestId": request_id,
+                             "contentType": content_type or None,
+                             "elapsedMs": round((time.monotonic()
+                                                 - started_monotonic) * 1000, 2),
+                             "attempt": attempt, "lastRequestAt": started,
                              "secretConfigured": bool(_JQUANTS_API_KEY)}
             proof.update(request_proof)
             proof.setdefault("endpointSummary", {})[path] = dict(request_proof)
@@ -18734,16 +18986,42 @@ def _jquants_secure_page(path, params, *, proof, max_attempts=4):
                               "lastSuccessfulRequestAt": _ai_now_iso()})
                 proof["endpointSummary"][path].update({
                     "errorClass": None, "rows": len(body.get("data") or []),
+                    "paginationKeyPresent": bool(body.get("pagination_key")),
+                    "responseSchema": sorted(str(k) for k in body.keys()),
                     "lastSuccessfulRequestAt": proof["lastSuccessfulRequestAt"]})
                 return body
+            error_code = error_message = None
+            try:
+                error_body = response.json()
+            except (ValueError, TypeError):
+                error_body = None
+            if isinstance(error_body, dict):
+                error_code = (error_body.get("code") or error_body.get("errorCode")
+                              or error_body.get("error_code"))
+                raw_message = (error_body.get("message") or error_body.get("detail")
+                               or error_body.get("error"))
+                if isinstance(raw_message, dict):
+                    error_code = error_code or raw_message.get("code")
+                    raw_message = raw_message.get("message")
+                if raw_message is not None:
+                    error_message = str(raw_message)[:240]
+            error_meta = {"responseErrorCode": (str(error_code)[:80]
+                                                  if error_code is not None else None),
+                          "responseErrorMessage": error_message,
+                          "planEntitlementError": bool(
+                              response.status_code == 403 or any(
+                                  word in str(error_message or "").lower()
+                                  for word in ("plan", "entitlement", "subscription")))}
+            proof.update(error_meta)
+            proof["endpointSummary"][path].update(error_meta)
             if response.status_code in (401, 403):
                 raise RuntimeError(f"jquants_http_{response.status_code}")
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 last_class = f"jquants_http_{response.status_code}"
                 if attempt < max_attempts:
                     wait = argus_foundation_jobs.bounded_backoff_seconds(
-                        attempt, response.headers.get("Retry-After"),
-                        f"{path}:{params}:{attempt}")
+                        attempt, response_headers.get("Retry-After"),
+                        f"{path}:{safe_query}:{attempt}")
                     time.sleep(wait)
                     continue
             raise RuntimeError(f"jquants_http_{response.status_code}")
@@ -18751,7 +19029,7 @@ def _jquants_secure_page(path, params, *, proof, max_attempts=4):
             last_class = type(exc).__name__
             if attempt < max_attempts:
                 time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
-                    attempt, seed=f"{path}:{params}:{attempt}"))
+                    attempt, seed=f"{path}:{safe_query}:{attempt}"))
                 continue
         except RuntimeError:
             raise
@@ -18792,6 +19070,118 @@ def _jquants_calendar_dates(start_date, end_date, proof):
             "/markets/calendar", {"from": frm, "to": to}, proof=proof))
         cursor = window_end + timedelta(days=1)
     return argus_foundation_jobs.trading_dates(rows, start=start_date, end=end_date)
+
+
+def _jquants_official_client_test(params):
+    """Run the same request through J-Quants' official V2 client, secret-safe."""
+    started = time.monotonic()
+    result = {"client": "jquants-api-client", "clientVersion": None,
+              "status": "failed", "rows": 0, "elapsedMs": None,
+              "httpStatus": None, "contentType": None, "requestId": None,
+              "errorClass": None, "responseErrorCode": None,
+              "responseErrorMessage": None}
+    try:
+        import jquantsapi
+        result["clientVersion"] = getattr(jquantsapi, "__version__", None)
+        client = jquantsapi.ClientV2(api_key=_JQUANTS_API_KEY)
+        frame = client.get_eq_bars_daily(
+            code=str(params.get("code") or ""),
+            date_yyyymmdd=str(params.get("date") or ""),
+            from_yyyymmdd=str(params.get("from") or ""),
+            to_yyyymmdd=str(params.get("to") or ""))
+        result.update({"status": "success", "rows": len(frame),
+                       "httpStatus": 200,
+                       "responseSchema": [str(x) for x in getattr(
+                           frame, "columns", [])]})
+    except Exception as exc:
+        result["errorClass"] = type(exc).__name__[:80]
+        response = getattr(exc, "response", None)
+        if response is not None:
+            result["httpStatus"] = getattr(response, "status_code", None)
+            headers = getattr(response, "headers", {}) or {}
+            result["contentType"] = str(headers.get("content-type") or "").split(";")[0] or None
+            result["requestId"] = (headers.get("x-request-id")
+                                   or headers.get("x-amzn-requestid"))
+            try:
+                body = response.json()
+            except (ValueError, TypeError):
+                body = None
+            if isinstance(body, dict):
+                result["responseErrorCode"] = str(
+                    body.get("code") or body.get("errorCode")
+                    or body.get("error_code") or "")[:80] or None
+                message = body.get("message") or body.get("detail")
+                if message is not None:
+                    result["responseErrorMessage"] = str(message)[:240]
+    finally:
+        result["elapsedMs"] = round((time.monotonic() - started) * 1000, 2)
+    return result
+
+
+def _jquants_request_matrix_worker(job_id):
+    """Execute the frozen five-case V2 matrix without persisting provider rows."""
+    try:
+        _foundation_job_update(job_id, status="running")
+        if not _JQUANTS_API_KEY:
+            raise RuntimeError("jquants_not_configured_in_runtime")
+        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        recent_start = (datetime.now(TZ_JST) - timedelta(days=14)).strftime("%Y-%m-%d")
+        calendar_proof = {}
+        recent_dates = _jquants_calendar_dates(recent_start, today, calendar_proof)
+        recent = (recent_dates[-1] if recent_dates else
+                  (datetime.now(TZ_JST) - timedelta(days=3)).strftime("%Y-%m-%d"))
+        recent_compact = argus_foundation_jobs.normalize_jquants_query(
+            {"date": recent})["date"]
+        cases = [
+            ("official_sample", {"code": "86970", "date": "20230324"}),
+            ("recent_confirmed_trading_day",
+             {"code": "86970", "date": recent_compact}),
+            ("oldest_required_with_code", {"code": "72030", "date": "20080507"}),
+            ("official_date_only", {"date": "20080507"}),
+            ("official_code_range",
+             {"code": "86970", "from": "20230324", "to": "20230327"}),
+        ]
+        matrix = []
+        for name, params in cases:
+            direct_proof = {}
+            direct = {"client": "argus-v2", "status": "failed", "rows": 0}
+            try:
+                rows = _jquants_secure_rows(
+                    "/equities/bars/daily", params, proof=direct_proof,
+                    max_pages=200)
+                direct.update({"status": "success", "rows": len(rows)})
+            except RuntimeError as exc:
+                direct["errorClass"] = str(exc)[:80]
+            direct.update({k: direct_proof.get(k) for k in (
+                "endpoint", "method", "query", "dateFormat", "codePresent",
+                "httpStatus", "requestId", "contentType", "elapsedMs",
+                "responseErrorCode", "responseErrorMessage",
+                "planEntitlementError", "pages")})
+            endpoint = (direct_proof.get("endpointSummary") or {}).get(
+                "/equities/bars/daily", {})
+            direct["paginationKeyPresent"] = endpoint.get("paginationKeyPresent")
+            direct["responseSchema"] = endpoint.get("responseSchema")
+            matrix.append({"test": name, "params": dict(params),
+                           "direct": direct,
+                           "officialClient": _jquants_official_client_test(params)})
+        direct_ok = all(x["direct"].get("status") == "success" for x in matrix)
+        official_ok = all(x["officialClient"].get("status") == "success"
+                          for x in matrix)
+        old_ok = matrix[2]["direct"].get("status") == "success"
+        result = {"status": ("verified" if direct_ok and official_ok else "diagnosed"),
+                  "matrix": matrix, "recentConfirmedTradingDay": recent,
+                  "directClientAllSuccessful": direct_ok,
+                  "officialClientAllSuccessful": official_ok,
+                  "oldestRequiredDateAccessible": old_ok,
+                  "rootCause": ("hyphenated_date_transport_format"
+                                if old_ok else "request_or_provider_rejection_persists"),
+                  "correctedDateFormat": "YYYYMMDD",
+                  "rawProviderRowsPersisted": False}
+        _foundation_job_update(job_id, status="completed", result=result)
+    except Exception as exc:
+        error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        _foundation_job_update(job_id, status="failed",
+                               error_class=error_class[:80])
 
 
 def _breadth_commit_rows(rows, now_iso):
@@ -18845,6 +19235,31 @@ def _jquants_breadth_worker(job_id):
         if not dates:
             raise RuntimeError("jquants_no_trading_dates")
         previous = {}
+        # A resumed slice must compare its first target session with the prior
+        # official close.  Fetch a bounded look-back seed but never persist it
+        # as a new observation or move the requested oldest boundary backward.
+        if params.get("resumedFromJobId") or start_date > "2008-05-07":
+            seed_start = (datetime.strptime(start_date, "%Y-%m-%d")
+                          - timedelta(days=10)).strftime("%Y-%m-%d")
+            seed_end = (datetime.strptime(start_date, "%Y-%m-%d")
+                        - timedelta(days=1)).strftime("%Y-%m-%d")
+            for seed_date in reversed(argus_foundation_jobs.weekday_candidates(
+                    seed_start, seed_end)):
+                seed_bars = _jquants_secure_rows(
+                    "/equities/bars/daily", {"date": seed_date}, proof=proof,
+                    max_pages=200)
+                if seed_bars:
+                    previous = {}
+                    for seed_row in seed_bars:
+                        try:
+                            seed_close = float(seed_row.get("AdjC"))
+                        except (TypeError, ValueError):
+                            continue
+                        if seed_close > 0:
+                            previous[str(seed_row.get("Code")
+                                         or seed_row.get("code") or "")] = seed_close
+                    proof["resumeSeedDate"] = seed_date
+                    break
         total = len(dates)
         trading_date_count = 0
         closed_or_no_bars = 0
@@ -18856,6 +19271,7 @@ def _jquants_breadth_worker(job_id):
         coverage = {uid: [] for uid in argus_foundation_jobs.UNIVERSES}
         issue_counts = {uid: [] for uid in argus_foundation_jobs.UNIVERSES}
         topix_prices = []
+        latest_daily = None
         oldest = newest = None
         processing_dates = candidate_dates
         processed_target = 0
@@ -18886,6 +19302,7 @@ def _jquants_breadth_worker(job_id):
             daily = argus_foundation_jobs.calculate_daily(
                 date=date_text, master_rows=master, bar_rows=bars,
                 previous_adjusted_closes=previous)
+            latest_daily = daily
             previous = daily["nextAdjustedCloses"]
             topix_row = next((x for x in bars if str(
                 x.get("Code") or x.get("code") or "").startswith("1306")), None)
@@ -18970,6 +19387,18 @@ def _jquants_breadth_worker(job_id):
                        _MARKET_LEDGER.setdefault("backtests", [])):
                 _MARKET_LEDGER["backtests"].append(record)
             backtests[universe] = record
+        derived = argus_market_ledger.derived_history(
+            _MARKET_LEDGER, _ai_now_iso())
+        latest_ratios = {}
+        for universe in ("prime", "all"):
+            latest_ratios[universe] = {
+                str(window): (((derived.get(
+                    f"breadth.{universe}.ratio{window}") or [{}])[-1]).get("value"))
+                for window in (6, 10, 15, 25)}
+        latest_counts = {}
+        if latest_daily:
+            for universe_id, row in latest_daily.get("universes", {}).items():
+                latest_counts[universe_id] = dict(row.get("counts") or {})
         result = {
             "rowCount": committed,
             "oldestDate": oldest,
@@ -18989,6 +19418,8 @@ def _jquants_breadth_worker(job_id):
                                             if vals else 0),
                                 "latest": vals[-1] if vals else 0}
                          for uid, vals in coverage.items()},
+            "latestCounts": latest_counts,
+            "latestRatios": latest_ratios,
             "turningPointCount": len(points),
             "backtests": backtests,
             "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),

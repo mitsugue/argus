@@ -1,4 +1,4 @@
-# Research Benchmark (v12.6.0)
+# Research Benchmark (v12.6.1)
 - 基準runにepochId刻印(provider:model:promptVersion:toolMode:schemaVersion)。異エポック比較禁止。
 - rubric-v2(argus_osint_engine.RUBRIC_VERSION)— 重みの無言変更禁止。
 - ホールドアウト3ケース(stale/no_news/direct_disclosure)=チューニング不使用。
@@ -11,3 +11,8 @@
 `gpt-5.6-terra`で、各応答のexact model IDとusageを保存する。generatorと
 refereeの実応答modelが同一、dataset hash不一致、hard cap 2,000円超過、
 またはholdout消費済みの場合はfail-closedとする。
+
+Gemini preflightは本文を保存せず、candidate/finishReason/parts/thinking usageを
+最大3回確認する。previewが3回ともprovider defectで、Models APIが返す最新の
+明示的stable Proだけが最小応答に成功した場合に限り、そのexact model IDを
+baselineへ記録して一度限りの正式runを閉じる。

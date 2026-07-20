@@ -7,6 +7,7 @@ flask
 flask-cors
 json-repair
 google-genai
+jquants-api-client==2.3.0
 moomoo-api
 xlrd
 gunicorn==23.0.0

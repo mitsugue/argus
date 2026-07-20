@@ -167,6 +167,7 @@ def test_exact_model_pricing_and_response_model_contract(monkeypatch):
     assert scanner._AI_PRICING["gpt-5.6-sol"] == {"in": 5.0, "out": 30.0}
     assert scanner._AI_PRICING["gpt-5.6-terra"] == {"in": 2.5, "out": 15.0}
     assert scanner._AI_PRICING["gemini-3.1-pro-preview"] == {"in": 2.0, "out": 12.0}
+    assert scanner._AI_PRICING["gemini-2.5-pro"] == {"in": 1.25, "out": 10.0}
     dry = scanner._formal_benchmark_dry_run_value()
     assert dry["models"] == {"gemini": "gemini-3.1-pro-preview",
                               "argus": "gpt-5.6-sol",
@@ -223,9 +224,86 @@ def test_jquants_v2_auth_pagination_and_429_recovery(monkeypatch):
     assert all(call["headers"] == {"x-api-key": "configured-test-value"}
                for call in calls)
     assert calls[-1]["params"]["pagination_key"] == "next"
+    assert all(call["params"]["date"] == "20260717" for call in calls)
     assert proof["apiVersion"] == "v2" and proof["httpStatus"] == 200
+    assert proof["method"] == "GET" and proof["dateFormat"] == "YYYYMMDD"
+    assert proof["query"]["date"] == "20260717"
     assert proof["endpointSummary"]["/equities/master"]["errorClass"] is None
     assert "configured-test-value" not in json.dumps(proof)
+
+
+def test_jquants_hyphenated_historical_date_is_normalized_at_transport():
+    assert jobs.normalize_jquants_query({
+        "code": "86970", "date": "2008-05-07"}) == {
+            "code": "86970", "date": "20080507"}
+    assert jobs.normalize_jquants_query({
+        "code": "86970", "from": "2023-03-24", "to": "20230327"}) == {
+            "code": "86970", "from": "20230324", "to": "20230327"}
+
+
+def test_jquants_error_metadata_is_safe_and_entitlement_is_explicit(monkeypatch):
+    import scanner
+
+    class Response:
+        status_code = 400
+        headers = {"content-type": "application/json; charset=utf-8",
+                   "x-request-id": "request-safe"}
+
+        @staticmethod
+        def json():
+            return {"code": "INVALID_PARAMETER", "message": "date format invalid"}
+
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "never-log-this")
+    monkeypatch.setattr(scanner.requests, "get", lambda *a, **k: Response())
+    proof = {}
+    with pytest.raises(RuntimeError, match="jquants_http_400"):
+        scanner._jquants_secure_page(
+            "/equities/bars/daily", {"date": "2008-05-07"}, proof=proof)
+    assert proof["query"] == {"date": "20080507"}
+    assert proof["contentType"] == "application/json"
+    assert proof["responseErrorCode"] == "INVALID_PARAMETER"
+    assert proof["responseErrorMessage"] == "date format invalid"
+    assert proof["planEntitlementError"] is False
+    assert "never-log-this" not in json.dumps(proof)
+
+
+def test_gemini_raw_metadata_classifies_thought_token_exhaustion_without_text():
+    import scanner
+    response = types.SimpleNamespace(
+        model_version="gemini-3.1-pro-preview-001", response_id="response-safe",
+        candidates=[types.SimpleNamespace(
+            finish_reason="MAX_TOKENS", finish_message="output limit",
+            content=types.SimpleNamespace(parts=[]), safety_ratings=[])],
+        prompt_feedback=types.SimpleNamespace(
+            block_reason=None, block_reason_message=None, safety_ratings=[]),
+        usage_metadata=types.SimpleNamespace(
+            prompt_token_count=6, thoughts_token_count=16,
+            candidates_token_count=0, total_token_count=22))
+    metadata = scanner._gemini_response_metadata(
+        response, "gemini-3.1-pro-preview", "ARGUS_GEMINI_OK")
+    assert metadata["responseId"] == "response-safe"
+    assert metadata["candidates"][0]["finishReason"] == "MAX_TOKENS"
+    assert metadata["tokenCounts"]["thoughtsTokenCount"] == 16
+    assert metadata["textPartExists"] is False
+    assert jobs.classify_gemini_preflight(metadata) == "max_tokens"
+
+
+def test_gemini_preflight_success_and_latest_stable_selection():
+    metadata = {"candidates": [{"finishReason": "STOP"}],
+                "textPartExists": True, "nonEmptyTextPartExists": True,
+                "matchedExpectedText": True, "promptFeedback": {},
+                "errorClass": None}
+    assert jobs.classify_gemini_preflight(metadata) == "success"
+    assert jobs.select_latest_stable_gemini_pro([
+        {"name": "models/gemini-3.1-pro-preview",
+         "supportedActions": ["generateContent"]},
+        {"name": "models/gemini-2.0-pro",
+         "supportedActions": ["generateContent"]},
+        {"name": "models/gemini-2.5-pro",
+         "supportedActions": ["generateContent", "countTokens"]},
+        {"name": "models/gemini-2.5-pro-latest",
+         "supportedActions": ["generateContent"]},
+    ]) == "gemini-2.5-pro"
 
 
 def test_jquants_calendar_uses_provider_confirmed_seven_day_windows(monkeypatch):
