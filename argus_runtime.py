@@ -236,8 +236,10 @@ def append_soak_heartbeat(soak: Dict[str, Any],
 def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
                      current_build_sha: Optional[str],
                      required_hours: int = 72) -> Dict[str, Any]:
-    """scheduler遅延とbackend中断を分離するheartbeat由来state machine。"""
-    rows = [h for h in (soak.get("heartbeats") or []) if isinstance(h, dict)]
+    """独立証拠を束ね、単一scheduler source障害とapp障害を分離する。"""
+    rows = sorted(
+        [h for h in (soak.get("heartbeats") or []) if isinstance(h, dict)],
+        key=lambda h: str(h.get("observedAt") or ""))
     last = rows[-1] if rows else None
     started = soak.get("startedAt")
     elapsed = _hours_between(started, now_iso) if started else 0.0
@@ -245,49 +247,92 @@ def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
     evidence_times = sorted(e for e in evidence_times if e is not None)
     evidence_gaps = [b - a for a, b in zip(evidence_times, evidence_times[1:])]
     max_evidence_gap = max(evidence_gaps, default=0)
+    now_ep = _ep(now_iso)
+    source_latest = {}
+    for heartbeat in rows:
+        source = heartbeat.get("source")
+        if source:
+            source_latest[str(source)] = heartbeat
+    warning_sources = []
+    for source in ("ec2_systemd", "github_schedule"):
+        source_row = source_latest.get(source)
+        source_ep = _ep(source_row.get("observedAt")) if source_row else None
+        if source_ep is None or now_ep is None or \
+                now_ep - source_ep > SOAK_HEARTBEAT_GAP_SECONDS:
+            warning_sources.append(source)
+    fresh_rows = [
+        heartbeat for heartbeat in rows
+        if now_ep is not None and _ep(heartbeat.get("observedAt")) is not None
+        and now_ep - _ep(heartbeat.get("observedAt"))
+        <= SOAK_HEARTBEAT_GAP_SECONDS
+    ]
+    healthy_fresh = [
+        heartbeat for heartbeat in fresh_rows
+        if heartbeat.get("healthStatus") == "ok"
+        and heartbeat.get("readyStatus") == "ready"
+        and heartbeat.get("durableIntegrity") in ("ok", "unknown")
+        and heartbeat.get("journalStatus") not in
+        ("hash_mismatch", "unreadable", "sequence_conflict")
+    ]
+    reference = healthy_fresh[-1] if healthy_fresh else last
     blocker = None
+    failure_class = None
     if not started or last is None:
         state = "not_started"
         blocker = "有効なheartbeat未記録"
-    elif not current_build_sha or last.get("buildSha") != current_build_sha:
+        failure_class = "verification_gap"
+    elif not current_build_sha or reference.get("buildSha") != current_build_sha:
         state = "interrupted"
         blocker = "build SHA不一致"
+        failure_class = "build_mismatch"
     elif any(not i.get("verified") for i in (soak.get("interruptions") or [])
              if isinstance(i, dict)):
         state = "interrupted"
         blocker = "過去の未検証中断（成功へ書き換えない）"
-    elif last.get("healthStatus") != "ok" or last.get("readyStatus") != "ready":
+        failure_class = "application_failure"
+    elif reference.get("healthStatus") != "ok" or \
+            reference.get("readyStatus") != "ready":
         state = "interrupted"
         blocker = "backend health/ready異常"
-    elif last.get("durableIntegrity") not in ("ok", "unknown"):
+        failure_class = "application_failure"
+    elif reference.get("durableIntegrity") not in ("ok", "unknown"):
         state = "interrupted"
         blocker = "durable state整合性異常"
-    elif last.get("journalStatus") in ("hash_mismatch", "unreadable",
-                                        "sequence_conflict"):
+        failure_class = "durable_integrity_failure"
+    elif reference.get("journalStatus") in ("hash_mismatch", "unreadable",
+                                             "sequence_conflict"):
         state = "interrupted"
         blocker = "Remote Journal整合性異常"
+        failure_class = "journal_failure"
     elif max_evidence_gap > SOAK_INTERRUPTION_GAP_SECONDS:
         state = "interrupted"
         blocker = "heartbeat列に長時間の未証明区間"
+        failure_class = "scheduler_source_failure"
     elif max_evidence_gap > SOAK_HEARTBEAT_GAP_SECONDS:
         state = "verification_gap"
         blocker = "heartbeat列の継続性を確認中"
+        failure_class = "verification_gap"
     else:
-        gap = (_ep(now_iso) - _ep(last.get("observedAt"))
-               if _ep(now_iso) is not None and
-               _ep(last.get("observedAt")) is not None else None)
+        gap = (now_ep - _ep(reference.get("observedAt"))
+               if now_ep is not None and
+               _ep(reference.get("observedAt")) is not None else None)
         if gap is not None and gap > SOAK_INTERRUPTION_GAP_SECONDS:
             state = "interrupted"
             blocker = "長時間にわたり代替継続性証拠なし"
+            failure_class = "scheduler_source_failure"
         elif gap is not None and gap > SOAK_HEARTBEAT_GAP_SECONDS:
             state = "verification_gap"
             blocker = "次の継続性証拠を確認中"
-        elif not last.get("readBackVerified"):
+            failure_class = "verification_gap"
+        elif not reference.get("readBackVerified"):
             state = "verification_gap"
             blocker = "Remote Journal read-back未確認"
-        elif int(last.get("schedulerDelaySeconds") or 0) > 5 * 60:
+            failure_class = "verification_gap"
+        elif not any(int(h.get("schedulerDelaySeconds") or 0) <= 5 * 60
+                     for h in healthy_fresh):
             state = "scheduler_delayed"
             blocker = "定期実行遅延（backend停止は未確認）"
+            failure_class = "scheduler_source_failure"
         elif elapsed is not None and elapsed >= required_hours and any(
                 not h.get("retrospectiveEvidence") for h in rows):
             state = "completed"
@@ -307,7 +352,19 @@ def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
             "lastHeartbeatSource": last.get("source") if last else None,
             "lastHeartbeat": last, "elapsedHours": elapsed or 0,
             "maximumEvidenceGapSeconds": int(max_evidence_gap),
-            "blockerJa": blocker, "ownerReadableJa": owner}
+            "blockerJa": blocker, "ownerReadableJa": owner,
+            "failureClass": failure_class,
+            "warningSources": warning_sources,
+            "warningSource": (warning_sources[0] if len(warning_sources) == 1
+                              else None),
+            "schedulerAuthority": {
+                "primary": "ec2_systemd", "backup": "github_schedule",
+                "manual": "diagnostic_only"},
+            "sourceLastSeenAt": {
+                source: heartbeat.get("observedAt")
+                for source, heartbeat in source_latest.items()},
+            "referenceHeartbeatSource": (reference.get("source")
+                                         if reference else None)}
 
 
 def build_soak(*, soak: Dict[str, Any], now_iso: str, startup_state: str,
