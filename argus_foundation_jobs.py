@@ -166,6 +166,18 @@ def trading_dates(calendar_rows: Iterable[Dict[str, Any]], *, start: str,
     return sorted(set(out))
 
 
+def weekday_candidates(start: str, end: str) -> List[str]:
+    """Candidate JP cash dates; actual trading is proven by non-empty daily bars."""
+    cursor = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    last = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    out = []
+    while cursor <= last:
+        if cursor.weekday() < 5:
+            out.append(cursor.strftime("%Y-%m-%d"))
+        cursor += timedelta(days=1)
+    return out
+
+
 def _segment(row: Dict[str, Any]) -> Optional[str]:
     market = " ".join(str(row.get(k) or "") for k in
                       ("Mkt", "MktNm", "MarketCode", "MarketCodeName"))
