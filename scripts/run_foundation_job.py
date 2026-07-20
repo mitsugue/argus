@@ -22,6 +22,11 @@ SAFE_RESULT_KEYS = {
     "resultClassification", "twoXClaimAllowed", "totalCostJpy", "readBackVerified",
     "verificationStatus", "pendingCount", "errorClass", "marketLedgerReadBack",
     "expectedHash", "actualHash", "remoteCommitSha", "ack",
+    "matrix", "recentConfirmedTradingDay", "directClientAllSuccessful",
+    "officialClientAllSuccessful", "oldestRequiredDateAccessible", "rootCause",
+    "correctedDateFormat", "preview", "modelsApi", "stable", "stableModel",
+    "previewProviderDefect", "stableProviderPath", "selectedBaselineModel",
+    "baselineSwapReason", "formalBaselineModel", "latestCounts", "latestRatios",
 }
 
 

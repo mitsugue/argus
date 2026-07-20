@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -20,6 +21,8 @@ METHOD_VERSION = "jquants-breadth-adjusted-close-v1"
 JOB_TYPES = {
     "JQUANTS_BREADTH_BACKFILL",
     "JQUANTS_BREADTH_INCREMENTAL",
+    "JQUANTS_REQUEST_MATRIX",
+    "GEMINI_PREFLIGHT",
     "RESEARCH_BENCHMARK",
     "JOURNAL_REVERIFY",
 }
@@ -34,6 +37,80 @@ UNIVERSES = {
         "segments": {"prime", "standard", "growth"},
     },
 }
+
+
+_JQUANTS_DATE_KEYS = {"date", "from", "to"}
+
+
+def normalize_jquants_query(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return the official V2 query form without mutating the caller.
+
+    J-Quants' official examples use compact ``YYYYMMDD`` values.  The official
+    client accepts both representations, but the production V2 endpoint has
+    rejected the hyphenated historical full-market request.  Normalizing at
+    the transport boundary keeps all callers and checkpoints human-readable.
+    """
+    out: Dict[str, Any] = {}
+    for key, value in dict(params or {}).items():
+        if key in _JQUANTS_DATE_KEYS and value is not None:
+            text = str(value)
+            if not (len(text) == 8 and text.isdigit()):
+                try:
+                    text = datetime.strptime(text[:10], "%Y-%m-%d").strftime("%Y%m%d")
+                except ValueError as exc:
+                    raise ValueError(f"invalid_jquants_{key}") from exc
+            out[key] = text
+        else:
+            out[key] = value
+    return out
+
+
+def classify_gemini_preflight(metadata: Dict[str, Any], *,
+                              expected_text: str = "ARGUS_GEMINI_OK") -> str:
+    """Classify a secret-free Gemini response without relying on ``.text``."""
+    if metadata.get("errorClass"):
+        error = str(metadata["errorClass"]).lower()
+        if any(word in error for word in ("timeout", "server", "unavailable", "429")):
+            return "transient_provider_error"
+        return "malformed_request"
+    prompt = metadata.get("promptFeedback") or {}
+    if prompt.get("blockReason"):
+        return "safety_block"
+    candidates = metadata.get("candidates") or []
+    if not candidates:
+        return "no_candidate"
+    reasons = {str(x.get("finishReason") or "").upper() for x in candidates}
+    if reasons & {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}:
+        return "safety_block"
+    if "RECITATION" in reasons:
+        return "recitation"
+    if reasons & {"MAX_TOKENS", "MAX_OUTPUT_TOKENS"}:
+        return "max_tokens"
+    if not metadata.get("textPartExists"):
+        return "no_text_part"
+    if metadata.get("matchedExpectedText") is True:
+        return "success"
+    if metadata.get("textPartExists") and not metadata.get("nonEmptyTextPartExists"):
+        return "preview_empty_output"
+    return "parsing_error"
+
+
+def select_latest_stable_gemini_pro(models: Iterable[Dict[str, Any]]) -> Optional[str]:
+    """Select the highest explicit stable Pro model supporting generateContent."""
+    ranked = []
+    for row in models:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").removeprefix("models/")
+        low = name.lower()
+        actions = {str(x).lower() for x in (row.get("supportedActions") or [])}
+        if ("gemini" not in low or "pro" not in low
+                or any(tag in low for tag in ("preview", "experimental", "-exp", "latest"))
+                or "generatecontent" not in actions):
+            continue
+        numbers = tuple(int(x) for x in re.findall(r"\d+", low)[:3])
+        ranked.append((numbers, name))
+    return max(ranked, default=((), None))[1]
 
 
 def _digest(value: Any, length: int = 20) -> str:
