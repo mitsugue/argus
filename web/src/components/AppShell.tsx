@@ -47,6 +47,8 @@ interface Props {
   overscrollPrev?: { label: string; go: () => void };
   /** Changes whenever the visible page changes — drives the enter animation. */
   pageKey?: string;
+  /** Exchange-calendar-first market status; never a hard-coded global open flag. */
+  marketStatusLabel?: string;
 }
 
 const IMPACT_COLOR: Record<RiskLevel, string> = {
@@ -76,7 +78,7 @@ function formatDaysAway(days: number): string {
 
 // Slim header (brand + next event + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
-export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey }) => {
+export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey, marketStatusLabel }) => {
   const [notifOpen, setNotifOpen] = React.useState(false);
   const [notifCounts, setNotifCounts] = React.useState({ total: 0, critical: 0, high: 0 });
   React.useEffect(() => {
@@ -267,7 +269,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
               <span className="shell__next-event-when">· {formatDaysAway(nextEvent.daysAway)}</span>
             </button>
           )}
-          <span className="shell__status">Market Open</span>
+          <span className="shell__status">{marketStatusLabel ?? 'Market status loading'}</span>
           <span className="shell__updated">
             <span className="shell__updated-label">Updated</span>
             {formatLastUpdated(lastUpdated)}

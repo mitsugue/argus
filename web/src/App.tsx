@@ -13,6 +13,8 @@ import { useActionLabels } from './hooks/useActionLabels';
 import { useImportantEvents } from './hooks/useImportantEvents';
 import { nextUpcomingEvent } from './lib/eventClock';
 import { startCloudSync } from './lib/vault';
+import { useMarketLedger } from './hooks/useMarketLedger';
+import { resolveSessionJst } from './domain/sessionBrief';
 
 import type { AssetFocusIntent } from './components/assetDesk/AssetDeskList';
 
@@ -79,6 +81,10 @@ const App: React.FC = () => {
   // while connecting; never a hand-written judgment).
   const al = useActionLabels();
   const lastUpdated = useMemo(() => new Date(), [al.data]);
+  const marketLedger = useMarketLedger();
+  const marketStatusLabel = useMemo(() => resolveSessionJst(
+    new Date(), marketLedger.ledger?.phase3?.calendar).marketStatusJa,
+  [marketLedger.ledger]);
 
   // v12.0.8追補: 「次のイベント」は単一のイベント時計(eventClock)から —
   // 発表済・日付不明は次に出さず、Important Events(公式日程)と必ず一致させる。
@@ -175,6 +181,7 @@ const App: React.FC = () => {
       overscrollNext={overscrollNext}
       overscrollPrev={overscrollPrev}
       pageKey={isReview ? 'review' : route}
+      marketStatusLabel={marketStatusLabel}
     >
       {isReview ? <AIReview /> : <Active onNavigate={handleNavSelect} onNavigateToAsset={navigateToAsset} assetFocus={assetFocus} />}
     </AppShell>

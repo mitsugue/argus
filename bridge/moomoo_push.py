@@ -50,9 +50,9 @@ PORT     = int(os.environ.get("OPEND_PORT", "11111"))
 # stays fine ("No permission to get quotes"). One market's failure must NEVER
 # stop the other. ARGUS_DISABLE_JP_QUOTES=1 = operator-forced US-only mode
 # (skips JP push/watchlist/mover-sweep/cap-test). Without the flag, JP is tried
-# normally but a permission error degrades gracefully with a 30-min backoff.
+# normally but a permission error degrades gracefully with a weekly probe.
 DISABLE_JP = os.environ.get("ARGUS_DISABLE_JP_QUOTES", "0") not in ("0", "false", "")
-JP_ENTITLEMENT_BACKOFF_SEC = max(300, int(os.environ.get("JP_ENTITLEMENT_BACKOFF_SEC", "1800")))
+JP_ENTITLEMENT_BACKOFF_SEC = max(3600, int(os.environ.get("JP_ENTITLEMENT_BACKOFF_SEC", "604800")))
 HEARTBEAT_INTERVAL = max(30, int(os.environ.get("BRIDGE_HEARTBEAT_SEC", "60")))
 # v10.10.1: 15s quote cadence (get_market_snapshot is 1 request per cycle —
 # 2/30s, far inside moomoo's ~10/30s quota). Big-money flow stays on its own
@@ -260,7 +260,7 @@ def fetch_market_quotes(qc, codes_by_market, state=None, disable_jp=None, now=No
                         ret_ok=None):
     """Fetch US and JP SEPARATELY so one market's permission failure can never
     poison the other (Jul-3 incident). Returns (stocks, jp_attempted).
-    JP permission error → 30-min backoff + entitlement_unavailable; other JP
+    JP permission error → weekly probe + entitlement_unavailable; other JP
     errors → shorter degraded backoff. US errors are logged but never block JP."""
     state = STATE if state is None else state
     disable_jp = DISABLE_JP if disable_jp is None else disable_jp
@@ -303,7 +303,7 @@ def fetch_market_quotes(qc, codes_by_market, state=None, disable_jp=None, now=No
                     state["jpLastErrorLogAt"] = now
                     print(time.strftime("%H:%M:%S"),
                           f"JP quotes: no permission — JP push suspended "
-                          f"{JP_ENTITLEMENT_BACKOFF_SEC // 60}min (US continues). "
+                          f"{JP_ENTITLEMENT_BACKOFF_SEC // 86400}d (US continues). "
                           "Fix: enable JP quote permission in moomoo, or set ARGUS_DISABLE_JP_QUOTES=1")
             else:
                 state["jpBlockUntil"] = now + 300      # transient JP error: 5-min degrade

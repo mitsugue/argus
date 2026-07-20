@@ -22,9 +22,11 @@ FC = {"id": "fc-test", "symbol": "9999", "market": "JP",
       "issuedAt": "2026-07-10T08:30:00+09:00",
       "forecastHorizon": "next_session", "origin": "forward_live",
       "integrityHash": "forecast-hash", "informationCutoffAt": "2026-07-10T08:30:00+09:00"}
-T0 = "2026-07-11T16:00:00+09:00"
-T1 = "2026-07-11T16:10:00+09:00"
-T2 = "2026-07-11T16:31:00+09:00"
+# Fixed JPX business day.  The prior Saturday date accidentally relied on the
+# resolver ignoring the official market calendar.
+T0 = "2026-07-13T16:00:00+09:00"
+T1 = "2026-07-13T16:10:00+09:00"
+T2 = "2026-07-13T16:31:00+09:00"
 
 
 class OutcomeRetryTests(unittest.TestCase):
@@ -164,9 +166,9 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
         self.assertEqual(scanner._OUTCOME_LEDGER[0]["retryCount"], 1)
         scanner._price_history_cached = lambda _s: [
             {"date": "2026-07-10", "close": 100},
-            {"date": "2026-07-11", "close": 105},
+            {"date": "2026-07-13", "close": 105},
         ]
-        t3 = "2026-07-11T17:02:00+09:00"
+        t3 = "2026-07-13T17:02:00+09:00"
         self.assertEqual(scanner._dl_resolve_matured(t3), 1)
         self.assertEqual(len(scanner._OUTCOME_LEDGER), 1)
         self.assertEqual(scanner._OUTCOME_LEDGER[0]["id"], original_id)
@@ -174,9 +176,9 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
         before = json.dumps(scanner._OUTCOME_LEDGER[0], sort_keys=True)
         scanner._price_history_cached = lambda _s: [
             {"date": "2026-07-10", "close": 100},
-            {"date": "2026-07-11", "close": 1},
+            {"date": "2026-07-13", "close": 1},
         ]
-        scanner._dl_resolve_matured("2026-07-12T17:02:00+09:00")
+        scanner._dl_resolve_matured("2026-07-14T17:02:00+09:00")
         self.assertEqual(json.dumps(scanner._OUTCOME_LEDGER[0], sort_keys=True), before)
 
     def test_real_resolver_premature_and_legacy_safe(self):
@@ -191,7 +193,7 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
                                         "immutableCreatedAt": T0})
         scanner._price_history_cached = lambda _s: [
             {"date": "2026-07-10", "close": 100},
-            {"date": "2026-07-11", "close": 101},
+            {"date": "2026-07-13", "close": 101},
         ]
         scanner._dl_resolve_matured(T2)
         self.assertEqual(len(scanner._OUTCOME_LEDGER), 1)
@@ -220,7 +222,7 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
 
                 scanner._price_history_cached = lambda _s: [
                     {"date": "2026-07-10", "close": 100},
-                    {"date": "2026-07-11", "close": 101},
+                    {"date": "2026-07-13", "close": 101},
                 ]
                 scanner._dl_resolve_matured(T2)
                 self.assertEqual(scanner._OUTCOME_LEDGER[0]["id"], original["id"])

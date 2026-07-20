@@ -14,6 +14,7 @@ import { useJapanWatchlist } from './useJapanWatchlist';
 import { useUSWatchlist } from './useUSWatchlist';
 import { useFlowAttributionList } from './useFlowAttribution';
 import { useSupplyDemandList } from './useSupplyDemand';
+import { useMarketLedger } from './useMarketLedger';
 import { coingeckoIdOf } from '../lib/cryptoIds';
 import { groupAssetCards, type LinkedEventTag, type AssetCardModel } from '../domain/assetCard';
 import { mergeAiPrimary, resolveAssetDecision, type AssetDecisionView, type AiMeta } from '../domain/assetDecision';
@@ -109,6 +110,7 @@ export function useAssetIntel(opts: { publish: boolean }): AssetIntel {
     return m;
   }, [cryptoAssets, cw.byId]);
   const regime = useMarketRegime();
+  const marketLedger = useMarketLedger();
   const ev = useEventRadar();
   const { data: downside } = useDownsideIncidents();
   const guard = useVisibilityGuard();   // Visibility Risk Guard (v10.195)
@@ -255,10 +257,11 @@ export function useAssetIntel(opts: { publish: boolean }): AssetIntel {
       eventNames: [...new Set(eventNames)].slice(0, 3),
       riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
       missingDataJa: missing,
+      marketCalendar: marketLedger.ledger?.phase3?.calendar,
     });
     if (publish) publishSessionBrief(b);
     return b;
-  }, [apItems, impEvents, regime.data, positionExposure, publish]);
+  }, [apItems, impEvents, regime.data, positionExposure, marketLedger.ledger, publish]);
 
   // v11.17.0: SCENARIOS — 条件付きの分岐(端末内合成・保有加味)。単一予測ではなく
   // ベース/強気/弱気/踏み上げ失速/イベント待ちを全レイヤーから決定論合成。帯のみ。
