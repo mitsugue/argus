@@ -1,7 +1,16 @@
 name: formal-research-benchmark
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Approved one-shot operation
+        required: true
+        default: benchmark
+        type: choice
+        options:
+          - benchmark
+          - jpx_credit_import
 
 permissions:
   contents: read
@@ -12,6 +21,7 @@ concurrency:
 
 jobs:
   benchmark:
+    if: inputs.operation == 'benchmark'
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
@@ -24,5 +34,68 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: >-
           python3 scripts/run_formal_research_benchmark.py
-          --ceiling-jpy 800
+          --ceiling-jpy 2000
           --max-wait-seconds 3000
+
+  jpx-credit-import:
+    if: inputs.operation == 'jpx_credit_import'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate, import, and verify JPX two-market credit data
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ARGUS_ADMIN_TOKEN:-}" ]; then
+            echo "ARGUS_ADMIN_TOKEN is not configured" >&2
+            exit 1
+          fi
+
+          backend="https://argus-backend-3j2m.onrender.com"
+          csv_path="ops/imports/jpx_two_market_credit_20020802_20260710.csv"
+          dry_payload="$RUNNER_TEMP/jpx-credit-dry.json"
+          commit_payload="$RUNNER_TEMP/jpx-credit-commit.json"
+          dry_response="$RUNNER_TEMP/jpx-credit-dry-response.json"
+          commit_response="$RUNNER_TEMP/jpx-credit-commit-response.json"
+
+          jq -n --rawfile csv "$csv_path" '{csv: $csv, dryRun: true}' > "$dry_payload"
+          dry_http=$(curl --silent --show-error --fail-with-body --max-time 300 \
+            --output "$dry_response" --write-out '%{http_code}' \
+            --request POST --header 'Content-Type: application/json' \
+            --header "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            --data-binary "@$dry_payload" \
+            "$backend/api/argus/admin/market-ledger/import")
+          jq -e '.ok == true and .dryRun == true and (.errors | length) == 0 and (.preview | length) == 2434' \
+            "$dry_response" >/dev/null
+          jq '{ok, dryRun, importId, rowCount: (.preview | length), errorCount: (.errors | length)}' \
+            "$dry_response"
+          echo "dry-run HTTP $dry_http"
+
+          jq -n --rawfile csv "$csv_path" '{csv: $csv, dryRun: false}' > "$commit_payload"
+          commit_http=$(curl --silent --show-error --fail-with-body --max-time 600 \
+            --output "$commit_response" --write-out '%{http_code}' \
+            --request POST --header 'Content-Type: application/json' \
+            --header "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            --data-binary "@$commit_payload" \
+            "$backend/api/argus/admin/market-ledger/import")
+          jq -e '.ok == true and .dryRun == false and (.errors | length) == 0 and (.preview | length) == 2434' \
+            "$commit_response" >/dev/null
+          jq '{ok, dryRun, importId, rowCount: (.preview | length), errorCount: (.errors | length)}' \
+            "$commit_response"
+          echo "commit HTTP $commit_http"
+
+          ledger_response="$RUNNER_TEMP/market-ledger-readback.json"
+          curl --silent --show-error --fail-with-body --max-time 180 \
+            --output "$ledger_response" "$backend/api/argus/market-ledger"
+          jq -e '.observationCount >= 3749 and
+            ([.table[] | select(.seriesId == "credit.short_balance")][0].periodEnd == "2026-07-10") and
+            ([.table[] | select(.seriesId == "credit.short_balance")][0].latestValue == 795524000000) and
+            ([.table[] | select(.seriesId == "credit.long_balance")][0].latestValue == 6732228000000)' \
+            "$ledger_response" >/dev/null
+          jq '{observationCount, stateHash,
+            credit: [.table[] | select(.seriesId == "credit.short_balance" or .seriesId == "credit.long_balance") |
+              {seriesId, periodEnd, latestValue, previousChange, fourPeriodDirection, thresholdDistance, thresholdStreak}],
+            turningPointCount: (.turningPoints | length)}' "$ledger_response"
