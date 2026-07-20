@@ -5,7 +5,209 @@
 冪等生成し、lease/claim・期限切れ回収・見逃し検知・重複防止を提供する。
 実行体は既存cron(caos-scan等)が /admin/missions/tick を叩く — 新規常駐なし。
 """
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+
+UTC = timezone.utc
+MISSION_WINDOW_INTERVAL_SECONDS = 30 * 60
+MISSION_WINDOW_OFFSET_MINUTE = 7
+# 2026-07-17--19 の Actions 実履歴では */30 が 30--90分超遅延し、
+# 複数windowが欠落した。通常のstep起動余裕を5分、1 cadence以内を遅延、
+# 3 cadence以内を重大遅延、それ以上をmissedとして分離する。
+MISSION_DELAYED_AFTER_SECONDS = 5 * 60
+MISSION_SEVERE_AFTER_SECONDS = 30 * 60
+MISSION_MISSED_AFTER_SECONDS = 90 * 60
+MISSION_WINDOW_RETRY_LEASE_SECONDS = 10 * 60
+MISSION_CATCHUP_LIMIT = 2
+
+
+def _aware(iso: str) -> Optional[datetime]:
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+    except Exception:
+        return None
+
+
+def _z(dt: datetime) -> str:
+    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z")
+
+
+def scheduler_delay_class(delay_seconds: int) -> str:
+    delay = max(0, int(delay_seconds))
+    if delay <= MISSION_DELAYED_AFTER_SECONDS:
+        return "on_time"
+    if delay <= MISSION_SEVERE_AFTER_SECONDS:
+        return "delayed"
+    if delay <= MISSION_MISSED_AFTER_SECONDS:
+        return "severely_delayed"
+    return "missed"
+
+
+def mission_window(*, observed_at: str, trigger_source: str = "schedule",
+                   scheduled_for: Optional[str] = None,
+                   offset_minute: int = MISSION_WINDOW_OFFSET_MINUTE
+                   ) -> Optional[Dict[str, Any]]:
+    """UTC 30分windowを決定論生成。古い時刻を現在windowへ付け替えない。"""
+    observed = _aware(observed_at)
+    if observed is None or trigger_source not in ("schedule", "manual"):
+        return None
+    if scheduled_for:
+        scheduled = _aware(scheduled_for)
+    else:
+        offset = int(offset_minute) * 60
+        slot = int((observed.timestamp() - offset) //
+                   MISSION_WINDOW_INTERVAL_SECONDS)
+        scheduled = datetime.fromtimestamp(
+            slot * MISSION_WINDOW_INTERVAL_SECONDS + offset, tz=UTC)
+    if scheduled is None or scheduled > observed:
+        return None
+    delay = int((observed - scheduled).total_seconds())
+    scheduled_iso = _z(scheduled)
+    return {
+        "missionWindowId": f"mw-{scheduled_iso}",
+        "scheduledFor": scheduled_iso,
+        "triggeredAt": _z(observed),
+        "triggerSource": trigger_source,
+        "delaySeconds": delay,
+        "delayClassification": scheduler_delay_class(delay),
+    }
+
+
+def apply_window_history(window: Dict[str, Any],
+                         records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """前回自然windowから欠落窓と実効遅延を導出（cron式から捏造しない）。"""
+    rec = dict(window)
+    if rec.get("triggerSource") != "schedule":
+        rec.update({"rawDelaySeconds": rec.get("delaySeconds", 0),
+                    "missedWindowCount": 0, "windowGapSeconds": None})
+        return rec
+    prior = [r for r in records if r.get("triggerSource") == "schedule" and
+             r.get("scheduledFor") and
+             str(r.get("scheduledFor")) < str(rec.get("scheduledFor"))]
+    last = max(prior, key=lambda r: str(r.get("scheduledFor"))) if prior else None
+    raw_delay = int(rec.get("delaySeconds") or 0)
+    if not last:
+        rec.update({"rawDelaySeconds": raw_delay, "missedWindowCount": 0,
+                    "windowGapSeconds": None,
+                    "previousMissionWindowId": None})
+        return rec
+    prev_at = _aware(last.get("scheduledFor"))
+    current_at = _aware(rec.get("scheduledFor"))
+    observed = _aware(rec.get("triggeredAt"))
+    if prev_at is None or current_at is None or observed is None:
+        return rec
+    gap = max(0, int((current_at - prev_at).total_seconds()))
+    missed = max(0, gap // MISSION_WINDOW_INTERVAL_SECONDS - 1)
+    next_expected = prev_at + timedelta(seconds=MISSION_WINDOW_INTERVAL_SECONDS)
+    effective_delay = max(raw_delay, int((observed - next_expected).total_seconds()))
+    rec.update({
+        "rawDelaySeconds": raw_delay,
+        "delaySeconds": max(0, effective_delay),
+        "delayClassification": scheduler_delay_class(effective_delay),
+        "missedWindowCount": missed,
+        "windowGapSeconds": gap,
+        "previousMissionWindowId": last.get("missionWindowId"),
+    })
+    return rec
+
+
+def begin_mission_window(records: List[Dict[str, Any]], *,
+                         window: Dict[str, Any], build_sha: Optional[str],
+                         started_at: str) -> Tuple[Dict[str, Any], bool]:
+    """同一windowの完了後重複を抑止。失敗/lease切れだけ再試行可能。"""
+    wid = window.get("missionWindowId")
+    existing = next((r for r in records if r.get("missionWindowId") == wid),
+                    None)
+    now = _aware(started_at)
+    if existing is not None:
+        terminal = existing.get("status") in ("completed", "expected_skip")
+        started = _aware(existing.get("startedAt"))
+        leased = (existing.get("status") == "started" and now is not None and
+                  started is not None and
+                  (now - started).total_seconds() <
+                  MISSION_WINDOW_RETRY_LEASE_SECONDS)
+        if terminal or leased:
+            existing["duplicateSuppressed"] = int(
+                existing.get("duplicateSuppressed") or 0) + 1
+            existing["lastDuplicateAt"] = started_at
+            return existing, False
+        existing.update({
+            **window, "startedAt": started_at, "completedAt": None,
+            "status": "started", "buildSha": build_sha,
+            "retryCount": int(existing.get("retryCount") or 0) + 1,
+            "errorClass": None,
+        })
+        return existing, True
+    rec = {
+        **window, "startedAt": started_at, "completedAt": None,
+        "status": "started", "buildSha": build_sha,
+        "retryCount": 0, "duplicateSuppressed": 0, "errorClass": None,
+    }
+    records.append(rec)
+    return rec, True
+
+
+def finish_mission_window(record: Dict[str, Any], *, completed_at: str,
+                          status: str = "completed",
+                          error_class: Optional[str] = None) -> Dict[str, Any]:
+    if status not in ("completed", "expected_skip", "degraded", "failed"):
+        status = "failed"
+        error_class = error_class or "invalid_terminal_status"
+    record["completedAt"] = completed_at
+    record["status"] = status
+    record["errorClass"] = str(error_class)[:80] if error_class else None
+    return record
+
+
+def bounded_catchup_windows(*, last_scheduled_for: Optional[str],
+                            current_scheduled_for: str,
+                            limit: int = MISSION_CATCHUP_LIMIT) -> List[str]:
+    """診断用の限定catch-up候補。呼び出し側が過去windowを現在扱いしない。"""
+    last = _aware(last_scheduled_for) if last_scheduled_for else None
+    current = _aware(current_scheduled_for)
+    if last is None or current is None or current <= last:
+        return []
+    out = []
+    cursor = last + timedelta(seconds=MISSION_WINDOW_INTERVAL_SECONDS)
+    while cursor < current and len(out) < max(0, int(limit)):
+        out.append(f"mw-{_z(cursor)}")
+        cursor += timedelta(seconds=MISSION_WINDOW_INTERVAL_SECONDS)
+    return out
+
+
+def scheduled_mission_summary(records: List[Dict[str, Any]], *,
+                              now_iso: str) -> Dict[str, Any]:
+    rows = sorted((r for r in records if isinstance(r, dict) and
+                   r.get("triggerSource") == "schedule"),
+                  key=lambda r: str(r.get("scheduledFor") or ""))
+    last = rows[-1] if rows else None
+    current = mission_window(observed_at=now_iso, trigger_source="schedule")
+    next_at = None
+    if current and _aware(current["scheduledFor"]):
+        next_at = _z(_aware(current["scheduledFor"]) +
+                     timedelta(seconds=MISSION_WINDOW_INTERVAL_SECONDS))
+    return {
+        "lastScheduledTick": last.get("completedAt") if last else None,
+        "nextExpectedTick": next_at,
+        "lastDelaySeconds": last.get("delaySeconds") if last else None,
+        "lastDelayClassification": (last.get("delayClassification")
+                                    if last else "unknown"),
+        "lastMissedWindowCount": int(last.get("missedWindowCount") or 0)
+        if last else 0,
+        "currentMissionWindow": (current.get("missionWindowId")
+                                 if current else None),
+        "lastMissionWindowId": last.get("missionWindowId") if last else None,
+        "duplicateSuppressed": sum(int(r.get("duplicateSuppressed") or 0)
+                                   for r in rows),
+        "windowCount": len(rows),
+        "scheduleOffsetMinute": MISSION_WINDOW_OFFSET_MINUTE,
+        "catchUpLimit": MISSION_CATCHUP_LIMIT,
+    }
 
 MISSION_TYPES = ("pre_session_research", "pre_session_forecast",
                  "session_open_check", "intraday_anomaly_monitor",

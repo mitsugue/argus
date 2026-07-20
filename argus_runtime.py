@@ -10,6 +10,7 @@ Gitのcommit/merge時刻はデプロイ時刻ではない。Render Deploy live�
 時刻ソースを正直にラベルする。
 """
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -103,6 +104,12 @@ def runtime_identity(*, app_version: str, build_sha: Optional[str],
 BUILD_SOAK_STATUSES = ("not_started", "bootstrapping", "restoring",
                        "soak_in_progress", "interrupted", "degraded",
                        "operationally_verified", "failed")
+SOAK_STATES = ("not_started", "running", "scheduler_delayed",
+               "verification_gap", "interrupted", "completed")
+SOAK_EVIDENCE_TYPES = ("scheduled_mission", "backend_health",
+                       "journal_commit", "journal_read_back", "boot_restore")
+SOAK_HEARTBEAT_GAP_SECONDS = 90 * 60
+SOAK_INTERRUPTION_GAP_SECONDS = 3 * 60 * 60
 
 
 def soak_start_decision(*, now_iso: str, build_sha: Optional[str],
@@ -171,12 +178,145 @@ def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
                                 "(build-scoped soak)")}
 
 
+def soak_heartbeat(*, soak_id: str, build_sha: Optional[str],
+                   runtime_version: str, expected_at: str, observed_at: str,
+                   source: str, health_status: str, ready_status: str,
+                   restore_outcome: Optional[str], durable_integrity: str,
+                   journal_status: str, read_back_verified: bool,
+                   scheduler_delay_seconds: int, evidence_type: str,
+                   now_iso: Optional[str] = None,
+                   retrospective: bool = False) -> Optional[Dict[str, Any]]:
+    """公開安全なbuild heartbeat。未来証拠と未知evidenceを安全拒否する。"""
+    observed_ep = _ep(observed_at)
+    expected_ep = _ep(expected_at)
+    now_ep = _ep(now_iso or observed_at)
+    if evidence_type not in SOAK_EVIDENCE_TYPES or observed_ep is None \
+            or expected_ep is None or now_ep is None:
+        return None
+    if observed_ep > now_ep + 1 or expected_ep > observed_ep:
+        return None
+    body = {
+        "soakId": soak_id, "buildSha": build_sha,
+        "runtimeVersion": runtime_version,
+        "expectedAt": expected_at, "observedAt": observed_at,
+        "source": source, "healthStatus": health_status,
+        "readyStatus": ready_status, "restoreOutcome": restore_outcome,
+        "durableIntegrity": durable_integrity,
+        "journalStatus": journal_status,
+        "readBackVerified": bool(read_back_verified),
+        "schedulerDelaySeconds": max(0, int(scheduler_delay_seconds)),
+        "evidenceType": evidence_type,
+        "retrospectiveEvidence": bool(retrospective),
+    }
+    body["stateHash"] = hashlib.sha256(json.dumps(
+        body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+    return body
+
+
+def append_soak_heartbeat(soak: Dict[str, Any],
+                          heartbeat: Optional[Dict[str, Any]],
+                          max_len: int = 400) -> bool:
+    """同一build/window/evidenceの重複heartbeatを抑止。"""
+    if not heartbeat or heartbeat.get("soakId") != soak.get("soakId") \
+            or heartbeat.get("buildSha") != soak.get("buildSha"):
+        return False
+    rows = soak.setdefault("heartbeats", [])
+    key = (heartbeat.get("buildSha"), heartbeat.get("expectedAt"),
+           heartbeat.get("evidenceType"), heartbeat.get("source"))
+    if any((h.get("buildSha"), h.get("expectedAt"), h.get("evidenceType"),
+            h.get("source")) == key for h in rows if isinstance(h, dict)):
+        return False
+    rows.append(heartbeat)
+    del rows[:-max(1, int(max_len))]
+    soak["lastHeartbeatAt"] = heartbeat.get("observedAt")
+    soak["lastHeartbeatSource"] = heartbeat.get("source")
+    return True
+
+
+def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
+                     current_build_sha: Optional[str],
+                     required_hours: int = 72) -> Dict[str, Any]:
+    """scheduler遅延とbackend中断を分離するheartbeat由来state machine。"""
+    rows = [h for h in (soak.get("heartbeats") or []) if isinstance(h, dict)]
+    last = rows[-1] if rows else None
+    started = soak.get("startedAt")
+    elapsed = _hours_between(started, now_iso) if started else 0.0
+    evidence_times = [_ep(started)] + [_ep(h.get("observedAt")) for h in rows]
+    evidence_times = sorted(e for e in evidence_times if e is not None)
+    evidence_gaps = [b - a for a, b in zip(evidence_times, evidence_times[1:])]
+    max_evidence_gap = max(evidence_gaps, default=0)
+    blocker = None
+    if not started or last is None:
+        state = "not_started"
+        blocker = "有効なheartbeat未記録"
+    elif not current_build_sha or last.get("buildSha") != current_build_sha:
+        state = "interrupted"
+        blocker = "build SHA不一致"
+    elif any(not i.get("verified") for i in (soak.get("interruptions") or [])
+             if isinstance(i, dict)):
+        state = "interrupted"
+        blocker = "過去の未検証中断（成功へ書き換えない）"
+    elif last.get("healthStatus") != "ok" or last.get("readyStatus") != "ready":
+        state = "interrupted"
+        blocker = "backend health/ready異常"
+    elif last.get("durableIntegrity") not in ("ok", "unknown"):
+        state = "interrupted"
+        blocker = "durable state整合性異常"
+    elif last.get("journalStatus") in ("hash_mismatch", "unreadable",
+                                        "sequence_conflict"):
+        state = "interrupted"
+        blocker = "Remote Journal整合性異常"
+    elif max_evidence_gap > SOAK_INTERRUPTION_GAP_SECONDS:
+        state = "interrupted"
+        blocker = "heartbeat列に長時間の未証明区間"
+    elif max_evidence_gap > SOAK_HEARTBEAT_GAP_SECONDS:
+        state = "verification_gap"
+        blocker = "heartbeat列の継続性を確認中"
+    else:
+        gap = (_ep(now_iso) - _ep(last.get("observedAt"))
+               if _ep(now_iso) is not None and
+               _ep(last.get("observedAt")) is not None else None)
+        if gap is not None and gap > SOAK_INTERRUPTION_GAP_SECONDS:
+            state = "interrupted"
+            blocker = "長時間にわたり代替継続性証拠なし"
+        elif gap is not None and gap > SOAK_HEARTBEAT_GAP_SECONDS:
+            state = "verification_gap"
+            blocker = "次の継続性証拠を確認中"
+        elif not last.get("readBackVerified"):
+            state = "verification_gap"
+            blocker = "Remote Journal read-back未確認"
+        elif int(last.get("schedulerDelaySeconds") or 0) > 5 * 60:
+            state = "scheduler_delayed"
+            blocker = "定期実行遅延（backend停止は未確認）"
+        elif elapsed is not None and elapsed >= required_hours and any(
+                not h.get("retrospectiveEvidence") for h in rows):
+            state = "completed"
+        else:
+            state = "running"
+    owner = {
+        "not_started": "新buildの有効heartbeat待ち",
+        "running": "継続性証拠を確認しながらSoak実行中",
+        "scheduler_delayed": ("定期実行が遅れています。アプリ本体の停止は"
+                              "確認されていません。"),
+        "verification_gap": "一部の継続性証拠が未確認です。",
+        "interrupted": "継続稼働を証明できない重大な空白があります。",
+        "completed": f"{required_hours}時間の継続性証拠を確認済み",
+    }[state]
+    return {"state": state, "heartbeatCount": len(rows),
+            "lastHeartbeatAt": last.get("observedAt") if last else None,
+            "lastHeartbeatSource": last.get("source") if last else None,
+            "lastHeartbeat": last, "elapsedHours": elapsed or 0,
+            "maximumEvidenceGapSeconds": int(max_evidence_gap),
+            "blockerJa": blocker, "ownerReadableJa": owner}
+
+
 def build_soak(*, soak: Dict[str, Any], now_iso: str, startup_state: str,
                process_booted_at: Optional[str] = None,
                ops_missed: int = 0, ops_failed_safe: int = 0,
                unresolved_critical_incidents: int = 0,
                durability_integrity: str = "unknown",
-               required_hours: int = 72) -> Dict[str, Any]:
+               required_hours: int = 72,
+               current_build_sha: Optional[str] = None) -> Dict[str, Any]:
     """BuildSoakビュー(集計・純)。時計異常(startedAt<boot)はfailedとして
     正直に表面化する(黙って通さない)。"""
     started = soak.get("startedAt")
@@ -222,6 +362,10 @@ def build_soak(*, soak: Dict[str, Any], now_iso: str, startup_state: str,
           "failed": ("soak時計異常(startedAt<processBootedAt) — "
                      "このsoakを信頼しない" if clock_anomaly
                      else "起動失敗状態 — soak不可")}[status]
+    state_view = build_soak_state(
+        soak=soak, now_iso=now_iso,
+        current_build_sha=current_build_sha or soak.get("buildSha"),
+        required_hours=required_hours)
     return {"soakId": soak.get("soakId"),
             "buildSha": soak.get("buildSha"),
             "appVersion": soak.get("appVersion"),
@@ -241,7 +385,9 @@ def build_soak(*, soak: Dict[str, Any], now_iso: str, startup_state: str,
             "durabilityIntegrity": durability_integrity,
             "clockAnomaly": bool(clock_anomaly),
             "previousSoak": soak.get("previousSoak"),
-            "ownerReadableJa": ja}
+            "ownerReadableJa": ja,
+            # statusは既存API互換、stateはv12.3.1 heartbeat state machine。
+            **state_view}
 
 
 def soak_continuity(*, soak: Dict[str, Any], process_booted_at: Optional[str],

@@ -97,7 +97,7 @@ def test_ja_cache_snapshot_bounded(monkeypatch, tmp_path):
 
 def test_caos_scan_workflow_has_247_drain_and_persist():
     y = open(".github/workflows/caos-scan.yml", encoding="utf-8").read()
-    assert "'*/30 * * * *'" in y                     # still 24/365
+    assert "'7,37 * * * *'" in y                     # still 30min, 24/365
     assert "translate-visible" in y                  # drains every run
     assert "ja-cache-snapshot" in y and "ledger/news-ja" in y
     assert "never overwrite the ledger with an empty cache" in y

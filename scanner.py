@@ -7712,6 +7712,22 @@ def _data_quality_console():
                 now_iso=_ai_now_iso(),
                 max_observed_lag_sec=_REMOTE_ACK.get("maxObservedLagSec")),
         }
+        console["remoteJournalVerification"] = dict(_REMOTE_CYCLE)
+        console["scheduledMission"] = argus_scheduler.scheduled_mission_summary(
+            _MISSION_WINDOWS, now_iso=_ai_now_iso())
+        _retry_rows = [o for o in _OUTCOME_LEDGER
+                       if o.get("status") != "resolved" and
+                       o.get("resolutionState") != "unresolved_expired"]
+        console["outcomeRetry"] = {
+            "unresolvedCount": len(_retry_rows),
+            "nextRetryAt": min((o.get("nextRetryAt") for o in _retry_rows
+                                if o.get("nextRetryAt")), default=None),
+            "retryCount": sum(int(o.get("retryCount") or 0)
+                              for o in _retry_rows),
+            "policyIntervalSeconds": _OUTCOME_RETRY_INTERVAL_SECONDS,
+            "expirySeconds": _OUTCOME_RETRY_EXPIRE_SECONDS,
+            "missingPriceIsZero": False,
+        }
         console["journalEventBreakdown"] = {
             "criticalByType": {t: sum(1 for e in _OPS_JOURNAL
                                       if e.get("eventType") == t)
@@ -7753,7 +7769,7 @@ def _data_quality_console():
                 1 for i in _INCIDENTS if i.get("status") == "open"
                 and i.get("severity") == "critical"),
             durability_integrity=_DURABLE_STATE.get("integrityStatus")
-            or "unknown")
+            or "unknown", current_build_sha=_backend_sha())
         console["soakContinuity"] = argus_runtime.soak_continuity(
             soak=_SOAK, process_booted_at=_RUNTIME["processBootedAt"],
             now_iso=_ai_now_iso())
@@ -15402,6 +15418,7 @@ def _osint_persist():
                 "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
                 "schemaVersion": _DURABLE_STATE["schemaVersion"],
                 "soak": _SOAK, "missions": _MISSIONS[-120:],
+                "missionWindows": _MISSION_WINDOWS[-240:],
                 "forecasts": _FORECAST_LEDGER[-200:],
                 "outcomes": _OUTCOME_LEDGER[-200:],
                 "incidents": _INCIDENTS[-20:],
@@ -15409,6 +15426,7 @@ def _osint_persist():
                 "opsJournalMeta": dict(_OPS_JOURNAL_META),
                 "opsJournalCompacted": _OPS_JOURNAL_COMPACT[-40:],
                 "remoteAck": dict(_REMOTE_ACK),   # レシートは再起動を生存(v12.2.10)
+                "remoteJournalCycle": dict(_REMOTE_CYCLE),
                 "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
                 "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
                 "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
@@ -15492,8 +15510,12 @@ def _osint_restore_once():
             _STARTUP["soakRestoreAction"] = _dec.get("action")
             if _dec.get("action") == "inherit_with_interruption":
                 for _k in ("soakId", "buildSha", "appVersion", "startedAt",
-                           "startReason", "startTimeSource"):
+                           "startReason", "startTimeSource", "heartbeats",
+                           "state", "lastHeartbeatAt", "lastHeartbeatSource"):
                     _SOAK[_k] = sk.get(_k)
+                if not isinstance(_SOAK.get("heartbeats"), list):
+                    _SOAK["heartbeats"] = []
+                _SOAK["state"] = _SOAK.get("state") or "not_started"
                 _SOAK["interruptions"] = (list(sk.get("interruptions") or [])
                                           + [_dec["interruption"]])
             else:
@@ -15503,6 +15525,11 @@ def _osint_restore_once():
                     x.get("idempotencyKey") == h.get("idempotencyKey")
                     for x in _MISSIONS):
                 _MISSIONS.append(h)
+        for h in (blob.get("missionWindows") or [])[-240:]:
+            if isinstance(h, dict) and h.get("missionWindowId") and not any(
+                    x.get("missionWindowId") == h.get("missionWindowId")
+                    for x in _MISSION_WINDOWS):
+                _MISSION_WINDOWS.append(h)
         for h in (blob.get("forecasts") or [])[-200:]:
             if isinstance(h, dict) and not any(
                     x.get("id") == h.get("id") for x in _FORECAST_LEDGER):
@@ -15582,6 +15609,9 @@ def _osint_restore_once():
                     not _REMOTE_ACK["lastVerifiedOutcomeReadBackAt"]:
                 _REMOTE_ACK["lastVerifiedOutcomeReadBackAt"] = \
                     _ra["lastVerifiedOutcomeReadBackAt"]
+        _rc = blob.get("remoteJournalCycle")
+        if isinstance(_rc, dict):
+            _REMOTE_CYCLE.update({k: _rc.get(k) for k in _REMOTE_CYCLE})
         if "opsJournal" not in blob:
             _REMOTE_ACK["legacyRemote"] = True   # v2 snapshot=journal未同乗
         for h in _OPS_JOURNAL:
@@ -16402,6 +16432,7 @@ def _baseline_legacy_runs():
 
 
 _MISSIONS = []                          # v12.2.1 永続ミッション台帳(有界300)
+_MISSION_WINDOWS = []                   # v12.3.1 30分tick冪等window(有界240)
 _POSTMORTEMS = []                       # 日次ポストモーテム(有界30)
 _PERIODIC_REPORTS = []                  # 週次/月次レポート(有界12)
 _CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
@@ -16409,14 +16440,17 @@ _CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
 # startedAtはboot/復元完了より前に遡らない(soak_start_decisionがmaxで保証)。
 _SOAK = {"soakId": None, "buildSha": None, "appVersion": None,
          "startedAt": None, "startReason": None, "startTimeSource": None,
-         "interruptions": [], "previousSoak": None}
+         "interruptions": [], "previousSoak": None, "heartbeats": [],
+         "state": "not_started", "lastHeartbeatAt": None,
+         "lastHeartbeatSource": None}
 _INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
 def _semantic_app_version():
     """セマンティック版(12.2.x)。Git SHAをappVersionとして表示しない。"""
     try:
         import json as _j
-        return _j.load(open(os.path.join(os.path.dirname(__file__),
-                                         "web", "package.json")))["version"]
+        with open(os.path.join(os.path.dirname(__file__), "web", "package.json"),
+                  encoding="utf-8") as _pkg:
+            return _j.load(_pkg)["version"]
     except Exception:
         return ""
 
@@ -16434,6 +16468,11 @@ _REMOTE_ACK = {"ackedKeys": [], "lastVerifiedRemoteAckAt": None,
                "legacyRemote": False, "maxObservedLagSec": 0,
                "readbackFailures": 0, "outcomeAckedIds": [],
                "lastVerifiedOutcomeReadBackAt": None}
+_REMOTE_CYCLE = {"remoteCommitSha": None, "committedAt": None,
+                 "readBackAt": None, "readBackVerified": False,
+                 "expectedHash": None, "actualHash": None,
+                 "pendingCount": 0, "acknowledgedCount": 0,
+                 "errorClass": None}
 
 # Outcome再解決ポリシー。intervalは環境変数で調整可。期限は既存ポリシーが
 # 無かったため既定0=失効無効。運用合意後のみ正数へ設定する。
@@ -16603,9 +16642,14 @@ def _remote_readback_ack(now_iso=None, blob=None):
             blob = None
     if blob is None:
         _REMOTE_ACK["readbackFailures"] += 1
+        _REMOTE_CYCLE.update({"readBackAt": now_iso,
+                              "readBackVerified": False,
+                              "errorClass": "remote_unreachable"})
         return None
     rec = argus_remote_journal.read_back_receipt(
-        remote_blob=blob, local_events=_OPS_JOURNAL, read_back_at=now_iso)
+        remote_blob=blob, local_events=_OPS_JOURNAL,
+        remote_commit_sha=_REMOTE_CYCLE.get("remoteCommitSha"),
+        read_back_at=now_iso)
     outcome_rec = argus_remote_journal.outcome_read_back_receipt(
         remote_blob=blob, local_outcomes=_OUTCOME_LEDGER,
         read_back_at=now_iso)
@@ -16634,6 +16678,28 @@ def _remote_readback_ack(now_iso=None, blob=None):
             _REMOTE_ACK["outcomeAckedIds"] + new_outcomes)[-400:]
     if outcome_rec.get("ackedOutcomeIds"):
         _REMOTE_ACK["lastVerifiedOutcomeReadBackAt"] = now_iso
+    actual_hash = rec.get("manifestHash")
+    expected_hash = _REMOTE_CYCLE.get("expectedHash")
+    cycle_verified = bool(
+        expected_hash and actual_hash and expected_hash == actual_hash and
+        rec.get("verificationStatus") == "verified")
+    if cycle_verified:
+        cycle_error = None
+    elif expected_hash and actual_hash and expected_hash != actual_hash:
+        cycle_error = "commit_receipt_stale"
+    elif not expected_hash:
+        cycle_error = "commit_receipt_missing"
+    else:
+        cycle_error = rec.get("verificationStatus") or "read_back_unverified"
+    _REMOTE_CYCLE.update({
+        "readBackAt": now_iso,
+        "readBackVerified": cycle_verified,
+        "actualHash": actual_hash,
+        "pendingCount": max(0, len(_OPS_JOURNAL) -
+                            len(rec.get("ackedIdempotencyKeys") or [])),
+        "acknowledgedCount": len(rec.get("ackedIdempotencyKeys") or []),
+        "errorClass": cycle_error,
+    })
     remote_ledger = blob.get("marketLedger") if isinstance(blob, dict) else None
     if isinstance(remote_ledger, dict) and argus_market_ledger.read_back_verified(
             _MARKET_LEDGER, remote_ledger):
@@ -16733,7 +16799,9 @@ _atexit.register(_graceful_shutdown)
 
 def _missions_persist_blob():
     return {"missions": _MISSIONS[-300:], "postmortems": _POSTMORTEMS[-30:],
-            "forecasts": _FORECAST_LEDGER[-200:], "outcomes": _OUTCOME_LEDGER[-200:]}
+            "missionWindows": _MISSION_WINDOWS[-240:],
+            "forecasts": _FORECAST_LEDGER[-200:], "outcomes": _OUTCOME_LEDGER[-200:],
+            "remoteJournalCycle": dict(_REMOTE_CYCLE)}
 
 
 def _market_ledger_tick(now_iso):
@@ -16833,8 +16901,43 @@ def api_argus_admin_missions_tick():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        body = {}
     now = datetime.now(TZ_JST)
     now_iso = now.isoformat()
+    trigger_source = ("schedule" if body.get("triggerSource") == "schedule"
+                      else "manual")
+    window = argus_scheduler.mission_window(
+        observed_at=now_iso, trigger_source=trigger_source)
+    if window is None:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "invalid_mission_window"}), 400
+    if trigger_source == "manual":
+        # workflow_dispatch/legacy admin検証は自然scheduleを抑止しない。
+        # GitHub run内の再送だけは同じrunIdで冪等になる。
+        run_id = str(body.get("runId") or f"local-{time.time_ns()}")[:80]
+        window.update({"missionWindowId": f"mw-manual-{run_id}",
+                       "delaySeconds": 0, "delayClassification": "on_time"})
+    window = argus_scheduler.apply_window_history(window, _MISSION_WINDOWS)
+    prior_windows = [r for r in _MISSION_WINDOWS
+                     if r.get("triggerSource") == trigger_source and
+                     r.get("scheduledFor") < window["scheduledFor"]]
+    window_record, should_run = argus_scheduler.begin_mission_window(
+        _MISSION_WINDOWS, window=window, build_sha=_backend_sha(),
+        started_at=now_iso)
+    if not should_run:
+        _osint_persist()
+        return jsonify({"ok": True, "status": "expected_skip",
+                        "reason": "duplicate_suppressed",
+                        "missionWindow": window_record})
+    last_scheduled = max((r.get("scheduledFor") for r in prior_windows
+                          if r.get("scheduledFor")), default=None)
+    window_record["boundedCatchUpCandidates"] = \
+        argus_scheduler.bounded_catchup_windows(
+            last_scheduled_for=last_scheduled,
+            current_scheduled_for=window["scheduledFor"])
+    window_record["catchUpExecuted"] = 0  # 過去windowを現在として実行しない
     session_date = now.strftime("%Y-%m-%d")
     epoch = argus_ai_gate.model_epoch_id(
         provider="gemini", model=GEMINI_MODEL_ID,
@@ -16851,30 +16954,6 @@ def api_argus_admin_missions_tick():
             _journal_compact(now_iso)
     except Exception:
         pass
-    # v12.2.9: soak開始はゲート付き(build識別+起動復元完了+整合ok後のみ)。
-    # tick壁時計を無条件に書かない — startedAtはboot/復元完了より前に遡らない。
-    if not _SOAK["startedAt"]:
-        _sk_dec = argus_runtime.soak_start_decision(
-            now_iso=now_iso, build_sha=_backend_sha() or None,
-            app_version=_semantic_app_version() or "",
-            process_booted_at=_RUNTIME["processBootedAt"],
-            restore_completed_at=_STARTUP.get("restoreCompletedAt"),
-            startup_state=_STARTUP["state"],
-            integrity_ok=_DURABLE_STATE.get("integrityStatus")
-            in ("ok", "unknown") or _STARTUP.get("restoreOutcome")
-            in ("no_prior_state", "test_mode"),
-            public_leak_safe=True, scheduler_ready=True)
-        if _sk_dec["allowed"]:
-            _SOAK.update({
-                "soakId": f"soak-{_backend_sha() or 'local'}-{_RUNTIME['bootId']}",
-                "buildSha": _backend_sha(),
-                "appVersion": _semantic_app_version() or None,
-                "startedAt": _sk_dec["startedAt"],
-                "startReason": _sk_dec["startReason"],
-                "startTimeSource": _sk_dec["startTimeSource"]})
-            _journal("soak_started", "soak", _SOAK["soakId"],
-                     {"buildSha": _SOAK["buildSha"] or "unknown",
-                      "startTimeSource": _SOAK["startTimeSource"]})
     created = argus_scheduler.generate_daily_missions(
         session_date=session_date, now_iso=now_iso,
         jp_holiday=jp_holiday, us_holiday=now.weekday() in (5, 6),
@@ -16908,8 +16987,7 @@ def api_argus_admin_missions_tick():
             rm["missionId"] = f"m-{rk}"
             _MISSIONS.append(rm)
     # v12.2.3: 週次/月次の検証実行(validation_run — 本番実行のふりをしない)
-    _validate = str((body or {}).get("validate") or "") if isinstance(
-        (body := request.get_json(silent=True) or {}), dict) else ""
+    _validate = str(body.get("validate") or "")
     if _validate in ("weekly", "monthly"):
         rep = {"type": ("WEEKLY LEARNING REVIEW" if _validate == "weekly"
                         else "MONTHLY AGENT REVIEW"),
@@ -16941,6 +17019,13 @@ def api_argus_admin_missions_tick():
                   "missionType": _mm.get("missionType") or "unknown"})
     while len(_INCIDENTS) > 20:
         _INCIDENTS.pop(0)
+    # unresolved Outcomeは日次missionだけに閉じ込めず、各有効windowで再評価。
+    # 同一window重複は上のleaseでここへ到達せず、Outcome ID/intervalも二重防御。
+    outcome_retry_candidates = sum(
+        1 for o in _OUTCOME_LEDGER
+        if argus_decision_ledger.outcome_retry_due(o, now_iso=now_iso))
+    outcome_resolved_this_tick = _dl_resolve_matured(now_iso)
+    failed_in_tick = 0
     for m in _MISSIONS:
         if m.get("status") not in ("scheduled", "retry_wait", "missed"):
             continue
@@ -17084,12 +17169,85 @@ def api_argus_admin_missions_tick():
             executed.append(m["missionId"])
         except Exception as e:
             argus_scheduler.fail(m, now_iso, type(e).__name__)
+            failed_in_tick += 1
     while len(_MISSIONS) > 300:
         _MISSIONS.pop(0)
-    return jsonify({"ok": True, "created": len(created),
+    while len(_MISSION_WINDOWS) > 240:
+        _MISSION_WINDOWS.pop(0)
+
+    # Soakはtick時刻ではなく、このbuildの最初の有効heartbeatで開始する。
+    heartbeat_at = _ai_now_iso()
+    if not _SOAK.get("startedAt"):
+        _sk_dec = argus_runtime.soak_start_decision(
+            now_iso=heartbeat_at, build_sha=_backend_sha() or None,
+            app_version=_semantic_app_version() or "",
+            process_booted_at=_RUNTIME["processBootedAt"],
+            restore_completed_at=_STARTUP.get("restoreCompletedAt"),
+            startup_state=_STARTUP["state"],
+            integrity_ok=_DURABLE_STATE.get("integrityStatus")
+            in ("ok", "unknown") or _STARTUP.get("restoreOutcome")
+            in ("no_prior_state", "test_mode"),
+            public_leak_safe=True, scheduler_ready=True)
+        if _sk_dec["allowed"]:
+            _SOAK.update({
+                "soakId": f"soak-{_backend_sha() or 'local'}-{_RUNTIME['bootId']}",
+                "buildSha": _backend_sha(),
+                "appVersion": _semantic_app_version() or None,
+                "startedAt": _sk_dec["startedAt"],
+                "startReason": "first_valid_heartbeat",
+                "startTimeSource": "scheduled_mission_heartbeat",
+                "heartbeats": [], "state": "not_started",
+                "lastHeartbeatAt": None, "lastHeartbeatSource": None})
+            _journal("soak_started", "soak", _SOAK["soakId"],
+                     {"buildSha": _SOAK["buildSha"] or "unknown",
+                      "startTimeSource": _SOAK["startTimeSource"]})
+    workflow_sha = str(body.get("expectedBuildSha") or "")[:7]
+    build_matches = not workflow_sha or workflow_sha == (_backend_sha() or "")
+    journal_status = (_REMOTE_ACK.get("lastReceiptStatus") or
+                      _REMOTE_CYCLE.get("errorClass") or "pending")
+    hb = argus_runtime.soak_heartbeat(
+        soak_id=_SOAK.get("soakId") or "", build_sha=_backend_sha(),
+        runtime_version=_semantic_app_version() or "unknown",
+        expected_at=window["scheduledFor"], observed_at=heartbeat_at,
+        source=("github_actions_schedule" if trigger_source == "schedule"
+                else "workflow_dispatch"),
+        health_status=("ok" if build_matches else "build_mismatch"),
+        ready_status=("ready" if _STARTUP["state"] in
+                      ("ready", "ready_degraded") else "not_ready"),
+        restore_outcome=_STARTUP.get("restoreOutcome"),
+        durable_integrity=_DURABLE_STATE.get("integrityStatus") or "unknown",
+        journal_status=journal_status,
+        read_back_verified=bool(_REMOTE_CYCLE.get("readBackVerified")),
+        scheduler_delay_seconds=int(window.get("delaySeconds") or 0),
+        evidence_type="scheduled_mission", now_iso=heartbeat_at)
+    heartbeat_added = argus_runtime.append_soak_heartbeat(_SOAK, hb)
+    if heartbeat_added:
+        _journal("soak_heartbeat", "soak", _SOAK.get("soakId") or "unknown",
+                 {"buildSha": _SOAK.get("buildSha") or "unknown",
+                  "evidenceType": "scheduled_mission",
+                  "stateHash": hb.get("stateHash")})
+    soak_state = argus_runtime.build_soak_state(
+        soak=_SOAK, now_iso=heartbeat_at,
+        current_build_sha=_backend_sha(), required_hours=72)
+    _SOAK["state"] = soak_state["state"]
+    terminal = "degraded" if failed_in_tick else "completed"
+    argus_scheduler.finish_mission_window(
+        window_record, completed_at=heartbeat_at, status=terminal,
+        error_class=("mission_execution_failed" if failed_in_tick else None))
+    _osint_persist()
+    return jsonify({"ok": True, "status": terminal,
+                    "created": len(created),
                     "executed": executed[:12], "missedDetected": len(missed),
                     "recovered": recovered,
                     "marketLedger": ledger_tick,
+                    "missionWindow": window_record,
+                    "outcomeRetry": {
+                        "evaluated": outcome_retry_candidates,
+                        "resolved": outcome_resolved_this_tick,
+                        "outcomeCount": len(_OUTCOME_LEDGER)},
+                    "soakHeartbeatAdded": heartbeat_added,
+                    "soak": soak_state,
+                    "remoteJournal": dict(_REMOTE_CYCLE),
                     "ops": argus_scheduler.ops_summary(_MISSIONS)})
 
 
@@ -17397,14 +17555,42 @@ def api_argus_osint_memory_snapshot():
                     "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
                     "soak": _SOAK, "soakLastPersistAt": _now,
                     "missions": _MISSIONS[-120:],
+                    "missionWindows": _MISSION_WINDOWS[-240:],
                     "forecasts": _FORECAST_LEDGER[-200:],
                     "outcomes": _OUTCOME_LEDGER[-200:],
+                    "remoteJournalCycle": dict(_REMOTE_CYCLE),
                     "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
                     "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
                     "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
+
+
+@app.route("/api/argus/admin/remote-journal/commit-receipt", methods=["POST"])
+def api_argus_admin_remote_journal_commit_receipt():
+    """ledger push後の公開安全receipt。commit成功はread-back成功に昇格しない。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    commit_sha = str(body.get("remoteCommitSha") or "").lower()
+    expected_hash = str(body.get("expectedHash") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit_sha) or \
+            not re.fullmatch(r"[0-9a-f]{16}", expected_hash):
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "invalid_public_receipt"}), 400
+    _REMOTE_CYCLE.update({
+        "remoteCommitSha": commit_sha, "committedAt": _ai_now_iso(),
+        "readBackAt": None, "readBackVerified": False,
+        "expectedHash": expected_hash, "actualHash": None,
+        "pendingCount": len(_OPS_JOURNAL), "acknowledgedCount": 0,
+        "errorClass": None,
+    })
+    _osint_persist()
+    return jsonify({"ok": True, "status": "pending",
+                    "readBackVerified": False,
+                    "noteJa": "remote commit記録済み・read-back待ち"})
 
 
 @app.route("/api/argus/cost-policy")

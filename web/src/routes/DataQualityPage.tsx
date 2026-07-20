@@ -73,6 +73,21 @@ interface Console {
   expectedDisabled: { sourceName: string; reasonJa: string }[];
   privacyHealth: { publicLeakSafe: boolean; noteJa: string };
   publicLeakSafe: boolean;
+  scheduledMission?: { lastScheduledTick: string | null; nextExpectedTick: string | null;
+    lastDelaySeconds: number | null; lastDelayClassification: string;
+    lastMissedWindowCount: number;
+    currentMissionWindow: string | null; lastMissionWindowId: string | null;
+    duplicateSuppressed: number; windowCount: number; scheduleOffsetMinute: number };
+  buildSoak?: { soakId: string | null; state?: string; status: string;
+    elapsedHours: number; requiredHours: number; heartbeatCount?: number;
+    lastHeartbeatAt?: string | null; lastHeartbeatSource?: string | null;
+    blockerJa?: string | null; ownerReadableJa: string };
+  remoteJournalVerification?: { remoteCommitSha: string | null;
+    committedAt: string | null; readBackAt: string | null; readBackVerified: boolean;
+    pendingCount: number; acknowledgedCount: number; errorClass: string | null };
+  outcomeRetry?: { unresolvedCount: number; nextRetryAt: string | null;
+    retryCount: number; policyIntervalSeconds: number; expirySeconds: number;
+    missingPriceIsZero: boolean };
 }
 
 const OVERALL_TONE: Record<string, string> = {
@@ -88,6 +103,13 @@ const STATUS_TONE: Record<string, string> = {
 };
 const BUCKET_JA: Record<string, string> = {
   fresh: '新鮮', recent: '最近', stale: '古い', very_stale: 'かなり古い', unknown: '不明',
+};
+const DELAY_JA: Record<string, string> = {
+  on_time: '予定内', delayed: '遅延', severely_delayed: '大幅遅延', missed: '未実行窓あり', unknown: '未確認',
+};
+const SOAK_JA: Record<string, string> = {
+  not_started: '開始待ち', running: '実行中', scheduler_delayed: 'スケジューラ遅延',
+  verification_gap: '継続性確認待ち', interrupted: '中断', completed: '72時間完了',
 };
 
 export const DataQualityPage: React.FC = () => {
@@ -165,6 +187,74 @@ export const DataQualityPage: React.FC = () => {
                          borderRadius: 6, padding: '2px 10px' }}>再読込</button>
             </div>
           </section>
+
+          {(c.scheduledMission || c.buildSoak || c.remoteJournalVerification || c.outcomeRetry) && (
+            <section>
+              <div className="section-head">
+                <span className="section-head__title">SCHEDULED OPERATIONS</span>
+                <span className="section-head__count">30分tick · Build Soak · durable read-back</span>
+              </div>
+              <div className="card cmd-alloc">
+                {c.scheduledMission && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                    <b>Scheduled Mission:</b>{' '}
+                    {DELAY_JA[c.scheduledMission.lastDelayClassification] ?? '未確認'}
+                    {' '}· 最終 {c.scheduledMission.lastScheduledTick ?? '未実行'}
+                    {' '}· 次回予定 {c.scheduledMission.nextExpectedTick ?? '未確定'}
+                    {' '}· 遅延 {c.scheduledMission.lastDelaySeconds ?? '—'}秒
+                    {' '}· 欠落窓 {c.scheduledMission.lastMissedWindowCount}件
+                    {' '}· 現在窓 {c.scheduledMission.currentMissionWindow ?? '未確定'}
+                    {' '}· 重複抑止 {c.scheduledMission.duplicateSuppressed}回
+                    {c.scheduledMission.lastDelayClassification !== 'on_time' &&
+                      c.scheduledMission.lastDelayClassification !== 'unknown' && (
+                        <span style={{ display: 'block', color: 'var(--amber, #fbbf24)' }}>
+                          SCHEDULER DELAYED — 定期実行が遅れています。アプリ本体の停止は確認されていません。
+                        </span>
+                      )}
+                  </p>
+                )}
+                {c.buildSoak && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                    <b>Build Soak:</b>{' '}
+                    {SOAK_JA[c.buildSoak.state ?? c.buildSoak.status] ?? c.buildSoak.ownerReadableJa}
+                    {' '}· ID {c.buildSoak.soakId ?? '未発行'}
+                    {' '}· {c.buildSoak.elapsedHours}/{c.buildSoak.requiredHours}時間
+                    {' '}· heartbeat {c.buildSoak.heartbeatCount ?? 0}回
+                    {' '}· 最終 {c.buildSoak.lastHeartbeatAt ?? '未記録'}
+                    {' '}· source {c.buildSoak.lastHeartbeatSource ?? '未記録'}
+                    {c.buildSoak.state === 'verification_gap' && (
+                      <span style={{ display: 'block', color: 'var(--amber, #fbbf24)' }}>
+                        VERIFICATION GAP — 一部の継続性証拠が未確認です。
+                      </span>
+                    )}
+                    {c.buildSoak.state === 'interrupted' && (
+                      <span style={{ display: 'block', color: 'var(--value-negative)' }}>
+                        INTERRUPTED — 継続稼働を証明できない重大な空白があります。
+                      </span>
+                    )}
+                  </p>
+                )}
+                {c.remoteJournalVerification && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                    <b>Remote Journal:</b>{' '}
+                    {c.remoteJournalVerification.readBackVerified ? 'read-back検証済み' : 'read-back待ち'}
+                    {' '}· commit {c.remoteJournalVerification.committedAt ?? '未記録'}
+                    {' '}· read-back {c.remoteJournalVerification.readBackAt ?? '未実施'}
+                    {' '}· ack {c.remoteJournalVerification.acknowledgedCount}
+                    {' '}· pending {c.remoteJournalVerification.pendingCount}
+                  </p>
+                )}
+                {c.outcomeRetry && (
+                  <p className="cmd-alloc__note" style={{ fontSize: 11 }}>
+                    <b>Outcome retry:</b> unresolved {c.outcomeRetry.unresolvedCount}件
+                    {' '}· retry累計 {c.outcomeRetry.retryCount}
+                    {' '}· 次回 {c.outcomeRetry.nextRetryAt ?? '対象なし'}
+                    {' '}· 欠損価格は0として採点しません
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
 
           {/* 2. ソース健全性 / 鮮度 */}
           <section>
