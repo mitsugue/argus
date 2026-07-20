@@ -63,9 +63,10 @@ class MissionWindowTests(unittest.TestCase):
     def test_missing_windows_raise_effective_delay_from_run_history(self):
         prior = [{"missionWindowId": "mw-2026-07-20T00:07:00Z",
                   "scheduledFor": "2026-07-20T00:07:00Z",
-                  "triggerSource": "schedule", "status": "completed"}]
+                  "triggerSource": "github_schedule", "status": "completed"}]
         current = scheduler.mission_window(
-            observed_at="2026-07-20T01:26:00Z", trigger_source="schedule")
+            observed_at="2026-07-20T01:26:00Z",
+            trigger_source="github_schedule")
         effective = scheduler.apply_window_history(current, prior)
         self.assertEqual(effective["scheduledFor"], "2026-07-20T01:07:00Z")
         self.assertEqual(effective["missedWindowCount"], 1)
@@ -283,8 +284,11 @@ class OutcomeAndJournalIntegrationTests(unittest.TestCase):
             scanner._FORECAST_LEDGER.append(fc)
             client = scanner.app.test_client()
             headers = {"X-ARGUS-ADMIN-TOKEN": "test-admin"}
-            payload = {"triggerSource": "schedule",
+            payload = {"triggerSource": "ec2_systemd",
                        "expectedBuildSha": os.environ["RENDER_GIT_COMMIT"]}
+            backup_payload = {"triggerSource": "github_schedule",
+                              "expectedBuildSha":
+                              os.environ["RENDER_GIT_COMMIT"]}
             with mock.patch.object(scanner, "_price_history_cached", return_value=[
                     {"date": "2026-01-01", "close": 100},
                     {"date": "2026-01-02", "close": 101}], create=True), \
@@ -292,10 +296,14 @@ class OutcomeAndJournalIntegrationTests(unittest.TestCase):
                 first = client.post("/api/argus/admin/missions/tick",
                                     headers=headers, json=payload)
                 second = client.post("/api/argus/admin/missions/tick",
-                                     headers=headers, json=payload)
+                                     headers=headers, json=backup_payload)
             self.assertEqual(first.status_code, 200)
             self.assertEqual(first.get_json()["status"], "completed")
             self.assertEqual(second.get_json()["status"], "expected_skip")
+            self.assertEqual(first.get_json()["missionWindow"]["leaseOwner"],
+                             "ec2_systemd")
+            self.assertEqual(second.get_json()["missionWindow"]
+                             ["lastDuplicateSource"], "github_schedule")
             self.assertEqual(len(scanner._OUTCOME_LEDGER), 1)
             self.assertEqual(scanner._OUTCOME_LEDGER[0]["status"], "resolved")
             ai.assert_not_called()

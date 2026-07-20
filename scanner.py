@@ -97,6 +97,7 @@ import argus_event_card            # EventCard v2 canonical research object (pur
 import argus_caos_audit            # CAOS association audit trail (pure, ARGUS Pro v11)
 import argus_cost_policy           # v12.3.0: centralized generative-AI execution policy
 import argus_market_ledger          # v12.3.0: append-only SHO-style market ledger
+import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
 from flask import Flask, jsonify, request
 from collections import deque
@@ -7494,6 +7495,8 @@ def _data_quality_console():
                        for r in _OSINT_BENCHMARK_RUNS[-5:]],
             "budget": _OSINT_BENCH_BUDGET,
         }
+        console["osintHealth"]["formalGeminiTwoX"] = \
+            argus_research_benchmark.public_status(_FORMAL_BENCHMARK)
         # v12.2.0: AI Integrity + Provider/Cost(公開安全 — 秘密/私的値なし)
         console["aiIntegrity"] = {
             "storeDisabledEnforced": True,     # 全Responses呼び出しstore=False(テスト固定)
@@ -14959,7 +14962,7 @@ def _openai_model_for(role):
     return _OPENAI_MODEL_ROLES.get(role) or _OPENAI_MODEL
 
 
-def _openai_research_ex(user, role="standard"):
+def _openai_research_ex(user, role="standard", benchmark=False):
     """v12.2.0 中央実行: GPT LIVE web調査。(text, AiExecutionResult)を返す。
     - store=False固定・usageは同一応答から取得
     - 価格不明モデルはfail-closed(呼ばない)
@@ -14967,7 +14970,8 @@ def _openai_research_ex(user, role="standard"):
     started = _ai_now_iso()
     model = _openai_model_for(role)
     if not _cost_policy_authorize(
-            "openai", "osint_research", automatic=True,
+            "openai", "research_benchmark" if benchmark else "osint_research",
+            automatic=not benchmark, confirmation=benchmark,
             estimated_cost_usd=0.15, estimated_tokens=8000)["allowed"]:
         return None, argus_ai_gate.ai_execution_result(
             provider="openai", model=model, role=role, mode="research",
@@ -15013,14 +15017,18 @@ def _openai_research_ex(user, role="standard"):
     client = openai.OpenAI(api_key=_OPENAI_API_KEY)
     sysmsg = ("あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
               "出所のない断定はせず、不明なら正直に不明と言う。投資助言・利益保証はしない。")
-    for tools, st_ok in (([{"type": "web_search"}], "ok"),
-                         ([{"type": "web_search_preview"}], "ok"),
-                         (None, "model_only")):
+    tool_modes = (([{"type": "web_search"}], "ok"),) if benchmark else (
+        ([{"type": "web_search"}], "ok"),
+        ([{"type": "web_search_preview"}], "ok"),
+        (None, "model_only"))
+    for tools, st_ok in tool_modes:
         try:
             kw = {"model": model, "instructions": sysmsg, "input": user,
                   "timeout": 90, "store": False}
             if tools:
                 kw["tools"] = tools
+            if benchmark:
+                kw["max_output_tokens"] = 1800
             resp = client.responses.create(**kw)
             txt = getattr(resp, "output_text", None)
             if not txt:
@@ -15056,10 +15064,10 @@ def _openai_research_ex(user, role="standard"):
         failure_reason_redacted="provider_error")
 
 
-def _openai_research(user):
+def _openai_research(user, benchmark=False):
     """互換ラッパ(text-only)。model_onlyの場合は本文にモデル記憶注記を付ける —
     無言でweb調査に偽装しない(v12.2.0 AI Integrity)。"""
-    txt, res = _openai_research_ex(user, role="standard")
+    txt, res = _openai_research_ex(user, role="standard", benchmark=benchmark)
     if txt and res.get("status") == "model_only":
         return txt + "\n\n" + argus_ai_gate.MODEL_ONLY_NOTE_JA
     return txt if res.get("status") == "ok" else (txt if txt else None)
@@ -15405,6 +15413,7 @@ _OSINT_BENCHMARK_RUNS = []             # v12.1.7 ベンチ実行記録(public-sa
 _OSINT_BENCH_STATE = {"running": False, "lastAt": None}
 _OSINT_BENCH_BUDGET = {"maxCasesPerInvocation": 2,
                        "maxCostLabel": "Gemini呼び出し最大2回/実行"}
+_FORMAL_BENCHMARK = argus_research_benchmark.default_state()
 _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
 
 
@@ -15421,6 +15430,8 @@ def _osint_persist():
                 "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                 "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                 "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
+                "formalResearchBenchmark": argus_research_benchmark.normalize_state(
+                    _FORMAL_BENCHMARK),
                 "schemaVersion": _DURABLE_STATE["schemaVersion"],
                 "soak": _SOAK, "missions": _MISSIONS[-120:],
                 "missionWindows": _MISSION_WINDOWS[-240:],
@@ -15504,6 +15515,37 @@ def _osint_restore_once():
             if isinstance(h, dict) and not any(
                     x.get("id") == h.get("id") for x in _OSINT_BENCHMARK_RUNS):
                 _OSINT_BENCHMARK_RUNS.append(h)
+        _formal = blob.get("formalResearchBenchmark")
+        if isinstance(_formal, dict):
+            restored = argus_research_benchmark.normalize_state(_formal)
+            # append-only: remote may add a completed result, never erase local.
+            merged_results = list(_FORMAL_BENCHMARK.get("results") or [])
+            known = {r.get("benchmarkId") for r in merged_results}
+            for result in restored.get("results", []):
+                if result.get("benchmarkId") not in known:
+                    merged_results.append(result)
+                    known.add(result.get("benchmarkId"))
+            if restored.get("lastCompletedAt") and str(
+                    restored.get("lastCompletedAt")) > str(
+                    _FORMAL_BENCHMARK.get("lastCompletedAt") or ""):
+                _FORMAL_BENCHMARK.update(restored)
+            # A started formal run is permanently counted even if the process
+            # restarts before a final result.  Never let an older/local default
+            # reopen the one-shot benchmark or consume the holdout twice.
+            if int(restored.get("executionCount") or 0) > int(
+                    _FORMAL_BENCHMARK.get("executionCount") or 0):
+                _FORMAL_BENCHMARK["executionCount"] = restored["executionCount"]
+                _FORMAL_BENCHMARK["firstStartedAt"] = restored.get("firstStartedAt")
+                _FORMAL_BENCHMARK["status"] = (
+                    "interrupted" if restored.get("runningBenchmarkId")
+                    else restored.get("status") or "not_run")
+                _FORMAL_BENCHMARK["mode"] = "DETERMINISTIC"
+                _FORMAL_BENCHMARK["runningBenchmarkId"] = None
+            if restored.get("holdoutConsumedBy") and not \
+                    _FORMAL_BENCHMARK.get("holdoutConsumedBy"):
+                _FORMAL_BENCHMARK["holdoutConsumedBy"] = \
+                    restored["holdoutConsumedBy"]
+            _FORMAL_BENCHMARK["results"] = merged_results
         sk = blob.get("soak")
         if isinstance(sk, dict) and sk.get("startedAt") and not _SOAK["startedAt"]:
             # v12.2.9 build-scoped: 同一SHAのredeployでsoakをリセットしない
@@ -15803,10 +15845,11 @@ _OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONの�
                     "根拠のない断定禁止。投資助言・売買指示はしない。")
 
 
-def _gemini_osint(prompt):
+def _gemini_osint(prompt, benchmark=False):
     """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
     if not _cost_policy_authorize(
-            "gemini", "osint_research", automatic=True,
+            "gemini", "research_benchmark" if benchmark else "osint_research",
+            automatic=not benchmark, confirmation=benchmark,
             estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
         return None, "deterministic_mode"
     if not google_genai or not GEMINI_API_KEY:
@@ -15816,7 +15859,11 @@ def _gemini_osint(prompt):
         cfg = None
         try:
             from google.genai import types as _gt
-            cfg = _gt.GenerateContentConfig(tools=[_gt.Tool(google_search=_gt.GoogleSearch())])
+            cfg = (_gt.GenerateContentConfig(
+                tools=[_gt.Tool(google_search=_gt.GoogleSearch())],
+                temperature=0, max_output_tokens=1800)
+                if benchmark else _gt.GenerateContentConfig(
+                    tools=[_gt.Tool(google_search=_gt.GoogleSearch())]))
         except Exception:
             cfg = None
         resp = (client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
@@ -15832,12 +15879,14 @@ def _gemini_osint(prompt):
         return None, "failed"
 
 
-def _gpt_osint(prompt):
+def _gpt_osint(prompt, benchmark=False):
     """GPT scout(web_search付き・admin経路のみ)。"""
     if not _OPENAI_API_KEY:
         return None, "disabled"
     try:
-        txt = _openai_research(prompt + "\n出力は必ず上記JSONを含めること(前置きの説明文があってもよい)。")
+        txt = _openai_research(
+            prompt + "\n出力は必ず上記JSONを含めること(前置きの説明文があってもよい)。",
+            benchmark=benchmark)
         if not txt:
             return None, "failed"
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
@@ -16947,13 +16996,22 @@ def api_argus_admin_missions_tick():
         body = {}
     now = datetime.now(TZ_JST)
     now_iso = now.isoformat()
-    trigger_source = ("schedule" if body.get("triggerSource") == "schedule"
-                      else "manual")
+    requested_source = str(body.get("triggerSource") or "manual")
+    trigger_source = argus_scheduler.normalize_trigger_source(requested_source)
+    if trigger_source is None:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "invalid_trigger_source"}), 400
     window = argus_scheduler.mission_window(
-        observed_at=now_iso, trigger_source=trigger_source)
+        observed_at=now_iso, trigger_source=trigger_source,
+        scheduled_for=(str(body.get("scheduledFor"))
+                       if body.get("scheduledFor") else None))
     if window is None:
         return jsonify({"ok": False, "status": "failed",
                         "error": "invalid_mission_window"}), 400
+    supplied_window_id = str(body.get("missionWindowId") or "")
+    if supplied_window_id and supplied_window_id != window["missionWindowId"]:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "mission_window_id_mismatch"}), 400
     if trigger_source == "manual":
         # workflow_dispatch/legacy admin検証は自然scheduleを抑止しない。
         # GitHub run内の再送だけは同じrunIdで冪等になる。
@@ -16962,11 +17020,11 @@ def api_argus_admin_missions_tick():
                        "delaySeconds": 0, "delayClassification": "on_time"})
     window = argus_scheduler.apply_window_history(window, _MISSION_WINDOWS)
     prior_windows = [r for r in _MISSION_WINDOWS
-                     if r.get("triggerSource") == trigger_source and
+                     if r.get("triggerSource") != "manual" and
                      r.get("scheduledFor") < window["scheduledFor"]]
     window_record, should_run = argus_scheduler.begin_mission_window(
         _MISSION_WINDOWS, window=window, build_sha=_backend_sha(),
-        started_at=now_iso)
+        started_at=now_iso, runtime_version=_semantic_app_version())
     if not should_run:
         _osint_persist()
         return jsonify({"ok": True, "status": "expected_skip",
@@ -17267,8 +17325,7 @@ def api_argus_admin_missions_tick():
         soak_id=_SOAK.get("soakId") or "", build_sha=_backend_sha(),
         runtime_version=_semantic_app_version() or "unknown",
         expected_at=window["scheduledFor"], observed_at=heartbeat_at,
-        source=("github_actions_schedule" if trigger_source == "schedule"
-                else "workflow_dispatch"),
+        source=trigger_source,
         health_status=("ok" if build_matches else "build_mismatch"),
         ready_status=("ready" if _STARTUP["state"] in
                       ("ready", "ready_degraded") else "not_ready"),
@@ -17470,6 +17527,233 @@ def api_argus_admin_ai_capability_probe():
                     "noteJa": "実測プローブのみ — 可用性を仮定した昇格はしない。"})
 
 
+def _formal_benchmark_prompt(case):
+    return (
+        f"調査質問: {case['question']}\n"
+        f"asOf/information cutoff: {case['informationCutoff']}\n"
+        f"許可ソース種別: {', '.join(case['permittedSources'])}\n"
+        "時点後の情報は禁止。不明は不明と回答する。投資助言・売買指示は禁止。"
+        "出力はJSONのみ: {\"claims\":[{\"titleJa\",\"url\",\"publishedAt\","
+        "\"sourceName\",\"directness\",\"whyRelevant\",\"confidence\"}]}。")
+
+
+def _formal_claims(out, case=None):
+    rows = []
+    permitted = set((case or {}).get("permittedSources") or [])
+    for c in ((out or {}).get("claims") or [])[:20]:
+        if not isinstance(c, dict):
+            continue
+        source = str(c.get("sourceName") or "").strip().lower()
+        url = str(c.get("url") or "")[:600] or None
+        url_valid = bool(url and re.match(r"^https://[^\s/]+(?:/|$)", url))
+        source_valid = bool(source and (not permitted or source in permitted))
+        rows.append({"titleJa": str(c.get("titleJa") or c.get("title") or "")[:300],
+                     "url": url,
+                     "publishedAt": c.get("publishedAt"),
+                     "sourceId": source[:80] or None,
+                     "sourceValidated": bool(url_valid and source_valid),
+                     "directness": str(c.get("directness") or "unknown")[:40],
+                     "fabricated": c.get("fabricated") is True})
+    return rows
+
+
+def _formal_blind_evaluate(case, benchmark_id, claims_by_provider):
+    """One OpenAI evaluator call, provider names hidden; no retry/fallback."""
+    order = argus_research_benchmark.blind_order(benchmark_id, case["caseId"])
+    answers = {label: claims_by_provider[provider] for label, provider in order.items()}
+    policy = _cost_policy_authorize(
+        "openai", "research_benchmark", automatic=False, confirmation=True,
+        estimated_cost_usd=0.10, estimated_tokens=8000)
+    if not policy["allowed"] or not _OPENAI_API_KEY:
+        return None, "provider_blocked"
+    prompt = (
+        "固定rubricでA/Bを独立採点。提供元を推測せず、各軸0-100。JSONのみ。"
+        f"質問={case['question']} cutoff={case['informationCutoff']} "
+        f"rubric={json.dumps(argus_research_benchmark.RUBRIC_WEIGHTS, sort_keys=True)} "
+        f"answers={json.dumps(answers, ensure_ascii=False, sort_keys=True)} "
+        "形式={\"A\":{rubric各キー},\"B\":{rubric各キー}}")
+    # Dry-run assumes at most 6,000 input tokens. A UTF-8 byte ceiling is a
+    # conservative fail-closed guard and prevents an unexpectedly large source
+    # payload from escaping the fixed per-call budget.
+    if len(prompt.encode("utf-8")) > 24_000:
+        return None, "input_budget_exceeded"
+    try:
+        import openai
+        client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        evaluator_model = _openai_model_for("referee")
+        response = client.responses.create(
+            model=evaluator_model, input=prompt, timeout=90, store=False,
+            max_output_tokens=1800)
+        parsed = safe_json(getattr(response, "output_text", "") or "")
+        if not isinstance(parsed, dict) or not all(
+                isinstance(parsed.get(k), dict) for k in ("A", "B")):
+            return None, "invalid_evaluator_json"
+        return {"A": parsed["A"], "B": parsed["B"]}, "ok"
+    except Exception as exc:
+        add_log(f"[formal-benchmark] evaluator failed: {type(exc).__name__}")
+        return None, "provider_failed"
+
+
+def _formal_benchmark_worker(benchmark_id, dry_run):
+    """Frozen calibration then one-shot holdout. Always returns to DETERMINISTIC."""
+    results = []
+    failure = None
+    try:
+        for case in argus_research_benchmark.execution_plan():
+            if case["phase"] == "holdout" and not \
+                    _FORMAL_BENCHMARK.get("holdoutConsumedBy"):
+                consumed = argus_research_benchmark.consume_holdout(
+                    _FORMAL_BENCHMARK, benchmark_id=benchmark_id)
+                if not consumed["allowed"]:
+                    failure = consumed["status"]
+                    break
+                _FORMAL_BENCHMARK.clear()
+                _FORMAL_BENCHMARK.update(consumed["state"])
+                _osint_persist()
+            prompt = _formal_benchmark_prompt(case)
+            baseline_out, baseline_status = _gemini_osint(prompt, benchmark=True)
+            if baseline_status != "ok":
+                failure = "provider_blocked" if baseline_status in (
+                    "disabled", "deterministic_mode") else "provider_failed"
+                break
+            # ARGUS platform comparison: same question/cutoff, two scouts plus
+            # deterministic source/temporal checks. Tool asymmetry is recorded.
+            argus_gemini, ag_status = _gemini_osint(prompt, benchmark=True)
+            argus_gpt, ao_status = _gpt_osint(prompt, benchmark=True)
+            if ag_status != "ok" or ao_status != "ok":
+                failure = "provider_blocked" if "disabled" in (ag_status, ao_status) \
+                    else "provider_failed"
+                break
+            claims = {"gemini": _formal_claims(baseline_out, case),
+                      "argus": (_formal_claims(argus_gemini, case)
+                                + _formal_claims(argus_gpt, case))[:30]}
+            axes, eval_status = _formal_blind_evaluate(
+                case, benchmark_id, claims)
+            if eval_status != "ok":
+                failure = eval_status
+                break
+            results.append(argus_research_benchmark.case_result(
+                benchmark_id=benchmark_id, case=case,
+                evaluator_axes_by_label=axes, claims_by_provider=claims))
+        if failure:
+            failed_state = argus_research_benchmark.fail_closed(
+                _FORMAL_BENCHMARK, status=failure, completed_at=_ai_now_iso())
+            _FORMAL_BENCHMARK.clear()
+            _FORMAL_BENCHMARK.update(failed_state)
+            _journal("research_benchmark_failed", "research_benchmark",
+                     benchmark_id, {"status": failure}, origin="admin_validation")
+        else:
+            completed = argus_research_benchmark.finalize(
+                state=_FORMAL_BENCHMARK, benchmark_id=benchmark_id,
+                research_epoch=_current_epoch_id(), code_sha=_backend_sha() or "local",
+                models={"gemini": _GEMINI_JUDGE_MODEL,
+                        "argus": _OPENAI_MODEL_ROLES.get("standard") or _OPENAI_MODEL,
+                        "evaluator": _openai_model_for("referee"),
+                        "argusVersion": _semantic_app_version()},
+                provider_settings={"temperature": {"gemini": 0,
+                                   "openai": "provider_default",
+                                   "evaluator": "provider_default"},
+                                   "maximumOutputTokensPerCall": 1800,
+                                   "baselineTools": ["google_search"],
+                                   "argusTools": ["google_search", "web_search",
+                                                  "deterministic_source_checks"],
+                                   "costStatus": "conservative_estimate"},
+                total_cost_jpy=float(dry_run.get("estimatedCostJpy") or 0),
+                case_results=results, completed_at=_ai_now_iso(),
+                limitations=["基盤込み比較: ARGUS側は複数scoutと決定論検証を使用",
+                             "API費用はprovider usage上限からの保守的見積り"])
+            _FORMAL_BENCHMARK.clear()
+            _FORMAL_BENCHMARK.update(completed["state"])
+            _journal("research_benchmark_completed", "research_benchmark",
+                     benchmark_id,
+                     {"classification": completed["status"],
+                      "twoXClaimAllowed": bool(
+                          completed.get("result", {}).get("twoXClaimAllowed")),
+                      "datasetHash": argus_research_benchmark.DATASET_HASH[:16]},
+                     origin="admin_validation")
+    except Exception as exc:
+        add_log(f"[formal-benchmark] failed: {type(exc).__name__}")
+        failed_state = argus_research_benchmark.fail_closed(
+            _FORMAL_BENCHMARK, status="invalid", completed_at=_ai_now_iso())
+        _FORMAL_BENCHMARK.clear()
+        _FORMAL_BENCHMARK.update(failed_state)
+    finally:
+        # A benchmark can never leave normal operations AI-enabled.
+        restored = argus_cost_policy.configure(
+            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+        _COST_POLICY.clear()
+        _COST_POLICY.update(restored)
+        _osint_persist()
+
+
+@app.route("/api/argus/research-benchmark")
+def api_argus_research_benchmark_status():
+    """Public-safe result summary. GET never starts or resumes a benchmark."""
+    return jsonify(argus_research_benchmark.public_status(_FORMAL_BENCHMARK))
+
+
+@app.route("/api/argus/admin/research-benchmark/dry-run", methods=["POST"])
+def api_argus_admin_research_benchmark_dry_run():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    if body.get("triggerSource") != "manual":
+        return jsonify({"ok": False, "status": "scheduled_execution_rejected"}), 400
+    evaluator = _openai_model_for("referee")
+    pricing = dict(_AI_PRICING)
+    if evaluator not in pricing and _OPENAI_MODEL in pricing:
+        pricing[evaluator] = dict(pricing[_OPENAI_MODEL])
+    remaining_usd = max(0.0, _AI_DAILY_BUDGET_USD
+                        - float(_AI_COST_STATE.get("daySpentUsd") or 0))
+    dry = argus_research_benchmark.estimate_cost(
+        gemini_model=_GEMINI_JUDGE_MODEL,
+        argus_model=_OPENAI_MODEL_ROLES.get("standard") or _OPENAI_MODEL,
+        evaluator_model=evaluator, pricing=pricing,
+        usd_jpy_ceiling=_float_env("ARGUS_BENCHMARK_USDJPY_CEILING", 160.0),
+        grounding_usd_per_call=_AI_GROUNDING_USD,
+        existing_budget_usd=remaining_usd,
+        providers_configured=bool(google_genai and GEMINI_API_KEY
+                                  and _OPENAI_API_KEY))
+    _FORMAL_BENCHMARK["dryRun"] = dry
+    _FORMAL_BENCHMARK["status"] = dry["status"]
+    _osint_persist()
+    return jsonify({"ok": dry["status"] == "ready", **dry})
+
+
+@app.route("/api/argus/admin/research-benchmark/execute", methods=["POST"])
+def api_argus_admin_research_benchmark_execute():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    dry = _FORMAL_BENCHMARK.get("dryRun") or {}
+    if body.get("dryRunHash") != dry.get("dryRunHash"):
+        return jsonify({"ok": False, "status": "dry_run_hash_mismatch"}), 409
+    if _COST_POLICY.get("mode") != "DETERMINISTIC":
+        return jsonify({"ok": False, "status": "normal_mode_not_deterministic"}), 409
+    benchmark_id = "gemini-2x-" + argus_research_benchmark.digest({
+        "datasetHash": argus_research_benchmark.DATASET_HASH,
+        "startedAt": _ai_now_iso()})[:16]
+    decision = argus_research_benchmark.begin(
+        _FORMAL_BENCHMARK, dry_run=dry, benchmark_id=benchmark_id,
+        trigger_source=str(body.get("triggerSource") or ""),
+        confirmed=body.get("confirm") is True, started_at=_ai_now_iso())
+    if not decision["allowed"]:
+        return jsonify({"ok": False, "status": decision["status"]}), 409
+    _FORMAL_BENCHMARK.clear()
+    _FORMAL_BENCHMARK.update(decision["state"])
+    enabled = argus_cost_policy.configure(
+        _COST_POLICY, mode="RESEARCH_BENCHMARK", event_opt_in=False)
+    _COST_POLICY.clear()
+    _COST_POLICY.update(enabled)
+    threading.Thread(target=_formal_benchmark_worker,
+                     args=(benchmark_id, dry), daemon=True).start()
+    return jsonify({"ok": True, "status": "running",
+                    "benchmarkId": benchmark_id,
+                    "datasetHash": argus_research_benchmark.DATASET_HASH}), 202
+
+
 @app.route("/api/argus/admin/osint/benchmark-run", methods=["POST"])
 def api_argus_admin_osint_benchmark_run():
     """Admin/cron専用: 固定ベンチスイートのGemini基準run実行(校正の加速)。
@@ -17612,6 +17896,8 @@ def api_argus_osint_memory_snapshot():
                     "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                     "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                     "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
+                    "formalResearchBenchmark": argus_research_benchmark.normalize_state(
+                        _FORMAL_BENCHMARK),
                     "soak": _SOAK, "soakLastPersistAt": _now,
                     "missions": _MISSIONS[-120:],
                     "missionWindows": _MISSION_WINDOWS[-240:],

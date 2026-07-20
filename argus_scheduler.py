@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""ARGUS Session-Aware Scheduler — v12.2.1 Phase 1(純・stdlibのみ)。
+"""ARGUS Session-Aware Scheduler — v12.3.2(純・stdlibのみ)。
 
 固定壁時計cronだけに依存しない: 市場カレンダー/セッション状態からミッションを
 冪等生成し、lease/claim・期限切れ回収・見逃し検知・重複防止を提供する。
-実行体は既存cron(caos-scan等)が /admin/missions/tick を叩く — 新規常駐なし。
+実行体の正本はEC2 systemd timer。GitHub Actionsはbackup、manualは診断専用。
 """
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,6 +20,23 @@ MISSION_SEVERE_AFTER_SECONDS = 30 * 60
 MISSION_MISSED_AFTER_SECONDS = 90 * 60
 MISSION_WINDOW_RETRY_LEASE_SECONDS = 10 * 60
 MISSION_CATCHUP_LIMIT = 2
+SCHEDULER_SOURCE_PRIORITY = {
+    "ec2_systemd": 1,
+    "github_schedule": 2,
+    "manual": 3,
+}
+_LEGACY_SOURCE_MAP = {"schedule": "github_schedule"}
+
+
+def normalize_trigger_source(source: Any) -> Optional[str]:
+    """旧schedule表記を安全に受けつつ、authorityを3種へ正規化する。"""
+    normalized = _LEGACY_SOURCE_MAP.get(str(source), str(source))
+    return normalized if normalized in SCHEDULER_SOURCE_PRIORITY else None
+
+
+def scheduler_source_priority(source: Any) -> Optional[int]:
+    normalized = normalize_trigger_source(source)
+    return SCHEDULER_SOURCE_PRIORITY.get(normalized) if normalized else None
 
 
 def _aware(iso: str) -> Optional[datetime]:
@@ -48,13 +65,14 @@ def scheduler_delay_class(delay_seconds: int) -> str:
     return "missed"
 
 
-def mission_window(*, observed_at: str, trigger_source: str = "schedule",
+def mission_window(*, observed_at: str, trigger_source: str = "github_schedule",
                    scheduled_for: Optional[str] = None,
                    offset_minute: int = MISSION_WINDOW_OFFSET_MINUTE
                    ) -> Optional[Dict[str, Any]]:
     """UTC 30分windowを決定論生成。古い時刻を現在windowへ付け替えない。"""
     observed = _aware(observed_at)
-    if observed is None or trigger_source not in ("schedule", "manual"):
+    trigger_source = normalize_trigger_source(trigger_source)
+    if observed is None or trigger_source is None:
         return None
     if scheduled_for:
         scheduled = _aware(scheduled_for)
@@ -73,6 +91,8 @@ def mission_window(*, observed_at: str, trigger_source: str = "schedule",
         "scheduledFor": scheduled_iso,
         "triggeredAt": _z(observed),
         "triggerSource": trigger_source,
+        "sourcePriority": scheduler_source_priority(trigger_source),
+        "receivedAt": _z(observed),
         "delaySeconds": delay,
         "delayClassification": scheduler_delay_class(delay),
     }
@@ -82,11 +102,11 @@ def apply_window_history(window: Dict[str, Any],
                          records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """前回自然windowから欠落窓と実効遅延を導出（cron式から捏造しない）。"""
     rec = dict(window)
-    if rec.get("triggerSource") != "schedule":
+    if rec.get("triggerSource") == "manual":
         rec.update({"rawDelaySeconds": rec.get("delaySeconds", 0),
                     "missedWindowCount": 0, "windowGapSeconds": None})
         return rec
-    prior = [r for r in records if r.get("triggerSource") == "schedule" and
+    prior = [r for r in records if r.get("triggerSource") != "manual" and
              r.get("scheduledFor") and
              str(r.get("scheduledFor")) < str(rec.get("scheduledFor"))]
     last = max(prior, key=lambda r: str(r.get("scheduledFor"))) if prior else None
@@ -118,7 +138,9 @@ def apply_window_history(window: Dict[str, Any],
 
 def begin_mission_window(records: List[Dict[str, Any]], *,
                          window: Dict[str, Any], build_sha: Optional[str],
-                         started_at: str) -> Tuple[Dict[str, Any], bool]:
+                         started_at: str,
+                         runtime_version: Optional[str] = None
+                         ) -> Tuple[Dict[str, Any], bool]:
     """同一windowの完了後重複を抑止。失敗/lease切れだけ再試行可能。"""
     wid = window.get("missionWindowId")
     existing = next((r for r in records if r.get("missionWindowId") == wid),
@@ -135,10 +157,19 @@ def begin_mission_window(records: List[Dict[str, Any]], *,
             existing["duplicateSuppressed"] = int(
                 existing.get("duplicateSuppressed") or 0) + 1
             existing["lastDuplicateAt"] = started_at
+            existing["lastDuplicateSource"] = window.get("triggerSource")
+            existing["duplicateSources"] = sorted(set(
+                list(existing.get("duplicateSources") or []) +
+                [str(window.get("triggerSource") or "unknown")]))
             return existing, False
         existing.update({
             **window, "startedAt": started_at, "completedAt": None,
             "status": "started", "buildSha": build_sha,
+            "runtimeVersion": runtime_version,
+            "leaseOwner": window.get("triggerSource"),
+            "leaseExpiresAt": (_z(now + timedelta(
+                seconds=MISSION_WINDOW_RETRY_LEASE_SECONDS)) if now else None),
+            "finalStatus": None,
             "retryCount": int(existing.get("retryCount") or 0) + 1,
             "errorClass": None,
         })
@@ -146,6 +177,11 @@ def begin_mission_window(records: List[Dict[str, Any]], *,
     rec = {
         **window, "startedAt": started_at, "completedAt": None,
         "status": "started", "buildSha": build_sha,
+        "runtimeVersion": runtime_version,
+        "leaseOwner": window.get("triggerSource"),
+        "leaseExpiresAt": (_z(now + timedelta(
+            seconds=MISSION_WINDOW_RETRY_LEASE_SECONDS)) if now else None),
+        "finalStatus": None,
         "retryCount": 0, "duplicateSuppressed": 0, "errorClass": None,
     }
     records.append(rec)
@@ -160,6 +196,7 @@ def finish_mission_window(record: Dict[str, Any], *, completed_at: str,
         error_class = error_class or "invalid_terminal_status"
     record["completedAt"] = completed_at
     record["status"] = status
+    record["finalStatus"] = status
     record["errorClass"] = str(error_class)[:80] if error_class else None
     return record
 
@@ -183,10 +220,11 @@ def bounded_catchup_windows(*, last_scheduled_for: Optional[str],
 def scheduled_mission_summary(records: List[Dict[str, Any]], *,
                               now_iso: str) -> Dict[str, Any]:
     rows = sorted((r for r in records if isinstance(r, dict) and
-                   r.get("triggerSource") == "schedule"),
+                   r.get("triggerSource") != "manual"),
                   key=lambda r: str(r.get("scheduledFor") or ""))
     last = rows[-1] if rows else None
-    current = mission_window(observed_at=now_iso, trigger_source="schedule")
+    current = mission_window(observed_at=now_iso,
+                             trigger_source="ec2_systemd")
     next_at = None
     if current and _aware(current["scheduledFor"]):
         next_at = _z(_aware(current["scheduledFor"]) +
@@ -207,6 +245,11 @@ def scheduled_mission_summary(records: List[Dict[str, Any]], *,
         "windowCount": len(rows),
         "scheduleOffsetMinute": MISSION_WINDOW_OFFSET_MINUTE,
         "catchUpLimit": MISSION_CATCHUP_LIMIT,
+        "primaryScheduler": "ec2_systemd",
+        "backupScheduler": "github_schedule",
+        "manualRole": "diagnostic_only",
+        "lastTriggerSource": last.get("triggerSource") if last else None,
+        "sourcePriority": dict(SCHEDULER_SOURCE_PRIORITY),
     }
 
 MISSION_TYPES = ("pre_session_research", "pre_session_forecast",

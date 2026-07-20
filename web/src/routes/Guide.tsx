@@ -122,6 +122,8 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 
 const RECENT_UPDATES: [string, string][] = [
   ['v12.4.0', 'Chart Intelligence + SHO Method Phase 2 — OHLCVから移動平均・Bollinger・一目・RSI・MACD・ATR、支持抵抗帯、相対強弱、テクニカル転換点、価格反応異常、最大5行批評を決定論的に計算。Market Context／Asset Desk／Todayへ統合し、自動生成AIは0のまま維持。'],
+  ['v12.3.3', 'Formal Gemini 2X Benchmark Infrastructure — calibration 6件とone-shot holdout 12件、盲検評価、費用上限、確認hash、append-only resultを実装。未実行時はnot_run/provider_blocked、twoXClaimAllowed=falseを維持。'],
+  ['v12.3.2', 'EC2 Primary Scheduler — EC2 systemd timerを30分mission tickの正本、GitHub Actionsをbackup、manualを診断専用へ変更。同一UTC windowはbackend leaseで重複抑止し、Soakは単一scheduler source遅延をwarningとして分離。'],
   ['v12.3.1', 'Scheduled Mission Tick + Build Soak Reliability — 30分mission windowの冪等実行と遅延分類、build-scoped Soak heartbeat、Remote Journalのcommit→read-back検証を追加。unresolved Outcome retryは同じIDのまま各有効windowで再評価し、自動生成AIはDETERMINISTICで0回を維持。'],
   ['v12.3.0', 'Deterministic Cost Reset + SHO Market Ledger Phase 1 — 自動生成AIを既定0へ変更し、非AIの市場データ・イベント・Outcome・Remote Journalを維持。Market Contextへ信用残・投資主体別売買・日経平均バリュエーション・騰落レシオのappend-only台帳、初期Turning Point、Cost Policy表示を追加。Asset DeskのChatGPT/Gemini相談はコピー専用(API送信なし)。'],
   ['v12.2.13', '安定化修正 — unresolved Outcomeを同じID・履歴のまま定期再解決し、後から価格を取得できた時だけresolvedへ遷移。定期workflowはHTTP status・JSON・業務結果を分離判定し、backend不達や認証・サーバー・異常応答を成功表示しない。'],
