@@ -212,7 +212,9 @@ def estimate_cost(*, gemini_model: str, argus_model: str, evaluator_model: str,
     configured_cap = (HARD_BUDGET_JPY if existing_budget_usd is None else
                       min(HARD_BUDGET_JPY, max(0.0, float(existing_budget_usd)) * fx))
     total_jpy = total_usd * fx
-    if not providers_configured:
+    if evaluator_model == argus_model:
+        status = "evaluator_not_independent"
+    elif not providers_configured:
         status = "provider_blocked"
     elif missing_models:
         status = "invalid"

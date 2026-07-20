@@ -14,6 +14,12 @@ export interface TurningPoint {
   facts: string[]; direction: string; severity: string; classification: string;
   subsequentOutcome: string;
 }
+export interface MarketCalendarState {
+  market: string; marketDate: string; isTradingDay: boolean; session: string;
+  holidayName: string | null; nextTradingDay: string | null; timezone: string;
+  regularOpenJst?: string; regularCloseJst?: string; earlyClose?: boolean;
+  calendarVersion?: string; officialCalendar?: string;
+}
 export interface MarketLedgerPayload {
   schemaVersion: string; asOf: string;
   summary: Record<string, string>;
@@ -25,6 +31,23 @@ export interface MarketLedgerPayload {
   derivedMetrics: Array<{ metricId: string; value: number | null; unit: string; asOf: string }>;
   turningPoints: TurningPoint[]; observationCount: number; stateHash: string;
   remoteReadBack: { verificationStatus: string; lastVerifiedReadBackAt: string | null };
+  phase3: {
+    schemaVersion: string; methodVersion: string; asOf: string;
+    sections: Array<{ order: number; name: string; status: string }>;
+    dailyChanges: Array<{ id: string; status: string; category: string; summaryJa: string; effectiveFrom: string }>;
+    anomalyDesk: Array<{ id: string; facts: string[]; expectedRelationship: string;
+      observedRelationship: string; discrepancy: string; confidence: string;
+      possibleExplanations: string[]; causeUnconfirmed: boolean }>;
+    decisionChangeConditions: Array<{ type: string; conditionJa: string; status: string }>;
+    today: Array<Record<string, unknown>>; calendar: Record<string, MarketCalendarState>; noteJa: string;
+  };
+  sourceOfTruthMatrix: Array<{ dataId: string; primary: string; fallback: string; frequency: string;
+    delay: string; license: string; currentStatus: string }>;
+  heuristics: Array<{ ruleId: string; ruleName: string; classification: string; sampleSize: number;
+    historicalTendency: string; currentState: string; supportingFacts: string[];
+    failureConditions: string[]; lastTriggered: string | null; outcomeSummary: string; methodVersion: string }>;
+  backtestPolicy: { method: string; noFutureLeakage: boolean; minimumValidatedSamples: number; status: string };
+  automaticAiCalls: number;
   noteJa: string;
 }
 export interface CostPolicyPayload {

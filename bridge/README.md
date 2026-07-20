@@ -61,7 +61,7 @@ ARGUS の Watchlist に銘柄を足したら、`/etc/argus-bridge.env` の `PUSH
 
 このブリッジは **US/JPを分離取得** します。片方の市場の権限エラーが
 もう片方を止めることはありません。JPで「No permission to get quotes」が
-出ると自動で30分バックオフし、USのpushは継続します。60秒毎に
+出ると自動で7日間バックオフ(週1回だけ再認定probe)し、USのpushは継続します。60秒毎に
 heartbeat(閉場中も)をバックエンドへ送り、アプリの「システム状態」に
 **ブリッジ/OpenD/US realtime/JP realtime が分割表示**されます。
 
@@ -112,8 +112,8 @@ PY
 ```
 2. ret=0 を確認できたら `/etc/argus-bridge.env` から `ARGUS_DISABLE_JP_QUOTES=1`
    を削除し `sudo systemctl restart argus-bridge`
-3. **ret=-1のままフラグだけ外さないこと**(自動バックオフで実害はないが
-   30分毎に権限エラーを試み続ける)
+3. **ret=-1のままフラグだけ外さないこと**(自動バックオフでUSは継続し、
+   JP権限は週1回だけ再認定する)
 
 ### 日常の確認コマンド
 ```bash

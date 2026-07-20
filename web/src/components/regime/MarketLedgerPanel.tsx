@@ -79,6 +79,17 @@ export const MarketLedgerPanel: React.FC = () => {
     {error && <div className="card ml-empty">Market Ledger取得失敗。前回値があれば保持表示します。({error})</div>}
     {loading && !ledger && <div className="card ml-empty">市場履歴台帳を読み込み中…</div>}
     {ledger && <>
+      <div className="card ml-ops-head">
+        <div><b>SHO DAILY OPERATING SHEET</b><span>Phase 3 · deterministic · 16-point review</span></div>
+        <ol>{ledger.phase3.sections.map((s) => <li key={s.order} className={s.status === 'available' ? 'is-live' : undefined}>
+          <span>{s.order}</span>{s.name}
+        </li>)}</ol>
+      </div>
+      <div className="card ml-daily"><div><b>DAILY CHANGES</b><span>前回更新から最大5件</span></div>
+        {ledger.phase3.dailyChanges.length ? ledger.phase3.dailyChanges.map((change) => <div key={change.id}>
+          <span>{change.status}</span><b>{change.summaryJa}</b><time>{change.effectiveFrom}</time>
+        </div>) : <p>公表済み実データに新しい変化はありません。</p>}
+      </div>
       <div className="ml-summary">
         {Object.entries(SUMMARY_JA).map(([key, label]) => <div className="card ml-summary__cell" key={key}>
           <span>{label}</span><b>{VALUE_JA[ledger.summary[key]] ?? '未取得'}</b></div>)}
@@ -115,6 +126,28 @@ export const MarketLedgerPanel: React.FC = () => {
           <small>{p.classification === 'sho_heuristic' ? 'SHO経験則・単独売買判断には使用しない' : '複合判断の確認材料'} · その後: 未評価</small>
         </div>) : <p className="ml-empty">入力データ不足のため転換点はまだありません。</p>}
       </div>
+      <div className="ml-phase3-grid">
+        <div className="card ml-desk"><h3>ANOMALY DESK</h3>
+          {ledger.phase3.anomalyDesk.length ? ledger.phase3.anomalyDesk.map((row) => <div key={row.id}>
+            <b>{row.facts.join(' / ')}</b><span>想定: {row.expectedRelationship}</span>
+            <span>観測: {row.observedRelationship}</span><small>原因未確認 · confidence {row.confidence}</small>
+          </div>) : <p>確認できた関係崩れはありません。欠損値から原因を推定しません。</p>}
+        </div>
+        <div className="card ml-desk"><h3>WHAT CHANGES THE VIEW</h3>
+          {ledger.phase3.decisionChangeConditions.map((row) => <div key={row.type}><b>{row.type}</b><span>{row.conditionJa}</span></div>)}
+        </div>
+      </div>
+      <div className="card ml-rules"><h3>SHO RULE CARDS</h3><div>
+        {ledger.heuristics.map((rule) => <article key={rule.ruleId}><b>{rule.ruleName}</b>
+          <span>{rule.classification} · n={rule.sampleSize}</span><small>{rule.outcomeSummary} · {rule.methodVersion}</small>
+        </article>)}
+      </div><p>walk-forward · future leakageなし · n&lt;{ledger.backtestPolicy.minimumValidatedSamples}はvalidatedにしません。</p></div>
+      <details className="card ml-sources"><summary>SOURCE OF TRUTH MATRIX</summary><div className="ml-table-wrap"><table className="ml-table"><thead><tr>
+        <th>データ</th><th>Primary</th><th>Fallback</th><th>頻度</th><th>遅延</th><th>License</th><th>現在</th>
+      </tr></thead><tbody>{ledger.sourceOfTruthMatrix.map((row) => <tr key={row.dataId}>
+        <td>{row.dataId}</td><td>{row.primary}</td><td>{row.fallback}</td><td>{row.frequency}</td>
+        <td>{row.delay}</td><td>{row.license}</td><td>{row.currentStatus}</td>
+      </tr>)}</tbody></table></div></details>
     </>}
     <div className="card ml-cost" id="cost-policy"><h3>COST POLICY</h3>
       {cost ? <><div className="ml-cost__mode"><b>{cost.mode.replace('_', ' ')}</b><span>{cost.messageJa}</span></div>

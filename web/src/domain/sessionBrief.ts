@@ -2,6 +2,7 @@
 // 保有を加味したAPItem群から「今日の作戦」を端末内で合成する。売買指示ではない。
 
 import type { APItem } from './actionPriority';
+import type { MarketCalendarState } from '../types/marketLedger';
 import { jpDisplay } from '../lib/displayName';
 
 export type OwnerMode = 'attack' | 'wait' | 'protect' | 'monitor' | 'review' | 'no_action' | 'unknown';
@@ -29,7 +30,33 @@ export interface LocalBrief {
   confidence: number;
 }
 
-export function resolveSessionJst(now = new Date()): { sessionType: string; marketStatusJa: string } {
+export function resolveSessionJst(now = new Date(),
+  calendar?: Record<string, MarketCalendarState>): { sessionType: string; marketStatusJa: string } {
+  const jp = calendar?.JP;
+  const us = calendar?.US;
+  if (jp && us) {
+    const jpOpen = ['MORNING_SESSION', 'AFTERNOON_SESSION'].includes(jp.session);
+    if (jpOpen) return { sessionType: 'intraday', marketStatusJa: '東京ザラ場' };
+    if (jp.session === 'LUNCH_BREAK') {
+      return { sessionType: 'lunch_break', marketStatusJa: '東京昼休み' };
+    }
+    const jpClosed = !jp.isTradingDay;
+    if (us.session === 'REGULAR') {
+      return { sessionType: 'intraday', marketStatusJa: jpClosed ? '米国ザラ場（JP休場）' : '米国ザラ場' };
+    }
+    if (us.session === 'PRE_MARKET') {
+      return { sessionType: 'morning', marketStatusJa: jpClosed ? '米国プレマーケット（JP休場）' : '米国プレマーケット' };
+    }
+    if (us.session === 'AFTER_HOURS') {
+      return { sessionType: 'after_close', marketStatusJa: jpClosed ? '米国時間外（JP休場）' : '米国時間外' };
+    }
+    if (jpClosed && us.isTradingDay) {
+      return { sessionType: 'holiday', marketStatusJa: 'JP休場・米国通常立会前' };
+    }
+    if (jpClosed && !us.isTradingDay) {
+      return { sessionType: 'weekend', marketStatusJa: 'JP・US休場' };
+    }
+  }
   const jst = new Date(now.getTime() + 9 * 3600_000);
   const wd = jst.getUTCDay();           // 0=Sun
   const h = jst.getUTCHours();
@@ -42,8 +69,9 @@ export function resolveSessionJst(now = new Date()): { sessionType: string; mark
 
 export function buildLocalBrief(items: APItem[], ctx: {
   eventNames?: string[]; riskOff?: boolean; missingDataJa?: string[];
+  marketCalendar?: Record<string, MarketCalendarState>;
 }, now = new Date()): LocalBrief {
-  const { sessionType, marketStatusJa } = resolveSessionJst(now);
+  const { sessionType, marketStatusJa } = resolveSessionJst(now, ctx.marketCalendar);
   const events = (ctx.eventNames ?? []).filter(Boolean);
   const p0 = items.filter((i) => i.priorityRank === 'P0');
   const p1 = items.filter((i) => i.priorityRank === 'P1');

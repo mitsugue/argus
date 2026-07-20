@@ -41,6 +41,11 @@ services:
         sync: false
       - key: OPENAI_MODEL
         sync: false
+      # Formal research benchmark blind evaluator.  This model is intentionally
+      # distinct from the ARGUS answer generator; its availability is verified
+      # through the admin capability probe before benchmark execution.
+      - key: ARGUS_OPENAI_MODEL_REFEREE
+        value: gpt-5.4-mini
       - key: GEMINI_JUDGE_MODEL
         sync: false
       - key: AI_JUDGE_ENABLED

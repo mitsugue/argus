@@ -99,6 +99,10 @@ class BudgetAndModeTests(unittest.TestCase):
         self.assertEqual(_dry(existing_budget_usd=0.01)["status"], "budget_blocked")
         self.assertEqual(_dry(providers_configured=False)["status"], "provider_blocked")
 
+    def test_blind_evaluator_must_be_distinct_from_argus_generator(self):
+        self.assertEqual(_dry(evaluator_model="argus-fixed")["status"],
+                         "evaluator_not_independent")
+
     def test_research_mode_is_manual_confirmation_and_scope_only(self):
         st = cost.default_state("RESEARCH_BENCHMARK")
         auto = cost.authorize(st, provider="gemini", purpose="research_benchmark",

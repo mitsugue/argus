@@ -99,6 +99,7 @@ import argus_cost_policy           # v12.3.0: centralized generative-AI executio
 import argus_market_ledger          # v12.3.0: append-only SHO-style market ledger
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
+import argus_sho_phase3             # v12.5.0: deterministic SHO operating sheet/backfill mapping
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -207,21 +208,36 @@ def get_jst_schedule():
 MARKET_OPEN_ET  = (9, 30)
 MARKET_CLOSE_ET = (16, 0)
 
+def _market_calendar_states(now=None):
+    current = now or datetime.now(pytz.utc)
+    if current.tzinfo is None:
+        current = pytz.utc.localize(current)
+    current_utc = current.astimezone(pytz.utc)
+    return {
+        "JP": argus_market_clock.market_session(
+            argus_market_clock.JP_EQUITY, current_utc),
+        "US": argus_market_clock.market_session(
+            argus_market_clock.US_EQUITY, current_utc),
+        "FX": argus_market_clock.market_session(
+            argus_market_clock.FX, current_utc),
+        "CRYPTO": argus_market_clock.market_session(
+            argus_market_clock.CRYPTO, current_utc),
+    }
+
+
 def is_market_open():
     """Check if US market is currently open (regular + pre-market)"""
-    now_et = datetime.now(TZ_ET)
-    if now_et.weekday() >= 5:  # Weekend
-        return False, "closed_weekend"
-    h, m = now_et.hour, now_et.minute
-    if h < 4:
-        return False, "closed"
-    elif h < 9 or (h == 9 and m < 30):
-        return True, "premarket"
-    elif h < 16:
-        return True, "regular"
-    elif h < 20:
-        return True, "afterhours"
-    return False, "closed"
+    state = _market_calendar_states()["US"]
+    label = {
+        "PRE_MARKET": "premarket",
+        "REGULAR": "regular",
+        "AFTER_HOURS": "afterhours",
+        "WEEKEND_CLOSED": "closed_weekend",
+        "HOLIDAY_CLOSED": "closed_holiday",
+        "EMERGENCY_CLOSED": "closed_emergency",
+    }.get(state["session"], "closed")
+    return state["session"] in (
+        "PRE_MARKET", "REGULAR", "AFTER_HOURS"), label
 
 DRY_RUN_MODE = False  # Set True when manual scan during closed market
 
@@ -3550,10 +3566,11 @@ def _jp_market_open(now_jst=None):
     bridge pushes as 'live' — the bridge pushes 24/7 but a Saturday price is the
     Friday close, not a real-time quote (user caught this 2026-06-20)."""
     n = now_jst or datetime.now(TZ_JST)
-    if n.weekday() >= 5:           # Sat/Sun
-        return False
-    hm = n.hour * 60 + n.minute
-    return (9 * 60 <= hm <= 11 * 60 + 30) or (12 * 60 + 30 <= hm <= 15 * 60 + 30)
+    if n.tzinfo is None:
+        n = TZ_JST.localize(n)
+    state = argus_market_clock.market_session(
+        argus_market_clock.JP_EQUITY, n.astimezone(pytz.utc))
+    return state["session"] in ("MORNING_SESSION", "AFTERNOON_SESSION")
 
 def _overlay_pushed(snapshot, market, requested):
     """Copy of a watchlist snapshot with fresh pushed quotes overlaid (and
@@ -3843,10 +3860,11 @@ _EVENT_POSTURE = {
 
 def _us_market_open(now_et=None):
     n = now_et or datetime.now(TZ_ET)
-    if n.weekday() >= 5:
-        return False
-    hm = n.hour * 60 + n.minute
-    return 9 * 60 + 30 <= hm <= 16 * 60
+    if n.tzinfo is None:
+        n = TZ_ET.localize(n)
+    state = argus_market_clock.market_session(
+        argus_market_clock.US_EQUITY, n.astimezone(pytz.utc))
+    return state["session"] == "REGULAR"
 
 def _mover_push_allowed(market):
     """Whether a whole-market MARKET_MOVER for `market` is worth pushing right now.
@@ -7860,6 +7878,13 @@ def _data_quality_console():
                 provider="gemini", model=GEMINI_MODEL_ID,
                 prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
                 tool_mode="grounding"),
+        }
+        _calendar_now = datetime.now(pytz.utc)
+        console["marketCalendar"] = {
+            "asOf": _calendar_now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "sourceOfTruth": "official_exchange_calendar",
+            "providerRole": "auxiliary_only",
+            "markets": _market_calendar_states(_calendar_now),
         }
         console["osintHealth"]["geminiBaseline"] = {
             "baselineType": _bl["baselineType"], "labelJa": _bl["labelJa"],
@@ -14433,6 +14458,17 @@ def _official_events_track():
     missing. Never called from a public GET."""
     _official_events_restore_once()
     now_iso = _ai_now_iso()
+    try:
+        now_utc = datetime.fromisoformat(
+            now_iso.replace("Z", "+00:00")).astimezone(pytz.utc)
+    except (TypeError, ValueError):
+        now_utc = datetime.now(pytz.utc)
+    jp_session = argus_market_clock.market_session(
+        argus_market_clock.JP_EQUITY, now_utc)
+    if not jp_session["isTradingDay"]:
+        return {"status": "expected_skip", "reason": "market_holiday",
+                "updated": 0, "total": len(_OFFICIAL_EVENTS),
+                "asOf": now_iso, "marketCalendar": jp_session}
     updated = 0
     for oid, rec in list(_OFFICIAL_EVENTS.items()):
         try:
@@ -14945,6 +14981,13 @@ _OPENAI_MODEL_ROLES = {
     "referee":  os.environ.get("ARGUS_OPENAI_MODEL_REFEREE")  or _OPENAI_MODEL,
     "rollback": os.environ.get("ARGUS_OPENAI_MODEL_ROLLBACK") or _OPENAI_MODEL,
 }
+# Role-specific models share the configured primary-model price ceiling unless
+# an explicit price is added to _AI_PRICING.  This is deliberately conservative:
+# the benchmark must never bypass the unknown-price gate merely because the
+# blind referee uses a distinct, cheaper model.
+for _role_model in set(_OPENAI_MODEL_ROLES.values()):
+    if _role_model not in _AI_PRICING and _OPENAI_MODEL in _AI_PRICING:
+        _AI_PRICING[_role_model] = dict(_AI_PRICING[_OPENAI_MODEL])
 _OPENAI_SHADOW = {
     "enabled": os.environ.get("ARGUS_OPENAI_SHADOW_ENABLED", "0") == "1",
     "ratePct": int(os.environ.get("ARGUS_OPENAI_SHADOW_SAMPLE_RATE", "10") or 10),
@@ -16912,6 +16955,11 @@ def _market_ledger_tick(now_iso):
 def _dl_resolve_matured(now_iso):
     """成熟成果を同一Outcomeで再解決。cached価格のみ・0値採点なし・冪等。"""
     resolved = 0
+    try:
+        now_utc = datetime.fromisoformat(
+            str(now_iso).replace("Z", "+00:00")).astimezone(pytz.utc)
+    except (TypeError, ValueError):
+        now_utc = datetime.now(pytz.utc)
     for fc in _FORECAST_LEDGER:
         fid = fc.get("id")
         issued_date = str(fc.get("issuedAt") or "")[:10]
@@ -16920,6 +16968,19 @@ def _dl_resolve_matured(now_iso):
         # next_session成熟: 発行日より後の営業日終値が観測できたら解決対象
         if not issued_date or issued_date >= now_iso[:10]:
             continue                      # 成熟前/legacy時刻不明は解決しない
+        market_code = str(fc.get("market") or "").upper()
+        asset_market = (
+            argus_market_clock.JP_EQUITY if market_code == "JP"
+            else argus_market_clock.US_EQUITY if market_code == "US"
+            else argus_market_clock.asset_market(str(fc.get("symbol") or "")))
+        market_closed = (
+            asset_market in (
+                argus_market_clock.JP_EQUITY,
+                argus_market_clock.US_EQUITY)
+            and not argus_market_clock.market_session(
+                asset_market, now_utc)["isTradingDay"])
+        if market_closed:
+            continue                      # 休場日は終値未確定 — retry/採点しない
         existing = next((o for o in _OUTCOME_LEDGER
                          if o.get("forecastId") == fid), None)
         if existing and existing.get("status") == "resolved":
@@ -17042,7 +17103,11 @@ def api_argus_admin_missions_tick():
         provider="gemini", model=GEMINI_MODEL_ID,
         prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
         tool_mode="grounding")
-    jp_holiday = now.weekday() >= 5
+    now_utc = now.astimezone(pytz.utc)
+    calendar_states = _market_calendar_states(now_utc)
+    jp_session = calendar_states["JP"]
+    us_session = calendar_states["US"]
+    jp_holiday = not jp_session["isTradingDay"]
     ledger_tick = _market_ledger_tick(now_iso)
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
     try:
@@ -17072,7 +17137,8 @@ def api_argus_admin_missions_tick():
         pass
     created = argus_scheduler.generate_daily_missions(
         session_date=session_date, now_iso=now_iso,
-        jp_holiday=jp_holiday, us_holiday=now.weekday() in (5, 6),
+        jp_holiday=jp_holiday,
+        us_holiday=not us_session["isTradingDay"],
         existing=_MISSIONS, model_epoch=epoch,
         rubric_version=argus_decision_ledger.RUBRIC_VERSION)
     created += argus_scheduler.generate_periodic_missions(
@@ -17978,8 +18044,20 @@ def api_argus_admin_cost_policy():
 
 @app.route("/api/argus/market-ledger")
 def api_argus_market_ledger_view():
-    view = argus_market_ledger.public_view(_MARKET_LEDGER, _ai_now_iso())
+    now_iso = _ai_now_iso()
+    view = argus_market_ledger.public_view(_MARKET_LEDGER, now_iso)
     view["remoteReadBack"] = dict(_MARKET_LEDGER_REMOTE)
+    calendar = {label: argus_market_clock.market_session(market, datetime.now(pytz.utc))
+                for label, market in (("JP", argus_market_clock.JP_EQUITY),
+                                      ("US", argus_market_clock.US_EQUITY),
+                                      ("FX", argus_market_clock.FX),
+                                      ("CRYPTO", argus_market_clock.CRYPTO))}
+    view.update(argus_sho_phase3.build_phase3(
+        view, calendar,
+        {"jp_current_price": "entitlement_unavailable",
+         "investor_types": ("live" if any(
+             x.get("seriesId") == "flow.foreign" for x in
+             (_MARKET_LEDGER.get("observations") or [])) else "backfill_available")}))
     return jsonify(view)
 
 
@@ -18141,9 +18219,30 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False):
             ledger_summary=ledger.get("summary"), relative=relative,
             eps_change=(ledger.get("valuationSummary") or {}).get("eps5Change"),
             per_change=(ledger.get("valuationSummary") or {}).get("per21ChangeFromPeak"))
-    merged = argus_chart_intelligence.merge_report(_CHART_INTELLIGENCE, report, now_iso)
+    try:
+        _chart_now_utc = datetime.fromisoformat(
+            now_iso.replace("Z", "+00:00")).astimezone(pytz.utc)
+    except (TypeError, ValueError):
+        _chart_now_utc = datetime.now(pytz.utc)
+    _chart_market = (argus_market_clock.JP_EQUITY
+                     if market == "JP" else argus_market_clock.US_EQUITY)
+    _chart_calendar = argus_market_clock.market_session(
+        _chart_market, _chart_now_utc)
+    report["marketCalendar"] = _chart_calendar
+    if not _chart_calendar["isTradingDay"]:
+        report["stateUpdate"] = {
+            "status": "expected_skip", "reason": "market_holiday"}
+        report["persistence"] = {
+            "stateHash": argus_chart_intelligence.state_hash(
+                _CHART_INTELLIGENCE),
+            **_CHART_INTELLIGENCE_REMOTE,
+        }
+        return report
+    merged = argus_chart_intelligence.merge_report(
+        _CHART_INTELLIGENCE, report, now_iso)
     _CHART_INTELLIGENCE.clear()
     _CHART_INTELLIGENCE.update(merged)
+    report["stateUpdate"] = {"status": "updated", "reason": None}
     report["persistence"] = {"stateHash": argus_chart_intelligence.state_hash(
         _CHART_INTELLIGENCE), **_CHART_INTELLIGENCE_REMOTE}
     return report
@@ -18211,6 +18310,95 @@ def api_argus_admin_market_ledger_import():
         return jsonify(result), (200 if result["ok"] else 400)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+def _jquants_paginated(path, params, max_pages=40):
+    """Fetch a bounded J-Quants v2 dataset without exposing auth or raw bodies."""
+    rows, cursor = [], None
+    for _ in range(max_pages):
+        query = dict(params or {})
+        if cursor:
+            query["pagination_key"] = cursor
+        response = requests.get(
+            f"{_JQUANTS_BASE}{path}", headers={"x-api-key": _JQUANTS_API_KEY},
+            params=query, timeout=_DIAG_TIMEOUT)
+        if response.status_code != 200:
+            raise RuntimeError(f"jquants_http_{response.status_code}")
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("jquants_invalid_json")
+        page = body.get("data") or []
+        if not isinstance(page, list):
+            raise RuntimeError("jquants_invalid_schema")
+        rows.extend(x for x in page if isinstance(x, dict))
+        next_cursor = body.get("pagination_key")
+        if not next_cursor or next_cursor == cursor:
+            return rows
+        cursor = str(next_cursor)
+    raise RuntimeError("jquants_pagination_limit")
+
+
+@app.route("/api/argus/admin/market-ledger/jquants-backfill", methods=["POST"])
+def api_argus_admin_market_ledger_jquants_backfill():
+    """Backfill contracted official investor flows; preview is mandatory first.
+
+    The two-market flow series uses the official ``TokyoNagoya`` section.  The
+    endpoint intentionally does not manufacture aggregate credit balances from
+    per-issue share volumes; those remain on the validated admin CSV path.
+    """
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    if not _JQUANTS_API_KEY:
+        return jsonify({"ok": False, "error": "jquants_not_configured_in_runtime"}), 503
+    body = request.get_json(silent=True) or {}
+    now_iso = _ai_now_iso()
+    from_date = str(body.get("from") or
+                    (datetime.now(TZ_JST) - timedelta(days=5 * 366)).strftime("%Y-%m-%d"))
+    to_date = str(body.get("to") or datetime.now(TZ_JST).strftime("%Y-%m-%d"))
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", from_date) or \
+            not re.fullmatch(r"\d{4}-\d{2}-\d{2}", to_date) or from_date > to_date:
+        return jsonify({"ok": False, "error": "invalid_date_range"}), 400
+    dry_run = body.get("dryRun") is not False
+    if not dry_run and body.get("confirm") is not True:
+        return jsonify({"ok": False, "error": "explicit_confirmation_required"}), 400
+    try:
+        raw = _jquants_paginated("/equities/investor-types",
+                                 {"section": "TokyoNagoya", "from": from_date, "to": to_date})
+        candidates = argus_sho_phase3.normalize_jquants_investor_rows(
+            raw, now_iso, "TokyoNagoya")
+        existing = {(x.get("seriesId"), x.get("periodEnd"), x.get("availableFrom"), x.get("value"))
+                    for x in (_MARKET_LEDGER.get("observations") or []) if isinstance(x, dict)}
+        candidates = [x for x in candidates if
+                      (x.get("seriesId"), x.get("periodEnd"), x.get("availableFrom"), x.get("value"))
+                      not in existing]
+        if not candidates:
+            return jsonify({"ok": True, "dryRun": dry_run, "status": "no_changes",
+                            "providerRows": len(raw), "candidateRows": 0,
+                            "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER)})
+        result = argus_market_ledger.import_rows(
+            _MARKET_LEDGER, candidates, now_iso=now_iso, dry_run=dry_run)
+        if result["ok"] and not dry_run:
+            _MARKET_LEDGER.clear()
+            _MARKET_LEDGER.update(result.pop("state"))
+            _journal("market_ledger_jquants_backfill_committed", "market_ledger",
+                     result["importId"],
+                     {"rowCount": len(result["preview"]), "section": "TokyoNagoya",
+                      "from": from_date, "to": to_date,
+                      "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER)},
+                     origin="admin")
+            _osint_persist()
+        else:
+            result.pop("state", None)
+        result.update({"providerRows": len(raw), "candidateRows": len(candidates),
+                       "section": "TokyoNagoya", "from": from_date, "to": to_date,
+                       "unitConversion": "thousand_yen_to_JPY",
+                       "publicationPolicy": "official_pubdate_18:00_JST"})
+        return jsonify(result), (200 if result["ok"] else 400)
+    except (requests.RequestException, RuntimeError, ValueError) as exc:
+        error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        return jsonify({"ok": False, "error": "jquants_backfill_failed",
+                        "errorClass": error_class[:80]}), 502
 
 
 @app.route("/api/argus/osint/canary")

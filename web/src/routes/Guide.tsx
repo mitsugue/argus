@@ -42,6 +42,8 @@ const PAGE_GUIDE: { page: string; descJa: string }[] = [
 ];
 
 const CAPABILITIES: { area: string; descJa: string }[] = [
+  { area: 'SHO Daily Operating Sheet / Source of Truth (v12.5)',
+    descJa: 'Market Contextを16項目の確認順に整理し、Daily Changes(最大5)、Anomaly Desk、判断変更条件(最大3)、SHO Rule Cardsを決定論で表示。正本: JP日足=J-Quants、JP開示=TDnet/EDINET/公式IR、US価格=moomoo US/Twelve Data、FX=Twelve Data/FRED、crypto=CoinGecko/Coinbase、投資主体別=J-Quants TokyoNagoya。JP現在値のmoomooは entitlement_unavailable/provider_permission_denied のため前営業日正式値へfallback。二市場合計信用残、日経PER/PBR、騰落銘柄数は公式値のadmin CSVが現在の入力経路。全系列はperiodEndとpublishedAt/availableFromを分離し、公表前利用・欠損の0置換・自動AI・自動売買を禁止。詳細なPrimary/Fallback/Frequency/Delay/License/Current status表はMarket ContextのSOURCE OF TRUTH MATRIXに常設。' },
   { area: 'ARGUS Pro RC ステータス (v12.0)',
     descJa: '運用ステータス(マーケティングではなく事実)。★稼働中の主要モジュール: 今日の作戦(Session Brief)/見る順番(Action Priority)/重要イベント(事前・事後の一元表示)/ポジション計画(Entry・Exit Planning)/シナリオ(条件付き分岐・帯のみ)/需給(S〜E・改善中だが重いは別枠)/大口・Flow推定/機関インテリジェンス(C.A.O.S.)/Portfolio Strategy・FIRE Core(投資信託=長期コア資産)/判断の答え合わせ(Decision Quality・Learning)/通知(変化のみ)/Backup(保存・復元・復元ドリル)/Data Quality(今日の判断を信じてよいか)/AI Review Pack(GPT Pro等への相談パック・コピーのみ)。★既知の制約: ①JPリアルタイム/フル板APIはmoomoo側メンテナンスのため利用不可=ARGUS側で意図的に無効(**moomooサポート確認済み**: メンテナンスがOpenD APIのsnapshot/ORDER_BOOKに影響。フル板はアプリ内契約済みで追加申込は現時点で不要・復旧時期は未定・復旧後はOpenDの再起動・再ログインが必要。JP snapshot ret=0までUS-only+JP代替データ(J-Quants/Yahoo・夜間delayedが正常)を維持。詳細はData QualityのJP READINESS) ②逆日歩は未取得 ③銘柄別空売り比率は未取込 ④投信の評価額は日次NAVまたは手動(古い場合はstale表示) ⑤学習ダッシュボードは履歴が貯まるまで傾向を断定しない ⑥FIRE整合は帯のみ(達成見込みの精密計算はしない) ⑦証券会社ログイン・自動売買・注文機能は存在しない ⑧外部AIレビューはコピーのみ(自動送信なし) ⑨データが古い日は判断の確度を割り引く(Data Qualityページで確認)。★プライバシー: 保有・投信・記録・戦略の詳細は端末内+暗号化バックアップのみ。公開APIはredacted(3層テスト+本番smokeで漏洩検査)。★確認場所: バックアップ=Backupページ/データ鮮度=Data Qualityページ/AI相談=Todayの「AIに相談」。' },
   { area: 'アクションレベル(7段階・最重要)',
@@ -121,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.5.0', 'SHO Production Phase 3 — 市場別公式カレンダー、J-Quants投資主体別backfill、16項目Daily Operating Sheet、Daily Changes、Anomaly Desk、判断変更条件、SHO経験則分類とfuture-leakage禁止walk-forward基盤、Source of Truth Matrixを追加。欠損値を捏造せず自動AI/自動売買は0。'],
   ['v12.4.0', 'Chart Intelligence + SHO Method Phase 2 — OHLCVから移動平均・Bollinger・一目・RSI・MACD・ATR、支持抵抗帯、相対強弱、テクニカル転換点、価格反応異常、最大5行批評を決定論的に計算。Market Context／Asset Desk／Todayへ統合し、自動生成AIは0のまま維持。'],
   ['v12.3.3', 'Formal Gemini 2X Benchmark Infrastructure — calibration 6件とone-shot holdout 12件、盲検評価、費用上限、確認hash、append-only resultを実装。未実行時はnot_run/provider_blocked、twoXClaimAllowed=falseを維持。'],
   ['v12.3.2', 'EC2 Primary Scheduler — EC2 systemd timerを30分mission tickの正本、GitHub Actionsをbackup、manualを診断専用へ変更。同一UTC windowはbackend leaseで重複抑止し、Soakは単一scheduler source遅延をwarningとして分離。'],

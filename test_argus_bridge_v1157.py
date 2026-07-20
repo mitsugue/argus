@@ -8,6 +8,7 @@ import scanner
 
 
 def _load_bridge(monkeypatch, disable_jp=False):
+    monkeypatch.delenv("JP_ENTITLEMENT_BACKOFF_SEC", raising=False)
     if disable_jp:
         monkeypatch.setenv("ARGUS_DISABLE_JP_QUOTES", "1")
     else:
@@ -47,6 +48,7 @@ def _us_ok_df():
 
 def test_jp_permission_failure_does_not_block_us(monkeypatch):
     m = _load_bridge(monkeypatch)
+    assert m.JP_ENTITLEMENT_BACKOFF_SEC == 7 * 24 * 3600
     qc = _FakeQC({"US": _us_ok_df(), "JP": (-1, "No permission to get quotes")})
     state = dict(m.STATE)
     stocks, jp_tried = m.fetch_market_quotes(
@@ -55,7 +57,7 @@ def test_jp_permission_failure_does_not_block_us(monkeypatch):
     assert jp_tried is True
     assert [s["symbol"] for s in stocks] == ["NVDA"]        # US pushed normally
     assert state["jpLastErrorClass"] == "permission"
-    assert state["jpBlockUntil"] >= 1000.0 + 300            # backoff armed
+    assert state["jpBlockUntil"] == 1000.0 + 7 * 24 * 3600  # weekly probe armed
     # next cycle inside the backoff window: JP is NOT even attempted
     qc2 = _FakeQC({"US": _us_ok_df(), "JP": (-1, "No permission to get quotes")})
     stocks2, jp_tried2 = m.fetch_market_quotes(
@@ -69,7 +71,10 @@ def test_jp_permission_failure_does_not_block_us(monkeypatch):
 def test_jp_permission_log_backoff_no_spam(monkeypatch, capsys):
     m = _load_bridge(monkeypatch)
     state = dict(m.STATE)
-    for t in (1000.0, 3000.0):    # both after block expiry? no — force expiry between
+    # Start beyond the weekly dedup interval so this isolated fresh state emits
+    # one initial diagnostic; the second forced entitlement probe remains inside
+    # that same logging window.
+    for t in (700000.0, 702000.0):
         state["jpBlockUntil"] = 0.0
         qc = _FakeQC({"US": _us_ok_df(), "JP": (-1, "No permission to get quotes")})
         m.fetch_market_quotes(qc, {"US": [], "JP": ["JP.8058"]}, state=state,
