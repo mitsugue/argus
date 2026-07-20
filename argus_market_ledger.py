@@ -32,19 +32,37 @@ SERIES = {
     "breadth.ratio10": ("percent", "10日騰落レシオ", "derived", "derived"),
     "breadth.ratio15": ("percent", "15日騰落レシオ", "derived", "derived"),
     "breadth.ratio25": ("percent", "25日騰落レシオ", "derived", "derived"),
+    "breadth.prime.advancers": ("count", "Prime値上がり銘柄数", "jquants", "derived"),
+    "breadth.prime.decliners": ("count", "Prime値下がり銘柄数", "jquants", "derived"),
+    "breadth.prime.unchanged": ("count", "Prime変わらず銘柄数", "jquants", "derived"),
+    "breadth.prime.unavailable": ("count", "Prime比較不能銘柄数", "jquants", "derived"),
+    "breadth.all.advancers": ("count", "全市場値上がり銘柄数", "jquants", "derived"),
+    "breadth.all.decliners": ("count", "全市場値下がり銘柄数", "jquants", "derived"),
+    "breadth.all.unchanged": ("count", "全市場変わらず銘柄数", "jquants", "derived"),
+    "breadth.all.unavailable": ("count", "全市場比較不能銘柄数", "jquants", "derived"),
+    "breadth.prime.ratio6": ("percent", "Prime 6日騰落レシオ", "derived", "derived"),
+    "breadth.prime.ratio10": ("percent", "Prime 10日騰落レシオ", "derived", "derived"),
+    "breadth.prime.ratio15": ("percent", "Prime 15日騰落レシオ", "derived", "derived"),
+    "breadth.prime.ratio25": ("percent", "Prime 25日騰落レシオ", "derived", "derived"),
+    "breadth.all.ratio6": ("percent", "全市場6日騰落レシオ", "derived", "derived"),
+    "breadth.all.ratio10": ("percent", "全市場10日騰落レシオ", "derived", "derived"),
+    "breadth.all.ratio15": ("percent", "全市場15日騰落レシオ", "derived", "derived"),
+    "breadth.all.ratio25": ("percent", "全市場25日騰落レシオ", "derived", "derived"),
 }
+
+BREADTH_PREFIXES = ("breadth", "breadth.prime", "breadth.all")
 
 
 def empty_state() -> Dict[str, Any]:
     return {"schemaVersion": SCHEMA_VERSION, "observations": [], "derivedMetrics": [],
-            "turningPoints": [], "imports": [], "rolledBackImports": [],
+            "turningPoints": [], "backtests": [], "imports": [], "rolledBackImports": [],
             "lastUpdatedAt": None, "methodVersion": METHOD_VERSION}
 
 
 def normalize_state(state: Any) -> Dict[str, Any]:
     src = state if isinstance(state, dict) else {}
     out = empty_state()
-    for k in ("observations", "derivedMetrics", "turningPoints", "imports",
+    for k in ("observations", "derivedMetrics", "turningPoints", "backtests", "imports",
               "rolledBackImports"):
         out[k] = [x for x in (src.get(k) or []) if isinstance(x, dict)] if k != "rolledBackImports" else list(src.get(k) or [])
     out["lastUpdatedAt"] = src.get("lastUpdatedAt")
@@ -59,7 +77,8 @@ def _hash(obj: Any, n: int = 20) -> str:
 def state_hash(state: Dict[str, Any]) -> str:
     st = normalize_state(state)
     return _hash({k: st[k] for k in ("observations", "derivedMetrics",
-                                     "turningPoints", "imports", "rolledBackImports")}, 32)
+                                     "turningPoints", "backtests", "imports",
+                                     "rolledBackImports")}, 32)
 
 
 def _iso_ok(value: Any) -> bool:
@@ -81,6 +100,16 @@ def _number(value: Any) -> Optional[float]:
 def append_observation(state: Dict[str, Any], candidate: Dict[str, Any],
                        *, now_iso: str, import_id: str = "") -> Tuple[Dict[str, Any], Dict[str, Any]]:
     st = normalize_state(state)
+    return _append_observation_in_place(st, candidate, now_iso=now_iso,
+                                        import_id=import_id)
+
+
+def _append_observation_in_place(st: Dict[str, Any], candidate: Dict[str, Any],
+                                 *, now_iso: str,
+                                 import_id: str = "",
+                                 prior_index: Optional[Dict[Tuple[str, str], List[Dict[str, Any]]]] = None
+                                 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Validated append for an already-normalized private working copy."""
     sid = str(candidate.get("seriesId") or "")
     if sid not in SERIES:
         raise ValueError("unknown_series")
@@ -105,9 +134,14 @@ def append_observation(state: Dict[str, Any], candidate: Dict[str, Any],
         raise ValueError("invalid_published_at")
     if value is None and status not in ("missing", "delayed"):
         raise ValueError("missing_value_status")
-    prior = [x for x in st["observations"] if x.get("seriesId") == sid
-             and x.get("periodEnd") == period
-             and x.get("importId") not in set(st["rolledBackImports"])]
+    rolled = set(st["rolledBackImports"])
+    if prior_index is None:
+        prior = [x for x in st["observations"] if x.get("seriesId") == sid
+                 and x.get("periodEnd") == period
+                 and x.get("importId") not in rolled]
+    else:
+        prior = [x for x in prior_index.get((sid, period), [])
+                 if x.get("importId") not in rolled]
     if prior and any(x.get("value") == value and x.get("availableFrom") == available
                      and x.get("unit") == unit for x in prior):
         raise ValueError("duplicate_observation")
@@ -123,6 +157,8 @@ def append_observation(state: Dict[str, Any], candidate: Dict[str, Any],
             "metadata": dict(candidate.get("metadata") or {}), "importId": import_id or None}
     body["id"] = "mo-" + _hash(body)
     st["observations"].append(body)
+    if prior_index is not None:
+        prior_index.setdefault((sid, period), []).append(body)
     st["lastUpdatedAt"] = now_iso
     return st, body
 
@@ -188,19 +224,22 @@ def derived_history(state: Dict[str, Any], as_of: str) -> Dict[str, List[Dict[st
     for nk, pbr in pbr_pairs:
         bps = None if not pbr.get("value") or pbr["value"] <= 0 or nk.get("value") is None else round(nk["value"] / pbr["value"], 2)
         add(_metric("valuation.bps", as_of, bps, "JPY", [nk, pbr]))
-    adv, dec = by.get("breadth.advancers") or [], by.get("breadth.decliners") or []
-    pairs = {x["periodEnd"]: x for x in dec}
-    joined = [(x, pairs[x["periodEnd"]]) for x in adv if x["periodEnd"] in pairs]
-    for days in (6, 10, 15, 25):
-        for end in range(days, len(joined) + 1):
-            sub = joined[end - days:end]
-            values_ok = all(a.get("value") is not None and d.get("value") is not None
-                            for a, d in sub)
-            val = (advance_decline_ratio([x[0]["value"] for x in sub],
-                                         [x[1]["value"] for x in sub])
-                   if values_ok else None)
-            add(_metric(f"breadth.ratio{days}", as_of, val, "percent",
-                        [z for pair in sub for z in pair]))
+    for prefix in BREADTH_PREFIXES:
+        adv = by.get(f"{prefix}.advancers") or []
+        dec = by.get(f"{prefix}.decliners") or []
+        dec_by_date = {x["periodEnd"]: x for x in dec}
+        joined = [(x, dec_by_date[x["periodEnd"]]) for x in adv
+                  if x["periodEnd"] in dec_by_date]
+        for days in (6, 10, 15, 25):
+            for end in range(days, len(joined) + 1):
+                sub = joined[end - days:end]
+                values_ok = all(a.get("value") is not None and d.get("value") is not None
+                                for a, d in sub)
+                val = (advance_decline_ratio([x[0]["value"] for x in sub],
+                                             [x[1]["value"] for x in sub])
+                       if values_ok else None)
+                add(_metric(f"{prefix}.ratio{days}", as_of, val, "percent",
+                            [z for pair in sub for z in pair], "sho_heuristic"))
     for rows in out.values():
         rows.sort(key=lambda x: str(x.get("asOf")))
     return out
@@ -253,59 +292,71 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                                 "derived", detected_at, cur["availableFrom"] >= detected_at[:10]))
     metric_history = derived_history(state, as_of)
     observation_index = {x["id"]: x for x in effective_observations(state, as_of)}
-    b6_rows = {x["asOf"]: x for x in metric_history.get("breadth.ratio6", [])
-               if x.get("value") is not None}
-    b25_rows = {x["asOf"]: x for x in metric_history.get("breadth.ratio25", [])
-                if x.get("value") is not None}
-    common = sorted(set(b6_rows) & set(b25_rows))
-    for prev_date, cur_date in zip(common, common[1:]):
-        prev6, prev25 = b6_rows[prev_date], b25_rows[prev_date]
-        cur6, cur25 = b6_rows[cur_date], b25_rows[cur_date]
-        direction = ("short_above_medium" if prev6["value"] < prev25["value"]
-                     and cur6["value"] >= cur25["value"] else
-                     "short_below_medium" if prev6["value"] >= prev25["value"]
-                     and cur6["value"] < cur25["value"] else "")
-        if direction:
-            inputs = [x for x in effective_observations(state, as_of)
-                      if x.get("id") in set(cur6["inputObservationIds"]
-                                            + cur25["inputObservationIds"])]
-            available = max([str(x.get("availableFrom") or "") for x in inputs]
-                            or [cur_date])
-            points.append(_turn(
-                "BREADTH_TURN", cur_date, available, inputs, direction, "info",
-                [f"6日騰落が25日騰落を{'上抜け' if direction == 'short_above_medium' else '下抜け'}"],
-                "experimental", detected_at, available >= detected_at[:10]))
-    breadth_by_date: Dict[str, Dict[int, Dict[str, Any]]] = {}
-    for days in (6, 10, 15, 25):
-        for row in metric_history.get(f"breadth.ratio{days}", []):
-            if row.get("value") is not None:
-                breadth_by_date.setdefault(row["asOf"], {})[days] = row
-    for date, rows in sorted(breadth_by_date.items()):
-        if len(rows) == 4 and all(rows[d]["value"] > 120 for d in (6, 10, 15, 25)):
-            ids = {oid for row in rows.values()
-                   for oid in row.get("inputObservationIds", [])}
-            inputs = [observation_index[oid] for oid in sorted(ids)
-                      if oid in observation_index]
-            available = max([str(x.get("availableFrom") or "") for x in inputs]
-                            or [date])
-            points.append(_turn("BREADTH_TURN", date, available, inputs, "all_overheated",
-                                "watch", ["6/10/15/25日騰落がすべて120超"],
-                                "experimental", detected_at,
-                                available >= detected_at[:10]))
-    b6_list = metric_history.get("breadth.ratio6", [])
-    for prev, cur in zip(b6_list, b6_list[1:]):
-        if prev.get("value") is not None and cur.get("value") is not None and \
-                prev["value"] - cur["value"] >= BREADTH_SHARP_DROP_POINTS:
-            inputs = [observation_index[oid]
-                      for oid in cur.get("inputObservationIds", [])
-                      if oid in observation_index]
-            available = max([str(x.get("availableFrom") or "") for x in inputs]
-                            or [cur["asOf"]])
-            points.append(_turn("BREADTH_TURN", cur["asOf"], available, inputs,
-                                "short_sharp_drop", "watch",
-                                [f"6日騰落が前回から{prev['value'] - cur['value']:.2f}pt低下"],
-                                "experimental", detected_at,
-                                available >= detected_at[:10]))
+    for prefix in BREADTH_PREFIXES:
+        universe = prefix.split(".")[-1] if "." in prefix else "legacy"
+        b6_rows = {x["asOf"]: x for x in metric_history.get(f"{prefix}.ratio6", [])
+                   if x.get("value") is not None}
+        b25_rows = {x["asOf"]: x for x in metric_history.get(f"{prefix}.ratio25", [])
+                    if x.get("value") is not None}
+        common = sorted(set(b6_rows) & set(b25_rows))
+        for prev_date, cur_date in zip(common, common[1:]):
+            prev6, prev25 = b6_rows[prev_date], b25_rows[prev_date]
+            cur6, cur25 = b6_rows[cur_date], b25_rows[cur_date]
+            direction = ("short_above_medium" if prev6["value"] < prev25["value"]
+                         and cur6["value"] >= cur25["value"] else
+                         "short_below_medium" if prev6["value"] >= prev25["value"]
+                         and cur6["value"] < cur25["value"] else "")
+            if direction:
+                inputs = [x for x in effective_observations(state, as_of)
+                          if x.get("id") in set(cur6["inputObservationIds"]
+                                                + cur25["inputObservationIds"])]
+                available = max([str(x.get("availableFrom") or "") for x in inputs]
+                                or [cur_date])
+                direction_value = (direction if universe == "legacy"
+                                   else f"{universe}:{direction}")
+                points.append(_turn(
+                    "BREADTH_TURN", cur_date, available, inputs,
+                    direction_value, "info",
+                    [f"{universe} 6日騰落が25日騰落を"
+                     f"{'上抜け' if direction == 'short_above_medium' else '下抜け'}"],
+                    "sho_heuristic", detected_at, available >= detected_at[:10]))
+        breadth_by_date: Dict[str, Dict[int, Dict[str, Any]]] = {}
+        for days in (6, 10, 15, 25):
+            for row in metric_history.get(f"{prefix}.ratio{days}", []):
+                if row.get("value") is not None:
+                    breadth_by_date.setdefault(row["asOf"], {})[days] = row
+        for date, rows in sorted(breadth_by_date.items()):
+            if len(rows) == 4 and all(rows[d]["value"] > 120 for d in (6, 10, 15, 25)):
+                ids = {oid for row in rows.values()
+                       for oid in row.get("inputObservationIds", [])}
+                inputs = [observation_index[oid] for oid in sorted(ids)
+                          if oid in observation_index]
+                available = max([str(x.get("availableFrom") or "") for x in inputs]
+                                or [date])
+                direction_value = ("all_overheated" if universe == "legacy"
+                                   else f"{universe}:all_overheated")
+                points.append(_turn("BREADTH_TURN", date, available, inputs,
+                                    direction_value, "watch",
+                                    [f"{universe} 6/10/15/25日騰落がすべて120超"],
+                                    "sho_heuristic", detected_at,
+                                    available >= detected_at[:10]))
+        b6_list = metric_history.get(f"{prefix}.ratio6", [])
+        for prev, cur in zip(b6_list, b6_list[1:]):
+            if prev.get("value") is not None and cur.get("value") is not None and \
+                    prev["value"] - cur["value"] >= BREADTH_SHARP_DROP_POINTS:
+                inputs = [observation_index[oid]
+                          for oid in cur.get("inputObservationIds", [])
+                          if oid in observation_index]
+                available = max([str(x.get("availableFrom") or "") for x in inputs]
+                                or [cur["asOf"]])
+                direction_value = ("short_sharp_drop" if universe == "legacy"
+                                   else f"{universe}:short_sharp_drop")
+                points.append(_turn("BREADTH_TURN", cur["asOf"], available, inputs,
+                                    direction_value, "watch",
+                                    [f"{universe} 6日騰落が前回から"
+                                     f"{prev['value'] - cur['value']:.2f}pt低下"],
+                                    "sho_heuristic", detected_at,
+                                    available >= detected_at[:10]))
     # Rollover needs an EPS series, not a single current calculation. Preserve honesty
     # until enough daily valuation observations exist.
     vals = by.get("valuation.nikkei") or []
@@ -359,9 +410,15 @@ def import_rows(state: Dict[str, Any], rows: List[Dict[str, Any]], *, now_iso: s
     work = normalize_state(state)
     import_id = "mi-" + _hash({"at": now_iso, "rows": rows})
     preview, errors = [], []
+    prior_index: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    for item in work["observations"]:
+        prior_index.setdefault((str(item.get("seriesId")),
+                                str(item.get("periodEnd"))), []).append(item)
     for idx, row in enumerate(rows):
         try:
-            work, obs = append_observation(work, row, now_iso=now_iso, import_id=import_id)
+            work, obs = _append_observation_in_place(
+                work, row, now_iso=now_iso, import_id=import_id,
+                prior_index=prior_index)
             preview.append(obs)
         except ValueError as exc:
             errors.append({"row": idx + 2, "error": str(exc)})
@@ -512,6 +569,9 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     per21_peak = max([x["value"] for x in per21_rows if x.get("value") is not None]
                      or [None])
     per21_current = (per21_rows[-1].get("value") if per21_rows else None)
+    breadth25 = mv("breadth.prime.ratio25")
+    if breadth25 is None:
+        breadth25 = mv("breadth.ratio25")
     summary = {
         "shortFuel": "UNKNOWN" if short.get("latestValue") is None else "HIGH" if short["latestValue"] >= CREDIT_THRESHOLD_YEN else "LOW",
         "creditBuyingPressure": "UNKNOWN" if long.get("latestValue") is None else "HIGH" if (mv("credit.ratio") or 0) >= 4 else "NORMAL",
@@ -521,7 +581,7 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
                           "HIGH_VALUATION_BAND" if (next((x.get("latestValue") for x in table
                                                           if x["seriesId"] == "valuation.per"), None) or 0) >= 18
                           else "NORMAL"),
-        "breadth": "UNKNOWN" if mv("breadth.ratio25") is None else "OVERHEAT_CANDIDATE" if mv("breadth.ratio25") > 120 else "OVERSOLD_CANDIDATE" if mv("breadth.ratio25") < 80 else "NEUTRAL",
+        "breadth": "UNKNOWN" if breadth25 is None else "OVERHEAT_CANDIDATE" if breadth25 > 120 else "OVERSOLD_CANDIDATE" if breadth25 < 80 else "NEUTRAL",
     }
     return {"schemaVersion": SCHEMA_VERSION, "asOf": now_iso,
             "summary": summary, "table": table,
@@ -538,6 +598,7 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
             "derivedMetrics": list(latest_metrics.values()),
             "turningPoints": [{**x, "subsequentOutcome": "not_evaluated"}
                                for x in st["turningPoints"][-200:]],
+            "backtests": st["backtests"][-20:],
             "observationCount": len(st["observations"]),
             "stateHash": state_hash(st),
             "sourcePolicy": {sid: {"acquisition": d[2], "sourceKind": d[3]}

@@ -173,7 +173,10 @@ def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
             "previousSoakSummary": {"soakId": persisted.get("soakId"),
                                     "buildSha": p_sha or "unknown",
                                     "startedAt": persisted.get("startedAt"),
-                                    "inherited": False},
+                                    "inherited": False,
+                                    "status": "superseded",
+                                    "reason": "foundation_completion_release",
+                                    "supersededBy": current_build_sha},
             "ownerReadableJa": ("build SHAが異なる/不明 — 旧soak時計を継承しない"
                                 "(build-scoped soak)")}
 

@@ -26,6 +26,7 @@ APPROVED_CALL_SITES = {
     "_gemini_osint",            # OSINTスカウト(grounding)
     "_translate_headlines_ja",  # 翻訳fallback(gemini flash)
     "_ai_capability_probe",     # v12.2.0 モデル能力プローブ(admin)
+    "_gemini_capability_probe", # v12.6.0 formal benchmark preflight(admin)
     "_formal_blind_evaluate",  # v12.3.2 手動限定・匿名固定rubric評価
 }
 
@@ -54,11 +55,13 @@ def ai_execution_result(*, provider: str, model: str, role: str, mode: str,
                         cache_hit: bool = False,
                         fallback_used: bool = False,
                         response_id: Optional[str] = None,
+                        response_model: Optional[str] = None,
                         failure_reason_redacted: Optional[str] = None) -> Dict[str, Any]:
     st = status if status in AI_EXEC_STATUSES else "failed"
     u = usage or {}
     return {
-        "provider": provider, "model": model, "role": role, "mode": mode,
+        "provider": provider, "model": model, "requestedModel": model,
+        "responseModel": response_model, "role": role, "mode": mode,
         "status": st, "responseId": response_id,
         "startedAt": started_at, "completedAt": completed_at,
         "promptVersion": prompt_version,

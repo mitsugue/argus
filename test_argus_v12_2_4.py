@@ -68,7 +68,7 @@ def test_durable_state_status_exposed():
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/data-quality").get_json() or {}
         ds = d.get("durableState") or {}
-        assert ds.get("schemaVersion") == "argus-durable-v2"
+        assert ds.get("schemaVersion") == "argus-durable-v3"
         assert "integrityStatus" in ds
 
 

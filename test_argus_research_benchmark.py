@@ -330,19 +330,35 @@ class RouteTests(unittest.TestCase):
         scanner._COST_POLICY.clear()
         scanner._COST_POLICY.update(cost.default_state("RESEARCH_BENCHMARK"))
 
-        def answer(*args, **kwargs):
+        def answer(provider, requested, response):
             return ({"claims": [{"titleJa": "source", "url": "https://example.test/a",
                                   "publishedAt": "2025-01-01T00:00:00Z",
-                                  "sourceName": "official_release"}]}, "ok")
+                                  "sourceName": "official_release"}],
+                     "_providerMeta": {
+                         "provider": provider, "requestedModel": requested,
+                         "responseModel": response,
+                         "usage": {"inputTokens": 10, "outputTokens": 10}}}, "ok")
+
+        def gemini_answer(*args, **kwargs):
+            return answer("gemini", scanner._GEMINI_JUDGE_MODEL,
+                          "gemini-3.1-pro-preview-202607")
+
+        def gpt_answer(*args, **kwargs):
+            return answer("openai", scanner._OPENAI_MODEL_ROLES["standard"],
+                          "gpt-5.6-sol-2026-07-01")
 
         def evaluate(case, benchmark_id, claims):
             order = bench.blind_order(benchmark_id, case["caseId"])
             return ({label: _axes(80 if provider == "argus" else 60)
-                     for label, provider in order.items()}, "ok")
+                     for label, provider in order.items()}, "ok",
+                    {"provider": "openai",
+                     "requestedModel": scanner._OPENAI_MODEL_ROLES["referee"],
+                     "responseModel": "gpt-5.6-terra-2026-07-01",
+                     "usage": {"inputTokens": 10, "outputTokens": 10}})
 
         try:
-            with mock.patch.object(scanner, "_gemini_osint", side_effect=answer), \
-                    mock.patch.object(scanner, "_gpt_osint", side_effect=answer), \
+            with mock.patch.object(scanner, "_gemini_osint", side_effect=gemini_answer), \
+                    mock.patch.object(scanner, "_gpt_osint", side_effect=gpt_answer), \
                     mock.patch.object(scanner, "_formal_blind_evaluate",
                                       side_effect=evaluate), \
                     mock.patch.object(scanner, "_osint_persist"), \

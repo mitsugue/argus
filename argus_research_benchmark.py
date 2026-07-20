@@ -450,7 +450,15 @@ def public_status(state: Dict[str, Any]) -> Dict[str, Any]:
             "benchmarkDate": (latest or {}).get("completedAt"),
             "researchEpoch": (latest or {}).get("researchEpoch"),
             "geminiModel": ((latest or {}).get("modelIds") or {}).get("gemini"),
+            "argusModel": ((latest or {}).get("modelIds") or {}).get("argus"),
+            "refereeModel": ((latest or {}).get("modelIds") or {}).get("evaluator"),
+            "modelIds": deepcopy((latest or {}).get("modelIds") or {}),
             "argusVersion": ((latest or {}).get("modelIds") or {}).get("argusVersion"),
+            "pricingVersion": ((latest or {}).get("providerSettings") or {}).get(
+                "pricingVersion"),
+            "costStatus": ((latest or {}).get("providerSettings") or {}).get(
+                "costStatus"),
+            "calibrationCaseCount": (latest or {}).get("calibrationCaseCount", 0),
             "holdoutCaseCount": (latest or {}).get("holdoutCaseCount", 0),
             "geminiScore": (latest or {}).get("geminiScore"),
             "argusScore": (latest or {}).get("argusScore"),
