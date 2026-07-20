@@ -11,6 +11,7 @@ on:
         options:
           - benchmark
           - jpx_credit_import
+          - provider_probe
 
 permissions:
   contents: read
@@ -99,3 +100,59 @@ jobs:
             credit: [.table[] | select(.seriesId == "credit.short_balance" or .seriesId == "credit.long_balance") |
               {seriesId, periodEnd, latestValue, previousChange, fourPeriodDirection, thresholdDistance, thresholdStreak}],
             turningPointCount: (.turningPoints | length)}' "$ledger_response"
+
+  provider-probe:
+    if: inputs.operation == 'provider_probe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe approved OpenAI models and restore deterministic mode
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ARGUS_ADMIN_TOKEN:-}" ]; then
+            echo "ARGUS_ADMIN_TOKEN is not configured" >&2
+            exit 1
+          fi
+
+          backend="https://argus-backend-3j2m.onrender.com"
+          response="$RUNNER_TEMP/openai-model-probe.json"
+          restore_response="$RUNNER_TEMP/cost-policy-restore.json"
+
+          restore_deterministic() {
+            curl --silent --show-error --fail-with-body --max-time 180 \
+              --output "$restore_response" --request POST \
+              --header 'Content-Type: application/json' \
+              --header "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              --data '{"confirm":true,"mode":"DETERMINISTIC"}' \
+              "$backend/api/argus/admin/cost-policy" >/dev/null
+          }
+          trap restore_deterministic EXIT
+
+          curl --silent --show-error --fail-with-body --max-time 180 \
+            --request POST --header 'Content-Type: application/json' \
+            --header "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            --data '{"confirm":true,"mode":"MANUAL"}' \
+            "$backend/api/argus/admin/cost-policy" \
+            | jq -e '.ok == true and .mode == "MANUAL"' >/dev/null
+
+          curl --silent --show-error --fail-with-body --max-time 180 \
+            --output "$response" --request POST \
+            --header 'Content-Type: application/json' \
+            --header "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            --data '{"models":["gpt-5.6-sol","gpt-5.6-terra"],"confirm":true,"reason":"Approved pre-benchmark model availability probe; no holdout consumption"}' \
+            "$backend/api/argus/admin/ai/capability-probe"
+          jq -e '.ok == true and (.results | length) == 2 and
+            all(.results[]; .accessible == true and .responsesSupported == true and .usageReturned == true and .errorClass == null)' \
+            "$response" >/dev/null
+          jq '{ok, provider, estimatedCostUsdPerModel,
+            results: [.results[] | {model, accessible, responsesSupported,
+              structuredOutputsSupported, webSearchSupported, usageReturned, errorClass}]}' \
+            "$response"
+
+          restore_deterministic
+          trap - EXIT
+          jq -e '.ok == true and .mode == "DETERMINISTIC"' "$restore_response" >/dev/null
+          jq '{ok, mode, automaticAiEnabled, todayRuns, todayEstimatedCostUsd}' "$restore_response"
