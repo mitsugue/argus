@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Formal Gemini 2X benchmark contract for ARGUS v12.3.2.
+"""Formal Gemini 2X benchmark contract for ARGUS v12.3.3.
 
 Pure/stdlib-only.  This module never performs network I/O.  It freezes the
 dataset and rubric, calculates a conservative budget, blinds answer order,
@@ -242,6 +242,7 @@ def default_state() -> Dict[str, Any]:
     return {"schemaVersion": SCHEMA_VERSION, "mode": DEFAULT_MODE,
             "status": "not_run", "datasetHash": DATASET_HASH,
             "rubricVersion": RUBRIC_VERSION, "dryRun": None,
+            "executionCount": 0, "firstStartedAt": None,
             "runningBenchmarkId": None, "holdoutConsumedBy": None,
             "results": [], "lastCompletedAt": None}
 
@@ -252,6 +253,11 @@ def normalize_state(value: Any) -> Dict[str, Any]:
     out["mode"] = MODE if src.get("mode") == MODE else DEFAULT_MODE
     out["status"] = str(src.get("status") or "not_run")[:40]
     out["dryRun"] = deepcopy(src.get("dryRun")) if isinstance(src.get("dryRun"), dict) else None
+    try:
+        out["executionCount"] = max(0, int(src.get("executionCount") or 0))
+    except (TypeError, ValueError):
+        out["executionCount"] = 0
+    out["firstStartedAt"] = src.get("firstStartedAt")
     out["runningBenchmarkId"] = src.get("runningBenchmarkId")
     out["holdoutConsumedBy"] = src.get("holdoutConsumedBy")
     out["results"] = [deepcopy(r) for r in (src.get("results") or [])
@@ -274,9 +280,13 @@ def begin(state: Dict[str, Any], *, dry_run: Dict[str, Any], benchmark_id: str,
         return {"allowed": False, "status": "dry_run_hash_mismatch", "state": st}
     if st.get("runningBenchmarkId"):
         return {"allowed": False, "status": "already_running", "state": st}
+    if int(st.get("executionCount") or 0) >= MAX_EXECUTIONS:
+        return {"allowed": False, "status": "execution_limit_reached", "state": st}
     if st.get("holdoutConsumedBy"):
         return {"allowed": False, "status": "holdout_already_consumed", "state": st}
     st.update({"mode": MODE, "status": "running", "dryRun": deepcopy(dry_run),
+               "executionCount": int(st.get("executionCount") or 0) + 1,
+               "firstStartedAt": st.get("firstStartedAt") or started_at,
                "runningBenchmarkId": benchmark_id,
                "startedAt": started_at})
     return {"allowed": True, "status": "running", "state": st}
@@ -440,6 +450,8 @@ def public_status(state: Dict[str, Any]) -> Dict[str, Any]:
             "geminiModel": ((latest or {}).get("modelIds") or {}).get("gemini"),
             "argusVersion": ((latest or {}).get("modelIds") or {}).get("argusVersion"),
             "holdoutCaseCount": (latest or {}).get("holdoutCaseCount", 0),
+            "geminiScore": (latest or {}).get("geminiScore"),
+            "argusScore": (latest or {}).get("argusScore"),
             "medianRatio": (latest or {}).get("medianRatio"),
             "geometricMeanRatio": (latest or {}).get("geometricMeanRatio"),
             "primarySourceGatePassed": (latest or {}).get("primarySourceGatePassed", False),

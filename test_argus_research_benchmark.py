@@ -134,7 +134,22 @@ class BudgetAndModeTests(unittest.TestCase):
         again = bench.begin(failed, dry_run=dry, benchmark_id="b2",
                             trigger_source="manual", confirmed=True,
                             started_at=NOW)
-        self.assertEqual(again["status"], "holdout_already_consumed")
+        self.assertEqual(again["status"], "execution_limit_reached")
+
+    def test_calibration_failure_also_consumes_the_single_execution(self):
+        dry = _dry()
+        begun = bench.begin(bench.default_state(), dry_run=dry,
+                            benchmark_id="calibration-failed",
+                            trigger_source="manual", confirmed=True,
+                            started_at=NOW)
+        self.assertEqual(begun["state"]["executionCount"], 1)
+        failed = bench.fail_closed(begun["state"], status="provider_failed",
+                                   completed_at=NOW)
+        again = bench.begin(failed, dry_run=dry, benchmark_id="never-rerun",
+                            trigger_source="manual", confirmed=True,
+                            started_at=NOW)
+        self.assertFalse(again["allowed"])
+        self.assertEqual(again["status"], "execution_limit_reached")
 
 
 class ScoringTests(unittest.TestCase):
@@ -196,7 +211,10 @@ class ScoringTests(unittest.TestCase):
         self.assertTrue(done["ok"])
         self.assertEqual(done["status"], "not_achieved")
         self.assertFalse(done["result"]["twoXClaimAllowed"])
-        self.assertIn("NOT ACHIEVED", bench.public_status(done["state"])["noteJa"])
+        public = bench.public_status(done["state"])
+        self.assertIn("NOT ACHIEVED", public["noteJa"])
+        self.assertEqual(public["geminiScore"], done["result"]["geminiScore"])
+        self.assertEqual(public["argusScore"], done["result"]["argusScore"])
 
     def test_incomplete_or_over_budget_is_invalid(self):
         bid = "formal-invalid"

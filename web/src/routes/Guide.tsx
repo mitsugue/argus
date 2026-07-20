@@ -121,6 +121,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.3.3', 'Formal Gemini 2X Benchmark Infrastructure — calibration 6件とone-shot holdout 12件、盲検評価、費用上限、確認hash、append-only resultを実装。未実行時はnot_run/provider_blocked、twoXClaimAllowed=falseを維持。'],
   ['v12.3.2', 'EC2 Primary Scheduler — EC2 systemd timerを30分mission tickの正本、GitHub Actionsをbackup、manualを診断専用へ変更。同一UTC windowはbackend leaseで重複抑止し、Soakは単一scheduler source遅延をwarningとして分離。'],
   ['v12.3.1', 'Scheduled Mission Tick + Build Soak Reliability — 30分mission windowの冪等実行と遅延分類、build-scoped Soak heartbeat、Remote Journalのcommit→read-back検証を追加。unresolved Outcome retryは同じIDのまま各有効windowで再評価し、自動生成AIはDETERMINISTICで0回を維持。'],
   ['v12.3.0', 'Deterministic Cost Reset + SHO Market Ledger Phase 1 — 自動生成AIを既定0へ変更し、非AIの市場データ・イベント・Outcome・Remote Journalを維持。Market Contextへ信用残・投資主体別売買・日経平均バリュエーション・騰落レシオのappend-only台帳、初期Turning Point、Cost Policy表示を追加。Asset DeskのChatGPT/Gemini相談はコピー専用(API送信なし)。'],

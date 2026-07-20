@@ -15522,6 +15522,22 @@ def _osint_restore_once():
                     restored.get("lastCompletedAt")) > str(
                     _FORMAL_BENCHMARK.get("lastCompletedAt") or ""):
                 _FORMAL_BENCHMARK.update(restored)
+            # A started formal run is permanently counted even if the process
+            # restarts before a final result.  Never let an older/local default
+            # reopen the one-shot benchmark or consume the holdout twice.
+            if int(restored.get("executionCount") or 0) > int(
+                    _FORMAL_BENCHMARK.get("executionCount") or 0):
+                _FORMAL_BENCHMARK["executionCount"] = restored["executionCount"]
+                _FORMAL_BENCHMARK["firstStartedAt"] = restored.get("firstStartedAt")
+                _FORMAL_BENCHMARK["status"] = (
+                    "interrupted" if restored.get("runningBenchmarkId")
+                    else restored.get("status") or "not_run")
+                _FORMAL_BENCHMARK["mode"] = "DETERMINISTIC"
+                _FORMAL_BENCHMARK["runningBenchmarkId"] = None
+            if restored.get("holdoutConsumedBy") and not \
+                    _FORMAL_BENCHMARK.get("holdoutConsumedBy"):
+                _FORMAL_BENCHMARK["holdoutConsumedBy"] = \
+                    restored["holdoutConsumedBy"]
             _FORMAL_BENCHMARK["results"] = merged_results
         sk = blob.get("soak")
         if isinstance(sk, dict) and sk.get("startedAt") and not _SOAK["startedAt"]:

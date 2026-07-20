@@ -195,7 +195,7 @@ class SystemdContractTests(unittest.TestCase):
     def test_version_contract(self):
         package = json.loads((ROOT / "web/package.json").read_text())
         lock = json.loads((ROOT / "web/package-lock.json").read_text())
-        self.assertEqual(package["version"], "12.3.2")
+        self.assertEqual(package["version"], "12.3.3")
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
 
