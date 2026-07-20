@@ -7,6 +7,9 @@
 # safe. The public GET never fetches — this cron is the only collection path.
 name: caos-scan
 
+# v12.3.2: mission tick authority is EC2 systemd. This workflow remains the
+# backup scheduler; workflow_dispatch is diagnostic-only.
+
 on:
   schedule:
     - cron: '7,37 * * * *'      # every 30 min, offset from the congested :00/:30
@@ -36,7 +39,7 @@ jobs:
             --url "$BE/healthz")
           echo "backend-health: $HEALTH"
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            TRIGGER_SOURCE="schedule"
+            TRIGGER_SOURCE="github_schedule"
           else
             TRIGGER_SOURCE="manual"
           fi
