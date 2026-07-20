@@ -303,6 +303,10 @@ def test_gemini_preflight_success_and_latest_stable_selection():
          "supportedActions": ["generateContent", "countTokens"]},
         {"name": "models/gemini-2.5-pro-latest",
          "supportedActions": ["generateContent"]},
+        {"name": "models/gemini-3-pro-image",
+         "supportedActions": ["generateContent"]},
+        {"name": "models/gemini-3.1-pro-preview-customtools",
+         "supportedActions": ["generateContent"]},
     ]) == "gemini-2.5-pro"
 
 

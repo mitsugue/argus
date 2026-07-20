@@ -105,7 +105,9 @@ def select_latest_stable_gemini_pro(models: Iterable[Dict[str, Any]]) -> Optiona
         low = name.lower()
         actions = {str(x).lower() for x in (row.get("supportedActions") or [])}
         if ("gemini" not in low or "pro" not in low
-                or any(tag in low for tag in ("preview", "experimental", "-exp", "latest"))
+                or any(tag in low for tag in (
+                    "preview", "experimental", "-exp", "latest", "image",
+                    "tts", "audio", "customtools", "custom-tools"))
                 or "generatecontent" not in actions):
             continue
         numbers = tuple(int(x) for x in re.findall(r"\d+", low)[:3])
