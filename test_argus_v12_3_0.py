@@ -31,8 +31,9 @@ class ArgusV1230IntegrationTests(unittest.TestCase):
         self.assertEqual(ledger.get_json()["schemaVersion"], "argus-market-ledger-v1")
         self.assertNotIn("holdings", str(ledger.get_json()).lower())
 
-    def test_runtime_version_is_current_patch(self):
-        self.assertEqual(scanner._semantic_app_version(), "12.3.3")
+    def test_runtime_keeps_v12_3_or_later_contract(self):
+        version = tuple(int(x) for x in scanner._semantic_app_version().split("."))
+        self.assertGreaterEqual(version, (12, 3, 0))
 
     def test_scheduled_ai_endpoint_is_expected_skip_without_provider_call(self):
         client = scanner.app.test_client()

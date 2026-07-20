@@ -97,7 +97,8 @@ import argus_event_card            # EventCard v2 canonical research object (pur
 import argus_caos_audit            # CAOS association audit trail (pure, ARGUS Pro v11)
 import argus_cost_policy           # v12.3.0: centralized generative-AI execution policy
 import argus_market_ledger          # v12.3.0: append-only SHO-style market ledger
-import argus_research_benchmark     # v12.3.2: frozen/manual Gemini 2X formal closure
+import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
+import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
 from flask import Flask, jsonify, request
 from collections import deque
 import hashlib
@@ -126,6 +127,9 @@ _COST_POLICY = argus_cost_policy.default_state(
 _MARKET_LEDGER = argus_market_ledger.empty_state()
 _MARKET_LEDGER_REMOTE = {"lastVerifiedReadBackAt": None,
                          "verificationStatus": "not_verified"}
+_CHART_INTELLIGENCE = argus_chart_intelligence.empty_state()
+_CHART_INTELLIGENCE_REMOTE = {"lastVerifiedReadBackAt": None,
+                              "verificationStatus": "not_verified"}
 
 
 def _cost_policy_authorize(provider, purpose, *, automatic=True,
@@ -9702,7 +9706,7 @@ def _td_price_history(sym):
     if _TWELVEDATA_API_KEY:
         try:
             r = requests.get(_TWELVEDATA_TS, params={
-                "symbol": sym, "interval": "1day", "outputsize": 130,
+                "symbol": sym, "interval": "1day", "outputsize": 1320,
                 "apikey": _TWELVEDATA_API_KEY}, timeout=15)
             r.raise_for_status()
             body = r.json()
@@ -9716,7 +9720,8 @@ def _td_price_history(sym):
                     except Exception:
                         return None
                 rows = [v for v in vals if _f(v, "close") is not None]   # newest-first
-                data = {"closes": [_f(v, "close") for v in rows],
+                data = {"opens": [_f(v, "open") for v in rows],
+                        "closes": [_f(v, "close") for v in rows],
                         "highs": [_f(v, "high") for v in rows],
                         "lows": [_f(v, "low") for v in rows],
                         "volumes": [int(_f(v, "volume") or 0) for v in rows],
@@ -15441,6 +15446,8 @@ def _osint_persist():
                 "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
                 "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
                 "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
+                "chartIntelligence": argus_chart_intelligence.normalize_state(_CHART_INTELLIGENCE),
+                "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
                 "soakLastPersistAt": _ai_now_iso()}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -15617,6 +15624,29 @@ def _osint_restore_once():
             _MARKET_LEDGER["lastUpdatedAt"] = max(
                 str(_MARKET_LEDGER.get("lastUpdatedAt") or ""),
                 str(_restored_ml.get("lastUpdatedAt") or "")) or None
+        _ci = blob.get("chartIntelligence")
+        if isinstance(_ci, dict):
+            _restored_ci = argus_chart_intelligence.normalize_state(_ci)
+            # Phase 2 history is append-only.  A remote snapshot can only add
+            # deterministic records; it cannot remove newer local detections.
+            for _key in ("snapshots", "zones", "turningPoints",
+                         "reactionAnomalies", "relationshipBreaks", "invalidations"):
+                def _ci_restore_key(_record):
+                    if _key == "snapshots":
+                        return _record.get("id")
+                    if _key == "invalidations":
+                        return (_record.get("symbol"), _record.get("market"),
+                                _record.get("turningPointId"))
+                    return (_record.get("symbol"), _record.get("market"),
+                            _record.get("id"))
+                _seen = {_ci_restore_key(x)
+                         for x in _CHART_INTELLIGENCE.get(_key, [])}
+                _CHART_INTELLIGENCE.setdefault(_key, []).extend(
+                    x for x in _restored_ci.get(_key, [])
+                    if _ci_restore_key(x) not in _seen)
+            _CHART_INTELLIGENCE["lastUpdatedAt"] = max(
+                str(_CHART_INTELLIGENCE.get("lastUpdatedAt") or ""),
+                str(_restored_ci.get("lastUpdatedAt") or "")) or None
         _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
         for h in _jr["events"]:
             argus_state_journal.append(_OPS_JOURNAL, h)
@@ -16494,7 +16524,7 @@ _SOAK = {"soakId": None, "buildSha": None, "appVersion": None,
          "lastHeartbeatSource": None}
 _INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
 def _semantic_app_version():
-    """セマンティック版(12.2.x)。Git SHAをappVersionとして表示しない。"""
+    """package.jsonのセマンティック版。Git SHAをappVersionとして表示しない。"""
     try:
         import json as _j
         with open(os.path.join(os.path.dirname(__file__), "web", "package.json"),
@@ -16759,8 +16789,19 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _MARKET_LEDGER_REMOTE["verificationStatus"] = "hash_mismatch"
     else:
         _MARKET_LEDGER_REMOTE["verificationStatus"] = "not_present"
+    remote_chart = blob.get("chartIntelligence") if isinstance(blob, dict) else None
+    if isinstance(remote_chart, dict) and argus_chart_intelligence.read_back_verified(
+            _CHART_INTELLIGENCE, remote_chart):
+        _CHART_INTELLIGENCE_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_chart, dict):
+        _CHART_INTELLIGENCE_REMOTE["verificationStatus"] = "hash_mismatch"
+    else:
+        _CHART_INTELLIGENCE_REMOTE["verificationStatus"] = "not_present"
     rec["outcomeReadBack"] = outcome_rec
     rec["marketLedgerReadBack"] = dict(_MARKET_LEDGER_REMOTE)
+    rec["chartIntelligenceReadBack"] = dict(_CHART_INTELLIGENCE_REMOTE)
     return rec
 
 
@@ -17003,6 +17044,23 @@ def api_argus_admin_missions_tick():
         tool_mode="grounding")
     jp_holiday = now.weekday() >= 5
     ledger_tick = _market_ledger_tick(now_iso)
+    _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
+    try:
+        _chart_report = _chart_public_report("1321", "JP", "daily", market_scope=True)
+        _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
+        _chart_changed = _chart_before_hash != _chart_after_hash
+        chart_tick = {"changed": _chart_changed, "reportId": _chart_report.get("reportId"),
+                      "status": _chart_report.get("status"),
+                      "stateHash": _chart_after_hash}
+        if _chart_changed:
+            _journal("chart_intelligence_updated", "chart_intelligence",
+                     str(_chart_report.get("reportId") or "unknown"),
+                     {"status": _chart_report.get("status"),
+                      "stateHash": _chart_after_hash,
+                      "methodVersion": _chart_report.get("methodVersion")})
+    except Exception as _chart_exc:
+        chart_tick = {"changed": False, "status": "degraded",
+                      "reason": type(_chart_exc).__name__}
     # v12.2.10: 30分cron文脈で検証済みread-back ack+非criticalのcompaction。
     # (GETからは実行されない — ackとcompactはこの遷移文脈のみ。テストは
     # disabledフラグでネットワークを遮断し、blob注入で直接検証する)
@@ -17297,6 +17355,7 @@ def api_argus_admin_missions_tick():
                     "executed": executed[:12], "missedDetected": len(missed),
                     "recovered": recovered,
                     "marketLedger": ledger_tick,
+                    "chartIntelligence": chart_tick,
                     "missionWindow": window_record,
                     "outcomeRetry": {
                         "evaluated": outcome_retry_candidates,
@@ -17848,6 +17907,8 @@ def api_argus_osint_memory_snapshot():
                     "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
                     "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
                     "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
+                    "chartIntelligence": argus_chart_intelligence.normalize_state(_CHART_INTELLIGENCE),
+                    "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
@@ -17920,6 +17981,194 @@ def api_argus_market_ledger_view():
     view = argus_market_ledger.public_view(_MARKET_LEDGER, _ai_now_iso())
     view["remoteReadBack"] = dict(_MARKET_LEDGER_REMOTE)
     return jsonify(view)
+
+
+def _chart_rows_from_history(history):
+    """Convert an existing newest-first provider cache to public-safe OHLCV."""
+    if not isinstance(history, dict):
+        return []
+    dates = history.get("dates") or []
+    opens = history.get("opens") or []
+    highs = history.get("highs") or []
+    lows = history.get("lows") or []
+    closes = history.get("closes") or []
+    volumes = history.get("volumes") or []
+    adjusted = history.get("adjusted") or []
+    out = []
+    for i, date in enumerate(dates):
+        if i >= len(closes):
+            break
+        out.append({"date": date, "open": opens[i] if i < len(opens) else None,
+                    "high": highs[i] if i < len(highs) else None,
+                    "low": lows[i] if i < len(lows) else None,
+                    "close": closes[i], "volume": volumes[i] if i < len(volumes) else None,
+                    "adjusted": adjusted[i] if i < len(adjusted) else False,
+                    "sourceId": f"price:{date}", "availableFrom": str(date)[:10]})
+    return out
+
+
+def _chart_weekly_rows(rows):
+    """Aggregate daily OHLCV to ISO weeks without using future observations."""
+    weekly = {}
+    for row in sorted(rows, key=lambda x: str(x.get("date") or "")):
+        try:
+            dt = datetime.strptime(str(row.get("date"))[:10], "%Y-%m-%d")
+        except (TypeError, ValueError):
+            continue
+        key = f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
+        item = weekly.get(key)
+        if item is None:
+            item = dict(row)
+            item["sourceId"] = f"price-week:{key}"
+            weekly[key] = item
+        else:
+            item["date"] = row["date"]
+            item["high"] = max(item.get("high") or row.get("high"), row.get("high") or item.get("high"))
+            item["low"] = min(item.get("low") or row.get("low"), row.get("low") or item.get("low"))
+            item["close"] = row.get("close")
+            item["volume"] = (item.get("volume") or 0) + (row.get("volume") or 0)
+            item["availableFrom"] = row.get("availableFrom") or row.get("date")
+    return list(weekly.values())
+
+
+def _chart_history(symbol, market):
+    if market == "JP":
+        return _chart_rows_from_history(_jq_price_history(symbol[:4]))
+    return _chart_rows_from_history(_td_price_history(symbol))
+
+
+def _chart_public_report(symbol, market, timeframe="daily", market_scope=False):
+    now_iso = _ai_now_iso()
+    rows = _chart_history(symbol, market)
+    if timeframe == "weekly":
+        rows = _chart_weekly_rows(rows)
+    ledger = argus_market_ledger.public_view(_MARKET_LEDGER, now_iso)
+    _effective = {x.get("id"): x for x in
+                  argus_market_ledger.effective_observations(_MARKET_LEDGER, now_iso)}
+    ledger["valuationHistory"] = []
+    for _eps in argus_market_ledger.derived_history(
+            _MARKET_LEDGER, now_iso).get("valuation.eps", []):
+        _inputs = [_effective.get(_oid) for _oid in _eps.get("inputObservationIds", [])]
+        _available = max([str(x.get("availableFrom") or "") for x in _inputs if x]
+                         or [str(_eps.get("asOf") or "")])
+        ledger["valuationHistory"].append({**_eps, "availableFrom": _available})
+    try:
+        event_doc = get_events_snapshot()
+        events = event_doc.get("events") if isinstance(event_doc, dict) else []
+    except Exception:
+        events = []
+    # Reuse only the already-assembled catalyst cache: opening a chart must not
+    # trigger Finnhub/J-Quants/SEC work.  Earnings and disclosure dates become
+    # markers; a beat/miss classification is used only when actual + estimate
+    # were already present in the cache.
+    _catalyst_snapshot = _CAT_CACHE.get("data") if isinstance(_CAT_CACHE, dict) else None
+    _catalyst_item = next((x for x in ((_catalyst_snapshot or {}).get("items") or [])
+                             if str(x.get("symbol") or "").upper() == symbol.upper()), None)
+    if _catalyst_item:
+        events = list(events or [])
+        _earnings = _catalyst_item.get("earnings") or {}
+        _earnings_date = str(_earnings.get("date") or "")[:10]
+        if _earnings_date:
+            _actual, _estimate = _earnings.get("epsActual"), _earnings.get("epsEstimate")
+            _classification = "earnings"
+            try:
+                if _actual is not None and _estimate is not None:
+                    _classification = ("earnings_beat" if float(_actual) >= float(_estimate)
+                                       else "earnings_miss")
+            except (TypeError, ValueError):
+                _classification = "earnings"
+            events.append({"id": f"earnings:{symbol}:{_earnings_date}",
+                           "date": _earnings_date, "availableFrom": _earnings_date,
+                           "titleJa": f"{symbol} 決算", "kind": "earnings",
+                           "classification": _classification})
+        for _kind, _items in (("filing", _catalyst_item.get("filings") or []),
+                              ("disclosure", _catalyst_item.get("disclosures") or [])):
+            for _item in _items[:5]:
+                _date = str(_item.get("filingDate") or _item.get("date") or "")[:10]
+                if _date:
+                    events.append({"id": f"{_kind}:{symbol}:{_date}", "date": _date,
+                                   "availableFrom": _date,
+                                   "titleJa": str(_item.get("title") or _item.get("form") or
+                                                  f"{symbol} 公式開示")[:100],
+                                   "kind": _kind, "classification": "unconfirmed"})
+    sector_rows = _chart_history("1306", "JP") if market == "JP" and symbol != "1306" else []
+    report = argus_chart_intelligence.analyze(
+        symbol, market, rows, now_iso=now_iso, market_ledger=ledger,
+        events=events, sector_rows=sector_rows)
+    report["eventMarkers"] = [{
+        "id": str(e.get("eventId") or e.get("id") or e.get("eventCode") or ""),
+        "date": str(e.get("availableFrom") or e.get("date") or e.get("eventDate") or "")[:10],
+        "labelJa": str(e.get("titleJa") or e.get("title") or e.get("eventCode") or "重要イベント")[:100],
+        "kind": str(e.get("eventCode") or e.get("kind") or "event")[:40],
+    } for e in (events or []) if str(e.get("availableFrom") or e.get("date") or e.get("eventDate") or "")[:10]]
+    report["timeframe"] = timeframe
+    report["reportId"] = f"{report['reportId']}-{timeframe}"
+    report["automaticAiCalls"] = 0
+    report["costPolicyMode"] = _COST_POLICY.get("mode")
+    report["ledgerTurningPoints"] = []
+    if market_scope:
+        histories = {
+            "nikkei": rows,
+            "topix": _chart_history("1306", "JP"),
+            "semiconductor": _chart_history("2644", "JP"),
+            "growth": _chart_history("2516", "JP"),
+            "sp500": _chart_history("SPY", "US"),
+            "usdjpy": _chart_history("USD/JPY", "US"),
+        }
+        definitions = {
+            "nikkei_sp500": ("nikkei", "sp500", "sho_heuristic"),
+            "nikkei_usdjpy": ("nikkei", "usdjpy", "derived"),
+            "topix_nikkei": ("topix", "nikkei", "derived"),
+            "semiconductor_topix": ("semiconductor", "topix", "derived"),
+            "growth_topix": ("growth", "topix", "derived"),
+            "dollar_nikkei": ("nikkei", "usdjpy", "derived"),
+        }
+        relative = {key: argus_chart_intelligence.relative_strength(
+            key, histories[left], histories[right], classification=classification)
+                    for key, (left, right, classification) in definitions.items()}
+        rotation_inputs = {
+            "TOPIX": histories["topix"], "日経平均": histories["nikkei"],
+            "グロース": histories["growth"], "半導体": histories["semiconductor"],
+            "バリュー": [], "高配当": [], "ディフェンシブ": [], "金融": [],
+            "自動車": [], "電線": [], "AI": [], "REIT": [], "金": [], "暗号資産": [],
+        }
+        report["relativeStrength"] = relative
+        report["rotationMap"] = argus_chart_intelligence.rotation_map(rotation_inputs)
+        report["turningPoints"] = (report.get("turningPoints") or []) + \
+            argus_chart_intelligence.relative_strength_turning_points(relative)
+        report["ledgerTurningPoints"] = list(ledger.get("turningPoints") or [])
+        report["relationshipBreaks"] = argus_chart_intelligence.relationship_breaks(
+            ledger_summary=ledger.get("summary"), relative=relative,
+            eps_change=(ledger.get("valuationSummary") or {}).get("eps5Change"),
+            per_change=(ledger.get("valuationSummary") or {}).get("per21ChangeFromPeak"))
+    merged = argus_chart_intelligence.merge_report(_CHART_INTELLIGENCE, report, now_iso)
+    _CHART_INTELLIGENCE.clear()
+    _CHART_INTELLIGENCE.update(merged)
+    report["persistence"] = {"stateHash": argus_chart_intelligence.state_hash(
+        _CHART_INTELLIGENCE), **_CHART_INTELLIGENCE_REMOTE}
+    return report
+
+
+@app.route("/api/argus/chart-intelligence")
+def api_argus_chart_intelligence():
+    """Deterministic GET-only chart facts.  No generated-AI call occurs here."""
+    scope = (request.args.get("scope") or "asset").strip().lower()
+    timeframe = (request.args.get("timeframe") or "daily").strip().lower()
+    if timeframe not in ("daily", "weekly"):
+        return jsonify({"error": "invalid_timeframe"}), 400
+    if scope == "market":
+        # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
+        report = _chart_public_report("1321", "JP", timeframe, market_scope=True)
+        report["displayNameJa"] = "日経平均連動ETF(市場チャートproxy)"
+        report["proxyDisclosureJa"] = "現物日経平均そのものではなく、既存の公式日足経路で取得する連動ETFを使用。"
+        return jsonify(report)
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    market = (request.args.get("market") or ("JP" if symbol[:1].isdigit() else "US")).upper()
+    if market == "JP" and not _JP_SYM_RE.match(symbol):
+        return jsonify({"error": "bad_symbol"}), 400
+    if market == "US" and not _US_SYM_RE.match(symbol):
+        return jsonify({"error": "bad_symbol"}), 400
+    return jsonify(_chart_public_report(symbol, market, timeframe, market_scope=False))
 
 
 @app.route("/api/argus/admin/market-ledger/import", methods=["POST"])
@@ -20586,7 +20835,7 @@ _JSF_CACHE = {"table": None, "date": None, "expires": 0.0}
 _JSF_TTL = 6 * 3600
 
 def _jq_price_history(code):
-    """~60-90 trading days of closes/volumes (newest-first) for one TSE code.
+    """Up to ~5 years of OHLCV (newest-first) for one TSE code.
     Same daily-bars endpoint the watchlist uses; 6h cache, 10-min fail back-off."""
     now = time.time()
     c = _JQ_HISTORY_CACHE.get(code)
@@ -20596,7 +20845,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            frm = (datetime.now(TZ_JST) - timedelta(days=130)).strftime("%Y-%m-%d")
+            frm = (datetime.now(TZ_JST) - timedelta(days=2000)).strftime("%Y-%m-%d")
             rows, params = [], {"code": code, "from": frm}
             for _ in range(6):
                 r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
@@ -20624,11 +20873,13 @@ def _jq_price_history(code):
                             except Exception:
                                 pass
                     return None
-                data = {"closes": [float(_q_close(q)) for q in rows],
+                data = {"opens": [_g(q, ("AdjO", "O", "Op")) for q in rows],
+                        "closes": [float(q.get("AdjC") if q.get("AdjC") is not None else _q_close(q)) for q in rows],
                         "volumes": [int(q.get("Vo") or 0) for q in rows],
-                        "highs": [_g(q, ("H", "Hi", "AdjH")) for q in rows],
-                        "lows": [_g(q, ("L", "Lo", "AdjL")) for q in rows],
-                        "dates": [q.get("Date") for q in rows]}
+                        "highs": [_g(q, ("AdjH", "H", "Hi")) for q in rows],
+                        "lows": [_g(q, ("AdjL", "L", "Lo")) for q in rows],
+                        "dates": [q.get("Date") for q in rows],
+                        "adjusted": [q.get("AdjC") is not None for q in rows]}
         except Exception as e:
             add_log(f"[scout] history fetch failed {code}: {type(e).__name__}")
     _JQ_HISTORY_CACHE[code] = {"data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600)}
@@ -22388,7 +22639,9 @@ def get_catalysts_snapshot():
             "earnings": {"status": "live" if earnings else ("unavailable" if finn_st != "live" else "live"),
                          "date": (earnings or {}).get("date"), "daysUntil": e_days if e_days is not None else 0,
                          "epsEstimate": (earnings or {}).get("epsEstimate"),
-                         "revenueEstimate": (earnings or {}).get("revenueEstimate")},
+                         "revenueEstimate": (earnings or {}).get("revenueEstimate"),
+                         "epsActual": (earnings or {}).get("epsActual"),
+                         "revenueActual": (earnings or {}).get("revenueActual")},
             "filings": filings, "news": news, "disclosures": [],
             "rationaleJa": rationale, "actionImpact": impact, "status": item_status,
         })
