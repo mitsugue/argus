@@ -144,6 +144,8 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
+          python3 scripts/build_remote_readback_receipt.py \
+            "$RUNNER_TEMP/osint-memory.json" "$RUNNER_TEMP/osint-readback.json"
           git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
             || git fetch origin ledger 2>/dev/null || true
           if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
@@ -165,6 +167,7 @@ jobs:
           if [ -s "$RUNNER_TEMP/osint-memory.json" ] && [ -n "$NEW_ASOF" ] && \
              { [ -z "$OLD_ASOF" ] || [ "$NEW_ASOF" \> "$OLD_ASOF" ]; }; then
             cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json
+            cp "$RUNNER_TEMP/osint-readback.json" ledger/osint/readback.json
           else
             echo "skip osint/memory.json: not newer (new=$NEW_ASOF old=$OLD_ASOF)"
           fi

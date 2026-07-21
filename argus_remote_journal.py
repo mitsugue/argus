@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 SCHEMA_V3 = "argus-durable-v3"
+READBACK_RECEIPT_SCHEMA = "argus-remote-readback-v1"
 JST = timezone(timedelta(hours=9))
 
 # v12.2.10: criticalイベント分類(Phase 3 — soak_interruptedをcriticalへ)
@@ -173,6 +174,43 @@ def parse_remote_snapshot(blob: Any) -> Dict[str, Any]:
             "manifest": manifest,
             "generatedAt": blob.get("generatedAt") or blob.get("asOf"),
             "ownerReadableJa": "v3 snapshot読み取り成功"}
+
+
+def compact_readback_snapshot(blob: Any) -> Dict[str, Any]:
+    """Build the bounded proof used by scheduler read-back.
+
+    The durable snapshot can contain years of Market Ledger observations.  A
+    scheduled heartbeat must not download that payload just to verify the WAL,
+    outcomes, and state hashes.  This proof preserves the original signed
+    journal records and integrity manifest; no event or hash is synthesized.
+    """
+    parsed = parse_remote_snapshot(blob)
+    if parsed.get("status") != "ok":
+        raise ValueError("remote_snapshot_not_verifiable")
+    receipt = {
+        "receiptSchemaVersion": READBACK_RECEIPT_SCHEMA,
+        "schemaVersion": blob.get("schemaVersion"),
+        "generatedAt": blob.get("generatedAt") or blob.get("asOf"),
+        "asOf": blob.get("asOf") or blob.get("generatedAt"),
+        "buildIdentity": dict(blob.get("buildIdentity") or {}),
+        "opsJournal": list(blob.get("opsJournal") or []),
+        "integrityManifest": dict(blob.get("integrityManifest") or {}),
+        "outcomes": list(blob.get("outcomes") or []),
+        "marketLedgerStateHash": blob.get("marketLedgerStateHash"),
+        "chartIntelligenceStateHash": blob.get("chartIntelligenceStateHash"),
+    }
+    receipt["receiptHash"] = _h(receipt)
+    return receipt
+
+
+def verify_compact_readback_snapshot(blob: Any) -> bool:
+    if not isinstance(blob, dict) or \
+            blob.get("receiptSchemaVersion") != READBACK_RECEIPT_SCHEMA:
+        return False
+    expected = blob.get("receiptHash")
+    body = {key: value for key, value in blob.items() if key != "receiptHash"}
+    return bool(expected and expected == _h(body) and
+                parse_remote_snapshot(blob).get("status") == "ok")
 
 
 # ── Phase 2: Verified Read-Back Ack ─────────────────────────────────────────
