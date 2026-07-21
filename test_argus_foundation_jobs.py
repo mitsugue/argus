@@ -509,6 +509,55 @@ def test_five_year_stages_are_bounded_and_reject_unknown_stage():
             "ten_years", latest_confirmed_date="2026-07-21")
 
 
+def test_breadth_resume_checkpoint_is_scoped_to_requested_stage():
+    import scanner
+
+    previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
+    scanner._FOUNDATION_JOBS.clear()
+    scanner._FOUNDATION_JOBS.update(jobs.empty_state())
+    scanner._FOUNDATION_JOBS["jobs"] = [
+        {"jobId": "canary", "jobType": "JQUANTS_BREADTH_BACKFILL",
+         "status": "failed", "parameters": {"stage": "canary_5d"},
+         "checkpoint": {"lastCommittedDate": "2026-07-21"}},
+        {"jobId": "full", "jobType": "JQUANTS_BREADTH_BACKFILL",
+         "status": "failed", "parameters": {"stage": "full_5y"},
+         "checkpoint": {"lastCommittedDate": "2024-06-28"}},
+    ]
+    try:
+        full = scanner._breadth_resume_candidate(
+            "JQUANTS_BREADTH_BACKFILL", "full_5y")
+        canary = scanner._breadth_resume_candidate(
+            "JQUANTS_BREADTH_BACKFILL", "canary_5d")
+        assert full["jobId"] == "full"
+        assert canary["jobId"] == "canary"
+        assert scanner._breadth_resume_candidate(
+            "JQUANTS_BREADTH_BACKFILL", "one_year") is None
+    finally:
+        scanner._FOUNDATION_JOBS.clear()
+        scanner._FOUNDATION_JOBS.update(previous_jobs)
+
+
+def test_legacy_breadth_resume_checkpoint_defaults_to_full_five_year_stage():
+    import scanner
+
+    previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
+    scanner._FOUNDATION_JOBS.clear()
+    scanner._FOUNDATION_JOBS.update(jobs.empty_state())
+    scanner._FOUNDATION_JOBS["jobs"] = [{
+        "jobId": "legacy", "jobType": "JQUANTS_BREADTH_BACKFILL",
+        "status": "failed",
+        "checkpoint": {"lastCommittedDate": "2023-01-31"},
+    }]
+    try:
+        assert scanner._breadth_resume_candidate(
+            "JQUANTS_BREADTH_BACKFILL", "full_5y")["jobId"] == "legacy"
+        assert scanner._breadth_resume_candidate(
+            "JQUANTS_BREADTH_BACKFILL", "canary_5d") is None
+    finally:
+        scanner._FOUNDATION_JOBS.clear()
+        scanner._FOUNDATION_JOBS.update(previous_jobs)
+
+
 def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
     import scanner
 

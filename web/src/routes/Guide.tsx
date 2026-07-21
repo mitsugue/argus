@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.15', 'Breadth resumeを同一stageのcheckpointへ限定し、canaryから5年本処理への誤resumeを防止。'],
   ['v12.7.14', 'Breadth workerのsoft limitをStandard枠の70%未満である1280MBへ調整。'],
   ['v12.7.13', 'Breadth workerをclean spawn processへ分離し、Web heap継承によるMemoryErrorを修正。'],
   ['v12.7.12', 'Breadth rebuildをproduction 5年へ限定し、archive保持のままworker peak memoryを抑制。'],
