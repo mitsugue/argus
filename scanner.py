@@ -17114,6 +17114,10 @@ def _missions_persist_blob():
 
 def _market_ledger_tick(now_iso):
     """Rebuild derived rows and turning points without network or AI calls."""
+    if not argus_market_ledger.rebuild_required(_MARKET_LEDGER):
+        return {"changed": False,
+                "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
+                "rebuildSkipped": True}
     before = argus_market_ledger.state_hash(_MARKET_LEDGER)
     rebuilt = argus_market_ledger.rebuild(_MARKET_LEDGER, now_iso)
     after = argus_market_ledger.state_hash(rebuilt)
@@ -17124,7 +17128,8 @@ def _market_ledger_tick(now_iso):
                  {"stateHash": after,
                   "observationCount": len(_MARKET_LEDGER["observations"]),
                   "turningPointCount": len(_MARKET_LEDGER["turningPoints"])})
-    return {"changed": before != after, "stateHash": after}
+    return {"changed": before != after, "stateHash": after,
+            "rebuildSkipped": False}
 
 
 def _dl_resolve_matured(now_iso):
