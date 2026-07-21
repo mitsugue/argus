@@ -20921,11 +20921,17 @@ def _jquants_breadth_process_entry(job_id, connection, memory_soft_limit_mb):
     def remote_update(target_job_id, *, status=None, progress=None,
                       checkpoint=None, result=None, error_class=None,
                       persist=True):
-        return exchange({"op": "update", "jobId": target_job_id,
-                         "status": status, "progress": progress,
-                         "checkpoint": checkpoint, "result": result,
-                         "errorClass": error_class,
-                         "persist": bool(persist)}).get("job")
+        payload = {"op": "update", "jobId": target_job_id,
+                   "status": status, "progress": progress,
+                   "checkpoint": checkpoint, "result": result,
+                   "errorClass": error_class, "persist": bool(persist)}
+        if status == "completed":
+            payload["ledgerDerivedState"] = {
+                key: _MARKET_LEDGER.get(key) for key in (
+                    "derivedMetrics", "turningPoints", "backtests",
+                    "derivedStateDirty", "lastRebuiltObservationCount",
+                    "lastRebuiltAt", "lastUpdatedAt")}
+        return exchange(payload).get("job")
 
     def mirrored_commit(rows, now_iso):
         local_result = local_commit(rows, now_iso)
@@ -20992,15 +20998,13 @@ def _jquants_breadth_worker(job_id):
                 elif operation == "update":
                     result = message.get("result")
                     if message.get("status") == "completed" and isinstance(result, dict):
-                        for record in (result.get("backtests") or {}).values():
-                            if isinstance(record, dict) and not any(
-                                    row.get("id") == record.get("id") for row in
-                                    _MARKET_LEDGER.setdefault("backtests", [])):
-                                _MARKET_LEDGER["backtests"].append(record)
-                        rebuilt = argus_market_ledger.rebuild(
-                            _MARKET_LEDGER, _ai_now_iso())
-                        _MARKET_LEDGER.clear()
-                        _MARKET_LEDGER.update(rebuilt)
+                        derived_state = message.get("ledgerDerivedState") or {}
+                        for key in ("derivedMetrics", "turningPoints", "backtests",
+                                    "derivedStateDirty",
+                                    "lastRebuiltObservationCount",
+                                    "lastRebuiltAt", "lastUpdatedAt"):
+                            if key in derived_state:
+                                _MARKET_LEDGER[key] = derived_state[key]
                         result = dict(result)
                         result["stateHash"] = argus_market_ledger.state_hash(
                             _MARKET_LEDGER)

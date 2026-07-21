@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.11', 'Breadthのderived stateをworkerから同期し、Web process側の二重全履歴rebuildを除去。'],
   ['v12.7.10', 'Breadth workerのsoft memory limitを復元済み大規模台帳に合わせ、独立processのMemoryErrorを修正。'],
   ['v12.7.9', 'J-Quants breadthの正式範囲を直近5年へ固定し、段階実行と独立worker processを追加。'],
   ['v12.7.8', 'Benchmark v2のRemote Journal gateをverified receipt・hash一致・commit SHAの正本へ接続。'],
