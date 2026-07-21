@@ -482,7 +482,8 @@ def parse_csv(text: str) -> List[Dict[str, Any]]:
 
 
 def import_rows(state: Dict[str, Any], rows: List[Dict[str, Any]], *, now_iso: str,
-                dry_run: bool = True) -> Dict[str, Any]:
+                dry_run: bool = True,
+                rebuild_after_commit: bool = True) -> Dict[str, Any]:
     work = normalize_state(state)
     import_id = "mi-" + _hash({"at": now_iso, "rows": rows})
     preview, errors = [], []
@@ -506,7 +507,12 @@ def import_rows(state: Dict[str, Any], rows: List[Dict[str, Any]], *, now_iso: s
                 "preview": preview, "errors": [], "state": normalize_state(state)}
     work["imports"].append({"importId": import_id, "at": now_iso,
                             "rowCount": len(preview), "status": "committed"})
-    work = rebuild(work, now_iso)
+    # Resumable backfills checkpoint many small append-only batches.  Rebuilding
+    # the full derived history after every checkpoint makes runtime grow
+    # super-linearly.  A backfill may defer this pure rebuild while observations
+    # and the import receipt remain durable, then rebuild once before completion.
+    if rebuild_after_commit:
+        work = rebuild(work, now_iso)
     return {"ok": True, "dryRun": False, "importId": import_id,
             "preview": preview, "errors": [], "state": work}
 

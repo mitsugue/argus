@@ -19995,7 +19995,8 @@ def _breadth_commit_rows(rows, now_iso):
     revisions = sum(1 for x in candidates if
                     (x.get("seriesId"), x.get("periodEnd")) in prior_periods)
     result = argus_market_ledger.import_rows(
-        _MARKET_LEDGER, candidates, now_iso=now_iso, dry_run=False)
+        _MARKET_LEDGER, candidates, now_iso=now_iso, dry_run=False,
+        rebuild_after_commit=False)
     if not result.get("ok"):
         errors = result.get("errors") or []
         raise RuntimeError(str((errors[0] if errors else {}).get("error")
@@ -20201,6 +20202,11 @@ def _jquants_breadth_worker(job_id):
                                 _MARKET_LEDGER.get("observations") or [])})
         if trading_date_count == 0:
             raise RuntimeError("jquants_no_daily_bars_in_range")
+        # Batch checkpoints defer the expensive pure rebuild.  Publish a fully
+        # derived and integrity-hashed state once all official rows are present.
+        rebuilt = argus_market_ledger.rebuild(_MARKET_LEDGER, _ai_now_iso())
+        _MARKET_LEDGER.clear()
+        _MARKET_LEDGER.update(rebuilt)
         proof["entitlementEndDate"] = newest
         proof["providerResponseClass"] = "success"
         seen_breadth_rows = set()
