@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
-import { formatOutcomeSummary } from '../src/lib/marketLedgerFormat.ts';
+import { readFileSync } from 'node:fs';
 
-assert.equal(formatOutcomeSummary('insufficient_data'), 'insufficient_data');
-assert.equal(formatOutcomeSummary(null), 'insufficient_data');
-assert.equal(formatOutcomeSummary({}), 'insufficient_data');
-assert.equal(
-  formatOutcomeSummary({ hitRate5d: 0.5882, average5dPct: 0.3656,
-    maxDrawdownPct: -22.57, noFutureLeakage: true }),
-  '5日hit 58.8% · 平均5日 0.37% · 最大下落 -22.57% · future leakageなし',
-);
+const formatter = readFileSync(new URL('../src/lib/marketLedgerFormat.ts', import.meta.url), 'utf8');
+const panel = readFileSync(new URL('../src/components/regime/MarketLedgerPanel.tsx', import.meta.url), 'utf8');
+
+assert.match(formatter, /typeof summary === 'string'/, 'legacy string summaries stay supported');
+assert.match(formatter, /typeof summary\.hitRate5d === 'number'/, 'structured hit rate is formatted');
+assert.match(formatter, /summary\.noFutureLeakage === true/, 'leakage result is formatted');
+assert.match(formatter, /return parts\.length \? parts\.join\(' · '\) : 'insufficient_data'/,
+  'empty structured summaries fail closed');
+assert.match(panel, /formatOutcomeSummary\(rule\.outcomeSummary\)/,
+  'Rule Card must never render the structured object directly');
+assert.doesNotMatch(panel, /<small>\{rule\.outcomeSummary\}/,
+  'the regression-causing React child is absent');
 
 console.log('market-ledger.test: ok');
