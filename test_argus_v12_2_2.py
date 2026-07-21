@@ -1,4 +1,6 @@
 """ARGUS V12.2.2 — 現行エポック再認定/forward-live起動/週次月次/soakの恒久ガード。"""
+from datetime import datetime as RealDateTime
+
 import argus_ai_gate as gate
 import argus_decision_ledger as dl
 import argus_osint_engine as oe
@@ -69,14 +71,21 @@ def test_research_ratio_excludes_decision_and_reliability():
 # ── Phase 2: プリフライト+ウォームアップ ────────────────────────────────────
 
 def test_cold_store_queues_warmup_not_forecast(monkeypatch):
+    class FixedBusinessDateTime(RealDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = RealDateTime.fromisoformat(NOW)
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
     monkeypatch.setattr(scanner, "_require_admin", lambda: (True, None, 200))
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: NOW)
+    monkeypatch.setattr(scanner, "datetime", FixedBusinessDateTime)
     scanner._MISSIONS.clear()
     scanner._FORECAST_LEDGER.clear()
     scanner._OSINT_STORE.clear()
     scanner._OSINT_AGENT_QUEUE.clear()
     import argus_scheduler as _sc
-    from datetime import datetime as _dt
-    _sd = _dt.now(scanner.TZ_JST).strftime("%Y-%m-%d")
+    _sd = NOW[:10]
     _due = _sc.mission(mission_type="pre_session_forecast", market="JP",
                        session_date=_sd,
                        scheduled_for=f"{_sd}T00:01:00+09:00")
