@@ -103,6 +103,8 @@ def test_capability_probe_admin_only():
 
 
 def test_openai_capability_probe_separates_response_from_exact_text(monkeypatch):
+    authorized = []
+    recorded = []
     response = types.SimpleNamespace(
         output_text="acknowledged",
         model="gpt-5.6-sol",
@@ -115,17 +117,23 @@ def test_openai_capability_probe_separates_response_from_exact_text(monkeypatch)
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "configured-test-key")
     monkeypatch.setattr(
         scanner, "_cost_policy_authorize",
-        lambda *args, **kwargs: {"allowed": True})
-    monkeypatch.setattr(scanner, "_cost_policy_record", lambda *args, **kwargs: None)
+        lambda provider, purpose, **kwargs: (
+            authorized.append((provider, purpose)) or {"allowed": True}))
+    monkeypatch.setattr(
+        scanner, "_cost_policy_record",
+        lambda provider, purpose, **kwargs: recorded.append((provider, purpose)))
 
     probe = scanner._ai_capability_probe(
-        "gpt-5.6-sol", confirmation=True, expected_text="ARGUS_SOL_OK")
+        "gpt-5.6-sol", confirmation=True, expected_text="ARGUS_SOL_OK",
+        purpose="research_benchmark")
 
     assert probe["accessible"] is True
     assert probe["responseTextPresent"] is True
     assert probe["matchedExpectedText"] is False
     assert probe["usageReturned"] is True
     assert probe["responseModel"] == "gpt-5.6-sol"
+    assert authorized == [("openai", "research_benchmark")]
+    assert recorded == [("openai", "research_benchmark")]
 
 
 def test_v2_capability_probe_requires_response_usage_model_and_no_error():
@@ -149,6 +157,17 @@ def test_v2_capability_probe_requires_response_usage_model_and_no_error():
     assert scanner._v2_capability_probe_passed(gemini) is True
     assert scanner._v2_capability_probe_passed(
         {**gemini, "candidates": [{"finishReason": "MAX_TOKENS"}]}) is False
+
+
+def test_v2_preflight_failure_does_not_consume_calibration_attempt():
+    preflight_only = {"status": "v2_provider_preflight_failed",
+                      "calibrationAttemptCount": 3, "calibrationRuns": [],
+                      "frozenRun": None, "holdoutConsumedBy": None}
+    assert scanner._v2_next_calibration_attempt(preflight_only) == 1
+    calibration_failed = {**preflight_only,
+                          "status": "v2_argus_transport_failed",
+                          "calibrationAttemptCount": 1}
+    assert scanner._v2_next_calibration_attempt(calibration_failed) == 2
 
 
 # ── Phase 5/10: 2xゲート(cold/budget/degraded/holdout) ──────────────────────

@@ -17722,7 +17722,8 @@ def _osint_benchmark_worker(case_ids):
         _OSINT_BENCH_STATE["lastAt"] = _ai_now_iso()
 
 
-def _ai_capability_probe(model, *, confirmation=False, expected_text="ok"):
+def _ai_capability_probe(model, *, confirmation=False, expected_text="ok",
+                         purpose="manual_api"):
     """v12.2.0: モデル能力プローブ(admin/cron専用・私的文脈なし・秘密非出力)。"""
     out = {"model": model, "requestedModel": model, "responseModel": None,
            "apiEndpoint": "responses", "accessible": False,
@@ -17733,7 +17734,7 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok"):
            "createdAt": _ai_now_iso(), "errorClass": None,
            "matchedExpectedText": False, "responseTextPresent": False}
     if not _cost_policy_authorize(
-            "openai", "manual_api", automatic=False, confirmation=confirmation,
+            "openai", purpose, automatic=False, confirmation=confirmation,
             estimated_cost_usd=0.001, estimated_tokens=50)["allowed"]:
         out["errorClass"] = "cost_policy_blocked"
         return out
@@ -17746,7 +17747,7 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok"):
         r = client.responses.create(
             model=model, input=f"Reply exactly {expected_text}",
             timeout=30, store=False, max_output_tokens=64)
-        _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
+        _cost_policy_record("openai", purpose, estimated_cost_usd=0.001)
         output_text = str(getattr(r, "output_text", None) or "").strip()
         out["matchedExpectedText"] = output_text == expected_text
         # Availability is a transport/response property. Exact instruction
@@ -17866,7 +17867,8 @@ def _gemini_probe_config():
     return genai_types.GenerateContentConfig(**kwargs)
 
 
-def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1):
+def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1,
+                             purpose="manual_api"):
     base = {"model": model, "requestedModel": model, "responseModel": None,
             "apiEndpoint": "models.generateContent", "accessible": False,
             "usageReturned": False, "usage": None, "attempts": [],
@@ -17874,7 +17876,7 @@ def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1):
             "createdAt": _ai_now_iso(), "errorClass": None,
             "classification": None}
     if not _cost_policy_authorize(
-            "gemini", "manual_api", automatic=False, confirmation=confirmation,
+            "gemini", purpose, automatic=False, confirmation=confirmation,
             estimated_cost_usd=0.01, estimated_tokens=1200)["allowed"]:
         base["errorClass"] = "cost_policy_blocked"
         base["classification"] = "malformed_request"
@@ -17891,7 +17893,7 @@ def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1):
                 model=model, contents="Reply with exactly: ARGUS_GEMINI_OK",
                 config=_gemini_probe_config())
             row = _gemini_response_metadata(response, model, expected)
-            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.01)
+            _cost_policy_record("gemini", purpose, estimated_cost_usd=0.01)
         except Exception as exc:
             row = {**base, "attempts": None,
                    "errorClass": type(exc).__name__[:80]}
@@ -18484,6 +18486,18 @@ def _v2_capability_probe_passed(meta):
                 and value.get("errorClass") is None)
 
 
+def _v2_next_calibration_attempt(state):
+    """Count actual calibration attempts, not failures before case execution."""
+    value = state if isinstance(state, dict) else {}
+    preflight_only = (value.get("status") == "v2_provider_preflight_failed"
+                      and not value.get("calibrationRuns")
+                      and not value.get("frozenRun")
+                      and not value.get("holdoutConsumedBy"))
+    current = 0 if preflight_only else int(
+        value.get("calibrationAttemptCount") or 0)
+    return current + 1
+
+
 def _v2_call_with_retry(call):
     last_out, last_status = None, "provider_failed"
     for attempt in range(1, 3):
@@ -18544,12 +18558,6 @@ def _research_benchmark_v2_job_worker(job_id):
         if not validation["valid"] or validation["validatedCaseCount"] != 18:
             raise RuntimeError("v2_manifest_validation_failed")
         _FORMAL_BENCHMARK_V2["manifest"] = manifest
-        calibration_attempt = int(
-            _FORMAL_BENCHMARK_V2.get("calibrationAttemptCount") or 0) + 1
-        if calibration_attempt > 3:
-            raise RuntimeError("v2_calibration_retry_limit_reached")
-        _FORMAL_BENCHMARK_V2["calibrationAttemptCount"] = calibration_attempt
-        _osint_persist()
         dry = _v2_dry_run_value()
         if dry["status"] != "ready" or dry["estimatedCostJpy"] > 2000:
             raise RuntimeError("v2_budget_blocked")
@@ -18561,12 +18569,14 @@ def _research_benchmark_v2_job_worker(job_id):
         _COST_POLICY.clear()
         _COST_POLICY.update(enabled)
         gemini_probe = _gemini_capability_probe(
-            "gemini-3.1-pro-preview", confirmation=True, max_attempts=3)
+            "gemini-3.1-pro-preview", confirmation=True, max_attempts=3,
+            purpose="research_benchmark")
         def openai_probe(model, expected):
             latest = None
             for attempt in range(1, 4):
                 latest = _ai_capability_probe(
-                    model, confirmation=True, expected_text=expected)
+                    model, confirmation=True, expected_text=expected,
+                    purpose="research_benchmark")
                 if latest.get("accessible"):
                     break
                 if attempt < 3:
@@ -18585,6 +18595,12 @@ def _research_benchmark_v2_job_worker(job_id):
             raise RuntimeError("v2_provider_response_model_mismatch")
         if sol_probe.get("responseModel") == terra_probe.get("responseModel"):
             raise RuntimeError("v2_evaluator_not_independent")
+        calibration_attempt = _v2_next_calibration_attempt(
+            _FORMAL_BENCHMARK_V2)
+        if calibration_attempt > 3:
+            raise RuntimeError("v2_calibration_retry_limit_reached")
+        _FORMAL_BENCHMARK_V2["calibrationAttemptCount"] = calibration_attempt
+        _osint_persist()
         def run_cases(cases, run_id, holdout=False):
             rows = []
             for case in cases:
