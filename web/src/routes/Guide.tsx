@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.5', 'J-Quants adjusted historical barの後日revisionを直近10営業日の公式再計算で検知し、削除せずappend-only訂正して再検証。'],
   ['v12.7.4', 'Market Ledgerの公表時刻をtimezone offset込みの実時刻で比較し、JST公表値が同時刻のUTC判定で未来扱いされる問題を修正。'],
   ['v12.7.3', '大規模Market Ledgerの定期tickは、新規観測がある場合だけ派生再計算し、clean時は整合hash確認のみ実行。'],
   ['v12.7.2', 'J-Quants breadth backfillの中間checkpointではappend-only保存だけを行い、全履歴の派生再計算を完了時の1回へ集約。'],
