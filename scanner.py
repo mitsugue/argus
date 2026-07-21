@@ -20126,6 +20126,22 @@ def _breadth_daily_matches(effective, daily):
     return True
 
 
+def _scope_breadth_worker_ledger(production_start):
+    """Release archive/non-breadth rows before the child performs a rebuild."""
+    rows = [row for row in (_MARKET_LEDGER.get("observations") or [])
+            if str(row.get("seriesId") or "").startswith("breadth.")
+            and str(row.get("periodEnd") or "") >= production_start]
+    scoped = argus_market_ledger.empty_state()
+    scoped["observations"] = rows
+    scoped["derivedStateDirty"] = True
+    scoped["lastUpdatedAt"] = _MARKET_LEDGER.get("lastUpdatedAt")
+    excluded = len(_MARKET_LEDGER.get("observations") or []) - len(rows)
+    _MARKET_LEDGER.clear()
+    _MARKET_LEDGER.update(scoped)
+    gc.collect()
+    return excluded
+
+
 def _jquants_breadth_finalize_worker(job_id):
     """Correct the current boundary and verify the complete durable ledger."""
     proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
@@ -20196,6 +20212,7 @@ def _jquants_breadth_finalize_worker(job_id):
         if corrections:
             corrected_rows, _, _ = _breadth_commit_rows(corrections, correction_at)
 
+        archive_excluded = _scope_breadth_worker_ledger(production_start)
         rebuilt = argus_market_ledger.rebuild(_MARKET_LEDGER, _ai_now_iso())
         _MARKET_LEDGER.clear()
         _MARKET_LEDGER.update(rebuilt)
@@ -20424,6 +20441,7 @@ def _jquants_breadth_finalize_worker(job_id):
                 "primeBackProjected": False},
             "rawProviderRowsPersisted": False}
         result.update(scope)
+        result["archiveObservationsExcludedFromWorkerMemory"] = archive_excluded
         result["universeMethodology"]["firstSection"]["from"] = production_start
         result["universeMethodology"]["allMarket"]["from"] = production_start
         if duplicate_count or not spot_passed or set(backtests) != {
@@ -20708,6 +20726,7 @@ def _jquants_breadth_worker_process_body(job_id):
             raise RuntimeError("jquants_no_daily_bars_in_range")
         # Batch checkpoints defer the expensive pure rebuild.  Publish a fully
         # derived and integrity-hashed state once all official rows are present.
+        archive_excluded = _scope_breadth_worker_ledger(production_start)
         rebuilt = argus_market_ledger.rebuild(_MARKET_LEDGER, _ai_now_iso())
         _MARKET_LEDGER.clear()
         _MARKET_LEDGER.update(rebuilt)
@@ -20875,7 +20894,9 @@ def _jquants_breadth_worker_process_body(job_id):
         result.update({"stage": stage,
                        "batchPolicy": "one_day_to_maximum_one_month",
                        "checkpointPersistence": "each_batch",
-                       "duplicateSafeResume": True})
+                       "duplicateSafeResume": True,
+                       "archiveObservationsExcludedFromWorkerMemory":
+                       archive_excluded})
         _journal("jquants_breadth_backfill_completed", "market_ledger", job_id,
                  {"rowCount": committed, "oldestDate": oldest,
                   "newestDate": newest, "stateHash": result["stateHash"]},
@@ -20931,6 +20952,8 @@ def _jquants_breadth_process_entry(job_id, connection, memory_soft_limit_mb):
                     "derivedMetrics", "turningPoints", "backtests",
                     "derivedStateDirty", "lastRebuiltObservationCount",
                     "lastRebuiltAt", "lastUpdatedAt")}
+            payload["ledgerDerivedScopeStart"] = (result or {}).get(
+                "productionFiveYearStartDate")
         return exchange(payload).get("job")
 
     def mirrored_commit(rows, now_iso):
@@ -20999,12 +21022,48 @@ def _jquants_breadth_worker(job_id):
                     result = message.get("result")
                     if message.get("status") == "completed" and isinstance(result, dict):
                         derived_state = message.get("ledgerDerivedState") or {}
-                        for key in ("derivedMetrics", "turningPoints", "backtests",
-                                    "derivedStateDirty",
-                                    "lastRebuiltObservationCount",
-                                    "lastRebuiltAt", "lastUpdatedAt"):
-                            if key in derived_state:
-                                _MARKET_LEDGER[key] = derived_state[key]
+                        scope_start = message.get("ledgerDerivedScopeStart")
+                        if scope_start:
+                            retained_metrics = [row for row in
+                                (_MARKET_LEDGER.get("derivedMetrics") or [])
+                                if not str(row.get("metricId") or "").startswith(
+                                    "breadth.") or str(row.get("asOf") or "")
+                                < scope_start]
+                            metric_ids = {row.get("id") for row in retained_metrics}
+                            retained_metrics.extend(row for row in
+                                (derived_state.get("derivedMetrics") or [])
+                                if row.get("id") not in metric_ids)
+                            retained_points = [row for row in
+                                (_MARKET_LEDGER.get("turningPoints") or [])
+                                if row.get("ruleId") != "BREADTH_TURN"
+                                or str(row.get("effectiveFrom") or "") < scope_start]
+                            point_ids = {row.get("id") for row in retained_points}
+                            retained_points.extend(row for row in
+                                (derived_state.get("turningPoints") or [])
+                                if row.get("id") not in point_ids)
+                            retained_backtests = list(
+                                _MARKET_LEDGER.get("backtests") or [])
+                            backtest_ids = {row.get("id") for row in retained_backtests}
+                            retained_backtests.extend(row for row in
+                                (derived_state.get("backtests") or [])
+                                if row.get("id") not in backtest_ids)
+                            _MARKET_LEDGER["derivedMetrics"] = retained_metrics
+                            _MARKET_LEDGER["turningPoints"] = retained_points
+                            _MARKET_LEDGER["backtests"] = retained_backtests
+                            _MARKET_LEDGER["derivedStateDirty"] = False
+                            _MARKET_LEDGER["lastRebuiltObservationCount"] = len(
+                                _MARKET_LEDGER.get("observations") or [])
+                            _MARKET_LEDGER["lastRebuiltAt"] = derived_state.get(
+                                "lastRebuiltAt")
+                            _MARKET_LEDGER["lastUpdatedAt"] = derived_state.get(
+                                "lastUpdatedAt")
+                        else:
+                            for key in ("derivedMetrics", "turningPoints",
+                                        "backtests", "derivedStateDirty",
+                                        "lastRebuiltObservationCount",
+                                        "lastRebuiltAt", "lastUpdatedAt"):
+                                if key in derived_state:
+                                    _MARKET_LEDGER[key] = derived_state[key]
                         result = dict(result)
                         result["stateHash"] = argus_market_ledger.state_hash(
                             _MARKET_LEDGER)
