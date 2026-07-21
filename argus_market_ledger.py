@@ -99,6 +99,53 @@ def normalize_state(state: Any) -> Dict[str, Any]:
     return out
 
 
+def merge_restored_state(local: Dict[str, Any],
+                         remote: Dict[str, Any]) -> Dict[str, Any]:
+    """Append-only merge that preserves a complete remote rebuild receipt.
+
+    Cached derived records have deterministic IDs and are safe to restore with
+    their source observations.  Any local observation absent from the remote
+    snapshot still marks the result dirty, so newer data cannot be hidden.
+    """
+    merged = normalize_state(local)
+    restored = normalize_state(remote)
+    remote_observation_ids = {
+        item.get("id") for item in restored.get("observations", [])}
+    local_has_newer_observation = any(
+        item.get("id") not in remote_observation_ids
+        for item in merged.get("observations", []))
+    for key, identity in (("observations", "id"),
+                          ("derivedMetrics", "id"),
+                          ("turningPoints", "id"),
+                          ("backtests", "id"),
+                          ("imports", "importId")):
+        seen = {item.get(identity) for item in merged.get(key, [])}
+        merged.setdefault(key, []).extend(
+            item for item in restored.get(key, [])
+            if item.get(identity) not in seen)
+    for import_id in restored.get("rolledBackImports", []):
+        if import_id not in merged["rolledBackImports"]:
+            merged["rolledBackImports"].append(import_id)
+    merged["lastUpdatedAt"] = max(
+        str(merged.get("lastUpdatedAt") or ""),
+        str(restored.get("lastUpdatedAt") or "")) or None
+    remote_rebuild_complete = bool(
+        not restored.get("derivedStateDirty") and
+        int(restored.get("lastRebuiltObservationCount") or 0) ==
+        len(restored.get("observations") or []))
+    if remote_rebuild_complete and not local_has_newer_observation and \
+            len(merged["observations"]) == len(restored["observations"]):
+        merged["derivedStateDirty"] = False
+        merged["lastRebuiltObservationCount"] = len(merged["observations"])
+    else:
+        merged["derivedStateDirty"] = True
+        merged["lastRebuiltObservationCount"] = min(
+            int(restored.get("lastRebuiltObservationCount") or 0),
+            len(merged["observations"]))
+    merged["lastRebuiltAt"] = restored.get("lastRebuiltAt")
+    return merged
+
+
 def _hash(obj: Any, n: int = 20) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False,
                                      separators=(",", ":")).encode()).hexdigest()[:n]
@@ -373,9 +420,10 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                          "short_below_medium" if prev6["value"] >= prev25["value"]
                          and cur6["value"] < cur25["value"] else "")
             if direction:
-                inputs = [x for x in effective_observations(state, as_of)
-                          if x.get("id") in set(cur6["inputObservationIds"]
-                                                + cur25["inputObservationIds"])]
+                input_ids = set(cur6["inputObservationIds"]
+                                + cur25["inputObservationIds"])
+                inputs = [observation_index[oid] for oid in sorted(input_ids)
+                          if oid in observation_index]
                 available = max([str(x.get("availableFrom") or "") for x in inputs]
                                 or [cur_date])
                 direction_value = (direction if universe == "legacy"
