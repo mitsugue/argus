@@ -1,4 +1,4 @@
-# ARGUS Operational State Durability Map (v12.6.5)
+# ARGUS Operational State Durability Map (v12.7.0)
 
 | ストア | 分類 | 生存経路 |
 |---|---|---|

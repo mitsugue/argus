@@ -1,4 +1,14 @@
-# Research Benchmark (v12.6.5)
+# Research Benchmark (v12.7.0)
+
+Protocol v1はholdout消費済みのまま`closed_invalid`としてappend-only保存し、
+再実行しない。Protocol v2は新規36ケースpoolからSHA256 seedでcalibration 6、
+holdout 12、reserve 18を層化抽出する。transport/parse/一回性等のprotocol
+validityと、一次情報・証拠・時点規律・捏造等の品質点を分離する。
+
+正式v2はGemini `gemini-3.1-pro-preview`、ARGUS generator
+`gpt-5.6-sol`、blind referee `gpt-5.6-terra`を用い、requested modelと
+実response modelを保存する。generator/referee同一modelはfail-closed、
+hard capは2,000円、定期実行とholdout再利用は禁止する。
 - 基準runにepochId刻印(provider:model:promptVersion:toolMode:schemaVersion)。異エポック比較禁止。
 - rubric-v2(argus_osint_engine.RUBRIC_VERSION)— 重みの無言変更禁止。
 - ホールドアウト3ケース(stale/no_news/direct_disclosure)=チューニング不使用。

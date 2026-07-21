@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.0', 'J-Quants Standard契約範囲のbreadthを旧東証一部／Prime／全市場に分離してbackfill。Benchmark v1をclosed_invalidとして保存し、validityと品質を分離したProtocol v2を追加。'],
   ['v12.6.5', 'v12.6.3で既にreadyへ上書き保存されたpre-holdout失敗を、holdoutなし・結果なし・復旧未使用時だけ安全に移行。'],
   ['v12.6.4', 'pre-holdout recovery用dry-runが既存provider failure状態を上書きしないよう修正し、holdout未消費時だけの復旧判定を維持。'],
   ['v12.6.3', '正式benchmarkのGPT-5.6生成・refereeをlow reasoning＋十分な出力上限へ固定し、holdoutを消費しないpipeline preflightと安全な失敗段階証拠を追加。'],

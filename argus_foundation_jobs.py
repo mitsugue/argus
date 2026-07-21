@@ -17,7 +17,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 SCHEMA_VERSION = "argus-foundation-jobs-v1"
-METHOD_VERSION = "jquants-breadth-adjusted-close-v1"
+METHOD_VERSION = "jquants-standard-breadth-adjusted-close-v2"
+ENTITLEMENT_PLAN = "standard"
+ENTITLEMENT_START_DATE = "2016-07-20"
+FIRST_SECTION_END_DATE = "2022-04-01"
+PRIME_START_DATE = "2022-04-04"
 JOB_TYPES = {
     "JQUANTS_BREADTH_BACKFILL",
     "JQUANTS_BREADTH_INCREMENTAL",
@@ -25,18 +29,45 @@ JOB_TYPES = {
     "GEMINI_PREFLIGHT",
     "RESEARCH_PIPELINE_PREFLIGHT",
     "RESEARCH_BENCHMARK",
+    "RESEARCH_BENCHMARK_V2",
     "JOURNAL_REVERIFY",
 }
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
 UNIVERSES = {
+    "tse_first_section_domestic_common": {
+        "name": "TSE First Section Domestic Common Stocks",
+        "segments": {"first_section"},
+        "activeFrom": ENTITLEMENT_START_DATE,
+        "activeTo": FIRST_SECTION_END_DATE,
+        "short": "first_section",
+    },
     "tse_prime_domestic_common": {
         "name": "TSE Prime Domestic Common Stocks",
         "segments": {"prime"},
+        "activeFrom": PRIME_START_DATE,
+        "activeTo": None,
+        "short": "prime",
     },
     "tse_all_domestic_common": {
         "name": "TSE All Domestic Common Stocks",
-        "segments": {"prime", "standard", "growth"},
+        "segments": {"first_section", "second_section", "mothers",
+                     "jasdaq_standard", "jasdaq_growth",
+                     "prime", "standard", "growth"},
+        "activeFrom": ENTITLEMENT_START_DATE,
+        "activeTo": None,
+        "short": "all",
     },
+}
+
+_MARKET_CODE_SEGMENTS = {
+    "0101": "first_section",
+    "0102": "second_section",
+    "0104": "mothers",
+    "0106": "jasdaq_standard",
+    "0107": "jasdaq_growth",
+    "0111": "prime",
+    "0112": "standard",
+    "0113": "growth",
 }
 
 
@@ -259,9 +290,25 @@ def weekday_candidates(start: str, end: str) -> List[str]:
 
 
 def _segment(row: Dict[str, Any]) -> Optional[str]:
+    for key in ("Mkt", "MarketCode"):
+        code = str(row.get(key) or "").strip()
+        if code in _MARKET_CODE_SEGMENTS:
+            return _MARKET_CODE_SEGMENTS[code]
     market = " ".join(str(row.get(k) or "") for k in
                       ("Mkt", "MktNm", "MarketCode", "MarketCodeName"))
     low = market.lower()
+    if "first section" in low or "market division1" in low \
+            or "市場第一部" in market or "東証一部" in market:
+        return "first_section"
+    if "second section" in low or "market division2" in low \
+            or "市場第二部" in market or "東証二部" in market:
+        return "second_section"
+    if "mothers" in low or "マザーズ" in market:
+        return "mothers"
+    if "jasdaq standard" in low or "jasdaqスタンダード" in low:
+        return "jasdaq_standard"
+    if "jasdaq growth" in low or "jasdaqグロース" in low:
+        return "jasdaq_growth"
     if "prime" in low or "プライム" in market:
         return "prime"
     if "standard" in low or "スタンダード" in market:
@@ -271,9 +318,22 @@ def _segment(row: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def eligible_issue(row: Dict[str, Any], universe_id: str) -> bool:
+def universe_active(universe_id: str, date: Optional[str]) -> bool:
     spec = UNIVERSES.get(universe_id)
-    if not spec or not isinstance(row, dict):
+    if not spec:
+        return False
+    day = str(date or "")[:10]
+    if day and day < str(spec.get("activeFrom") or ENTITLEMENT_START_DATE):
+        return False
+    if day and spec.get("activeTo") and day > str(spec["activeTo"]):
+        return False
+    return True
+
+
+def eligible_issue(row: Dict[str, Any], universe_id: str,
+                   date: Optional[str] = None) -> bool:
+    spec = UNIVERSES.get(universe_id)
+    if not spec or not isinstance(row, dict) or not universe_active(universe_id, date):
         return False
     seg = _segment(row)
     if seg not in spec["segments"]:
@@ -310,24 +370,52 @@ def calculate_daily(*, date: str, master_rows: Iterable[Dict[str, Any]],
             for x in bar_rows if isinstance(x, dict)
             and str(x.get("Date") or x.get("date") or "")[:10] == date}
     results: Dict[str, Any] = {}
-    # The comparison base for the next session is *this* session only.  Carrying
-    # an older close across a missing/no-trade row would silently turn a two-day
-    # move into a one-day advance/decline and could also bridge a delist/relist.
+    # Formal breadth compares with the immediately preceding *comparable* close.
+    # Carry a prior positive adjusted close only while the issue remains in the
+    # historical domestic-common master.  This spans an explicit no-trade or
+    # missing-price day without bridging a delisting/relisting absence.
+    all_market_codes = {code for code, row in master.items()
+                        if eligible_issue(
+                            row, "tse_all_domestic_common", date)}
     next_closes: Dict[str, float] = {}
-    for code, row in bars.items():
+    for code in all_market_codes:
+        row = bars.get(code, {})
         close = _adjusted_close(row)
-        if close is not None:
+        volume = row.get("Vo", row.get("Volume"))
+        try:
+            no_trade = volume is not None and float(volume) <= 0
+        except (TypeError, ValueError):
+            no_trade = False
+        prior = previous_adjusted_closes.get(code)
+        if close is not None and not no_trade:
             next_closes[code] = close
+        elif isinstance(prior, (int, float)) and prior > 0:
+            next_closes[code] = float(prior)
     for universe_id, spec in UNIVERSES.items():
         codes = {code for code, row in master.items()
-                 if eligible_issue(row, universe_id)}
+                 if eligible_issue(row, universe_id, date)}
         counts = {"advancers": 0, "decliners": 0, "unchanged": 0,
                   "unavailable": 0}
+        data_quality = {"noTrade": 0, "missingPrice": 0}
         source_ids = []
         for code in sorted(codes):
             current = _adjusted_close(bars.get(code, {}))
             previous = previous_adjusted_closes.get(code)
-            if current is None or previous is None or previous <= 0:
+            bar = bars.get(code, {})
+            volume = bar.get("Vo", bar.get("Volume"))
+            try:
+                no_trade = volume is not None and float(volume) <= 0
+            except (TypeError, ValueError):
+                no_trade = False
+            if no_trade:
+                data_quality["noTrade"] += 1
+                counts["unavailable"] += 1
+                continue
+            if current is None:
+                data_quality["missingPrice"] += 1
+                counts["unavailable"] += 1
+                continue
+            if previous is None or previous <= 0:
                 counts["unavailable"] += 1
                 continue
             if current > previous:
@@ -347,9 +435,11 @@ def calculate_daily(*, date: str, master_rows: Iterable[Dict[str, Any]],
             "effectiveDate": date,
             "source": "J-Quants V2 equities/master + equities/bars/daily",
             "issueCount": issue_count,
+            "totalUniverseCount": issue_count,
             "eligibleCount": eligible,
             "coverageRatio": coverage,
             "counts": counts,
+            "dataQuality": data_quality,
             "sourceObservationIds": source_ids,
             "inclusionRules": ["historical listed issue master", *sorted(spec["segments"]),
                                "domestic common stock"],
@@ -366,10 +456,12 @@ def ledger_candidates(daily: Dict[str, Any], *, calculated_at: str,
     available = f"{date}T{published_hour_jst:02d}:00:00+09:00"
     out: List[Dict[str, Any]] = []
     for universe_id, row in (daily.get("universes") or {}).items():
-        short = "prime" if universe_id == "tse_prime_domestic_common" else "all"
+        if not universe_active(universe_id, date):
+            continue
+        short = str((UNIVERSES.get(universe_id) or {}).get("short") or universe_id)
         meta = {k: deepcopy(row.get(k)) for k in (
             "universeId", "universeName", "methodVersion", "effectiveDate", "source",
-            "issueCount", "eligibleCount", "coverageRatio", "inclusionRules",
+            "issueCount", "totalUniverseCount", "eligibleCount", "coverageRatio", "inclusionRules",
             "exclusionRules")}
         # Raw J-Quants rows are never persisted; only aggregate counts and hashes.
         ids = row.get("sourceObservationIds") or []
@@ -377,14 +469,26 @@ def ledger_candidates(daily: Dict[str, Any], *, calculated_at: str,
         meta["sourceObservationHash"] = _digest(ids, 32)
         meta["calculatedAt"] = calculated_at
         meta["availabilityPolicy"] = "same_day_17:00_JST_after_provider_16:30_update"
-        for name in ("advancers", "decliners", "unchanged", "unavailable"):
+        meta.update({"plan": ENTITLEMENT_PLAN,
+                     "entitlementStartDate": ENTITLEMENT_START_DATE,
+                     "entitlementObservedAt": calculated_at,
+                     "apiVersion": "v2",
+                     "contractScope": "rolling_10_years",
+                     "entitlementPolicy": "rolling_10_years"})
+        values = dict(row.get("counts") or {})
+        values.update(dict(row.get("dataQuality") or {}))
+        values.update({"eligibleCount": int(row.get("eligibleCount") or 0),
+                       "totalUniverseCount": int(row.get("totalUniverseCount") or 0)})
+        for name in ("advancers", "decliners", "unchanged", "unavailable",
+                     "noTrade", "missingPrice", "eligibleCount",
+                     "totalUniverseCount"):
             out.append({
                 "seriesId": f"breadth.{short}.{name}",
                 "periodEnd": date,
                 "publishedAt": available,
                 "availableFrom": available,
                 "observedAt": calculated_at,
-                "value": int((row.get("counts") or {}).get(name) or 0),
+                "value": int(values.get(name) or 0),
                 "unit": "count",
                 "source": "J-Quants V2 licensed aggregate",
                 "sourceKind": "derived",
@@ -405,6 +509,13 @@ def ratio_rows(daily_counts: Iterable[Dict[str, Any]], window: int) -> List[Dict
         out.append({"asOfDate": sample[-1]["asOfDate"], "window": window,
                     "advancerSum": adv, "declinerSum": dec,
                     "ratio": None if dec == 0 else round(adv / dec * 100.0, 2),
+                    "universeId": sample[-1].get("universeId"),
+                    "eligibleTradingDays": len(sample),
+                    "coverageRatio": round(sum(float(x.get("coverageRatio") or 0)
+                                                for x in sample) / len(sample), 6),
+                    "calculatedAt": sample[-1].get("calculatedAt"),
+                    "availableFrom": sample[-1].get("availableFrom"),
+                    "revision": int(sample[-1].get("revision") or 0),
                     "sourceObservationIds": [x.get("observationId") for x in sample
                                              if x.get("observationId")],
                     "methodVersion": METHOD_VERSION,

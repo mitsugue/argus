@@ -28,6 +28,7 @@ APPROVED_CALL_SITES = {
     "_ai_capability_probe",     # v12.2.0 モデル能力プローブ(admin)
     "_gemini_capability_probe", # v12.6.3 raw-metadata benchmark preflight(admin)
     "_formal_blind_evaluate",  # v12.3.2 手動限定・匿名固定rubric評価
+    "_v2_blind_evaluate",      # v12.7.0 手動限定・validity分離blind評価
 }
 
 BENCH_ELIGIBLE_STATUSES = ("ok",)          # ok以外はベンチ基準に使えない

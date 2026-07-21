@@ -64,21 +64,28 @@ def test_missing_adjusted_price_is_unavailable_not_zero():
     assert all("previousAdjustedCloses" not in json.dumps(row) for row in candidates)
 
 
-def test_missing_session_close_is_not_carried_into_next_comparison():
+def test_missing_session_close_keeps_prior_comparable_close_while_listed():
     master = [_master("11110", "Prime")]
     missing = jobs.calculate_daily(
         date="2026-07-16", master_rows=master, bar_rows=[],
         previous_adjusted_closes={"11110": 100})
     assert missing["universes"]["tse_prime_domestic_common"]["counts"][
         "unavailable"] == 1
-    assert "11110" not in missing["nextAdjustedCloses"]
+    assert missing["nextAdjustedCloses"]["11110"] == 100
     following = jobs.calculate_daily(
         date="2026-07-17", master_rows=master,
         bar_rows=[_bar("11110", "2026-07-17", 110)],
         previous_adjusted_closes=missing["nextAdjustedCloses"])
     counts = following["universes"]["tse_prime_domestic_common"]["counts"]
-    assert counts["unavailable"] == 1
-    assert counts["advancers"] == 0
+    assert counts["unavailable"] == 0
+    assert counts["advancers"] == 1
+
+
+def test_prior_close_is_dropped_when_issue_leaves_historical_master():
+    missing = jobs.calculate_daily(
+        date="2026-07-16", master_rows=[], bar_rows=[],
+        previous_adjusted_closes={"11110": 100})
+    assert "11110" not in missing["nextAdjustedCloses"]
 
 
 def test_ratios_and_zero_denominator_are_deterministic():
@@ -253,7 +260,7 @@ def test_exact_model_pricing_and_response_model_contract(monkeypatch):
     assert dry["estimatedCostJpy"] <= 2000
     assert dry["effectiveBudgetJpy"] == 2000
     assert dry["outputTokensPerCall"] == 4096
-    assert dry["pricingVersion"] == "official-2026-07-20-v1"
+    assert dry["pricingVersion"] == "official-2026-07-21-v2"
 
 
 def test_secure_admin_job_route_does_not_start_from_public(monkeypatch):
@@ -308,6 +315,8 @@ def test_jquants_v2_auth_pagination_and_429_recovery(monkeypatch):
     assert proof["apiVersion"] == "v2" and proof["httpStatus"] == 200
     assert proof["method"] == "GET" and proof["dateFormat"] == "YYYYMMDD"
     assert proof["query"]["date"] == "20260717"
+    assert proof["paginationObserved"] is True
+    assert len(proof["paginationTokenHashes"]) == 1
     assert proof["endpointSummary"]["/equities/master"]["errorClass"] is None
     assert "configured-test-value" not in json.dumps(proof)
 
@@ -417,9 +426,9 @@ def test_historical_candidates_exclude_weekends_but_do_not_claim_holidays():
 
 
 def test_provider_history_boundary_never_requires_a_pre_start_seed():
-    dates = jobs.weekday_candidates("2008-05-07", "2008-05-09")
-    assert dates[0] == "2008-05-07"
-    assert all(date >= "2008-05-07" for date in dates)
+    dates = jobs.weekday_candidates("2016-07-20", "2016-07-22")
+    assert dates[0] == jobs.ENTITLEMENT_START_DATE
+    assert all(date >= jobs.ENTITLEMENT_START_DATE for date in dates)
 
 
 def test_journal_reverify_job_records_verified_ack(monkeypatch):
