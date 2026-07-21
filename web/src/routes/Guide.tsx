@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.24', '本番実測に合わせmission tickの有界HTTP timeoutを180秒へ統一。'],
   ['v12.7.23', '大容量durable snapshotを一時ファイルへstreamし、cold-boot時のメモリを制限。'],
   ['v12.7.22', '大容量durable snapshotのcold-boot復元timeoutを修正。'],
   ['v12.7.21', 'Market Ledgerの構造化backtest summaryをRule Cardへ安全に表示。'],
