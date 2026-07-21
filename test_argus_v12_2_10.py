@@ -98,6 +98,33 @@ def test_sequence_preserved_in_manifest():
         "incident:x"] == 7
 
 
+def test_compact_readback_preserves_proof_without_large_ledger():
+    evs = [_ev(1), _ev(2, agg_id="b2")]
+    full = {**_snapshot(evs),
+            "outcomes": [],
+            "marketLedger": {"observations": [{"id": f"o{i}"}
+                                                 for i in range(1000)]},
+            "marketLedgerStateHash": "market-hash",
+            "chartIntelligence": {"snapshots": [{"id": "chart"}]},
+            "chartIntelligenceStateHash": "chart-hash"}
+    receipt = rj.compact_readback_snapshot(full)
+    assert rj.verify_compact_readback_snapshot(receipt) is True
+    assert receipt["receiptSchemaVersion"] == rj.READBACK_RECEIPT_SCHEMA
+    assert "marketLedger" not in receipt
+    assert "chartIntelligence" not in receipt
+    assert receipt["marketLedgerStateHash"] == "market-hash"
+    rec = rj.read_back_receipt(remote_blob=receipt, local_events=evs,
+                               read_back_at=NOW)
+    assert rec["verificationStatus"] == "verified"
+    assert len(rec["ackedIdempotencyKeys"]) == 2
+
+
+def test_compact_readback_tamper_is_rejected():
+    receipt = rj.compact_readback_snapshot(_snapshot([_ev(1)]))
+    receipt["marketLedgerStateHash"] = "tampered"
+    assert rj.verify_compact_readback_snapshot(receipt) is False
+
+
 # ── Phase 2: Verified Read-Back Ack ─────────────────────────────────────────
 
 def test_read_back_exact_success():
@@ -654,6 +681,46 @@ def test_snapshot_v3_public_safe_and_carries_journal():
     for banned in ("passphrase", "hmac", "quantity", "avgCost",
                    "acquisitionPrice", "OPENAI_API_KEY"):
         assert banned not in body, banned
+
+
+def test_scheduler_remote_ack_accepts_compact_state_hash_proof():
+    event = _ev(7, agg_id="compact-proof")
+    full = {**_snapshot([event]), "outcomes": [],
+            "marketLedgerStateHash": rj._h({"placeholder": "unused"}),
+            "chartIntelligenceStateHash": rj._h({"placeholder": "unused"})}
+    # Use the real current state hashes; the compact receipt must verify them
+    # without carrying either full state.
+    full["marketLedgerStateHash"] = scanner.argus_market_ledger.state_hash(
+        scanner._MARKET_LEDGER)
+    full["chartIntelligenceStateHash"] = \
+        scanner.argus_chart_intelligence.state_hash(scanner._CHART_INTELLIGENCE)
+    receipt = rj.compact_readback_snapshot(full)
+    old_events = list(scanner._OPS_JOURNAL)
+    old_cycle = dict(scanner._REMOTE_CYCLE)
+    try:
+        scanner._OPS_JOURNAL[:] = [event]
+        scanner._REMOTE_CYCLE.update({
+            "expectedHash": receipt["integrityManifest"]["manifestHash"],
+            "remoteCommitSha": "a" * 40,
+            "readBackVerified": False})
+        result = scanner._remote_readback_ack(now_iso=NOW, blob=receipt)
+        assert result["verificationStatus"] == "verified"
+        assert scanner._REMOTE_CYCLE["readBackVerified"] is True
+        assert scanner._MARKET_LEDGER_REMOTE["verificationStatus"] == "verified"
+        assert scanner._CHART_INTELLIGENCE_REMOTE["verificationStatus"] == "verified"
+    finally:
+        scanner._OPS_JOURNAL[:] = old_events
+        scanner._REMOTE_CYCLE.clear()
+        scanner._REMOTE_CYCLE.update(old_cycle)
+
+
+def test_workflows_build_compact_receipt_before_ledger_checkout():
+    for name in ("caos-scan.yml", "caos-watchtower.yml"):
+        workflow = _wf(name)
+        build_at = workflow.index("scripts/build_remote_readback_receipt.py")
+        checkout_at = workflow.index("git checkout -B ledger")
+        assert build_at < checkout_at
+        assert 'ledger/osint/readback.json' in workflow
 
 
 def test_semantic_version_format():

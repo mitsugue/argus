@@ -15518,6 +15518,8 @@ _DURABLE_STATE = {"schemaVersion": "argus-durable-v3", "lastWriteAt": None,
                   "lastRestoreAt": None, "integrityStatus": "unknown",
                   "lastKnownGoodAt": None, "restoreSource": None}
 
+_REMOTE_READBACK_PATH = "/osint/readback.json"
+
 
 def _osint_persist():
     try:
@@ -16933,7 +16935,7 @@ def _remote_readback_ack(now_iso=None, blob=None):
     now_iso = now_iso or _ai_now_iso()
     if blob is None:
         try:
-            r = requests.get(f"{_LEDGER_RAW_BASE}/osint/memory.json"
+            r = requests.get(f"{_LEDGER_RAW_BASE}{_REMOTE_READBACK_PATH}"
                              f"?cb={int(time.time())}", timeout=8)
             blob = r.json() if r.status_code == 200 else None
         except Exception:
@@ -16943,6 +16945,19 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _REMOTE_CYCLE.update({"readBackAt": now_iso,
                               "readBackVerified": False,
                               "errorClass": "remote_unreachable"})
+        return None
+    if not isinstance(blob, dict):
+        _REMOTE_ACK["readbackFailures"] += 1
+        _REMOTE_CYCLE.update({"readBackAt": now_iso,
+                              "readBackVerified": False,
+                              "errorClass": "remote_invalid_json"})
+        return None
+    if blob.get("receiptSchemaVersion") and not \
+            argus_remote_journal.verify_compact_readback_snapshot(blob):
+        _REMOTE_ACK["readbackFailures"] += 1
+        _REMOTE_CYCLE.update({"readBackAt": now_iso,
+                              "readBackVerified": False,
+                              "errorClass": "compact_receipt_invalid"})
         return None
     rec = argus_remote_journal.read_back_receipt(
         remote_blob=blob, local_events=_OPS_JOURNAL,
@@ -16999,22 +17014,36 @@ def _remote_readback_ack(now_iso=None, blob=None):
         "errorClass": cycle_error,
     })
     remote_ledger = blob.get("marketLedger") if isinstance(blob, dict) else None
+    remote_ledger_hash = (blob.get("marketLedgerStateHash")
+                          if isinstance(blob, dict) else None)
     if isinstance(remote_ledger, dict) and argus_market_ledger.read_back_verified(
             _MARKET_LEDGER, remote_ledger):
         _MARKET_LEDGER_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
-    elif isinstance(remote_ledger, dict):
+    elif remote_ledger_hash and remote_ledger_hash == \
+            argus_market_ledger.state_hash(_MARKET_LEDGER):
+        _MARKET_LEDGER_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_ledger, dict) or remote_ledger_hash:
         _MARKET_LEDGER_REMOTE["verificationStatus"] = "hash_mismatch"
     else:
         _MARKET_LEDGER_REMOTE["verificationStatus"] = "not_present"
     remote_chart = blob.get("chartIntelligence") if isinstance(blob, dict) else None
+    remote_chart_hash = (blob.get("chartIntelligenceStateHash")
+                         if isinstance(blob, dict) else None)
     if isinstance(remote_chart, dict) and argus_chart_intelligence.read_back_verified(
             _CHART_INTELLIGENCE, remote_chart):
         _CHART_INTELLIGENCE_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
-    elif isinstance(remote_chart, dict):
+    elif remote_chart_hash and remote_chart_hash == \
+            argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE):
+        _CHART_INTELLIGENCE_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_chart, dict) or remote_chart_hash:
         _CHART_INTELLIGENCE_REMOTE["verificationStatus"] = "hash_mismatch"
     else:
         _CHART_INTELLIGENCE_REMOTE["verificationStatus"] = "not_present"
