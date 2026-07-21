@@ -431,6 +431,36 @@ def test_provider_history_boundary_never_requires_a_pre_start_seed():
     assert all(date >= jobs.ENTITLEMENT_START_DATE for date in dates)
 
 
+def test_standard_boundary_rolls_with_execution_date_and_handles_leap_day():
+    assert jobs.rolling_entitlement_start("2026-07-20") == "2016-07-20"
+    assert jobs.rolling_entitlement_start("2026-07-21") == "2016-07-21"
+    assert jobs.rolling_entitlement_start("2024-02-29", years=1) == "2023-02-28"
+
+
+def test_provider_probe_advances_to_first_accessible_trading_day(monkeypatch):
+    import scanner
+    calls = []
+
+    def fake_rows(path, params, *, proof, max_pages):
+        day = str(params["date"])
+        calls.append(day)
+        if day == "2016-07-21":
+            proof["planEntitlementError"] = True
+            raise RuntimeError("jquants_http_400")
+        proof["planEntitlementError"] = False
+        return ([{"Date": day, "Code": "72030", "AdjC": 100}]
+                if day == "2016-07-22" else [])
+
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", fake_rows)
+    proof = {}
+    start, rows = scanner._jquants_discover_entitlement_start(
+        "2026-07-21", proof)
+    assert start == "2016-07-22"
+    assert rows[0]["Code"] == "72030"
+    assert calls == ["2016-07-21", "2016-07-22"]
+    assert proof["rollingCalendarBoundary"] == "2016-07-21"
+
+
 def test_journal_reverify_job_records_verified_ack(monkeypatch):
     import scanner
     previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)

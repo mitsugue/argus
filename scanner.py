@@ -19074,7 +19074,8 @@ def api_argus_admin_foundation_jobs_start():
                    if str(x.get("seriesId") or "").startswith("breadth.all.")]
         params["from"] = (argus_foundation_jobs.next_day(max(periods))
                           if periods else
-                          argus_foundation_jobs.ENTITLEMENT_START_DATE)
+                          argus_foundation_jobs.rolling_entitlement_start(
+                              datetime.now(TZ_JST).strftime("%Y-%m-%d")))
     try:
         started = argus_foundation_jobs.start_job(
             _FOUNDATION_JOBS, job_type=job_type, now_iso=_ai_now_iso(),
@@ -19717,6 +19718,9 @@ def _jquants_secure_page(path, params, *, proof, max_attempts=4):
                 if not isinstance(body, dict) or not isinstance(body.get("data"), list):
                     raise RuntimeError("jquants_invalid_schema")
                 proof.update({"errorClass": None,
+                              "responseErrorCode": None,
+                              "responseErrorMessage": None,
+                              "planEntitlementError": False,
                               "lastSuccessfulRequestAt": _ai_now_iso()})
                 proof["endpointSummary"][path].update({
                     "errorClass": None, "rows": len(body.get("data") or []),
@@ -19816,6 +19820,27 @@ def _jquants_calendar_dates(start_date, end_date, proof):
     return argus_foundation_jobs.trading_dates(rows, start=start_date, end=end_date)
 
 
+def _jquants_discover_entitlement_start(as_of_date, proof):
+    """Find the first provider-accessible trading day at the rolling boundary."""
+    boundary = argus_foundation_jobs.rolling_entitlement_start(as_of_date)
+    cursor = datetime.strptime(boundary, "%Y-%m-%d")
+    for offset in range(15):
+        candidate = (cursor + timedelta(days=offset)).strftime("%Y-%m-%d")
+        try:
+            rows = _jquants_secure_rows(
+                "/equities/bars/daily", {"date": candidate}, proof=proof,
+                max_pages=200)
+        except RuntimeError:
+            if proof.get("planEntitlementError") is True:
+                continue
+            raise
+        if rows:
+            proof["rollingCalendarBoundary"] = boundary
+            proof["oldestSuccessfulDate"] = candidate
+            return candidate, rows
+    raise RuntimeError("jquants_entitlement_boundary_not_found")
+
+
 def _jquants_official_client_test(params):
     """Run the same request through J-Quants' official V2 client, secret-safe."""
     started = time.monotonic()
@@ -19877,17 +19902,31 @@ def _jquants_request_matrix_worker(job_id):
         recent_start = (datetime.now(TZ_JST) - timedelta(days=14)).strftime("%Y-%m-%d")
         calendar_proof = {}
         recent_dates = _jquants_calendar_dates(recent_start, today, calendar_proof)
-        recent = (recent_dates[-1] if recent_dates else
-                  (datetime.now(TZ_JST) - timedelta(days=3)).strftime("%Y-%m-%d"))
+        recent = None
+        for candidate in reversed(recent_dates):
+            recent_probe = {}
+            recent_rows = _jquants_secure_rows(
+                "/equities/bars/daily", {"code": "72030", "date": candidate},
+                proof=recent_probe, max_pages=10)
+            if recent_rows:
+                recent = candidate
+                break
+        if not recent:
+            raise RuntimeError("jquants_recent_confirmed_date_not_found")
         recent_compact = argus_foundation_jobs.normalize_jquants_query(
             {"date": recent})["date"]
+        boundary_proof = {}
+        entitlement_start, _ = _jquants_discover_entitlement_start(
+            today, boundary_proof)
+        entitlement_compact = argus_foundation_jobs.normalize_jquants_query(
+            {"date": entitlement_start})["date"]
         cases = [
             ("official_sample", {"code": "86970", "date": "20230324"}),
             ("recent_confirmed_trading_day",
-             {"code": "86970", "date": recent_compact}),
+             {"code": "72030", "date": recent_compact}),
             ("entitlement_boundary_with_code",
-             {"code": "72030", "date": "20160720"}),
-            ("entitlement_boundary_date_only", {"date": "20160720"}),
+             {"code": "72030", "date": entitlement_compact}),
+            ("entitlement_boundary_date_only", {"date": entitlement_compact}),
             ("official_code_range",
              {"code": "86970", "from": "20230324", "to": "20230327"}),
         ]
@@ -19917,14 +19956,18 @@ def _jquants_request_matrix_worker(job_id):
         direct_ok = all(x["direct"].get("status") == "success" for x in matrix)
         official_ok = all(x["officialClient"].get("status") == "success"
                           for x in matrix)
-        old_ok = matrix[2]["direct"].get("status") == "success"
+        old_ok = (matrix[2]["direct"].get("status") == "success"
+                  and matrix[3]["direct"].get("status") == "success"
+                  and int(matrix[3]["direct"].get("rows") or 0) > 0)
         result = {"status": ("verified" if direct_ok and official_ok else "diagnosed"),
                   "matrix": matrix, "recentConfirmedTradingDay": recent,
                   "directClientAllSuccessful": direct_ok,
                   "officialClientAllSuccessful": official_ok,
                   "oldestRequiredDateAccessible": old_ok,
                   "entitlementPlan": argus_foundation_jobs.ENTITLEMENT_PLAN,
-                  "entitlementStartDate": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+                  "entitlementStartDate": entitlement_start,
+                  "rollingCalendarBoundary": boundary_proof.get(
+                      "rollingCalendarBoundary"),
                   "entitlementPolicy": "rolling_10_years",
                   "rootCause": ("standard_entitlement_boundary_confirmed"
                                 if old_ok else "request_or_provider_rejection_persists"),
@@ -19965,15 +20008,14 @@ def _breadth_commit_rows(rows, now_iso):
 def _jquants_breadth_worker(job_id):
     job = _foundation_job(job_id) or {}
     params = job.get("parameters") or {}
-    requested_start_date = str(params.get("from") or
-                               argus_foundation_jobs.ENTITLEMENT_START_DATE)[:10]
-    start_date = max(requested_start_date,
-                     argus_foundation_jobs.ENTITLEMENT_START_DATE)
     end_date = str(params.get("to") or datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10]
+    calendar_boundary = argus_foundation_jobs.rolling_entitlement_start(end_date)
+    requested_start_date = str(params.get("from") or calendar_boundary)[:10]
+    start_date = max(requested_start_date, calendar_boundary)
     proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
              "authentication": "x-api-key", "secretConfigured": bool(_JQUANTS_API_KEY),
              "errorClass": None, "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
-             "entitlementStartDate": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+             "entitlementStartDate": start_date,
              "entitlementEndDate": end_date,
              "entitlementObservedAt": _ai_now_iso(),
              "entitlementPolicy": "rolling_10_years",
@@ -19985,6 +20027,11 @@ def _jquants_breadth_worker(job_id):
                                checkpoint={"providerProof": proof})
         if not _JQUANTS_API_KEY:
             raise RuntimeError("jquants_not_configured_in_runtime")
+        discovered_start, boundary_rows = _jquants_discover_entitlement_start(
+            end_date, proof)
+        start_date = max(requested_start_date, discovered_start)
+        proof["entitlementStartDate"] = start_date
+        proof["effectiveStartDate"] = start_date
         # Calendar V2 is probed in its production-confirmed current window. Its
         # history does not extend to the 2008 Premium price start, so historical
         # trading dates are proven by the existence of official adjusted daily
@@ -20001,8 +20048,7 @@ def _jquants_breadth_worker(job_id):
         # A resumed slice must compare its first target session with the prior
         # official close.  Fetch a bounded look-back seed but never persist it
         # as a new observation or move the requested oldest boundary backward.
-        if params.get("resumedFromJobId") or \
-                start_date > argus_foundation_jobs.ENTITLEMENT_START_DATE:
+        if params.get("resumedFromJobId") or start_date > discovered_start:
             seed_start = (datetime.strptime(start_date, "%Y-%m-%d")
                           - timedelta(days=10)).strftime("%Y-%m-%d")
             seed_end = (datetime.strptime(start_date, "%Y-%m-%d")
@@ -20049,9 +20095,10 @@ def _jquants_breadth_worker(job_id):
                                                "lastDate": newest})
                 return
             try:
-                bars = _jquants_secure_rows(
-                    "/equities/bars/daily", {"date": date_text}, proof=proof,
-                    max_pages=200)
+                bars = (boundary_rows if date_text == discovered_start else
+                        _jquants_secure_rows(
+                            "/equities/bars/daily", {"date": date_text},
+                            proof=proof, max_pages=200))
             except RuntimeError:
                 failed_requests += 1
                 raise
@@ -20101,13 +20148,13 @@ def _jquants_breadth_worker(job_id):
                                 "instrument": "1306 TOPIX-linked ETF proxy",
                                 "officialIndexValue": False,
                                 "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
-                                "entitlementStartDate":
-                                    argus_foundation_jobs.ENTITLEMENT_START_DATE,
+                                "entitlementStartDate": start_date,
                                 "methodVersion": argus_foundation_jobs.METHOD_VERSION}})
                 except (TypeError, ValueError):
                     pass
             batch.extend(argus_foundation_jobs.ledger_candidates(
-                daily, calculated_at=_ai_now_iso()))
+                daily, calculated_at=_ai_now_iso(),
+                entitlement_start_date=start_date))
             for uid, row in daily["universes"].items():
                 if argus_foundation_jobs.universe_active(uid, date_text):
                     coverage[uid].append(row["coverageRatio"])
@@ -20268,7 +20315,7 @@ def _jquants_breadth_worker(job_id):
             "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
             "planEntitlement": "standard_rolling_10_years_observed",
             "contractScope": "rolling_10_years",
-            "entitlementStartDate": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+            "entitlementStartDate": start_date,
             "entitlementEndDate": newest,
             "latestConfirmedTradingDate": newest,
             "entitlementObservedAt": proof.get("entitlementObservedAt"),
@@ -20276,12 +20323,12 @@ def _jquants_breadth_worker(job_id):
             "apiVersion": "v2",
             "universeMethodology": {
                 "firstSection": {
-                    "from": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+                    "from": start_date,
                     "to": argus_foundation_jobs.FIRST_SECTION_END_DATE},
                 "prime": {"from": argus_foundation_jobs.PRIME_START_DATE,
-                          "to": end_date},
-                "allMarket": {"from": argus_foundation_jobs.ENTITLEMENT_START_DATE,
-                              "to": end_date},
+                          "to": newest},
+                "allMarket": {"from": start_date,
+                              "to": newest},
                 "primeBackProjected": False},
             "rawProviderRowsPersisted": False,
         }

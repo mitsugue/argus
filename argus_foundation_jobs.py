@@ -74,6 +74,16 @@ _MARKET_CODE_SEGMENTS = {
 _JQUANTS_DATE_KEYS = {"date", "from", "to"}
 
 
+def rolling_entitlement_start(as_of_date: str, years: int = 10) -> str:
+    """Calendar lower bound for a rolling-year contract (provider day is probed)."""
+    day = datetime.strptime(str(as_of_date)[:10], "%Y-%m-%d")
+    try:
+        boundary = day.replace(year=day.year - int(years))
+    except ValueError:  # 29 February -> last calendar day of February.
+        boundary = day.replace(year=day.year - int(years), day=28)
+    return boundary.strftime("%Y-%m-%d")
+
+
 def normalize_jquants_query(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Return the official V2 query form without mutating the caller.
 
@@ -451,7 +461,9 @@ def calculate_daily(*, date: str, master_rows: Iterable[Dict[str, Any]],
 
 
 def ledger_candidates(daily: Dict[str, Any], *, calculated_at: str,
-                      published_hour_jst: int = 17) -> List[Dict[str, Any]]:
+                      published_hour_jst: int = 17,
+                      entitlement_start_date: Optional[str] = None
+                      ) -> List[Dict[str, Any]]:
     date = str(daily.get("date") or "")[:10]
     available = f"{date}T{published_hour_jst:02d}:00:00+09:00"
     out: List[Dict[str, Any]] = []
@@ -470,7 +482,8 @@ def ledger_candidates(daily: Dict[str, Any], *, calculated_at: str,
         meta["calculatedAt"] = calculated_at
         meta["availabilityPolicy"] = "same_day_17:00_JST_after_provider_16:30_update"
         meta.update({"plan": ENTITLEMENT_PLAN,
-                     "entitlementStartDate": ENTITLEMENT_START_DATE,
+                     "entitlementStartDate": (entitlement_start_date
+                                               or ENTITLEMENT_START_DATE),
                      "entitlementObservedAt": calculated_at,
                      "apiVersion": "v2",
                      "contractScope": "rolling_10_years",
