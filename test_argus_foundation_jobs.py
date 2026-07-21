@@ -847,3 +847,44 @@ def test_journal_reverify_job_records_verified_ack(monkeypatch):
         scanner._REMOTE_CYCLE.update(previous_cycle)
         scanner._REMOTE_ACK.clear()
         scanner._REMOTE_ACK.update(previous_ack)
+
+
+@pytest.mark.parametrize("execution_mode, expected", [
+    ("independent_os_process", True),
+    ("independent_spawned_os_process", True),
+    ("in_process", False),
+    (None, False),
+])
+def test_foundation_closeout_accepts_only_independent_breadth_workers(
+        execution_mode, expected):
+    import scanner
+
+    previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
+    result = {
+        "stage": "full_5y",
+        "observationCount": 1,
+        "contractScope": jobs.PRODUCTION_SCOPE,
+        "archiveBackfillStatus": "deferred",
+        "coreRequired": False,
+        "executionMode": execution_mode,
+        "backendRestartCountDuringJob": 0,
+        "checkpointPending": 0,
+        "duplicateCount": 0,
+        "permanentFailures": [],
+        "spotCheckPassed": True,
+        "backtests": {"first_section": {}, "prime": {}, "all": {}},
+    }
+    scanner._FOUNDATION_JOBS.clear()
+    scanner._FOUNDATION_JOBS.update({
+        "schemaVersion": jobs.SCHEMA_VERSION,
+        "jobs": [{"jobType": "JQUANTS_BREADTH_BACKFILL",
+                  "status": "completed", "result": result}],
+        "activeJobId": None,
+    })
+    try:
+        closeout = scanner._foundation_closeout_status()
+        assert closeout["requirements"][
+            "productionFiveYearBreadthCompleted"] is expected
+    finally:
+        scanner._FOUNDATION_JOBS.clear()
+        scanner._FOUNDATION_JOBS.update(previous_jobs)

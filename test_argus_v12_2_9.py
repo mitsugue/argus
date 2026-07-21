@@ -499,7 +499,15 @@ def _warm_inv(sym="6965"):
 
 
 def test_e2e_forward_live_fixture(monkeypatch, tmp_path):
+    class FixedBusinessDateTime(RealDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = RealDateTime.fromisoformat(NOW)
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
     _admin(monkeypatch)
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: NOW)
+    monkeypatch.setattr(scanner, "datetime", FixedBusinessDateTime)
     _ready_startup()
     monkeypatch.setenv("RENDER_GIT_COMMIT", "abc1234def")
     monkeypatch.setattr(scanner, "_OSINT_PERSIST_FILE",
@@ -512,8 +520,7 @@ def test_e2e_forward_live_fixture(monkeypatch, tmp_path):
     scanner._OSINT_STORE.clear()
     _reset_soak()
     scanner._OSINT_STORE["6965"] = _warm_inv()
-    from datetime import datetime as _dt
-    sd = _dt.now(scanner.TZ_JST).strftime("%Y-%m-%d")
+    sd = NOW[:10]
     due = sc.mission(mission_type="pre_session_forecast", market="JP",
                      session_date=sd, scheduled_for=f"{sd}T00:01:00+09:00")
     scanner._MISSIONS.append(due)

@@ -1,4 +1,6 @@
 """ARGUS V12.2.3 — 運用証拠ゲート(回収発行/soak永続/検証実行/replay E2E)の恒久ガード。"""
+from datetime import datetime as RealDateTime
+
 import argus_decision_ledger as dl
 import argus_scheduler as sc
 import scanner
@@ -11,15 +13,22 @@ def _admin(monkeypatch):
 
 
 def test_recovery_issuance_idempotent(monkeypatch):
+    class FixedBusinessDateTime(RealDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = RealDateTime.fromisoformat(NOW)
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
     _admin(monkeypatch)
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: NOW)
+    monkeypatch.setattr(scanner, "datetime", FixedBusinessDateTime)
     scanner._MISSIONS.clear()
     scanner._FORECAST_LEDGER.clear()
     scanner._OUTCOME_LEDGER.clear()
     scanner._OSINT_STORE.clear()
     scanner._OSINT_AGENT_QUEUE.clear()
     import argus_scheduler as _sc
-    from datetime import datetime as _dt
-    _sd = _dt.now(scanner.TZ_JST).strftime("%Y-%m-%d")
+    _sd = NOW[:10]
     _due = _sc.mission(mission_type="pre_session_forecast", market="JP",
                        session_date=_sd,
                        scheduled_for=f"{_sd}T00:01:00+09:00")
