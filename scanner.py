@@ -21025,10 +21025,10 @@ def _jquants_breadth_worker(job_id):
     """Supervise the one-at-a-time breadth worker in an independent OS process."""
     try:
         memory_limit = int(os.environ.get(
-            "JQUANTS_BREADTH_WORKER_MEMORY_SOFT_LIMIT_MB", "1024"))
+            "JQUANTS_BREADTH_WORKER_MEMORY_SOFT_LIMIT_MB", "1280"))
     except (TypeError, ValueError):
-        memory_limit = 1024
-    memory_limit = max(256, min(memory_limit, 1024))
+        memory_limit = 1280
+    memory_limit = max(256, min(memory_limit, 1280))
     boot_id = _RUNTIME.get("bootId")
     backend_peak_before = _process_peak_memory_mb()
     start_method = str(os.environ.get(
