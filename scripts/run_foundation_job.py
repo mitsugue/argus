@@ -36,6 +36,7 @@ SAFE_RESULT_KEYS = {
     "productionFiveYearEndDate", "archiveBackfillStatus", "archiveScope",
     "coreRequired", "stage", "batchPolicy", "checkpointPersistence",
     "duplicateSafeResume", "executionMode", "workerConcurrency",
+    "workerProcessStartMethod",
     "workerMemorySoftLimitMb", "workerPeakMemoryMb", "backendPeakMemoryMb",
     "backendPeakMemoryAtStartMb", "backendRestartCountDuringJob",
     "backendBootIdStable",

@@ -512,6 +512,8 @@ def test_five_year_stages_are_bounded_and_reject_unknown_stage():
 def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
     import scanner
 
+    monkeypatch.setenv("ARGUS_BREADTH_PROCESS_START_METHOD", "fork")
+
     previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
     previous_ledger = copy.deepcopy(scanner._MARKET_LEDGER)
     scanner._MARKET_LEDGER.clear()
@@ -548,6 +550,7 @@ def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
         final = scanner._foundation_job(started["job"]["jobId"])
         assert final["status"] == "completed"
         assert final["result"]["executionMode"] == "independent_os_process"
+        assert final["result"]["workerProcessStartMethod"] == "fork"
         assert final["result"]["workerConcurrency"] == 1
         assert final["result"]["workerMemorySoftLimitMb"] == 1024
         assert final["result"]["backendRestartCountDuringJob"] == 0
@@ -583,6 +586,74 @@ def test_breadth_worker_scope_releases_archive_and_non_breadth_rows():
             "2026-07-21T17:00:00+09:00")
         assert scanner._MARKET_LEDGER["imports"] == []
     finally:
+        scanner._MARKET_LEDGER.clear()
+        scanner._MARKET_LEDGER.update(previous_ledger)
+
+
+def test_breadth_spawn_seed_contains_only_the_production_window():
+    import scanner
+
+    previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
+    previous_ledger = copy.deepcopy(scanner._MARKET_LEDGER)
+    scanner._FOUNDATION_JOBS.clear()
+    scanner._FOUNDATION_JOBS.update(jobs.empty_state())
+    started = jobs.start_job(
+        scanner._FOUNDATION_JOBS, job_type="JQUANTS_BREADTH_BACKFILL",
+        now_iso="2026-07-21T00:00:00Z",
+        parameters={"stage": "canary_5d", "to": "2026-07-21"})
+    scanner._FOUNDATION_JOBS.clear()
+    scanner._FOUNDATION_JOBS.update(started["state"])
+    scanner._MARKET_LEDGER.clear()
+    scanner._MARKET_LEDGER.update(scanner.argus_market_ledger.empty_state())
+    scanner._MARKET_LEDGER["observations"] = [
+        {"seriesId": "breadth.all.advancers", "periodEnd": "2021-07-06"},
+        {"seriesId": "breadth.all.advancers", "periodEnd": "2021-07-07"},
+        {"seriesId": "flow.foreign", "periodEnd": "2026-07-21"},
+    ]
+    try:
+        seed = scanner._breadth_worker_seed_state(started["job"]["jobId"])
+        assert [(row["seriesId"], row["periodEnd"]) for row in
+                seed["observations"]] == [
+            ("breadth.all.advancers", "2021-07-07")]
+        assert seed["derivedMetrics"] == []
+        assert seed["derivedStateDirty"] is True
+    finally:
+        scanner._FOUNDATION_JOBS.clear()
+        scanner._FOUNDATION_JOBS.update(previous_jobs)
+        scanner._MARKET_LEDGER.clear()
+        scanner._MARKET_LEDGER.update(previous_ledger)
+
+
+def test_breadth_spawn_process_starts_clean_and_reports_failure_metrics(
+        monkeypatch):
+    import scanner
+
+    previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
+    previous_ledger = copy.deepcopy(scanner._MARKET_LEDGER)
+    scanner._FOUNDATION_JOBS.clear()
+    started = jobs.start_job(
+        jobs.empty_state(), job_type="JQUANTS_BREADTH_BACKFILL",
+        now_iso="2026-07-21T00:00:00Z",
+        parameters={"stage": "canary_5d", "to": "2026-07-21"})
+    scanner._FOUNDATION_JOBS.update(started["state"])
+    scanner._MARKET_LEDGER.clear()
+    scanner._MARKET_LEDGER.update(scanner.argus_market_ledger.empty_state())
+    monkeypatch.setenv("ARGUS_BREADTH_PROCESS_START_METHOD", "spawn")
+    monkeypatch.delenv("JQUANTS_API_KEY", raising=False)
+    monkeypatch.setattr(scanner, "_osint_persist", lambda: None)
+    try:
+        scanner._jquants_breadth_worker(started["job"]["jobId"])
+        final = scanner._foundation_job(started["job"]["jobId"])
+        assert final["status"] == "failed"
+        assert final["errorClass"] == "jquants_not_configured_in_runtime"
+        assert final["result"]["workerProcessStartMethod"] == "spawn"
+        assert final["result"]["executionMode"] == (
+            "independent_spawned_os_process")
+        assert final["result"]["workerPeakMemoryMb"] is not None
+        assert final["result"]["backendBootIdStable"] is True
+    finally:
+        scanner._FOUNDATION_JOBS.clear()
+        scanner._FOUNDATION_JOBS.update(previous_jobs)
         scanner._MARKET_LEDGER.clear()
         scanner._MARKET_LEDGER.update(previous_ledger)
 

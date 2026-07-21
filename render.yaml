@@ -32,6 +32,8 @@ services:
       # Raw provider rows are released after each <= one-month checkpoint.
       - key: JQUANTS_BREADTH_WORKER_MEMORY_SOFT_LIMIT_MB
         value: 1024
+      - key: ARGUS_BREADTH_PROCESS_START_METHOD
+        value: spawn
       # FRED (live rates snapshot) — also dashboard-only.
       - key: FRED_API_KEY
         sync: false

@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.13', 'Breadth workerをclean spawn processへ分離し、Web heap継承によるMemoryErrorを修正。'],
   ['v12.7.12', 'Breadth rebuildをproduction 5年へ限定し、archive保持のままworker peak memoryを抑制。'],
   ['v12.7.11', 'Breadthのderived stateをworkerから同期し、Web process側の二重全履歴rebuildを除去。'],
   ['v12.7.10', 'Breadth workerのsoft memory limitを復元済み大規模台帳に合わせ、独立processのMemoryErrorを修正。'],
