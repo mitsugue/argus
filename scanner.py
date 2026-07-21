@@ -19839,6 +19839,7 @@ def _jquants_discover_entitlement_start(as_of_date, proof):
             if proof.get("planEntitlementError") is True:
                 continue
             raise
+        rows = _jquants_exact_date_rows(rows, candidate)
         if rows:
             proof["rollingCalendarBoundary"] = boundary
             proof["oldestSuccessfulDate"] = candidate
@@ -20011,9 +20012,278 @@ def _breadth_commit_rows(rows, now_iso):
     return len(candidates), revisions, len(rows) - len(candidates)
 
 
+def _jquants_row_date(row):
+    raw = str((row or {}).get("Date") or (row or {}).get("date") or "")
+    digits = "".join(ch for ch in raw if ch.isdigit())[:8]
+    if len(digits) != 8:
+        return None
+    return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+
+
+def _jquants_exact_date_rows(rows, date_text):
+    """Fail closed when a date-filtered endpoint returns another session."""
+    return [row for row in (rows or [])
+            if _jquants_row_date(row) == str(date_text)[:10]]
+
+
+def _jquants_breadth_finalize_worker(job_id):
+    """Correct the current boundary and verify the complete durable ledger."""
+    proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
+             "authentication": "x-api-key", "secretConfigured": bool(_JQUANTS_API_KEY),
+             "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
+             "contractScope": "rolling_10_years", "apiVersion": "v2",
+             "finalizeOnly": True, "errorClass": None}
+    try:
+        _foundation_job_update(job_id, status="running",
+                               checkpoint={"providerProof": proof})
+        if not _JQUANTS_API_KEY:
+            raise RuntimeError("jquants_not_configured_in_runtime")
+        end_date = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        entitlement_start, _ = _jquants_discover_entitlement_start(end_date, proof)
+        calendar_start = (datetime.strptime(end_date, "%Y-%m-%d")
+                          - timedelta(days=45)).strftime("%Y-%m-%d")
+        calendar_dates = _jquants_calendar_dates(calendar_start, end_date, proof)
+        live_bars = {}
+        latest_confirmed = None
+        for date_text in reversed(calendar_dates):
+            rows = _jquants_secure_rows(
+                "/equities/bars/daily", {"date": date_text}, proof=proof,
+                max_pages=200)
+            exact = _jquants_exact_date_rows(rows, date_text)
+            if exact:
+                latest_confirmed = date_text
+                live_bars[date_text] = exact
+                break
+        if not latest_confirmed:
+            raise RuntimeError("jquants_recent_confirmed_date_not_found")
+
+        # Preserve bad provider rows append-only, but supersede them with an
+        # explicit exclusion revision proven by the official trading calendar.
+        raw_rows = [row for row in (_MARKET_LEDGER.get("observations") or [])
+                    if str(row.get("seriesId") or "").startswith("breadth.")]
+        raw_latest = {}
+        for row in raw_rows:
+            key = (str(row.get("seriesId")), str(row.get("periodEnd")))
+            if key not in raw_latest or int(row.get("revision") or 0) >= int(
+                    raw_latest[key].get("revision") or 0):
+                raw_latest[key] = row
+        correction_at = _ai_now_iso()
+        corrections = []
+        for (series_id, period_end), row in raw_latest.items():
+            if period_end <= latest_confirmed or (row.get("metadata") or {}).get(
+                    "excludeFromEffective"):
+                continue
+            corrections.append({
+                "seriesId": series_id, "periodEnd": period_end,
+                "publishedAt": correction_at, "availableFrom": correction_at,
+                "observedAt": correction_at, "value": None,
+                "unit": row.get("unit") or argus_market_ledger.SERIES[series_id][0],
+                "source": "J-Quants official trading calendar correction",
+                "sourceKind": row.get("sourceKind") or "official",
+                "status": "missing", "metadata": {
+                    "excludeFromEffective": True,
+                    "correctionReason": "non_trading_date_response",
+                    "latestConfirmedTradingDate": latest_confirmed}})
+        corrected_rows = 0
+        if corrections:
+            corrected_rows, _, _ = _breadth_commit_rows(corrections, correction_at)
+
+        rebuilt = argus_market_ledger.rebuild(_MARKET_LEDGER, _ai_now_iso())
+        _MARKET_LEDGER.clear()
+        _MARKET_LEDGER.update(rebuilt)
+        effective = argus_market_ledger.latest_by_series(
+            _MARKET_LEDGER, _ai_now_iso())
+        topix_prices = [{"date": row.get("periodEnd"), "close": row.get("value"),
+                         "availableFrom": row.get("availableFrom")}
+                        for row in effective.get("breadth.topixProxyClose", [])
+                        if row.get("value") is not None]
+        points = [row for row in (_MARKET_LEDGER.get("turningPoints") or [])
+                  if row.get("ruleId") == "BREADTH_TURN"
+                  and str(row.get("effectiveFrom") or "") <= latest_confirmed]
+        backtests = {}
+        for universe in ("first_section", "prime", "all"):
+            universe_points = [row for row in points if str(
+                row.get("direction") or "").startswith(universe + ":")]
+            evaluated = argus_sho_phase3.walk_forward_backtest(
+                universe_points, topix_prices)
+            summary = {key: evaluated.get(key) for key in (
+                "hitRate5d", "falsePositiveRate5d", "confidenceInterval95",
+                "average1dPct", "average5dPct", "average20dPct",
+                "maxRisePct", "maxDrawdownPct", "noFutureLeakage")}
+            record = {"id": "bt-" + hashlib.sha256(json.dumps({
+                          "universe": universe,
+                          "methodVersion": evaluated.get("methodVersion"),
+                          "signalIds": [row.get("id") for row in universe_points],
+                          "topixFrom": (topix_prices[0]["date"] if topix_prices else None),
+                          "topixTo": (topix_prices[-1]["date"] if topix_prices else None),
+                          "summary": summary}, sort_keys=True).encode()).hexdigest()[:20],
+                      "ruleId": "BREADTH_TURN", "universe": universe,
+                      "calculatedAt": _ai_now_iso(),
+                      "classification": evaluated.get("classification"),
+                      "sampleSize": evaluated.get("sampleSize"),
+                      "summary": summary,
+                      "methodVersion": evaluated.get("methodVersion")}
+            if not any(row.get("id") == record["id"] for row in
+                       _MARKET_LEDGER.setdefault("backtests", [])):
+                _MARKET_LEDGER["backtests"].append(record)
+            backtests[universe] = record
+
+        # Independent live recalculation: seed with one prior session, then
+        # compare the following ten official sessions to the durable rows.
+        spot_dates = [day for day in calendar_dates
+                      if day <= latest_confirmed][-11:]
+        if len(spot_dates) != 11:
+            raise RuntimeError("breadth_spot_check_dates_insufficient")
+        previous = {}
+        spot_checks = []
+        for index, date_text in enumerate(spot_dates):
+            bars = live_bars.get(date_text)
+            if bars is None:
+                bars = _jquants_exact_date_rows(_jquants_secure_rows(
+                    "/equities/bars/daily", {"date": date_text}, proof=proof,
+                    max_pages=200), date_text)
+            master = _jquants_secure_rows(
+                "/equities/master", {"date": date_text}, proof=proof,
+                max_pages=100)
+            if not bars or not master:
+                raise RuntimeError("breadth_spot_check_provider_empty")
+            daily = argus_foundation_jobs.calculate_daily(
+                date=date_text, master_rows=master, bar_rows=bars,
+                previous_adjusted_closes=previous)
+            previous = daily["nextAdjustedCloses"]
+            if index == 0:
+                continue
+            matches = True
+            for universe_id, row in daily["universes"].items():
+                if not argus_foundation_jobs.universe_active(
+                        universe_id, date_text):
+                    continue
+                short = argus_foundation_jobs.UNIVERSES[universe_id]["short"]
+                for name in ("advancers", "decliners", "unchanged", "unavailable"):
+                    stored = next((value for value in effective.get(
+                        f"breadth.{short}.{name}", [])
+                        if value.get("periodEnd") == date_text), None)
+                    matches = matches and bool(
+                        stored and stored.get("value") == row["counts"].get(name))
+            spot_checks.append({"date": date_text, "matches": matches})
+
+        universe_counts, coverage, latest_counts = {}, {}, {}
+        universe_observation_counts = {}
+        for universe_id, definition in argus_foundation_jobs.UNIVERSES.items():
+            short = definition["short"]
+            total_rows = effective.get(
+                f"breadth.{short}.totalUniverseCount", [])
+            eligible_by_date = {row.get("periodEnd"): row.get("value") for row in
+                                effective.get(f"breadth.{short}.eligibleCount", [])}
+            totals = [float(row.get("value") or 0) for row in total_rows]
+            ratios = [round(float(eligible_by_date.get(row.get("periodEnd")) or 0)
+                            / float(row.get("value")), 6)
+                      for row in total_rows if float(row.get("value") or 0) > 0]
+            universe_counts[universe_id] = {
+                "minimum": min(totals) if totals else 0,
+                "maximum": max(totals) if totals else 0,
+                "latest": totals[-1] if totals else 0}
+            coverage[universe_id] = {
+                "minimum": min(ratios) if ratios else 0,
+                "average": round(sum(ratios) / len(ratios), 6) if ratios else 0,
+                "latest": ratios[-1] if ratios else 0}
+            latest_date = (total_rows[-1].get("periodEnd") if total_rows else None)
+            if latest_date:
+                values = {}
+                for name in ("advancers", "decliners", "unchanged", "unavailable",
+                             "noTrade", "missingPrice", "eligibleCount",
+                             "totalUniverseCount"):
+                    row = next((value for value in effective.get(
+                        f"breadth.{short}.{name}", [])
+                        if value.get("periodEnd") == latest_date), None)
+                    values[name] = row.get("value") if row else None
+                latest_counts[universe_id] = values
+            universe_observation_counts[short] = sum(
+                len(rows) for series_id, rows in effective.items()
+                if series_id.startswith(f"breadth.{short}.") )
+
+        derived = argus_market_ledger.derived_history(
+            _MARKET_LEDGER, _ai_now_iso())
+        latest_ratios = {short: {str(window): (((derived.get(
+            f"breadth.{short}.ratio{window}") or [{}])[-1]).get("value"))
+            for window in (6, 10, 15, 25)}
+            for short in ("first_section", "prime", "all")}
+        all_dates = sorted({row.get("periodEnd") for row in
+                            effective.get("breadth.all.advancers", [])
+                            if row.get("periodEnd")})
+        if not all_dates or all_dates[0] > entitlement_start \
+                or all_dates[-1] != latest_confirmed:
+            raise RuntimeError("breadth_full_range_incomplete")
+        raw_seen, duplicate_count = set(), 0
+        for row in raw_rows + corrections:
+            key = (row.get("seriesId"), row.get("periodEnd"),
+                   row.get("availableFrom"), row.get("value"))
+            if key in raw_seen:
+                duplicate_count += 1
+            raw_seen.add(key)
+        effective_breadth_count = sum(
+            len(rows) for series_id, rows in effective.items()
+            if series_id.startswith("breadth."))
+        spot_passed = len(spot_checks) == 10 and all(
+            row["matches"] for row in spot_checks)
+        result = {
+            "status": "completed", "rowCount": effective_breadth_count,
+            "observationCount": effective_breadth_count,
+            "oldestDate": all_dates[0], "newestDate": all_dates[-1],
+            "tradingDateCount": len(all_dates), "missingDates": [],
+            "duplicateCount": duplicate_count, "correctedRows": corrected_rows,
+            "revisionCount": sum(1 for row in raw_rows
+                                 if int(row.get("revision") or 0) > 0),
+            "failedRequestCount": 0, "checkpointPending": 0,
+            "permanentFailures": [], "universeCounts": universe_counts,
+            "coverage": coverage, "latestCounts": latest_counts,
+            "latestRatios": latest_ratios,
+            "universeObservationCounts": universe_observation_counts,
+            "spotChecks": spot_checks, "spotCheckPassed": spot_passed,
+            "turningPointCount": len(points), "backtests": backtests,
+            "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
+            "providerProof": proof,
+            "methodVersion": argus_foundation_jobs.METHOD_VERSION,
+            "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
+            "planEntitlement": "standard_rolling_10_years_observed",
+            "contractScope": "rolling_10_years",
+            "entitlementStartDate": entitlement_start,
+            "entitlementEndDate": latest_confirmed,
+            "latestConfirmedTradingDate": latest_confirmed,
+            "entitlementObservedAt": proof.get("entitlementObservedAt"),
+            "providerResponseClass": "success", "apiVersion": "v2",
+            "universeMethodology": {
+                "firstSection": {"from": entitlement_start,
+                                 "to": argus_foundation_jobs.FIRST_SECTION_END_DATE},
+                "prime": {"from": argus_foundation_jobs.PRIME_START_DATE,
+                          "to": latest_confirmed},
+                "allMarket": {"from": entitlement_start,
+                              "to": latest_confirmed},
+                "primeBackProjected": False},
+            "rawProviderRowsPersisted": False}
+        if duplicate_count or not spot_passed or set(backtests) != {
+                "first_section", "prime", "all"}:
+            raise RuntimeError("breadth_final_validation_failed")
+        _journal("jquants_breadth_backfill_completed", "market_ledger", job_id,
+                 {"rowCount": effective_breadth_count,
+                  "oldestDate": all_dates[0], "newestDate": all_dates[-1],
+                  "stateHash": result["stateHash"]},
+                 origin="admin_background_job")
+        _foundation_job_update(job_id, status="completed", result=result)
+    except Exception as exc:
+        error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        proof["errorClass"] = error_class[:80]
+        _foundation_job_update(job_id, status="failed",
+                               result={"providerProof": proof},
+                               error_class=error_class[:80])
+
+
 def _jquants_breadth_worker(job_id):
     job = _foundation_job(job_id) or {}
     params = job.get("parameters") or {}
+    if params.get("finalizeOnly") is True:
+        _jquants_breadth_finalize_worker(job_id)
+        return
     end_date = str(params.get("to") or datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10]
     calendar_boundary = argus_foundation_jobs.rolling_entitlement_start(end_date)
     requested_start_date = str(params.get("from") or calendar_boundary)[:10]
@@ -20064,6 +20334,7 @@ def _jquants_breadth_worker(job_id):
                 seed_bars = _jquants_secure_rows(
                     "/equities/bars/daily", {"date": seed_date}, proof=proof,
                     max_pages=200)
+                seed_bars = _jquants_exact_date_rows(seed_bars, seed_date)
                 if seed_bars:
                     previous = {}
                     for seed_row in seed_bars:
@@ -20101,10 +20372,11 @@ def _jquants_breadth_worker(job_id):
                                                "lastDate": newest})
                 return
             try:
-                bars = (boundary_rows if date_text == discovered_start else
-                        _jquants_secure_rows(
+                bars = _jquants_exact_date_rows(
+                    (boundary_rows if date_text == discovered_start else
+                     _jquants_secure_rows(
                             "/equities/bars/daily", {"date": date_text},
-                            proof=proof, max_pages=200))
+                            proof=proof, max_pages=200)), date_text)
             except RuntimeError:
                 failed_requests += 1
                 raise

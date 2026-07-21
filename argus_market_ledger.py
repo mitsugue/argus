@@ -209,7 +209,11 @@ def effective_observations(state: Dict[str, Any], as_of: str) -> List[Dict[str, 
     for row in sorted(eligible, key=lambda x: (str(x.get("seriesId")), str(x.get("periodEnd")),
                                                 int(x.get("revision") or 0), str(x.get("observedAt")))):
         latest[(str(row.get("seriesId")), str(row.get("periodEnd")))] = row
-    return list(latest.values())
+    # Data corrections are append-only.  A newer revision may explicitly
+    # invalidate a provider row (for example a holiday response mislabeled as
+    # the requested date) without deleting or rewriting the historical row.
+    return [row for row in latest.values()
+            if not (row.get("metadata") or {}).get("excludeFromEffective")]
 
 
 def latest_by_series(state: Dict[str, Any], as_of: str) -> Dict[str, List[Dict[str, Any]]]:
