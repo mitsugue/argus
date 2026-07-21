@@ -205,4 +205,10 @@ def test_no_trade_and_missing_price_are_distinct_and_never_scored_as_zero():
     assert by_series["breadth.prime.advancers"]["metadata"][
         "entitlementStartDate"] == "2016-07-20"
     assert by_series["breadth.prime.advancers"]["metadata"][
-        "contractScope"] == "rolling_10_years"
+        "contractScope"] == "rolling_5_years"
+    assert by_series["breadth.prime.advancers"]["metadata"][
+        "productionFiveYearStartDate"] == "2021-07-17"
+    assert by_series["breadth.prime.advancers"]["metadata"][
+        "archiveBackfillStatus"] == "deferred"
+    assert by_series["breadth.prime.advancers"]["metadata"][
+        "coreRequired"] is False

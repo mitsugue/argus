@@ -28,6 +28,10 @@ services:
       # in the x-api-key header (v1 mailaddress/password is discontinued).
       - key: JQUANTS_API_KEY
         sync: false
+      # Dedicated breadth child process: hard upper configuration boundary.
+      # Raw provider rows are released after each <= one-month checkpoint.
+      - key: JQUANTS_BREADTH_WORKER_MEMORY_SOFT_LIMIT_MB
+        value: 512
       # FRED (live rates snapshot) — also dashboard-only.
       - key: FRED_API_KEY
         sync: false

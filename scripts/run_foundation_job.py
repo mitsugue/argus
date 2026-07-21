@@ -32,6 +32,13 @@ SAFE_RESULT_KEYS = {
     "plan", "planEntitlement", "entitlementStartDate", "entitlementEndDate",
     "entitlementObservedAt", "latestConfirmedTradingDate",
     "providerResponseClass", "contractScope", "apiVersion", "universeMethodology",
+    "productionHistoryYears", "productionFiveYearStartDate",
+    "productionFiveYearEndDate", "archiveBackfillStatus", "archiveScope",
+    "coreRequired", "stage", "batchPolicy", "checkpointPersistence",
+    "duplicateSafeResume", "executionMode", "workerConcurrency",
+    "workerMemorySoftLimitMb", "workerPeakMemoryMb", "backendPeakMemoryMb",
+    "backendPeakMemoryAtStartMb", "backendRestartCountDuringJob",
+    "backendBootIdStable",
     "dryRun", "manifestValidation", "providerPreflight", "formalResult",
 }
 
