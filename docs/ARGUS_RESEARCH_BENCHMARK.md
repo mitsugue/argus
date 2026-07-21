@@ -1,4 +1,4 @@
-# Research Benchmark (v12.7.11)
+# Research Benchmark (v12.7.12)
 
 Protocol v1はholdout消費済みのまま`closed_invalid`としてappend-only保存し、
 再実行しない。Protocol v2は新規36ケースpoolからSHA256 seedでcalibration 6、

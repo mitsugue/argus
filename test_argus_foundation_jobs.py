@@ -561,6 +561,32 @@ def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
         scanner._MARKET_LEDGER.update(previous_ledger)
 
 
+def test_breadth_worker_scope_releases_archive_and_non_breadth_rows():
+    import scanner
+
+    previous_ledger = copy.deepcopy(scanner._MARKET_LEDGER)
+    scanner._MARKET_LEDGER.clear()
+    scanner._MARKET_LEDGER.update(scanner.argus_market_ledger.empty_state())
+    scanner._MARKET_LEDGER["observations"] = [
+        {"seriesId": "breadth.all.advancers", "periodEnd": "2021-07-20"},
+        {"seriesId": "breadth.all.advancers", "periodEnd": "2021-07-21"},
+        {"seriesId": "flow.foreign", "periodEnd": "2026-07-21"},
+    ]
+    scanner._MARKET_LEDGER["lastUpdatedAt"] = "2026-07-21T17:00:00+09:00"
+    try:
+        excluded = scanner._scope_breadth_worker_ledger("2021-07-21")
+        assert excluded == 2
+        assert scanner._MARKET_LEDGER["observations"] == [{
+            "seriesId": "breadth.all.advancers", "periodEnd": "2021-07-21"}]
+        assert scanner._MARKET_LEDGER["derivedStateDirty"] is True
+        assert scanner._MARKET_LEDGER["lastUpdatedAt"] == (
+            "2026-07-21T17:00:00+09:00")
+        assert scanner._MARKET_LEDGER["imports"] == []
+    finally:
+        scanner._MARKET_LEDGER.clear()
+        scanner._MARKET_LEDGER.update(previous_ledger)
+
+
 def test_provider_probe_advances_to_first_accessible_trading_day(monkeypatch):
     import scanner
     calls = []

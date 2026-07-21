@@ -39,6 +39,7 @@ SAFE_RESULT_KEYS = {
     "workerMemorySoftLimitMb", "workerPeakMemoryMb", "backendPeakMemoryMb",
     "backendPeakMemoryAtStartMb", "backendRestartCountDuringJob",
     "backendBootIdStable",
+    "archiveObservationsExcludedFromWorkerMemory",
     "dryRun", "manifestValidation", "providerPreflight", "formalResult",
 }
 
