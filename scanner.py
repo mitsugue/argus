@@ -1,7 +1,7 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
 import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures
-import gc, multiprocessing, resource, sys
+import gc, multiprocessing, resource, sys, tempfile
 try:
     from google import genai as google_genai
     from google.genai import types as genai_types
@@ -15497,6 +15497,7 @@ _OSINT_PROGRESS = {}                   # SYM -> {stage, loop, maxLoops, notesJa[
 _OSINT_PERSIST_FILE = "/tmp/argus_osint_memory.json"
 _OSINT_PERSIST_STATE = {"restored": False}
 _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
+_DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
 _OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
@@ -15585,9 +15586,34 @@ def _osint_restore_once():
             r = requests.get(
                 f"{_LEDGER_RAW_BASE}/osint/memory.json?cb={int(time.time())}",
                 timeout=_DURABLE_RESTORE_HTTP_TIMEOUT,
+                stream=True,
             )
             if r.status_code == 200:
-                blob = r.json()
+                restore_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                            mode="wb", prefix="argus-durable-restore-",
+                            suffix=".json", dir="/tmp", delete=False) as tmp:
+                        restore_path = tmp.name
+                        received = 0
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):
+                            if not chunk:
+                                continue
+                            received += len(chunk)
+                            if received > _DURABLE_RESTORE_MAX_BYTES:
+                                raise ValueError("durable_snapshot_too_large")
+                            tmp.write(chunk)
+                    with open(restore_path, encoding="utf-8") as f:
+                        blob = json.load(f)
+                finally:
+                    if restore_path:
+                        try:
+                            os.unlink(restore_path)
+                        except OSError:
+                            pass
+                    r.close()
+            else:
+                r.close()
         except Exception:
             blob = None
     if blob is None:

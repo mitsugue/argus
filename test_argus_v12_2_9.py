@@ -304,10 +304,16 @@ def test_remote_restore_allows_large_snapshot_read_timeout(monkeypatch, tmp_path
 
     class _Response:
         status_code = 200
+        closed = False
 
         @staticmethod
-        def json():
-            return {"schemaVersion": "argus-durable-v3"}
+        def iter_content(chunk_size):
+            assert chunk_size == 1024 * 1024
+            yield json.dumps({"schemaVersion": "argus-durable-v3"}).encode()
+
+        @classmethod
+        def close(cls):
+            cls.closed = True
 
     class _Requests:
         @staticmethod
@@ -319,8 +325,10 @@ def test_remote_restore_allows_large_snapshot_read_timeout(monkeypatch, tmp_path
     scanner._osint_restore_once()
 
     assert observed["timeout"] == (6, 60)
+    assert observed["stream"] is True
     assert observed["timeout"][1] > 6
     assert scanner._DURABLE_STATE["restoreSource"] == "ledger"
+    assert _Response.closed is True
 
 
 def test_corrupt_state_ready_degraded(monkeypatch, tmp_path):
