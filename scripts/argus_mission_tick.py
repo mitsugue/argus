@@ -70,7 +70,7 @@ def main() -> int:
         _emit(status="failure", errorClass="missing_admin_token")
         return 78
     timeout = min(180, max(10, int(os.environ.get(
-        "ARGUS_TICK_TIMEOUT_SECONDS", "120"))))
+        "ARGUS_TICK_TIMEOUT_SECONDS", "180"))))
     attempts = min(2, max(1, int(os.environ.get(
         "ARGUS_TICK_MAX_ATTEMPTS", "2"))))
     scheduled_for, window_id = _window(dt.datetime.now(tz=UTC))

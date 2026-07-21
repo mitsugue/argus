@@ -45,7 +45,7 @@ jobs:
           fi
           export TRIGGER_SOURCE
           TICK_PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"triggerSource":os.environ["TRIGGER_SOURCE"],"expectedBuildSha":os.environ["GITHUB_SHA"],"runId":os.environ["GITHUB_RUN_ID"]},separators=(",",":")))')
-          MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 120 \
+          MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --header 'Content-Type: application/json' --data "$TICK_PAYLOAD" \
             --url "$BE/api/argus/admin/missions/tick")

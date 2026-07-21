@@ -131,6 +131,8 @@ class SystemdContractTests(unittest.TestCase):
         self.assertNotIn("ARGUS_ADMIN_TOKEN=", service)
         self.assertNotIn("--token", service)
         self.assertIn("NoNewPrivileges=true", service)
+        env = (ROOT / "ops/systemd/argus-mission-tick.env.example").read_text()
+        self.assertIn("ARGUS_TICK_TIMEOUT_SECONDS=180", env)
 
     def test_invoker_emits_stable_utc_window_and_no_secret(self):
         path = ROOT / "scripts/argus_mission_tick.py"
@@ -145,6 +147,7 @@ class SystemdContractTests(unittest.TestCase):
         self.assertEqual(window_id, "mw-2026-07-20T00:07:00Z")
         source = path.read_text()
         self.assertIn('"triggerSource": "ec2_systemd"', source)
+        self.assertIn('"ARGUS_TICK_TIMEOUT_SECONDS", "180"', source)
         self.assertNotIn('print(token', source)
 
     def test_invoker_success_log_is_structured_and_secret_free(self):
