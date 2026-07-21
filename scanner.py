@@ -20026,6 +20026,22 @@ def _jquants_exact_date_rows(rows, date_text):
             if _jquants_row_date(row) == str(date_text)[:10]]
 
 
+def _breadth_daily_matches(effective, daily):
+    """Compare one official recalculation with the current effective ledger."""
+    date_text = str((daily or {}).get("date") or "")[:10]
+    for universe_id, row in (daily.get("universes") or {}).items():
+        if not argus_foundation_jobs.universe_active(universe_id, date_text):
+            continue
+        short = argus_foundation_jobs.UNIVERSES[universe_id]["short"]
+        for name in ("advancers", "decliners", "unchanged", "unavailable"):
+            stored = next((value for value in effective.get(
+                f"breadth.{short}.{name}", [])
+                if value.get("periodEnd") == date_text), None)
+            if not stored or stored.get("value") != row["counts"].get(name):
+                return False
+    return True
+
+
 def _jquants_breadth_finalize_worker(job_id):
     """Correct the current boundary and verify the complete durable ledger."""
     proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
@@ -20093,6 +20109,80 @@ def _jquants_breadth_finalize_worker(job_id):
         _MARKET_LEDGER.update(rebuilt)
         effective = argus_market_ledger.latest_by_series(
             _MARKET_LEDGER, _ai_now_iso())
+
+        # Independent live recalculation: seed with one prior session, then
+        # compare the following ten official sessions to the durable rows.
+        # Adjusted historical bars can be revised for corporate actions.  Such
+        # differences are appended as new official revisions, never overwritten.
+        spot_dates = [day for day in calendar_dates
+                      if day <= latest_confirmed][-11:]
+        if len(spot_dates) != 11:
+            raise RuntimeError("breadth_spot_check_dates_insufficient")
+        previous = {}
+        spot_daily = []
+        reconciliation_rows = []
+        for index, date_text in enumerate(spot_dates):
+            bars = live_bars.get(date_text)
+            if bars is None:
+                bars = _jquants_exact_date_rows(_jquants_secure_rows(
+                    "/equities/bars/daily", {"date": date_text}, proof=proof,
+                    max_pages=200), date_text)
+            master = _jquants_secure_rows(
+                "/equities/master", {"date": date_text}, proof=proof,
+                max_pages=100)
+            if not bars or not master:
+                raise RuntimeError("breadth_spot_check_provider_empty")
+            daily = argus_foundation_jobs.calculate_daily(
+                date=date_text, master_rows=master, bar_rows=bars,
+                previous_adjusted_closes=previous)
+            previous = daily["nextAdjustedCloses"]
+            if index == 0:
+                continue
+            spot_daily.append(daily)
+            reconciliation_rows.extend(argus_foundation_jobs.ledger_candidates(
+                daily, calculated_at=_ai_now_iso(),
+                entitlement_start_date=entitlement_start))
+            topix_row = next((row for row in bars if str(
+                row.get("Code") or row.get("code") or "").startswith("1306")), None)
+            if topix_row and topix_row.get("AdjC") is not None:
+                try:
+                    topix_close = float(topix_row["AdjC"])
+                    if topix_close > 0:
+                        reconciliation_rows.append({
+                            "seriesId": "breadth.topixProxyClose",
+                            "periodEnd": date_text,
+                            "publishedAt": f"{date_text}T17:00:00+09:00",
+                            "availableFrom": f"{date_text}T17:00:00+09:00",
+                            "observedAt": _ai_now_iso(), "value": topix_close,
+                            "unit": "JPY", "source": (
+                                "J-Quants V2 1306 adjusted close reconciliation"),
+                            "sourceKind": "derived", "status": "live",
+                            "metadata": {
+                                "instrument": "1306 TOPIX-linked ETF proxy",
+                                "officialIndexValue": False,
+                                "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
+                                "entitlementStartDate": entitlement_start,
+                                "methodVersion": argus_foundation_jobs.METHOD_VERSION,
+                                "reconciliation": "official_spot_check"}})
+                except (TypeError, ValueError):
+                    pass
+
+        reconciled_rows, reconciliation_revisions = 0, 0
+        if not all(_breadth_daily_matches(effective, daily)
+                   for daily in spot_daily):
+            reconciled_rows, reconciliation_revisions, _ = _breadth_commit_rows(
+                reconciliation_rows, _ai_now_iso())
+            if reconciled_rows:
+                rebuilt = argus_market_ledger.rebuild(
+                    _MARKET_LEDGER, _ai_now_iso())
+                _MARKET_LEDGER.clear()
+                _MARKET_LEDGER.update(rebuilt)
+                effective = argus_market_ledger.latest_by_series(
+                    _MARKET_LEDGER, _ai_now_iso())
+        spot_checks = [{"date": daily.get("date"),
+                        "matches": _breadth_daily_matches(effective, daily)}
+                       for daily in spot_daily]
+
         topix_prices = [{"date": row.get("periodEnd"), "close": row.get("value"),
                          "availableFrom": row.get("availableFrom")}
                         for row in effective.get("breadth.topixProxyClose", [])
@@ -20127,45 +20217,6 @@ def _jquants_breadth_finalize_worker(job_id):
                        _MARKET_LEDGER.setdefault("backtests", [])):
                 _MARKET_LEDGER["backtests"].append(record)
             backtests[universe] = record
-
-        # Independent live recalculation: seed with one prior session, then
-        # compare the following ten official sessions to the durable rows.
-        spot_dates = [day for day in calendar_dates
-                      if day <= latest_confirmed][-11:]
-        if len(spot_dates) != 11:
-            raise RuntimeError("breadth_spot_check_dates_insufficient")
-        previous = {}
-        spot_checks = []
-        for index, date_text in enumerate(spot_dates):
-            bars = live_bars.get(date_text)
-            if bars is None:
-                bars = _jquants_exact_date_rows(_jquants_secure_rows(
-                    "/equities/bars/daily", {"date": date_text}, proof=proof,
-                    max_pages=200), date_text)
-            master = _jquants_secure_rows(
-                "/equities/master", {"date": date_text}, proof=proof,
-                max_pages=100)
-            if not bars or not master:
-                raise RuntimeError("breadth_spot_check_provider_empty")
-            daily = argus_foundation_jobs.calculate_daily(
-                date=date_text, master_rows=master, bar_rows=bars,
-                previous_adjusted_closes=previous)
-            previous = daily["nextAdjustedCloses"]
-            if index == 0:
-                continue
-            matches = True
-            for universe_id, row in daily["universes"].items():
-                if not argus_foundation_jobs.universe_active(
-                        universe_id, date_text):
-                    continue
-                short = argus_foundation_jobs.UNIVERSES[universe_id]["short"]
-                for name in ("advancers", "decliners", "unchanged", "unavailable"):
-                    stored = next((value for value in effective.get(
-                        f"breadth.{short}.{name}", [])
-                        if value.get("periodEnd") == date_text), None)
-                    matches = matches and bool(
-                        stored and stored.get("value") == row["counts"].get(name))
-            spot_checks.append({"date": date_text, "matches": matches})
 
         universe_counts, coverage, latest_counts = {}, {}, {}
         universe_observation_counts = {}
@@ -20215,7 +20266,10 @@ def _jquants_breadth_finalize_worker(job_id):
                 or all_dates[-1] != latest_confirmed:
             raise RuntimeError("breadth_full_range_incomplete")
         raw_seen, duplicate_count = set(), 0
-        for row in raw_rows + corrections:
+        validation_rows = [row for row in
+                           (_MARKET_LEDGER.get("observations") or [])
+                           if str(row.get("seriesId") or "").startswith("breadth.")]
+        for row in validation_rows:
             key = (row.get("seriesId"), row.get("periodEnd"),
                    row.get("availableFrom"), row.get("value"))
             if key in raw_seen:
@@ -20232,7 +20286,9 @@ def _jquants_breadth_finalize_worker(job_id):
             "oldestDate": all_dates[0], "newestDate": all_dates[-1],
             "tradingDateCount": len(all_dates), "missingDates": [],
             "duplicateCount": duplicate_count, "correctedRows": corrected_rows,
-            "revisionCount": sum(1 for row in raw_rows
+            "reconciledRows": reconciled_rows,
+            "reconciliationRevisions": reconciliation_revisions,
+            "revisionCount": sum(1 for row in validation_rows
                                  if int(row.get("revision") or 0) > 0),
             "failedRequestCount": 0, "checkpointPending": 0,
             "permanentFailures": [], "universeCounts": universe_counts,
@@ -20263,6 +20319,11 @@ def _jquants_breadth_finalize_worker(job_id):
             "rawProviderRowsPersisted": False}
         if duplicate_count or not spot_passed or set(backtests) != {
                 "first_section", "prime", "all"}:
+            proof["validation"] = {
+                "duplicateCount": duplicate_count,
+                "spotChecks": spot_checks,
+                "reconciledRows": reconciled_rows,
+                "backtestUniverses": sorted(backtests)}
             raise RuntimeError("breadth_final_validation_failed")
         _journal("jquants_breadth_backfill_completed", "market_ledger", job_id,
                  {"rowCount": effective_breadth_count,

@@ -343,6 +343,28 @@ def test_jquants_date_filtered_response_fails_closed_on_wrong_session():
     assert scanner._jquants_exact_date_rows(rows, "2026-07-21") == []
 
 
+def test_breadth_spot_match_requires_effective_official_counts():
+    import scanner
+    daily = jobs.calculate_daily(
+        date="2026-07-21",
+        master_rows=[_master("11110", "Prime")],
+        bar_rows=[_bar("11110", "2026-07-21", 110)],
+        previous_adjusted_closes={"11110": 100})
+    effective = {
+        "breadth.prime.advancers": [{"periodEnd": "2026-07-21", "value": 1}],
+        "breadth.prime.decliners": [{"periodEnd": "2026-07-21", "value": 0}],
+        "breadth.prime.unchanged": [{"periodEnd": "2026-07-21", "value": 0}],
+        "breadth.prime.unavailable": [{"periodEnd": "2026-07-21", "value": 0}],
+        "breadth.all.advancers": [{"periodEnd": "2026-07-21", "value": 1}],
+        "breadth.all.decliners": [{"periodEnd": "2026-07-21", "value": 0}],
+        "breadth.all.unchanged": [{"periodEnd": "2026-07-21", "value": 0}],
+        "breadth.all.unavailable": [{"periodEnd": "2026-07-21", "value": 0}],
+    }
+    assert scanner._breadth_daily_matches(effective, daily) is True
+    effective["breadth.all.advancers"][0]["value"] = 0
+    assert scanner._breadth_daily_matches(effective, daily) is False
+
+
 def test_jquants_error_metadata_is_safe_and_entitlement_is_explicit(monkeypatch):
     import scanner
 
