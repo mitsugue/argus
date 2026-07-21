@@ -294,6 +294,35 @@ def test_no_prior_state_is_honest(monkeypatch, tmp_path):
     scanner._DURABLE_STATE["lastRestoreAt"] = prev_restore
 
 
+def test_remote_restore_allows_large_snapshot_read_timeout(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanner, "_OSINT_PERSIST_FILE",
+                        str(tmp_path / "missing.json"))
+    monkeypatch.setitem(scanner._OSINT_PERSIST_STATE, "restored", False)
+    monkeypatch.setitem(scanner._DURABLE_STATE, "lastRestoreAt", None)
+    monkeypatch.setitem(scanner._DURABLE_STATE, "restoreSource", None)
+    observed = {}
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"schemaVersion": "argus-durable-v3"}
+
+    class _Requests:
+        @staticmethod
+        def get(url, **kwargs):
+            observed.update({"url": url, **kwargs})
+            return _Response()
+
+    monkeypatch.setattr(scanner, "requests", _Requests)
+    scanner._osint_restore_once()
+
+    assert observed["timeout"] == (6, 60)
+    assert observed["timeout"][1] > 6
+    assert scanner._DURABLE_STATE["restoreSource"] == "ledger"
+
+
 def test_corrupt_state_ready_degraded(monkeypatch, tmp_path):
     p = tmp_path / "corrupt.json"
     p.write_text("[1,2,3]", encoding="utf-8")            # dictでない=破損

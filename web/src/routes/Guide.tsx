@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.22', '大容量durable snapshotのcold-boot復元timeoutを修正。'],
   ['v12.7.21', 'Market Ledgerの構造化backtest summaryをRule Cardへ安全に表示。'],
   ['v12.7.20', 'Market Ledgerのrestore時にrebuild receiptを維持し、Turning Point再構築の全観測再走査を解消。'],
   ['v12.7.19', 'Remote Journal read-backを整合性付き小型receiptへ分離し、定期mission tickの巨大snapshot待ちを解消。'],
