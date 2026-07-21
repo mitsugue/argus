@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useMarketLedger } from '../../hooks/useMarketLedger';
 import type { MarketLedgerHistoryPoint, MarketLedgerRow } from '../../types/marketLedger';
+import { formatOutcomeSummary } from '../../lib/marketLedgerFormat';
 import './MarketLedgerPanel.css';
 
 const SUMMARY_JA: Record<string, string> = { shortFuel: 'ショート燃料', creditBuyingPressure: '信用買い圧力',
@@ -139,7 +140,7 @@ export const MarketLedgerPanel: React.FC = () => {
       </div>
       <div className="card ml-rules"><h3>SHO RULE CARDS</h3><div>
         {ledger.heuristics.map((rule) => <article key={rule.ruleId}><b>{rule.ruleName}</b>
-          <span>{rule.classification} · n={rule.sampleSize}</span><small>{rule.outcomeSummary} · {rule.methodVersion}</small>
+          <span>{rule.classification} · n={rule.sampleSize}</span><small>{formatOutcomeSummary(rule.outcomeSummary)} · {rule.methodVersion}</small>
         </article>)}
       </div><p>walk-forward · future leakageなし · n&lt;{ledger.backtestPolicy.minimumValidatedSamples}はvalidatedにしません。</p></div>
       <details className="card ml-sources"><summary>SOURCE OF TRUTH MATRIX</summary><div className="ml-table-wrap"><table className="ml-table"><thead><tr>

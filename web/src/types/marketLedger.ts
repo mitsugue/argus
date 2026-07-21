@@ -1,4 +1,9 @@
 export interface MarketLedgerHistoryPoint { periodEnd: string; value: number | null; unit: string }
+export interface MarketLedgerBacktestSummary {
+  average1dPct?: number | null; average5dPct?: number | null; average20dPct?: number | null;
+  hitRate5d?: number | null; falsePositiveRate5d?: number | null;
+  maxDrawdownPct?: number | null; maxRisePct?: number | null; noFutureLeakage?: boolean;
+}
 export interface MarketLedgerRow {
   seriesId: string; labelJa: string; latestValue: number | null; unit: string;
   previousChange: number | null; fourPeriodDirection: 'up' | 'down' | 'flat' | null;
@@ -45,7 +50,8 @@ export interface MarketLedgerPayload {
     delay: string; license: string; currentStatus: string }>;
   heuristics: Array<{ ruleId: string; ruleName: string; classification: string; sampleSize: number;
     historicalTendency: string; currentState: string; supportingFacts: string[];
-    failureConditions: string[]; lastTriggered: string | null; outcomeSummary: string; methodVersion: string }>;
+    failureConditions: string[]; lastTriggered: string | null;
+    outcomeSummary: string | MarketLedgerBacktestSummary; methodVersion: string }>;
   backtestPolicy: { method: string; noFutureLeakage: boolean; minimumValidatedSamples: number; status: string };
   automaticAiCalls: number;
   noteJa: string;
