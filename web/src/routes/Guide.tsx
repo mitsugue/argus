@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.3', '大規模Market Ledgerの定期tickは、新規観測がある場合だけ派生再計算し、clean時は整合hash確認のみ実行。'],
   ['v12.7.2', 'J-Quants breadth backfillの中間checkpointではappend-only保存だけを行い、全履歴の派生再計算を完了時の1回へ集約。'],
   ['v12.7.1', 'J-Quants Standardの10年ローリング境界を実行日とProvider実測から決定し、固定日境界の失効を防止。'],
   ['v12.7.0', 'J-Quants Standard契約範囲のbreadthを旧東証一部／Prime／全市場に分離してbackfill。Benchmark v1をclosed_invalidとして保存し、validityと品質を分離したProtocol v2を追加。'],

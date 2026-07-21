@@ -1,7 +1,14 @@
 import pathlib
+import sys
+import types
 import unittest
 from unittest import mock
 
+_moomoo = types.ModuleType("moomoo")
+_moomoo.OpenQuoteContext = lambda *a, **k: None
+_moomoo.OpenSecTradeContext = lambda *a, **k: None
+_moomoo.RET_OK = 0
+sys.modules.setdefault("moomoo", _moomoo)
 import scanner
 
 
@@ -57,9 +64,13 @@ class ArgusV1230IntegrationTests(unittest.TestCase):
 
     def test_market_ledger_tick_is_idempotent(self):
         first = scanner._market_ledger_tick("2026-07-20T12:00:00Z")
-        second = scanner._market_ledger_tick("2026-07-20T12:00:00Z")
+        with mock.patch.object(scanner.argus_market_ledger, "rebuild",
+                               wraps=scanner.argus_market_ledger.rebuild) as rebuild:
+            second = scanner._market_ledger_tick("2026-07-20T12:00:00Z")
         self.assertEqual(first["stateHash"], second["stateHash"])
         self.assertFalse(second["changed"])
+        self.assertTrue(second["rebuildSkipped"])
+        rebuild.assert_not_called()
 
     def test_asset_consultation_source_has_no_ai_post(self):
         src = pathlib.Path("web/src/components/assetDesk/AssetResearchPanel.tsx").read_text()

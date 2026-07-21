@@ -18,6 +18,7 @@ on:
           - pipeline_preflight
           - breadth_backfill
           - breadth_incremental
+          - breadth_finalize
           - journal_reverify
 
 permissions:
@@ -79,7 +80,7 @@ jobs:
             --max-wait-seconds 3000
 
   breadth-backfill:
-    if: inputs.operation == 'breadth_backfill' || inputs.operation == 'breadth_incremental'
+    if: inputs.operation == 'breadth_backfill' || inputs.operation == 'breadth_incremental' || inputs.operation == 'breadth_finalize'
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
@@ -100,6 +101,9 @@ jobs:
           if [ "$OPERATION" = "breadth_incremental" ]; then
             job_type=JQUANTS_BREADTH_INCREMENTAL
             parameters='{}'
+            resume_arg=
+          elif [ "$OPERATION" = "breadth_finalize" ]; then
+            parameters='{"finalizeOnly":true}'
             resume_arg=
           fi
           python3 scripts/run_foundation_job.py \

@@ -77,7 +77,9 @@ BREADTH_PREFIXES = ("breadth", "breadth.first_section", "breadth.prime", "breadt
 def empty_state() -> Dict[str, Any]:
     return {"schemaVersion": SCHEMA_VERSION, "observations": [], "derivedMetrics": [],
             "turningPoints": [], "backtests": [], "imports": [], "rolledBackImports": [],
-            "lastUpdatedAt": None, "methodVersion": METHOD_VERSION}
+            "lastUpdatedAt": None, "methodVersion": METHOD_VERSION,
+            "derivedStateDirty": False, "lastRebuiltObservationCount": 0,
+            "lastRebuiltAt": None}
 
 
 def normalize_state(state: Any) -> Dict[str, Any]:
@@ -87,6 +89,12 @@ def normalize_state(state: Any) -> Dict[str, Any]:
               "rolledBackImports"):
         out[k] = [x for x in (src.get(k) or []) if isinstance(x, dict)] if k != "rolledBackImports" else list(src.get(k) or [])
     out["lastUpdatedAt"] = src.get("lastUpdatedAt")
+    # v1 remains backward-compatible: snapshots written before the dirty marker
+    # were rebuilt synchronously before persistence, so they are clean on load.
+    out["derivedStateDirty"] = bool(src.get("derivedStateDirty", False))
+    out["lastRebuiltObservationCount"] = int(
+        src.get("lastRebuiltObservationCount", len(out["observations"])) or 0)
+    out["lastRebuiltAt"] = src.get("lastRebuiltAt")
     return out
 
 
@@ -100,6 +108,13 @@ def state_hash(state: Dict[str, Any]) -> str:
     return _hash({k: st[k] for k in ("observations", "derivedMetrics",
                                      "turningPoints", "backtests", "imports",
                                      "rolledBackImports")}, 32)
+
+
+def rebuild_required(state: Dict[str, Any]) -> bool:
+    """True only when append-only inputs changed since the last derived rebuild."""
+    st = normalize_state(state)
+    return bool(st["derivedStateDirty"] or
+                st["lastRebuiltObservationCount"] != len(st["observations"]))
 
 
 def _iso_ok(value: Any) -> bool:
@@ -181,6 +196,7 @@ def _append_observation_in_place(st: Dict[str, Any], candidate: Dict[str, Any],
     if prior_index is not None:
         prior_index.setdefault((sid, period), []).append(body)
     st["lastUpdatedAt"] = now_iso
+    st["derivedStateDirty"] = True
     return st, body
 
 
@@ -193,7 +209,11 @@ def effective_observations(state: Dict[str, Any], as_of: str) -> List[Dict[str, 
     for row in sorted(eligible, key=lambda x: (str(x.get("seriesId")), str(x.get("periodEnd")),
                                                 int(x.get("revision") or 0), str(x.get("observedAt")))):
         latest[(str(row.get("seriesId")), str(row.get("periodEnd")))] = row
-    return list(latest.values())
+    # Data corrections are append-only.  A newer revision may explicitly
+    # invalidate a provider row (for example a holiday response mislabeled as
+    # the requested date) without deleting or rewriting the historical row.
+    return [row for row in latest.values()
+            if not (row.get("metadata") or {}).get("excludeFromEffective")]
 
 
 def latest_by_series(state: Dict[str, Any], as_of: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -467,6 +487,9 @@ def rebuild(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     st["turningPoints"].extend(x for x in points if x["id"] not in seen_t)
     if metrics or points or st["observations"]:
         st["lastUpdatedAt"] = now_iso
+    st["derivedStateDirty"] = False
+    st["lastRebuiltObservationCount"] = len(st["observations"])
+    st["lastRebuiltAt"] = now_iso
     return st
 
 
@@ -530,7 +553,7 @@ def rollback_import(state: Dict[str, Any], import_id: str, now_iso: str) -> Dict
 
 
 def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
-    st = rebuild(state, now_iso)
+    st = rebuild(state, now_iso) if rebuild_required(state) else normalize_state(state)
     by = latest_by_series(st, now_iso)
     metric_history = derived_history(st, now_iso)
     latest_metrics = {mid: rows[-1] for mid, rows in metric_history.items() if rows}

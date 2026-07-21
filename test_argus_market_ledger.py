@@ -1,6 +1,7 @@
 import copy
 import unittest
 from datetime import date, timedelta
+from unittest import mock
 
 import argus_market_ledger as ml
 
@@ -35,6 +36,27 @@ class MarketLedgerTests(unittest.TestCase):
         self.assertEqual(ml.effective_observations(st, NOW), [])
         self.assertIsNone(st["observations"][0]["value"])
         self.assertEqual(st["observations"][0]["status"], "missing")
+
+    def test_append_only_exclusion_revision_removes_only_effective_bad_row(self):
+        st = add(ml.empty_state(), "breadth.all.advancers", "2026-07-20", 123)
+        correction = {
+            "seriesId": "breadth.all.advancers", "periodEnd": "2026-07-20",
+            "availableFrom": "2026-07-21T00:00:00Z",
+            "publishedAt": "2026-07-21T00:00:00Z", "value": None,
+            "unit": "count", "source": "official calendar correction",
+            "sourceKind": "official", "status": "missing",
+            "metadata": {"excludeFromEffective": True,
+                         "correctionReason": "non_trading_date_response"}}
+        corrected, receipt = ml.append_observation(
+            st, correction, now_iso="2026-07-21T00:00:00Z")
+        self.assertEqual(receipt["revision"], 1)
+        self.assertEqual(len(corrected["observations"]), 2)
+        self.assertEqual(ml.effective_observations(
+            corrected, "2026-07-21T00:00:00Z"), [])
+        restored = ml.normalize_state(copy.deepcopy(corrected))
+        self.assertEqual(len(restored["observations"]), 2)
+        self.assertEqual(ml.effective_observations(
+            restored, "2026-07-21T00:00:00Z"), [])
 
     def test_required_formulas(self):
         self.assertEqual(ml.advance_decline_ratio([6_732_228], [795_524]), 846.26)
@@ -145,9 +167,32 @@ class MarketLedgerTests(unittest.TestCase):
         self.assertEqual(len(deferred["state"]["observations"]), 1)
         self.assertEqual(len(deferred["state"]["imports"]), 1)
         self.assertEqual(deferred["state"]["derivedMetrics"], [])
-        rebuilt = ml.rebuild(deferred["state"], NOW)
+        self.assertTrue(deferred["state"]["derivedStateDirty"])
+        restored = ml.normalize_state(copy.deepcopy(deferred["state"]))
+        self.assertTrue(ml.rebuild_required(restored))
+        rebuilt = ml.rebuild(restored, NOW)
         self.assertEqual(len(rebuilt["observations"]), 1)
         self.assertEqual(len(rebuilt["imports"]), 1)
+        self.assertFalse(rebuilt["derivedStateDirty"])
+        self.assertEqual(rebuilt["lastRebuiltObservationCount"], 1)
+
+    def test_clean_public_view_skips_full_derived_rebuild(self):
+        state = add(ml.empty_state(), "breadth.all.advancers",
+                    "2026-07-17", 1000)
+        rebuilt = ml.rebuild(state, NOW)
+        restored = ml.normalize_state(copy.deepcopy(rebuilt))
+        with mock.patch.object(ml, "rebuild", wraps=ml.rebuild) as rebuild_call:
+            view = ml.public_view(restored, NOW)
+        rebuild_call.assert_not_called()
+        self.assertEqual(view["stateHash"], ml.state_hash(restored))
+
+    def test_new_observation_invalidates_rebuild_receipt(self):
+        clean = ml.rebuild(ml.empty_state(), NOW)
+        changed = add(clean, "breadth.all.advancers", "2026-07-17", 1000)
+        self.assertTrue(ml.rebuild_required(changed))
+        with mock.patch.object(ml, "rebuild", wraps=ml.rebuild) as rebuild_call:
+            ml.public_view(changed, NOW)
+        rebuild_call.assert_called_once()
 
     def test_public_view_does_not_expose_licensed_raw_value(self):
         st = add(ml.empty_state(), "credit.valuation_loss_pct", "2026-07-11", -10.5)

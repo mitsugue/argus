@@ -330,6 +330,19 @@ def test_jquants_hyphenated_historical_date_is_normalized_at_transport():
             "code": "86970", "from": "20230324", "to": "20230327"}
 
 
+def test_jquants_date_filtered_response_fails_closed_on_wrong_session():
+    import scanner
+    rows = [
+        {"Date": "20260717", "Code": "72030", "AdjC": 100},
+        {"Date": "2026-07-20", "Code": "72030", "AdjC": 101},
+        {"date": "2026/07/17", "Code": "67580", "AdjC": 200},
+        {"Code": "99840", "AdjC": 300},
+    ]
+    exact = scanner._jquants_exact_date_rows(rows, "2026-07-17")
+    assert [row["Code"] for row in exact] == ["72030", "67580"]
+    assert scanner._jquants_exact_date_rows(rows, "2026-07-21") == []
+
+
 def test_jquants_error_metadata_is_safe_and_entitlement_is_explicit(monkeypatch):
     import scanner
 
@@ -459,6 +472,26 @@ def test_provider_probe_advances_to_first_accessible_trading_day(monkeypatch):
     assert rows[0]["Code"] == "72030"
     assert calls == ["2016-07-21", "2016-07-22"]
     assert proof["rollingCalendarBoundary"] == "2016-07-21"
+
+
+def test_provider_probe_ignores_rows_from_a_different_embedded_date(monkeypatch):
+    import scanner
+    calls = []
+
+    def fake_rows(path, params, *, proof, max_pages):
+        day = str(params["date"])
+        calls.append(day)
+        if day == "2016-07-21":
+            return [{"Date": "20160720", "Code": "72030", "AdjC": 99}]
+        return [{"Date": day, "Code": "72030", "AdjC": 100}]
+
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", fake_rows)
+    proof = {}
+    start, rows = scanner._jquants_discover_entitlement_start(
+        "2026-07-21", proof)
+    assert start == "2016-07-22"
+    assert rows[0]["Date"] == "2016-07-22"
+    assert calls == ["2016-07-21", "2016-07-22"]
 
 
 def test_journal_reverify_job_records_verified_ack(monkeypatch):
