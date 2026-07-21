@@ -533,6 +533,10 @@ def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
             "value": 100, "unit": "count", "source": "test aggregate",
             "sourceKind": "derived", "status": "live", "metadata": {},
         }], "2026-07-21T17:00:01+09:00")
+        rebuilt = scanner.argus_market_ledger.rebuild(
+            scanner._MARKET_LEDGER, "2026-07-21T17:00:02+09:00")
+        scanner._MARKET_LEDGER.clear()
+        scanner._MARKET_LEDGER.update(rebuilt)
         scanner._foundation_job_update(job_id, status="completed", result={
             "status": "completed", "backtests": {}, "stateHash": "child"})
 
@@ -549,6 +553,7 @@ def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
         assert final["result"]["backendRestartCountDuringJob"] == 0
         assert any(row.get("seriesId") == "breadth.all.advancers" for row in
                    scanner._MARKET_LEDGER["observations"])
+        assert scanner._MARKET_LEDGER["derivedStateDirty"] is False
     finally:
         scanner._FOUNDATION_JOBS.clear()
         scanner._FOUNDATION_JOBS.update(previous_jobs)
