@@ -19062,8 +19062,10 @@ def _foundation_closeout_status():
             == argus_foundation_jobs.PRODUCTION_SCOPE
             and breadth_result.get("archiveBackfillStatus") == "deferred"
             and breadth_result.get("coreRequired") is False
-            and breadth_result.get("executionMode")
-            == "independent_os_process"
+            and breadth_result.get("executionMode") in (
+                "independent_os_process",
+                "independent_spawned_os_process",
+            )
             and int(breadth_result.get("backendRestartCountDuringJob") or 0) == 0
             and int(breadth_result.get("checkpointPending") or 0) == 0
             and int(breadth_result.get("duplicateCount") or 0) == 0

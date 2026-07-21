@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.17', '独立spawn workerの5年breadth完了証拠をfoundation closeoutで正しく受理。'],
   ['v12.7.16', 'Breadth spot checkの訂正値を確認時刻付きrevisionとしてappendし、履歴を保ったままeffective値を修復。'],
   ['v12.7.15', 'Breadth resumeを同一stageのcheckpointへ限定し、canaryから5年本処理への誤resumeを防止。'],
   ['v12.7.14', 'Breadth workerのsoft limitをStandard枠の70%未満である1280MBへ調整。'],
