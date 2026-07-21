@@ -1,4 +1,4 @@
-# ARGUS Operational State Durability Map (v12.7.8)
+# ARGUS Operational State Durability Map (v12.7.9)
 
 | ストア | 分類 | 生存経路 |
 |---|---|---|
@@ -17,3 +17,7 @@
 - 私的フィールドはpublic-safe耐久状態に一切入らない(横断漏洩テスト固定)。
 - J-Quants licensed raw rows/API secretsは耐久状態へ保存しない。保存対象は集計値、
   checkpoint、source observation hash、remote receiptのみ。
+- Breadthのproduction coreは最新確定営業日から直近5年。契約上利用可能な旧期間は
+  append-onlyで保持しつつ`archiveBackfillStatus=deferred`、`coreRequired=false`とする。
+  追加メタデータは後方互換なoptional fieldのためdurable-v3／Market Ledger v1の
+  schema versionは変更しない。

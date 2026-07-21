@@ -472,6 +472,90 @@ def test_standard_boundary_rolls_with_execution_date_and_handles_leap_day():
     assert jobs.rolling_entitlement_start("2024-02-29", years=1) == "2023-02-28"
 
 
+def test_five_year_production_scope_is_explicit_and_archive_is_non_core():
+    assert jobs.production_calendar_start("2026-07-21") == "2021-07-21"
+    scope = jobs.production_scope_metadata(
+        latest_confirmed_date="2026-07-21",
+        production_start_date="2021-07-21",
+        entitlement_start_date="2016-07-21")
+    assert scope == {
+        "contractScope": "rolling_5_years",
+        "productionHistoryYears": 5,
+        "productionFiveYearStartDate": "2021-07-21",
+        "productionFiveYearEndDate": "2026-07-21",
+        "entitlementPolicy": "rolling_10_years",
+        "entitlementStartDate": "2016-07-21",
+        "archiveBackfillStatus": "deferred",
+        "archiveScope": {"from": "2016-07-21", "to": "2021-07-20"},
+        "coreRequired": False,
+    }
+
+
+def test_five_year_stages_are_bounded_and_reject_unknown_stage():
+    full = jobs.staged_production_range(
+        "full_5y", latest_confirmed_date="2026-07-21")
+    one_year = jobs.staged_production_range(
+        "one_year", latest_confirmed_date="2026-07-21")
+    one_month = jobs.staged_production_range(
+        "canary_1m", latest_confirmed_date="2026-07-21")
+    five_days = jobs.staged_production_range(
+        "canary_5d", latest_confirmed_date="2026-07-21")
+    assert full == ("2021-07-21", "2026-07-21")
+    assert one_year == ("2025-07-21", "2026-07-21")
+    assert one_month == ("2026-06-20", "2026-07-21")
+    assert five_days == ("2026-07-11", "2026-07-21")
+    with pytest.raises(ValueError, match="invalid_breadth_stage"):
+        jobs.staged_production_range(
+            "ten_years", latest_confirmed_date="2026-07-21")
+
+
+def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
+    import scanner
+
+    previous_jobs = copy.deepcopy(scanner._FOUNDATION_JOBS)
+    previous_ledger = copy.deepcopy(scanner._MARKET_LEDGER)
+    scanner._MARKET_LEDGER.clear()
+    scanner._MARKET_LEDGER.update(scanner.argus_market_ledger.empty_state())
+    started = jobs.start_job(
+        jobs.empty_state(), job_type="JQUANTS_BREADTH_BACKFILL",
+        now_iso="2026-07-21T00:00:00Z", parameters={"stage": "canary_5d"})
+    scanner._FOUNDATION_JOBS.clear()
+    scanner._FOUNDATION_JOBS.update(started["state"])
+
+    def child_body(job_id):
+        scanner._foundation_job_update(job_id, status="running")
+        scanner._breadth_commit_rows([{
+            "seriesId": "breadth.all.advancers",
+            "periodEnd": "2026-07-21",
+            "publishedAt": "2026-07-21T17:00:00+09:00",
+            "availableFrom": "2026-07-21T17:00:00+09:00",
+            "observedAt": "2026-07-21T17:00:01+09:00",
+            "value": 100, "unit": "count", "source": "test aggregate",
+            "sourceKind": "derived", "status": "live", "metadata": {},
+        }], "2026-07-21T17:00:01+09:00")
+        scanner._foundation_job_update(job_id, status="completed", result={
+            "status": "completed", "backtests": {}, "stateHash": "child"})
+
+    monkeypatch.setattr(scanner, "_jquants_breadth_worker_process_body",
+                        child_body)
+    monkeypatch.setattr(scanner, "_osint_persist", lambda: None)
+    try:
+        scanner._jquants_breadth_worker(started["job"]["jobId"])
+        final = scanner._foundation_job(started["job"]["jobId"])
+        assert final["status"] == "completed"
+        assert final["result"]["executionMode"] == "independent_os_process"
+        assert final["result"]["workerConcurrency"] == 1
+        assert final["result"]["workerMemorySoftLimitMb"] == 512
+        assert final["result"]["backendRestartCountDuringJob"] == 0
+        assert any(row.get("seriesId") == "breadth.all.advancers" for row in
+                   scanner._MARKET_LEDGER["observations"])
+    finally:
+        scanner._FOUNDATION_JOBS.clear()
+        scanner._FOUNDATION_JOBS.update(previous_jobs)
+        scanner._MARKET_LEDGER.clear()
+        scanner._MARKET_LEDGER.update(previous_ledger)
+
+
 def test_provider_probe_advances_to_first_accessible_trading_day(monkeypatch):
     import scanner
     calls = []
@@ -494,6 +578,27 @@ def test_provider_probe_advances_to_first_accessible_trading_day(monkeypatch):
     assert rows[0]["Code"] == "72030"
     assert calls == ["2016-07-21", "2016-07-22"]
     assert proof["rollingCalendarBoundary"] == "2016-07-21"
+
+
+def test_production_probe_advances_to_first_trading_day_in_five_year_window(
+        monkeypatch):
+    import scanner
+    calls = []
+
+    def fake_rows(path, params, *, proof, max_pages):
+        day = str(params["date"])
+        calls.append(day)
+        return ([{"Date": day, "Code": "72030", "AdjC": 100}]
+                if day == "2021-07-21" else [])
+
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", fake_rows)
+    proof = {}
+    start, rows = scanner._jquants_discover_production_start(
+        "2026-07-20", proof)
+    assert start == "2021-07-21"
+    assert rows[0]["Code"] == "72030"
+    assert calls == ["2021-07-20", "2021-07-21"]
+    assert proof["productionCalendarBoundary"] == "2021-07-20"
 
 
 def test_provider_probe_ignores_rows_from_a_different_embedded_date(monkeypatch):

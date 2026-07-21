@@ -16,6 +16,9 @@ on:
           - jquants_matrix
           - gemini_preflight
           - pipeline_preflight
+          - breadth_canary_5d
+          - breadth_canary_1m
+          - breadth_one_year
           - breadth_backfill
           - breadth_incremental
           - breadth_finalize
@@ -80,7 +83,7 @@ jobs:
             --max-wait-seconds 3000
 
   breadth-backfill:
-    if: inputs.operation == 'breadth_backfill' || inputs.operation == 'breadth_incremental' || inputs.operation == 'breadth_finalize'
+    if: inputs.operation == 'breadth_canary_5d' || inputs.operation == 'breadth_canary_1m' || inputs.operation == 'breadth_one_year' || inputs.operation == 'breadth_backfill' || inputs.operation == 'breadth_incremental' || inputs.operation == 'breadth_finalize'
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
@@ -96,9 +99,18 @@ jobs:
         run: |
           set -euo pipefail
           job_type=JQUANTS_BREADTH_BACKFILL
-          parameters='{}'
+          parameters='{"stage":"full_5y"}'
           resume_arg=--resume
-          if [ "$OPERATION" = "breadth_incremental" ]; then
+          if [ "$OPERATION" = "breadth_canary_5d" ]; then
+            parameters='{"stage":"canary_5d"}'
+            resume_arg=
+          elif [ "$OPERATION" = "breadth_canary_1m" ]; then
+            parameters='{"stage":"canary_1m"}'
+            resume_arg=
+          elif [ "$OPERATION" = "breadth_one_year" ]; then
+            parameters='{"stage":"one_year"}'
+            resume_arg=
+          elif [ "$OPERATION" = "breadth_incremental" ]; then
             job_type=JQUANTS_BREADTH_INCREMENTAL
             parameters='{}'
             resume_arg=

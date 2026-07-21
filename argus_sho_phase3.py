@@ -23,7 +23,7 @@ SOURCE_OF_TRUTH = [
     ("credit_two_market", "JPX 二市場合計", "admin CSV", "weekly", "publication schedule", "official/free", "manual_csv"),
     ("investor_types", "J-Quants investor-types: TokyoNagoya", "admin CSV", "weekly", "published date", "contracted", "backfill_available"),
     ("nikkei_per_pbr", "Nikkei official licensed import", "none", "daily", "publication timing", "license_unverified", "license_blocked"),
-    ("breadth_counts", "J-Quants V2 adjusted daily bars + historical master", "none", "daily", "16:30 provider update / 17:00 available", "contracted", "backfill_available"),
+    ("breadth_counts", "J-Quants V2 adjusted daily bars + historical master", "none", "daily", "16:30 provider update / 17:00 available", "contracted", "production_live_rolling_5y"),
     ("tdnet", "J-Quants TDnet add-on", "JPX TDnet", "event", "near real-time", "contracted", "live"),
     ("edinet", "EDINET API", "official IR", "event", "provider", "official", "live"),
     ("economic_events", "official agencies", "existing event ledger", "event", "source-specific", "official/free", "live"),

@@ -1,6 +1,7 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
 import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures
+import gc, multiprocessing, resource, sys
 try:
     from google import genai as google_genai
     from google.genai import types as genai_types
@@ -19046,14 +19047,24 @@ def _foundation_closeout_status():
     """Evidence-derived v12 implementation/observation split; no mutable claim flag."""
     breadth = next((job for job in reversed(_FOUNDATION_JOBS.get("jobs", []))
                     if job.get("jobType") == "JQUANTS_BREADTH_BACKFILL"
-                    and job.get("status") == "completed"), None)
+                    and job.get("status") == "completed"
+                    and (((job.get("result") or {}).get("stage") == "full_5y")
+                         or ((job.get("result") or {}).get("providerProof")
+                             or {}).get("finalizeOnly") is True)), None)
     breadth_result = (breadth or {}).get("result") or {}
     benchmark = _FORMAL_BENCHMARK_V2.get("holdoutResult") or {}
     receipts = [row for row in (_FORMAL_BENCHMARK_V2.get("remoteReceipts") or [])
                 if row.get("readBackVerified") is True]
     requirements = {
-        "standardScopeBreadthCompleted": bool(
+        "productionFiveYearBreadthCompleted": bool(
             breadth and int(breadth_result.get("observationCount") or 0) > 0
+            and breadth_result.get("contractScope")
+            == argus_foundation_jobs.PRODUCTION_SCOPE
+            and breadth_result.get("archiveBackfillStatus") == "deferred"
+            and breadth_result.get("coreRequired") is False
+            and breadth_result.get("executionMode")
+            == "independent_os_process"
+            and int(breadth_result.get("backendRestartCountDuringJob") or 0) == 0
             and int(breadth_result.get("checkpointPending") or 0) == 0
             and int(breadth_result.get("duplicateCount") or 0) == 0
             and not (breadth_result.get("permanentFailures") or [])
@@ -19110,6 +19121,16 @@ def api_argus_admin_foundation_jobs_start():
             body.get("triggerSource") != "manual":
         return jsonify({"ok": False, "error": "scheduled_execution_rejected"}), 400
     params = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
+    if job_type == "JQUANTS_BREADTH_BACKFILL":
+        params.setdefault("stage", "full_5y")
+        try:
+            argus_foundation_jobs.staged_production_range(
+                params["stage"], latest_confirmed_date=str(
+                    params.get("to") or
+                    datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10])
+        except (TypeError, ValueError):
+            return jsonify({"ok": False,
+                            "error": "invalid_breadth_stage"}), 400
     if job_type in ("JQUANTS_BREADTH_BACKFILL", "JQUANTS_BREADTH_INCREMENTAL") \
             and body.get("resume") is True and not params.get("from"):
         prior = next((x for x in reversed(_FOUNDATION_JOBS.get("jobs", []))
@@ -19126,7 +19147,7 @@ def api_argus_admin_foundation_jobs_start():
                    if str(x.get("seriesId") or "").startswith("breadth.all.")]
         params["from"] = (argus_foundation_jobs.next_day(max(periods))
                           if periods else
-                          argus_foundation_jobs.rolling_entitlement_start(
+                          argus_foundation_jobs.production_calendar_start(
                               datetime.now(TZ_JST).strftime("%Y-%m-%d")))
     try:
         started = argus_foundation_jobs.start_job(
@@ -19894,6 +19915,22 @@ def _jquants_discover_entitlement_start(as_of_date, proof):
     raise RuntimeError("jquants_entitlement_boundary_not_found")
 
 
+def _jquants_discover_production_start(as_of_date, proof):
+    """Find the first official session in the rolling five-year core window."""
+    boundary = argus_foundation_jobs.production_calendar_start(as_of_date)
+    cursor = datetime.strptime(boundary, "%Y-%m-%d")
+    for offset in range(15):
+        candidate = (cursor + timedelta(days=offset)).strftime("%Y-%m-%d")
+        rows = _jquants_exact_date_rows(_jquants_secure_rows(
+            "/equities/bars/daily", {"date": candidate}, proof=proof,
+            max_pages=200), candidate)
+        if rows:
+            proof["productionCalendarBoundary"] = boundary
+            proof["productionFiveYearStartDate"] = candidate
+            return candidate, rows
+    raise RuntimeError("jquants_production_boundary_not_found")
+
+
 def _jquants_official_client_test(params):
     """Run the same request through J-Quants' official V2 client, secret-safe."""
     started = time.monotonic()
@@ -20094,7 +20131,9 @@ def _jquants_breadth_finalize_worker(job_id):
     proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
              "authentication": "x-api-key", "secretConfigured": bool(_JQUANTS_API_KEY),
              "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
-             "contractScope": "rolling_10_years", "apiVersion": "v2",
+             "contractScope": argus_foundation_jobs.PRODUCTION_SCOPE,
+             "entitlementPolicy": argus_foundation_jobs.ENTITLEMENT_POLICY,
+             "apiVersion": "v2",
              "finalizeOnly": True, "errorClass": None}
     try:
         _foundation_job_update(job_id, status="running",
@@ -20119,6 +20158,12 @@ def _jquants_breadth_finalize_worker(job_id):
                 break
         if not latest_confirmed:
             raise RuntimeError("jquants_recent_confirmed_date_not_found")
+        production_start, _ = _jquants_discover_production_start(
+            latest_confirmed, proof)
+        scope = argus_foundation_jobs.production_scope_metadata(
+            latest_confirmed_date=latest_confirmed,
+            production_start_date=production_start,
+            entitlement_start_date=entitlement_start)
 
         # Preserve bad provider rows append-only, but supersede them with an
         # explicit exclusion revision proven by the official trading calendar.
@@ -20188,7 +20233,9 @@ def _jquants_breadth_finalize_worker(job_id):
             spot_daily.append(daily)
             reconciliation_rows.extend(argus_foundation_jobs.ledger_candidates(
                 daily, calculated_at=_ai_now_iso(),
-                entitlement_start_date=entitlement_start))
+                entitlement_start_date=entitlement_start,
+                production_start_date=production_start,
+                latest_confirmed_date=latest_confirmed))
             topix_row = next((row for row in bars if str(
                 row.get("Code") or row.get("code") or "").startswith("1306")), None)
             if topix_row and topix_row.get("AdjC") is not None:
@@ -20233,9 +20280,11 @@ def _jquants_breadth_finalize_worker(job_id):
         topix_prices = [{"date": row.get("periodEnd"), "close": row.get("value"),
                          "availableFrom": row.get("availableFrom")}
                         for row in effective.get("breadth.topixProxyClose", [])
-                        if row.get("value") is not None]
+                        if row.get("value") is not None
+                        and str(row.get("periodEnd") or "") >= production_start]
         points = [row for row in (_MARKET_LEDGER.get("turningPoints") or [])
                   if row.get("ruleId") == "BREADTH_TURN"
+                  and str(row.get("effectiveFrom") or "") >= production_start
                   and str(row.get("effectiveFrom") or "") <= latest_confirmed]
         backtests = {}
         for universe in ("first_section", "prime", "all"):
@@ -20271,8 +20320,11 @@ def _jquants_breadth_finalize_worker(job_id):
             short = definition["short"]
             total_rows = effective.get(
                 f"breadth.{short}.totalUniverseCount", [])
+            total_rows = [row for row in total_rows
+                          if str(row.get("periodEnd") or "") >= production_start]
             eligible_by_date = {row.get("periodEnd"): row.get("value") for row in
-                                effective.get(f"breadth.{short}.eligibleCount", [])}
+                                effective.get(f"breadth.{short}.eligibleCount", [])
+                                if str(row.get("periodEnd") or "") >= production_start}
             totals = [float(row.get("value") or 0) for row in total_rows]
             ratios = [round(float(eligible_by_date.get(row.get("periodEnd")) or 0)
                             / float(row.get("value")), 6)
@@ -20297,7 +20349,10 @@ def _jquants_breadth_finalize_worker(job_id):
                     values[name] = row.get("value") if row else None
                 latest_counts[universe_id] = values
             universe_observation_counts[short] = sum(
-                len(rows) for series_id, rows in effective.items()
+                sum(1 for row in rows
+                    if str(row.get("periodEnd") or row.get("asOf") or "")
+                    >= production_start)
+                for series_id, rows in effective.items()
                 if series_id.startswith(f"breadth.{short}.") )
 
         derived = argus_market_ledger.derived_history(
@@ -20308,14 +20363,16 @@ def _jquants_breadth_finalize_worker(job_id):
             for short in ("first_section", "prime", "all")}
         all_dates = sorted({row.get("periodEnd") for row in
                             effective.get("breadth.all.advancers", [])
-                            if row.get("periodEnd")})
-        if not all_dates or all_dates[0] > entitlement_start \
+                            if row.get("periodEnd")
+                            and str(row.get("periodEnd")) >= production_start})
+        if not all_dates or all_dates[0] > production_start \
                 or all_dates[-1] != latest_confirmed:
-            raise RuntimeError("breadth_full_range_incomplete")
+            raise RuntimeError("breadth_five_year_range_incomplete")
         raw_seen, duplicate_count = set(), 0
         validation_rows = [row for row in
                            (_MARKET_LEDGER.get("observations") or [])
-                           if str(row.get("seriesId") or "").startswith("breadth.")]
+                           if str(row.get("seriesId") or "").startswith("breadth.")
+                           and str(row.get("periodEnd") or "") >= production_start]
         for row in validation_rows:
             key = (row.get("seriesId"), row.get("periodEnd"),
                    row.get("availableFrom"), row.get("value"))
@@ -20323,7 +20380,10 @@ def _jquants_breadth_finalize_worker(job_id):
                 duplicate_count += 1
             raw_seen.add(key)
         effective_breadth_count = sum(
-            len(rows) for series_id, rows in effective.items()
+            sum(1 for row in rows
+                if str(row.get("periodEnd") or row.get("asOf") or "")
+                >= production_start)
+            for series_id, rows in effective.items()
             if series_id.startswith("breadth."))
         spot_passed = len(spot_checks) == 10 and all(
             row["matches"] for row in spot_checks)
@@ -20348,8 +20408,7 @@ def _jquants_breadth_finalize_worker(job_id):
             "providerProof": proof,
             "methodVersion": argus_foundation_jobs.METHOD_VERSION,
             "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
-            "planEntitlement": "standard_rolling_10_years_observed",
-            "contractScope": "rolling_10_years",
+            "planEntitlement": "standard_rolling_10_years_available",
             "entitlementStartDate": entitlement_start,
             "entitlementEndDate": latest_confirmed,
             "latestConfirmedTradingDate": latest_confirmed,
@@ -20364,6 +20423,9 @@ def _jquants_breadth_finalize_worker(job_id):
                               "to": latest_confirmed},
                 "primeBackProjected": False},
             "rawProviderRowsPersisted": False}
+        result.update(scope)
+        result["universeMethodology"]["firstSection"]["from"] = production_start
+        result["universeMethodology"]["allMarket"]["from"] = production_start
         if duplicate_count or not spot_passed or set(backtests) != {
                 "first_section", "prime", "all"}:
             proof["validation"] = {
@@ -20386,24 +20448,33 @@ def _jquants_breadth_finalize_worker(job_id):
                                error_class=error_class[:80])
 
 
-def _jquants_breadth_worker(job_id):
+def _jquants_breadth_worker_process_body(job_id):
     job = _foundation_job(job_id) or {}
     params = job.get("parameters") or {}
     if params.get("finalizeOnly") is True:
         _jquants_breadth_finalize_worker(job_id)
         return
-    end_date = str(params.get("to") or datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10]
-    calendar_boundary = argus_foundation_jobs.rolling_entitlement_start(end_date)
-    requested_start_date = str(params.get("from") or calendar_boundary)[:10]
-    start_date = max(requested_start_date, calendar_boundary)
+    requested_end_date = str(params.get("to") or
+                             datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10]
+    end_date = requested_end_date
+    production_boundary = argus_foundation_jobs.production_calendar_start(end_date)
+    stage = str(params.get("stage") or "full_5y").lower()
+    staged_start, _ = argus_foundation_jobs.staged_production_range(
+        stage, latest_confirmed_date=end_date,
+        production_start_date=production_boundary)
+    explicit_start = bool(params.get("from"))
+    requested_start_date = str(params.get("from") or staged_start)[:10]
+    start_date = max(requested_start_date, production_boundary)
     proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
              "authentication": "x-api-key", "secretConfigured": bool(_JQUANTS_API_KEY),
              "errorClass": None, "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
              "entitlementStartDate": start_date,
              "entitlementEndDate": end_date,
              "entitlementObservedAt": _ai_now_iso(),
-             "entitlementPolicy": "rolling_10_years",
-             "contractScope": "rolling_10_years", "apiVersion": "v2",
+             "entitlementPolicy": argus_foundation_jobs.ENTITLEMENT_POLICY,
+             "contractScope": argus_foundation_jobs.PRODUCTION_SCOPE,
+             "productionFiveYearStartDate": production_boundary,
+             "stage": stage, "apiVersion": "v2",
              "requestedStartDate": requested_start_date,
              "effectiveStartDate": start_date}
     try:
@@ -20411,11 +20482,43 @@ def _jquants_breadth_worker(job_id):
                                checkpoint={"providerProof": proof})
         if not _JQUANTS_API_KEY:
             raise RuntimeError("jquants_not_configured_in_runtime")
-        discovered_start, boundary_rows = _jquants_discover_entitlement_start(
+        recent_start = (datetime.strptime(requested_end_date, "%Y-%m-%d")
+                        - timedelta(days=45)).strftime("%Y-%m-%d")
+        recent_dates = _jquants_calendar_dates(
+            recent_start, requested_end_date, proof)
+        latest_confirmed = None
+        for candidate in reversed(recent_dates):
+            exact = _jquants_exact_date_rows(_jquants_secure_rows(
+                "/equities/bars/daily", {"date": candidate}, proof=proof,
+                max_pages=200), candidate)
+            if exact:
+                latest_confirmed = candidate
+                break
+        if not latest_confirmed:
+            raise RuntimeError("jquants_recent_confirmed_date_not_found")
+        end_date = latest_confirmed
+        production_boundary = argus_foundation_jobs.production_calendar_start(
+            end_date)
+        staged_start, _ = argus_foundation_jobs.staged_production_range(
+            stage, latest_confirmed_date=end_date,
+            production_start_date=production_boundary)
+        if not explicit_start:
+            requested_start_date = staged_start
+        proof["requestedEndDate"] = requested_end_date
+        proof["latestConfirmedTradingDate"] = end_date
+        entitlement_start, _ = _jquants_discover_entitlement_start(
             end_date, proof)
-        start_date = max(requested_start_date, discovered_start)
-        proof["entitlementStartDate"] = start_date
+        production_start, boundary_rows = _jquants_discover_production_start(
+            end_date, proof)
+        start_date = max(requested_start_date, production_start)
+        proof["entitlementStartDate"] = entitlement_start
+        proof["productionFiveYearStartDate"] = production_start
         proof["effectiveStartDate"] = start_date
+        scope = argus_foundation_jobs.production_scope_metadata(
+            latest_confirmed_date=end_date,
+            production_start_date=production_start,
+            entitlement_start_date=entitlement_start)
+        proof.update(scope)
         # Calendar V2 is probed in its production-confirmed current window. Its
         # history does not extend to the 2008 Premium price start, so historical
         # trading dates are proven by the existence of official adjusted daily
@@ -20425,6 +20528,12 @@ def _jquants_breadth_worker(job_id):
         _jquants_calendar_dates(calendar_probe_start, end_date, proof)
         candidate_dates = argus_foundation_jobs.weekday_candidates(
             start_date, end_date)
+        if stage == "canary_5d":
+            candidate_dates = _jquants_calendar_dates(
+                start_date, end_date, proof)[-5:]
+            if candidate_dates:
+                start_date = candidate_dates[0]
+                proof["effectiveStartDate"] = start_date
         dates = list(candidate_dates)
         if not dates:
             raise RuntimeError("jquants_no_trading_dates")
@@ -20432,7 +20541,7 @@ def _jquants_breadth_worker(job_id):
         # A resumed slice must compare its first target session with the prior
         # official close.  Fetch a bounded look-back seed but never persist it
         # as a new observation or move the requested oldest boundary backward.
-        if params.get("resumedFromJobId") or start_date > discovered_start:
+        if params.get("resumedFromJobId") or start_date > production_start:
             seed_start = (datetime.strptime(start_date, "%Y-%m-%d")
                           - timedelta(days=10)).strftime("%Y-%m-%d")
             seed_end = (datetime.strptime(start_date, "%Y-%m-%d")
@@ -20481,7 +20590,7 @@ def _jquants_breadth_worker(job_id):
                 return
             try:
                 bars = _jquants_exact_date_rows(
-                    (boundary_rows if date_text == discovered_start else
+                    (boundary_rows if date_text == production_start else
                      _jquants_secure_rows(
                             "/equities/bars/daily", {"date": date_text},
                             proof=proof, max_pages=200)), date_text)
@@ -20534,13 +20643,17 @@ def _jquants_breadth_worker(job_id):
                                 "instrument": "1306 TOPIX-linked ETF proxy",
                                 "officialIndexValue": False,
                                 "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
-                                "entitlementStartDate": start_date,
+                                "entitlementStartDate": entitlement_start,
+                                "productionFiveYearStartDate": production_start,
+                                "contractScope": argus_foundation_jobs.PRODUCTION_SCOPE,
                                 "methodVersion": argus_foundation_jobs.METHOD_VERSION}})
                 except (TypeError, ValueError):
                     pass
             batch.extend(argus_foundation_jobs.ledger_candidates(
                 daily, calculated_at=_ai_now_iso(),
-                entitlement_start_date=start_date))
+                entitlement_start_date=entitlement_start,
+                production_start_date=production_start,
+                latest_confirmed_date=end_date))
             for uid, row in daily["universes"].items():
                 if argus_foundation_jobs.universe_active(uid, date_text):
                     coverage[uid].append(row["coverageRatio"])
@@ -20562,10 +20675,13 @@ def _jquants_breadth_worker(job_id):
                               "totalUnits": total,
                               "percent": percent},
                     checkpoint={"lastCommittedDate": date_text,
+                                "stage": stage,
+                                "batchPolicy": "one_day_to_maximum_one_month",
                                 "providerProof": dict(proof),
                                 "marketLedgerRowsBeforeBatch": before,
                                 "marketLedgerRowsAfterBatch": len(
                                     _MARKET_LEDGER.get("observations") or [])})
+                gc.collect()
         # The requested end date may be a weekend/holiday (for example Marine
         # Day). Flush the final residue even when the last candidate has no bars.
         if batch:
@@ -20581,10 +20697,13 @@ def _jquants_breadth_worker(job_id):
                 progress={"completedUnits": total, "totalUnits": total,
                           "percent": 100.0},
                 checkpoint={"lastCommittedDate": newest,
+                            "stage": stage,
+                            "batchPolicy": "one_day_to_maximum_one_month",
                             "providerProof": dict(proof),
                             "marketLedgerRowsBeforeBatch": before,
                             "marketLedgerRowsAfterBatch": len(
                                 _MARKET_LEDGER.get("observations") or [])})
+            gc.collect()
         if trading_date_count == 0:
             raise RuntimeError("jquants_no_daily_bars_in_range")
         # Batch checkpoints defer the expensive pure rebuild.  Publish a fully
@@ -20592,6 +20711,15 @@ def _jquants_breadth_worker(job_id):
         rebuilt = argus_market_ledger.rebuild(_MARKET_LEDGER, _ai_now_iso())
         _MARKET_LEDGER.clear()
         _MARKET_LEDGER.update(rebuilt)
+        effective_rows = argus_market_ledger.latest_by_series(
+            _MARKET_LEDGER, _ai_now_iso())
+        if stage == "full_5y":
+            topix_prices = [
+                {"date": row.get("periodEnd"), "close": row.get("value"),
+                 "availableFrom": row.get("availableFrom")}
+                for row in effective_rows.get("breadth.topixProxyClose", [])
+                if row.get("value") is not None
+                and str(row.get("periodEnd") or "") >= production_start]
         proof["entitlementEndDate"] = newest
         proof["providerResponseClass"] = "success"
         seen_breadth_rows = set()
@@ -20605,7 +20733,8 @@ def _jquants_breadth_worker(job_id):
             else:
                 seen_breadth_rows.add(key)
         points = [x for x in (_MARKET_LEDGER.get("turningPoints") or [])
-                  if x.get("ruleId") == "BREADTH_TURN"]
+                  if x.get("ruleId") == "BREADTH_TURN"
+                  and str(x.get("effectiveFrom") or "") >= production_start]
         backtests = {}
         for universe in ("first_section", "prime", "all"):
             universe_points = [x for x in points if str(
@@ -20649,8 +20778,6 @@ def _jquants_breadth_worker(job_id):
                     **dict(row.get("dataQuality") or {}),
                     "eligibleCount": row.get("eligibleCount"),
                     "totalUniverseCount": row.get("totalUniverseCount")}
-        effective_rows = argus_market_ledger.latest_by_series(
-            _MARKET_LEDGER, _ai_now_iso())
         spot_checks = []
         for candidate in spot_check_candidates:
             matches = True
@@ -20666,15 +20793,37 @@ def _jquants_breadth_worker(job_id):
         universe_observation_counts = {
             short: sum(1 for row in (_MARKET_LEDGER.get("observations") or [])
                        if str(row.get("seriesId") or "").startswith(
-                           f"breadth.{short}."))
+                           f"breadth.{short}.")
+                       and str(row.get("periodEnd") or "") >= production_start)
             for short in ("first_section", "prime", "all")}
+        effective_scope_start = (production_start
+                                 if stage == "full_5y" else start_date)
+        effective_stage_observation_count = sum(
+            sum(1 for row in rows
+                if effective_scope_start <= str(row.get("periodEnd") or
+                                                row.get("asOf") or "") <= newest)
+            for series_id, rows in effective_rows.items()
+            if series_id.startswith("breadth."))
+        active_all_dates = sorted({
+            str(row.get("periodEnd")) for row in
+            effective_rows.get("breadth.all.advancers", [])
+            if effective_scope_start <= str(row.get("periodEnd") or "") <= newest})
+        if stage == "full_5y" and (not active_all_dates
+                                   or active_all_dates[0] > production_start
+                                   or active_all_dates[-1] != newest):
+            raise RuntimeError("breadth_five_year_range_incomplete")
+        scope = argus_foundation_jobs.production_scope_metadata(
+            latest_confirmed_date=newest,
+            production_start_date=production_start,
+            entitlement_start_date=entitlement_start)
         result = {
             "status": "completed",
             "rowCount": committed,
-            "observationCount": committed,
-            "oldestDate": oldest,
-            "newestDate": newest,
-            "tradingDateCount": trading_date_count,
+            "observationCount": effective_stage_observation_count,
+            "oldestDate": (active_all_dates[0] if active_all_dates else oldest),
+            "newestDate": (active_all_dates[-1] if active_all_dates else newest),
+            "tradingDateCount": (len(active_all_dates) if active_all_dates
+                                 else trading_date_count),
             "missingDates": [],
             "closedOrNoBarsCandidateCount": closed_or_no_bars,
             "duplicateCount": duplicate_count,
@@ -20704,9 +20853,8 @@ def _jquants_breadth_worker(job_id):
             "providerProof": proof,
             "methodVersion": argus_foundation_jobs.METHOD_VERSION,
             "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
-            "planEntitlement": "standard_rolling_10_years_observed",
-            "contractScope": "rolling_10_years",
-            "entitlementStartDate": start_date,
+            "planEntitlement": "standard_rolling_10_years_available",
+            "entitlementStartDate": entitlement_start,
             "entitlementEndDate": newest,
             "latestConfirmedTradingDate": newest,
             "entitlementObservedAt": proof.get("entitlementObservedAt"),
@@ -20714,15 +20862,20 @@ def _jquants_breadth_worker(job_id):
             "apiVersion": "v2",
             "universeMethodology": {
                 "firstSection": {
-                    "from": start_date,
+                    "from": production_start,
                     "to": argus_foundation_jobs.FIRST_SECTION_END_DATE},
                 "prime": {"from": argus_foundation_jobs.PRIME_START_DATE,
                           "to": newest},
-                "allMarket": {"from": start_date,
+                "allMarket": {"from": production_start,
                               "to": newest},
                 "primeBackProjected": False},
             "rawProviderRowsPersisted": False,
         }
+        result.update(scope)
+        result.update({"stage": stage,
+                       "batchPolicy": "one_day_to_maximum_one_month",
+                       "checkpointPersistence": "each_batch",
+                       "duplicateSafeResume": True})
         _journal("jquants_breadth_backfill_completed", "market_ledger", job_id,
                  {"rowCount": committed, "oldestDate": oldest,
                   "newestDate": newest, "stateHash": result["stateHash"]},
@@ -20733,6 +20886,176 @@ def _jquants_breadth_worker(job_id):
         proof["errorClass"] = error_class[:80]
         _foundation_job_update(job_id, status="failed", result={
             "providerProof": proof}, error_class=error_class[:80])
+
+
+def _process_peak_memory_mb():
+    """Return a platform-normalized peak RSS without adding a dependency."""
+    peak = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss or 0)
+    return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 2)
+
+
+def _jquants_breadth_process_entry(job_id, connection, memory_soft_limit_mb):
+    """Run provider I/O/calculation in a forked process; parent owns durability."""
+    global _foundation_job_update, _foundation_job, _breadth_commit_rows
+    global _journal, _osint_persist
+    local_commit = _breadth_commit_rows
+    try:
+        limit_bytes = int(memory_soft_limit_mb) * 1024 * 1024
+        current_soft, current_hard = resource.getrlimit(resource.RLIMIT_DATA)
+        hard = current_hard if current_hard not in (-1, resource.RLIM_INFINITY) else limit_bytes
+        resource.setrlimit(resource.RLIMIT_DATA,
+                           (min(limit_bytes, hard), current_hard))
+    except (ValueError, OSError, AttributeError):
+        pass
+
+    def exchange(payload):
+        connection.send(payload)
+        response = connection.recv()
+        if not isinstance(response, dict) or response.get("ok") is not True:
+            raise RuntimeError("breadth_parent_ipc_failed")
+        return response
+
+    def remote_job(target_job_id):
+        return exchange({"op": "job", "jobId": target_job_id}).get("job")
+
+    def remote_update(target_job_id, *, status=None, progress=None,
+                      checkpoint=None, result=None, error_class=None,
+                      persist=True):
+        return exchange({"op": "update", "jobId": target_job_id,
+                         "status": status, "progress": progress,
+                         "checkpoint": checkpoint, "result": result,
+                         "errorClass": error_class,
+                         "persist": bool(persist)}).get("job")
+
+    def mirrored_commit(rows, now_iso):
+        local_result = local_commit(rows, now_iso)
+        parent_result = tuple(exchange({"op": "commit", "rows": rows,
+                                        "nowIso": now_iso}).get("result") or ())
+        if parent_result != tuple(local_result):
+            raise RuntimeError("breadth_parent_commit_mismatch")
+        return local_result
+
+    def remote_journal(kind, entity_type, entity_id, payload, origin=None):
+        return exchange({"op": "journal", "kind": kind,
+                         "entityType": entity_type, "entityId": entity_id,
+                         "payload": payload, "origin": origin}).get("result")
+
+    _foundation_job = remote_job
+    _foundation_job_update = remote_update
+    _breadth_commit_rows = mirrored_commit
+    _journal = remote_journal
+    _osint_persist = lambda: None
+    try:
+        _jquants_breadth_worker_process_body(job_id)
+        connection.send({"op": "done", "workerPeakMemoryMb":
+                         _process_peak_memory_mb()})
+    except BaseException as exc:
+        connection.send({"op": "crashed", "errorClass":
+                         type(exc).__name__[:80], "workerPeakMemoryMb":
+                         _process_peak_memory_mb()})
+    finally:
+        connection.close()
+
+
+def _jquants_breadth_worker(job_id):
+    """Supervise the one-at-a-time breadth worker in an independent OS process."""
+    try:
+        memory_limit = int(os.environ.get(
+            "JQUANTS_BREADTH_WORKER_MEMORY_SOFT_LIMIT_MB", "512"))
+    except (TypeError, ValueError):
+        memory_limit = 512
+    memory_limit = max(256, min(memory_limit, 1024))
+    boot_id = _RUNTIME.get("bootId")
+    backend_peak_before = _process_peak_memory_mb()
+    parent_connection, child_connection = multiprocessing.get_context(
+        "fork").Pipe(duplex=True)
+    process = multiprocessing.get_context("fork").Process(
+        target=_jquants_breadth_process_entry,
+        args=(job_id, child_connection, memory_limit), daemon=True)
+    process.start()
+    child_connection.close()
+    worker_peak = None
+    crashed = None
+    received_done = False
+    try:
+        while process.is_alive() or parent_connection.poll(0.2):
+            if not parent_connection.poll(0.5):
+                continue
+            message = parent_connection.recv()
+            operation = message.get("op") if isinstance(message, dict) else None
+            try:
+                if operation == "job":
+                    reply = {"ok": True, "job": _foundation_job(message["jobId"])}
+                elif operation == "commit":
+                    reply = {"ok": True, "result": list(_breadth_commit_rows(
+                        message.get("rows") or [], message.get("nowIso") or _ai_now_iso()))}
+                elif operation == "update":
+                    result = message.get("result")
+                    if message.get("status") == "completed" and isinstance(result, dict):
+                        for record in (result.get("backtests") or {}).values():
+                            if isinstance(record, dict) and not any(
+                                    row.get("id") == record.get("id") for row in
+                                    _MARKET_LEDGER.setdefault("backtests", [])):
+                                _MARKET_LEDGER["backtests"].append(record)
+                        rebuilt = argus_market_ledger.rebuild(
+                            _MARKET_LEDGER, _ai_now_iso())
+                        _MARKET_LEDGER.clear()
+                        _MARKET_LEDGER.update(rebuilt)
+                        result = dict(result)
+                        result["stateHash"] = argus_market_ledger.state_hash(
+                            _MARKET_LEDGER)
+                    reply = {"ok": True, "job": _foundation_job_update(
+                        message["jobId"], status=message.get("status"),
+                        progress=message.get("progress"),
+                        checkpoint=message.get("checkpoint"), result=result,
+                        error_class=message.get("errorClass"),
+                        persist=message.get("persist", True))}
+                elif operation == "journal":
+                    reply = {"ok": True, "result": _journal(
+                        message.get("kind"), message.get("entityType"),
+                        message.get("entityId"), message.get("payload") or {},
+                        origin=message.get("origin"))}
+                elif operation in ("done", "crashed"):
+                    worker_peak = message.get("workerPeakMemoryMb")
+                    crashed = message.get("errorClass") if operation == "crashed" else None
+                    received_done = operation == "done"
+                    continue
+                else:
+                    reply = {"ok": False}
+            except Exception:
+                reply = {"ok": False}
+            parent_connection.send(reply)
+    except (EOFError, BrokenPipeError, OSError):
+        if not received_done:
+            crashed = crashed or "breadth_worker_ipc_closed"
+    finally:
+        process.join(timeout=10)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+        parent_connection.close()
+
+    final = _foundation_job(job_id) or {}
+    if crashed or process.exitcode not in (0, None):
+        if final.get("status") not in argus_foundation_jobs.TERMINAL_STATES:
+            _foundation_job_update(job_id, status="failed",
+                                   error_class=crashed or
+                                   f"breadth_worker_exit_{process.exitcode}")
+        return
+    result = final.get("result") if isinstance(final.get("result"), dict) else None
+    if final.get("status") == "completed" and result is not None:
+        result = dict(result)
+        result.update({
+            "executionMode": "independent_os_process",
+            "workerConcurrency": 1,
+            "workerMemorySoftLimitMb": memory_limit,
+            "workerPeakMemoryMb": worker_peak,
+            "backendPeakMemoryMb": _process_peak_memory_mb(),
+            "backendPeakMemoryAtStartMb": backend_peak_before,
+            "backendRestartCountDuringJob": 0 if _RUNTIME.get("bootId") == boot_id else 1,
+            "backendBootIdStable": _RUNTIME.get("bootId") == boot_id,
+        })
+        _foundation_job_update(job_id, status="completed", result=result)
 
 
 def _journal_reverify_worker(job_id):

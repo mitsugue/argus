@@ -20,6 +20,9 @@ SCHEMA_VERSION = "argus-foundation-jobs-v1"
 METHOD_VERSION = "jquants-standard-breadth-adjusted-close-v2"
 ENTITLEMENT_PLAN = "standard"
 ENTITLEMENT_START_DATE = "2016-07-20"
+PRODUCTION_HISTORY_YEARS = 5
+PRODUCTION_SCOPE = "rolling_5_years"
+ENTITLEMENT_POLICY = "rolling_10_years"
 FIRST_SECTION_END_DATE = "2022-04-01"
 PRIME_START_DATE = "2022-04-04"
 JOB_TYPES = {
@@ -82,6 +85,63 @@ def rolling_entitlement_start(as_of_date: str, years: int = 10) -> str:
     except ValueError:  # 29 February -> last calendar day of February.
         boundary = day.replace(year=day.year - int(years), day=28)
     return boundary.strftime("%Y-%m-%d")
+
+
+def production_calendar_start(as_of_date: str) -> str:
+    """Calendar lower bound for the official five-year production window."""
+    return rolling_entitlement_start(as_of_date, years=PRODUCTION_HISTORY_YEARS)
+
+
+def production_scope_metadata(*, latest_confirmed_date: str,
+                              production_start_date: Optional[str] = None,
+                              entitlement_start_date: Optional[str] = None
+                              ) -> Dict[str, Any]:
+    """Return the explicit core/archive split without deleting older evidence."""
+    production_start = (production_start_date
+                        or production_calendar_start(latest_confirmed_date))
+    entitlement_start = entitlement_start_date or ENTITLEMENT_START_DATE
+    archive_end = (datetime.strptime(production_start, "%Y-%m-%d")
+                   - timedelta(days=1)).strftime("%Y-%m-%d")
+    return {
+        "contractScope": PRODUCTION_SCOPE,
+        "productionHistoryYears": PRODUCTION_HISTORY_YEARS,
+        "productionFiveYearStartDate": production_start,
+        "productionFiveYearEndDate": str(latest_confirmed_date)[:10],
+        "entitlementPolicy": ENTITLEMENT_POLICY,
+        "entitlementStartDate": entitlement_start,
+        "archiveBackfillStatus": "deferred",
+        "archiveScope": {
+            "from": entitlement_start,
+            "to": archive_end,
+        },
+        "coreRequired": False,
+    }
+
+
+def staged_production_range(stage: str, *, latest_confirmed_date: str,
+                            production_start_date: Optional[str] = None
+                            ) -> Tuple[str, str]:
+    """Bound a staged run by calendar dates; provider bars prove trading days."""
+    latest = datetime.strptime(str(latest_confirmed_date)[:10], "%Y-%m-%d")
+    production_start = datetime.strptime(
+        production_start_date or production_calendar_start(
+            latest.strftime("%Y-%m-%d")), "%Y-%m-%d")
+    normalized = str(stage or "full_5y").strip().lower()
+    if normalized == "canary_5d":
+        start = latest - timedelta(days=10)
+    elif normalized == "canary_1m":
+        start = latest - timedelta(days=31)
+    elif normalized == "one_year":
+        try:
+            start = latest.replace(year=latest.year - 1)
+        except ValueError:
+            start = latest.replace(year=latest.year - 1, day=28)
+    elif normalized == "full_5y":
+        start = production_start
+    else:
+        raise ValueError("invalid_breadth_stage")
+    return max(start, production_start).strftime("%Y-%m-%d"), latest.strftime(
+        "%Y-%m-%d")
 
 
 def normalize_jquants_query(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -462,7 +522,9 @@ def calculate_daily(*, date: str, master_rows: Iterable[Dict[str, Any]],
 
 def ledger_candidates(daily: Dict[str, Any], *, calculated_at: str,
                       published_hour_jst: int = 17,
-                      entitlement_start_date: Optional[str] = None
+                      entitlement_start_date: Optional[str] = None,
+                      production_start_date: Optional[str] = None,
+                      latest_confirmed_date: Optional[str] = None
                       ) -> List[Dict[str, Any]]:
     date = str(daily.get("date") or "")[:10]
     available = f"{date}T{published_hour_jst:02d}:00:00+09:00"
@@ -481,13 +543,13 @@ def ledger_candidates(daily: Dict[str, Any], *, calculated_at: str,
         meta["sourceObservationHash"] = _digest(ids, 32)
         meta["calculatedAt"] = calculated_at
         meta["availabilityPolicy"] = "same_day_17:00_JST_after_provider_16:30_update"
+        scope = production_scope_metadata(
+            latest_confirmed_date=(latest_confirmed_date or date),
+            production_start_date=production_start_date,
+            entitlement_start_date=entitlement_start_date)
         meta.update({"plan": ENTITLEMENT_PLAN,
-                     "entitlementStartDate": (entitlement_start_date
-                                               or ENTITLEMENT_START_DATE),
                      "entitlementObservedAt": calculated_at,
-                     "apiVersion": "v2",
-                     "contractScope": "rolling_10_years",
-                     "entitlementPolicy": "rolling_10_years"})
+                     "apiVersion": "v2", **scope})
         values = dict(row.get("counts") or {})
         values.update(dict(row.get("dataQuality") or {}))
         values.update({"eligibleCount": int(row.get("eligibleCount") or 0),
