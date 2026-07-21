@@ -19106,6 +19106,26 @@ def api_argus_foundation_jobs():
     return jsonify(status)
 
 
+def _breadth_resume_candidate(job_type, requested_stage):
+    """Return only a failed checkpoint from the same production stage."""
+    for candidate in reversed(_FOUNDATION_JOBS.get("jobs", [])):
+        if candidate.get("jobType") != job_type or candidate.get(
+                "status") not in ("failed", "cancelled"):
+            continue
+        if not (candidate.get("checkpoint") or {}).get("lastCommittedDate"):
+            continue
+        if job_type == "JQUANTS_BREADTH_BACKFILL":
+            candidate_stage = str(
+                (candidate.get("parameters") or {}).get("stage")
+                or (candidate.get("result") or {}).get("stage")
+                or (candidate.get("checkpoint") or {}).get("stage")
+                or "full_5y")
+            if candidate_stage != requested_stage:
+                continue
+        return candidate
+    return None
+
+
 @app.route("/api/argus/admin/foundation-jobs", methods=["POST"])
 def api_argus_admin_foundation_jobs_start():
     ok, err, code = _require_admin()
@@ -19133,10 +19153,8 @@ def api_argus_admin_foundation_jobs_start():
                             "error": "invalid_breadth_stage"}), 400
     if job_type in ("JQUANTS_BREADTH_BACKFILL", "JQUANTS_BREADTH_INCREMENTAL") \
             and body.get("resume") is True and not params.get("from"):
-        prior = next((x for x in reversed(_FOUNDATION_JOBS.get("jobs", []))
-                      if x.get("jobType") == job_type
-                      and x.get("status") in ("failed", "cancelled")
-                      and (x.get("checkpoint") or {}).get("lastCommittedDate")), None)
+        prior = _breadth_resume_candidate(job_type, str(
+            params.get("stage") or "full_5y"))
         if prior:
             params["from"] = argus_foundation_jobs.next_day(
                 prior["checkpoint"]["lastCommittedDate"])
