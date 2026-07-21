@@ -1,7 +1,7 @@
 {
- "asOf": "2026-07-20T10:18:59Z",
+ "asOf": "2026-07-21T09:32:52Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-07-20",
+ "day": "2026-07-21",
  "dayRemainingUsd": 5.0,
  "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
@@ -23,9 +23,21 @@
    "in": 1.25,
    "out": 10.0
   },
+  "gemini-3.1-pro-preview": {
+   "in": 2.0,
+   "out": 12.0
+  },
   "gpt-5.5": {
    "in": 1.25,
    "out": 10.0
+  },
+  "gpt-5.6-sol": {
+   "in": 5.0,
+   "out": 30.0
+  },
+  "gpt-5.6-terra": {
+   "in": 2.5,
+   "out": 15.0
   }
  },
  "recentRuns": []
