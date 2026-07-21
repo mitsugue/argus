@@ -137,7 +137,10 @@ def walk_forward_backtest(signals: Iterable[Dict[str, Any]], prices: Iterable[Di
     if n and hit is not None:
         half = 1.96 * sqrt(hit * (1.0 - hit) / n)
         ci = [round(max(0.0, hit - half), 4), round(min(1.0, hit + half), 4)]
-    classification = "backtested" if n >= min_validated_samples else "insufficient_data"
+    # A sample-size threshold only makes the heuristic testable.  It does not
+    # by itself prove economic validity, so a >=30 sample remains experimental
+    # until a separately frozen rule-specific directional hypothesis passes.
+    classification = "experimental" if n >= min_validated_samples else "insufficient_data"
     return {"methodVersion": METHOD_VERSION, "classification": classification,
             "sampleSize": n, "occurrences": len(samples),
             "hitRate5d": (round(hit, 4) if hit is not None else None),
@@ -177,9 +180,15 @@ def heuristic_inventory(turning_points: Iterable[Dict[str, Any]],
         matched = [x for x in points if mapped_rule and x.get("ruleId") == mapped_rule]
         matching_tests = [x for x in tests if x.get("ruleId") == mapped_rule]
         latest_test = matching_tests[-1] if matching_tests else {}
+        sample_size = int(latest_test.get("sampleSize") or len(matched))
+        evaluated_class = str(latest_test.get("classification") or "")
+        allowed_class = (evaluated_class if evaluated_class in {
+            "validated", "experimental", "rejected", "insufficient_data"}
+                         else "experimental" if sample_size >= 30 and matched
+                         else "insufficient_data")
         out.append({"ruleId": rule_id, "ruleName": name,
-                    "classification": classification if matched or classification == "insufficient_data" else "insufficient_data",
-                    "sampleSize": int(latest_test.get("sampleSize") or len(matched)),
+                    "classification": allowed_class,
+                    "sampleSize": sample_size,
                     "historicalTendency": (latest_test.get("classification")
                                            or "not_evaluated"),
                     "currentState": "triggered" if matched else "not_observed",

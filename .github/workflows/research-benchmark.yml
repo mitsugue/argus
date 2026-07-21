@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - benchmark
+          - benchmark_v2
           - jpx_credit_import
           - provider_probe
           - jquants_matrix
@@ -54,7 +55,7 @@ jobs:
             --poll-seconds 5 --max-wait-seconds 1200
 
   benchmark:
-    if: inputs.operation == 'benchmark'
+    if: inputs.operation == 'benchmark' || inputs.operation == 'benchmark_v2'
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
@@ -65,10 +66,17 @@ jobs:
       - name: Dry-run, execute once, and verify deterministic restore
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
-        run: >-
-          python3 scripts/run_foundation_job.py
-          --job-type RESEARCH_BENCHMARK
-          --max-wait-seconds 3000
+          OPERATION: ${{ inputs.operation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          job_type=RESEARCH_BENCHMARK
+          if [ "$OPERATION" = "benchmark_v2" ]; then
+            job_type=RESEARCH_BENCHMARK_V2
+          fi
+          python3 scripts/run_foundation_job.py \
+            --job-type "$job_type" \
+            --max-wait-seconds 3000
 
   breadth-backfill:
     if: inputs.operation == 'breadth_backfill' || inputs.operation == 'breadth_incremental'

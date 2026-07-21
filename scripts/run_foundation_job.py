@@ -27,6 +27,12 @@ SAFE_RESULT_KEYS = {
     "correctedDateFormat", "preview", "modelsApi", "stable", "stableModel",
     "previewProviderDefect", "stableProviderPath", "selectedBaselineModel",
     "baselineSwapReason", "formalBaselineModel", "latestCounts", "latestRatios",
+    "observationCount", "checkpointPending", "permanentFailures",
+    "universeObservationCounts", "spotChecks", "spotCheckPassed",
+    "plan", "planEntitlement", "entitlementStartDate", "entitlementEndDate",
+    "entitlementObservedAt", "latestConfirmedTradingDate",
+    "providerResponseClass", "contractScope", "apiVersion", "universeMethodology",
+    "dryRun", "manifestValidation", "providerPreflight", "formalResult",
 }
 
 

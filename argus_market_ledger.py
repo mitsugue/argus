@@ -32,25 +32,46 @@ SERIES = {
     "breadth.ratio10": ("percent", "10日騰落レシオ", "derived", "derived"),
     "breadth.ratio15": ("percent", "15日騰落レシオ", "derived", "derived"),
     "breadth.ratio25": ("percent", "25日騰落レシオ", "derived", "derived"),
+    "breadth.topixProxyClose": ("JPY", "TOPIX連動ETF調整終値", "jquants", "derived"),
     "breadth.prime.advancers": ("count", "Prime値上がり銘柄数", "jquants", "derived"),
     "breadth.prime.decliners": ("count", "Prime値下がり銘柄数", "jquants", "derived"),
     "breadth.prime.unchanged": ("count", "Prime変わらず銘柄数", "jquants", "derived"),
     "breadth.prime.unavailable": ("count", "Prime比較不能銘柄数", "jquants", "derived"),
+    "breadth.prime.noTrade": ("count", "Prime無取引銘柄数", "jquants", "derived"),
+    "breadth.prime.missingPrice": ("count", "Prime価格欠損銘柄数", "jquants", "derived"),
+    "breadth.prime.eligibleCount": ("count", "Prime比較対象銘柄数", "jquants", "derived"),
+    "breadth.prime.totalUniverseCount": ("count", "Prime母集団銘柄数", "jquants", "derived"),
+    "breadth.first_section.advancers": ("count", "旧東証一部値上がり銘柄数", "jquants", "derived"),
+    "breadth.first_section.decliners": ("count", "旧東証一部値下がり銘柄数", "jquants", "derived"),
+    "breadth.first_section.unchanged": ("count", "旧東証一部変わらず銘柄数", "jquants", "derived"),
+    "breadth.first_section.unavailable": ("count", "旧東証一部比較不能銘柄数", "jquants", "derived"),
+    "breadth.first_section.noTrade": ("count", "旧東証一部無取引銘柄数", "jquants", "derived"),
+    "breadth.first_section.missingPrice": ("count", "旧東証一部価格欠損銘柄数", "jquants", "derived"),
+    "breadth.first_section.eligibleCount": ("count", "旧東証一部比較対象銘柄数", "jquants", "derived"),
+    "breadth.first_section.totalUniverseCount": ("count", "旧東証一部母集団銘柄数", "jquants", "derived"),
     "breadth.all.advancers": ("count", "全市場値上がり銘柄数", "jquants", "derived"),
     "breadth.all.decliners": ("count", "全市場値下がり銘柄数", "jquants", "derived"),
     "breadth.all.unchanged": ("count", "全市場変わらず銘柄数", "jquants", "derived"),
     "breadth.all.unavailable": ("count", "全市場比較不能銘柄数", "jquants", "derived"),
+    "breadth.all.noTrade": ("count", "全市場無取引銘柄数", "jquants", "derived"),
+    "breadth.all.missingPrice": ("count", "全市場価格欠損銘柄数", "jquants", "derived"),
+    "breadth.all.eligibleCount": ("count", "全市場比較対象銘柄数", "jquants", "derived"),
+    "breadth.all.totalUniverseCount": ("count", "全市場母集団銘柄数", "jquants", "derived"),
     "breadth.prime.ratio6": ("percent", "Prime 6日騰落レシオ", "derived", "derived"),
     "breadth.prime.ratio10": ("percent", "Prime 10日騰落レシオ", "derived", "derived"),
     "breadth.prime.ratio15": ("percent", "Prime 15日騰落レシオ", "derived", "derived"),
     "breadth.prime.ratio25": ("percent", "Prime 25日騰落レシオ", "derived", "derived"),
+    "breadth.first_section.ratio6": ("percent", "旧東証一部6日騰落レシオ", "derived", "derived"),
+    "breadth.first_section.ratio10": ("percent", "旧東証一部10日騰落レシオ", "derived", "derived"),
+    "breadth.first_section.ratio15": ("percent", "旧東証一部15日騰落レシオ", "derived", "derived"),
+    "breadth.first_section.ratio25": ("percent", "旧東証一部25日騰落レシオ", "derived", "derived"),
     "breadth.all.ratio6": ("percent", "全市場6日騰落レシオ", "derived", "derived"),
     "breadth.all.ratio10": ("percent", "全市場10日騰落レシオ", "derived", "derived"),
     "breadth.all.ratio15": ("percent", "全市場15日騰落レシオ", "derived", "derived"),
     "breadth.all.ratio25": ("percent", "全市場25日騰落レシオ", "derived", "derived"),
 }
 
-BREADTH_PREFIXES = ("breadth", "breadth.prime", "breadth.all")
+BREADTH_PREFIXES = ("breadth", "breadth.first_section", "breadth.prime", "breadth.all")
 
 
 def empty_state() -> Dict[str, Any]:
@@ -342,6 +363,26 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                                     available >= detected_at[:10]))
         b6_list = metric_history.get(f"{prefix}.ratio6", [])
         for prev, cur in zip(b6_list, b6_list[1:]):
+            if prev.get("value") is None or cur.get("value") is None:
+                continue
+            threshold_direction = (
+                "ratio6_over_120" if prev["value"] <= 120 < cur["value"] else
+                "ratio6_under_80" if prev["value"] >= 80 > cur["value"] else "")
+            if threshold_direction:
+                inputs = [observation_index[oid]
+                          for oid in cur.get("inputObservationIds", [])
+                          if oid in observation_index]
+                available = max([str(x.get("availableFrom") or "") for x in inputs]
+                                or [cur["asOf"]])
+                direction_value = (threshold_direction if universe == "legacy"
+                                   else f"{universe}:{threshold_direction}")
+                points.append(_turn(
+                    "BREADTH_TURN", cur["asOf"], available, inputs,
+                    direction_value, "watch",
+                    [f"{universe} 6日騰落レシオが"
+                     f"{'120を上抜け' if 'over_120' in threshold_direction else '80を下抜け'}"],
+                    "sho_heuristic", detected_at, available >= detected_at[:10]))
+        for prev, cur in zip(b6_list, b6_list[1:]):
             if prev.get("value") is not None and cur.get("value") is not None and \
                     prev["value"] - cur["value"] >= BREADTH_SHARP_DROP_POINTS:
                 inputs = [observation_index[oid]
@@ -357,6 +398,41 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                                      f"{prev['value'] - cur['value']:.2f}pt低下"],
                                     "sho_heuristic", detected_at,
                                     available >= detected_at[:10]))
+        proxy_by_date = {x.get("periodEnd"): x for x in
+                         (by.get("breadth.topixProxyClose") or [])}
+        adv_by_date = {x.get("periodEnd"): x for x in
+                       (by.get(f"{prefix}.advancers") or [])}
+        dec_by_date = {x.get("periodEnd"): x for x in
+                       (by.get(f"{prefix}.decliners") or [])}
+        common_divergence = sorted(set(proxy_by_date) & set(adv_by_date)
+                                   & set(dec_by_date))
+        for prev_date, cur_date in zip(common_divergence, common_divergence[1:]):
+            previous_proxy, current_proxy = (proxy_by_date[prev_date],
+                                             proxy_by_date[cur_date])
+            if not previous_proxy.get("value") or not current_proxy.get("value"):
+                continue
+            price_change = current_proxy["value"] - previous_proxy["value"]
+            previous_balance = ((adv_by_date[prev_date].get("value") or 0)
+                                - (dec_by_date[prev_date].get("value") or 0))
+            current_balance = ((adv_by_date[cur_date].get("value") or 0)
+                               - (dec_by_date[cur_date].get("value") or 0))
+            breadth_change = current_balance - previous_balance
+            divergence = ("index_up_breadth_down" if price_change > 0
+                          and breadth_change < 0 else
+                          "index_down_breadth_improves" if price_change < 0
+                          and breadth_change > 0 else "")
+            if divergence:
+                inputs = [previous_proxy, current_proxy, adv_by_date[cur_date],
+                          dec_by_date[cur_date]]
+                available = max(str(x.get("availableFrom") or "") for x in inputs)
+                direction_value = (divergence if universe == "legacy"
+                                   else f"{universe}:{divergence}")
+                points.append(_turn(
+                    "BREADTH_TURN", cur_date, available, inputs,
+                    direction_value, "watch",
+                    [f"{universe} " + ("指数proxy上昇・breadth悪化" if price_change > 0
+                                      else "指数proxy下落・breadth改善")],
+                    "sho_heuristic", detected_at, available >= detected_at[:10]))
     # Rollover needs an EPS series, not a single current calculation. Preserve honesty
     # until enough daily valuation observations exist.
     vals = by.get("valuation.nikkei") or []

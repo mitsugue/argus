@@ -98,6 +98,7 @@ import argus_caos_audit            # CAOS association audit trail (pure, ARGUS P
 import argus_cost_policy           # v12.3.0: centralized generative-AI execution policy
 import argus_market_ledger          # v12.3.0: append-only SHO-style market ledger
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
+import argus_research_benchmark_v2  # v12.7.0: validity-separated one-time v2 closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
 import argus_sho_phase3             # v12.5.0: deterministic SHO operating sheet/backfill mapping
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
@@ -10661,16 +10662,22 @@ _AI_PRICING = {
     "gemini-3.1-pro-preview": {"in": 2.0, "out": 12.0},
     "gemini-2.5-pro": {"in": 1.25, "out": 10.0},
 }
-_BENCHMARK_PRICING_VERSION = "official-2026-07-20-v1"
+_BENCHMARK_PRICING_VERSION = "official-2026-07-21-v2"
 _BENCHMARK_PRICING_CATALOG = {
-    "gpt-5.6-sol": {"inputUsdPer1M": 5.0, "outputUsdPer1M": 30.0},
-    "gpt-5.6-terra": {"inputUsdPer1M": 2.5, "outputUsdPer1M": 15.0},
+    "gpt-5.6-sol": {"inputUsdPer1M": 5.0, "outputUsdPer1M": 30.0,
+                      "cacheAssumed": False,
+                      "sourceUrl": "https://developers.openai.com/api/docs/pricing"},
+    "gpt-5.6-terra": {"inputUsdPer1M": 2.5, "outputUsdPer1M": 15.0,
+                        "cacheAssumed": False,
+                        "sourceUrl": "https://developers.openai.com/api/docs/pricing"},
     "gemini-3.1-pro-preview": {
         "contextTierBoundaryTokens": 200000,
         "inputUsdPer1MAtOrBelowBoundary": 2.0,
         "outputUsdPer1MAtOrBelowBoundary": 12.0,
         "inputUsdPer1MAboveBoundary": 4.0,
         "outputUsdPer1MAboveBoundary": 18.0,
+        "cacheAssumed": False,
+        "sourceUrl": "https://ai.google.dev/gemini-api/docs/pricing",
     },
     "gemini-2.5-pro": {
         "contextTierBoundaryTokens": 200000,
@@ -10678,6 +10685,8 @@ _BENCHMARK_PRICING_CATALOG = {
         "outputUsdPer1MAtOrBelowBoundary": 10.0,
         "inputUsdPer1MAboveBoundary": 2.5,
         "outputUsdPer1MAboveBoundary": 15.0,
+        "cacheAssumed": False,
+        "sourceUrl": "https://ai.google.dev/gemini-api/docs/pricing",
     },
 }
 _BENCHMARK_MAX_OUTPUT_TOKENS = 4096
@@ -15498,6 +15507,7 @@ _OSINT_BENCH_STATE = {"running": False, "lastAt": None}
 _OSINT_BENCH_BUDGET = {"maxCasesPerInvocation": 2,
                        "maxCostLabel": "Gemini呼び出し最大2回/実行"}
 _FORMAL_BENCHMARK = argus_research_benchmark.default_state()
+_FORMAL_BENCHMARK_V2 = argus_research_benchmark_v2.default_state()
 _FOUNDATION_JOBS = argus_foundation_jobs.empty_state()
 _FOUNDATION_JOB_LOCK = threading.Lock()
 _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
@@ -15518,6 +15528,8 @@ def _osint_persist():
                 "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
                 "formalResearchBenchmark": argus_research_benchmark.normalize_state(
                     _FORMAL_BENCHMARK),
+                "formalResearchBenchmarkV2": argus_research_benchmark_v2.normalize_state(
+                    _FORMAL_BENCHMARK_V2),
                 "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
                 "schemaVersion": _DURABLE_STATE["schemaVersion"],
                 "soak": _SOAK, "missions": _MISSIONS[-120:],
@@ -15633,6 +15645,36 @@ def _osint_restore_once():
                 _FORMAL_BENCHMARK["holdoutConsumedBy"] = \
                     restored["holdoutConsumedBy"]
             _FORMAL_BENCHMARK["results"] = merged_results
+        _formal_v2 = blob.get("formalResearchBenchmarkV2")
+        if isinstance(_formal_v2, dict):
+            restored_v2 = argus_research_benchmark_v2.normalize_state(_formal_v2)
+            local_v2 = argus_research_benchmark_v2.normalize_state(
+                _FORMAL_BENCHMARK_V2)
+            merged_v2_results = list(local_v2.get("results") or [])
+            known_v2 = {x.get("benchmarkId") for x in merged_v2_results}
+            merged_v2_results.extend(
+                x for x in (restored_v2.get("results") or [])
+                if x.get("benchmarkId") not in known_v2)
+            merged_v2_receipts = list(local_v2.get("remoteReceipts") or [])
+            known_receipts = {x.get("receiptId") for x in merged_v2_receipts}
+            merged_v2_receipts.extend(
+                x for x in (restored_v2.get("remoteReceipts") or [])
+                if x.get("receiptId") not in known_receipts)
+            if str(restored_v2.get("lastCompletedAt") or "") > str(
+                    local_v2.get("lastCompletedAt") or ""):
+                local_v2.update(restored_v2)
+            if restored_v2.get("holdoutConsumedBy") and not \
+                    local_v2.get("holdoutConsumedBy"):
+                local_v2["holdoutConsumedBy"] = restored_v2["holdoutConsumedBy"]
+            if restored_v2.get("v1Closure") and not local_v2.get("v1Closure"):
+                local_v2["v1Closure"] = restored_v2["v1Closure"]
+            local_v2["results"] = merged_v2_results[-4:]
+            local_v2["remoteReceipts"] = merged_v2_receipts[-8:]
+            if restored_v2.get("runningBenchmarkId"):
+                local_v2.update({"mode": "DETERMINISTIC", "status": "interrupted",
+                                 "runningBenchmarkId": None})
+            _FORMAL_BENCHMARK_V2.clear()
+            _FORMAL_BENCHMARK_V2.update(local_v2)
         _jobs = blob.get("foundationJobs")
         if isinstance(_jobs, dict):
             restored_jobs = argus_foundation_jobs.normalize_state(_jobs)
@@ -15997,6 +16039,7 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
                 "requestedModel": selected_model,
                 "responseModel": (getattr(resp, "model_version", None)
                                   or getattr(resp, "model", None)),
+                "responseId": getattr(resp, "response_id", None),
                 "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
                 "createdAt": _ai_now_iso(),
                 "pricingVersion": _BENCHMARK_PRICING_VERSION,
@@ -16050,6 +16093,7 @@ def _gpt_osint(prompt, benchmark=False, diagnostic_context=None):
                 "provider": "openai", "apiEndpoint": "responses",
                 "requestedModel": execution.get("requestedModel"),
                 "responseModel": execution.get("responseModel"),
+                "responseId": execution.get("responseId"),
                 "usage": execution.get("usage"),
                 "createdAt": execution.get("completedAt"),
                 "pricingVersion": _BENCHMARK_PRICING_VERSION,
@@ -17673,7 +17717,7 @@ def _osint_benchmark_worker(case_ids):
         _OSINT_BENCH_STATE["lastAt"] = _ai_now_iso()
 
 
-def _ai_capability_probe(model, *, confirmation=False):
+def _ai_capability_probe(model, *, confirmation=False, expected_text="ok"):
     """v12.2.0: モデル能力プローブ(admin/cron専用・私的文脈なし・秘密非出力)。"""
     out = {"model": model, "requestedModel": model, "responseModel": None,
            "apiEndpoint": "responses", "accessible": False,
@@ -17681,7 +17725,8 @@ def _ai_capability_probe(model, *, confirmation=False):
            "structuredOutputsSupported": "unknown", "webSearchSupported": "unknown",
            "usageReturned": False, "usage": None,
            "pricingVersion": _BENCHMARK_PRICING_VERSION,
-           "createdAt": _ai_now_iso(), "errorClass": None}
+           "createdAt": _ai_now_iso(), "errorClass": None,
+           "matchedExpectedText": False}
     if not _cost_policy_authorize(
             "openai", "manual_api", automatic=False, confirmation=confirmation,
             estimated_cost_usd=0.001, estimated_tokens=50)["allowed"]:
@@ -17693,10 +17738,13 @@ def _ai_capability_probe(model, *, confirmation=False):
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-        r = client.responses.create(model=model, input="Reply: ok",
-                                    timeout=30, store=False)
+        r = client.responses.create(
+            model=model, input=f"Reply exactly {expected_text}",
+            timeout=30, store=False, max_output_tokens=64)
         _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
-        out["accessible"] = bool(getattr(r, "output_text", None))
+        output_text = str(getattr(r, "output_text", None) or "").strip()
+        out["matchedExpectedText"] = output_text == expected_text
+        out["accessible"] = out["matchedExpectedText"]
         out["responsesSupported"] = True
         u = _usage_tokens(r)
         out["usageReturned"] = bool(u and (u[0] or u[1]))
@@ -18242,10 +18290,435 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
     return diagnostic
 
 
+def _v2_dry_run_value():
+    """Three calls/case: Gemini baseline, ARGUS Sol, independent Terra referee."""
+    fx = _float_env("ARGUS_BENCHMARK_USDJPY_CEILING", 160.0)
+    models = {"gemini": "gemini-3.1-pro-preview",
+              "argus": "gpt-5.6-sol", "referee": "gpt-5.6-terra"}
+    input_tokens, output_tokens = 6000, 1800
+    per_case_usd = 0.0
+    for model in models.values():
+        rate = _AI_PRICING.get(model) or {}
+        per_case_usd += (input_tokens * float(rate.get("in") or 0)
+                         + output_tokens * float(rate.get("out") or 0)) / 1_000_000
+    per_case_usd += max(0.0, float(_AI_GROUNDING_USD))
+    estimated_usd = per_case_usd * (
+        argus_research_benchmark_v2.CALIBRATION_CASES
+        + argus_research_benchmark_v2.HOLDOUT_CASES)
+    estimated_jpy = estimated_usd * fx
+    body = {"status": ("ready" if estimated_jpy <=
+                       argus_research_benchmark_v2.HARD_BUDGET_JPY
+                       else "budget_blocked"),
+            "models": models, "caseCount": 18, "callsPerCase": 3,
+            "maximumCallsWithoutRetry": 54,
+            "inputTokensPerCall": input_tokens,
+            "outputTokensPerCall": output_tokens,
+            "cacheAssumed": False, "groundingUsdPerGeminiCall": _AI_GROUNDING_USD,
+            "usdJpyCeiling": fx, "estimatedCostUsd": round(estimated_usd, 6),
+            "estimatedCostJpy": round(estimated_jpy, 2),
+            "hardBudgetJpy": argus_research_benchmark_v2.HARD_BUDGET_JPY,
+            "pricingVersion": _BENCHMARK_PRICING_VERSION,
+            "pricingCatalog": _BENCHMARK_PRICING_CATALOG}
+    body["confirmationHash"] = argus_research_benchmark_v2.digest(body)
+    return body
+
+
+def _v2_source_access(manifest):
+    urls = sorted({str(source.get("url")) for phase in ("calibration", "holdout")
+                   for case in (manifest.get(phase) or [])
+                   for source in (case.get("primarySourceDocuments") or [])
+                   if source.get("url")})
+    access, proof = {}, []
+    headers = {"User-Agent": "A.R.G.U.S. research benchmark evidence validator "
+                             "admin@argus.invalid"}
+    for url in urls:
+        last_error = None
+        status = None
+        for attempt in range(1, 4):
+            try:
+                response = requests.get(url, headers=headers, timeout=20,
+                                        allow_redirects=True)
+                status = int(response.status_code)
+                if 200 <= status < 400 and bool(response.content):
+                    access[url] = True
+                    last_error = None
+                    break
+                last_error = f"http_{status}"
+                if status not in (408, 425, 429) and status < 500:
+                    break
+            except requests.RequestException as exc:
+                last_error = type(exc).__name__[:80]
+            if attempt < 3:
+                time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
+                    attempt, seed=f"v2-source:{url}:{attempt}"))
+        access.setdefault(url, False)
+        proof.append({"urlHash": hashlib.sha256(url.encode()).hexdigest()[:16],
+                      "accessible": access[url], "httpStatus": status,
+                      "errorClass": last_error})
+    return access, proof
+
+
+def _v2_prompt(case):
+    sources = [{k: source.get(k) for k in (
+        "sourceId", "title", "url", "sourcePublishedAt", "availableFrom")}
+        for source in (case.get("primarySourceDocuments") or [])]
+    return (
+        f"調査質問: {case['ownerQuestion']}\n"
+        f"asOf/evidence cutoff: {case['allowedEvidenceCutoff']}\n"
+        f"一次資料package: {json.dumps(sources, ensure_ascii=False, sort_keys=True)}\n"
+        "時点後の情報は禁止。一次資料を優先し、事実・解釈・不明を分ける。"
+        "投資助言・売買指示は禁止。JSONのみ: "
+        "{\"claims\":[{\"titleJa\",\"url\",\"publishedAt\","
+        "\"sourceName\",\"directness\",\"whyRelevant\",\"confidence\"}]}。")
+
+
+def _v2_blind_evaluate(case, run_id, claims_by_provider):
+    order = argus_research_benchmark_v2.blind_order(run_id, case["caseId"])
+    answers = {label: claims_by_provider[provider]
+               for label, provider in order.items()}
+    policy = _cost_policy_authorize(
+        "openai", "research_benchmark", automatic=False, confirmation=True,
+        estimated_cost_usd=0.10, estimated_tokens=8000)
+    if not policy["allowed"] or not _OPENAI_API_KEY:
+        return None, "provider_blocked", None
+    prompt = (
+        "A/Bの提供元を推測せず、各品質軸を0-100で独立採点する。"
+        "弱い回答もtransport/parse成功なら採点し、case無効にはしない。JSONのみ。"
+        f"question={case['ownerQuestion']} cutoff={case['allowedEvidenceCutoff']} "
+        f"rubric={json.dumps(argus_research_benchmark_v2.QUALITY_WEIGHTS, sort_keys=True)} "
+        f"answers={json.dumps(answers, ensure_ascii=False, sort_keys=True)} "
+        "format={\"A\":{rubric各キー},\"B\":{rubric各キー}}")
+    if len(prompt.encode("utf-8")) > 24_000:
+        return None, "input_budget_exceeded", None
+    try:
+        import openai
+        client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        model = _openai_model_for("referee")
+        response = client.responses.create(
+            model=model, input=prompt, timeout=90, store=False,
+            reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
+            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
+        parsed = safe_json(getattr(response, "output_text", "") or "")
+        if not isinstance(parsed, dict) or not all(
+                isinstance(parsed.get(label), dict) for label in ("A", "B")):
+            return None, "invalid_evaluator_json", None
+        usage = _usage_tokens(response) or (0, 0)
+        meta = {"provider": "openai", "apiEndpoint": "responses",
+                "requestedModel": model, "responseModel": getattr(response, "model", None),
+                "responseId": getattr(response, "id", None),
+                "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
+                "pricingVersion": _BENCHMARK_PRICING_VERSION,
+                "createdAt": _ai_now_iso()}
+        return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
+    except Exception as exc:
+        add_log(f"[formal-benchmark-v2] evaluator failed: {type(exc).__name__}")
+        return None, "provider_failed", {"errorClass": type(exc).__name__[:80]}
+
+
+def _v2_evaluate_with_retry(case, run_id, claims_by_provider):
+    last_axes, last_status, last_meta = None, "provider_failed", None
+    for attempt in range(1, 3):
+        last_axes, last_status, last_meta = _v2_blind_evaluate(
+            case, run_id, claims_by_provider)
+        if last_status == "ok":
+            return last_axes, last_status, last_meta, attempt
+        if last_status in ("provider_blocked", "invalid_evaluator_json",
+                           "input_budget_exceeded"):
+            break
+        if attempt < 2:
+            time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
+                attempt, seed=f"v2-referee:{case['caseId']}:{attempt}"))
+    return last_axes, last_status, last_meta, attempt
+
+
+def _v2_provider_evidence(meta, *, attempts):
+    """Persist audit metadata only; provider text, prompts and credentials are excluded."""
+    value = meta if isinstance(meta, dict) else {}
+    usage = value.get("usage") if isinstance(value.get("usage"), dict) else {}
+    return {"provider": value.get("provider"),
+            "apiEndpoint": value.get("apiEndpoint"),
+            "requestedModel": value.get("requestedModel"),
+            "responseModel": value.get("responseModel"),
+            "responseId": value.get("responseId"),
+            "usage": {"inputTokens": int(usage.get("inputTokens") or 0),
+                      "cachedInputTokens": int(usage.get("cachedInputTokens") or 0),
+                      "outputTokens": int(usage.get("outputTokens") or 0),
+                      "reasoningTokens": int(usage.get("reasoningTokens") or 0)},
+            "createdAt": value.get("createdAt"),
+            "pricingVersion": value.get("pricingVersion"),
+            "attempts": int(attempts)}
+
+
+def _v2_exact_model_match(meta):
+    value = meta if isinstance(meta, dict) else {}
+    requested = str(value.get("requestedModel") or "")
+    response = str(value.get("responseModel") or "")
+    return bool(requested and response and
+                (response == requested or response.startswith(requested + "-")))
+
+
+def _v2_call_with_retry(call):
+    last_out, last_status = None, "provider_failed"
+    for attempt in range(1, 3):
+        out, status = call()
+        last_out, last_status = out, status
+        if status == "ok":
+            return out, status, attempt
+        if status in ("disabled", "deterministic_mode", "budget_limited",
+                      "unavailable", "invalid_evaluator_json",
+                      "input_budget_exceeded"):
+            break
+        if attempt < 2:
+            time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
+                attempt, seed=f"v2-provider:{status}:{attempt}"))
+    return last_out, last_status, attempt
+
+
+def _v2_protocol_gates(*, exact_models, budget_ok, append_only):
+    return {"frozenDatasetHash": True, "unusedHoldout": True,
+            "exactProviderModel": bool(exact_models), "responseReceived": True,
+            "parseSuccess": True, "blindLabelRandomization": True,
+            "noFutureLeakage": True, "noDuplicateCase": True,
+            "noCaseSpecificTuning": True, "evaluatorIndependent": True,
+            "deterministicScorerExecuted": True,
+            "budgetCompliance": bool(budget_ok), "oneTimeHoldout": True,
+            "appendOnlyResult": bool(append_only),
+            "remoteJournalReadBack": bool(
+                _MARKET_LEDGER_REMOTE.get("verificationStatus") == "verified")}
+
+
+def _research_benchmark_v2_job_worker(job_id):
+    global _FORMAL_BENCHMARK_V2
+    provider_calls = []
+    source_proof = []
+    try:
+        _foundation_job_update(job_id, status="running")
+        latest_v1 = ((_FORMAL_BENCHMARK.get("results") or [None])[-1] or {})
+        if not latest_v1 or latest_v1.get("resultClassification") != "invalid":
+            raise RuntimeError("v1_invalid_result_not_available")
+        closed_state = argus_research_benchmark_v2.close_v1(
+            _FORMAL_BENCHMARK_V2, latest_v1, closed_at=_ai_now_iso(),
+            remote_receipt={"remoteCommitSha": _REMOTE_CYCLE.get("remoteCommitSha"),
+                            "readBackVerified": _REMOTE_CYCLE.get("readBackVerified")})
+        _FORMAL_BENCHMARK_V2.clear()
+        _FORMAL_BENCHMARK_V2.update(closed_state)
+        if _FORMAL_BENCHMARK_V2.get("holdoutConsumedBy"):
+            raise RuntimeError("v2_holdout_already_consumed")
+        code_sha = _backend_sha() or "local"
+        manifest = argus_research_benchmark_v2.frozen_manifest(code_sha)
+        source_access, source_proof = _v2_source_access(manifest)
+        v1_ids = [x.get("caseId") for x in argus_research_benchmark.FORMAL_DATASET]
+        v1_questions = [x.get("question") for x in
+                        argus_research_benchmark.FORMAL_DATASET]
+        validation = argus_research_benchmark_v2.validate_manifest(
+            manifest, v1_case_ids=v1_ids, v1_questions=v1_questions,
+            source_access=source_access)
+        if not validation["valid"] or validation["validatedCaseCount"] != 18:
+            raise RuntimeError("v2_manifest_validation_failed")
+        _FORMAL_BENCHMARK_V2["manifest"] = manifest
+        calibration_attempt = int(
+            _FORMAL_BENCHMARK_V2.get("calibrationAttemptCount") or 0) + 1
+        if calibration_attempt > 3:
+            raise RuntimeError("v2_calibration_retry_limit_reached")
+        _FORMAL_BENCHMARK_V2["calibrationAttemptCount"] = calibration_attempt
+        _osint_persist()
+        dry = _v2_dry_run_value()
+        if dry["status"] != "ready" or dry["estimatedCostJpy"] > 2000:
+            raise RuntimeError("v2_budget_blocked")
+        if (_openai_model_for("standard") != "gpt-5.6-sol" or
+                _openai_model_for("referee") != "gpt-5.6-terra"):
+            raise RuntimeError("v2_exact_model_configuration_mismatch")
+        enabled = argus_cost_policy.configure(
+            _COST_POLICY, mode="RESEARCH_BENCHMARK", event_opt_in=False)
+        _COST_POLICY.clear()
+        _COST_POLICY.update(enabled)
+        gemini_probe = _gemini_capability_probe(
+            "gemini-3.1-pro-preview", confirmation=True, max_attempts=3)
+        def openai_probe(model, expected):
+            latest = None
+            for attempt in range(1, 4):
+                latest = _ai_capability_probe(
+                    model, confirmation=True, expected_text=expected)
+                if latest.get("accessible"):
+                    break
+                if attempt < 3:
+                    time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
+                        attempt, seed=f"v2-probe:{model}:{attempt}"))
+            return latest or {}
+        sol_probe = openai_probe("gpt-5.6-sol", "ARGUS_SOL_OK")
+        terra_probe = openai_probe("gpt-5.6-terra", "ARGUS_TERRA_OK")
+        if not (gemini_probe.get("accessible") and sol_probe.get("accessible")
+                and terra_probe.get("accessible")):
+            raise RuntimeError("v2_provider_preflight_failed")
+        if not all(_v2_exact_model_match(probe) for probe in
+                   (gemini_probe, sol_probe, terra_probe)):
+            raise RuntimeError("v2_provider_response_model_mismatch")
+        if sol_probe.get("responseModel") == terra_probe.get("responseModel"):
+            raise RuntimeError("v2_evaluator_not_independent")
+        preflight = {"gemini": gemini_probe, "sol": sol_probe, "terra": terra_probe,
+                     "sourceAccess": source_proof}
+
+        def run_cases(cases, run_id, holdout=False):
+            rows = []
+            for case in cases:
+                prompt = _v2_prompt(case)
+                baseline, baseline_status, baseline_attempts = _v2_call_with_retry(lambda:
+                    _gemini_osint(prompt, benchmark=True,
+                                  model_override="gemini-3.1-pro-preview"))
+                if baseline_status != "ok":
+                    raise RuntimeError("v2_gemini_transport_failed")
+                argus_out, argus_status, argus_attempts = _v2_call_with_retry(lambda:
+                    _gpt_osint(prompt, benchmark=True))
+                if argus_status != "ok":
+                    raise RuntimeError("v2_argus_transport_failed")
+                provider_calls.extend([
+                    dict((baseline or {}).get("_providerMeta") or {}),
+                    dict((argus_out or {}).get("_providerMeta") or {})])
+                claims = {"gemini": _formal_claims(baseline),
+                          "argus": _formal_claims(argus_out)}
+                axes, eval_status, referee_meta, referee_attempts = \
+                    _v2_evaluate_with_retry(case, run_id, claims)
+                if eval_status != "ok":
+                    raise RuntimeError(f"v2_referee_{eval_status}")
+                provider_calls.append(dict(referee_meta or {}))
+                actual_jpy, _ = _benchmark_usage_cost_jpy(
+                    provider_calls, dry["usdJpyCeiling"])
+                case_provider_meta = [
+                    dict((baseline or {}).get("_providerMeta") or {}),
+                    dict((argus_out or {}).get("_providerMeta") or {}),
+                    dict(referee_meta or {})]
+                case_cost_jpy, case_cost_usd = _benchmark_usage_cost_jpy(
+                    case_provider_meta, dry["usdJpyCeiling"])
+                gates = _v2_protocol_gates(
+                    exact_models=all(_v2_exact_model_match(x)
+                                     for x in case_provider_meta),
+                    budget_ok=actual_jpy <= 2000,
+                    append_only=not any(x.get("benchmarkId") == run_id for x in
+                                        (_FORMAL_BENCHMARK_V2.get("results") or [])))
+                row = argus_research_benchmark_v2.score_case(
+                    run_id=run_id, case=case, axes_by_label=axes,
+                    claims_by_provider=claims, protocol_gates=gates)
+                row["providerEvidence"] = {
+                    "gemini": _v2_provider_evidence(
+                        (baseline or {}).get("_providerMeta"),
+                        attempts=baseline_attempts),
+                    "argus": _v2_provider_evidence(
+                        (argus_out or {}).get("_providerMeta"),
+                        attempts=argus_attempts),
+                    "referee": _v2_provider_evidence(
+                        referee_meta, attempts=referee_attempts),
+                }
+                row["scoredAt"] = _ai_now_iso()
+                row["usageCost"] = {
+                    "actualFromProviderUsageUsd": case_cost_usd,
+                    "actualFromProviderUsageJpy": case_cost_jpy,
+                    "usdJpyCeiling": dry["usdJpyCeiling"],
+                    "pricingVersion": _BENCHMARK_PRICING_VERSION,
+                }
+                rows.append(row)
+                _foundation_job_update(
+                    job_id, progress={"completedUnits": len(provider_calls) // 3,
+                                      "totalUnits": 18,
+                                      "percent": round((len(provider_calls) // 3)
+                                                       / 18 * 100, 2)},
+                    checkpoint={"phase": "holdout" if holdout else "calibration",
+                                "lastCaseId": case["caseId"]})
+            return rows
+
+        calibration_id = "v2-cal-" + argus_research_benchmark_v2.digest(
+            manifest["datasetHash"] + _ai_now_iso())[:16]
+        calibration_rows = run_cases(manifest["calibration"], calibration_id)
+        implementation_hash = argus_research_benchmark_v2.digest({
+            "codeSha": code_sha, "rubric": argus_research_benchmark_v2.RUBRIC_VERSION,
+            "models": dry["models"], "prompt": "v2-evidence-package"})
+        calibrated_state = argus_research_benchmark_v2.record_calibration(
+            _FORMAL_BENCHMARK_V2, run_id=calibration_id,
+            rows=calibration_rows, completed_at=_ai_now_iso(),
+            models=dry["models"], implementation_hash=implementation_hash)
+        _FORMAL_BENCHMARK_V2.clear()
+        _FORMAL_BENCHMARK_V2.update(calibrated_state)
+        _FORMAL_BENCHMARK_V2["manifest"] = manifest
+        if not _FORMAL_BENCHMARK_V2.get("frozenRun"):
+            raise RuntimeError("v2_calibration_not_6_of_6")
+        holdout_id = "v2-hold-" + argus_research_benchmark_v2.digest(
+            manifest["datasetHash"] + implementation_hash)[:16]
+        consumed = argus_research_benchmark_v2.consume_holdout(
+            _FORMAL_BENCHMARK_V2, run_id=holdout_id)
+        if not consumed["allowed"]:
+            raise RuntimeError(consumed["status"])
+        _FORMAL_BENCHMARK_V2.clear()
+        _FORMAL_BENCHMARK_V2.update(consumed["state"])
+        _osint_persist()
+        holdout_rows = run_cases(manifest["holdout"], holdout_id, holdout=True)
+        requested_models = {
+            "gemini": {x.get("responseModel") for x in provider_calls
+                        if x.get("requestedModel") == "gemini-3.1-pro-preview"},
+            "argus": {x.get("responseModel") for x in provider_calls
+                      if x.get("requestedModel") == "gpt-5.6-sol"},
+            "referee": {x.get("responseModel") for x in provider_calls
+                        if x.get("requestedModel") == "gpt-5.6-terra"}}
+        if any(len(values) != 1 for values in requested_models.values()):
+            raise RuntimeError("v2_response_model_inconsistent")
+        exact_models = {key: next(iter(values)) for key, values in requested_models.items()}
+        if exact_models["argus"] == exact_models["referee"]:
+            raise RuntimeError("v2_evaluator_not_independent")
+        actual_jpy, actual_usd = _benchmark_usage_cost_jpy(
+            provider_calls, dry["usdJpyCeiling"])
+        completed = argus_research_benchmark_v2.finalize(
+            _FORMAL_BENCHMARK_V2, run_id=holdout_id, rows=holdout_rows,
+            models=exact_models, provider_proof=preflight,
+            pricing={"version": _BENCHMARK_PRICING_VERSION,
+                     "catalog": _BENCHMARK_PRICING_CATALOG,
+                     "estimatedCostJpy": dry["estimatedCostJpy"],
+                     "actualCostUsd": actual_usd,
+                     "usdJpyCeiling": dry["usdJpyCeiling"]},
+            actual_cost_jpy=actual_jpy, completed_at=_ai_now_iso())
+        _FORMAL_BENCHMARK_V2.clear()
+        _FORMAL_BENCHMARK_V2.update(completed["state"])
+        _journal("research_benchmark_v2_completed", "research_benchmark_v2",
+                 holdout_id, {"status": completed["status"],
+                              "twoXClaimAllowed": completed["result"][
+                                  "twoXClaimAllowed"],
+                              "datasetHash": manifest["datasetHash"][:16]},
+                 origin="admin_validation")
+        _osint_persist()
+        _foundation_job_update(job_id, status="completed", result={
+            "status": completed["status"], "benchmarkId": holdout_id,
+            "dryRun": dry, "manifestValidation": validation,
+            "providerPreflight": preflight,
+            "formalResult": argus_research_benchmark_v2.public_status(
+                _FORMAL_BENCHMARK_V2)})
+    except Exception as exc:
+        error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        _FORMAL_BENCHMARK_V2["mode"] = "DETERMINISTIC"
+        _FORMAL_BENCHMARK_V2["runningBenchmarkId"] = None
+        _FORMAL_BENCHMARK_V2["status"] = error_class[:80]
+        _foundation_job_update(job_id, status="failed",
+                               result={"sourceAccess": source_proof},
+                               error_class=error_class[:80])
+    finally:
+        restored = argus_cost_policy.configure(
+            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+        _COST_POLICY.clear()
+        _COST_POLICY.update(restored)
+        _osint_persist()
+
+
+@app.route("/api/argus/research-benchmark/v2")
+def api_argus_research_benchmark_v2_status():
+    return jsonify(argus_research_benchmark_v2.public_status(
+        _FORMAL_BENCHMARK_V2))
+
+
 @app.route("/api/argus/research-benchmark")
 def api_argus_research_benchmark_status():
     """Public-safe result summary. GET never starts or resumes a benchmark."""
-    return jsonify(argus_research_benchmark.public_status(_FORMAL_BENCHMARK))
+    legacy = argus_research_benchmark.public_status(_FORMAL_BENCHMARK)
+    legacy["protocolV1Closure"] = dict(
+        _FORMAL_BENCHMARK_V2.get("v1Closure") or {})
+    legacy["protocolV2"] = argus_research_benchmark_v2.public_status(
+        _FORMAL_BENCHMARK_V2)
+    return jsonify(legacy)
 
 
 @app.route("/api/argus/admin/research-benchmark/dry-run", methods=["POST"])
@@ -18508,6 +18981,8 @@ def _foundation_job_dispatch(job_id):
         _research_pipeline_preflight_worker(job_id)
     elif job_type == "RESEARCH_BENCHMARK":
         _research_benchmark_job_worker(job_id)
+    elif job_type == "RESEARCH_BENCHMARK_V2":
+        _research_benchmark_v2_job_worker(job_id)
     elif job_type == "JOURNAL_REVERIFY":
         _journal_reverify_worker(job_id)
     else:
@@ -18515,11 +18990,57 @@ def _foundation_job_dispatch(job_id):
                                error_class="unknown_job_type")
 
 
+def _foundation_closeout_status():
+    """Evidence-derived v12 implementation/observation split; no mutable claim flag."""
+    breadth = next((job for job in reversed(_FOUNDATION_JOBS.get("jobs", []))
+                    if job.get("jobType") == "JQUANTS_BREADTH_BACKFILL"
+                    and job.get("status") == "completed"), None)
+    breadth_result = (breadth or {}).get("result") or {}
+    benchmark = _FORMAL_BENCHMARK_V2.get("holdoutResult") or {}
+    receipts = [row for row in (_FORMAL_BENCHMARK_V2.get("remoteReceipts") or [])
+                if row.get("readBackVerified") is True]
+    requirements = {
+        "standardScopeBreadthCompleted": bool(
+            breadth and int(breadth_result.get("observationCount") or 0) > 0
+            and int(breadth_result.get("checkpointPending") or 0) == 0
+            and int(breadth_result.get("duplicateCount") or 0) == 0
+            and not (breadth_result.get("permanentFailures") or [])
+            and breadth_result.get("spotCheckPassed") is True
+            and set((breadth_result.get("backtests") or {}).keys())
+            == {"first_section", "prime", "all"}),
+        "benchmarkV1ClosedInvalid": (
+            (_FORMAL_BENCHMARK_V2.get("v1Closure") or {}).get("status")
+            == "closed_invalid"),
+        "benchmarkV2FormallyClosed": benchmark.get("status") in (
+            "achieved", "not_achieved"),
+        "benchmarkRemoteReadBackVerified": bool(receipts),
+        "remoteJournalVerified": _REMOTE_CYCLE.get("readBackVerified") is True,
+    }
+    closed = all(requirements.values())
+    soak_running = bool(_SOAK.get("startedAt") and _SOAK.get("state")
+                        not in ("operationally_verified", "failed"))
+    return {
+        "foundationImplementationStatus": "CLOSED" if closed else "CLOSEOUT_RUNNING",
+        "operationalObservationStatus": (
+            "SOAK_RUNNING" if soak_running else
+            "OPERATIONALLY_VERIFIED" if _SOAK.get("state") == "operationally_verified"
+            else "SOAK_NOT_STARTED"),
+        "requirements": requirements,
+        "remainingImplementationTasks": 0 if closed else sum(
+            value is not True for value in requirements.values()),
+        "allowedV12Changes": ["critical_bug_fix", "security_fix",
+                              "data_correction", "soak_observation"],
+        "nextDevelopmentTheme": "V13 PRODUCT REDUCTION AND INTERFACE REBUILD",
+    }
+
+
 @app.route("/api/argus/foundation-jobs")
 def api_argus_foundation_jobs():
     """Public-safe, read-only progress. Never exposes keys or provider rows."""
-    return jsonify(argus_foundation_jobs.public_status(
-        _FOUNDATION_JOBS, request.args.get("jobId")))
+    status = argus_foundation_jobs.public_status(
+        _FOUNDATION_JOBS, request.args.get("jobId"))
+    status["foundationCloseout"] = _foundation_closeout_status()
+    return jsonify(status)
 
 
 @app.route("/api/argus/admin/foundation-jobs", methods=["POST"])
@@ -18533,7 +19054,8 @@ def api_argus_admin_foundation_jobs_start():
         return jsonify({"ok": False, "error": "unknown_job_type"}), 400
     if body.get("confirm") is not True:
         return jsonify({"ok": False, "error": "explicit_confirmation_required"}), 400
-    if job_type == "RESEARCH_BENCHMARK" and body.get("triggerSource") != "manual":
+    if job_type in ("RESEARCH_BENCHMARK", "RESEARCH_BENCHMARK_V2") and \
+            body.get("triggerSource") != "manual":
         return jsonify({"ok": False, "error": "scheduled_execution_rejected"}), 400
     params = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
     if job_type in ("JQUANTS_BREADTH_BACKFILL", "JQUANTS_BREADTH_INCREMENTAL") \
@@ -18547,11 +19069,12 @@ def api_argus_admin_foundation_jobs_start():
                 prior["checkpoint"]["lastCommittedDate"])
             params["resumedFromJobId"] = prior.get("jobId")
     if job_type == "JQUANTS_BREADTH_INCREMENTAL" and not params.get("from"):
-        latest = max([str(x.get("periodEnd") or "") for x in
-                      (_MARKET_LEDGER.get("observations") or [])
-                      if str(x.get("seriesId") or "").startswith("breadth.prime.")]
-                     or ["2008-05-07"])
-        params["from"] = argus_foundation_jobs.next_day(latest)
+        periods = [str(x.get("periodEnd") or "") for x in
+                   (_MARKET_LEDGER.get("observations") or [])
+                   if str(x.get("seriesId") or "").startswith("breadth.all.")]
+        params["from"] = (argus_foundation_jobs.next_day(max(periods))
+                          if periods else
+                          argus_foundation_jobs.ENTITLEMENT_START_DATE)
     try:
         started = argus_foundation_jobs.start_job(
             _FOUNDATION_JOBS, job_type=job_type, now_iso=_ai_now_iso(),
@@ -18733,6 +19256,8 @@ def api_argus_osint_memory_snapshot():
                     "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
                     "formalResearchBenchmark": argus_research_benchmark.normalize_state(
                         _FORMAL_BENCHMARK),
+                    "formalResearchBenchmarkV2": argus_research_benchmark_v2.normalize_state(
+                        _FORMAL_BENCHMARK_V2),
                     "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
                     "soak": _SOAK, "soakLastPersistAt": _now,
                     "missions": _MISSIONS[-120:],
@@ -19173,6 +19698,14 @@ def _jquants_secure_page(path, params, *, proof, max_attempts=4):
                              "elapsedMs": round((time.monotonic()
                                                  - started_monotonic) * 1000, 2),
                              "attempt": attempt, "lastRequestAt": started,
+                             "rateLimit": {
+                                 "limit": response_headers.get("x-ratelimit-limit"),
+                                 "remaining": response_headers.get(
+                                     "x-ratelimit-remaining"),
+                                 "reset": response_headers.get("x-ratelimit-reset"),
+                                 "retryAfter": (response_headers.get("retry-after")
+                                                or response_headers.get(
+                                                    "Retry-After"))},
                              "secretConfigured": bool(_JQUANTS_API_KEY)}
             proof.update(request_proof)
             proof.setdefault("endpointSummary", {})[path] = dict(request_proof)
@@ -19188,6 +19721,9 @@ def _jquants_secure_page(path, params, *, proof, max_attempts=4):
                 proof["endpointSummary"][path].update({
                     "errorClass": None, "rows": len(body.get("data") or []),
                     "paginationKeyPresent": bool(body.get("pagination_key")),
+                    "paginationKeyHash": (hashlib.sha256(str(
+                        body.get("pagination_key")).encode()).hexdigest()[:16]
+                        if body.get("pagination_key") else None),
                     "responseSchema": sorted(str(k) for k in body.keys()),
                     "lastSuccessfulRequestAt": proof["lastSuccessfulRequestAt"]})
                 return body
@@ -19247,9 +19783,16 @@ def _jquants_secure_rows(path, params, *, proof, max_pages=200):
         body = _jquants_secure_page(path, query, proof=proof)
         rows.extend(x for x in body.get("data", []) if isinstance(x, dict))
         next_cursor = body.get("pagination_key")
+        if next_cursor:
+            token_hash = hashlib.sha256(str(next_cursor).encode()).hexdigest()[:16]
+            hashes = proof.setdefault("paginationTokenHashes", [])
+            if token_hash not in hashes:
+                hashes.append(token_hash)
         if not next_cursor or str(next_cursor) == str(cursor):
             proof["rows"] = len(rows)
             proof["pages"] = page + 1
+            proof["paginationObserved"] = bool(
+                proof.get("paginationTokenHashes"))
             return rows
         cursor = str(next_cursor)
     raise RuntimeError("jquants_pagination_limit")
@@ -19285,11 +19828,16 @@ def _jquants_official_client_test(params):
         import jquantsapi
         result["clientVersion"] = getattr(jquantsapi, "__version__", None)
         client = jquantsapi.ClientV2(api_key=_JQUANTS_API_KEY)
-        frame = client.get_eq_bars_daily(
-            code=str(params.get("code") or ""),
-            date_yyyymmdd=str(params.get("date") or ""),
-            from_yyyymmdd=str(params.get("from") or ""),
-            to_yyyymmdd=str(params.get("to") or ""))
+        official_params = {}
+        if params.get("code"):
+            official_params["code"] = str(params["code"])
+        if params.get("date"):
+            official_params["date_yyyymmdd"] = str(params["date"])
+        if params.get("from"):
+            official_params["from_yyyymmdd"] = str(params["from"])
+        if params.get("to"):
+            official_params["to_yyyymmdd"] = str(params["to"])
+        frame = client.get_eq_bars_daily(**official_params)
         result.update({"status": "success", "rows": len(frame),
                        "httpStatus": 200,
                        "responseSchema": [str(x) for x in getattr(
@@ -19337,8 +19885,9 @@ def _jquants_request_matrix_worker(job_id):
             ("official_sample", {"code": "86970", "date": "20230324"}),
             ("recent_confirmed_trading_day",
              {"code": "86970", "date": recent_compact}),
-            ("oldest_required_with_code", {"code": "72030", "date": "20080507"}),
-            ("official_date_only", {"date": "20080507"}),
+            ("entitlement_boundary_with_code",
+             {"code": "72030", "date": "20160720"}),
+            ("entitlement_boundary_date_only", {"date": "20160720"}),
             ("official_code_range",
              {"code": "86970", "from": "20230324", "to": "20230327"}),
         ]
@@ -19374,7 +19923,10 @@ def _jquants_request_matrix_worker(job_id):
                   "directClientAllSuccessful": direct_ok,
                   "officialClientAllSuccessful": official_ok,
                   "oldestRequiredDateAccessible": old_ok,
-                  "rootCause": ("hyphenated_date_transport_format"
+                  "entitlementPlan": argus_foundation_jobs.ENTITLEMENT_PLAN,
+                  "entitlementStartDate": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+                  "entitlementPolicy": "rolling_10_years",
+                  "rootCause": ("standard_entitlement_boundary_confirmed"
                                 if old_ok else "request_or_provider_rejection_persists"),
                   "correctedDateFormat": "YYYYMMDD",
                   "rawProviderRowsPersisted": False}
@@ -19393,7 +19945,7 @@ def _breadth_commit_rows(rows, now_iso):
                   (x.get("seriesId"), x.get("periodEnd"), x.get("availableFrom"),
                    x.get("value")) not in existing]
     if not candidates:
-        return 0, 0
+        return 0, 0, len(rows)
     prior_periods = {(x.get("seriesId"), x.get("periodEnd")) for x in
                      (_MARKET_LEDGER.get("observations") or [])
                      if isinstance(x, dict)}
@@ -19407,17 +19959,27 @@ def _breadth_commit_rows(rows, now_iso):
                                or "breadth_import_failed"))
     _MARKET_LEDGER.clear()
     _MARKET_LEDGER.update(result.pop("state"))
-    return len(candidates), revisions
+    return len(candidates), revisions, len(rows) - len(candidates)
 
 
 def _jquants_breadth_worker(job_id):
     job = _foundation_job(job_id) or {}
     params = job.get("parameters") or {}
-    start_date = str(params.get("from") or "2008-05-07")[:10]
+    requested_start_date = str(params.get("from") or
+                               argus_foundation_jobs.ENTITLEMENT_START_DATE)[:10]
+    start_date = max(requested_start_date,
+                     argus_foundation_jobs.ENTITLEMENT_START_DATE)
     end_date = str(params.get("to") or datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10]
     proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
              "authentication": "x-api-key", "secretConfigured": bool(_JQUANTS_API_KEY),
-             "errorClass": None}
+             "errorClass": None, "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
+             "entitlementStartDate": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+             "entitlementEndDate": end_date,
+             "entitlementObservedAt": _ai_now_iso(),
+             "entitlementPolicy": "rolling_10_years",
+             "contractScope": "rolling_10_years", "apiVersion": "v2",
+             "requestedStartDate": requested_start_date,
+             "effectiveStartDate": start_date}
     try:
         _foundation_job_update(job_id, status="running",
                                checkpoint={"providerProof": proof})
@@ -19439,7 +20001,8 @@ def _jquants_breadth_worker(job_id):
         # A resumed slice must compare its first target session with the prior
         # official close.  Fetch a bounded look-back seed but never persist it
         # as a new observation or move the requested oldest boundary backward.
-        if params.get("resumedFromJobId") or start_date > "2008-05-07":
+        if params.get("resumedFromJobId") or \
+                start_date > argus_foundation_jobs.ENTITLEMENT_START_DATE:
             seed_start = (datetime.strptime(start_date, "%Y-%m-%d")
                           - timedelta(days=10)).strftime("%Y-%m-%d")
             seed_end = (datetime.strptime(start_date, "%Y-%m-%d")
@@ -19466,12 +20029,14 @@ def _jquants_breadth_worker(job_id):
         closed_or_no_bars = 0
         committed = 0
         duplicate_count = 0
+        idempotent_skipped = 0
         revision_count = 0
         failed_requests = 0
         batch = []
         coverage = {uid: [] for uid in argus_foundation_jobs.UNIVERSES}
         issue_counts = {uid: [] for uid in argus_foundation_jobs.UNIVERSES}
         topix_prices = []
+        spot_check_candidates = []
         latest_daily = None
         oldest = newest = None
         processing_dates = candidate_dates
@@ -19500,10 +20065,19 @@ def _jquants_breadth_worker(job_id):
             master = _jquants_secure_rows(
                 "/equities/master", {"date": date_text}, proof=proof,
                 max_pages=100)
+            if not master:
+                raise RuntimeError("jquants_historical_master_empty")
             daily = argus_foundation_jobs.calculate_daily(
                 date=date_text, master_rows=master, bar_rows=bars,
                 previous_adjusted_closes=previous)
             latest_daily = daily
+            spot_check_candidates.append({
+                "date": date_text,
+                "universes": {uid: dict(row.get("counts") or {})
+                              for uid, row in daily.get("universes", {}).items()
+                              if argus_foundation_jobs.universe_active(
+                                  uid, date_text)}})
+            spot_check_candidates = spot_check_candidates[-10:]
             previous = daily["nextAdjustedCloses"]
             topix_row = next((x for x in bars if str(
                 x.get("Code") or x.get("code") or "").startswith("1306")), None)
@@ -19515,21 +20089,38 @@ def _jquants_breadth_worker(job_id):
                                              "close": topix_close,
                                              "availableFrom":
                                              f"{date_text}T17:00:00+09:00"})
+                        batch.append({
+                            "seriesId": "breadth.topixProxyClose",
+                            "periodEnd": date_text,
+                            "publishedAt": f"{date_text}T17:00:00+09:00",
+                            "availableFrom": f"{date_text}T17:00:00+09:00",
+                            "observedAt": _ai_now_iso(), "value": topix_close,
+                            "unit": "JPY", "source": "J-Quants V2 1306 adjusted close",
+                            "sourceKind": "derived", "status": "live",
+                            "metadata": {
+                                "instrument": "1306 TOPIX-linked ETF proxy",
+                                "officialIndexValue": False,
+                                "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
+                                "entitlementStartDate":
+                                    argus_foundation_jobs.ENTITLEMENT_START_DATE,
+                                "methodVersion": argus_foundation_jobs.METHOD_VERSION}})
                 except (TypeError, ValueError):
                     pass
             batch.extend(argus_foundation_jobs.ledger_candidates(
                 daily, calculated_at=_ai_now_iso()))
             for uid, row in daily["universes"].items():
-                coverage[uid].append(row["coverageRatio"])
-                issue_counts[uid].append(row["issueCount"])
+                if argus_foundation_jobs.universe_active(uid, date_text):
+                    coverage[uid].append(row["coverageRatio"])
+                    issue_counts[uid].append(row["issueCount"])
             oldest = oldest or date_text
             newest = date_text
             if len(batch) >= 200 or processed_target == total:
                 before = len(_MARKET_LEDGER.get("observations") or [])
-                added, revisions = _breadth_commit_rows(batch, _ai_now_iso())
+                added, revisions, skipped = _breadth_commit_rows(
+                    batch, _ai_now_iso())
                 committed += added
                 revision_count += revisions
-                duplicate_count += max(0, len(batch) - added)
+                idempotent_skipped += skipped
                 batch = []
                 percent = round(processed_target / total * 100.0, 2)
                 _foundation_job_update(
@@ -19546,10 +20137,11 @@ def _jquants_breadth_worker(job_id):
         # Day). Flush the final residue even when the last candidate has no bars.
         if batch:
             before = len(_MARKET_LEDGER.get("observations") or [])
-            added, revisions = _breadth_commit_rows(batch, _ai_now_iso())
+            added, revisions, skipped = _breadth_commit_rows(
+                batch, _ai_now_iso())
             committed += added
             revision_count += revisions
-            duplicate_count += max(0, len(batch) - added)
+            idempotent_skipped += skipped
             batch = []
             _foundation_job_update(
                 job_id,
@@ -19562,10 +20154,22 @@ def _jquants_breadth_worker(job_id):
                                 _MARKET_LEDGER.get("observations") or [])})
         if trading_date_count == 0:
             raise RuntimeError("jquants_no_daily_bars_in_range")
+        proof["entitlementEndDate"] = newest
+        proof["providerResponseClass"] = "success"
+        seen_breadth_rows = set()
+        for row in (_MARKET_LEDGER.get("observations") or []):
+            if not str(row.get("seriesId") or "").startswith("breadth."):
+                continue
+            key = (row.get("seriesId"), row.get("periodEnd"),
+                   row.get("availableFrom"), row.get("value"))
+            if key in seen_breadth_rows:
+                duplicate_count += 1
+            else:
+                seen_breadth_rows.add(key)
         points = [x for x in (_MARKET_LEDGER.get("turningPoints") or [])
                   if x.get("ruleId") == "BREADTH_TURN"]
         backtests = {}
-        for universe in ("prime", "all"):
+        for universe in ("first_section", "prime", "all"):
             universe_points = [x for x in points if str(
                 x.get("direction") or "").startswith(universe + ":")]
             evaluated = argus_sho_phase3.walk_forward_backtest(
@@ -19591,7 +20195,7 @@ def _jquants_breadth_worker(job_id):
         derived = argus_market_ledger.derived_history(
             _MARKET_LEDGER, _ai_now_iso())
         latest_ratios = {}
-        for universe in ("prime", "all"):
+        for universe in ("first_section", "prime", "all"):
             latest_ratios[universe] = {
                 str(window): (((derived.get(
                     f"breadth.{universe}.ratio{window}") or [{}])[-1]).get("value"))
@@ -19599,17 +20203,48 @@ def _jquants_breadth_worker(job_id):
         latest_counts = {}
         if latest_daily:
             for universe_id, row in latest_daily.get("universes", {}).items():
-                latest_counts[universe_id] = dict(row.get("counts") or {})
+                if not argus_foundation_jobs.universe_active(
+                        universe_id, latest_daily.get("date")):
+                    continue
+                latest_counts[universe_id] = {
+                    **dict(row.get("counts") or {}),
+                    **dict(row.get("dataQuality") or {}),
+                    "eligibleCount": row.get("eligibleCount"),
+                    "totalUniverseCount": row.get("totalUniverseCount")}
+        effective_rows = argus_market_ledger.latest_by_series(
+            _MARKET_LEDGER, _ai_now_iso())
+        spot_checks = []
+        for candidate in spot_check_candidates:
+            matches = True
+            for uid, counts in candidate["universes"].items():
+                short = (argus_foundation_jobs.UNIVERSES.get(uid) or {}).get("short")
+                for name in ("advancers", "decliners", "unchanged", "unavailable"):
+                    stored = next((x for x in effective_rows.get(
+                        f"breadth.{short}.{name}", [])
+                        if x.get("periodEnd") == candidate["date"]), None)
+                    matches = matches and bool(stored and stored.get("value") ==
+                                               counts.get(name))
+            spot_checks.append({"date": candidate["date"], "matches": matches})
+        universe_observation_counts = {
+            short: sum(1 for row in (_MARKET_LEDGER.get("observations") or [])
+                       if str(row.get("seriesId") or "").startswith(
+                           f"breadth.{short}."))
+            for short in ("first_section", "prime", "all")}
         result = {
+            "status": "completed",
             "rowCount": committed,
+            "observationCount": committed,
             "oldestDate": oldest,
             "newestDate": newest,
             "tradingDateCount": trading_date_count,
             "missingDates": [],
             "closedOrNoBarsCandidateCount": closed_or_no_bars,
             "duplicateCount": duplicate_count,
+            "idempotentSkippedCount": idempotent_skipped,
             "revisionCount": revision_count,
             "failedRequestCount": failed_requests,
+            "checkpointPending": 0,
+            "permanentFailures": [],
             "universeCounts": {uid: {"minimum": min(vals) if vals else 0,
                                       "maximum": max(vals) if vals else 0,
                                       "latest": vals[-1] if vals else 0}
@@ -19621,14 +20256,33 @@ def _jquants_breadth_worker(job_id):
                          for uid, vals in coverage.items()},
             "latestCounts": latest_counts,
             "latestRatios": latest_ratios,
+            "universeObservationCounts": universe_observation_counts,
+            "spotChecks": spot_checks,
+            "spotCheckPassed": len(spot_checks) == 10 and all(
+                x["matches"] for x in spot_checks),
             "turningPointCount": len(points),
             "backtests": backtests,
             "stateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
             "providerProof": proof,
             "methodVersion": argus_foundation_jobs.METHOD_VERSION,
-            "planEntitlement": ("premium_or_equivalent_all_periods_confirmed"
-                                if oldest and oldest <= "2008-05-07"
-                                else "provider_range_observed"),
+            "plan": argus_foundation_jobs.ENTITLEMENT_PLAN,
+            "planEntitlement": "standard_rolling_10_years_observed",
+            "contractScope": "rolling_10_years",
+            "entitlementStartDate": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+            "entitlementEndDate": newest,
+            "latestConfirmedTradingDate": newest,
+            "entitlementObservedAt": proof.get("entitlementObservedAt"),
+            "providerResponseClass": proof.get("providerResponseClass"),
+            "apiVersion": "v2",
+            "universeMethodology": {
+                "firstSection": {
+                    "from": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+                    "to": argus_foundation_jobs.FIRST_SECTION_END_DATE},
+                "prime": {"from": argus_foundation_jobs.PRIME_START_DATE,
+                          "to": end_date},
+                "allMarket": {"from": argus_foundation_jobs.ENTITLEMENT_START_DATE,
+                              "to": end_date},
+                "primeBackProjected": False},
             "rawProviderRowsPersisted": False,
         }
         _journal("jquants_breadth_backfill_completed", "market_ledger", job_id,
@@ -19662,6 +20316,18 @@ def _journal_reverify_worker(job_id):
                   "pendingCount": _REMOTE_CYCLE.get("pendingCount"),
                   "errorClass": None,
                   "marketLedgerReadBack": dict(_MARKET_LEDGER_REMOTE)}
+        completed_v2 = (_FORMAL_BENCHMARK_V2.get("holdoutResult") or {}).get(
+            "benchmarkId")
+        if completed_v2:
+            updated_v2 = argus_research_benchmark_v2.append_remote_receipt(
+                _FORMAL_BENCHMARK_V2, benchmark_id=completed_v2,
+                receipt={"remoteCommitSha": result["remoteCommitSha"],
+                         "expectedHash": result["expectedHash"],
+                         "actualHash": result["actualHash"],
+                         "readBackVerified": True,
+                         "verifiedAt": _ai_now_iso()})
+            _FORMAL_BENCHMARK_V2.clear()
+            _FORMAL_BENCHMARK_V2.update(updated_v2)
         _journal("remote_journal_reverified", "remote_journal", job_id,
                  {"verificationStatus": "verified",
                   "remoteCommitSha": result["remoteCommitSha"]},
