@@ -15496,6 +15496,7 @@ _OSINT_URL_CACHE_MAX = 120
 _OSINT_PROGRESS = {}                   # SYM -> {stage, loop, maxLoops, notesJa[], at}
 _OSINT_PERSIST_FILE = "/tmp/argus_osint_memory.json"
 _OSINT_PERSIST_STATE = {"restored": False}
+_DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
 _OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
@@ -15576,7 +15577,15 @@ def _osint_restore_once():
         pass
     if blob is None:
         try:
-            r = requests.get(f"{_LEDGER_RAW_BASE}/osint/memory.json?cb={int(time.time())}", timeout=6)
+            # The five-year breadth snapshot is intentionally kept outside the
+            # web process and is currently tens of MB. A six-second read
+            # timeout made a healthy ledger look like ``no_prior_state`` during
+            # a cold deploy. Keep connection failure bounded while allowing a
+            # large, continuously streaming snapshot enough time to arrive.
+            r = requests.get(
+                f"{_LEDGER_RAW_BASE}/osint/memory.json?cb={int(time.time())}",
+                timeout=_DURABLE_RESTORE_HTTP_TIMEOUT,
+            )
             if r.status_code == 200:
                 blob = r.json()
         except Exception:
