@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.8', 'Benchmark v2のRemote Journal gateをverified receipt・hash一致・commit SHAの正本へ接続。'],
   ['v12.7.7', 'Benchmark v2のProvider probeをRESEARCH_BENCHMARK用途へ正しく配線し、preflight失敗をcalibration試行から分離。'],
   ['v12.7.6', 'Benchmark v2のProvider可用性を非空応答・usage・実model IDで判定し、完全一致は診断情報として分離。'],
   ['v12.7.5', 'J-Quants adjusted historical barの後日revisionを直近10営業日の公式再計算で検知し、削除せずappend-only訂正して再検証。'],

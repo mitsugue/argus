@@ -170,6 +170,16 @@ def test_v2_preflight_failure_does_not_consume_calibration_attempt():
     assert scanner._v2_next_calibration_attempt(calibration_failed) == 2
 
 
+def test_v2_remote_journal_gate_uses_verified_receipt_not_auxiliary_flag():
+    verified = {"readBackVerified": True, "remoteCommitSha": "a" * 40,
+                "expectedHash": "b" * 16, "actualHash": "b" * 16}
+    assert scanner._v2_remote_journal_verified(verified) is True
+    assert scanner._v2_remote_journal_verified(
+        {**verified, "actualHash": "c" * 16}) is False
+    assert scanner._v2_remote_journal_verified(
+        {**verified, "readBackVerified": False}) is False
+
+
 # ── Phase 5/10: 2xゲート(cold/budget/degraded/holdout) ──────────────────────
 
 def _strong():
