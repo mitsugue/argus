@@ -545,7 +545,7 @@ def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
         assert final["status"] == "completed"
         assert final["result"]["executionMode"] == "independent_os_process"
         assert final["result"]["workerConcurrency"] == 1
-        assert final["result"]["workerMemorySoftLimitMb"] == 512
+        assert final["result"]["workerMemorySoftLimitMb"] == 1024
         assert final["result"]["backendRestartCountDuringJob"] == 0
         assert any(row.get("seriesId") == "breadth.all.advancers" for row in
                    scanner._MARKET_LEDGER["observations"])
