@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SCHEMA_VERSION = "argus-market-ledger-v1"
@@ -122,6 +123,29 @@ def _iso_ok(value: Any) -> bool:
     return len(s) >= 10 and s[4:5] == "-" and s[7:8] == "-"
 
 
+def _as_instant(value: Any) -> Optional[datetime]:
+    """Normalize legacy/date-only and offset ISO values to comparable UTC."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _available_by(available_from: Any, as_of: Any) -> bool:
+    available, cutoff = _as_instant(available_from), _as_instant(as_of)
+    if available is not None and cutoff is not None:
+        return available <= cutoff
+    # Preserve the previous deterministic behavior for malformed legacy values;
+    # validation still rejects malformed values on every new append.
+    return str(available_from or "") <= str(as_of or "")
+
+
 def _number(value: Any) -> Optional[float]:
     if value is None or value == "":
         return None
@@ -203,7 +227,8 @@ def _append_observation_in_place(st: Dict[str, Any], candidate: Dict[str, Any],
 def effective_observations(state: Dict[str, Any], as_of: str) -> List[Dict[str, Any]]:
     st = normalize_state(state)
     rolled = set(st["rolledBackImports"])
-    eligible = [x for x in st["observations"] if str(x.get("availableFrom") or "") <= as_of
+    eligible = [x for x in st["observations"] if _available_by(
+                x.get("availableFrom"), as_of)
                 and x.get("importId") not in rolled]
     latest: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for row in sorted(eligible, key=lambda x: (str(x.get("seriesId")), str(x.get("periodEnd")),
