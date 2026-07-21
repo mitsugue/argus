@@ -103,6 +103,42 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertLess(len(weekly.get_json()["indicators"]["bars"]), 80)
         self.assertEqual(invalid.status_code, 400)
 
+    def test_scheduled_chart_tick_is_cache_only_when_cold(self):
+        with mock.patch.object(scanner, "_ai_now_iso",
+                               return_value="2026-07-21T15:00:00+09:00"), \
+                mock.patch.dict(scanner._JQ_HISTORY_CACHE, {}, clear=True), \
+                mock.patch.dict(scanner._TD_HISTORY_CACHE, {}, clear=True), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("network fetch")), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  side_effect=AssertionError("network fetch")):
+            body = scanner._chart_public_report(
+                "1321", "JP", market_scope=True, cached_only=True)
+        self.assertEqual(body["stateUpdate"], {
+            "status": "expected_skip", "reason": "price_cache_unavailable"})
+        self.assertEqual(body["automaticAiCalls"], 0)
+
+    def test_scheduled_chart_tick_uses_only_fresh_price_caches(self):
+        fake = history()
+        fresh = {"data": fake, "expires": 9_999_999_999.0}
+        jq_cache = {code: dict(fresh) for code in
+                    ("1321", "1306", "2644", "2516")}
+        td_cache = {symbol: dict(fresh) for symbol in ("SPY", "USD/JPY")}
+        with mock.patch.object(scanner, "_ai_now_iso",
+                               return_value="2026-07-21T15:00:00+09:00"), \
+                mock.patch.dict(scanner._JQ_HISTORY_CACHE, jq_cache, clear=True), \
+                mock.patch.dict(scanner._TD_HISTORY_CACHE, td_cache, clear=True), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("network fetch")), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  side_effect=AssertionError("network fetch")), \
+                mock.patch.object(scanner, "get_events_snapshot",
+                                  return_value={"events": []}):
+            body = scanner._chart_public_report(
+                "1321", "JP", market_scope=True, cached_only=True)
+        self.assertEqual(body["stateUpdate"]["status"], "updated")
+        self.assertIn("relativeStrength", body)
+
     def test_durable_v3_snapshot_contains_chart_state_and_hash(self):
         old_restored = scanner._OSINT_PERSIST_STATE["restored"]
         scanner._OSINT_PERSIST_STATE["restored"] = True
@@ -126,7 +162,7 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertIn("AI API 0", panel)
 
     def test_runtime_version_matches_release(self):
-        self.assertEqual(scanner._semantic_app_version(), "12.7.17")
+        self.assertEqual(scanner._semantic_app_version(), "12.7.18")
 
 
 if __name__ == "__main__":

@@ -17292,7 +17292,8 @@ def api_argus_admin_missions_tick():
     ledger_tick = _market_ledger_tick(now_iso)
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
     try:
-        _chart_report = _chart_public_report("1321", "JP", "daily", market_scope=True)
+        _chart_report = _chart_public_report(
+            "1321", "JP", "daily", market_scope=True, cached_only=True)
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _chart_changed = _chart_before_hash != _chart_after_hash
         chart_tick = {"changed": _chart_changed, "reportId": _chart_report.get("reportId"),
@@ -19504,9 +19505,37 @@ def _chart_history(symbol, market):
     return _chart_rows_from_history(_td_price_history(symbol))
 
 
-def _chart_public_report(symbol, market, timeframe="daily", market_scope=False):
+def _chart_history_cached(symbol, market):
+    """Return only a fresh provider cache entry; scheduled ticks never fetch."""
+    now = time.time()
+    cache = (_JQ_HISTORY_CACHE.get(symbol[:4]) if market == "JP"
+             else _TD_HISTORY_CACHE.get(symbol))
+    if not isinstance(cache, dict) or now >= float(cache.get("expires") or 0):
+        return []
+    return _chart_rows_from_history(cache.get("data"))
+
+
+def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
+                         cached_only=False):
     now_iso = _ai_now_iso()
-    rows = _chart_history(symbol, market)
+    history = _chart_history_cached if cached_only else _chart_history
+    rows = history(symbol, market)
+    if cached_only and not rows:
+        return {
+            "reportId": None,
+            "status": "expected_skip",
+            "automaticAiCalls": 0,
+            "costPolicyMode": _COST_POLICY.get("mode"),
+            "stateUpdate": {
+                "status": "expected_skip",
+                "reason": "price_cache_unavailable",
+            },
+            "persistence": {
+                "stateHash": argus_chart_intelligence.state_hash(
+                    _CHART_INTELLIGENCE),
+                **_CHART_INTELLIGENCE_REMOTE,
+            },
+        }
     if timeframe == "weekly":
         rows = _chart_weekly_rows(rows)
     ledger = argus_market_ledger.public_view(_MARKET_LEDGER, now_iso)
@@ -19558,7 +19587,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False):
                                    "titleJa": str(_item.get("title") or _item.get("form") or
                                                   f"{symbol} 公式開示")[:100],
                                    "kind": _kind, "classification": "unconfirmed"})
-    sector_rows = _chart_history("1306", "JP") if market == "JP" and symbol != "1306" else []
+    sector_rows = history("1306", "JP") if market == "JP" and symbol != "1306" else []
     report = argus_chart_intelligence.analyze(
         symbol, market, rows, now_iso=now_iso, market_ledger=ledger,
         events=events, sector_rows=sector_rows)
@@ -19576,11 +19605,11 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False):
     if market_scope:
         histories = {
             "nikkei": rows,
-            "topix": _chart_history("1306", "JP"),
-            "semiconductor": _chart_history("2644", "JP"),
-            "growth": _chart_history("2516", "JP"),
-            "sp500": _chart_history("SPY", "US"),
-            "usdjpy": _chart_history("USD/JPY", "US"),
+            "topix": history("1306", "JP"),
+            "semiconductor": history("2644", "JP"),
+            "growth": history("2516", "JP"),
+            "sp500": history("SPY", "US"),
+            "usdjpy": history("USD/JPY", "US"),
         }
         definitions = {
             "nikkei_sp500": ("nikkei", "sp500", "sho_heuristic"),
