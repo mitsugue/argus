@@ -1,4 +1,4 @@
-# Research Benchmark (v12.7.5)
+# Research Benchmark (v12.7.6)
 
 Protocol v1はholdout消費済みのまま`closed_invalid`としてappend-only保存し、
 再実行しない。Protocol v2は新規36ケースpoolからSHA256 seedでcalibration 6、
@@ -25,7 +25,9 @@ refereeの実応答modelが同一、dataset hash不一致、hard cap 2,000円超
 GPT-5.6 generator/refereeはResponses APIでreasoning effort `low`、出力上限
 4,096 tokenに固定する。正式run前のpipeline preflightは検索・referee契約だけを
 確認し、dataset採点・holdout消費を行わない。provider失敗がcalibration完了前かつ
-holdout未消費の場合だけ、証跡を保持したままpre-holdout recoveryを最大1回許可する。
+holdout未消費の場合だけ、証跡を保持したままcalibration試行を合計3回まで許可する。
+Provider可用性は非空応答・usage・実model ID・errorなしで判定し、指定文字列との
+完全一致は診断証拠として分離する。
 
 Gemini preflightは本文を保存せず、candidate/finishReason/parts/thinking usageを
 最大3回確認する。previewが3回ともprovider defectで、Models APIが返す最新の

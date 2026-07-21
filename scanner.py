@@ -17731,7 +17731,7 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok"):
            "usageReturned": False, "usage": None,
            "pricingVersion": _BENCHMARK_PRICING_VERSION,
            "createdAt": _ai_now_iso(), "errorClass": None,
-           "matchedExpectedText": False}
+           "matchedExpectedText": False, "responseTextPresent": False}
     if not _cost_policy_authorize(
             "openai", "manual_api", automatic=False, confirmation=confirmation,
             estimated_cost_usd=0.001, estimated_tokens=50)["allowed"]:
@@ -17749,7 +17749,11 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok"):
         _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
         output_text = str(getattr(r, "output_text", None) or "").strip()
         out["matchedExpectedText"] = output_text == expected_text
-        out["accessible"] = out["matchedExpectedText"]
+        # Availability is a transport/response property. Exact instruction
+        # following remains diagnostic evidence, but must not turn a successful,
+        # non-empty Responses API call into a false provider outage.
+        out["responseTextPresent"] = bool(output_text)
+        out["accessible"] = out["responseTextPresent"]
         out["responsesSupported"] = True
         u = _usage_tokens(r)
         out["usageReturned"] = bool(u and (u[0] or u[1]))
@@ -18462,6 +18466,24 @@ def _v2_exact_model_match(meta):
                 (response == requested or response.startswith(requested + "-")))
 
 
+def _v2_capability_probe_passed(meta):
+    """Provider availability contract used before any calibration is scored."""
+    value = meta if isinstance(meta, dict) else {}
+    if value.get("apiEndpoint") == "models.generateContent":
+        candidates = value.get("candidates") or []
+        response_ok = bool(value.get("nonEmptyTextPartExists") is True
+                           and candidates
+                           and all(row.get("finishReason") == "STOP"
+                                   for row in candidates)
+                           and not (value.get("promptFeedback") or {}).get(
+                               "blockReason"))
+    else:
+        response_ok = value.get("responseTextPresent") is True
+    return bool(response_ok and value.get("usageReturned") is True
+                and value.get("responseModel")
+                and value.get("errorClass") is None)
+
+
 def _v2_call_with_retry(call):
     last_out, last_status = None, "provider_failed"
     for attempt in range(1, 3):
@@ -18496,6 +18518,7 @@ def _research_benchmark_v2_job_worker(job_id):
     global _FORMAL_BENCHMARK_V2
     provider_calls = []
     source_proof = []
+    preflight = {"sourceAccess": source_proof}
     try:
         _foundation_job_update(job_id, status="running")
         latest_v1 = ((_FORMAL_BENCHMARK.get("results") or [None])[-1] or {})
@@ -18552,17 +18575,16 @@ def _research_benchmark_v2_job_worker(job_id):
             return latest or {}
         sol_probe = openai_probe("gpt-5.6-sol", "ARGUS_SOL_OK")
         terra_probe = openai_probe("gpt-5.6-terra", "ARGUS_TERRA_OK")
-        if not (gemini_probe.get("accessible") and sol_probe.get("accessible")
-                and terra_probe.get("accessible")):
+        preflight = {"gemini": gemini_probe, "sol": sol_probe,
+                     "terra": terra_probe, "sourceAccess": source_proof}
+        if not all(_v2_capability_probe_passed(probe) for probe in
+                   (gemini_probe, sol_probe, terra_probe)):
             raise RuntimeError("v2_provider_preflight_failed")
         if not all(_v2_exact_model_match(probe) for probe in
                    (gemini_probe, sol_probe, terra_probe)):
             raise RuntimeError("v2_provider_response_model_mismatch")
         if sol_probe.get("responseModel") == terra_probe.get("responseModel"):
             raise RuntimeError("v2_evaluator_not_independent")
-        preflight = {"gemini": gemini_probe, "sol": sol_probe, "terra": terra_probe,
-                     "sourceAccess": source_proof}
-
         def run_cases(cases, run_id, holdout=False):
             rows = []
             for case in cases:
@@ -18699,7 +18721,8 @@ def _research_benchmark_v2_job_worker(job_id):
         _FORMAL_BENCHMARK_V2["runningBenchmarkId"] = None
         _FORMAL_BENCHMARK_V2["status"] = error_class[:80]
         _foundation_job_update(job_id, status="failed",
-                               result={"sourceAccess": source_proof},
+                               result={"sourceAccess": source_proof,
+                                       "providerPreflight": preflight},
                                error_class=error_class[:80])
     finally:
         restored = argus_cost_policy.configure(

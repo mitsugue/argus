@@ -1,6 +1,8 @@
 """ARGUS V12.2.0 — AI Integrity / 校正エポック / 一次ソース支配 / 不変予測台帳の恒久ガード。"""
 import os
 import re
+import sys
+import types
 
 import argus_ai_gate as gate
 import argus_decision_ledger as dl
@@ -98,6 +100,55 @@ def test_capability_probe_admin_only():
     with scanner.app.test_client() as c:
         r = c.post("/api/argus/admin/ai/capability-probe", json={})
         assert r.status_code in (401, 403, 503)
+
+
+def test_openai_capability_probe_separates_response_from_exact_text(monkeypatch):
+    response = types.SimpleNamespace(
+        output_text="acknowledged",
+        model="gpt-5.6-sol",
+        usage=types.SimpleNamespace(input_tokens=5, output_tokens=3))
+    client = types.SimpleNamespace(
+        responses=types.SimpleNamespace(create=lambda **kwargs: response))
+    monkeypatch.setitem(
+        sys.modules, "openai",
+        types.SimpleNamespace(OpenAI=lambda **kwargs: client))
+    monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "configured-test-key")
+    monkeypatch.setattr(
+        scanner, "_cost_policy_authorize",
+        lambda *args, **kwargs: {"allowed": True})
+    monkeypatch.setattr(scanner, "_cost_policy_record", lambda *args, **kwargs: None)
+
+    probe = scanner._ai_capability_probe(
+        "gpt-5.6-sol", confirmation=True, expected_text="ARGUS_SOL_OK")
+
+    assert probe["accessible"] is True
+    assert probe["responseTextPresent"] is True
+    assert probe["matchedExpectedText"] is False
+    assert probe["usageReturned"] is True
+    assert probe["responseModel"] == "gpt-5.6-sol"
+
+
+def test_v2_capability_probe_requires_response_usage_model_and_no_error():
+    valid = {"accessible": True, "responseTextPresent": True,
+             "usageReturned": True,
+             "responseModel": "gpt-5.6-sol", "errorClass": None}
+    assert scanner._v2_capability_probe_passed(valid) is True
+    for missing in ("responseTextPresent", "usageReturned", "responseModel"):
+        row = dict(valid)
+        row[missing] = False if missing != "responseModel" else None
+        assert scanner._v2_capability_probe_passed(row) is False
+    assert scanner._v2_capability_probe_passed(
+        {**valid, "errorClass": "PermissionDenied"}) is False
+
+    gemini = {"apiEndpoint": "models.generateContent", "accessible": False,
+              "matchedExpectedText": False, "nonEmptyTextPartExists": True,
+              "candidates": [{"finishReason": "STOP"}],
+              "promptFeedback": {"blockReason": None},
+              "usageReturned": True,
+              "responseModel": "gemini-3.1-pro-preview", "errorClass": None}
+    assert scanner._v2_capability_probe_passed(gemini) is True
+    assert scanner._v2_capability_probe_passed(
+        {**gemini, "candidates": [{"finishReason": "MAX_TOKENS"}]}) is False
 
 
 # ── Phase 5/10: 2xゲート(cold/budget/degraded/holdout) ──────────────────────
