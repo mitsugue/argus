@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v12.7.20', 'Market Ledgerのrestore時にrebuild receiptを維持し、Turning Point再構築の全観測再走査を解消。'],
   ['v12.7.19', 'Remote Journal read-backを整合性付き小型receiptへ分離し、定期mission tickの巨大snapshot待ちを解消。'],
   ['v12.7.18', '定期mission tickのChart Intelligenceをfresh cache限定にし、同期provider取得によるtimeoutを防止。'],
   ['v12.7.17', '独立spawn workerの5年breadth完了証拠をfoundation closeoutで正しく受理。'],

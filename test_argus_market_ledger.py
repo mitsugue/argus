@@ -135,6 +135,23 @@ class MarketLedgerTests(unittest.TestCase):
         self.assertTrue(any(x["ruleId"] == "BREADTH_TURN" and
                             x["direction"] == "short_below_medium" for x in points))
 
+    def test_turning_point_detection_reuses_effective_observation_index(self):
+        st = ml.empty_state(); base = date(2026, 1, 1)
+        for i in range(120):
+            day = str(base + timedelta(days=i))
+            broad = (i // 12) % 2 == 0
+            st = add(st, "breadth.all.advancers", day,
+                     1800 if broad else 300)
+            st = add(st, "breadth.all.decliners", day,
+                     300 if broad else 1800)
+        with mock.patch.object(
+                ml, "effective_observations",
+                wraps=ml.effective_observations) as effective_call:
+            points = ml.detect_turning_points(st, "2027-01-01T00:00:00Z",
+                                              "2027-01-01T00:00:00Z")
+        self.assertTrue(any(x["ruleId"] == "BREADTH_TURN" for x in points))
+        self.assertEqual(effective_call.call_count, 3)
+
     def test_valuation_rollover(self):
         st = ml.empty_state(); base = date(2026, 6, 1)
         eps_values = list(range(100, 121)) + [110]
@@ -154,6 +171,32 @@ class MarketLedgerTests(unittest.TestCase):
         self.assertEqual(ml.state_hash(once), ml.state_hash(twice))
         restored = ml.normalize_state(copy.deepcopy(twice))
         self.assertTrue(ml.read_back_verified(twice, restored))
+
+    def test_restore_merge_preserves_clean_rebuild_receipt_and_cache(self):
+        remote = ml.empty_state(); base = date(2026, 6, 1)
+        for i in range(32):
+            day = str(base + timedelta(days=i))
+            remote = add(remote, "breadth.all.advancers", day,
+                         1800 if i < 25 else 300)
+            remote = add(remote, "breadth.all.decliners", day,
+                         300 if i < 25 else 1800)
+        remote = ml.rebuild(remote, NOW)
+        merged = ml.merge_restored_state(ml.empty_state(), remote)
+        self.assertFalse(ml.rebuild_required(merged))
+        self.assertEqual(ml.state_hash(merged), ml.state_hash(remote))
+        self.assertEqual(merged["lastRebuiltObservationCount"],
+                         len(merged["observations"]))
+        self.assertEqual(len(merged["turningPoints"]),
+                         len(remote["turningPoints"]))
+
+    def test_restore_merge_marks_newer_local_observation_dirty(self):
+        remote = ml.rebuild(add(
+            ml.empty_state(), "breadth.all.advancers", "2026-07-17", 1000), NOW)
+        local = add(ml.empty_state(), "breadth.all.advancers",
+                    "2026-07-18", 1100)
+        merged = ml.merge_restored_state(local, remote)
+        self.assertEqual(len(merged["observations"]), 2)
+        self.assertTrue(ml.rebuild_required(merged))
 
     def test_csv_dry_run_commit_and_append_only_rollback(self):
         csv_text = ("seriesId,periodEnd,availableFrom,value,unit,source\n"

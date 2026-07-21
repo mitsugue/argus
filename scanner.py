@@ -15753,24 +15753,10 @@ def _osint_restore_once():
             _COST_POLICY.update(_restored_cp)
         _ml = blob.get("marketLedger")
         if isinstance(_ml, dict):
-            _restored_ml = argus_market_ledger.normalize_state(_ml)
-            # Ledger is append-only.  A remote snapshot can add records, but cannot
-            # delete a newer local record from the same process.
-            for _key, _id in (("observations", "id"),
-                              ("derivedMetrics", "id"),
-                              ("turningPoints", "id"),
-                              ("backtests", "id"),
-                              ("imports", "importId")):
-                _seen = {x.get(_id) for x in _MARKET_LEDGER.get(_key, [])}
-                _MARKET_LEDGER.setdefault(_key, []).extend(
-                    x for x in _restored_ml.get(_key, [])
-                    if x.get(_id) not in _seen)
-            for _iid in _restored_ml.get("rolledBackImports", []):
-                if _iid not in _MARKET_LEDGER["rolledBackImports"]:
-                    _MARKET_LEDGER["rolledBackImports"].append(_iid)
-            _MARKET_LEDGER["lastUpdatedAt"] = max(
-                str(_MARKET_LEDGER.get("lastUpdatedAt") or ""),
-                str(_restored_ml.get("lastUpdatedAt") or "")) or None
+            _restored_ml = argus_market_ledger.merge_restored_state(
+                _MARKET_LEDGER, _ml)
+            _MARKET_LEDGER.clear()
+            _MARKET_LEDGER.update(_restored_ml)
         _ci = blob.get("chartIntelligence")
         if isinstance(_ci, dict):
             _restored_ci = argus_chart_intelligence.normalize_state(_ci)
