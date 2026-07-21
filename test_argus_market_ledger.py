@@ -131,6 +131,24 @@ class MarketLedgerTests(unittest.TestCase):
         self.assertEqual(len(rolled["observations"]), count)
         self.assertEqual(ml.effective_observations(rolled, NOW), [])
 
+    def test_import_can_defer_rebuild_without_losing_append_receipt(self):
+        rows = [{"seriesId": "breadth.all.advancers",
+                 "periodEnd": "2026-07-17",
+                 "publishedAt": "2026-07-17T17:00:00+09:00",
+                 "availableFrom": "2026-07-17T17:00:00+09:00",
+                 "value": 1000, "unit": "count", "source": "J-Quants",
+                 "sourceKind": "official", "status": "live"}]
+        deferred = ml.import_rows(
+            ml.empty_state(), rows, now_iso=NOW, dry_run=False,
+            rebuild_after_commit=False)
+        self.assertTrue(deferred["ok"])
+        self.assertEqual(len(deferred["state"]["observations"]), 1)
+        self.assertEqual(len(deferred["state"]["imports"]), 1)
+        self.assertEqual(deferred["state"]["derivedMetrics"], [])
+        rebuilt = ml.rebuild(deferred["state"], NOW)
+        self.assertEqual(len(rebuilt["observations"]), 1)
+        self.assertEqual(len(rebuilt["imports"]), 1)
+
     def test_public_view_does_not_expose_licensed_raw_value(self):
         st = add(ml.empty_state(), "credit.valuation_loss_pct", "2026-07-11", -10.5)
         row = next(x for x in ml.public_view(st, NOW)["table"]
