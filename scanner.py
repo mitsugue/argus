@@ -20144,6 +20144,28 @@ def _breadth_daily_matches(effective, daily):
     return True
 
 
+def _breadth_reconciliation_candidates(effective, rows, correction_at):
+    """Append current corrections even when the same value exists historically."""
+    candidates = []
+    for row in rows:
+        series_id = str(row.get("seriesId") or "")
+        period_end = str(row.get("periodEnd") or "")
+        current = next((value for value in effective.get(series_id, [])
+                        if value.get("periodEnd") == period_end), None)
+        if current and current.get("value") == row.get("value"):
+            continue
+        revised = dict(row)
+        revised["availableFrom"] = correction_at
+        revised["observedAt"] = correction_at
+        revised["metadata"] = {
+            **dict(row.get("metadata") or {}),
+            "reconciliation": "official_spot_check",
+            "correctsAvailableFrom": (current or {}).get("availableFrom"),
+        }
+        candidates.append(revised)
+    return candidates
+
+
 def _scope_breadth_worker_ledger(production_start):
     """Release archive/non-breadth rows before the child performs a rebuild."""
     rows = [row for row in (_MARKET_LEDGER.get("observations") or [])
@@ -20328,8 +20350,11 @@ def _jquants_breadth_finalize_worker(job_id):
         reconciled_rows, reconciliation_revisions = 0, 0
         if not all(_breadth_daily_matches(effective, daily)
                    for daily in spot_daily):
+            correction_at = _ai_now_iso()
+            reconciliation_rows = _breadth_reconciliation_candidates(
+                effective, reconciliation_rows, correction_at)
             reconciled_rows, reconciliation_revisions, _ = _breadth_commit_rows(
-                reconciliation_rows, _ai_now_iso())
+                reconciliation_rows, correction_at)
             if reconciled_rows:
                 rebuilt = argus_market_ledger.rebuild(
                     _MARKET_LEDGER, _ai_now_iso())
