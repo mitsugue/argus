@@ -558,6 +558,46 @@ def test_legacy_breadth_resume_checkpoint_defaults_to_full_five_year_stage():
         scanner._FOUNDATION_JOBS.update(previous_jobs)
 
 
+def test_breadth_reconciliation_reasserts_historical_value_at_correction_time():
+    import scanner
+
+    effective = {"breadth.all.advancers": [{
+        "periodEnd": "2026-07-14", "value": 90,
+        "availableFrom": "2026-07-14T17:00:00+09:00",
+    }]}
+    rows = [{
+        "seriesId": "breadth.all.advancers",
+        "periodEnd": "2026-07-14",
+        "publishedAt": "2026-07-14T17:00:00+09:00",
+        "availableFrom": "2026-07-14T17:00:00+09:00",
+        "observedAt": "2026-07-14T17:00:01+09:00",
+        "value": 100, "unit": "count", "source": "J-Quants",
+        "sourceKind": "derived", "status": "live", "metadata": {},
+    }]
+    correction_at = "2026-07-21T23:45:00+09:00"
+    candidates = scanner._breadth_reconciliation_candidates(
+        effective, rows, correction_at)
+    assert len(candidates) == 1
+    assert candidates[0]["value"] == 100
+    assert candidates[0]["publishedAt"] == "2026-07-14T17:00:00+09:00"
+    assert candidates[0]["availableFrom"] == correction_at
+    assert candidates[0]["observedAt"] == correction_at
+    assert candidates[0]["metadata"]["reconciliation"] == (
+        "official_spot_check")
+    assert candidates[0]["metadata"]["correctsAvailableFrom"] == (
+        "2026-07-14T17:00:00+09:00")
+
+
+def test_breadth_reconciliation_skips_current_matching_value():
+    import scanner
+
+    row = {"seriesId": "breadth.all.advancers",
+           "periodEnd": "2026-07-14", "value": 100}
+    effective = {"breadth.all.advancers": [dict(row)]}
+    assert scanner._breadth_reconciliation_candidates(
+        effective, [row], "2026-07-21T23:45:00+09:00") == []
+
+
 def test_breadth_supervisor_runs_work_in_independent_process(monkeypatch):
     import scanner
 
