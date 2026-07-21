@@ -37,6 +37,20 @@ class MarketLedgerTests(unittest.TestCase):
         self.assertIsNone(st["observations"][0]["value"])
         self.assertEqual(st["observations"][0]["status"], "missing")
 
+    def test_available_from_compares_instants_not_iso_offset_text(self):
+        st = add(ml.empty_state(), "breadth.all.advancers", "2026-07-21", 100,
+                 available="2026-07-21T17:00:00+09:00")
+        self.assertEqual(len(ml.effective_observations(
+            st, "2026-07-21T08:00:00Z")), 1)
+        self.assertEqual(ml.effective_observations(
+            st, "2026-07-21T07:59:59Z"), [])
+
+    def test_legacy_date_only_availability_remains_supported(self):
+        st = add(ml.empty_state(), "breadth.all.advancers", "2026-07-21", 100,
+                 available="2026-07-21")
+        self.assertEqual(len(ml.effective_observations(
+            st, "2026-07-21T00:00:00Z")), 1)
+
     def test_append_only_exclusion_revision_removes_only_effective_bad_row(self):
         st = add(ml.empty_state(), "breadth.all.advancers", "2026-07-20", 123)
         correction = {
