@@ -1,4 +1,4 @@
-# Research Benchmark (v12.7.7)
+# Research Benchmark (v12.7.8)
 
 Protocol v1はholdout消費済みのまま`closed_invalid`としてappend-only保存し、
 再実行しない。Protocol v2は新規36ケースpoolからSHA256 seedでcalibration 6、
@@ -30,6 +30,10 @@ Provider可用性は非空応答・usage・実model ID・errorなしで判定し
 完全一致は診断証拠として分離する。正式run内のprobeはCost Policyの
 `research_benchmark`用途で認可し、case実行前のpreflight失敗はcalibration試行へ
 算入しない。
+
+`remoteJournalReadBack` gateはRemote Journal cycleのverified receipt、expected/
+actual hash一致、remote commit SHAを確認する。再deployで失われるMarket Ledger補助
+フラグを正式benchmark validityの正本にはしない。
 
 Gemini preflightは本文を保存せず、candidate/finishReason/parts/thinking usageを
 最大3回確認する。previewが3回ともprovider defectで、Models APIが返す最新の

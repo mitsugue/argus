@@ -18515,6 +18515,15 @@ def _v2_call_with_retry(call):
     return last_out, last_status, attempt
 
 
+def _v2_remote_journal_verified(cycle=None):
+    value = cycle if isinstance(cycle, dict) else _REMOTE_CYCLE
+    expected = value.get("expectedHash")
+    return bool(value.get("readBackVerified") is True
+                and value.get("remoteCommitSha")
+                and expected
+                and expected == value.get("actualHash"))
+
+
 def _v2_protocol_gates(*, exact_models, budget_ok, append_only):
     return {"frozenDatasetHash": True, "unusedHoldout": True,
             "exactProviderModel": bool(exact_models), "responseReceived": True,
@@ -18524,8 +18533,7 @@ def _v2_protocol_gates(*, exact_models, budget_ok, append_only):
             "deterministicScorerExecuted": True,
             "budgetCompliance": bool(budget_ok), "oneTimeHoldout": True,
             "appendOnlyResult": bool(append_only),
-            "remoteJournalReadBack": bool(
-                _MARKET_LEDGER_REMOTE.get("verificationStatus") == "verified")}
+            "remoteJournalReadBack": _v2_remote_journal_verified()}
 
 
 def _research_benchmark_v2_job_worker(job_id):
