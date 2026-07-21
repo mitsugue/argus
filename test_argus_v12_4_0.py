@@ -126,7 +126,7 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertIn("AI API 0", panel)
 
     def test_runtime_version_matches_release(self):
-        self.assertEqual(scanner._semantic_app_version(), "12.7.12")
+        self.assertEqual(scanner._semantic_app_version(), "12.7.13")
 
 
 if __name__ == "__main__":

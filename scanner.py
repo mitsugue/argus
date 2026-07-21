@@ -20142,6 +20142,35 @@ def _scope_breadth_worker_ledger(production_start):
     return excluded
 
 
+def _breadth_worker_seed_state(job_id):
+    """Build the minimum restart-safe seed for a clean spawned worker.
+
+    A fork inherits the Web process allocator arenas even after archive rows are
+    released.  The spawned worker receives only breadth inputs around the
+    rolling production window, so its memory limit measures worker data rather
+    than the already-restored Web heap.
+    """
+    job = _foundation_job(job_id) or {}
+    params = job.get("parameters") or {}
+    end_date = str(params.get("to") or
+                   datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10]
+    production_boundary = argus_foundation_jobs.production_calendar_start(
+        end_date)
+    seed_boundary = (datetime.strptime(production_boundary, "%Y-%m-%d")
+                     - timedelta(days=14)).strftime("%Y-%m-%d")
+    seed = argus_market_ledger.empty_state()
+    seed["observations"] = [row for row in
+                            (_MARKET_LEDGER.get("observations") or [])
+                            if str(row.get("seriesId") or "").startswith(
+                                "breadth.")
+                            and str(row.get("periodEnd") or "") >= seed_boundary]
+    seed["rolledBackImports"] = list(
+        _MARKET_LEDGER.get("rolledBackImports") or [])
+    seed["derivedStateDirty"] = True
+    seed["lastUpdatedAt"] = _MARKET_LEDGER.get("lastUpdatedAt")
+    return seed
+
+
 def _jquants_breadth_finalize_worker(job_id):
     """Correct the current boundary and verify the complete durable ledger."""
     proof = {"provider": "J-Quants", "baseUrl": _JQUANTS_BASE,
@@ -20915,11 +20944,17 @@ def _process_peak_memory_mb():
     return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 2)
 
 
-def _jquants_breadth_process_entry(job_id, connection, memory_soft_limit_mb):
-    """Run provider I/O/calculation in a forked process; parent owns durability."""
+def _jquants_breadth_process_entry(job_id, connection, memory_soft_limit_mb,
+                                    ledger_seed=None):
+    """Run provider I/O/calculation in an isolated process; parent owns durability."""
     global _foundation_job_update, _foundation_job, _breadth_commit_rows
     global _journal, _osint_persist
     local_commit = _breadth_commit_rows
+    if isinstance(ledger_seed, dict):
+        _MARKET_LEDGER.clear()
+        _MARKET_LEDGER.update(argus_market_ledger.normalize_state(ledger_seed))
+    ledger_seed = None
+    gc.collect()
     try:
         limit_bytes = int(memory_soft_limit_mb) * 1024 * 1024
         current_soft, current_hard = resource.getrlimit(resource.RLIMIT_DATA)
@@ -20996,12 +21031,23 @@ def _jquants_breadth_worker(job_id):
     memory_limit = max(256, min(memory_limit, 1024))
     boot_id = _RUNTIME.get("bootId")
     backend_peak_before = _process_peak_memory_mb()
-    parent_connection, child_connection = multiprocessing.get_context(
-        "fork").Pipe(duplex=True)
-    process = multiprocessing.get_context("fork").Process(
-        target=_jquants_breadth_process_entry,
-        args=(job_id, child_connection, memory_limit), daemon=True)
+    start_method = str(os.environ.get(
+        "ARGUS_BREADTH_PROCESS_START_METHOD", "spawn")).lower()
+    if start_method not in ("spawn", "forkserver", "fork"):
+        start_method = "spawn"
+    process_context = multiprocessing.get_context(start_method)
+    ledger_seed = _breadth_worker_seed_state(job_id)
+    parent_connection, child_connection = process_context.Pipe(duplex=True)
+    process_target = _jquants_breadth_process_entry
+    if start_method != "fork":
+        import argus_breadth_worker
+        process_target = argus_breadth_worker.process_entry
+    process = process_context.Process(
+        target=process_target,
+        args=(job_id, child_connection, memory_limit, ledger_seed), daemon=True)
     process.start()
+    ledger_seed = None
+    gc.collect()
     child_connection.close()
     worker_peak = None
     crashed = None
@@ -21099,26 +21145,36 @@ def _jquants_breadth_worker(job_id):
         parent_connection.close()
 
     final = _foundation_job(job_id) or {}
+    runtime_metrics = {
+        "executionMode": ("independent_spawned_os_process"
+                          if start_method != "fork" else
+                          "independent_os_process"),
+        "workerProcessStartMethod": start_method,
+        "workerConcurrency": 1,
+        "workerMemorySoftLimitMb": memory_limit,
+        "workerPeakMemoryMb": worker_peak,
+        "backendPeakMemoryMb": _process_peak_memory_mb(),
+        "backendPeakMemoryAtStartMb": backend_peak_before,
+        "backendRestartCountDuringJob": 0 if _RUNTIME.get("bootId") == boot_id else 1,
+        "backendBootIdStable": _RUNTIME.get("bootId") == boot_id,
+    }
     if crashed or process.exitcode not in (0, None):
         if final.get("status") not in argus_foundation_jobs.TERMINAL_STATES:
             _foundation_job_update(job_id, status="failed",
+                                   result=runtime_metrics,
                                    error_class=crashed or
                                    f"breadth_worker_exit_{process.exitcode}")
         return
     result = final.get("result") if isinstance(final.get("result"), dict) else None
     if final.get("status") == "completed" and result is not None:
         result = dict(result)
-        result.update({
-            "executionMode": "independent_os_process",
-            "workerConcurrency": 1,
-            "workerMemorySoftLimitMb": memory_limit,
-            "workerPeakMemoryMb": worker_peak,
-            "backendPeakMemoryMb": _process_peak_memory_mb(),
-            "backendPeakMemoryAtStartMb": backend_peak_before,
-            "backendRestartCountDuringJob": 0 if _RUNTIME.get("bootId") == boot_id else 1,
-            "backendBootIdStable": _RUNTIME.get("bootId") == boot_id,
-        })
+        result.update(runtime_metrics)
         _foundation_job_update(job_id, status="completed", result=result)
+    elif final.get("status") == "failed":
+        result = dict(result or {})
+        result.update(runtime_metrics)
+        _foundation_job_update(job_id, status="failed", result=result,
+                               error_class=final.get("errorClass"))
 
 
 def _journal_reverify_worker(job_id):
