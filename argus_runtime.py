@@ -232,9 +232,10 @@ def soak_heartbeat(*, soak_id: str, build_sha: Optional[str],
 def append_soak_heartbeat(soak: Dict[str, Any],
                           heartbeat: Optional[Dict[str, Any]],
                           max_len: int = 400) -> bool:
-    """同一build/window/evidenceの重複heartbeatを抑止。"""
+    """同一build/window/evidenceの重複とmanual診断証拠を抑止。"""
     if not heartbeat or heartbeat.get("soakId") != soak.get("soakId") \
-            or heartbeat.get("buildSha") != soak.get("buildSha"):
+            or heartbeat.get("buildSha") != soak.get("buildSha") \
+            or heartbeat.get("source") == "manual":
         return False
     rows = soak.setdefault("heartbeats", [])
     key = (heartbeat.get("buildSha"), heartbeat.get("expectedAt"),

@@ -17591,7 +17591,7 @@ def api_argus_admin_missions_tick():
 
     # Soakはtick時刻ではなく、このbuildの最初の有効heartbeatで開始する。
     heartbeat_at = _ai_now_iso()
-    if not _SOAK.get("startedAt"):
+    if trigger_source != "manual" and not _SOAK.get("startedAt"):
         _sk_dec = argus_runtime.soak_start_decision(
             now_iso=heartbeat_at, build_sha=_backend_sha() or None,
             app_version=_semantic_app_version() or "",
@@ -17619,7 +17619,7 @@ def api_argus_admin_missions_tick():
     build_matches = not workflow_sha or workflow_sha == (_backend_sha() or "")
     journal_status = (_REMOTE_ACK.get("lastReceiptStatus") or
                       _REMOTE_CYCLE.get("errorClass") or "pending")
-    hb = argus_runtime.soak_heartbeat(
+    hb = (argus_runtime.soak_heartbeat(
         soak_id=_SOAK.get("soakId") or "", build_sha=_backend_sha(),
         runtime_version=_semantic_app_version() or "unknown",
         expected_at=window["scheduledFor"], observed_at=heartbeat_at,
@@ -17633,6 +17633,7 @@ def api_argus_admin_missions_tick():
         read_back_verified=bool(_REMOTE_CYCLE.get("readBackVerified")),
         scheduler_delay_seconds=int(window.get("delaySeconds") or 0),
         evidence_type="scheduled_mission", now_iso=heartbeat_at)
+          if trigger_source != "manual" else None)
     heartbeat_added = argus_runtime.append_soak_heartbeat(_SOAK, hb)
     if heartbeat_added:
         _journal("soak_heartbeat", "soak", _SOAK.get("soakId") or "unknown",
