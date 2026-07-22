@@ -100,14 +100,10 @@ def test_deep_link_uses_app_state_not_only_event():
 
 def test_deep_link_four_sources():
     cc = _read("routes", "CommandCenter.tsx")
-    # ①OWNER CRITICAL ②例外サマリー
-    assert cc.count("onNavigateToAsset?.(") >= 2
-    assert "TodayAssetExceptions" in cc
-    # ③Your Exposure ④Action Queue
-    exp = _read("components", "today", "YourExposureCard.tsx")
-    assert "onOpenAsset" in exp
-    q = _read("components", "today", "TodayActionQueue.tsx")
-    assert "onOpenAsset" in q
+    assert "onOpenAsset={(symbol) => onNavigateToAsset?.(symbol)}" in cc
+    panel = _read("components", "today", "ArgusTodayPanel.tsx")
+    # Today縮約後も、保有注意と推奨アクションの両方からAsset Deskへ遷移できる。
+    assert panel.count("onOpenAsset?.(") >= 2
     # 未登録銘柄は捏造スクロールしない
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
     assert "未登録銘柄" in desk
@@ -162,10 +158,11 @@ def test_portfolio_wide_features_moved_to_core():
 def test_today_exception_summary_replaces_card_list():
     cc = _read("routes", "CommandCenter.tsx")
     assert "AssetCategorySection" not in cc          # 旧全銘柄リストは撤去
-    ex = _read("components", "today", "TodayAssetExceptions.tsx")
-    assert "Asset Desk" in ex
-    # 例外の定義(保有×撤退/防衛・P0/P1・急落・不一致)がTodayの選択条件に残る
-    assert "保有×撤退判断" in cc and "急落対応中" in cc and "不一致" in cc
+    vm = _read("domain", "argusTodayView.ts")
+    assert "dedupeHoldings" in vm and ".slice(0, 3)" in vm
+    # 集中・高優先度リスクをTodayの少数注意項目へ残す。
+    assert "risk.riskType === 'concentration'" in cc
+    assert "item.priorityRank === 'P0'" in cc
 
 
 def test_desk_default_sort_deterministic():

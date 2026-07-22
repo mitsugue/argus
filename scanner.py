@@ -97,11 +97,11 @@ import argus_mission_trigger       # §12 research-mission trigger gating (pure,
 import argus_event_card            # EventCard v2 canonical research object (pure, ARGUS Pro v11)
 import argus_caos_audit            # CAOS association audit trail (pure, ARGUS Pro v11)
 import argus_cost_policy           # v12.3.0: centralized generative-AI execution policy
-import argus_market_ledger          # v12.3.0: append-only SHO-style market ledger
+import argus_market_ledger          # append-only Market Ledger
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_research_benchmark_v2  # v12.7.0: validity-separated one-time v2 closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
-import argus_sho_phase3             # v12.5.0: deterministic SHO operating sheet/backfill mapping
+import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 from flask import Flask, jsonify, request
 from collections import deque
@@ -19492,13 +19492,13 @@ def api_argus_market_ledger_view():
                                       ("US", argus_market_clock.US_EQUITY),
                                       ("FX", argus_market_clock.FX),
                                       ("CRYPTO", argus_market_clock.CRYPTO))}
-    view.update(argus_sho_phase3.build_phase3(
+    view.update(argus_market_intelligence.build_phase3(
         view, calendar,
         {"jp_current_price": "entitlement_unavailable",
          "investor_types": ("live" if any(
              x.get("seriesId") == "flow.foreign" for x in
              (_MARKET_LEDGER.get("observations") or [])) else "backfill_available")}))
-    return jsonify(view)
+    return jsonify(argus_market_intelligence.normalize_public_names(view))
 
 
 def _chart_rows_from_history(history):
@@ -19662,7 +19662,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "usdjpy": history("USD/JPY", "US"),
         }
         definitions = {
-            "nikkei_sp500": ("nikkei", "sp500", "sho_heuristic"),
+            "nikkei_sp500": ("nikkei", "sp500", "argus_heuristic"),
             "nikkei_usdjpy": ("nikkei", "usdjpy", "derived"),
             "topix_nikkei": ("topix", "nikkei", "derived"),
             "semiconductor_topix": ("semiconductor", "topix", "derived"),
@@ -19728,14 +19728,15 @@ def api_argus_chart_intelligence():
         report = _chart_public_report("1321", "JP", timeframe, market_scope=True)
         report["displayNameJa"] = "日経平均連動ETF(市場チャートproxy)"
         report["proxyDisclosureJa"] = "現物日経平均そのものではなく、既存の公式日足経路で取得する連動ETFを使用。"
-        return jsonify(report)
+        return jsonify(argus_market_intelligence.normalize_public_names(report))
     symbol = (request.args.get("symbol") or "").strip().upper()
     market = (request.args.get("market") or ("JP" if symbol[:1].isdigit() else "US")).upper()
     if market == "JP" and not _JP_SYM_RE.match(symbol):
         return jsonify({"error": "bad_symbol"}), 400
     if market == "US" and not _US_SYM_RE.match(symbol):
         return jsonify({"error": "bad_symbol"}), 400
-    return jsonify(_chart_public_report(symbol, market, timeframe, market_scope=False))
+    return jsonify(argus_market_intelligence.normalize_public_names(
+        _chart_public_report(symbol, market, timeframe, market_scope=False)))
 
 
 @app.route("/api/argus/admin/market-ledger/import", methods=["POST"])
@@ -20460,7 +20461,7 @@ def _jquants_breadth_finalize_worker(job_id):
         for universe in ("first_section", "prime", "all"):
             universe_points = [row for row in points if str(
                 row.get("direction") or "").startswith(universe + ":")]
-            evaluated = argus_sho_phase3.walk_forward_backtest(
+            evaluated = argus_market_intelligence.walk_forward_backtest(
                 universe_points, topix_prices)
             summary = {key: evaluated.get(key) for key in (
                 "hitRate5d", "falsePositiveRate5d", "confidenceInterval95",
@@ -20911,7 +20912,7 @@ def _jquants_breadth_worker_process_body(job_id):
         for universe in ("first_section", "prime", "all"):
             universe_points = [x for x in points if str(
                 x.get("direction") or "").startswith(universe + ":")]
-            evaluated = argus_sho_phase3.walk_forward_backtest(
+            evaluated = argus_market_intelligence.walk_forward_backtest(
                 universe_points, topix_prices)
             record = {"id": "bt-" + hashlib.sha256(json.dumps(
                           {"universe": universe,
@@ -21370,7 +21371,7 @@ def api_argus_admin_market_ledger_jquants_backfill():
     try:
         raw = _jquants_paginated("/equities/investor-types",
                                  {"section": "TokyoNagoya", "from": from_date, "to": to_date})
-        candidates = argus_sho_phase3.normalize_jquants_investor_rows(
+        candidates = argus_market_intelligence.normalize_jquants_investor_rows(
             raw, now_iso, "TokyoNagoya")
         existing = {(x.get("seriesId"), x.get("periodEnd"), x.get("availableFrom"), x.get("value"))
                     for x in (_MARKET_LEDGER.get("observations") or []) if isinstance(x, dict)}

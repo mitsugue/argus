@@ -159,10 +159,10 @@ class RelativeReactionAndCritiqueTests(unittest.TestCase):
     def test_relative_strength_ns_turn_and_zero_guard(self):
         left, right = bars(80, step=0.5), bars(80, step=0.15)
         result = ci.relative_strength("nikkei_sp500", left, right,
-                                      classification="sho_heuristic")
+                                      classification="argus_heuristic")
         self.assertEqual(result["status"], "live")
         self.assertGreater(result["change20Pct"], 0)
-        self.assertEqual(result["classification"], "sho_heuristic")
+        self.assertEqual(result["classification"], "argus_heuristic")
         broken = copy.deepcopy(right)
         broken[-1]["close"] = 0
         guarded = ci.relative_strength("guard", left, broken)

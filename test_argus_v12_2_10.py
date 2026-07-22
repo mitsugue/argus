@@ -728,7 +728,7 @@ def test_semantic_version_format():
     # セマンティック形式でありGit SHAをappVersionにしない。
     import re
     v = scanner._semantic_app_version()
-    assert re.fullmatch(r"12\.\d+\.\d+", v), v
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v), v
 
 
 def test_version_consistency_dynamic():

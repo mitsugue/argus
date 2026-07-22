@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Append-only SHO-inspired market ledger Phase 1 (pure, stdlib-only)."""
+"""Append-only A.R.G.U.S. Market Ledger (pure, stdlib-only)."""
 import csv
 import hashlib
 import io
@@ -333,7 +333,7 @@ def derived_history(state: Dict[str, Any], as_of: str) -> Dict[str, List[Dict[st
         for multiple in range(16, 22):
             add(_metric(f"valuation.per{multiple}_level", as_of,
                         None if eps is None else round(eps * multiple), "JPY",
-                        [nk, per], "sho_heuristic" if multiple == 21 else "derived"))
+                        [nk, per], "argus_heuristic" if multiple == 21 else "derived"))
     for nk, pbr in pbr_pairs:
         bps = None if not pbr.get("value") or pbr["value"] <= 0 or nk.get("value") is None else round(nk["value"] / pbr["value"], 2)
         add(_metric("valuation.bps", as_of, bps, "JPY", [nk, pbr]))
@@ -352,7 +352,7 @@ def derived_history(state: Dict[str, Any], as_of: str) -> Dict[str, List[Dict[st
                                              [x[1]["value"] for x in sub])
                        if values_ok else None)
                 add(_metric(f"{prefix}.ratio{days}", as_of, val, "percent",
-                            [z for pair in sub for z in pair], "sho_heuristic"))
+                            [z for pair in sub for z in pair], "argus_heuristic"))
     for rows in out.values():
         rows.sort(key=lambda x: str(x.get("asOf")))
     return out
@@ -389,7 +389,7 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                                 [prev, cur], direction, "watch",
                                 [f"二市場合計売り残が8,000億円を{'上抜け' if direction == 'up' else '下抜け'}",
                                  "閾値側で連続1週"],
-                                "sho_heuristic", detected_at, cur["availableFrom"] >= detected_at[:10]))
+                                "argus_heuristic", detected_at, cur["availableFrom"] >= detected_at[:10]))
     longs = by.get("credit.long_balance") or []
     if len(shorts) >= 5 and len(longs) >= 5:
         s4, l4 = shorts[-5:], longs[-5:]
@@ -433,7 +433,7 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                     direction_value, "info",
                     [f"{universe} 6日騰落が25日騰落を"
                      f"{'上抜け' if direction == 'short_above_medium' else '下抜け'}"],
-                    "sho_heuristic", detected_at, available >= detected_at[:10]))
+                    "argus_heuristic", detected_at, available >= detected_at[:10]))
         breadth_by_date: Dict[str, Dict[int, Dict[str, Any]]] = {}
         for days in (6, 10, 15, 25):
             for row in metric_history.get(f"{prefix}.ratio{days}", []):
@@ -452,7 +452,7 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                 points.append(_turn("BREADTH_TURN", date, available, inputs,
                                     direction_value, "watch",
                                     [f"{universe} 6/10/15/25日騰落がすべて120超"],
-                                    "sho_heuristic", detected_at,
+                                    "argus_heuristic", detected_at,
                                     available >= detected_at[:10]))
         b6_list = metric_history.get(f"{prefix}.ratio6", [])
         for prev, cur in zip(b6_list, b6_list[1:]):
@@ -474,7 +474,7 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                     direction_value, "watch",
                     [f"{universe} 6日騰落レシオが"
                      f"{'120を上抜け' if 'over_120' in threshold_direction else '80を下抜け'}"],
-                    "sho_heuristic", detected_at, available >= detected_at[:10]))
+                    "argus_heuristic", detected_at, available >= detected_at[:10]))
         for prev, cur in zip(b6_list, b6_list[1:]):
             if prev.get("value") is not None and cur.get("value") is not None and \
                     prev["value"] - cur["value"] >= BREADTH_SHARP_DROP_POINTS:
@@ -489,7 +489,7 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                                     direction_value, "watch",
                                     [f"{universe} 6日騰落が前回から"
                                      f"{prev['value'] - cur['value']:.2f}pt低下"],
-                                    "sho_heuristic", detected_at,
+                                    "argus_heuristic", detected_at,
                                     available >= detected_at[:10]))
         proxy_by_date = {x.get("periodEnd"): x for x in
                          (by.get("breadth.topixProxyClose") or [])}
@@ -525,7 +525,7 @@ def detect_turning_points(state: Dict[str, Any], as_of: str, detected_at: str) -
                     direction_value, "watch",
                     [f"{universe} " + ("指数proxy上昇・breadth悪化" if price_change > 0
                                       else "指数proxy下落・breadth改善")],
-                    "sho_heuristic", detected_at, available >= detected_at[:10]))
+                    "argus_heuristic", detected_at, available >= detected_at[:10]))
     # Rollover needs an EPS series, not a single current calculation. Preserve honesty
     # until enough daily valuation observations exist.
     vals = by.get("valuation.nikkei") or []
@@ -703,7 +703,7 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     for mid, label in (("valuation.eps", "日経平均EPS"),
                        ("valuation.bps", "日経平均BPS"),
                        ("valuation.per18_level", "PER18倍水準"),
-                       ("valuation.per21_level", "PER21倍水準(SHO参考上限)")):
+                       ("valuation.per21_level", "PER21倍水準(A.R.G.U.S.参考帯)")):
         rows = metric_history.get(mid) or []
         cur, prev = (rows[-1] if rows else None), (rows[-2] if len(rows) > 1 else None)
         values = [x["value"] for x in rows if x.get("value") is not None]
@@ -770,7 +770,7 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
                 "per21Level": per21_current, "per21RecentPeak": per21_peak,
                 "per21ChangeFromPeak": (None if per21_current is None or per21_peak is None
                                         else round(per21_current - per21_peak, 2)),
-                "labelJa": "PER21倍はSHO参考上限/高評価帯であり、絶対上限や目標株価ではありません。"},
+                "labelJa": "PER21倍はA.R.G.U.S.参考帯であり、絶対上限や目標株価ではありません。"},
             "flowCaveatJa": "海外と証券自己の反対売買は、配当期・裁定・ポジション移管等の可能性があり、フローの質は未確認です。",
             "breadthThresholdsJa": {"over120": "過熱候補", "under80": "売られすぎ候補"},
             "derivedMetrics": list(latest_metrics.values()),

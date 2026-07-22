@@ -22,7 +22,7 @@ the two current individual files use their Wednesday publication timestamps.
 |---|---|---|---|
 | Prime domestic-common breadth | J-Quants V2 historical issue master + adjusted daily close | provider update 16:30 JST; consumed from 17:00 JST | aggregate observations only |
 | All TSE domestic-common breadth | Same; Prime/Standard/Growth, historical membership | same | aggregate observations only |
-| 6/10/15/25-day ratios | Market Ledger derived from daily advances/declines | after source observations are available | `sho_heuristic`, never `validated` without walk-forward evidence |
+| 6/10/15/25-day ratios | Market Ledger derived from daily advances/declines | after source observations are available | `argus_heuristic`, never `validated` without walk-forward evidence |
 | Nikkei 225 PER/PBR | Licensed reviewed import only | source publication time | blocked from automatic fetch/display until rights review |
 
 Raw licensed J-Quants rows are processed in memory and are not written to the

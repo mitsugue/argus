@@ -175,9 +175,12 @@ def test_fe_partial_data_reasons():
     hero = _read("components", "dashboard", "HeroCard.tsx")
     assert "PARTIAL DATAの理由" in hero
     assert "解消条件" in hero
-    cc = _read("routes", "CommandCenter.tsx")
-    assert "partialReasonsJa" in cc
-    assert "moomoo側メンテナンス中" in cc
+    vm = _read("domain", "argusTodayView.ts")
+    assert "dataStatus" in vm
+    assert "要確認" in vm
+    panel = _read("components", "today", "ArgusTodayPanel.tsx")
+    assert "Data Quality" in panel
+    assert "view.dataStatus" in panel
 
 
 def test_fe_matrix_axes_and_provisional():
@@ -217,8 +220,10 @@ def test_fe_unified_stance_chip_everywhere():
     assert "stances" in ap and "統一スタンス" in ap
     intel = _read("hooks", "useAssetIntel.ts")
     assert "resolvePrimaryStance" in intel and "stanceBySymbol" in intel
-    cc = _read("routes", "CommandCenter.tsx")
-    assert "stances={stanceBySymbol}" in cc                   # Today AP
+    vm = _read("domain", "argusTodayView.ts")
+    assert "decisions" in vm and "finalAction" in vm          # Todayの単一最終判断
+    panel = _read("components", "today", "ArgusTodayPanel.tsx")
+    assert "view.finalAction" in panel
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
     assert "stanceBySymbol.get(sym)" in desk                  # Asset Deskカード
 
@@ -272,9 +277,12 @@ def test_addendum_single_event_clock():
     assert "日時がパースできる未来のイベントだけ" in clock or "パースできる" in clock
     assert "あと${days}日" in clock or "あと" in clock
     app = _read("App.tsx")
-    assert "nextUpcomingEvent" in app                # 右上Nextチップ
+    assert "nextUpcomingEvent" in app                # Today以外の右上Nextチップ
+    assert "route === 'command' ? undefined : nextEvent" in app
+    vm = _read("domain", "argusTodayView.ts")
+    assert "['RELEASED', 'RESOLVED']" in vm
+    assert "future.slice(1)" in vm and "slice(0, 3)" in vm
     cc = _read("routes", "CommandCenter.tsx")
-    assert cc.count("nextUpcomingEvent") >= 2        # import+スティッキーバー
     # 旧「countdown === 'D'先頭拾い」ロジックが残っていない
     assert "find((e) => e.countdown === 'D' || e.countdown === 'D-1')" not in cc
 

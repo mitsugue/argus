@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Deterministic Chart Intelligence / SHO Method Phase 2.
+"""Deterministic Chart Intelligence / A.R.G.U.S. Engine.
 
 Pure stdlib calculations only.  The module never performs network I/O, never
 calls an LLM, and never places an order.  Inputs are chronological or unordered
@@ -714,8 +714,8 @@ def valuation_levels(market_ledger: Optional[Dict[str, Any]], as_of: str) -> Lis
                     "inputIds": latest["inputIds"], "history": points[-1300:],
                     "labelJa": ("低評価帯" if multiple == 17 else "基準評価帯" if multiple == 18
                                 else "高評価帯" if multiple in (19, 20)
-                                else "SHO参考上限／高評価帯" if multiple == 21 else "評価水準"),
-                    "classification": "sho_heuristic" if multiple == 21 else "derived"})
+                                else "A.R.G.U.S.参考帯／高評価帯" if multiple == 21 else "評価水準"),
+                    "classification": "argus_heuristic" if multiple == 21 else "derived"})
     return out
 
 

@@ -100,7 +100,7 @@ const RelativePanel: React.FC<{ payload: ChartIntelligencePayload }> = ({ payloa
       <b>{RS_JA[key] ?? key}</b><span>5日 {row.change5Pct == null ? '—' : `${row.change5Pct.toFixed(2)}%`}</span>
       <span>20日 {row.change20Pct == null ? '—' : `${row.change20Pct.toFixed(2)}%`}</span>
       <span>{row.directionTurn ? STATUS_JA[row.directionTurn] ?? row.directionTurn : '転換未確認'}</span>
-      <small>{row.classification === 'sho_heuristic' ? 'SHO参考分類・単独判断には使用しない' : `${row.historicalPercentile ?? '—'}%ile`}</small>
+      <small>{row.classification === 'argus_heuristic' ? 'A.R.G.U.S.参考分類・単独判断には使用しない' : `${row.historicalPercentile ?? '—'}%ile`}</small>
     </div>)}</div>
     <div className="ci-rotation">{(payload.rotationMap ?? []).map((row) => <div key={row.label}>
       <b>{row.label}</b><span>5日 {row.relative5Pct == null ? '—' : `${row.relative5Pct.toFixed(1)}%`}</span>

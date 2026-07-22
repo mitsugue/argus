@@ -72,7 +72,7 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertIn("ledgerTurningPoints", body)
         self.assertIn("proxyDisclosureJa", body)
         self.assertEqual(body["relativeStrength"]["nikkei_sp500"]["classification"],
-                         "sho_heuristic")
+                         "argus_heuristic")
 
     def test_asset_chart_reuses_cached_earnings_without_provider_fetch(self):
         fake = history()
@@ -162,7 +162,7 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertIn("AI API 0", panel)
 
     def test_runtime_version_matches_release(self):
-        self.assertEqual(scanner._semantic_app_version(), "12.7.24")
+        self.assertEqual(scanner._semantic_app_version(), "13.0.0")
 
 
 if __name__ == "__main__":

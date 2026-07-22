@@ -37,7 +37,7 @@ def isolated(monkeypatch):
     scanner._ARGUS_ADMIN_TOKEN, scanner._JQUANTS_API_KEY = old_token, old_key
 
 
-def test_public_phase3_is_get_only_and_secret_safe(isolated):
+def test_public_market_intelligence_is_get_only_and_secret_safe(isolated):
     client = scanner.app.test_client()
     response = client.get("/api/argus/market-ledger")
     assert response.status_code == 200
@@ -48,6 +48,17 @@ def test_public_phase3_is_get_only_and_secret_safe(isolated):
     text = json.dumps(body)
     assert "configured-not-a-real-key" not in text
     assert client.post("/api/argus/market-ledger").status_code == 405
+
+
+def test_public_api_adapts_legacy_classification_without_mutating_raw(isolated, monkeypatch):
+    legacy = "".join(("s", "ho_heuristic"))
+    raw = {"schemaVersion": "market-ledger-v1", "asOf": "2026-07-22T00:00:00Z",
+           "summary": {}, "table": [], "turningPoints": [], "backtests": [],
+           "legacyProof": {"classification": legacy}}
+    monkeypatch.setattr(market_ledger, "public_view", lambda *_args, **_kwargs: raw)
+    body = scanner.app.test_client().get("/api/argus/market-ledger").get_json()
+    assert body["legacyProof"]["classification"] == "argus_heuristic"
+    assert raw["legacyProof"]["classification"] == legacy
 
 
 def test_jquants_backfill_requires_admin_and_defaults_to_dry_run(isolated):

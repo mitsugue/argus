@@ -177,11 +177,12 @@ const App: React.FC = () => {
         />
       }
       lastUpdated={lastUpdated}
-      nextEvent={nextEvent}
+      nextEvent={!isReview && route === 'command' ? undefined : nextEvent}
       overscrollNext={overscrollNext}
       overscrollPrev={overscrollPrev}
       pageKey={isReview ? 'review' : route}
       marketStatusLabel={marketStatusLabel}
+      hideNotifications={!isReview && route === 'command'}
     >
       {isReview ? <AIReview /> : <Active onNavigate={handleNavSelect} onNavigateToAsset={navigateToAsset} assetFocus={assetFocus} />}
     </AppShell>
