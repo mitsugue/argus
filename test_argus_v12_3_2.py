@@ -131,8 +131,13 @@ class SystemdContractTests(unittest.TestCase):
         self.assertNotIn("ARGUS_ADMIN_TOKEN=", service)
         self.assertNotIn("--token", service)
         self.assertIn("NoNewPrivileges=true", service)
+        self.assertIn("ExecStartPre=+/opt/argus/scripts/argus_build_identity.py",
+                      service)
+        self.assertIn("StateDirectory=argus-build-identity", service)
+        self.assertIn("PassEnvironment=ARGUS_TRIGGER_SOURCE", service)
         env = (ROOT / "ops/systemd/argus-mission-tick.env.example").read_text()
         self.assertIn("ARGUS_TICK_TIMEOUT_SECONDS=180", env)
+        self.assertIn("ARGUS_TRUSTED_BUILD_REF_URL=", env)
 
     def test_invoker_emits_stable_utc_window_and_no_secret(self):
         path = ROOT / "scripts/argus_mission_tick.py"
@@ -146,7 +151,7 @@ class SystemdContractTests(unittest.TestCase):
         self.assertEqual(scheduled, "2026-07-20T00:07:00Z")
         self.assertEqual(window_id, "mw-2026-07-20T00:07:00Z")
         source = path.read_text()
-        self.assertIn('"triggerSource": "ec2_systemd"', source)
+        self.assertIn('"ec2_systemd"', source)
         self.assertIn('"ARGUS_TICK_TIMEOUT_SECONDS", "180"', source)
         self.assertNotIn('print(token', source)
 
@@ -175,15 +180,21 @@ class SystemdContractTests(unittest.TestCase):
                         "finalStatus": "completed",
                     },
                     "outcomeRetry": {"evaluated": 1, "resolved": 0,
-                                     "outcomeCount": 10},
+                                     "outcomeCount": 10,
+                                     "duplicateCount": 0},
                     "soak": {"soakId": "soak-abc", "state": "running",
                              "heartbeatCount": 2},
                     "remoteJournal": {"readBackVerified": True},
+                    "costPolicy": {"automaticAiEnabled": False,
+                                   "automaticAiExecutions": 0},
                 }).encode()
 
         output = io.StringIO()
         env = {"ARGUS_ADMIN_TOKEN": "super-secret-test-value",
-               "ARGUS_TICK_MAX_ATTEMPTS": "1"}
+               "ARGUS_TICK_MAX_ATTEMPTS": "1",
+               "ARGUS_EXPECTED_BUILD_SHA": "abc1234",
+               "ARGUS_BUILD_IDENTITY_DECISION_FILE":
+               "/definitely/missing/argus-build-identity.json"}
         with mock.patch.dict(os.environ, env, clear=False), \
                 mock.patch.object(module.urllib.request, "urlopen",
                                   return_value=Response()), \
@@ -193,7 +204,27 @@ class SystemdContractTests(unittest.TestCase):
         self.assertEqual(record["status"], "success")
         self.assertEqual(record["triggerSource"], "ec2_systemd")
         self.assertTrue(record["readBackVerified"])
+        self.assertEqual(record["outcomeDuplicateCount"], 0)
+        self.assertEqual(record["automaticAiExecutions"], 0)
         self.assertNotIn("super-secret-test-value", output.getvalue())
+
+    def test_stale_pin_soak_is_preserved_as_interrupted_history(self):
+        decision = runtime.soak_restore_decision(
+            persisted={
+                "soakId": "soak-old", "buildSha": "abc1234",
+                "startedAt": "2026-07-22T06:00:00Z",
+                "heartbeats": [
+                    {"healthStatus": "build_mismatch"},
+                    {"healthStatus": "ok"}],
+                "lastHeartbeat": {"healthStatus": "ok"}},
+            current_build_sha="def5678",
+            boot_iso="2026-07-22T07:00:00Z")
+        previous = decision["previousSoakSummary"]
+        self.assertEqual(previous["status"], "interrupted")
+        self.assertEqual(previous["failureClass"],
+                         "scheduler_configuration_mismatch")
+        self.assertEqual(previous["reason"],
+                         "stale_ec2_expected_build_sha")
 
     def test_version_contract(self):
         package = json.loads((ROOT / "web/package.json").read_text())

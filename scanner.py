@@ -17658,10 +17658,23 @@ def api_argus_admin_missions_tick():
                     "outcomeRetry": {
                         "evaluated": outcome_retry_candidates,
                         "resolved": outcome_resolved_this_tick,
-                        "outcomeCount": len(_OUTCOME_LEDGER)},
+                        "outcomeCount": len(_OUTCOME_LEDGER),
+                        "duplicateCount": (len([
+                            row for row in _OUTCOME_LEDGER
+                            if isinstance(row, dict) and row.get("forecastId")
+                        ]) - len({str(row.get("forecastId"))
+                                  for row in _OUTCOME_LEDGER
+                                  if isinstance(row, dict)
+                                  and row.get("forecastId")}))},
                     "soakHeartbeatAdded": heartbeat_added,
                     "soak": soak_state,
                     "remoteJournal": dict(_REMOTE_CYCLE),
+                    "costPolicy": {
+                        "mode": _COST_POLICY.get("mode"),
+                        "automaticAiEnabled": bool(
+                            _COST_POLICY.get("automaticAiEnabled")),
+                        "automaticAiExecutions": (0 if not _COST_POLICY.get(
+                            "automaticAiEnabled") else None)},
                     "ops": argus_scheduler.ops_summary(_MISSIONS)})
 
 

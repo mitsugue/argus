@@ -1,4 +1,4 @@
-# ARGUS Operational State Durability Map (v13.0.0)
+# ARGUS Operational State Durability Map (v13.0.1)
 
 | ストア | 分類 | 生存経路 |
 |---|---|---|
@@ -21,3 +21,6 @@
   append-onlyで保持しつつ`archiveBackfillStatus=deferred`、`coreRequired=false`とする。
   追加メタデータは後方互換なoptional fieldのためdurable-v3／Market Ledger v1の
   schema versionは変更しない。
+- EC2 build identityの確認済みSHAはdurable-v3 payloadとは分離したroot-owned
+  stateへ原子的に保存する。追加情報は既存Soak/Journalのoptional metadataであり、
+  durable-v3の既存reader・integrity hash契約を変更しない。
