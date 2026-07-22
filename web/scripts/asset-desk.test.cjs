@@ -185,6 +185,17 @@ check('D9 watch stocks then funds then crypto',
   && desk.deskRank(ri({ genre: 'crypto' })) === 9);
 // 非保有のEXIT/DEFENDは最上位に来ない(保有条件つき)
 check('D10 non-held EXIT not rank0', desk.deskRank(ri({ signalCode: 'EXIT' })) !== 0);
+const flowPanel = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'assetDesk', 'AssetFlowPanel.tsx'), 'utf8');
+const chartPanel = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'chart', 'ChartIntelligencePanel.tsx'), 'utf8');
+const researchPanel = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'assetDesk', 'AssetResearchPanel.tsx'), 'utf8');
+check('D10b individual supply/demand numeric evidence remains visible',
+  ['marginBuyingBalance', 'marginSellingBalance', 'lendingBorrowingRatio', 'marginBalanceChange',
+    'volumeTrend', 'closeLocation', 'supplyDemandRank'].every((key) => flowPanel.includes(key)));
+check('D10bb individual raw volume remains visible', flowPanel.includes('d.strat.volume'));
+check('D10c individual turning points remain in Chart Intelligence', chartPanel.includes('最新転換点')
+  && chartPanel.includes('turningPoints'));
+check('D10d historical outcomes remain in Research & Notes', researchPanel.includes('outcomeReturn5d')
+  && researchPanel.includes('結果待ち'));
 // 順序不変: 入力順を入れ替えても同一出力
 { const items = [
     { rankInput: ri({ symbol: 'CCCC', genre: 'crypto' }) },

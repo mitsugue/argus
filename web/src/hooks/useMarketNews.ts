@@ -22,6 +22,8 @@ export interface MarketNewsItem {
   tier?: 'wire' | 'aggregator' | 'official';
   /** corroboration level (v10.170): official | corroborated (>=2 indep families) | single. */
   corroboration?: 'official' | 'corroborated' | 'single';
+  /** Public instrument identifiers inferred from the headline; never owner holdings. */
+  linkedSymbols?: string[];
 }
 
 export interface MarketNews {

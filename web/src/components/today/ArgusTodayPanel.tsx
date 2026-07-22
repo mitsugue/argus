@@ -17,6 +17,16 @@ const ACTION_TONE = { BUY: 'var(--value-positive)', WAIT: 'var(--amber, #fbbf24)
 const mark = (yes: boolean) => yes ? '○' : '×';
 const fmt = (v: number) => v >= 1000 ? v.toLocaleString('ja-JP', { maximumFractionDigits: 1 }) : v.toFixed(2);
 const fmtMove = (v: number, suffix = '') => `${fmt(v)}${suffix}`;
+const shortDate = (value?: string | null) => value ? value.slice(5).replace('-', '/') : '';
+const moveTone = (value: number, previous?: number | null) => previous == null || value === previous
+  ? 'flat' : value > previous ? 'up' : 'down';
+
+const Sparkline: React.FC<{ values: number[] }> = ({ values }) => {
+  if (values.length < 2) return null;
+  const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
+  const points = values.map((value, index) => `${index / (values.length - 1) * 42},${12 - (value - lo) / span * 10}`).join(' ');
+  return <svg className="at-spark" viewBox="0 0 42 14" aria-hidden><polyline points={points} /></svg>;
+};
 
 const ProjectionChart: React.FC<{ projection: TodayProjection }> = ({ projection }) => {
   const all = projection.history.map((point) => point.value).concat([
@@ -27,6 +37,8 @@ const ProjectionChart: React.FC<{ projection: TodayProjection }> = ({ projection
   const y = (value: number) => 6 + (hi - value) / span * 70;
   const path = projection.history.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(point.value).toFixed(1)}`).join(' ');
   return <div className="at-projection">
+    <div className="at-proj-heading"><b>{projection.label}｜{projection.horizon}見通し</b>
+      <span>{shortDate(projection.asOf)}終値・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測5日 · {projection.quoteState}</span></div>
     <svg viewBox="0 0 100 82" role="img" aria-label={`${projection.label} 実績と5営業日シナリオ`}>
       <defs><linearGradient id="at-band" x1="0" x2="1"><stop offset="0" stopColor="#facc15" stopOpacity=".1"/><stop offset="1" stopColor="#facc15" stopOpacity=".35"/></linearGradient></defs>
       <line x1="5" x2="97" y1={y(projection.upside)} y2={y(projection.upside)} className="at-proj-up" />
@@ -34,6 +46,7 @@ const ProjectionChart: React.FC<{ projection: TodayProjection }> = ({ projection
       <line x1="72" x2="97" y1={y(projection.invalidation)} y2={y(projection.invalidation)} className="at-proj-inv" />
       <rect x="72" width="25" y={y(projection.baseHigh)} height={Math.max(2, y(projection.baseLow) - y(projection.baseHigh))} fill="url(#at-band)" />
       <path d={path} className="at-proj-actual" />
+      <line x1="74" x2="74" y1="3" y2="78" className="at-proj-boundary" />
       <circle cx="74" cy={y(projection.current)} r="2.1" className="at-proj-current" />
       <line x1="74" x2="97" y1={y(projection.current)} y2={y((projection.baseLow + projection.baseHigh) / 2)} className="at-proj-base" />
     </svg>
@@ -70,8 +83,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onNavigate, onO
           onClick={() => onMode(mode)}>{mode}</button>)}
         <span>SELECTED {view.selectedMarket}</span>{view.globalRisk && <em>GLOBAL {view.globalRisk}</em>}
       </div>
-      {view.marketMoves.length > 0 && <div className="at-index-strip" aria-label="主要指数現在値">
-        {view.marketMoves.slice(0, 4).map((move) => <div key={move.id}><span>{move.label}</span><b>{fmtMove(move.value, move.suffix)}</b><em>{move.directionLabel ?? ''}</em></div>)}
+      {view.indexMoves.length > 0 && <div className="at-index-strip" aria-label="主要指数現在値">
+        {view.indexMoves.map((move) => <div key={move.id} className={`is-${moveTone(move.value, move.previous)}`}>
+          <span title={move.label}>{move.label}</span><b>{fmtMove(move.value, move.suffix)}</b>
+          <Sparkline values={(move.history ?? []).map((point) => point.value)} />
+          <em>{move.directionLabel ?? ''} · {move.status ?? 'close'} {shortDate(move.asOf)}</em></div>)}
       </div>}
       <div className="at-call">
         <strong style={{ color: ACTION_TONE[view.finalAction] }}>{view.finalAction}</strong>
@@ -84,7 +100,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onNavigate, onO
       <div className="at-kpis"><span>確度 <b>{view.projection?.confidenceLabel ?? (view.confidence == null ? '未算出' : Math.round(view.confidence * 100))}</b></span>
         <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span></div>
       {view.factors.length > 0 && <div className="at-factors">{view.factors.map((factor) =>
-        <span key={factor.key}>{factor.key} <b>{factor.state}</b></span>)}</div>}
+        <span key={factor.key} className={factor.state === '↑' || factor.state === 'LOW' ? 'is-positive'
+          : factor.state === '↓' || factor.state === 'HIGH' ? 'is-negative' : 'is-neutral'}>{factor.key} <b>{factor.state}</b></span>)}</div>}
       <div className="at-perms"><span>新規 <b>{mark(view.permissions.newEntry)}</b></span><span>買増 <b>{mark(view.permissions.add)}</b></span><span>保有 <b>{mark(view.permissions.hold)}</b></span></div>
       {(view.conciseAction || view.conciseAvoid) && <div className="at-concise">
         {view.conciseAction && <span><b>やる</b>{view.conciseAction}</span>}
@@ -106,17 +123,22 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onNavigate, onO
       </div>}
     </article>
 
-    {view.marketMoves.length > 4 && <Compact title="MARKET"><div className="at-rows">
-      {view.marketMoves.slice(4).map((move) => <div key={move.id}><b>{move.label}</b><span>{fmtMove(move.value, move.suffix)}</span><em>{move.directionLabel ?? '→'}</em></div>)}
+    {view.macroMoves.length > 0 && <Compact title="MACRO"><div className="at-rows">
+      {view.macroMoves.map((move) => <div key={move.id}><b>{move.label}</b><span>{fmtMove(move.value, move.suffix)}</span><em>{move.directionLabel ?? '→'} · {shortDate(move.asOf)}</em></div>)}
     </div></Compact>}
 
-    {view.positioning.length > 0 && <Compact title={`${view.selectedMarket} 需給`}><div className="at-tags">
-      {view.positioning.map((row) => <span key={row.key}>{row.label} <b>{row.value}</b></span>)}
+    {view.positioning.length > 0 && <Compact title={`${view.selectedMarket} 需給`} className="at-positioning"
+      onActivate={view.selectedMarket === 'JP' ? () => {
+        try { sessionStorage.setItem('argus.scrollTo', 'market-ledger'); } catch { /* best effort */ }
+        onNavigate('regime');
+      } : undefined}><div className="at-position-rows">
+      {view.positioning.map((row) => <div key={row.key} className={`is-${row.tone ?? 'neutral'}`}>
+        <b>{row.label}</b><span>{row.value}</span>{row.detail && <em>{row.detail}</em>}</div>)}
     </div></Compact>}
 
-    <Compact title="重大ニュース"><div className="at-news">
-      {view.news.length ? view.news.map((row) => <a key={row.id} href={row.url} target="_blank" rel="noreferrer"><b>{row.titleJa}</b><span>{row.source}</span></a>) : <p className="at-quiet">判断変更につながる重大ニュースなし</p>}
-    </div></Compact>
+    {view.news.length ? <Compact title="重大ニュース"><div className="at-news">
+      {view.news.map((row) => <a key={row.id} href={row.url} target="_blank" rel="noreferrer"><b>{row.titleJa}</b><span>{row.source}</span></a>)}
+    </div></Compact> : <div className="at-news-zero"><b>重大ニュース</b><span>0</span></div>}
 
     {view.holdingsReview.length > 0 && <Compact title="保有確認"><div className="at-rows">
       {view.holdingsReview.map((row) => <button type="button" key={row.symbol} onClick={() => onOpenAsset?.(row.symbol)}>
@@ -125,13 +147,19 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onNavigate, onO
     </div></Compact>}
 
     {view.reviewSummary && <section className="at-review card">
-      <div><b>前回 {view.reviewSummary.action}</b><span>{view.reviewSummary.marketLabel} {view.reviewSummary.returnPct == null ? '変化未算出' : `${view.reviewSummary.returnPct >= 0 ? '+' : ''}${view.reviewSummary.returnPct.toFixed(2)}%`}</span></div>
-      <strong>評価：{view.reviewSummary.evaluationJa}</strong>
+      <div><b>前回 {view.reviewSummary.action}</b><span>{view.reviewSummary.marketLabel} · {view.reviewSummary.horizon}</span></div>
+      {view.reviewSummary.matured && view.reviewSummary.returnPct != null
+        ? <strong>実績 {view.reviewSummary.returnPct > 0 ? '+' : ''}{view.reviewSummary.returnPct.toFixed(2)}% · 評価：{view.reviewSummary.evaluationJa}</strong>
+        : <strong>答え合わせ待ち</strong>}
     </section>}
   </div>;
 };
 
-const Compact: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) =>
-  <section className="at-compact card"><h3>{title}</h3>{children}</section>;
+const Compact: React.FC<{ title: string; children: React.ReactNode; className?: string;
+  onActivate?: () => void }> = ({ title, children, className = '', onActivate }) =>
+  <section className={`at-compact card ${className}`} role={onActivate ? 'link' : undefined}
+    tabIndex={onActivate ? 0 : undefined} onClick={onActivate}
+    onKeyDown={onActivate ? (event) => { if (event.key === 'Enter' || event.key === ' ') onActivate(); } : undefined}>
+    <h3>{title}{onActivate && <span aria-hidden>↗</span>}</h3>{children}</section>;
 
 export default ArgusTodayPanel;
