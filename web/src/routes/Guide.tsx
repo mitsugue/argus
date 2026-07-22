@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.0.1', 'EC2 schedulerのbuild identityをGitHub mainとbackend healthの独立照合へ変更。deploy移行grace・確認済みSHA復元・明示的失敗分類で静的pinの取り残しを防止。'],
   ['v13.0.0', 'A.R.G.U.S. Engineへ名称と判断を統一。Todayを市場別の単一BUY／WAIT／SELL、NEXT EVENT、簡潔な需給・保有確認へ削減。自動AIと自動売買は0。'],
   ['v12.7.24', '本番実測に合わせmission tickの有界HTTP timeoutを180秒へ統一。'],
   ['v12.7.23', '大容量durable snapshotを一時ファイルへstreamし、cold-boot時のメモリを制限。'],

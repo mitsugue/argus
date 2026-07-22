@@ -15,6 +15,7 @@ import urllib.request
 UTC = dt.timezone.utc
 OFFSET_MINUTE = 7
 INTERVAL_SECONDS = 30 * 60
+IDENTITY_DECISION_FILE = "/run/argus-build-identity/decision.json"
 
 
 def _window(now: dt.datetime) -> tuple[str, str]:
@@ -42,6 +43,8 @@ def _safe_response(body: object) -> dict[str, object]:
     outcome = outcome if isinstance(outcome, dict) else {}
     remote = data.get("remoteJournal")
     remote = remote if isinstance(remote, dict) else {}
+    cost = data.get("costPolicy")
+    cost = cost if isinstance(cost, dict) else {}
     return {
         "businessStatus": data.get("status"),
         "reason": data.get("reason"),
@@ -53,12 +56,33 @@ def _safe_response(body: object) -> dict[str, object]:
         "outcomeEvaluated": outcome.get("evaluated"),
         "outcomeResolved": outcome.get("resolved"),
         "outcomeCount": outcome.get("outcomeCount"),
+        "outcomeDuplicateCount": outcome.get("duplicateCount"),
         "soakId": soak.get("soakId"),
         "soakState": soak.get("state"),
         "heartbeatCount": soak.get("heartbeatCount"),
         "readBackVerified": remote.get("readBackVerified"),
         "remoteCommitSha": remote.get("remoteCommitSha"),
+        "remoteErrorClass": remote.get("errorClass"),
+        "automaticAiEnabled": cost.get("automaticAiEnabled"),
+        "automaticAiExecutions": cost.get("automaticAiExecutions"),
     }
+
+
+def _identity_decision() -> dict[str, object]:
+    path = os.environ.get(
+        "ARGUS_BUILD_IDENTITY_DECISION_FILE", IDENTITY_DECISION_FILE)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else {}
+    except (FileNotFoundError, PermissionError, OSError, json.JSONDecodeError):
+        # Backward-compatible bootstrap for a not-yet-upgraded unit.  A static
+        # pin is never preferred once the independent preflight is installed.
+        expected = os.environ.get("ARGUS_EXPECTED_BUILD_SHA", "").strip()
+        return ({"status": "verified", "identitySource": "static_bootstrap",
+                 "expectedBuildSha": expected} if expected else
+                {"status": "failure", "errorClass":
+                 "build_identity_decision_missing"})
 
 
 def main() -> int:
@@ -73,13 +97,39 @@ def main() -> int:
         "ARGUS_TICK_TIMEOUT_SECONDS", "180"))))
     attempts = min(2, max(1, int(os.environ.get(
         "ARGUS_TICK_MAX_ATTEMPTS", "2"))))
+    identity = _identity_decision()
+    identity_status = str(identity.get("status") or "failure")
+    identity_log = {
+        "identitySource": identity.get("identitySource"),
+        "errorClass": identity.get("errorClass"),
+        "expectedBuildSha": (str(identity.get("expectedBuildSha"))[:7]
+                              if identity.get("expectedBuildSha") else None),
+        "actualBuildSha": (str(identity.get("actualBuildSha"))[:7]
+                            if identity.get("actualBuildSha") else None),
+        "buildMismatch": identity.get("buildMismatch"),
+        "transitionElapsedSeconds": identity.get(
+            "transitionElapsedSeconds"),
+    }
+    if identity_status == "expected_skip":
+        _emit(status="expected_skip", **identity_log)
+        return 0
+    if identity_status != "verified":
+        _emit(status="failure", **identity_log)
+        return 1
+
     scheduled_for, window_id = _window(dt.datetime.now(tz=UTC))
+    requested_source = os.environ.get(
+        "ARGUS_TRIGGER_SOURCE", "ec2_systemd").strip().lower()
+    diagnostic = requested_source in ("diagnostic", "manual")
     payload: dict[str, object] = {
-        "triggerSource": "ec2_systemd",
+        "triggerSource": ("manual" if diagnostic else "ec2_systemd"),
         "scheduledFor": scheduled_for,
         "missionWindowId": window_id,
     }
-    expected_sha = os.environ.get("ARGUS_EXPECTED_BUILD_SHA", "").strip()
+    if diagnostic:
+        payload.pop("missionWindowId", None)
+        payload["runId"] = "diagnostic-" + str(time.time_ns())
+    expected_sha = str(identity.get("expectedBuildSha") or "").strip()
     if expected_sha:
         payload["expectedBuildSha"] = expected_sha
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -115,7 +165,8 @@ def main() -> int:
                 status=("success" if business_status != "degraded" else "degraded"),
                 httpStatus=status_code, attempt=attempt,
                 elapsedMs=round((time.monotonic() - started) * 1000),
-                **safe,
+                invocation=("diagnostic" if diagnostic else "natural"),
+                **identity_log, **safe,
             )
             return 0 if business_status != "degraded" else 2
         except urllib.error.HTTPError as exc:

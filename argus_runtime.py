@@ -169,13 +169,26 @@ def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
                 "ownerReadableJa": ("同一SHA再起動 — soak継続+中断を記録"
                                     + ("(検証済み復旧)" if verified
                                        else "(未検証中断 — 隠さない)"))}
+    rows = [row for row in (persisted.get("heartbeats") or [])
+            if isinstance(row, dict)]
+    last_heartbeat = persisted.get("lastHeartbeat")
+    if isinstance(last_heartbeat, dict):
+        rows.append(last_heartbeat)
+    stale_pin = any(row.get("healthStatus") == "build_mismatch"
+                    for row in rows)
+    previous_status = "interrupted" if stale_pin else "superseded"
+    previous_reason = ("stale_ec2_expected_build_sha" if stale_pin
+                       else "v13_product_rebuild")
+    previous_failure = ("scheduler_configuration_mismatch" if stale_pin
+                        else None)
     return {"action": "new_soak",
             "previousSoakSummary": {"soakId": persisted.get("soakId"),
                                     "buildSha": p_sha or "unknown",
                                     "startedAt": persisted.get("startedAt"),
                                     "inherited": False,
-                                    "status": "superseded",
-                                    "reason": "v13_product_rebuild",
+                                    "status": previous_status,
+                                    "failureClass": previous_failure,
+                                    "reason": previous_reason,
                                     "supersededBy": current_build_sha},
             "ownerReadableJa": ("build SHAが異なる/不明 — 旧soak時計を継承しない"
                                 "(build-scoped soak)")}
@@ -280,6 +293,7 @@ def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
     reference = healthy_fresh[-1] if healthy_fresh else last
     blocker = None
     failure_class = None
+    failure_reason = None
     if not started or last is None:
         state = "not_started"
         blocker = "有効なheartbeat未記録"
@@ -293,6 +307,11 @@ def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
         state = "interrupted"
         blocker = "過去の未検証中断（成功へ書き換えない）"
         failure_class = "application_failure"
+    elif reference.get("healthStatus") == "build_mismatch":
+        state = "interrupted"
+        blocker = "EC2 schedulerの期待build SHAがbackendと不一致"
+        failure_class = "scheduler_configuration_mismatch"
+        failure_reason = "stale_ec2_expected_build_sha"
     elif reference.get("healthStatus") != "ok" or \
             reference.get("readyStatus") != "ready":
         state = "interrupted"
@@ -350,13 +369,16 @@ def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
         "interrupted": "継続稼働を証明できない重大な空白があります。",
         "completed": f"{required_hours}時間の継続性証拠を確認済み",
     }[state]
-    return {"state": state, "heartbeatCount": len(rows),
+    return {"soakId": soak.get("soakId"),
+            "buildSha": soak.get("buildSha"),
+            "state": state, "heartbeatCount": len(rows),
             "lastHeartbeatAt": last.get("observedAt") if last else None,
             "lastHeartbeatSource": last.get("source") if last else None,
             "lastHeartbeat": last, "elapsedHours": elapsed or 0,
             "maximumEvidenceGapSeconds": int(max_evidence_gap),
             "blockerJa": blocker, "ownerReadableJa": owner,
             "failureClass": failure_class,
+            "reason": failure_reason,
             "warningSources": warning_sources,
             "warningSource": (warning_sources[0] if len(warning_sources) == 1
                               else None),

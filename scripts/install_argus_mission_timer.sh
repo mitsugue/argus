@@ -7,6 +7,10 @@ if [[ ! -f /etc/argus-bridge.env ]]; then
   exit 1
 fi
 sudo install -d -m 0755 "${ROOT}/scripts"
+sudo install -d -o root -g root -m 0700 /var/lib/argus-build-identity
+sudo install -d -o root -g root -m 0755 /run/argus-build-identity
+sudo install -m 0755 scripts/argus_build_identity.py \
+  "${ROOT}/scripts/argus_build_identity.py"
 sudo install -m 0755 scripts/argus_mission_tick.py \
   "${ROOT}/scripts/argus_mission_tick.py"
 sudo install -m 0755 scripts/check_argus_mission_timer.sh \
