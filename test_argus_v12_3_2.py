@@ -116,6 +116,15 @@ class SoakSourceIndependenceTests(unittest.TestCase):
                 current_build_sha="abc1234")
             self.assertEqual(state["failureClass"], expected)
 
+    def test_manual_diagnostic_is_not_soak_evidence(self):
+        heartbeat = self._heartbeat(
+            source="manual", expected="2026-07-20T00:07:00Z",
+            observed="2026-07-20T00:07:02Z")
+        soak = {"soakId": "soak-final", "buildSha": "abc1234",
+                "startedAt": "2026-07-20T00:07:02Z", "heartbeats": []}
+        self.assertFalse(runtime.append_soak_heartbeat(soak, heartbeat))
+        self.assertEqual(soak["heartbeats"], [])
+
 
 class SystemdContractTests(unittest.TestCase):
     def test_timer_contract(self):

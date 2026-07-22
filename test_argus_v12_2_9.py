@@ -217,7 +217,8 @@ def test_tick_starts_build_scoped_soak(monkeypatch):
     scanner._OPS_JOURNAL.clear()
     scanner._OPS_SEQ.clear()
     with scanner.app.test_client() as c:
-        c.post("/api/argus/admin/missions/tick", json={})
+        c.post("/api/argus/admin/missions/tick",
+               json={"triggerSource": "ec2_systemd"})
     assert scanner._SOAK["buildSha"] == "abc1234"
     assert scanner._SOAK["startedAt"] is not None
     assert rt._ep(scanner._SOAK["startedAt"]) >= \
