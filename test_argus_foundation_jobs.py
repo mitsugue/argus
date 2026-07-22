@@ -7,7 +7,7 @@ import pytest
 
 import argus_foundation_jobs as jobs
 import argus_market_ledger as ledger
-import argus_sho_phase3 as sho
+import argus_market_intelligence as intelligence
 
 
 def _master(code, market, name="会社"):
@@ -118,7 +118,7 @@ def test_market_ledger_two_universes_and_legacy_restore():
     assert imported["ok"]
     history = ledger.derived_history(imported["state"], "2026-07-20T00:00:00Z")
     assert history["breadth.prime.ratio25"][-1]["value"] > 120
-    assert history["breadth.all.ratio6"][-1]["classification"] == "sho_heuristic"
+    assert history["breadth.all.ratio6"][-1]["classification"] == "argus_heuristic"
     legacy = ledger.normalize_state({"schemaVersion": "argus-market-ledger-v1",
                                      "observations": []})
     assert legacy["schemaVersion"] == "argus-market-ledger-v1"
@@ -237,7 +237,7 @@ def test_walk_forward_has_no_future_leakage_and_stays_heuristic():
     signals = [{"id": "s1", "effectiveFrom": "2026-06-01",
                 "availableFrom": "2026-06-01T17:00:00+09:00",
                 "detectedAt": "2026-06-01T17:00:00+09:00"}]
-    result = sho.walk_forward_backtest(signals, prices)
+    result = intelligence.walk_forward_backtest(signals, prices)
     assert result["noFutureLeakage"] is True
     assert result["classification"] == "insufficient_data"
 

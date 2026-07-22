@@ -50,7 +50,7 @@ def test_new_sha_cannot_inherit_old_soak():
     assert d["action"] == "new_soak"
     assert d["previousSoakSummary"]["inherited"] is False
     assert d["previousSoakSummary"]["status"] == "superseded"
-    assert d["previousSoakSummary"]["reason"] == "v12_final_closeout_release"
+    assert d["previousSoakSummary"]["reason"] == "v13_product_rebuild"
     assert d["previousSoakSummary"]["supersededBy"] == "2222222"
     # 旧形式(buildShaなし=v12.2.8本番形状)も継承しない — 23:23欠陥の根治
     d2 = rt.soak_restore_decision(

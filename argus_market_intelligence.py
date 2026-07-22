@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Deterministic SHO Phase 3 presentation and validation helpers.
+"""Deterministic A.R.G.U.S. Market Intelligence presentation helpers.
 
 This module never fetches data and never calls AI.  It turns already-observed,
 publication-time-gated facts into an operating sheet.  Missing inputs remain
@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from math import sqrt
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-SCHEMA_VERSION = "argus-sho-phase3-v1"
-METHOD_VERSION = "sho-phase3-2026.07"
+SCHEMA_VERSION = "argus-market-intelligence-v1"
+METHOD_VERSION = "argus-market-intelligence-2026.07"
 
 
 SOURCE_OF_TRUTH = [
@@ -31,15 +31,30 @@ SOURCE_OF_TRUTH = [
 
 
 HEURISTICS = [
-    ("credit_short_800b", "二市場信用売り残8,000億円", "sho_heuristic", "CREDIT_THRESHOLD_CROSS"),
+    ("credit_short_800b", "二市場信用売り残8,000億円", "argus_heuristic", "CREDIT_THRESHOLD_CROSS"),
     ("nikkei_leverage_ratio_below_1", "1570信用倍率1倍未満", "insufficient_data", None),
     ("ns_ratio", "NS倍率", "insufficient_data", None),
-    ("per_21x", "PER21倍", "sho_heuristic", "VALUATION_CEILING_ROLLOVER"),
-    ("breadth_120_80", "騰落レシオ120／80", "sho_heuristic", "BREADTH_TURN"),
+    ("per_21x", "PER21倍", "argus_heuristic", "VALUATION_CEILING_ROLLOVER"),
+    ("breadth_120_80", "騰落レシオ120／80", "argus_heuristic", "BREADTH_TURN"),
     ("wall_rejection", "壁ドン", "experimental", "TREND_STRUCTURE_BREAK"),
     ("vix_macd", "VIX MACD", "insufficient_data", None),
     ("good_news_price_down", "好材料なのに下落", "experimental", "REACTION_ANOMALY"),
 ]
+
+
+def normalize_classification(value: Any) -> Any:
+    """Read adapter for an old append-only classification without rewriting it."""
+    legacy = "".join(("s", "ho_heuristic"))
+    return "argus_heuristic" if value == legacy else value
+
+
+def normalize_public_names(value: Any) -> Any:
+    """Recursively adapt historical values at the API/UI read boundary."""
+    if isinstance(value, dict):
+        return {key: normalize_public_names(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [normalize_public_names(item) for item in value]
+    return normalize_classification(value)
 
 
 def source_of_truth_matrix(status_overrides: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:

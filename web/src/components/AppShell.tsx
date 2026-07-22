@@ -49,6 +49,8 @@ interface Props {
   pageKey?: string;
   /** Exchange-calendar-first market status; never a hard-coded global open flag. */
   marketStatusLabel?: string;
+  /** Today keeps notification processing but moves critical output to Attention. */
+  hideNotifications?: boolean;
 }
 
 const IMPACT_COLOR: Record<RiskLevel, string> = {
@@ -78,7 +80,7 @@ function formatDaysAway(days: number): string {
 
 // Slim header (brand + next event + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
-export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey, marketStatusLabel }) => {
+export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey, marketStatusLabel, hideNotifications = false }) => {
   const [notifOpen, setNotifOpen] = React.useState(false);
   const [notifCounts, setNotifCounts] = React.useState({ total: 0, critical: 0, high: 0 });
   React.useEffect(() => {
@@ -243,7 +245,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
         {/* v11.14.0: 通知ベル(端末内通知センター・変化検知のみ・売買指示なし) */}
         {(() => null)()}
         <div className="shell__meta">
-          <button type="button" aria-label="通知" onClick={() => setNotifOpen((v) => !v)}
+          {!hideNotifications && <button type="button" aria-label="通知" onClick={() => setNotifOpen((v) => !v)}
                   style={{ position: 'relative', background: 'transparent', border: 'none',
                            cursor: 'pointer', fontSize: 15, color: 'var(--text-sub)', padding: '0 6px' }}>
             🔔
@@ -255,7 +257,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
                 {notifCounts.total > 9 ? '9+' : notifCounts.total}
               </span>
             )}
-          </button>
+          </button>}
           {nextEvent && (
             <button
               className="shell__next-event"
@@ -276,7 +278,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
           </span>
         </div>
       </header>
-      {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
+      {!hideNotifications && notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       <div className="shell__body">
         {sidebar}
         <main className="shell__main" ref={mainRef}>

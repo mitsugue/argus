@@ -81,7 +81,7 @@ export const MarketLedgerPanel: React.FC = () => {
     {loading && !ledger && <div className="card ml-empty">市場履歴台帳を読み込み中…</div>}
     {ledger && <>
       <div className="card ml-ops-head">
-        <div><b>SHO DAILY OPERATING SHEET</b><span>Phase 3 · deterministic · 16-point review</span></div>
+        <div><b>DAILY MARKET SHEET</b><span>A.R.G.U.S. Market Intelligence · deterministic · 16-point review</span></div>
         <ol>{ledger.phase3.sections.map((s) => <li key={s.order} className={s.status === 'available' ? 'is-live' : undefined}>
           <span>{s.order}</span>{s.name}
         </li>)}</ol>
@@ -124,7 +124,7 @@ export const MarketLedgerPanel: React.FC = () => {
       <div className="card ml-timeline" id="market-ledger-turning-points"><h3>TURNING POINT TIMELINE</h3>
         {points.length ? points.slice(0, 30).map((p) => <div className="ml-timeline__row" key={p.id}>
           <time>{p.effectiveFrom}</time><b>{p.facts.join(' / ')}</b><span>{p.detectionMode === 'live' ? 'ライブ検出' : '事後検出'}</span>
-          <small>{p.classification === 'sho_heuristic' ? 'SHO経験則・単独売買判断には使用しない' : '複合判断の確認材料'} · その後: 未評価</small>
+          <small>{p.classification === 'argus_heuristic' ? 'A.R.G.U.S.経験則・単独売買判断には使用しない' : '複合判断の確認材料'} · その後: 未評価</small>
         </div>) : <p className="ml-empty">入力データ不足のため転換点はまだありません。</p>}
       </div>
       <div className="ml-phase3-grid">
@@ -138,7 +138,7 @@ export const MarketLedgerPanel: React.FC = () => {
           {ledger.phase3.decisionChangeConditions.map((row) => <div key={row.type}><b>{row.type}</b><span>{row.conditionJa}</span></div>)}
         </div>
       </div>
-      <div className="card ml-rules"><h3>SHO RULE CARDS</h3><div>
+      <div className="card ml-rules"><h3>RULE CARDS</h3><div>
         {ledger.heuristics.map((rule) => <article key={rule.ruleId}><b>{rule.ruleName}</b>
           <span>{rule.classification} · n={rule.sampleSize}</span><small>{formatOutcomeSummary(rule.outcomeSummary)} · {rule.methodVersion}</small>
         </article>)}

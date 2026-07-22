@@ -1,4 +1,4 @@
-/* V12.2.12 — Asset Desk(個別銘柄の正本ページ)。カード内部はuac-*/asset-*の
+/* V12.2.12 — Asset Desk(個別銘柄の正本ページ)。カード内部はuac-/asset- prefixesの
    既存スタイルを再利用し、ここでは閉じたカードのヘッダ行(ad-*)とリスト枠のみ。 */
 
 .ad-card { position: relative; }
