@@ -98,12 +98,14 @@ def test_deep_link_uses_app_state_not_only_event():
     assert "750" in desk                             # 遅延ロード後のsettle再固定
 
 
-def test_deep_link_four_sources():
+def test_today_holding_deep_link_survives_product_reduction():
     cc = _read("routes", "CommandCenter.tsx")
     assert "onOpenAsset={(symbol) => onNavigateToAsset?.(symbol)}" in cc
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
-    # Today縮約後も、保有注意と推奨アクションの両方からAsset Deskへ遷移できる。
-    assert panel.count("onOpenAsset?.(") >= 2
+    # Product Intentでは無関係な新規推奨をTodayから外す。保有確認からの
+    # Asset Desk deep-linkは維持し、推奨候補の詳細はAsset Deskへ集約する。
+    assert panel.count("onOpenAsset?.(") >= 1
+    assert "view.recommendations" not in panel
     # 未登録銘柄は捏造スクロールしない
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
     assert "未登録銘柄" in desk

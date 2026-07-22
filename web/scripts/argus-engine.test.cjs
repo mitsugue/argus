@@ -10,7 +10,7 @@ require.extensions['.ts'] = (mod, filename) => {
   mod._compile(output, filename);
 };
 const { synthesizeArgusDecision, finalActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
-const { buildArgusTodayView, selectAutoMarket } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
+const { buildArgusTodayView, buildTodayProjection, selectAutoMarket } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
 let failed = 0;
 function check(name, condition) { if (condition) console.log(`  ok  ${name}`); else { failed++; console.error(`FAIL  ${name}`); } }
 
@@ -44,12 +44,11 @@ const view = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'), select
   baseSignal: 'ENTER', jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8, dataQuality: 'LIVE',
   events: [1,2,3,4,5].map((n) => ({ id: String(n), code: `E${n}`, title: `Event ${n}`,
     at: `2026-07-${22+n}T00:00:00Z`, impact: 'high' })),
-  positioning: [1,2,3,4,5,6].map((n) => ({ key: String(n), label: String(n), value: '↑' })),
+  positioning: { JP: [1,2,3,4,5,6].map((n) => ({ key: String(n), label: String(n), value: n === 6 ? '—' : '↑' })) },
   attention: [1,2,3,4].map((n) => ({ id: String(n), label: String(n), severity: n })),
   holdings: [{ symbol: 'AAA', name: 'A', rank: 2, reasonJa: 'x', statusJa: '監視' },
     { symbol: 'AAA', name: 'A', rank: 1, reasonJa: 'y', statusJa: '要確認' },
     { symbol: 'BBB', name: 'B', rank: 3, reasonJa: 'z', statusJa: '監視' }],
-  totalAssetJpy: null,
 });
 check('JP/US decisions independent', view.decisions.JP.finalAction === 'BUY' && view.decisions.US.finalAction === 'SELL');
 check('one selected final decision', view.finalAction === 'BUY' && view.selectedMarket === 'JP');
@@ -58,7 +57,7 @@ check('positioning max 5', view.positioning.length === 5);
 check('Attention max 3', view.attention.length === 3);
 check('NEXT EVENT is not duplicated in Attention', !view.attention.some((row) => row.id === view.nextEvent?.id));
 check('holdings max 3 and deduped', view.holdingsReview.length === 2 && view.holdingsReview[0].reasonJa === 'y');
-check('FIRE honest empty', view.fireProgress === null);
+check('FIRE is outside the Today view contract', !Object.prototype.hasOwnProperty.call(view, 'fireProgress'));
 check('footer mirrors decision', view.footerText.startsWith('JP BUY 7/7'));
 const manual = buildArgusTodayView({ ...view, now: new Date('2026-07-22T00:00:00Z'), selectionMode: 'US', baseSignal: 'ENTER',
   jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8, dataQuality: 'LIVE' });
@@ -70,7 +69,19 @@ check('AUTO return', buildArgusTodayView({ ...manual, now: new Date('2026-07-22T
   baseSignal: 'ENTER', jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8, dataQuality: 'LIVE',
   calendar: { JP: state('JP', 'MORNING_SESSION'), US: state('US', 'CLOSED') } }).selectedMarket === 'JP');
 
+const bars = Array.from({ length: 25 }, (_, index) => ({ date: `2026-06-${String(index + 1).padStart(2, '0')}`,
+  close: 100 + index, atr14: 2 }));
+const projection = buildTodayProjection({ symbol: '1321', label: '日経225 ETF', asOf: '2026-07-21', status: 'live', bars,
+  zones: [{ center: 95, lower: 94, upper: 96, status: 'active' }, { center: 130, lower: 129, upper: 131, status: 'active' }] }, 'WAIT');
+check('projection uses real bars and deterministic zones', projection?.current === 124 && projection.baseLow === 122
+  && projection.baseHigh === 126 && projection.upside === 130 && projection.downside === 95);
+check('projection levels cannot invert', projection.downside < projection.baseLow && projection.baseHigh < projection.upside);
+check('projection does not fabricate probability', projection?.probability === null && projection.confidenceLabel === '中');
+check('projection refuses insufficient history', buildTodayProjection({ symbol: '1321', label: 'x', asOf: null,
+  status: 'live', bars: bars.slice(0, 5), zones: [] }, 'WAIT') === null);
+
 const panel = fs.readFileSync(path.join(__dirname, '..', 'src/components/today/ArgusTodayPanel.tsx'), 'utf8');
+const css = fs.readFileSync(path.join(__dirname, '..', 'src/components/today/ArgusToday.css'), 'utf8');
 const route = fs.readFileSync(path.join(__dirname, '..', 'src/routes/CommandCenter.tsx'), 'utf8');
 const shell = fs.readFileSync(path.join(__dirname, '..', 'src/components/AppShell.tsx'), 'utf8');
 check('single decision card', (panel.match(/at-decision card/g) || []).length === 1);
@@ -80,6 +91,12 @@ check('manual market local persistence', route.includes('argus.today.marketSelec
 check('no AI POST on Today interactions', !/fetch\([^\n]+method:\s*['"]POST/.test(route + panel));
 check('unknown event time is not fabricated', !route.includes('T23:59:00+09:00'));
 check('market levels do not get a synthetic plus sign', !panel.includes("v > 0 ? '+'"));
+check('Today removes FIRE and duplicate concentration card', !panel.includes('fireProgress') && !panel.includes('portfolioConcentration'));
+check('Today has required prediction graphic', panel.includes('at-proj-actual') && panel.includes('at-proj-base')
+  && panel.includes('at-proj-up') && panel.includes('at-proj-down') && panel.includes('at-proj-inv'));
+check('seven action stages have seven distinct colors', [1,2,3,4,5,6,7].every((n) => css.includes(`nth-child(${n})`)));
+check('major news is capped and processed', panel.includes('重大ニュース') && !panel.includes('Related Signal'));
+check('market positioning is explicitly scoped', panel.includes('`${view.selectedMarket} 需給`'));
 const handoff = fs.readFileSync(path.join(__dirname, '..', 'src/components/dashboard/ProHandoffButton.tsx'), 'utf8');
 check('AI consultation scope is honest', handoff.includes("kind === 'event' && nextEvent ? 'event'")
   && handoff.includes("kind === 'portfolio' ? 'portfolio'") && handoff.includes('disabled={!selectedSymbol}'));
