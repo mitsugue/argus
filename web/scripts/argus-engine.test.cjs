@@ -10,7 +10,8 @@ require.extensions['.ts'] = (mod, filename) => {
   mod._compile(output, filename);
 };
 const { synthesizeArgusDecision, finalActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
-const { buildArgusTodayView, buildTodayProjection, selectAutoMarket } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
+const { buildArgusTodayView, buildTodayProjection, buildTodayReview, selectTodayNews,
+  selectAutoMarket } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
 let failed = 0;
 function check(name, condition) { if (condition) console.log(`  ok  ${name}`); else { failed++; console.error(`FAIL  ${name}`); } }
 
@@ -49,11 +50,15 @@ const view = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'), select
   holdings: [{ symbol: 'AAA', name: 'A', rank: 2, reasonJa: 'x', statusJa: '監視' },
     { symbol: 'AAA', name: 'A', rank: 1, reasonJa: 'y', statusJa: '要確認' },
     { symbol: 'BBB', name: 'B', rank: 3, reasonJa: 'z', statusJa: '監視' }],
+  indexMoves: [1,2,3,4,5].map((n) => ({ id: `i${n}`, label: `${n}`, value: n })),
+  macroMoves: [1,2,3,4].map((n) => ({ id: `m${n}`, label: n === 3 ? 'VIX' : `${n}`, value: n })),
 });
 check('JP/US decisions independent', view.decisions.JP.finalAction === 'BUY' && view.decisions.US.finalAction === 'SELL');
 check('one selected final decision', view.finalAction === 'BUY' && view.selectedMarket === 'JP');
 check('COMING 30D max 3', view.comingEvents.length === 3);
 check('positioning max 5', view.positioning.length === 5);
+check('index and macro cards have independent limits', view.indexMoves.length === 4
+  && view.macroMoves.length === 3 && view.macroMoves.some((row) => row.label === 'VIX'));
 check('Attention max 3', view.attention.length === 3);
 check('NEXT EVENT is not duplicated in Attention', !view.attention.some((row) => row.id === view.nextEvent?.id));
 check('holdings max 3 and deduped', view.holdingsReview.length === 2 && view.holdingsReview[0].reasonJa === 'y');
@@ -77,8 +82,36 @@ check('projection uses real bars and deterministic zones', projection?.current =
   && projection.baseHigh === 126 && projection.upside === 130 && projection.downside === 95);
 check('projection levels cannot invert', projection.downside < projection.baseLow && projection.baseHigh < projection.upside);
 check('projection does not fabricate probability', projection?.probability === null && projection.confidenceLabel === '中');
+check('projection identifies timeframe, state and source coverage', projection?.timeframeLabel === '日足'
+  && projection.quoteState === 'close' && projection.sourceHistoryCount === 25);
 check('projection refuses insufficient history', buildTodayProjection({ symbol: '1321', label: 'x', asOf: null,
   status: 'live', bars: bars.slice(0, 5), zones: [] }, 'WAIT') === null);
+
+const reviewBars = [{ date: '2026-07-20', close: 100 }, { date: '2026-07-21', close: 101.4 }];
+const matureReview = buildTodayReview(reviewBars, '日経225 ETF（1321）', 'WAIT', '2026-07-20');
+check('previous decision uses matching instrument and one-day horizon', matureReview.marketLabel.includes('1321')
+  && matureReview.horizon === '翌1営業日' && matureReview.returnPct === 1.4 && matureReview.outcomeDate === '2026-07-21');
+const pendingReview = buildTodayReview(reviewBars, '日経225 ETF（1321）', 'WAIT', '2026-07-21');
+check('immature previous decision never fabricates +0.00', !pendingReview.matured
+  && pendingReview.returnPct === null && pendingReview.evaluationJa === '答え合わせ待ち');
+check('zero or missing start price is never scored', buildTodayReview([{ date: '2026-07-20', close: 0 }], 'x', 'WAIT', '2026-07-20').returnPct === null);
+
+const newsBase = { source: 'official', url: 'https://example.test/item', publishedAt: 1,
+  major: true, relevant: true, translationStatus: 'translated', corroboration: 'official' };
+const selectedNews = selectTodayNews([
+  { ...newsBase, id: 'held', titleJa: 'NVDA 重大開示', linkedSymbols: ['NVDA'], scope: 'holding' },
+  { ...newsBase, id: 'watch', titleJa: 'AAPL 重大開示', linkedSymbols: ['AAPL'], scope: 'watchlist', publishedAt: 2 },
+  { ...newsBase, id: 'index', titleJa: 'NASDAQ指数に重大影響', scope: 'index', publishedAt: 3 },
+  { ...newsBase, id: 'global', titleJa: '金融危機で緊急決定', scope: 'global', publishedAt: 4 },
+], ['NVDA', 'AAPL']);
+check('major news is newest-first and capped at 3', selectedNews.length === 3 && selectedNews[0].id === 'global');
+for (const [id, titleJa, scope, linkedSymbols] of [
+  ['held', 'NVDA 重大開示', 'holding', ['NVDA']], ['watch', 'AAPL 重大開示', 'watchlist', ['AAPL']],
+  ['index', 'NASDAQ指数に重大影響', 'index', []], ['global', '金融危機で緊急決定', 'global', []],
+]) check(`major news includes ${id}`, selectTodayNews([{ ...newsBase, id, titleJa, scope, linkedSymbols }], ['NVDA', 'AAPL']).length === 1);
+check('unrelated disclosure is filtered', selectTodayNews([{ ...newsBase, id: 'noise', titleJa: '無関係な一般開示', scope: 'other' }], ['NVDA']).length === 0);
+check('translation-pending news is filtered', selectTodayNews([{ ...newsBase, id: 'pending', titleJa: '翻訳待ち', scope: 'global', translationStatus: 'pending' }], []).length === 0);
+check('headline-only single-source news is filtered', selectTodayNews([{ ...newsBase, id: 'single', titleJa: '金融危機', scope: 'global', corroboration: 'single' }], []).length === 0);
 
 const panel = fs.readFileSync(path.join(__dirname, '..', 'src/components/today/ArgusTodayPanel.tsx'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '..', 'src/components/today/ArgusToday.css'), 'utf8');
@@ -93,7 +126,13 @@ check('unknown event time is not fabricated', !route.includes('T23:59:00+09:00')
 check('market levels do not get a synthetic plus sign', !panel.includes("v > 0 ? '+'"));
 check('Today removes FIRE and duplicate concentration card', !panel.includes('fireProgress') && !panel.includes('portfolioConcentration'));
 check('Today has required prediction graphic', panel.includes('at-proj-actual') && panel.includes('at-proj-base')
-  && panel.includes('at-proj-up') && panel.includes('at-proj-down') && panel.includes('at-proj-inv'));
+  && panel.includes('at-proj-up') && panel.includes('at-proj-down') && panel.includes('at-proj-inv')
+  && panel.includes('at-proj-boundary'));
+check('actual line alone is white', css.includes('.at-proj-actual { fill:none; stroke:#fff')
+  && css.includes('.at-proj-up { stroke:#22c55e') && css.includes('.at-proj-down { stroke:#ef4444'));
+check('market card renamed MACRO and VIX retained', panel.includes('title="MACRO"') && route.includes("addRate('vix'"));
+check('JP positioning deep-links to canonical ledger', panel.includes("argus.scrollTo', 'market-ledger'") && panel.includes("onNavigate('regime')"));
+check('zero-news state is a compact line', panel.includes('at-news-zero') && panel.includes('<span>0</span>'));
 check('seven action stages have seven distinct colors', [1,2,3,4,5,6,7].every((n) => css.includes(`nth-child(${n})`)));
 check('major news is capped and processed', panel.includes('重大ニュース') && !panel.includes('Related Signal'));
 check('market positioning is explicitly scoped', panel.includes('`${view.selectedMarket} 需給`'));

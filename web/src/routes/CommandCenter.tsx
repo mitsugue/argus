@@ -14,14 +14,15 @@ import { listSnapshots } from '../lib/portfolioSync';
 import type { RouteKey } from '../components/NavRail';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
-import { buildArgusTodayView, type MarketSelectionMode } from '../domain/argusTodayView';
+import { buildArgusTodayView, buildTodayReview, selectTodayNews,
+  type MarketSelectionMode, type TodayMoveInput, type TodayPositioningRow } from '../domain/argusTodayView';
 import { resolveCommandSummary } from '../domain/commandSummary';
 import { SIGNALS, type SignalCode } from '../domain/actionLevel';
 import { useMarketLedger } from '../hooks/useMarketLedger';
 import { useChartIntelligence } from '../hooks/useChartIntelligence';
 import { useMarketNews } from '../hooks/useMarketNews';
 import type { ChartIntelligencePayload } from '../types/chartIntelligence';
-import type { TodayProjectionInput, TodayReviewInput } from '../domain/argusTodayView';
+import type { TodayProjectionInput } from '../domain/argusTodayView';
 
 interface Props {
   onNavigate: (key: RouteKey) => void;
@@ -38,38 +39,36 @@ const formatDate = (iso: string) => {
   });
 };
 
-function projectionInput(payload: ChartIntelligencePayload | null, label: string): TodayProjectionInput | null {
+function instrumentLabel(payload: ChartIntelligencePayload): string {
+  const name = (payload.displayNameJa || payload.symbol).trim();
+  return name.includes(payload.symbol) ? name : `${name}（${payload.symbol}）`;
+}
+
+function projectionInput(payload: ChartIntelligencePayload | null): TodayProjectionInput | null {
   if (!payload) return null;
-  return { symbol: payload.symbol, label, asOf: payload.periodEnd, status: payload.status,
+  return { symbol: payload.symbol, label: instrumentLabel(payload), asOf: payload.periodEnd,
+    status: payload.status, timeframe: payload.timeframe, quoteState: 'close',
+    sourceHistoryCount: payload.indicators.bars.length,
     bars: payload.indicators.bars, zones: payload.zones };
 }
 
-function marketMove(payload: ChartIntelligencePayload | null, id: string, label: string) {
+function marketMove(payload: ChartIntelligencePayload | null, id: string): TodayMoveInput | null {
   const bars = payload?.indicators.bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0) ?? [];
   const latest = bars.at(-1), previous = bars.at(-2);
-  if (!latest) return null;
+  if (!latest || !payload) return null;
   const changePct = previous && previous.close > 0 ? (latest.close - previous.close) / previous.close * 100 : null;
-  return { id, label, value: latest.close, previous: previous?.close ?? null,
+  return { id, label: instrumentLabel(payload), value: latest.close, previous: previous?.close ?? null,
     directionLabel: changePct == null ? undefined : `${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(1)}%`,
-    asOf: latest.date };
+    asOf: latest.date, status: payload.status === 'delayed' ? 'delayed' : 'close',
+    history: bars.slice(-12).map((bar) => ({ date: bar.date, value: bar.close })) };
 }
 
-function reviewFor(payload: ChartIntelligencePayload | null, marketLabel: string,
-  action: string, date: string): TodayReviewInput {
-  const bars = payload?.indicators.bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0) ?? [];
-  const base = bars.find((bar) => bar.date >= date), latest = bars.at(-1);
-  const returnPct = base && latest && base.close > 0
-    ? Math.round((latest.close - base.close) / base.close * 10_000) / 100 : null;
-  const finalAction = ['ADD', 'BUY_DIP'].includes(action) ? 'BUY'
-    : ['EXIT', 'TRIM'].includes(action) ? 'SELL' : 'WAIT';
-  let evaluationJa = '価格履歴不足のため評価保留';
-  if (returnPct != null) {
-    if (finalAction === 'BUY') evaluationJa = returnPct > 0 ? '上方向判断を支持' : '上方向判断を反証';
-    else if (finalAction === 'SELL') evaluationJa = returnPct < 0 ? '防御判断を支持' : '防御判断を反証';
-    else evaluationJa = returnPct <= -1 ? '待機で下落回避' : returnPct >= 2 ? '上昇を取り逃した可能性' : '待機継続は妥当';
-  }
-  return { action: finalAction, marketLabel, returnPct, evaluationJa };
+function reviewFor(payload: ChartIntelligencePayload | null, action: string, date: string) {
+  return buildTodayReview(payload?.indicators.bars ?? [], payload ? instrumentLabel(payload) : '対象価格', action, date);
 }
+
+const signed = (value: number, digits = 0) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
+const oku = (value: number) => `${Math.round(value / 100_000_000).toLocaleString('ja-JP')}億`;
 
 export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }) => {
   useLocale();   // re-render Today on locale switch
@@ -285,17 +284,16 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     const imminent = (impEvents?.events ?? []).some((event) =>
       (event.daysUntil ?? 99) <= 1 && ['critical', 'high'].includes(event.displayImpact)
       && !['RELEASED', 'RESOLVED'].includes(event.lifecycle));
-    const moves = [] as Array<{ id: string; label: string; value: number; previous?: number | null; suffix?: string; directionLabel?: string; asOf?: string | null }>;
+    const indexMoves: TodayMoveInput[] = [];
     for (const move of [
-      marketMove(jpChart.data, 'nikkei', '日経225 ETF'),
-      marketMove(topixChart.data, 'topix', 'TOPIX ETF'),
-      marketMove(sp500Chart.data, 'sp500', 'S&P 500 ETF'),
-      marketMove(nasdaqChart.data, 'nasdaq', 'NASDAQ100 ETF'),
-    ]) if (move) moves.push(move);
+      marketMove(jpChart.data, 'nikkei'), marketMove(topixChart.data, 'topix'),
+      marketMove(sp500Chart.data, 'sp500'), marketMove(nasdaqChart.data, 'nasdaq'),
+    ]) if (move) indexMoves.push(move);
+    const macroMoves: TodayMoveInput[] = [];
     const addRate = (id: string, label: string, point: NonNullable<typeof rates.data>['us10y'] | undefined, suffix: string, direction?: string) => {
-      if (point?.status === 'live' && Number.isFinite(point.latestValue)) moves.push({ id, label,
+      if (point?.status === 'live' && Number.isFinite(point.latestValue)) macroMoves.push({ id, label,
         value: point.latestValue, previous: point.previousValue, suffix, directionLabel: direction,
-        asOf: point.latestDate });
+        asOf: point.latestDate, status: 'close' });
     };
     addRate('usdjpy', 'USDJPY', rates.data?.usdJpy, '', (rates.data?.usdJpy?.change ?? 0) > 0 ? '円安' : '円高');
     addRate('us10y', 'US10Y', rates.data?.us10y, '%', (rates.data?.us10y?.change ?? 0) > 0 ? '↑' : '↓');
@@ -318,27 +316,52 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
         .map((event) => ({ id: event.eventId, label: event.nameJa || event.symbol || event.eventType,
           time: null, severity: event.severity })),
     ];
-    const positioning = {
-      JP: [
-        { key: 'credit', label: '信用', value: factorState(summary.shortFuel) },
-        { key: 'flow', label: '海外', value: factorState(summary.foreignFlow) },
-        { key: 'breadth', label: 'breadth', value: factorState(summary.breadth) },
-        { key: 'value', label: '評価', value: summary.valuationBand === 'HIGH_VALUATION_BAND' ? '高' : summary.valuationBand === 'UNKNOWN' ? '—' : '中' },
-      ],
-      US: [
-        { key: 'breadth', label: 'breadth', value: factorState(summary.breadth) },
-        { key: 'rates', label: '金利', value: rates.data?.us10y?.status === 'live'
-          ? (rates.data.us10y.change > 0 ? '↑' : rates.data.us10y.change < 0 ? '↓' : '→') : '—' },
-        { key: 'vix', label: 'VIX', value: rates.data?.vix?.status === 'live'
-          ? (rates.data.vix.change > 0 ? '↑' : rates.data.vix.change < 0 ? '↓' : '→') : '—' },
-        { key: 'flow', label: 'flow', value: factorState(summary.foreignFlow) },
-      ],
+    const ledgerRows = new Map((marketLedger.ledger?.table ?? []).map((row) => [row.seriesId, row]));
+    const metric = (ids: string[]) => ids.map((id) => ledgerRows.get(id)?.latestValue
+      ?? marketLedger.ledger?.derivedMetrics.find((row) => row.metricId === id)?.value)
+      .find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    const jpPositioning: TodayPositioningRow[] = [];
+    const credit = ledgerRows.get('credit.short_balance');
+    if (credit?.latestValue != null) jpPositioning.push({ key: 'credit-numeric', label: '信用売残',
+      value: oku(credit.latestValue), detail: credit.thresholdDistance == null ? undefined
+        : `8千億差 ${signed(credit.thresholdDistance / 100_000_000)}億`,
+      tone: credit.thresholdSide === 'above' ? 'negative' : 'neutral' });
+    const foreign = ledgerRows.get('flow.foreign');
+    if (foreign?.fourPeriodTotal != null) jpPositioning.push({ key: 'foreign-4w', label: '海外4週',
+      value: oku(foreign.fourPeriodTotal), detail: foreign.fourPeriodDirection === 'up' ? '↑' : foreign.fourPeriodDirection === 'down' ? '↓' : '→',
+      tone: foreign.fourPeriodTotal > 0 ? 'positive' : foreign.fourPeriodTotal < 0 ? 'negative' : 'neutral' });
+    const ratio6 = metric(['breadth.prime.ratio6', 'breadth.ratio6']);
+    const ratio25 = metric(['breadth.prime.ratio25', 'breadth.ratio25']);
+    if (ratio6 != null || ratio25 != null) jpPositioning.push({ key: 'breadth-ratios', label: '騰落比率',
+      value: [ratio6 == null ? null : `6日${ratio6.toFixed(0)}`, ratio25 == null ? null : `25日${ratio25.toFixed(0)}`].filter(Boolean).join(' / ') });
+    const jpRs = jpChart.data?.relativeStrength?.nikkei_sp500?.change20Pct;
+    if (jpRs != null) jpPositioning.push({ key: 'relative-numeric', label: '日米強弱',
+      value: jpRs >= 0 ? 'JP優位' : 'US優位', detail: `${signed(jpRs, 1)}pt`,
+      tone: jpRs >= 0 ? 'positive' : 'negative' });
+
+    const usPositioning: TodayPositioningRow[] = [];
+    if (rates.data?.us10y?.status === 'live') usPositioning.push({ key: 'rates-numeric', label: '米10年',
+      value: `${rates.data.us10y.latestValue.toFixed(2)}%`, detail: rates.data.us10y.change > 0 ? '↑' : rates.data.us10y.change < 0 ? '↓' : '→',
+      tone: rates.data.us10y.change > 0 ? 'negative' : 'neutral' });
+    if (rates.data?.vix?.status === 'live') usPositioning.push({ key: 'vix-numeric', label: '恐怖指数',
+      value: rates.data.vix.latestValue.toFixed(2), detail: rates.data.vix.change > 0 ? '↑' : rates.data.vix.change < 0 ? '↓' : '→',
+      tone: rates.data.vix.change > 0 ? 'negative' : 'positive' });
+    const change20 = (payload: ChartIntelligencePayload | null) => {
+      const bars = payload?.indicators.bars.filter((bar) => bar.close > 0) ?? [];
+      return bars.length >= 21 ? (bars.at(-1)!.close / bars.at(-21)!.close - 1) * 100 : null;
     };
-    const news = (marketNews.data?.items ?? []).filter((item) => item.major && item.relevant !== false
-      && !!item.displayTitleJa && !!item.source && !!item.url
-      && ['translated', 'not_needed'].includes(item.translationStatus ?? ''))
-      .slice(0, 3).map((item, index) => ({ id: `${item.datetime ?? index}:${item.url}`,
-        titleJa: item.displayTitleJa!, source: item.source, url: item.url, publishedAt: item.datetime }));
+    const qqq20 = change20(nasdaqChart.data), spy20 = change20(sp500Chart.data);
+    if (qqq20 != null && spy20 != null) usPositioning.push({ key: 'us-relative-numeric', label: 'NASDAQ対SPY',
+      value: `${signed(qqq20 - spy20, 1)}pt`, detail: qqq20 >= spy20 ? 'NASDAQ優位' : 'SPY優位',
+      tone: qqq20 >= spy20 ? 'positive' : 'negative' });
+    const positioning = { JP: jpPositioning, US: usPositioning };
+    const news = selectTodayNews((marketNews.data?.items ?? []).map((item, index) => ({
+      id: `${item.datetime ?? index}:${item.url}`, titleJa: item.displayTitleJa ?? '',
+      titleOriginal: item.titleOriginal ?? item.headline, source: item.source, url: item.url,
+      publishedAt: item.datetime, major: item.major, relevant: item.relevant,
+      translationStatus: item.translationStatus, tier: item.tier, corroboration: item.corroboration,
+      linkedSymbols: item.linkedSymbols,
+    })), assets.map((asset) => asset.symbol));
     const backup = assessBackupSafety(assets);
     const previous = previousJudgment(judgment.date);
     return buildArgusTodayView({
@@ -352,14 +375,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
       eventHardVeto: { JP: imminent, US: imminent },
       factors: { JP: sharedFactors, US: sharedFactors },
       evidence: { JP: judgment.reasons, US: judgment.reasons },
-      events: eventRows, marketMoves: moves, positioning, attention, holdings, news,
+      events: eventRows, indexMoves, macroMoves, positioning, attention, holdings, news,
       projection: {
-        JP: projectionInput(jpChart.data, '日経225 ETF'),
-        US: projectionInput(sp500Chart.data, 'S&P 500 ETF'),
+        JP: projectionInput(jpChart.data),
+        US: projectionInput(sp500Chart.data),
       },
       review: previous ? {
-        JP: reviewFor(jpChart.data, '日経225 ETF', previous.overall, previous.date),
-        US: reviewFor(sp500Chart.data, 'S&P 500 ETF', previous.overall, previous.date),
+        JP: reviewFor(jpChart.data, previous.overall, previous.date),
+        US: reviewFor(sp500Chart.data, previous.overall, previous.date),
       } : undefined,
       systemStatus: { data: commandSummary.dataQuality, backup: backup.protectionLevelJa,
         rule: al.data?.status === 'live' ? 'DETERMINISTIC' : 'RULE TEMPORARY' },

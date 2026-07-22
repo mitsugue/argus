@@ -13748,6 +13748,7 @@ def get_market_news():
         # markets/finance (incl. the JA translation) so the UI + AI can drop noise.
         for item in items:
             item["relevant"] = _news_relevant(item["headline"], item.get("headlineJa"))
+            item["linkedSymbols"] = _intel_link_assets(item["headline"])
         # Corroboration rating (v10.170): cluster against the C.A.O.S. mesh so each
         # headline carries official/corroborated/single — single can't drive the AI.
         _annotate_news_corroboration(items)
@@ -13780,6 +13781,7 @@ def get_market_news():
                     "tier": "wire" if sid in ("reuters_jp", "boj_official", "meti_official") else "aggregator",
                     "relevant": _news_relevant(h, h),
                     "corroboration": it.get("corroboration") or "single",
+                    "linkedSymbols": _intel_link_assets(h),
                 })
                 if len(jp_items) >= 6:
                     break
@@ -19655,6 +19657,10 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     report = argus_chart_intelligence.analyze(
         symbol, market, rows, now_iso=now_iso, market_ledger=ledger,
         events=events, sector_rows=sector_rows)
+    # Canonical instrument metadata comes from the existing calibrated universe.
+    # The UI must never relabel an ETF proxy as the cash index it follows.
+    report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(
+        str(symbol).upper(), str(symbol).upper())
     report["eventMarkers"] = [{
         "id": str(e.get("eventId") or e.get("id") or e.get("eventCode") or ""),
         "date": str(e.get("availableFrom") or e.get("date") or e.get("eventDate") or "")[:10],
@@ -19740,7 +19746,7 @@ def api_argus_chart_intelligence():
     if scope == "market":
         # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
         report = _chart_public_report("1321", "JP", timeframe, market_scope=True)
-        report["displayNameJa"] = "日経平均連動ETF(市場チャートproxy)"
+        report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get("1321", "1321")
         report["proxyDisclosureJa"] = "現物日経平均そのものではなく、既存の公式日足経路で取得する連動ETFを使用。"
         return jsonify(argus_market_intelligence.normalize_public_names(report))
     symbol = (request.args.get("symbol") or "").strip().upper()

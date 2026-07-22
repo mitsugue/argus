@@ -16,14 +16,22 @@ export interface TodayHoldingInput {
 export interface TodayMoveInput {
   id: string; label: string; value: number; previous?: number | null;
   suffix?: string; directionLabel?: string; asOf?: string | null;
+  status?: 'realtime' | 'delayed' | 'close' | string;
+  history?: Array<{ date: string; value: number }>;
 }
 export interface TodayAttentionInput { id: string; label: string; time?: string | null; severity: number }
 export interface TodayNewsInput {
   id: string; titleJa: string; source: string; url: string; publishedAt?: number | null;
 }
+export interface TodayNewsCandidate extends TodayNewsInput {
+  major: boolean; relevant?: boolean; translationStatus?: string;
+  tier?: string; corroboration?: string; titleOriginal?: string;
+  linkedSymbols?: string[]; scope?: 'holding' | 'watchlist' | 'index' | 'global' | 'other';
+}
 export interface TodayProjectionInput {
   symbol: string; label: string; asOf: string | null; status: string;
-  bars: ChartBar[]; zones: PriceZone[];
+  bars: ChartBar[]; zones: PriceZone[]; timeframe?: 'daily' | 'weekly';
+  quoteState?: 'realtime' | 'delayed' | 'close'; sourceHistoryCount?: number;
 }
 export interface TodayProjection {
   symbol: string; label: string; asOf: string | null; current: number;
@@ -31,9 +39,15 @@ export interface TodayProjection {
   baseLow: number; baseHigh: number; upside: number; downside: number;
   invalidation: number; horizon: string; directionLabel: string;
   confidenceLabel: '低' | '中'; probability: null; methodLabel: string;
+  timeframeLabel: string; quoteState: string; sourceHistoryCount: number;
 }
 export interface TodayReviewInput {
   action: string; marketLabel: string; returnPct: number | null; evaluationJa: string;
+  horizon: string; decisionDate: string; outcomeDate: string | null; matured: boolean;
+}
+export interface TodayPositioningRow {
+  key: string; label: string; value: string; detail?: string;
+  tone?: 'positive' | 'negative' | 'neutral';
 }
 
 export interface ArgusTodayInput {
@@ -52,7 +66,9 @@ export interface ArgusTodayInput {
   evidence?: Partial<Record<ArgusMarket, string[]>>;
   events?: TodayEventInput[];
   marketMoves?: TodayMoveInput[];
-  positioning?: Partial<Record<ArgusMarket, Array<{ key: string; label: string; value: string }>>>;
+  indexMoves?: TodayMoveInput[];
+  macroMoves?: TodayMoveInput[];
+  positioning?: Partial<Record<ArgusMarket, TodayPositioningRow[]>>;
   news?: TodayNewsInput[];
   projection?: Partial<Record<ArgusMarket, TodayProjectionInput | null>>;
   attention?: TodayAttentionInput[];
@@ -82,8 +98,9 @@ export interface ArgusTodayView {
   permissions: { newEntry: boolean; add: boolean; hold: boolean };
   conciseAction: string | null;
   conciseAvoid: string | null;
-  marketMoves: TodayMoveInput[];
-  positioning: Array<{ key: string; label: string; value: string }>;
+  indexMoves: TodayMoveInput[];
+  macroMoves: TodayMoveInput[];
+  positioning: TodayPositioningRow[];
   news: TodayNewsInput[];
   attention: TodayAttentionInput[];
   holdingsReview: TodayHoldingInput[];
@@ -190,7 +207,8 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     factors: decision.factors.slice(0, 5), permissions,
     conciseAction: input.conciseAction ? input.conciseAction.slice(0, 32) : null,
     conciseAvoid: input.conciseAvoid ? input.conciseAvoid.slice(0, 32) : null,
-    marketMoves: (input.marketMoves ?? []).slice(0, 6),
+    indexMoves: (input.indexMoves ?? input.marketMoves ?? []).slice(0, 4),
+    macroMoves: (input.macroMoves ?? (input.marketMoves ?? []).slice(4)).slice(0, 3),
     positioning: (input.positioning?.[selectedMarket] ?? [])
       .filter((row) => row.value.trim() !== '—').slice(0, 5),
     news: dedupeNews(input.news ?? []),
@@ -238,7 +256,58 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     confidenceLabel: input.status === 'live' && bars.length >= 25 ? '中' : '低',
     probability: null,
     methodLabel: '実測終値 + ATR14 + 確認済み支持抵抗',
+    timeframeLabel: input.timeframe === 'weekly' ? '週足' : '日足',
+    quoteState: input.quoteState ?? (input.status === 'delayed' ? 'delayed' : 'close'),
+    sourceHistoryCount: input.sourceHistoryCount ?? input.bars.length,
   };
+}
+
+/** 前回判断の翌1営業日だけを採点する。翌バーが無ければ0%ではなく未成熟。 */
+export function buildTodayReview(bars: Array<{ date: string; close: number }>, symbolLabel: string,
+  action: string, decisionDate: string): TodayReviewInput {
+  const valid = bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0)
+    .slice().sort((a, b) => a.date.localeCompare(b.date));
+  const base = [...valid].reverse().find((bar) => bar.date <= decisionDate) ?? null;
+  const outcome = base ? valid.find((bar) => bar.date > base.date) ?? null : null;
+  const finalAction = ['ADD', 'BUY_DIP'].includes(action) ? 'BUY'
+    : ['EXIT', 'TRIM'].includes(action) ? 'SELL' : 'WAIT';
+  const returnPct = base && outcome
+    ? Math.round((outcome.close - base.close) / base.close * 10_000) / 100 : null;
+  let evaluationJa = '答え合わせ待ち';
+  if (returnPct != null) {
+    if (finalAction === 'BUY') evaluationJa = returnPct > 0 ? '上方向判断を支持' : '上方向判断を反証';
+    else if (finalAction === 'SELL') evaluationJa = returnPct < 0 ? '防御判断を支持' : '防御判断を反証';
+    else evaluationJa = returnPct <= -1 ? '追い買い回避は妥当'
+      : returnPct >= 2 ? '上昇を取り逃した可能性' : '待機継続は妥当';
+  }
+  return { action: finalAction, marketLabel: symbolLabel, returnPct, evaluationJa,
+    horizon: '翌1営業日', decisionDate, outcomeDate: outcome?.date ?? null, matured: !!outcome };
+}
+
+const INDEX_NEWS = /(日経|nikkei|topix|s&p|nasdaq|dow|株式市場|stock market|equity market)/i;
+const GLOBAL_NEWS = /(戦争|侵攻|制裁|金融危機|銀行破綻|緊急利上げ|緊急利下げ|緊急決定|war|invasion|sanction|financial crisis|bank failure|emergency rate)/i;
+
+/** Today用ニュースは、処理済みかつ判断変更に関係するものだけを最大3件にする。 */
+export function selectTodayNews(candidates: TodayNewsCandidate[], symbols: string[]): TodayNewsInput[] {
+  const universe = symbols.map((value) => value.trim().toUpperCase()).filter(Boolean);
+  const seen = new Set<string>();
+  return candidates.filter((item) => {
+    if (!item.major || item.relevant === false || !item.titleJa.trim() || !item.source || !item.url) return false;
+    if (!['translated', 'not_needed'].includes(item.translationStatus ?? '')) return false;
+    if (!['official', 'corroborated'].includes(item.corroboration ?? '')) return false;
+    const text = `${item.titleJa} ${item.titleOriginal ?? ''}`;
+    const linked = (item.linkedSymbols ?? []).map((value) => value.toUpperCase());
+    const universeMatch = linked.some((symbol) => universe.includes(symbol))
+      || universe.some((symbol) => symbol.length >= 3 && text.toUpperCase().includes(symbol));
+    const allowedScope = item.scope === 'holding' || item.scope === 'watchlist'
+      || item.scope === 'index' || item.scope === 'global';
+    if (!allowedScope && !universeMatch && !INDEX_NEWS.test(text) && !GLOBAL_NEWS.test(text)) return false;
+    const key = `${item.source}:${item.titleJa}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
+    .slice(0, 3).map(({ id, titleJa, source, url, publishedAt }) => ({ id, titleJa, source, url, publishedAt }));
 }
 
 function dedupeHoldings(rows: TodayHoldingInput[]): TodayHoldingInput[] {

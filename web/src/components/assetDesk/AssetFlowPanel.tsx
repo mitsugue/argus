@@ -10,6 +10,20 @@ import { ExpandableReason } from '../common/CollapsibleSection';
 export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
   const sdg = d.sdg;
   const flow = d.strat.bigFlowRatio;
+  const ev = sdg?.evidence ?? {};
+  const balanceChange = ev.marginBalanceChange as { buyPct?: number | null; sellPct?: number | null } | null;
+  const detailRows = sdg ? [
+    ev.marginBuyingBalance != null ? `信用買い残 ${Number(ev.marginBuyingBalance).toLocaleString()}` : null,
+    ev.marginSellingBalance != null ? `信用売り残 ${Number(ev.marginSellingBalance).toLocaleString()}` : null,
+    ev.lendingBorrowingRatio != null ? `信用・貸借倍率 ${Number(ev.lendingBorrowingRatio).toFixed(2)}` : null,
+    balanceChange?.buyPct != null || balanceChange?.sellPct != null
+      ? `前週差 買${balanceChange?.buyPct == null ? '未取得' : `${balanceChange.buyPct > 0 ? '+' : ''}${balanceChange.buyPct.toFixed(1)}%`} / 売${balanceChange?.sellPct == null ? '未取得' : `${balanceChange.sellPct > 0 ? '+' : ''}${balanceChange.sellPct.toFixed(1)}%`}` : null,
+    sdg.levelJa ? `買い残の重さ ${sdg.levelJa}` : null,
+    d.strat.volume != null && d.strat.volume > 0 ? `出来高 ${d.strat.volume.toLocaleString()}` : null,
+    typeof ev.volumeTrend === 'string' ? ev.volumeTrend : null,
+    typeof ev.closeLocation === 'number' ? `終値位置 ${(ev.closeLocation * 100).toFixed(0)}%` : null,
+    ev.daysToCover != null ? `買い戻し ${String(ev.daysToCover)}日分` : null,
+  ].filter((row): row is string => !!row) : [];
   return (
     <>
       {sdg ? (
@@ -24,12 +38,11 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
           <ExpandableReason className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }} text={sdg.ownerReadableWhyJa} />
           <details>
             <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>詳細データを見る</summary>
-            <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-              信用買い残 {sdg.evidence.marginBuyingBalance != null ? Number(sdg.evidence.marginBuyingBalance).toLocaleString() : '—'} /
-              売り残 {sdg.evidence.marginSellingBalance != null ? Number(sdg.evidence.marginSellingBalance).toLocaleString() : '—'}
-              {sdg.evidence.lendingBorrowingRatio != null && <> / 貸借倍率 {String(sdg.evidence.lendingBorrowingRatio)}</>}
-              {sdg.evidence.daysToCover != null && <> / 買い戻し{String(sdg.evidence.daysToCover)}日分</>}
-              {' / 逆日歩 未取得'}
+            {detailRows.length > 0 && <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
+              {detailRows.join(' / ')}
+            </p>}
+            <p style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
+              逆日歩 未取得。需給Turning Pointと過去の価格反応は下のCHART INTELLIGENCE、判断履歴の結果はRESEARCH &amp; NOTESで確認できます。
             </p>
           </details>
         </div>
