@@ -142,7 +142,10 @@ class SystemdContractTests(unittest.TestCase):
         self.assertIn("NoNewPrivileges=true", service)
         self.assertIn("ExecStartPre=+/opt/argus/scripts/argus_build_identity.py",
                       service)
-        self.assertIn("StateDirectory=argus-build-identity", service)
+        self.assertNotIn("StateDirectory=argus-build-identity", service)
+        installer = (ROOT / "scripts/install_argus_mission_timer.sh").read_text()
+        self.assertIn("-o root -g root -m 0700 /var/lib/argus-build-identity",
+                      installer)
         self.assertIn("PassEnvironment=ARGUS_TRIGGER_SOURCE", service)
         env = (ROOT / "ops/systemd/argus-mission-tick.env.example").read_text()
         self.assertIn("ARGUS_TICK_TIMEOUT_SECONDS=180", env)
