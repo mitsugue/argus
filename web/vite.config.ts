@@ -81,6 +81,20 @@ export default defineConfig({
             options: { cacheName: 'fonts-cache', expiration: { maxEntries: 20 } },
           },
           {
+            // Instrument identity is a correctness boundary. Prefer the live
+            // deterministic cache endpoint, then fall back only to this
+            // instrument-specific cache. Do not reuse the broad legacy API
+            // StaleWhileRevalidate cache for Market charts.
+            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/chart-intelligence(?:\?.*)?$/i,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'argus-chart-intelligence-v1',
+              networkTimeoutSeconds: 15,
+              expiration: { maxEntries: 16, maxAgeSeconds: 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
             // ARGUS backend GETs — StaleWhileRevalidate (v10.190). On launch the SW
             // serves the LAST cached snapshot INSTANTLY (so the screen is populated
             // even while the free-plan dyno cold-starts / the fetches are in flight),
