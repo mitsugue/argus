@@ -111,19 +111,26 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertLess(len(weekly.get_json()["indicators"]["bars"]), 80)
         self.assertEqual(invalid.status_code, 400)
 
-    def test_scheduled_chart_tick_is_cache_only_when_cold(self):
+    def test_scheduled_replay_precompute_refreshes_cold_price_cache(self):
+        fake = history()
         with mock.patch.object(scanner, "_ai_now_iso",
                                return_value="2026-07-21T15:00:00+09:00"), \
                 mock.patch.dict(scanner._JQ_HISTORY_CACHE, {}, clear=True), \
                 mock.patch.dict(scanner._TD_HISTORY_CACHE, {}, clear=True), \
                 mock.patch.object(scanner, "_jq_price_history",
-                                  side_effect=AssertionError("network fetch")), \
+                                  return_value=fake) as jp_provider, \
                 mock.patch.object(scanner, "_td_price_history",
-                                  side_effect=AssertionError("network fetch")):
+                                  return_value=fake) as us_provider, \
+                mock.patch.object(scanner, "get_events_snapshot",
+                                  return_value={"events": []}):
             body = scanner._chart_public_report(
-                "1321", "JP", market_scope=True, cached_only=True)
-        self.assertEqual(body["stateUpdate"], {
-            "status": "expected_skip", "reason": "price_cache_unavailable"})
+                "1321", "JP", market_scope=True, cached_only=False,
+                precompute_replay=True)
+        jp_provider.assert_called()
+        us_provider.assert_called()
+        self.assertEqual(body["stateUpdate"]["status"], "updated")
+        self.assertEqual({"1", "5", "20"},
+                         set(body["marketReplay"]["contexts"]))
         self.assertEqual(body["automaticAiCalls"], 0)
 
     def test_scheduled_chart_tick_uses_only_fresh_price_caches(self):
