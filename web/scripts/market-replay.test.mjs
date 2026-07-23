@@ -18,6 +18,8 @@ assert.match(replay, /localStorage\.setItem\(key/);
 assert.doesNotMatch(replay, /fetch\s*\(/, 'component delegates only to GET hooks');
 assert.match(chartHook, /fetch\(url, \{ method: 'GET'/);
 assert.doesNotMatch(chartHook, /method:\s*'POST'/);
+assert.match(chartHook, /dataUrl === url \? data : null/,
+  'instrument switches must fail closed instead of relabeling stale data');
 assert.match(today, /argus\.replayContext/);
 assert.match(today, /finalAction: view\.finalAction/);
 assert.match(route, /MarketContextReplay/);
