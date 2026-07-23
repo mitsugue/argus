@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 import argus_chart_intelligence as ci
+import argus_market_replay as mr
 
 # The SDK creates a user-home rotating log during import.  Tests exercise only
 # public Flask/data functions, so use the same inert process-local stub as CI.
@@ -34,10 +35,15 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.chart_state = ci.normalize_state(scanner._CHART_INTELLIGENCE)
         scanner._CHART_INTELLIGENCE.clear()
         scanner._CHART_INTELLIGENCE.update(ci.empty_state())
+        self.replay_state = mr.normalize_state(scanner._MARKET_REPLAY)
+        scanner._MARKET_REPLAY.clear()
+        scanner._MARKET_REPLAY.update(mr.empty_state())
 
     def tearDown(self):
         scanner._CHART_INTELLIGENCE.clear()
         scanner._CHART_INTELLIGENCE.update(self.chart_state)
+        scanner._MARKET_REPLAY.clear()
+        scanner._MARKET_REPLAY.update(self.replay_state)
 
     def test_asset_chart_get_is_deterministic_and_provider_ai_zero(self):
         fake = history()
@@ -137,9 +143,14 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
                 mock.patch.object(scanner, "get_events_snapshot",
                                   return_value={"events": []}):
             body = scanner._chart_public_report(
-                "1321", "JP", market_scope=True, cached_only=True)
+                "1321", "JP", market_scope=True, cached_only=True,
+                precompute_replay=True)
         self.assertEqual(body["stateUpdate"]["status"], "updated")
         self.assertIn("relativeStrength", body)
+        self.assertEqual({"1", "5", "20"},
+                         set(body["marketReplay"]["contexts"]))
+        self.assertEqual(0, body["marketReplay"]["automaticAiCalls"])
+        self.assertEqual(3, len(scanner._MARKET_REPLAY["contexts"]))
 
     def test_durable_v3_snapshot_contains_chart_state_and_hash(self):
         old_restored = scanner._OSINT_PERSIST_STATE["restored"]
@@ -151,7 +162,29 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertEqual(body["schemaVersion"], "argus-durable-v3")
         self.assertIn("chartIntelligence", body)
         self.assertIn("chartIntelligenceStateHash", body)
+        self.assertIn("marketReplay", body)
+        self.assertIn("marketReplayStateHash", body)
         self.assertNotIn("holdings", str(body).lower())
+
+    def test_market_endpoint_supports_four_isolated_instruments(self):
+        fake = history()
+        with mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
+                mock.patch.object(scanner, "_td_price_history", return_value=fake), \
+                mock.patch.object(scanner, "get_events_snapshot",
+                                  return_value={"events": []}):
+            client = scanner.app.test_client()
+            for symbol, market in (("1321", "JP"), ("1306", "JP"),
+                                   ("SPY", "US"), ("QQQ", "US")):
+                body = client.get(
+                    f"/api/argus/chart-intelligence?scope=market&symbol={symbol}"
+                ).get_json()
+                self.assertEqual(symbol, body["symbol"])
+                self.assertEqual(market, body["market"])
+                self.assertEqual(f"{market}:{symbol}:ETF",
+                                 body["marketReplay"]["instrumentId"])
+            invalid = client.get(
+                "/api/argus/chart-intelligence?scope=market&symbol=INVALID")
+        self.assertEqual(400, invalid.status_code)
 
     def test_frontend_uses_get_shared_cache_hidden_pause_and_no_ai_post(self):
         hook = pathlib.Path("web/src/hooks/useChartIntelligence.ts").read_text()
@@ -164,7 +197,7 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertIn("AI API 0", panel)
 
     def test_runtime_version_matches_release(self):
-        self.assertEqual(scanner._semantic_app_version(), "13.1.2")
+        self.assertEqual(scanner._semantic_app_version(), "13.2.0")
 
 
 if __name__ == "__main__":

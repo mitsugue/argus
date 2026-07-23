@@ -106,6 +106,69 @@ export interface ChartIntelligencePayload {
         calibrationStatus: string; probability: number | null; outcomes: Record<string, unknown> } };
     automaticAiCalls: number;
   };
+  marketReplay?: {
+    schemaVersion: string; methodVersion: string; instrumentId: string;
+    stateHash: string; automaticAiCalls: number; computationMode: string;
+    readBack: { verificationStatus: string; lastVerifiedReadBackAt: string | null };
+    contexts: Record<string, MarketReplayContext>;
+  };
   shortDataAudit?: Array<Record<string, unknown>>;
   noteJa: string;
+}
+
+export interface ReplayOutcome {
+  '1': number | null; '5': number | null; '20': number | null;
+  mfe: number | null; mae: number | null; reactionClass: string;
+  reactionDelayDays: number | null;
+}
+export interface ReplayEpisode {
+  episodeId: string; date: string; episodeStart: string; episodePeak: number | null;
+  rank: number; family: string; volatility: string; distance: number;
+  similarityPct: number; dataCoverage: string; outcomes: ReplayOutcome;
+}
+export interface ReplayDistribution {
+  count: number; q10: number | null; q25: number | null; median: number | null;
+  q75: number | null; q90: number | null; min: number | null; max: number | null;
+  histogram: Array<{ from: number; to: number; count: number }>;
+}
+export interface ReplayLedgerSeries {
+  seriesId: string; labelJa: string; unit?: string; currentValue: number;
+  change1: number | null; cumulative4: number | null; cumulative13: number | null;
+  rollingPercentile: number; zScore: number; localPeak: boolean; localBottom: boolean;
+  extremeFamily: string | null; source?: string;
+  history: Array<{ date: string; availableFrom: string; value: number }>;
+}
+export interface MarketReplayContext {
+  schemaVersion: string; methodVersion: string; featureVersion: string;
+  reactionVersion: string; contextId: string; instrumentId: string; symbol: string;
+  market: string; horizon: number; asOf: string; datasetHash: string;
+  outcomeHash: string; calibrationHash: string; automaticAiCalls: number;
+  historyCoverage: { start: string | null; end: string | null; count: number };
+  currentFeatures: Record<string, number>;
+  currentRegime: { trend: string; volatility: string };
+  similarEpisodes: {
+    rawOccurrenceCount: number; groupedEpisodeCount: number; effectiveSampleCount: number;
+    cooldownTradingDays: number; similarityMethod: string; featureVersion: string;
+    episodes: ReplayEpisode[];
+  };
+  eventStudy: { window: number[]; noFutureLeakage: boolean;
+    points: Array<{ day: number; sample: number; q10: number | null; q25: number | null;
+      median: number | null; q75: number | null; q90: number | null }> };
+  outcomeDistributions: Record<string, ReplayDistribution>;
+  calibrationCurve: { horizon: number; walkForward: boolean; noFutureLeakage: boolean;
+    points: Array<{ bin: number; sample: number; predicted: number; observed: number;
+      smallSample: boolean }> };
+  regimeAnalysis: Array<{ regime: string; effectiveSample: number; eligible: boolean;
+    medianReturnPct: number | null; upRatePct: number | null }>;
+  extremes: { methodVersion: string; thresholds: number[]; rawOccurrenceCount: number;
+    effectiveEpisodeCount: number; publicationTimeIntegrity: boolean;
+    series: ReplayLedgerSeries[]; events: Array<Record<string, unknown>> };
+  changeConditions: Array<{ triggerType: string; price: number | null; event: string | null;
+    timeframe: string; requiredConfirmation: string; status: string; sourceId?: string }>;
+  probabilityQuality: { modelBrier: number | null; baselineBrier: number | null;
+    brierSkill: number | null; effectiveSample: number | null;
+    calibrationIntegrity: string | null; datasetHash: string;
+    evaluationPeriod: { start: string | null; end: string | null } };
+  computation: { mode: string; cacheKey: string; noFutureLeakage: boolean;
+    publicationTimeIntegrity: boolean };
 }

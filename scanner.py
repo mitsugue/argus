@@ -102,6 +102,7 @@ import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal cl
 import argus_research_benchmark_v2  # v12.7.0: validity-separated one-time v2 closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
 import argus_today_intelligence     # v13.1.1: replay calibration/daily short/failed-rally
+import argus_market_replay          # v13.2.0: deterministic Market Context replay/extremes
 import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 from flask import Flask, jsonify, request
@@ -138,6 +139,9 @@ _CHART_INTELLIGENCE_REMOTE = {"lastVerifiedReadBackAt": None,
 _TODAY_INTELLIGENCE = argus_today_intelligence.empty_state()
 _TODAY_INTELLIGENCE_REMOTE = {"lastVerifiedReadBackAt": None,
                               "verificationStatus": "not_verified"}
+_MARKET_REPLAY = argus_market_replay.empty_state()
+_MARKET_REPLAY_REMOTE = {"lastVerifiedReadBackAt": None,
+                         "verificationStatus": "not_verified"}
 
 
 def _cost_policy_authorize(provider, purpose, *, automatic=True,
@@ -15579,6 +15583,8 @@ def _osint_persist():
                 "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
                 "todayIntelligence": argus_today_intelligence.normalize_state(_TODAY_INTELLIGENCE),
                 "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
+                "marketReplay": argus_market_replay.normalize_state(_MARKET_REPLAY),
+                "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
                 "soakLastPersistAt": _ai_now_iso()}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -15848,6 +15854,11 @@ def _osint_restore_once():
                 _TODAY_INTELLIGENCE, _ti)
             _TODAY_INTELLIGENCE.clear()
             _TODAY_INTELLIGENCE.update(_restored_ti)
+        _mr = blob.get("marketReplay")
+        if isinstance(_mr, dict):
+            _restored_mr = argus_market_replay.merge_state(_MARKET_REPLAY, _mr)
+            _MARKET_REPLAY.clear()
+            _MARKET_REPLAY.update(_restored_mr)
         _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
         for h in _jr["events"]:
             argus_state_journal.append(_OPS_JOURNAL, h)
@@ -17118,10 +17129,28 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _TODAY_INTELLIGENCE_REMOTE["verificationStatus"] = "hash_mismatch"
     else:
         _TODAY_INTELLIGENCE_REMOTE["verificationStatus"] = "not_present"
+    remote_replay = blob.get("marketReplay") if isinstance(blob, dict) else None
+    remote_replay_hash = (blob.get("marketReplayStateHash")
+                          if isinstance(blob, dict) else None)
+    if isinstance(remote_replay, dict) and argus_market_replay.read_back_verified(
+            _MARKET_REPLAY, remote_replay):
+        _MARKET_REPLAY_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif remote_replay_hash and remote_replay_hash == \
+            argus_market_replay.state_hash(_MARKET_REPLAY):
+        _MARKET_REPLAY_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_replay, dict) or remote_replay_hash:
+        _MARKET_REPLAY_REMOTE["verificationStatus"] = "hash_mismatch"
+    else:
+        _MARKET_REPLAY_REMOTE["verificationStatus"] = "not_present"
     rec["outcomeReadBack"] = outcome_rec
     rec["marketLedgerReadBack"] = dict(_MARKET_LEDGER_REMOTE)
     rec["chartIntelligenceReadBack"] = dict(_CHART_INTELLIGENCE_REMOTE)
     rec["todayIntelligenceReadBack"] = dict(_TODAY_INTELLIGENCE_REMOTE)
+    rec["marketReplayReadBack"] = dict(_MARKET_REPLAY_REMOTE)
     return rec
 
 
@@ -17417,20 +17446,37 @@ def api_argus_admin_missions_tick():
                                 "rowCount": len(_TODAY_INTELLIGENCE.get(
                                     "shortSellingHistory") or [])}
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
+    _replay_before_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
     try:
-        _chart_report = _chart_public_report(
-            "1321", "JP", "daily", market_scope=True, cached_only=True)
+        _chart_reports = []
+        for _market_symbol, _market_code in (
+                ("1321", "JP"), ("1306", "JP"), ("SPY", "US"), ("QQQ", "US")):
+            _chart_reports.append(_chart_public_report(
+                _market_symbol, _market_code, "daily",
+                market_scope=_market_symbol == "1321", cached_only=True,
+                precompute_replay=True))
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
+        _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
         _chart_changed = _chart_before_hash != _chart_after_hash
-        chart_tick = {"changed": _chart_changed, "reportId": _chart_report.get("reportId"),
-                      "status": _chart_report.get("status"),
-                      "stateHash": _chart_after_hash}
-        if _chart_changed:
-            _journal("chart_intelligence_updated", "chart_intelligence",
-                     str(_chart_report.get("reportId") or "unknown"),
-                     {"status": _chart_report.get("status"),
-                      "stateHash": _chart_after_hash,
-                      "methodVersion": _chart_report.get("methodVersion")})
+        _replay_changed = _replay_before_hash != _replay_after_hash
+        chart_tick = {
+            "changed": _chart_changed, "replayChanged": _replay_changed,
+            # Preserve the pre-v13.2 primary report fields for operations
+            # consumers while exposing all four cache results additively.
+            "reportId": _chart_reports[0].get("reportId"),
+            "status": _chart_reports[0].get("status"),
+            "reportIds": [row.get("reportId") for row in _chart_reports],
+            "statuses": [row.get("status") for row in _chart_reports],
+            "stateHash": _chart_after_hash,
+            "replayStateHash": _replay_after_hash,
+        }
+        if _chart_changed or _replay_changed:
+            _journal("market_context_replay_updated", "market_replay",
+                     _replay_after_hash,
+                     {"chartStateHash": _chart_after_hash,
+                      "replayStateHash": _replay_after_hash,
+                      "methodVersion": argus_market_replay.METHOD_VERSION,
+                      "instrumentCount": 4})
     except Exception as _chart_exc:
         chart_tick = {"changed": False, "status": "degraded",
                       "reason": type(_chart_exc).__name__}
@@ -19508,6 +19554,8 @@ def api_argus_osint_memory_snapshot():
                     "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
                     "todayIntelligence": argus_today_intelligence.normalize_state(_TODAY_INTELLIGENCE),
                     "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
+                    "marketReplay": argus_market_replay.normalize_state(_MARKET_REPLAY),
+                    "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
@@ -19710,7 +19758,7 @@ def _jp_daily_short_history(cached_only=False):
 
 
 def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
-                         cached_only=False):
+                         cached_only=False, precompute_replay=False):
     now_iso = _ai_now_iso()
     history = _chart_history_cached if cached_only else _chart_history
     daily_rows = history(symbol, market)
@@ -19729,6 +19777,8 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                     _CHART_INTELLIGENCE),
                 "todayIntelligenceStateHash": argus_today_intelligence.state_hash(
                     _TODAY_INTELLIGENCE),
+                "marketReplayStateHash": argus_market_replay.state_hash(
+                    _MARKET_REPLAY),
                 **_CHART_INTELLIGENCE_REMOTE,
             },
         }
@@ -19814,6 +19864,61 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         short_history=_short_rows, comparison_rows=_comparison_rows,
         as_of=report.get("periodEnd"))
     report["todayIntelligence"] = _today_intel
+    # Every Replay instrument keeps an isolated relative-price series.  The JP
+    # primary view later adds the full cross-market matrix.
+    report["relativeStrength"] = {
+        f"{symbol.lower()}_{_comparison_symbol.lower()}":
+            argus_chart_intelligence.relative_strength(
+                f"{symbol.lower()}_{_comparison_symbol.lower()}",
+                daily_rows, _comparison_rows, classification="derived")
+    }
+    _instrument_id = f"{market}:{symbol}:ETF"
+    if precompute_replay and timeframe == "daily":
+        _replay_ledger = {**ledger, "table": list(ledger.get("table") or [])}
+        if market == "JP" and _short_rows:
+            _replay_ledger["table"].append({
+                "seriesId": "daily_short.ratio",
+                "labelJa": "日次空売り比率", "unit": "percent",
+                "latestValue": _short_rows[-1].get("totalShortRatio"),
+                "source": _short_rows[-1].get("source"),
+                "history": [{
+                    "periodEnd": row.get("date"),
+                    "availableFrom": row.get("availableFrom") or row.get("date"),
+                    "value": row.get("totalShortRatio"), "unit": "percent",
+                } for row in _short_rows],
+            })
+        for _relative_id, _relative_row in (report.get("relativeStrength") or {}).items():
+            _replay_ledger["table"].append({
+                "seriesId": f"relative.{_relative_id}",
+                "labelJa": _relative_id, "unit": "ratio",
+                "latestValue": _relative_row.get("latestValue"),
+                "history": [{
+                    "periodEnd": point.get("date"),
+                    "availableFrom": point.get("date"),
+                    "value": point.get("value"), "unit": "ratio",
+                } for point in (_relative_row.get("history") or [])],
+            })
+        for _replay_horizon in argus_market_replay.HORIZONS:
+            _replay_context = argus_market_replay.build_context(
+                daily_rows, symbol=symbol, market=market,
+                horizon=_replay_horizon, chart_report=report, ledger=_replay_ledger,
+                calibration=_today_intel.get("calibration") or {},
+                now_iso=now_iso)
+            _replay_merged = argus_market_replay.merge_context(
+                _MARKET_REPLAY, _replay_context, now_iso)
+            _MARKET_REPLAY.clear()
+            _MARKET_REPLAY.update(_replay_merged)
+    report["marketReplay"] = {
+        "schemaVersion": argus_market_replay.SCHEMA_VERSION,
+        "methodVersion": argus_market_replay.METHOD_VERSION,
+        "instrumentId": _instrument_id,
+        "contexts": argus_market_replay.latest_contexts(
+            _MARKET_REPLAY, _instrument_id),
+        "stateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
+        "readBack": dict(_MARKET_REPLAY_REMOTE),
+        "automaticAiCalls": 0,
+        "computationMode": "deterministic_background_cache",
+    }
     report["shortDataAudit"] = argus_today_intelligence.data_source_audit(
         _today_intel.get("shortSelling") or {},
         "available_per_symbol_via_jpx_disclosure" if market == "JP" else
@@ -19903,6 +20008,9 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "todayIntelligenceStateHash": argus_today_intelligence.state_hash(
                 _TODAY_INTELLIGENCE),
             "todayIntelligenceReadBack": dict(_TODAY_INTELLIGENCE_REMOTE),
+            "marketReplayStateHash": argus_market_replay.state_hash(
+                _MARKET_REPLAY),
+            "marketReplayReadBack": dict(_MARKET_REPLAY_REMOTE),
             **_CHART_INTELLIGENCE_REMOTE,
         }
         return report
@@ -19924,6 +20032,9 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         "todayIntelligenceStateHash": argus_today_intelligence.state_hash(
             _TODAY_INTELLIGENCE),
         "todayIntelligenceReadBack": dict(_TODAY_INTELLIGENCE_REMOTE),
+        "marketReplayStateHash": argus_market_replay.state_hash(
+            _MARKET_REPLAY),
+        "marketReplayReadBack": dict(_MARKET_REPLAY_REMOTE),
         **_CHART_INTELLIGENCE_REMOTE}
     return report
 
@@ -19936,10 +20047,17 @@ def api_argus_chart_intelligence():
     if timeframe not in ("daily", "weekly"):
         return jsonify({"error": "invalid_timeframe"}), 400
     if scope == "market":
+        symbol = (request.args.get("symbol") or "1321").strip().upper()
+        if symbol not in {"1321", "1306", "SPY", "QQQ"}:
+            return jsonify({"error": "unsupported_market_instrument"}), 400
+        market = "JP" if symbol in {"1321", "1306"} else "US"
         # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
-        report = _chart_public_report("1321", "JP", timeframe, market_scope=True)
-        report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get("1321", "1321")
-        report["proxyDisclosureJa"] = "現物日経平均そのものではなく、既存の公式日足経路で取得する連動ETFを使用。"
+        report = _chart_public_report(
+            symbol, market, timeframe, market_scope=symbol == "1321")
+        report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(symbol, symbol)
+        if symbol == "1321":
+            report["proxyDisclosureJa"] = (
+                "現物日経平均そのものではなく、既存の公式日足経路で取得する連動ETFを使用。")
         return jsonify(argus_market_intelligence.normalize_public_names(report))
     symbol = (request.args.get("symbol") or "").strip().upper()
     market = (request.args.get("market") or ("JP" if symbol[:1].isdigit() else "US")).upper()

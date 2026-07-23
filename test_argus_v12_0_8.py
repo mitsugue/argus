@@ -189,7 +189,9 @@ def test_fe_matrix_axes_and_provisional():
     assert "中立" in m                                       # 欠損→中立の説明
     assert "入力の内訳" in m
     mr = _read("routes", "MarketRegime.tsx")
-    assert "axisHelpJa" in mr
+    replay = _read("components", "marketReplay", "MarketContextReplay.tsx")
+    assert "MarketContextReplay" in mr
+    assert "currentRegime" in replay and "サンプル不足" in replay
 
 
 def test_jp_matrix_missing_data_maps_neutral():
@@ -381,10 +383,11 @@ def test_addendum_caos_delay_numeric():
 # ── 追補9: JP行列の暫定 ─────────────────────────────────────────────────────
 
 def test_addendum_jp_matrix_provisional_label():
-    src = _read("routes", "MarketRegime.tsx")
+    src = _read("components", "marketReplay", "MarketContextReplay.tsx")
+    assert "data.status !== 'live'" in src
     assert "暫定" in src
-    assert "provisional" in src
-    assert "toJpMatrixState(data.jpMatrix, data?.status !== 'live')" in src
+    assert "currentRegime" in src
+    assert "regimeAnalysis" in src
 
 
 # ── 追補10: スクショ再現fixture(決定論) ─────────────────────────────────────

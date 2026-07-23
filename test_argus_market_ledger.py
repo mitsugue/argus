@@ -37,6 +37,14 @@ class MarketLedgerTests(unittest.TestCase):
         self.assertIsNone(st["observations"][0]["value"])
         self.assertEqual(st["observations"][0]["status"], "missing")
 
+    def test_public_history_preserves_publication_time_for_replay(self):
+        st = add(ml.empty_state(), "credit.short_balance", "2026-07-10",
+                 700_000_000_000, available="2026-07-14T07:00:00Z")
+        row = next(item for item in ml.public_view(st, NOW)["table"]
+                   if item["seriesId"] == "credit.short_balance")
+        self.assertEqual("2026-07-14T07:00:00Z",
+                         row["history"][0]["availableFrom"])
+
     def test_available_from_compares_instants_not_iso_offset_text(self):
         st = add(ml.empty_state(), "breadth.all.advancers", "2026-07-21", 100,
                  available="2026-07-21T17:00:00+09:00")

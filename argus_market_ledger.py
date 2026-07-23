@@ -699,7 +699,12 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
                       "acquisition": acquisition, "sourceKind": source_kind,
                       "history": ([] if licensed_redacted else
                                   [{"periodEnd": x.get("periodEnd") or x.get("asOf"), "value": x.get("value"),
-                                   "unit": x.get("unit")} for x in (rows or drows)[-1300:]])})
+                                   "unit": x.get("unit"),
+                                   # Replay may consume a weekly point only
+                                   # after publication, never at period end.
+                                   "availableFrom": x.get("availableFrom")
+                                   or x.get("periodEnd") or x.get("asOf")}
+                                  for x in (rows or drows)[-1300:]])})
     for mid, label in (("valuation.eps", "日経平均EPS"),
                        ("valuation.bps", "日経平均BPS"),
                        ("valuation.per18_level", "PER18倍水準"),
@@ -730,7 +735,9 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
                       "status": cur.get("status") if cur else "missing",
                       "acquisition": "derived", "sourceKind": "derived",
                       "history": [{"periodEnd": x.get("asOf"), "value": x.get("value"),
-                                   "unit": "JPY"} for x in rows[-1300:]]})
+                                   "unit": "JPY",
+                                   "availableFrom": x.get("availableFrom") or x.get("asOf")}
+                                  for x in rows[-1300:]]})
     def mv(mid: str): return (latest_metrics.get(mid) or {}).get("value")
     short = next((x for x in table if x["seriesId"] == "credit.short_balance"), {})
     long = next((x for x in table if x["seriesId"] == "credit.long_balance"), {})
