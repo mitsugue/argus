@@ -92,11 +92,13 @@ const reclaimedProjection = buildTodayProjection({ symbol: '1321', label: '日�
   asOf: '2026-07-21', status: 'live', bars,
   zones: [{ id: 'broken', center: 122, lower: 121, upper: 123, status: 'broken' },
     { id: 'reclaimed', center: 120, lower: 119, upper: 121, status: 'reclaimed' },
+    { id: 'crossing', center: 125, lower: 123, upper: 127, status: 'active' },
     { id: 'resistance', center: 130, lower: 129, upper: 131, status: 'active' }] }, 'WAIT');
 check('zone roles are price-relative and reclaimed becomes support', reclaimedProjection.support.status === 'reclaimed'
   && reclaimedProjection.support.high < reclaimedProjection.current
   && reclaimedProjection.resistance.low > reclaimedProjection.current
-  && !reclaimedProjection.supportResistanceIds.includes('broken'));
+  && !reclaimedProjection.supportResistanceIds.includes('broken')
+  && !reclaimedProjection.supportResistanceIds.includes('crossing'));
 const calibratedInput = { symbol: 'SPY', instrumentId: 'US:SPY:ETF', label: 'S&P 500 ETF（SPY）',
   asOf: '2026-07-22', status: 'live', timeframe: 'daily', quoteState: 'close', bars, zones: [],
   calibration: { historyCount: 1338, calibrationVersion: 'beta-dirichlet-walk-forward-v2', horizons: {

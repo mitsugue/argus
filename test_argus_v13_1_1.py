@@ -107,6 +107,8 @@ def test_today_acceptance_uses_server_eligibility_and_honest_price_time():
     assert "翌5日下落" not in panel
     assert "実績 · 終値" in panel
     assert "営業日先 予測" in panel
+    assert "zone.upper < current" in domain
+    assert "zone.lower > current" in domain
 
 
 def test_1321_is_explicitly_an_etf_proxy_with_unverified_index_rights():
