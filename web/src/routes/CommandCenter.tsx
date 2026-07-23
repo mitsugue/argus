@@ -48,7 +48,8 @@ function instrumentLabel(payload: ChartIntelligencePayload): string {
 function projectionInput(payload: ChartIntelligencePayload | null): TodayProjectionInput | null {
   if (!payload) return null;
   return { symbol: payload.symbol, label: instrumentLabel(payload), asOf: payload.periodEnd,
-    status: payload.status, timeframe: payload.timeframe, quoteState: 'close',
+    status: payload.status, timeframe: payload.timeframe,
+    quoteState: payload.quoteState ?? 'CLOSE',
     sourceHistoryCount: payload.indicators.bars.length,
     instrumentId: payload.instrumentMetadata?.instrumentId,
     source: payload.instrumentMetadata?.source ?? 'existing_market_data_cache',
