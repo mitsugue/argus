@@ -17377,7 +17377,10 @@ def api_argus_admin_missions_tick():
     # J-Quants publishes this close-based aggregate after the JP session.  The
     # natural scheduler owns the bounded provider refresh; public chart GETs
     # remain cache/read-only and therefore cannot create provider cost.
-    if jp_session.get("isTradingDay") and (now.hour, now.minute) >= (16, 30):
+    _needs_daily_short_seed = not bool(
+        _TODAY_INTELLIGENCE.get("shortSellingHistory") or [])
+    if _needs_daily_short_seed or (
+            jp_session.get("isTradingDay") and (now.hour, now.minute) >= (16, 30)):
         try:
             _daily_short_rows = _jp_daily_short_history(cached_only=False)
             daily_short_tick = {
@@ -17387,6 +17390,7 @@ def api_argus_admin_missions_tick():
                 "rowCount": len(_daily_short_rows),
                 "latestDate": (_daily_short_rows[-1].get("date")
                                if _daily_short_rows else None),
+                "initialSeed": _needs_daily_short_seed,
             }
         except Exception as _short_exc:
             daily_short_tick = {"status": "degraded",

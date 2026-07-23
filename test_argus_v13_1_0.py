@@ -72,6 +72,12 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
                 "/api/argus/chart-intelligence?scope=asset&market=JP&symbol=1321")
         short.assert_called_once_with(cached_only=True)
 
+    def test_natural_tick_has_bounded_initial_short_seed(self):
+        source = pathlib.Path("scanner.py").read_text()
+        self.assertIn("_needs_daily_short_seed", source)
+        self.assertIn("_jp_daily_short_history(cached_only=False)", source)
+        self.assertIn('"initialSeed": _needs_daily_short_seed', source)
+
     def test_today_state_is_durable_hash_verified_and_private_safe(self):
         bars = [{"date": "2026-07-21", "open": 99, "high": 102, "low": 98,
                  "close": 101, "volume": 1000}]
