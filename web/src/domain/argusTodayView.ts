@@ -374,8 +374,12 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
   const current = last.close;
   const zones = input.zones.filter((zone) => ['active', 'reclaimed'].includes(zone.status)
     && Number.isFinite(zone.lower) && Number.isFinite(zone.upper));
-  const below = zones.filter((zone) => zone.center < current).sort((a, b) => b.center - a.center)[0];
-  const above = zones.filter((zone) => zone.center > current).sort((a, b) => a.center - b.center)[0];
+  // A zone must sit wholly on the correct side of the observed close. A band
+  // crossing the close is neither resistance nor support at that instant.
+  const below = zones.filter((zone) => zone.upper < current)
+    .sort((a, b) => b.upper - a.upper)[0];
+  const above = zones.filter((zone) => zone.lower > current)
+    .sort((a, b) => a.lower - b.lower)[0];
   const calibrated = input.calibration?.horizons[String(horizonDays)];
   const distribution = calibrated?.returnDistribution;
   const priceAt = (value: number | null | undefined, fallback: number) =>
