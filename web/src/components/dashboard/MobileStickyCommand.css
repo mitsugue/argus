@@ -4,14 +4,14 @@
 @media (max-width: 720px) {
   .msc {
     position: fixed;
-    bottom: 0;
-    left: 44px;                 /* the dots-only nav rail keeps its column */
+    bottom: calc(58px + env(safe-area-inset-bottom));
+    left: 0;
     right: 0;
-    z-index: 40;
+    z-index: 39;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+    padding: 6px 10px;
     background: var(--bg-card, #0d1117);
     border-top: 1px solid var(--line);
     font-size: 11px;

@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.1.0', 'Today Forecast／Replay完成 — JP・USのETF proxyをinstrument IDごとに分離し、S&P 500／Nasdaq切替、5年類似局面のwalk-forward校正、日次空売り比率、上昇失敗検出、Remote Journal保存を接続。通常操作のAI呼び出しと自動売買は0。'],
   ['v13.0.2', 'Todayの簡潔さを維持したまま、予測図のinstrument・期間・実績境界を明示し、実績線を白へ変更。指数のas-of／騰落色／sparkline、需給の実数、Market Ledger導線、MACROのVIX、重大ニュースの処理済みフィルター、前回判断の翌1営業日評価を整合。'],
   ['v13.0.1', 'EC2 schedulerのbuild identityをGitHub mainとbackend healthの独立照合へ変更。deploy移行grace・確認済みSHA復元・明示的失敗分類で静的pinの取り残しを防止。'],
   ['v13.0.0', 'A.R.G.U.S. Engineへ名称と判断を統一。Todayを市場別の単一BUY／WAIT／SELL、NEXT EVENT、簡潔な需給・保有確認へ削減。自動AIと自動売買は0。'],

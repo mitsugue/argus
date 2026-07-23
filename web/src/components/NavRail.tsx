@@ -47,8 +47,9 @@ export const NavRail: React.FC<Props> = ({
 }) => {
   return (
     <nav className="nav" aria-label="Sections">
-      <div className="nav__group-label">Workspace</div>
-      {NAV.map((n) => (
+      <div className="nav__desktop">
+        <div className="nav__group-label">Workspace</div>
+        {NAV.map((n) => (
         <button
           key={n.key}
           className={`nav__btn ${active === n.key ? 'is-active' : ''}`}
@@ -58,7 +59,7 @@ export const NavRail: React.FC<Props> = ({
           <span className="nav__dot" aria-hidden />
           {n.label}
         </button>
-      ))}
+        ))}
 
       {/* v11.19.1 (owner request): backup operations consolidated on ONE page,
           placed at the bottom group next to Guide. */}
@@ -102,6 +103,26 @@ export const NavRail: React.FC<Props> = ({
             AI review
           </button>
         )}
+      </div>
+      </div>
+
+      <div className="nav__mobile" aria-label="Mobile sections">
+        <button className={`nav__mobile-btn ${active === 'command' ? 'is-active' : ''}`}
+          onClick={() => onSelect('command')}><span className="nav__mobile-dot" />Today</button>
+        <button className={`nav__mobile-btn ${active === 'regime' ? 'is-active' : ''}`}
+          onClick={() => onSelect('regime')}><span className="nav__mobile-dot" />Market</button>
+        <button className={`nav__mobile-btn ${active === 'watchlist' || active === 'core' ? 'is-active' : ''}`}
+          onClick={() => onSelect('watchlist')}><span className="nav__mobile-dot" />Assets</button>
+        <button className={`nav__mobile-btn ${isReview ? 'is-active' : ''}`}
+          onClick={onReviewLink}><span className="nav__mobile-dot" />Review</button>
+        <details className={`nav__mobile-system ${active === 'quality' || active === 'backup' || active === 'guide' ? 'is-active' : ''}`}>
+          <summary className="nav__mobile-btn"><span className="nav__mobile-dot" />System</summary>
+          <div className="nav__mobile-system-menu">
+            <button onClick={() => onSelect('quality')}>Data Quality</button>
+            <button onClick={() => onSelect('backup')}>Backup</button>
+            <button onClick={() => onSelect('guide')}>Guide</button>
+          </div>
+        </details>
       </div>
     </nav>
   );

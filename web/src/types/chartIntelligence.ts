@@ -51,5 +51,42 @@ export interface ChartIntelligencePayload {
   critique: Array<{ label: string; text: string }>;
   scenarios: Array<{ label: string; text: string }>;
   persistence: { stateHash: string; verificationStatus: string; lastVerifiedReadBackAt: string | null };
+  instrumentMetadata?: { instrumentId: string; symbol: string; market: string;
+    assetType: 'ETF' | 'EQUITY' | string; displayNameJa: string; source: string;
+    availableFrom: string | null; observedAt: string; revision: number };
+  turningPointPage?: { totalStoredCount: number; apiReturnCount: number; uiDisplayLimit: number;
+    activeCount: number; confirmedCount: number; periodFilter: string | null;
+    limit: number | null; nextCursor: string | null };
+  todayIntelligence?: {
+    schemaVersion: string; methodVersion: string; symbol: string; market: string; asOf: string | null;
+    historyCoverage: { start: string | null; end: string | null; count: number };
+    calibration: { schemaVersion: string; methodVersion: string; calibrationVersion: string;
+      historyStart: string | null; historyEnd: string | null; historyCount: number;
+      horizons: Record<string, {
+        horizon: number; signalFamily?: string; rawOccurrenceCount: number; episodeCount: number;
+        effectiveSampleCount: number; cooldownTradingDays?: number; calibrationStatus: string;
+        probabilities: { UP: number; RANGE: number; DOWN: number } | null;
+        baseRates?: Record<string, number>; brierScore?: number | null;
+        baseRateBrierScore?: number | null; confidenceInterval?: Record<string, { low: number; high: number }> | null;
+        noFutureLeakage?: boolean; walkForward?: boolean; calibrationVersion?: string;
+        methodVersion?: string; averageReactionDelay?: number | null;
+        returnDistribution?: { q10: number | null; q25: number | null; median: number | null;
+          q75: number | null; q90: number | null; meanMfe: number | null; meanMae: number | null };
+        targetProbabilities?: { upperTargetTouch: number | null; baseRangeClose: number | null;
+          lowerTargetTouch: number | null; invalidationTouch: number | null } | null;
+      }> };
+    shortSelling: { schemaVersion: string; status: string; historyStart: string | null;
+      historyCount: number; latestDate?: string; freshness?: string; missingReason?: string | null;
+      latest: null | { date: string; totalShortRatio: number; previousDayDifference: number | null;
+        average5: number | null; average20: number | null; rollingPercentile: number | null;
+        totalTradingValue: number; totalShortSellingValue: number; regulatedShortValue: number;
+        nonRegulatedShortValue: number; source: string; availableFrom: string } };
+    failedRally: { state: 'NONE' | 'WATCH' | 'CONFIRMED'; facts: string[];
+      probability: number | null; metrics: Record<string, number | null>;
+      backtest: { rawOccurrenceCount: number; episodeCount: number; effectiveSampleCount: number;
+        calibrationStatus: string; probability: number | null; outcomes: Record<string, unknown> } };
+    automaticAiCalls: number;
+  };
+  shortDataAudit?: Array<Record<string, unknown>>;
   noteJa: string;
 }
