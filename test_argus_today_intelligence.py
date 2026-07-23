@@ -59,6 +59,12 @@ def test_probability_calibration_uses_effective_episodes_and_sums_to_100():
         assert row["modelBrier"] == row["brierScore"]
         assert row["baselineBrier"] is not None
         assert row["calibrationIntegrity"] == "PASS"
+        eligibility = row["probabilityEligibility"]
+        assert eligibility["effectiveSample"] == row["effectiveSampleCount"]
+        assert eligibility["modelBrier"] == row["modelBrier"]
+        assert eligibility["baselineBrier"] == row["baselineBrier"]
+        assert eligibility["datasetHash"] == row["calibrationDatasetHash"]
+        assert eligibility["contractVersion"] == "probability-eligibility-v1"
         assert row["evaluationSampleCount"] > 0
         assert row["expectedValue"]["horizon"] == int(horizon)
         if row["calibrationStatus"] == "calibrated":
@@ -67,6 +73,12 @@ def test_probability_calibration_uses_effective_episodes_and_sums_to_100():
             assert row["brierSkill"] > 0
             assert row["confidenceInterval"]
             assert row["levelProbabilities"]["upperTargetTouch"] is not None
+            assert eligibility["eligible"] is True
+            assert eligibility["reasonCodes"] == []
+            assert eligibility["probabilitySum"] == 100
+        else:
+            assert eligibility["eligible"] is False
+            assert row["probabilities"] is None
 
 
 def test_walk_forward_baseline_is_past_only_and_skill_is_paired():
@@ -85,6 +97,47 @@ def test_small_sample_never_displays_percentages():
     row = ti.calibrate_horizon(market_bars(70), 20)
     assert row["calibrationStatus"] in {"insufficient_history", "insufficient_sample"}
     assert row["probabilities"] is None
+    assert row["probabilityEligibility"]["eligible"] is False
+    assert "effective_sample_below_30" in row["probabilityEligibility"]["reasonCodes"]
+
+
+def test_probability_eligibility_is_the_complete_authoritative_gate():
+    good = {
+        "effectiveSampleCount": 30,
+        "modelBrier": .51,
+        "baselineBrier": .60,
+        "brierSkill": .15,
+        "calibrationIntegrity": "PASS",
+        "noFutureLeakage": True,
+        "calibrationVersion": "fixed-v1",
+        "calibrationDatasetHash": "abc123",
+        "calibrationDatasetFixedAt": "2026-07-22",
+    }
+    probabilities = {"UP": 45, "RANGE": 30, "DOWN": 25}
+    eligible = ti.probability_eligibility(good, probabilities)
+    assert eligible["eligible"] is True
+    assert eligible["reasonCodes"] == []
+    assert eligible["probabilitySum"] == 100
+    cases = [
+        ({**good, "effectiveSampleCount": 29}, "effective_sample_below_30"),
+        ({**good, "brierSkill": 0}, "brier_skill_non_positive"),
+        ({**good, "modelBrier": .61}, "model_not_better_than_baseline"),
+        ({**good, "calibrationIntegrity": "FAIL"}, "calibration_integrity_failed"),
+        ({**good, "noFutureLeakage": False}, "future_leakage_not_excluded"),
+    ]
+    for row, reason in cases:
+        result = ti.probability_eligibility(row, probabilities)
+        assert result["eligible"] is False
+        assert reason in result["reasonCodes"]
+    bad_sum = ti.probability_eligibility(good, {"UP": 45, "RANGE": 30, "DOWN": 24})
+    assert bad_sum["eligible"] is False
+    assert "probability_sum_not_100" in bad_sum["reasonCodes"]
+    malformed = ti.probability_eligibility(
+        {**good, "effectiveSampleCount": "invalid"},
+        {"UP": "invalid", "RANGE": 30, "DOWN": 70})
+    assert malformed["eligible"] is False
+    assert malformed["effectiveSample"] == 0
+    assert malformed["probabilitySum"] is None
 
 
 def test_daily_short_schema_is_distinct_and_has_rollups():
@@ -111,6 +164,17 @@ def test_failed_rally_fixture_is_confirmed_without_forcing_probability():
     assert result["conditions"]["gapUp"] is True
     assert result["conditions"]["closeBelowPrevious"] is True
     assert result["conditions"]["shortRatioFell"] is True
+
+
+def test_failed_rally_rate_is_not_promoted_without_baseline_skill():
+    result = ti.failed_rally_backtest(market_bars())
+    assert "observedDeclineRatePct" in result
+    assert result["probability"] is None
+    assert result["calibrationStatus"] == "forward_skill_not_evaluated"
+    assert result["forwardSkill"]["eligible"] is False
+    assert result["forwardSkill"]["baselineBrier"] is None
+    assert result["forwardSkill"]["reasonCodes"] == [
+        "baseline_comparison_not_available"]
 
 
 def test_failed_rally_does_not_promote_plain_up_day():

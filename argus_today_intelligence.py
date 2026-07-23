@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 SCHEMA_VERSION = "argus-today-intelligence-v1"
 METHOD_VERSION = "today-replay-calibration-v1"
 CALIBRATION_VERSION = "beta-dirichlet-walk-forward-v2"
+PROBABILITY_ELIGIBILITY_VERSION = "probability-eligibility-v1"
 MIN_EFFECTIVE_SAMPLES = 30
 HORIZONS = (1, 5, 20)
 UNIFORM_MULTICLASS_BRIER = 2.0 / 3.0
@@ -340,17 +341,82 @@ def _confidence_interval(probability: float, effective_n: int) -> Dict[str, floa
             "high": round(min(1.0, probability + delta) * 100, 1)}
 
 
+def probability_eligibility(
+    calibration: Dict[str, Any],
+    probabilities: Optional[Dict[str, int]] = None,
+    *,
+    evaluated_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return the sole server-side contract for publishing direction percentages."""
+    candidate = probabilities if probabilities is not None else (
+        calibration.get("directionProbabilities") or calibration.get("probabilities")
+    )
+    candidate_values = (
+        [_number(candidate.get(key)) for key in ("UP", "RANGE", "DOWN")]
+        if isinstance(candidate, dict) else []
+    )
+    probability_sum = (
+        sum(value for value in candidate_values if value is not None)
+        if len(candidate_values) == 3 and all(value is not None for value in candidate_values)
+        else None
+    )
+    effective_sample_number = _number(calibration.get("effectiveSampleCount"))
+    effective_sample = max(0, int(effective_sample_number or 0))
+    model_brier = _number(calibration.get("modelBrier"))
+    baseline_brier = _number(calibration.get("baselineBrier"))
+    brier_skill = _number(calibration.get("brierSkill"))
+    integrity = str(calibration.get("calibrationIntegrity") or "UNKNOWN")
+    no_future_leakage = calibration.get("noFutureLeakage") is True
+    reasons: List[str] = []
+    if effective_sample < MIN_EFFECTIVE_SAMPLES:
+        reasons.append("effective_sample_below_30")
+    if brier_skill is None or brier_skill <= 0:
+        reasons.append("brier_skill_non_positive")
+    if model_brier is None or baseline_brier is None or model_brier >= baseline_brier:
+        reasons.append("model_not_better_than_baseline")
+    if integrity != "PASS":
+        reasons.append("calibration_integrity_failed")
+    if probability_sum != 100:
+        reasons.append("probability_sum_not_100")
+    if not no_future_leakage:
+        reasons.append("future_leakage_not_excluded")
+    return {
+        "eligible": not reasons,
+        "reasonCodes": reasons,
+        "effectiveSample": effective_sample,
+        "modelBrier": _round(model_brier, 4),
+        "baselineBrier": _round(baseline_brier, 4),
+        "brierSkill": _round(brier_skill, 4),
+        "calibrationIntegrity": integrity,
+        "probabilitySum": probability_sum,
+        "calibrationVersion": calibration.get("calibrationVersion") or CALIBRATION_VERSION,
+        "datasetHash": calibration.get("calibrationDatasetHash"),
+        "evaluatedAt": evaluated_at or calibration.get("calibrationDatasetFixedAt"),
+        "contractVersion": PROBABILITY_ELIGIBILITY_VERSION,
+    }
+
+
+def _insufficient_calibration(horizon: int) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        "horizon": horizon, "calibrationStatus": "insufficient_history",
+        "rawOccurrenceCount": 0, "episodeCount": 0, "effectiveSampleCount": 0,
+        "probabilities": None, "directionProbabilities": None,
+        "modelBrier": None, "baselineBrier": None, "brierSkill": None,
+        "calibrationIntegrity": "UNKNOWN", "noFutureLeakage": True,
+        "calibrationVersion": CALIBRATION_VERSION,
+        "calibrationDatasetHash": None,
+    }
+    row["probabilityEligibility"] = probability_eligibility(row)
+    return row
+
+
 def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str, Any]:
     normalized = normalize_bars(bars)
     if len(normalized) < 80 + horizon:
-        return {"horizon": horizon, "calibrationStatus": "insufficient_history",
-                "rawOccurrenceCount": 0, "episodeCount": 0, "effectiveSampleCount": 0,
-                "probabilities": None}
+        return _insufficient_calibration(horizon)
     current_feature = _feature(normalized, len(normalized) - 1)
     if current_feature is None:
-        return {"horizon": horizon, "calibrationStatus": "insufficient_history",
-                "rawOccurrenceCount": 0, "episodeCount": 0, "effectiveSampleCount": 0,
-                "probabilities": None}
+        return _insufficient_calibration(horizon)
     family = _signal_family(current_feature)
     all_rows: List[Dict[str, Any]] = []
     for index in range(24, len(normalized) - horizon):
@@ -417,14 +483,11 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
     expected_downside = abs(_mean(negative_returns) or 0.0) if negative_returns else None
     reward_risk = (expected_upside / expected_downside
                    if expected_upside is not None and expected_downside else None)
-    # Percentages are withheld unless every sample, integrity, and skill gate passes.
-    visible = probabilities if status == "calibrated" else None
-    return {
+    result = {
         "horizon": horizon, "signalFamily": family,
         "rawOccurrenceCount": len(pool), "episodeCount": n,
         "effectiveSampleCount": n, "cooldownTradingDays": max(1, horizon),
-        "calibrationStatus": status, "probabilities": visible,
-        "directionProbabilities": visible,
+        "calibrationStatus": status,
         "unroundedProbabilities": ({key: round(value * 100, 3) for key, value in posterior.items()}
                                    if status == "calibrated" else None),
         "baseRates": {key: round(value * 100, 2) for key, value in base.items()},
@@ -485,6 +548,15 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
             for row in episodes
         ]), 2),
     }
+    eligibility = probability_eligibility(
+        result, probabilities,
+        evaluated_at=f"{normalized[-1]['date']}T00:00:00Z",
+    )
+    visible = probabilities if eligibility["eligible"] else None
+    result["probabilities"] = visible
+    result["directionProbabilities"] = visible
+    result["probabilityEligibility"] = eligibility
+    return result
 
 
 def calibrate_forecast(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
@@ -603,16 +675,26 @@ def failed_rally_backtest(rows: Iterable[Dict[str, Any]], *,
             "declineRatePct": _round(100 * sum(1 for value in values if value < 0) / len(values), 1)
             if values else None,
         }
+    observed_decline_rate = summary["5"]["declineRatePct"]
     return {
         "rawOccurrenceCount": len(cases), "episodeCount": len(effective),
         "effectiveSampleCount": len(effective), "cooldownTradingDays": 5,
         "outcomes": summary,
         "meanMfe20Pct": _round(_mean([row["mfe20Pct"] for row in effective]), 3),
         "meanMae20Pct": _round(_mean([row["mae20Pct"] for row in effective]), 3),
-        "probability": (summary["5"]["declineRatePct"]
-                        if len(effective) >= MIN_EFFECTIVE_SAMPLES else None),
-        "calibrationStatus": ("calibrated" if len(effective) >= MIN_EFFECTIVE_SAMPLES
-                              else "insufficient_sample"),
+        # This is an observed conditional rate, not a calibrated forward
+        # probability. It remains separate until a past-only baseline and
+        # positive out-of-sample skill are both available.
+        "observedDeclineRatePct": observed_decline_rate,
+        "probability": None,
+        "calibrationStatus": "forward_skill_not_evaluated",
+        "forwardSkill": {
+            "eligible": False,
+            "reasonCodes": ["baseline_comparison_not_available"],
+            "modelBrier": None, "baselineBrier": None, "brierSkill": None,
+            "effectiveSample": len(effective),
+            "noFutureLeakage": True,
+        },
         "cases": [{key: row[key] for key in ("date", "state", "outcomes", "mfe20Pct", "mae20Pct")}
                   for row in effective[-40:]],
         "noFutureLeakage": True, "methodVersion": METHOD_VERSION,

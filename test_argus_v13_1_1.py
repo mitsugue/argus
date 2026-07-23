@@ -81,7 +81,7 @@ def test_today_contract_keeps_one_probability_language_and_price_only_levels():
     panel = pathlib.Path(
         "web/src/components/today/ArgusTodayPanel.tsx").read_text()
     domain = pathlib.Path("web/src/domain/argusTodayView.ts").read_text()
-    assert "5D 終値方向" in panel
+    assert "{projection.horizonDays}D 終値方向" in panel
     assert "directionProbabilities" in panel
     assert "levelProbabilities" not in panel
     assert "接触" not in panel
@@ -90,6 +90,23 @@ def test_today_contract_keeps_one_probability_language_and_price_only_levels():
     assert "supportResistanceIds" in panel
     assert "eventIds" in panel
     assert "an UP plurality can never create or promote a BUY" in domain
+
+
+def test_today_acceptance_uses_server_eligibility_and_honest_price_time():
+    panel = pathlib.Path(
+        "web/src/components/today/ArgusTodayPanel.tsx").read_text()
+    domain = pathlib.Path("web/src/domain/argusTodayView.ts").read_text()
+    assert "calibrated?.probabilityEligibility?.eligible" in domain
+    assert "probabilitySum === 100" not in domain
+    assert "%非表示" not in panel
+    assert "理由：{probabilityReasonJa" in panel
+    assert 'aria-label="主要指数現在値"' not in panel
+    assert "quoteDisplayLabel(projection.quoteState)" in panel
+    assert "上昇失速パターン" in panel
+    assert "将来リターンのSkill未検証" in panel
+    assert "翌5日下落" not in panel
+    assert "実績 · 終値" in panel
+    assert "営業日先 予測" in panel
 
 
 def test_1321_is_explicitly_an_etf_proxy_with_unverified_index_rights():

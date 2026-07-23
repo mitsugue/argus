@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
-import { formatEventTime } from '../../domain/argusTodayView';
+import { formatEventTime, quoteDisplayLabel } from '../../domain/argusTodayView';
 import { SIGNAL_ORDER, SIGNALS } from '../../domain/actionLevel';
 import type { RouteKey } from '../NavRail';
 import './ArgusToday.css';
@@ -21,6 +21,17 @@ const fmtMove = (v: number, suffix = '') => `${fmt(v)}${suffix}`;
 const shortDate = (value?: string | null) => value ? value.slice(5).replace('-', '/') : '';
 const moveTone = (value: number, previous?: number | null) => previous == null || value === previous
   ? 'flat' : value > previous ? 'up' : 'down';
+const zoneLabel = (kind: '支持' | '抵抗', status: string) =>
+  `${kind}${status === 'reclaimed' ? '（回復）' : status === 'broken' ? '（突破済み）' : ''}`;
+const probabilityReasonJa = (codes: string[]) => {
+  if (codes.includes('effective_sample_below_30')) return '実効標本が30未満';
+  if (codes.includes('brier_skill_non_positive')
+    || codes.includes('model_not_better_than_baseline')) return 'Brier Skillが基準以下';
+  if (codes.includes('calibration_integrity_failed')
+    || codes.includes('future_leakage_not_excluded')) return '校正完全性が未確認';
+  if (codes.includes('probability_sum_not_100')) return '確率合計を検証できません';
+  return 'サーバー適格性判定待ち';
+};
 
 const Sparkline: React.FC<{ values: number[] }> = ({ values }) => {
   if (values.length < 2) return null;
@@ -73,13 +84,13 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
   const swingHigh = recent.reduce((best, point) => point.value > best.value ? point : best, recent[0]);
   const swingLow = recent.reduce((best, point) => point.value < best.value ? point : best, recent[0]);
   const priceLabels = layoutPriceLabels([
-    { key: 'current', label: '現在', value: projection.current, priority: 0, tone: 'current' },
+    { key: 'current', label: quoteDisplayLabel(projection.quoteState), value: projection.current, priority: 0, tone: 'current' },
     { key: 'invalid', label: '無効', value: projection.invalidation, priority: 1, tone: 'invalid' },
     { key: 'upper', label: '上限', value: projection.upside, priority: 2, tone: 'upper' },
     { key: 'lower', label: '下限', value: projection.downside, priority: 3, tone: 'lower' },
-    ...(projection.support ? [{ key: 'support', label: '支持', value: projection.support.high,
+    ...(projection.support ? [{ key: 'support', label: zoneLabel('支持', projection.support.status), value: projection.support.high,
       priority: 4, tone: 'support' }] : []),
-    ...(projection.resistance ? [{ key: 'resistance', label: '抵抗', value: projection.resistance.low,
+    ...(projection.resistance ? [{ key: 'resistance', label: zoneLabel('抵抗', projection.resistance.status), value: projection.resistance.low,
       priority: 5, tone: 'resistance' }] : []),
     { key: 'swing-high', label: '高値', value: swingHigh.value, priority: 6, tone: 'swing' },
     { key: 'swing-low', label: '安値', value: swingLow.value, priority: 7, tone: 'swing' },
@@ -90,7 +101,7 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
   return <div className="at-projection" role="link" tabIndex={0} onClick={onActivate}
     onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onActivate(); }}>
     <div className="at-proj-heading"><b>{projection.label}｜{projection.horizon}見通し</b>
-      <span>{projection.proxyFor ? 'ETF PROXY · ' : ''}{shortDate(projection.asOf)}終値・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測{projection.horizonDays}日 · {projection.quoteState}</span></div>
+      <span>{projection.proxyFor ? 'ETF PROXY · ' : ''}{shortDate(projection.asOf)} {quoteDisplayLabel(projection.quoteState)}・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測{projection.horizonDays}日</span></div>
     <svg viewBox="0 0 720 330" role="img" aria-label={`${projection.label} 実績と${projection.horizonDays}営業日シナリオ`}>
       <defs><linearGradient id="at-band" x1="0" x2="1"><stop offset="0" stopColor="#facc15" stopOpacity=".1"/><stop offset="1" stopColor="#facc15" stopOpacity=".35"/></linearGradient></defs>
       {[.25, .5, .75].map((ratio) => <line key={ratio} x1="28" x2="570"
@@ -104,9 +115,18 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
       <line x1={currentX} x2={forecastX} y1={y(projection.invalidation)} y2={y(projection.invalidation)} className="at-proj-inv" />
       <path d={`M${currentX},${y(projection.current)} L${forecastX},${y(projection.baseHigh)} L${forecastX},${y(projection.baseLow)} Z`} fill="url(#at-band)" />
       <path d={path} className="at-proj-actual" />
+      {projection.history.map((point, index) => <circle key={`tip:${point.date}`}
+        cx={x(index)} cy={y(point.value)} r="7" className="at-proj-tooltip-point">
+        <title>{`${point.date} 実績 · 終値 ${formatInstrumentPrice(point.value, projection.instrumentId)} · 高値 ${formatInstrumentPrice(point.high, projection.instrumentId)} · 安値 ${formatInstrumentPrice(point.low, projection.instrumentId)} · 出来高 ${point.volume == null ? '未取得' : point.volume.toLocaleString('ja-JP')}`}</title>
+      </circle>)}
       <line x1={currentX} x2={currentX} y1="10" y2="314" className="at-proj-boundary" />
+      <text x={currentX - 8} y="12" textAnchor="end" className="at-proj-side-label">実績</text>
+      <text x={currentX + 8} y="12" className="at-proj-side-label">予測</text>
       <circle cx={currentX} cy={y(projection.current)} r="4.2" className="at-proj-current" />
       <path d={`M${currentX},${y(projection.current)} C${currentX + 28},${y(projection.current)} ${forecastX - 24},${y(median)} ${forecastX},${y(median)}`} className="at-proj-base" />
+      <circle cx={forecastX} cy={y(median)} r="7" className="at-proj-tooltip-point">
+        <title>{`${projection.horizonDays}営業日先 予測 · 本線 ${formatInstrumentPrice(projection.baseLow, projection.instrumentId)}–${formatInstrumentPrice(projection.baseHigh, projection.instrumentId)}`}</title>
+      </circle>
       {projection.eventMarkers.map((marker) => { const mx = markerX(marker.date); return mx == null ? null
         : <g key={marker.id}><line x1={mx} x2={mx} y1="16" y2="308" className="at-proj-event-line" />
           <circle cx={mx} cy="20" r="3" className="at-proj-event" /></g>; })}
@@ -124,11 +144,12 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
       <span>本線 <b>{formatInstrumentPrice(projection.baseLow, projection.instrumentId)}–{formatInstrumentPrice(projection.baseHigh, projection.instrumentId)}</b></span>
       <span className="down">下限 <b>{formatInstrumentPrice(projection.downside, projection.instrumentId)}</b></span>
       <span className="invalid">無効 <b>{formatInstrumentPrice(projection.invalidation, projection.instrumentId)}</b></span></div>
-    {projection.directionProbabilities ? <div className="at-proj-prob"><span>5D 終値方向</span>
+    {projection.directionProbabilities ? <div className="at-proj-prob"><span>{projection.horizonDays}D 終値方向</span>
       {(['UP', 'RANGE', 'DOWN'] as const).map((key) => <span key={key}
         className={`${key.toLowerCase()} ${strongest === key ? 'is-max' : ''}`}>{key} <b>{projection.directionProbabilities![key]}%</b></span>)}
       <em>実効n={projection.effectiveSampleCount} · BSS {projection.brierSkill?.toFixed(3)}</em></div>
-      : <div className="at-proj-prob"><b>{projection.directionLabel}</b><span>確度 {projection.confidenceLabel} · n={projection.effectiveSampleCount} · %非表示</span></div>}
+      : <div className="at-proj-prob is-suppressed"><b>確率は非表示</b>
+        <span>理由：{probabilityReasonJa(projection.probabilityEligibility.reasonCodes)} · 実効n={projection.effectiveSampleCount}</span></div>}
     <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>タップでMarket Context</small></div>
   </div>;
 };
@@ -163,7 +184,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
           onClick={() => onMode(mode)}>{mode}</button>)}
         <span>SELECTED {view.selectedMarket}</span>{view.globalRisk && <em>GLOBAL {view.globalRisk}</em>}
       </div>
-      {view.indexMoves.length > 0 && <div className="at-index-strip" aria-label="主要指数現在値">
+      {view.indexMoves.length > 0 && <div className="at-index-strip" aria-label="主要指数データ">
         {view.indexMoves.map((move) => <button type="button" key={move.id}
           aria-pressed={move.symbol === view.selectedInstrument?.symbol}
           onClick={() => move.symbol && move.market && onInstrument(move.market, move.symbol)}
@@ -196,9 +217,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
       {view.factors.length > 0 && <div className="at-factors">{view.factors.map((factor) =>
         <span key={factor.key} className={factor.state === '↑' || factor.state === 'LOW' ? 'is-positive'
           : factor.state === '↓' || factor.state === 'HIGH' ? 'is-negative' : 'is-neutral'}>{factor.key} <b>{factor.state}</b></span>)}</div>}
-      {view.failedRallyState && view.failedRallyState.state !== 'NONE' && <div className={`at-failed-rally is-${view.failedRallyState.state.toLowerCase()}`}>
-        <b>上昇失敗　{view.failedRallyState.state === 'CONFIRMED' ? '確認' : '候補'}</b>
-        {view.failedRallyState.probability != null && <span>翌5日下落 {view.failedRallyState.probability.toFixed(0)}%</span>}
+      {view.failedRallyState && view.failedRallyState.state !== 'NONE' && <div className="at-failed-rally">
+        <b>上昇失速パターン　{view.failedRallyState.state === 'CONFIRMED' ? '観測済み' : '候補'}</b>
+        <span>将来リターンのSkill未検証</span>
       </div>}
       <div className="at-perms"><span>新規 <b>{mark(view.permissions.newEntry)}</b></span><span>買増 <b>{mark(view.permissions.add)}</b></span><span>保有 <b>{mark(view.permissions.hold)}</b></span></div>
       {(view.conciseAction || view.conciseAvoid) && <div className="at-concise">
