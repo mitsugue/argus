@@ -101,7 +101,7 @@ import argus_market_ledger          # append-only Market Ledger
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_research_benchmark_v2  # v12.7.0: validity-separated one-time v2 closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
-import argus_today_intelligence     # v13.1.0: replay calibration/daily short/failed-rally
+import argus_today_intelligence     # v13.1.1: replay calibration/daily short/failed-rally
 import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 from flask import Flask, jsonify, request
@@ -13445,7 +13445,10 @@ def _news_theme_level(count):
 # market-moving topics so the Top screen surfaces them within minutes.
 # Honest limits: headlines are English, unverified, and informational — the
 # judgment engine does NOT consume them (reaction-based signals stay primary).
-_MARKET_NEWS_CACHE = {"data": None, "expires": 0.0}
+_MARKET_NEWS_CACHE = {
+    "data": None, "expires": 0.0, "lastPollAt": None,
+    "lastSuccessfulPollAt": None, "lastErrorClass": None,
+}
 _MARKET_NEWS_TTL = 600        # 10 min — Finnhub free tier is generous but finite
 _MARKET_NEWS_FAIL_TTL = 300
 _NEWS_MAJOR_RE = re.compile(
@@ -13719,11 +13722,14 @@ def _translate_pending_headlines(cap=60, queue_first=False):
 def get_market_news():
     if not FINNHUB_API_KEY:
         return {"status": "missing_key", "asOf": _ai_now_iso(), "items": [],
-                "noteJa": "FINNHUB_API_KEY未設定のため市場速報は停止中。"}
+                "fetchedCount": 0, "stale": True, "failureClass": "missing_key",
+                "lastSuccessfulPollAt": _MARKET_NEWS_CACHE.get("lastSuccessfulPollAt"),
+                "noteJa": "市場速報のProvider設定をこの実行環境で確認できません。"}
     now = time.time()
     if _MARKET_NEWS_CACHE["data"] and now < _MARKET_NEWS_CACHE["expires"]:
         return _MARKET_NEWS_CACHE["data"]
     try:
+        _MARKET_NEWS_CACHE["lastPollAt"] = _ai_now_iso()
         r = requests.get("https://finnhub.io/api/v1/news",
                          params={"category": "general", "token": FINNHUB_API_KEY}, timeout=8)
         r.raise_for_status()
@@ -13801,16 +13807,29 @@ def get_market_news():
         for _it in items:
             _it.update(argus_news_i18n.decorate_from_ja(
                 _it.get("headline"), _it.get("headlineJa"), _it.get("source") or ""))
+        _MARKET_NEWS_CACHE["lastSuccessfulPollAt"] = _ai_now_iso()
+        _MARKET_NEWS_CACHE["lastErrorClass"] = None
         out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
+               "fetchedCount": len(items), "stale": False, "failureClass": None,
+               "lastSuccessfulPollAt": _MARKET_NEWS_CACHE["lastSuccessfulPollAt"],
                "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=重要キーワード。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のみ・裏取り(公式>複数系統>単一)で重み付けして参考投入。単一ソースは判断を動かさない。"}
         _MARKET_NEWS_CACHE["data"] = out
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_TTL
         return out
     except Exception as e:
-        add_log(f"[news] finnhub market news failed: {type(e).__name__}")
+        _error_class = type(e).__name__
+        _MARKET_NEWS_CACHE["lastErrorClass"] = _error_class
+        add_log(f"[news] finnhub market news failed: {_error_class}")
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_FAIL_TTL
-        return _MARKET_NEWS_CACHE["data"] or {
+        if _MARKET_NEWS_CACHE["data"]:
+            return {**_MARKET_NEWS_CACHE["data"], "status": "unavailable",
+                    "asOf": _ai_now_iso(), "stale": True,
+                    "failureClass": _error_class,
+                    "lastSuccessfulPollAt": _MARKET_NEWS_CACHE.get("lastSuccessfulPollAt")}
+        return {
             "status": "unavailable", "asOf": _ai_now_iso(), "items": [],
+            "fetchedCount": 0, "stale": True, "failureClass": _error_class,
+            "lastSuccessfulPollAt": _MARKET_NEWS_CACHE.get("lastSuccessfulPollAt"),
             "noteJa": "市場速報を一時取得できません(自動リトライ)。"}
 
 @app.route("/api/argus/market-news")
@@ -19807,7 +19826,15 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         "source": report.get("source"),
         "availableFrom": (daily_rows[0].get("date") if daily_rows else None),
         "observedAt": now_iso, "revision": 0,
+        "proxyFor": "Nikkei 225" if symbol == "1321" else None,
+        "licenseStatus": "license_unverified" if symbol == "1321" else "not_applicable",
     }
+    if symbol == "1321":
+        report["displayNameJa"] = "日経225 ETF"
+        report["proxyDisclosureJa"] = (
+            "ETF PROXY — 日経平均の現物指数値ではなく、日経225連動ETF（1321）を表示。"
+        )
+        report["instrumentMetadata"]["displayNameJa"] = "日経225 ETF"
     report["turningPointPage"] = {
         "totalStoredCount": len([point for point in
                                  _CHART_INTELLIGENCE.get("turningPoints", [])
@@ -20265,6 +20292,103 @@ def _jquants_official_client_test(params):
     finally:
         result["elapsedMs"] = round((time.monotonic() - started) * 1000, 2)
     return result
+
+
+def _jquants_index_audit():
+    """Secret-safe, read-only audit of the official J-Quants V2 index APIs."""
+    result = {
+        "status": "failed",
+        "provider": "J-Quants",
+        "providerConfigured": bool(_JQUANTS_API_KEY),
+        "credentialLengthPositive": bool(len(_JQUANTS_API_KEY or "") > 0),
+        "client": "jquants-api-client",
+        "clientVersion": None,
+        "baseUrl": "https://api.jquants.com/v2",
+        "genericIndexEndpoint": "/indices/bars/daily",
+        "topixEndpoint": "/indices/bars/daily/topix",
+        "httpStatus": None,
+        "requestId": None,
+        "errorClass": None,
+        "generic": None,
+        "topix": None,
+        "nikkeiIdentityStatus": "unverified",
+        "officialCloseComparison": "not_performed_identity_unverified",
+        "rawRowsPersisted": False,
+        "ownerHoldingsTransmitted": False,
+        "licenseAudit": {
+            "dataAccessEntitlement": "Light_or_higher",
+            "publicDisplayRight": "unverified",
+            "nonDisplayProcessingRight": "unverified",
+            "redistributionRight": "unverified",
+            "decision": "keep_1321_etf_proxy",
+        },
+    }
+    if not _JQUANTS_API_KEY:
+        result["errorClass"] = "configured_in_other_runtime_or_missing"
+        return result
+    try:
+        import jquantsapi
+        result["clientVersion"] = getattr(jquantsapi, "__version__", None)
+        client = jquantsapi.ClientV2(api_key=_JQUANTS_API_KEY)
+        end = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        start = (datetime.now(TZ_JST) - timedelta(days=21)).strftime("%Y-%m-%d")
+        generic = client.get_idx_bars_daily(
+            from_yyyymmdd=start, to_yyyymmdd=end)
+        topix = client.get_idx_bars_daily_topix(
+            from_yyyymmdd=start, to_yyyymmdd=end)
+
+        def _frame_audit(frame):
+            columns = [str(column) for column in getattr(frame, "columns", [])]
+            rows = int(len(frame))
+            latest_date = None
+            if rows and "Date" in columns:
+                latest_date = str(frame["Date"].max())[:10]
+            codes = []
+            if rows and "Code" in columns:
+                codes = sorted({str(value) for value in frame["Code"].dropna().tolist()})[:100]
+            name_columns = [column for column in columns
+                            if "name" in column.lower() or column.lower().endswith("nm")]
+            names = []
+            for column in name_columns:
+                names.extend(str(value)[:100] for value in
+                             frame[column].dropna().drop_duplicates().tolist()[:100])
+            return {
+                "rows": rows, "columns": columns, "latestDate": latest_date,
+                "availableCodes": codes, "availableNames": sorted(set(names))[:100],
+                "ohlcFieldsPresent": all(column in columns for column in ("O", "H", "L", "C")),
+            }
+
+        generic_audit = _frame_audit(generic)
+        topix_audit = _frame_audit(topix)
+        result["generic"] = generic_audit
+        result["topix"] = topix_audit
+        nikkei_names = [name for name in generic_audit["availableNames"]
+                         if "nikkei" in name.lower() or "日経" in name]
+        result["nikkeiIdentityStatus"] = (
+            "named_candidate_present" if nikkei_names else
+            "not_identifiable_from_response_schema"
+        )
+        result["nikkeiNamedCandidates"] = nikkei_names
+        result["status"] = "success"
+        result["httpStatus"] = 200
+    except Exception as exc:
+        result["errorClass"] = type(exc).__name__[:80]
+        response = getattr(exc, "response", None)
+        if response is not None:
+            result["httpStatus"] = getattr(response, "status_code", None)
+            headers = getattr(response, "headers", {}) or {}
+            result["requestId"] = (headers.get("x-request-id")
+                                   or headers.get("x-amzn-requestid"))
+    return result
+
+
+@app.route("/api/argus/admin/jquants/index-audit", methods=["POST"])
+def api_argus_admin_jquants_index_audit():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    result = _jquants_index_audit()
+    return jsonify(result), (200 if result.get("status") == "success" else 503)
 
 
 def _jquants_request_matrix_worker(job_id):

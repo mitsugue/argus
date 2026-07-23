@@ -29,46 +29,107 @@ const Sparkline: React.FC<{ values: number[] }> = ({ values }) => {
   return <svg className="at-spark" viewBox="0 0 42 14" aria-hidden><polyline points={points} /></svg>;
 };
 
+interface PriceLabel { key: string; label: string; value: number; priority: number; tone: string }
+
+export function layoutPriceLabels(labels: PriceLabel[], toY: (value: number) => number,
+  minY = 16, maxY = 308, gap = 17): Array<PriceLabel & { y: number }> {
+  const accepted: Array<PriceLabel & { y: number }> = [];
+  for (const label of [...labels].sort((a, b) => a.priority - b.priority || b.value - a.value)) {
+    let y = Math.max(minY, Math.min(maxY, toY(label.value)));
+    for (const row of accepted) {
+      if (Math.abs(y - row.y) < gap) y = row.y + (y >= row.y ? gap : -gap);
+    }
+    y = Math.max(minY, Math.min(maxY, y));
+    accepted.push({ ...label, y });
+  }
+  return accepted.sort((a, b) => a.y - b.y);
+}
+
+export function formatInstrumentPrice(value: number, instrumentId: string): string {
+  const isJp = instrumentId.startsWith('JP:') || /:\d{4}:/.test(instrumentId);
+  return value.toLocaleString(isJp ? 'ja-JP' : 'en-US', {
+    minimumFractionDigits: isJp ? 0 : 2,
+    maximumFractionDigits: isJp ? (value < 100 ? 1 : 0) : 2,
+  });
+}
+
 const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () => void }> = ({ projection, onActivate }) => {
   const all = projection.history.map((point) => point.value).concat([
     projection.baseLow, projection.baseHigh, projection.upside, projection.downside, projection.invalidation,
+    ...(projection.support ? [projection.support.low, projection.support.high] : []),
+    ...(projection.resistance ? [projection.resistance.low, projection.resistance.high] : []),
   ]);
   const lo = Math.min(...all), hi = Math.max(...all), span = hi - lo || 1;
-  const x = (index: number) => 8 + index / Math.max(1, projection.history.length - 1) * 66;
-  const y = (value: number) => 6 + (hi - value) / span * 70;
+  const x = (index: number) => 28 + index / Math.max(1, projection.history.length - 1) * 460;
+  const y = (value: number) => 16 + (hi - value) / span * 292;
   const path = projection.history.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(point.value).toFixed(1)}`).join(' ');
+  const currentX = 488, forecastX = 570;
+  const median = (projection.baseLow + projection.baseHigh) / 2;
   const markerX = (date: string) => {
     const index = projection.history.findIndex((point) => point.date === date);
     return index < 0 ? null : x(index);
   };
+  const recent = projection.history.slice(-20);
+  const swingHigh = recent.reduce((best, point) => point.value > best.value ? point : best, recent[0]);
+  const swingLow = recent.reduce((best, point) => point.value < best.value ? point : best, recent[0]);
+  const priceLabels = layoutPriceLabels([
+    { key: 'current', label: '現在', value: projection.current, priority: 0, tone: 'current' },
+    { key: 'invalid', label: '無効', value: projection.invalidation, priority: 1, tone: 'invalid' },
+    { key: 'upper', label: '上限', value: projection.upside, priority: 2, tone: 'upper' },
+    { key: 'lower', label: '下限', value: projection.downside, priority: 3, tone: 'lower' },
+    ...(projection.support ? [{ key: 'support', label: '支持', value: projection.support.high,
+      priority: 4, tone: 'support' }] : []),
+    ...(projection.resistance ? [{ key: 'resistance', label: '抵抗', value: projection.resistance.low,
+      priority: 5, tone: 'resistance' }] : []),
+    { key: 'swing-high', label: '高値', value: swingHigh.value, priority: 6, tone: 'swing' },
+    { key: 'swing-low', label: '安値', value: swingLow.value, priority: 7, tone: 'swing' },
+  ], y);
+  const strongest = projection.directionProbabilities
+    ? (Object.entries(projection.directionProbabilities)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] ?? '') : '';
   return <div className="at-projection" role="link" tabIndex={0} onClick={onActivate}
     onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onActivate(); }}>
     <div className="at-proj-heading"><b>{projection.label}｜{projection.horizon}見通し</b>
-      <span>{shortDate(projection.asOf)}終値・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測{projection.horizonDays}日 · {projection.quoteState}</span></div>
-    <svg viewBox="0 0 100 82" role="img" aria-label={`${projection.label} 実績と${projection.horizonDays}営業日シナリオ`}>
+      <span>{projection.proxyFor ? 'ETF PROXY · ' : ''}{shortDate(projection.asOf)}終値・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測{projection.horizonDays}日 · {projection.quoteState}</span></div>
+    <svg viewBox="0 0 720 330" role="img" aria-label={`${projection.label} 実績と${projection.horizonDays}営業日シナリオ`}>
       <defs><linearGradient id="at-band" x1="0" x2="1"><stop offset="0" stopColor="#facc15" stopOpacity=".1"/><stop offset="1" stopColor="#facc15" stopOpacity=".35"/></linearGradient></defs>
-      {projection.support && <rect x="5" width="92" y={y(projection.support.high)}
+      {[.25, .5, .75].map((ratio) => <line key={ratio} x1="28" x2="570"
+        y1={16 + ratio * 292} y2={16 + ratio * 292} className="at-proj-grid" />)}
+      {projection.support && <rect x="28" width="542" y={y(projection.support.high)}
         height={Math.max(1, y(projection.support.low) - y(projection.support.high))} className="at-proj-support" />}
-      {projection.resistance && <rect x="5" width="92" y={y(projection.resistance.high)}
+      {projection.resistance && <rect x="28" width="542" y={y(projection.resistance.high)}
         height={Math.max(1, y(projection.resistance.low) - y(projection.resistance.high))} className="at-proj-resistance" />}
-      <line x1="5" x2="97" y1={y(projection.upside)} y2={y(projection.upside)} className="at-proj-up" />
-      <line x1="5" x2="97" y1={y(projection.downside)} y2={y(projection.downside)} className="at-proj-down" />
-      <line x1="72" x2="97" y1={y(projection.invalidation)} y2={y(projection.invalidation)} className="at-proj-inv" />
-      <rect x="72" width="25" y={y(projection.baseHigh)} height={Math.max(2, y(projection.baseLow) - y(projection.baseHigh))} fill="url(#at-band)" />
+      <line x1="28" x2={forecastX} y1={y(projection.upside)} y2={y(projection.upside)} className="at-proj-up" />
+      <line x1="28" x2={forecastX} y1={y(projection.downside)} y2={y(projection.downside)} className="at-proj-down" />
+      <line x1={currentX} x2={forecastX} y1={y(projection.invalidation)} y2={y(projection.invalidation)} className="at-proj-inv" />
+      <path d={`M${currentX},${y(projection.current)} L${forecastX},${y(projection.baseHigh)} L${forecastX},${y(projection.baseLow)} Z`} fill="url(#at-band)" />
       <path d={path} className="at-proj-actual" />
-      <line x1="74" x2="74" y1="3" y2="78" className="at-proj-boundary" />
-      <circle cx="74" cy={y(projection.current)} r="2.1" className="at-proj-current" />
-      <line x1="74" x2="97" y1={y(projection.current)} y2={y((projection.baseLow + projection.baseHigh) / 2)} className="at-proj-base" />
+      <line x1={currentX} x2={currentX} y1="10" y2="314" className="at-proj-boundary" />
+      <circle cx={currentX} cy={y(projection.current)} r="4.2" className="at-proj-current" />
+      <path d={`M${currentX},${y(projection.current)} C${currentX + 28},${y(projection.current)} ${forecastX - 24},${y(median)} ${forecastX},${y(median)}`} className="at-proj-base" />
       {projection.eventMarkers.map((marker) => { const mx = markerX(marker.date); return mx == null ? null
-        : <g key={marker.id}><line x1={mx} x2={mx} y1="5" y2="78" className="at-proj-event-line" />
-          <circle cx={mx} cy="7" r="1.5" className="at-proj-event" /></g>; })}
-      {projection.activeTurningPoint && (() => { const mx = markerX(projection.activeTurningPoint!.date); return mx == null ? null
-        : <path d={`M${mx - 2},74 L${mx},69 L${mx + 2},74 Z`} className="at-proj-turn" />; })()}
+        : <g key={marker.id}><line x1={mx} x2={mx} y1="16" y2="308" className="at-proj-event-line" />
+          <circle cx={mx} cy="20" r="3" className="at-proj-event" /></g>; })}
+      {projection.turningPointMarkers.map((point) => { const mx = markerX(point.date); return mx == null ? null
+        : <path key={point.id} d={`M${mx - 5},300 L${mx},288 L${mx + 5},300 Z`} className="at-proj-turn" />; })}
+      <circle cx={x(projection.history.indexOf(swingHigh))} cy={y(swingHigh.value)} r="3" className="at-proj-swing" />
+      <circle cx={x(projection.history.indexOf(swingLow))} cy={y(swingLow.value)} r="3" className="at-proj-swing" />
+      {priceLabels.map((row) => <g key={row.key} className={`at-proj-chip is-${row.tone}`}>
+        <line x1="570" x2="588" y1={y(row.value)} y2={row.y} />
+        <rect x="588" y={row.y - 8} width="126" height="16" rx="3" />
+        <text x="594" y={row.y + 4}>{row.label} {formatInstrumentPrice(row.value, projection.instrumentId)}</text>
+      </g>)}
     </svg>
-    <div className="at-proj-levels"><span className="up">上 {fmt(projection.upside)}{projection.targetProbabilities?.upperTargetTouch != null ? ` ${projection.targetProbabilities.upperTargetTouch.toFixed(0)}%` : ''}</span><span>本線 {fmt(projection.baseLow)}–{fmt(projection.baseHigh)}{projection.targetProbabilities?.baseRangeClose != null ? ` ${projection.targetProbabilities.baseRangeClose.toFixed(0)}%` : ''}</span><span className="down">下 {fmt(projection.downside)}{projection.targetProbabilities?.lowerTargetTouch != null ? ` ${projection.targetProbabilities.lowerTargetTouch.toFixed(0)}%` : ''}</span></div>
-    {projection.probability ? <div className="at-proj-prob"><b className="up">UP {projection.probability.UP}%</b><b>RANGE {projection.probability.RANGE}%</b><b className="down">DOWN {projection.probability.DOWN}%</b><span>実効n={projection.effectiveSampleCount} · 校正済</span></div>
+    <div className="at-proj-levels"><span className="up">上限 <b>{formatInstrumentPrice(projection.upside, projection.instrumentId)}</b></span>
+      <span>本線 <b>{formatInstrumentPrice(projection.baseLow, projection.instrumentId)}–{formatInstrumentPrice(projection.baseHigh, projection.instrumentId)}</b></span>
+      <span className="down">下限 <b>{formatInstrumentPrice(projection.downside, projection.instrumentId)}</b></span>
+      <span className="invalid">無効 <b>{formatInstrumentPrice(projection.invalidation, projection.instrumentId)}</b></span></div>
+    {projection.directionProbabilities ? <div className="at-proj-prob"><span>5D 終値方向</span>
+      {(['UP', 'RANGE', 'DOWN'] as const).map((key) => <span key={key}
+        className={`${key.toLowerCase()} ${strongest === key ? 'is-max' : ''}`}>{key} <b>{projection.directionProbabilities![key]}%</b></span>)}
+      <em>実効n={projection.effectiveSampleCount} · BSS {projection.brierSkill?.toFixed(3)}</em></div>
       : <div className="at-proj-prob"><b>{projection.directionLabel}</b><span>確度 {projection.confidenceLabel} · n={projection.effectiveSampleCount} · %非表示</span></div>}
-    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>無効 {fmt(projection.invalidation)}{projection.targetProbabilities?.invalidationTouch != null ? ` · 接触${projection.targetProbabilities.invalidationTouch.toFixed(0)}%` : ''}</small></div>
+    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>タップでMarket Context</small></div>
   </div>;
 };
 
@@ -124,7 +185,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
       {projection ? <ProjectionChart projection={projection} onActivate={() => {
         try { sessionStorage.setItem('argus.replayContext', JSON.stringify({ route: 'market-context',
           instrumentId: projection.instrumentId, symbol: projection.symbol,
-          horizon: projection.horizonDays, signalIds: projection.activeTurningPoint ? [projection.activeTurningPoint.id] : [] })); } catch { /* best effort */ }
+          horizon: projection.horizonDays, forecastId: projection.forecastId,
+          signalEpisodeIds: projection.signalEpisodeIds,
+          supportResistanceIds: projection.supportResistanceIds,
+          eventIds: projection.eventIds })); } catch { /* best effort */ }
         onNavigate('regime');
       }} /> : <div className="at-projection-missing">実測OHLCV確認待ち</div>}
       <div className="at-kpis"><span>確度 <b>{view.projection?.confidenceLabel ?? (view.confidence == null ? '未算出' : Math.round(view.confidence * 100))}</b></span>
@@ -153,7 +217,12 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
         <div><b>SOURCE</b><span>{[...new Set(view.factors.map((factor) => factor.source).filter(Boolean))].join(' / ') || '—'}</span></div>
         {projection && <><div><b>PROJECTION</b><span>{projection.methodLabel}</span></div>
           <div><b>REPLAY</b><span>類似{projection.rawSampleCount} · episode {projection.episodeCount} · 実効{projection.effectiveSampleCount}</span></div>
-          <div><b>CALIBRATION</b><span>{projection.calibrationStatus}{projection.brierScore == null ? '' : ` · Brier ${projection.brierScore.toFixed(3)}`}</span></div></>}
+          <div><b>CALIBRATION</b><span>{projection.calibrationStatus}
+            {projection.modelBrier == null ? '' : ` · Brier ${projection.modelBrier.toFixed(3)}`}
+            {projection.brierSkill == null ? ' · Skillなし/基準予測以下' : ` · BSS ${projection.brierSkill.toFixed(3)}`}</span></div>
+          <div><b>EXPECTED 5D</b><span>{projection.expectedValue?.expectedReturn == null ? '未算出'
+            : `EV ${(projection.expectedValue.expectedReturn * 100).toFixed(2)}% · q10 ${((projection.expectedValue.q10 ?? 0) * 100).toFixed(2)}% · R/R ${projection.expectedValue.rewardRisk?.toFixed(2) ?? '—'}`}</span></div>
+          <div><b>INSTRUMENT</b><span>{projection.assetType}{projection.proxyFor ? ` · ETF PROXY for ${projection.proxyFor}` : ''} · {projection.licenseStatus}</span></div></>}
         {view.decisions[view.selectedMarket].evidence.map((line, index) => <p key={`${index}:${line}`}>{line}</p>)}
         <div className="at-detail-actions">{aiButton}<button type="button" onClick={() => onNavigate('quality')}>Data Quality</button><button type="button" onClick={() => onNavigate('backup')}>Backup</button></div>
       </div>}
@@ -172,9 +241,12 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
         <b>{row.label}</b><span>{row.value}</span>{row.detail && <em>{row.detail}</em>}</div>)}
     </div></Compact>}
 
-    {view.news.length ? <Compact title="重大ニュース"><div className="at-news">
+    <Compact title="重大ニュース" className={`at-news-card ${view.newsCardState.status !== 'live' ? 'is-stale' : ''}`}>
+      {view.news.length ? <div className="at-news">
       {view.news.map((row) => <a key={row.id} href={row.url} target="_blank" rel="noreferrer"><b>{row.titleJa}</b><span>{row.source}</span></a>)}
-    </div></Compact> : <div className="at-news-zero"><b>重大ニュース</b><span>0</span></div>}
+      </div> : <div className="at-news-zero"><b>{view.newsCardState.status === 'live' ? '現在なし' : 'ニュース確認要'}</b>
+        <span>最終確認 {view.newsCardState.lastChecked ? new Date(view.newsCardState.lastChecked).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>}
+    </Compact>
 
     {view.holdingsReview.length > 0 && <Compact title="保有確認"><div className="at-rows">
       {view.holdingsReview.map((row) => <button type="button" key={row.symbol} onClick={() => onOpenAsset?.(row.symbol)}>

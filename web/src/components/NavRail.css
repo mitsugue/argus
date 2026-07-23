@@ -181,7 +181,10 @@
   }
   .nav__mobile-btn.is-active .nav__mobile-dot,
   .nav__mobile-system.is-active .nav__mobile-dot { background: var(--blue); }
-  .nav__mobile-system { position: relative; min-width: 0; }
+  .nav__mobile-system {
+    position: relative; min-width: 0; margin:0; padding:0; border:0;
+  }
+  .nav__mobile-system > summary { width:100%; height:58px; box-sizing:border-box; }
   .nav__mobile-system-menu {
     position: absolute;
     right: 4px;

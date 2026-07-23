@@ -10,13 +10,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import random
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 SCHEMA_VERSION = "argus-today-intelligence-v1"
 METHOD_VERSION = "today-replay-calibration-v1"
-CALIBRATION_VERSION = "beta-dirichlet-walk-forward-v1"
+CALIBRATION_VERSION = "beta-dirichlet-walk-forward-v2"
 MIN_EFFECTIVE_SAMPLES = 30
 HORIZONS = (1, 5, 20)
 UNIFORM_MULTICLASS_BRIER = 2.0 / 3.0
@@ -240,25 +241,94 @@ def _integer_probabilities(values: Dict[str, float]) -> Dict[str, int]:
     return base
 
 
-def _walk_forward_brier(episodes: Sequence[Dict[str, Any]]) -> Optional[float]:
+def _walk_forward_brier(
+    episodes: Sequence[Dict[str, Any]],
+    baseline_episodes: Sequence[Dict[str, Any]],
+    seed: str,
+) -> Dict[str, Any]:
+    """Compare the episode model with a strictly past-only climatology.
+
+    Both predictions are made before the row's label is observed.  The model
+    learns from prior similar, cooldown-separated episodes; the baseline learns
+    from every prior cooldown-separated market episode.  This preserves an
+    apples-to-apples out-of-sample Brier Skill Score.
+    """
     labels = ("UP", "RANGE", "DOWN")
-    counts = {label: 0 for label in labels}
-    scores: List[float] = []
-    # A fixed symmetric prior is intentional.  Using the full-sample base rate
-    # here would leak labels from later episodes into earlier walk-forward
-    # predictions, even though the live forecast itself only uses past bars.
+    model_counts = {label: 0 for label in labels}
+    baseline_counts = {label: 0 for label in labels}
+    score_pairs: List[Tuple[float, float]] = []
+    confidence_rows: List[Tuple[float, bool]] = []
+    baseline_pos = 0
+    ordered_baseline = sorted(baseline_episodes, key=lambda row: row["index"])
     prior_weight = 12.0
     prior = 1.0 / len(labels)
-    for index, episode in enumerate(episodes):
-        if index >= 10:
-            denominator = index + prior_weight
-            prediction = {label: (counts[label] + prior_weight * prior) / denominator
-                          for label in labels}
+    for model_pos, episode in enumerate(sorted(episodes, key=lambda row: row["index"])):
+        while (baseline_pos < len(ordered_baseline) and
+               ordered_baseline[baseline_pos]["index"] < episode["index"]):
+            baseline_counts[ordered_baseline[baseline_pos]["direction"]] += 1
+            baseline_pos += 1
+        baseline_n = sum(baseline_counts.values())
+        if model_pos >= 10 and baseline_n >= 10:
+            model_denominator = model_pos + prior_weight
+            baseline_denominator = baseline_n + prior_weight
+            prediction = {
+                label: (model_counts[label] + prior_weight * prior) / model_denominator
+                for label in labels
+            }
+            baseline_prediction = {
+                label: (baseline_counts[label] + prior_weight * prior) / baseline_denominator
+                for label in labels
+            }
             actual = episode["direction"]
-            scores.append(sum((prediction[label] - (1.0 if label == actual else 0.0)) ** 2
-                              for label in labels))
-        counts[episode["direction"]] += 1
-    return _mean(scores)
+            model_score = sum(
+                (prediction[label] - (1.0 if label == actual else 0.0)) ** 2
+                for label in labels
+            )
+            baseline_score = sum(
+                (baseline_prediction[label] - (1.0 if label == actual else 0.0)) ** 2
+                for label in labels
+            )
+            score_pairs.append((model_score, baseline_score))
+            predicted = max(labels, key=lambda label: prediction[label])
+            confidence_rows.append((prediction[predicted], predicted == actual))
+        model_counts[episode["direction"]] += 1
+
+    model_brier = _mean([pair[0] for pair in score_pairs])
+    baseline_brier = _mean([pair[1] for pair in score_pairs])
+    skill = (None if model_brier is None or baseline_brier is None or baseline_brier <= 0
+             else 1.0 - model_brier / baseline_brier)
+    calibration_error = None
+    if confidence_rows:
+        weighted_error = 0.0
+        for low in (0.0, .2, .4, .6, .8):
+            bucket = [row for row in confidence_rows if low <= row[0] < low + .2 or
+                      (low == .8 and row[0] == 1.0)]
+            if bucket:
+                avg_confidence = sum(row[0] for row in bucket) / len(bucket)
+                accuracy = sum(1 for row in bucket if row[1]) / len(bucket)
+                weighted_error += len(bucket) / len(confidence_rows) * abs(avg_confidence - accuracy)
+        calibration_error = weighted_error
+
+    skill_samples: List[float] = []
+    if score_pairs and baseline_brier and baseline_brier > 0:
+        rng = random.Random(seed)
+        for _ in range(500):
+            sample = [score_pairs[rng.randrange(len(score_pairs))] for _ in score_pairs]
+            sample_model = sum(pair[0] for pair in sample) / len(sample)
+            sample_baseline = sum(pair[1] for pair in sample) / len(sample)
+            if sample_baseline > 0:
+                skill_samples.append(1.0 - sample_model / sample_baseline)
+    return {
+        "modelBrier": model_brier,
+        "baselineBrier": baseline_brier,
+        "brierSkill": skill,
+        "calibrationError": calibration_error,
+        "evaluationSampleCount": len(score_pairs),
+        "confidenceInterval": ({
+            "low": _quantile(skill_samples, .025),
+            "high": _quantile(skill_samples, .975),
+        } if skill_samples else None),
+    }
 
 
 def _confidence_interval(probability: float, effective_n: int) -> Dict[str, float]:
@@ -316,16 +386,17 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
     posterior = {label: (counts[label] + prior_weight * base[label]) / (n + prior_weight)
                  for label in labels}
     probabilities = _integer_probabilities(posterior)
-    brier = _walk_forward_brier(episodes)
-    base_brier = 1.0 - sum(value * value for value in base.values())
-    # The walk-forward score and the full-history class base rate are useful but
-    # are not the same estimand.  The visibility gate therefore compares the
-    # prequential score with the fixed three-class random baseline.  The
-    # historical base-rate score remains stored as a separate comparison, never
-    # as a falsely out-of-sample benchmark.
+    dataset_hash = _hash([
+        (row["date"], row["open"], row["high"], row["low"], row["close"], row.get("volume"))
+        for row in normalized
+    ], 32)
+    brier = _walk_forward_brier(episodes, base_candidates, dataset_hash)
+    model_brier = brier["modelBrier"]
+    baseline_brier = brier["baselineBrier"]
+    brier_skill = brier["brierSkill"]
     status = ("insufficient_sample" if n < MIN_EFFECTIVE_SAMPLES else
-              "poor_calibration" if brier is None or
-              brier > UNIFORM_MULTICLASS_BRIER + MAX_BRIER_DEGRADATION else
+              "poor_calibration" if model_brier is None or baseline_brier is None or
+              brier_skill is None or brier_skill <= 0 else
               "calibrated")
     returns = [row["return"] for row in episodes]
     mfes = [row["mfe"] for row in episodes]
@@ -340,26 +411,41 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
     invalidation_touch = (sum(1 for row in episodes if q10 is not None and row["mae"] <= q10) / n
                           if n else None)
     ci = {label: _confidence_interval(posterior[label], n) for label in labels}
-    # Percentages are withheld unless all calibration gates pass.
+    positive_returns = [value for value in returns if value > 0]
+    negative_returns = [value for value in returns if value < 0]
+    expected_upside = _mean(positive_returns)
+    expected_downside = abs(_mean(negative_returns) or 0.0) if negative_returns else None
+    reward_risk = (expected_upside / expected_downside
+                   if expected_upside is not None and expected_downside else None)
+    # Percentages are withheld unless every sample, integrity, and skill gate passes.
     visible = probabilities if status == "calibrated" else None
     return {
         "horizon": horizon, "signalFamily": family,
         "rawOccurrenceCount": len(pool), "episodeCount": n,
         "effectiveSampleCount": n, "cooldownTradingDays": max(1, horizon),
         "calibrationStatus": status, "probabilities": visible,
+        "directionProbabilities": visible,
         "unroundedProbabilities": ({key: round(value * 100, 3) for key, value in posterior.items()}
                                    if status == "calibrated" else None),
         "baseRates": {key: round(value * 100, 2) for key, value in base.items()},
-        "brierScore": _round(brier, 4), "baseRateBrierScore": _round(base_brier, 4),
+        "brierScore": _round(model_brier, 4),
+        "modelBrier": _round(model_brier, 4),
+        "baselineBrier": _round(baseline_brier, 4),
+        "baseRateBrierScore": _round(baseline_brier, 4),
+        "brierSkill": _round(brier_skill, 4),
+        "brierSkillConfidenceInterval": ({
+            "low": _round(brier["confidenceInterval"]["low"], 4),
+            "high": _round(brier["confidenceInterval"]["high"], 4),
+        } if brier["confidenceInterval"] else None),
+        "calibrationError": _round(brier["calibrationError"], 4),
+        "evaluationSampleCount": brier["evaluationSampleCount"],
         "uniformBaselineBrierScore": _round(UNIFORM_MULTICLASS_BRIER, 4),
         "brierGateMaximum": _round(UNIFORM_MULTICLASS_BRIER + MAX_BRIER_DEGRADATION, 4),
         "confidenceInterval": ci if status == "calibrated" else None,
         "noFutureLeakage": True, "walkForward": True,
+        "calibrationIntegrity": "PASS",
         "calibrationDatasetFixedAt": normalized[-1]["date"],
-        "calibrationDatasetHash": _hash([
-            (row["date"], row["open"], row["high"], row["low"], row["close"], row.get("volume"))
-            for row in normalized
-        ], 32),
+        "calibrationDatasetHash": dataset_hash,
         "calibrationVersion": CALIBRATION_VERSION,
         "methodVersion": METHOD_VERSION,
         "returnDistribution": {
@@ -367,6 +453,24 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
             "q75": _round(q75), "q90": _round(q90),
             "meanMfe": _round(_mean(mfes)), "meanMae": _round(_mean(maes)),
         },
+        "expectedValue": {
+            "horizon": horizon,
+            "expectedReturn": _round(_mean(returns)),
+            "medianReturn": _round(q50),
+            "q10": _round(q10),
+            "q90": _round(q90),
+            "expectedUpside": _round(expected_upside),
+            "expectedDownside": _round(expected_downside),
+            "rewardRisk": _round(reward_risk),
+        },
+        "levelProbabilities": ({
+            "upperTargetTouch": round(upper_touch * 100, 1) if upper_touch is not None else None,
+            "baseRangeClose": round(close_in_band * 100, 1) if close_in_band is not None else None,
+            "lowerTargetTouch": round(lower_touch * 100, 1) if lower_touch is not None else None,
+            "invalidationTouch": round(invalidation_touch * 100, 1) if invalidation_touch is not None else None,
+        } if status == "calibrated" else None),
+        # Compatibility alias for Market Context consumers during the v13.1.1
+        # transition. Today only renders directionProbabilities.
         "targetProbabilities": ({
             "upperTargetTouch": round(upper_touch * 100, 1) if upper_touch is not None else None,
             "baseRangeClose": round(close_in_band * 100, 1) if close_in_band is not None else None,

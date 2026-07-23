@@ -24,6 +24,11 @@ export interface TodayAttentionInput { id: string; label: string; time?: string 
 export interface TodayNewsInput {
   id: string; titleJa: string; source: string; url: string; publishedAt?: number | null;
 }
+export interface TodayNewsCardState {
+  status: 'live' | 'unavailable' | 'missing_key';
+  lastChecked: string | null; lastSuccessfulPollAt: string | null;
+  fetchedCount: number; relevantCount: number; stale: boolean; failureClass?: string | null;
+}
 export interface TodayNewsCandidate extends TodayNewsInput {
   major: boolean; relevant?: boolean; translationStatus?: string;
   tier?: string; corroboration?: string; titleOriginal?: string;
@@ -34,6 +39,7 @@ export interface TodayProjectionInput {
   bars: ChartBar[]; zones: PriceZone[]; timeframe?: 'daily' | 'weekly';
   quoteState?: 'realtime' | 'delayed' | 'close'; sourceHistoryCount?: number;
   instrumentId?: string; source?: string; availableFrom?: string | null;
+  assetType?: string; proxyFor?: string | null; licenseStatus?: string;
   eventMarkers?: Array<{ id: string; date: string; labelJa: string; kind: string }>;
   turningPoints?: Array<{ id: string; effectiveFrom: string; status: string; direction: string; facts: string[] }>;
   calibration?: { historyCount: number; calibrationVersion: string; horizons: Record<string, TodayCalibrationInput> };
@@ -43,12 +49,22 @@ export interface TodayProjectionInput {
 export interface TodayCalibrationInput {
   horizon: number; rawOccurrenceCount: number; episodeCount: number; effectiveSampleCount: number;
   calibrationStatus: string; probabilities: { UP: number; RANGE: number; DOWN: number } | null;
+  directionProbabilities?: { UP: number; RANGE: number; DOWN: number } | null;
+  levelProbabilities?: { upperTargetTouch: number | null; baseRangeClose: number | null;
+    lowerTargetTouch: number | null; invalidationTouch: number | null } | null;
   brierScore?: number | null; confidenceInterval?: Record<string, { low: number; high: number }> | null;
+  modelBrier?: number | null; baselineBrier?: number | null; brierSkill?: number | null;
+  brierSkillConfidenceInterval?: { low: number | null; high: number | null } | null;
+  calibrationError?: number | null; calibrationIntegrity?: string;
+  calibrationDatasetHash?: string; calibrationVersion?: string;
   averageReactionDelay?: number | null;
   returnDistribution?: { q10: number | null; q25: number | null; median: number | null;
     q75: number | null; q90: number | null; meanMfe: number | null; meanMae: number | null };
   targetProbabilities?: { upperTargetTouch: number | null; baseRangeClose: number | null;
     lowerTargetTouch: number | null; invalidationTouch: number | null } | null;
+  expectedValue?: { horizon: number; expectedReturn: number | null; medianReturn: number | null;
+    q10: number | null; q90: number | null; expectedUpside: number | null;
+    expectedDownside: number | null; rewardRisk: number | null };
 }
 export interface TodayShortSellingSummary {
   status: string; historyStart: string | null; historyCount: number; latestDate?: string;
@@ -69,13 +85,19 @@ export interface TodayProjection {
   invalidation: number; support: { low: number; high: number } | null;
   resistance: { low: number; high: number } | null;
   horizon: string; horizonDays: 1 | 5 | 20; directionLabel: string;
-  confidenceLabel: '低' | '中' | '高'; probability: { UP: number; RANGE: number; DOWN: number } | null;
+  confidenceLabel: '低' | '中' | '高'; directionProbabilities: { UP: number; RANGE: number; DOWN: number } | null;
   calibrationStatus: string; rawSampleCount: number; episodeCount: number; effectiveSampleCount: number;
-  brierScore: number | null; confidenceInterval: Record<string, { low: number; high: number }> | null;
-  targetProbabilities: TodayCalibrationInput['targetProbabilities']; reactionDelay: number | null;
+  modelBrier: number | null; baselineBrier: number | null; brierSkill: number | null;
+  brierSkillConfidenceInterval: { low: number | null; high: number | null } | null;
+  calibrationError: number | null; calibrationVersion: string | null; datasetHash: string | null;
+  expectedValue: TodayCalibrationInput['expectedValue'] | null;
+  levelProbabilities: TodayCalibrationInput['levelProbabilities']; reactionDelay: number | null;
   methodLabel: string; timeframeLabel: string; quoteState: string; sourceHistoryCount: number;
   source: string; availableFrom: string | null;
+  assetType: string; proxyFor: string | null; licenseStatus: string;
+  forecastId: string; signalEpisodeIds: string[]; supportResistanceIds: string[]; eventIds: string[];
   eventMarkers: Array<{ id: string; date: string; labelJa: string; kind: string }>;
+  turningPointMarkers: Array<{ id: string; date: string; direction: string; label: string }>;
   activeTurningPoint: { id: string; date: string; direction: string; label: string } | null;
   shortSelling: TodayShortSellingSummary | null; failedRally: TodayFailedRally | null;
 }
@@ -109,6 +131,7 @@ export interface ArgusTodayInput {
   macroMoves?: TodayMoveInput[];
   positioning?: Partial<Record<ArgusMarket, TodayPositioningRow[]>>;
   news?: TodayNewsInput[];
+  newsCardState?: TodayNewsCardState;
   projection?: Partial<Record<ArgusMarket, TodayProjectionInput | null>>;
   selectedInstrument?: Partial<Record<ArgusMarket, string>>;
   attention?: TodayAttentionInput[];
@@ -146,6 +169,16 @@ export interface ArgusTodayView {
   macroMoves: TodayMoveInput[];
   positioning: TodayPositioningRow[];
   news: TodayNewsInput[];
+  newsCardState: TodayNewsCardState;
+  directionProbabilities: TodayProjection['directionProbabilities'] | null;
+  probabilityHorizon: number | null;
+  brierSkill: number | null; baselineBrier: number | null; modelBrier: number | null;
+  effectiveSample: number | null; expectedReturn: number | null;
+  downsidePercentile: number | null; rewardRisk: number | null;
+  priceLevels: { upper: number; baseLow: number; baseHigh: number; lower: number; invalidation: number } | null;
+  nikkeiLicenseStatus: string;
+  evidenceCoverage: { overall: 'HIGH' | 'MEDIUM' | 'LOW'; price: string; breadth: string;
+    flow: string; short: string; macro: string; replay: string };
   attention: TodayAttentionInput[];
   holdingsReview: TodayHoldingInput[];
   reviewSummary: TodayReviewInput | null;
@@ -208,7 +241,7 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     calculatedAt: input.now.toISOString(),
   });
   const decisions = { JP: make('JP'), US: make('US') };
-  const decision = decisions[selectedMarket];
+  let decision = decisions[selectedMarket];
   const nowMs = input.now.getTime();
   const future = [...(input.events ?? [])]
     .map((event) => ({ event, at: eventEpoch(event) }))
@@ -218,11 +251,6 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
   const nextEvent = future[0]?.event ?? null;
   const limit30d = nowMs + 30 * 86_400_000;
   const comingEvents = future.slice(1).filter((x) => x.at <= limit30d).slice(0, 3).map((x) => x.event);
-  const permissions = {
-    newEntry: decision.actionScore === 7,
-    add: decision.actionScore === 7,
-    hold: decision.actionScore > 1,
-  };
   const projectionInput = input.projection?.[selectedMarket] ?? null;
   const projectionsByHorizon: ArgusTodayView['projectionsByHorizon'] = {};
   for (const days of [1, 5, 20] as const) {
@@ -230,6 +258,33 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     if (built) projectionsByHorizon[`${days}D` as const] = built;
   }
   const projection = projectionsByHorizon['5D'] ?? null;
+  // Forecast evidence is a one-way risk gate. It may veto an otherwise strong
+  // BUY, but an UP plurality can never create or promote a BUY.
+  const expected = projection?.expectedValue;
+  const forecastBuyGate = !!projection?.directionProbabilities
+    && (projection.brierSkill ?? 0) > 0
+    && (expected?.expectedReturn ?? 0) > 0
+    && (expected?.q10 ?? -1) > -.08
+    && (expected?.rewardRisk ?? 0) >= 1;
+  if (decision.finalAction === 'BUY' && !forecastBuyGate) {
+    decision = { ...decision, finalAction: 'WAIT', actionScore: 6,
+      evidence: [...decision.evidence, '予測Skill／期待値／下方リスクのBUY条件が未成立'].slice(0, 12) };
+    decisions[selectedMarket] = decision;
+  }
+  if (selectedMarket === 'US' && decision.confidence != null && decision.confidence > .65) {
+    decision = { ...decision, confidence: .65 };
+    decisions[selectedMarket] = decision;
+  }
+  const permissions = {
+    newEntry: decision.finalAction === 'BUY' && decision.actionScore === 7,
+    add: decision.finalAction === 'BUY' && decision.actionScore === 7,
+    hold: decision.actionScore > 1,
+  };
+  const evidenceCoverage = selectedMarket === 'JP'
+    ? { overall: 'HIGH' as const, price: 'HIGH', breadth: 'HIGH', flow: 'HIGH',
+      short: 'HIGH', macro: 'MEDIUM', replay: projection ? 'HIGH' : 'LOW' }
+    : { overall: 'MEDIUM' as const, price: 'HIGH', breadth: 'MEDIUM', flow: 'LOW',
+      short: 'NONE', macro: 'HIGH', replay: projection ? 'HIGH' : 'LOW' };
   const eventTag = nextEvent ? `${nextEvent.code} ${formatEventTime(nextEvent.at)}` : `DATA ${dataStatus(input.dataQuality).label}`;
   return {
     selectedMarket, selectionMode: input.selectionMode,
@@ -265,6 +320,23 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     positioning: (input.positioning?.[selectedMarket] ?? [])
       .filter((row) => row.value.trim() !== '—').slice(0, 5),
     news: dedupeNews(input.news ?? []),
+    newsCardState: input.newsCardState ?? {
+      status: 'unavailable', lastChecked: null, lastSuccessfulPollAt: null,
+      fetchedCount: 0, relevantCount: 0, stale: true, failureClass: 'not_checked',
+    },
+    directionProbabilities: projection?.directionProbabilities ?? null,
+    probabilityHorizon: projection?.horizonDays ?? null,
+    brierSkill: projection?.brierSkill ?? null,
+    baselineBrier: projection?.baselineBrier ?? null,
+    modelBrier: projection?.modelBrier ?? null,
+    effectiveSample: projection?.effectiveSampleCount ?? null,
+    expectedReturn: projection?.expectedValue?.expectedReturn ?? null,
+    downsidePercentile: projection?.expectedValue?.q10 ?? null,
+    rewardRisk: projection?.expectedValue?.rewardRisk ?? null,
+    priceLevels: projection ? { upper: projection.upside, baseLow: projection.baseLow,
+      baseHigh: projection.baseHigh, lower: projection.downside, invalidation: projection.invalidation } : null,
+    nikkeiLicenseStatus: projection?.licenseStatus ?? 'not_applicable',
+    evidenceCoverage,
     attention: [...(input.attention ?? [])]
       .filter((row) => row.id !== nextEvent?.id)
       .sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id)).slice(0, 3),
@@ -305,10 +377,27 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     : priceAt(distribution?.q10, below?.lower ?? Math.max(0.000001, current - 2 * horizonAtr));
   const activePoint = [...(input.turningPoints ?? [])].reverse()
     .find((point) => point.status === 'confirmed' || point.status === 'candidate');
+  const candidateProbabilities = calibrated?.directionProbabilities ?? calibrated?.probabilities ?? null;
+  const probabilitySum = candidateProbabilities
+    ? candidateProbabilities.UP + candidateProbabilities.RANGE + candidateProbabilities.DOWN : 0;
   const probabilities = calibrated?.calibrationStatus === 'calibrated'
-    ? calibrated.probabilities : null;
+    && calibrated.calibrationIntegrity === 'PASS'
+    && (calibrated.effectiveSampleCount ?? 0) >= 30
+    && (calibrated.brierSkill ?? 0) > 0
+    && probabilitySum === 100 ? candidateProbabilities : null;
+  const turningPointMarkers = [...(input.turningPoints ?? [])].reverse()
+    .filter((point) => point.status === 'confirmed' || point.status === 'candidate')
+    .slice(0, 3).map((point) => ({ id: point.id, date: point.effectiveFrom,
+      direction: point.direction, label: point.facts[0] ?? 'Turning Point' }));
+  const eventMarkers = (input.eventMarkers ?? []).filter((event) =>
+    bars.some((bar) => bar.date === event.date)).slice(-2);
+  const instrumentId = input.instrumentId ?? input.symbol;
+  const forecastId = [
+    'forecast', instrumentId, horizonDays, input.asOf ?? 'unknown',
+    calibrated?.calibrationDatasetHash?.slice(0, 12) ?? 'uncalibrated',
+  ].join(':');
   return {
-    symbol: input.symbol, instrumentId: input.instrumentId ?? input.symbol,
+    symbol: input.symbol, instrumentId,
     label: input.label, asOf: input.asOf, current,
     history: bars.map((bar) => ({ date: bar.date, value: bar.close })),
     baseLow: Math.min(baseLow, baseHigh), baseHigh: Math.max(baseLow, baseHigh),
@@ -322,14 +411,20 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
       : action === 'BUY' ? '上方向優勢' : action === 'SELL' ? '下方向警戒' : '本線内で待機',
     confidenceLabel: probabilities && (calibrated?.effectiveSampleCount ?? 0) >= 60 ? '高'
       : input.status === 'live' && bars.length >= 25 ? '中' : '低',
-    probability: probabilities,
+    directionProbabilities: probabilities,
     calibrationStatus: calibrated?.calibrationStatus ?? 'not_available',
     rawSampleCount: calibrated?.rawOccurrenceCount ?? 0,
     episodeCount: calibrated?.episodeCount ?? 0,
     effectiveSampleCount: calibrated?.effectiveSampleCount ?? 0,
-    brierScore: calibrated?.brierScore ?? null,
-    confidenceInterval: calibrated?.confidenceInterval ?? null,
-    targetProbabilities: calibrated?.targetProbabilities ?? null,
+    modelBrier: calibrated?.modelBrier ?? calibrated?.brierScore ?? null,
+    baselineBrier: calibrated?.baselineBrier ?? null,
+    brierSkill: calibrated?.brierSkill ?? null,
+    brierSkillConfidenceInterval: calibrated?.brierSkillConfidenceInterval ?? null,
+    calibrationError: calibrated?.calibrationError ?? null,
+    calibrationVersion: calibrated?.calibrationVersion ?? input.calibration?.calibrationVersion ?? null,
+    datasetHash: calibrated?.calibrationDatasetHash ?? null,
+    expectedValue: calibrated?.expectedValue ?? null,
+    levelProbabilities: calibrated?.levelProbabilities ?? calibrated?.targetProbabilities ?? null,
     reactionDelay: calibrated?.averageReactionDelay ?? null,
     methodLabel: `実測OHLCV + 類似局面 + ATR14 + 支持抵抗 · ${input.calibration?.calibrationVersion ?? '未校正'}`,
     timeframeLabel: input.timeframe === 'weekly' ? '週足' : '日足',
@@ -337,8 +432,15 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     sourceHistoryCount: input.sourceHistoryCount ?? input.bars.length,
     source: input.source ?? 'existing_market_data_cache',
     availableFrom: input.availableFrom ?? null,
-    eventMarkers: (input.eventMarkers ?? []).filter((event) =>
-      bars.some((bar) => bar.date === event.date)).slice(-4),
+    assetType: input.assetType ?? 'UNKNOWN',
+    proxyFor: input.proxyFor ?? null,
+    licenseStatus: input.licenseStatus ?? 'not_applicable',
+    forecastId,
+    signalEpisodeIds: turningPointMarkers.map((point) => point.id),
+    supportResistanceIds: [below?.id, above?.id].filter((id): id is string => !!id),
+    eventIds: eventMarkers.map((event) => event.id),
+    eventMarkers,
+    turningPointMarkers,
     activeTurningPoint: activePoint ? { id: activePoint.id, date: activePoint.effectiveFrom,
       direction: activePoint.direction, label: activePoint.facts[0] ?? 'Turning Point' } : null,
     shortSelling: input.shortSelling ?? null,

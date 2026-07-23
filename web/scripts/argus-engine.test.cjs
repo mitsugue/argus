@@ -53,8 +53,8 @@ const view = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'), select
   indexMoves: [1,2,3,4,5].map((n) => ({ id: `i${n}`, label: `${n}`, value: n })),
   macroMoves: [1,2,3,4].map((n) => ({ id: `m${n}`, label: n === 3 ? 'VIX' : `${n}`, value: n })),
 });
-check('JP/US decisions independent', view.decisions.JP.finalAction === 'BUY' && view.decisions.US.finalAction === 'SELL');
-check('one selected final decision', view.finalAction === 'BUY' && view.selectedMarket === 'JP');
+check('JP/US decisions independent', view.decisions.JP.finalAction === 'WAIT' && view.decisions.US.finalAction === 'SELL');
+check('one selected final decision', view.finalAction === 'WAIT' && view.selectedMarket === 'JP');
 check('COMING 30D max 3', view.comingEvents.length === 3);
 check('positioning max 5', view.positioning.length === 5);
 check('index and macro cards have independent limits', view.indexMoves.length === 4
@@ -63,7 +63,7 @@ check('Attention max 3', view.attention.length === 3);
 check('NEXT EVENT is not duplicated in Attention', !view.attention.some((row) => row.id === view.nextEvent?.id));
 check('holdings max 3 and deduped', view.holdingsReview.length === 2 && view.holdingsReview[0].reasonJa === 'y');
 check('FIRE is outside the Today view contract', !Object.prototype.hasOwnProperty.call(view, 'fireProgress'));
-check('footer mirrors decision', view.footerText.startsWith('JP BUY 7/7'));
+check('footer mirrors decision', view.footerText.startsWith('JP WAIT 6/7'));
 const manual = buildArgusTodayView({ ...view, now: new Date('2026-07-22T00:00:00Z'), selectionMode: 'US', baseSignal: 'ENTER',
   jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8, dataQuality: 'LIVE' });
 check('manual US selection', manual.selectedMarket === 'US' && manual.finalAction === 'SELL');
@@ -81,30 +81,47 @@ const projection = buildTodayProjection({ symbol: '1321', label: '日経225 ETF'
 check('projection uses real bars and deterministic zones', projection?.current === 124 && projection.baseLow === 122
   && projection.baseHigh === 126 && projection.upside === 130 && projection.downside === 95);
 check('projection levels cannot invert', projection.downside < projection.baseLow && projection.baseHigh < projection.upside);
-check('projection does not fabricate probability', projection?.probability === null && projection.confidenceLabel === '中');
+check('projection does not fabricate probability', projection?.directionProbabilities === null && projection.confidenceLabel === '中');
 check('projection identifies timeframe, state and source coverage', projection?.timeframeLabel === '日足'
   && projection.quoteState === 'close' && projection.sourceHistoryCount === 25);
 check('projection refuses insufficient history', buildTodayProjection({ symbol: '1321', label: 'x', asOf: null,
   status: 'live', bars: bars.slice(0, 5), zones: [] }, 'WAIT') === null);
 const calibratedInput = { symbol: 'SPY', instrumentId: 'US:SPY:ETF', label: 'S&P 500 ETF（SPY）',
   asOf: '2026-07-22', status: 'live', timeframe: 'daily', quoteState: 'close', bars, zones: [],
-  calibration: { historyCount: 1338, calibrationVersion: 'beta-dirichlet-walk-forward-v1', horizons: {
+  calibration: { historyCount: 1338, calibrationVersion: 'beta-dirichlet-walk-forward-v2', horizons: {
     '5': { horizon: 5, rawOccurrenceCount: 64, episodeCount: 38, effectiveSampleCount: 38,
-      calibrationStatus: 'calibrated', probabilities: { UP: 28, RANGE: 51, DOWN: 21 }, brierScore: .54,
+      calibrationStatus: 'calibrated', probabilities: { UP: 28, RANGE: 51, DOWN: 21 },
+      directionProbabilities: { UP: 28, RANGE: 51, DOWN: 21 },
+      calibrationIntegrity: 'PASS', modelBrier: .54, baselineBrier: .6, brierSkill: .1,
       confidenceInterval: { UP: { low: 18, high: 39 } }, averageReactionDelay: 2.6,
       returnDistribution: { q10: -.08, q25: -.02, median: .01, q75: .04, q90: .09, meanMfe: .03, meanMae: -.02 },
-      targetProbabilities: { upperTargetTouch: 24, baseRangeClose: 55, lowerTargetTouch: 21, invalidationTouch: 16 } },
+      expectedValue: { horizon: 5, expectedReturn: .01, medianReturn: .01, q10: -.08, q90: .09,
+        expectedUpside: .03, expectedDownside: .02, rewardRisk: 1.5 },
+      levelProbabilities: { upperTargetTouch: 24, baseRangeClose: 55, lowerTargetTouch: 21, invalidationTouch: 16 } },
   } } };
 const calibratedProjection = buildTodayProjection(calibratedInput, 'WAIT');
 check('calibrated probabilities use server result and sum to 100', calibratedProjection.instrumentId === 'US:SPY:ETF'
-  && Object.values(calibratedProjection.probability).reduce((a, b) => a + b, 0) === 100
-  && calibratedProjection.effectiveSampleCount === 38 && calibratedProjection.brierScore === .54);
-check('target touch and close-in-band remain distinct', calibratedProjection.targetProbabilities.upperTargetTouch === 24
-  && calibratedProjection.targetProbabilities.baseRangeClose === 55);
+  && Object.values(calibratedProjection.directionProbabilities).reduce((a, b) => a + b, 0) === 100
+  && calibratedProjection.effectiveSampleCount === 38 && calibratedProjection.modelBrier === .54);
+check('level touch and close-in-band remain distinct', calibratedProjection.levelProbabilities.upperTargetTouch === 24
+  && calibratedProjection.levelProbabilities.baseRangeClose === 55);
 const uncalibrated = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
   horizons: { '5': { ...calibratedInput.calibration.horizons['5'], calibrationStatus: 'insufficient_sample',
     effectiveSampleCount: 29, probabilities: null } } } }, 'WAIT');
-check('uncalibrated probability is hidden', uncalibrated.probability === null && uncalibrated.effectiveSampleCount === 29);
+check('uncalibrated probability is hidden', uncalibrated.directionProbabilities === null && uncalibrated.effectiveSampleCount === 29);
+const weakSkill = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
+  horizons: { '5': { ...calibratedInput.calibration.horizons['5'], brierSkill: 0 } } } }, 'WAIT');
+check('BSS zero hides probability', weakSkill.directionProbabilities === null);
+const upPluralityInput = { ...calibratedInput, calibration: { ...calibratedInput.calibration,
+  horizons: { '5': { ...calibratedInput.calibration.horizons['5'],
+    probabilities: { UP: 49, RANGE: 29, DOWN: 22 },
+    directionProbabilities: { UP: 49, RANGE: 29, DOWN: 22 } } } } };
+const upPluralityView = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'),
+  selectionMode: 'JP', baseSignal: 'PREPARE', jpSignal: 'PREPARE', confidence: .8,
+  dataQuality: 'LIVE', projection: { JP: upPluralityInput } });
+check('UP 49/RANGE 29/DOWN 22 never maps WAIT to BUY',
+  upPluralityView.finalAction === 'WAIT'
+  && upPluralityView.directionProbabilities.UP === 49);
 
 const reviewBars = [{ date: '2026-07-20', close: 100 }, { date: '2026-07-21', close: 101.4 }];
 const matureReview = buildTodayReview(reviewBars, '日経225 ETF（1321）', 'WAIT', '2026-07-20');
@@ -164,7 +181,8 @@ check('actual line alone is white', css.includes('.at-proj-actual { fill:none; s
   && css.includes('.at-proj-up { stroke:#22c55e') && css.includes('.at-proj-down { stroke:#ef4444'));
 check('market card renamed MACRO and VIX retained', panel.includes('title="MACRO"') && route.includes("addRate('vix'"));
 check('JP positioning deep-links to canonical ledger', panel.includes("argus.scrollTo', 'market-ledger'") && panel.includes("onNavigate('regime')"));
-check('zero-news state is a compact line', panel.includes('at-news-zero') && panel.includes('<span>0</span>'));
+check('zero-news state preserves card and last check', panel.includes('at-news-zero')
+  && panel.includes('現在なし') && panel.includes('ニュース確認要') && panel.includes('最終確認'));
 check('seven action stages have seven distinct colors', [1,2,3,4,5,6,7].every((n) => css.includes(`nth-child(${n})`)));
 check('major news is capped and processed', panel.includes('重大ニュース') && !panel.includes('Related Signal'));
 check('market headlines poll 60m in-session and 120m off-hours', marketNewsHook.includes('60 * 60_000')

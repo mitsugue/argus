@@ -33,6 +33,10 @@ export interface MarketNews {
   asOf: string;
   items: MarketNewsItem[];
   noteJa: string;
+  lastSuccessfulPollAt?: string | null;
+  fetchedCount?: number;
+  stale?: boolean;
+  nextPollAt?: string | null;
 }
 
 export const MARKET_NEWS_OPEN_INTERVAL_MS = 60 * 60_000;
@@ -58,15 +62,20 @@ export function marketNewsRefreshInterval(now = new Date()): number {
 interface State {
   data: MarketNews | null;
   loading: boolean;
+  lastChecked: string | null;
+  failureClass: string | null;
 }
 
 export function useMarketNews(): State {
-  const [state, setState] = useState<State>({ data: null, loading: true });
+  const [state, setState] = useState<State>({
+    data: null, loading: true, lastChecked: null, failureClass: null,
+  });
 
   useEffect(() => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: null, loading: false });
+      setState({ data: null, loading: false, lastChecked: new Date().toISOString(),
+        failureClass: 'backend_not_configured' });
       return;
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/market-news';
@@ -79,12 +88,21 @@ export function useMarketNews(): State {
       try {
         const r = await fetch(url, { signal: ctrl.signal });
         clearTimeout(timer);
-        if (!r.ok || cancelled) return;
+        if (!r.ok || cancelled) {
+          if (!cancelled) setState((s) => ({ ...s, loading: false,
+            lastChecked: new Date().toISOString(), failureClass: `http_${r.status}` }));
+          return;
+        }
         const data = (await r.json()) as MarketNews;
-        if (!cancelled) setState({ data, loading: false });
-      } catch {
+        if (!cancelled) setState({ data, loading: false,
+          lastChecked: new Date().toISOString(),
+          failureClass: data.status === 'live' ? null : data.status });
+      } catch (error) {
         clearTimeout(timer);
-        if (!cancelled) setState((s) => ({ ...s, loading: false }));
+        if (!cancelled) setState((s) => ({ ...s, loading: false,
+          lastChecked: new Date().toISOString(),
+          failureClass: error instanceof DOMException && error.name === 'AbortError'
+            ? 'timeout' : 'network_error' }));
       }
     }
 
