@@ -83,9 +83,17 @@ check('projection uses real bars and deterministic zones', projection?.current =
 check('projection levels cannot invert', projection.downside < projection.baseLow && projection.baseHigh < projection.upside);
 check('projection does not fabricate probability', projection?.directionProbabilities === null && projection.confidenceLabel === '中');
 check('projection identifies timeframe, state and source coverage', projection?.timeframeLabel === '日足'
-  && projection.quoteState === 'close' && projection.sourceHistoryCount === 25);
-check('quote time semantics never call prior close current', quoteDisplayLabel('close') === '終値'
-  && quoteDisplayLabel('delayed') === '遅延値' && quoteDisplayLabel('realtime') === 'リアルタイム');
+  && projection.quoteState === 'CLOSE' && projection.sourceHistoryCount === 25);
+check('quote time semantics never call prior close current', quoteDisplayLabel('CLOSE') === '終値'
+  && quoteDisplayLabel('D20') === '現在 D20' && quoteDisplayLabel('RT') === '現在 RT'
+  && quoteDisplayLabel('STALE') === '最終値 STALE');
+const d20Projection = buildTodayProjection({ symbol: '1321', label: '日経225 ETF',
+  asOf: '2026-07-23T10:20:00+09:00', status: 'live', quoteState: 'D20', bars, zones: [] }, 'WAIT');
+check('D20 is displayed only from an explicit authoritative state',
+  d20Projection?.quoteState === 'D20' && quoteDisplayLabel(d20Projection.quoteState) === '現在 D20');
+check('legacy delayed state is not promoted to D20',
+  buildTodayProjection({ symbol: '1321', label: 'x', asOf: '2026-07-22',
+    status: 'delayed', bars, zones: [] }, 'WAIT')?.quoteState === 'CLOSE');
 check('projection refuses insufficient history', buildTodayProjection({ symbol: '1321', label: 'x', asOf: null,
   status: 'live', bars: bars.slice(0, 5), zones: [] }, 'WAIT') === null);
 const reclaimedProjection = buildTodayProjection({ symbol: '1321', label: '日経225 ETF',

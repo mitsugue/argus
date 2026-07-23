@@ -35,6 +35,8 @@ export interface RotationRow {
 export interface ChartIntelligencePayload {
   schemaVersion: string; methodVersion: string; asOf: string; symbol: string; market: string;
   displayNameJa?: string; proxyDisclosureJa?: string; timeframe: 'daily' | 'weekly';
+  /** Authoritative quote timing. Omitted by legacy payloads, which must fall back to CLOSE. */
+  quoteState?: 'RT' | 'D20' | 'CLOSE' | 'STALE';
   status: string; missingReasons: string[]; automaticAiCalls: number; costPolicyMode: string;
   periodEnd: string | null;
   indicators: { bars: ChartBar[]; status: string; missingReasons: string[] };

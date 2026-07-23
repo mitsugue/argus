@@ -37,7 +37,9 @@ export interface TodayNewsCandidate extends TodayNewsInput {
 export interface TodayProjectionInput {
   symbol: string; label: string; asOf: string | null; status: string;
   bars: ChartBar[]; zones: PriceZone[]; timeframe?: 'daily' | 'weekly';
-  quoteState?: 'realtime' | 'delayed' | 'close'; sourceHistoryCount?: number;
+  quoteState?: 'RT' | 'D20' | 'CLOSE' | 'STALE'
+    | 'realtime' | 'delayed' | 'close' | 'stale';
+  sourceHistoryCount?: number;
   instrumentId?: string; source?: string; availableFrom?: string | null;
   assetType?: string; proxyFor?: string | null; licenseStatus?: string;
   eventMarkers?: Array<{ id: string; date: string; labelJa: string; kind: string }>;
@@ -201,8 +203,12 @@ const OPEN_JP = new Set(['MORNING_SESSION', 'AFTERNOON_SESSION']);
 const ACTIVE_US = new Set(['PRE_MARKET', 'REGULAR']);
 
 export function quoteDisplayLabel(state: string): string {
-  return state === 'realtime' ? 'リアルタイム'
-    : state === 'delayed' ? '遅延値' : '終値';
+  if (state === 'RT') return '現在 RT';
+  if (state === 'D20') return '現在 D20';
+  if (state === 'STALE' || state === 'stale') return '最終値 STALE';
+  if (state === 'realtime') return 'リアルタイム';
+  if (state === 'delayed') return '遅延値';
+  return '終値';
 }
 
 function sessionLabel(market: ArgusMarket, state?: MarketCalendarState): string {
@@ -457,7 +463,9 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     reactionDelay: calibrated?.averageReactionDelay ?? null,
     methodLabel: `実測OHLCV + 類似局面 + ATR14 + 支持抵抗 · ${input.calibration?.calibrationVersion ?? '未校正'}`,
     timeframeLabel: input.timeframe === 'weekly' ? '週足' : '日足',
-    quoteState: input.quoteState ?? (input.status === 'delayed' ? 'delayed' : 'close'),
+    // Legacy chart payloads do not prove intraday freshness.  They therefore
+    // fall back to CLOSE; RT/D20 are rendered only when explicitly supplied.
+    quoteState: input.quoteState ?? (input.status === 'stale' ? 'STALE' : 'CLOSE'),
     sourceHistoryCount: input.sourceHistoryCount ?? input.bars.length,
     source: input.source ?? 'existing_market_data_cache',
     availableFrom: input.availableFrom ?? null,
