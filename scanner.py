@@ -17453,7 +17453,7 @@ def api_argus_admin_missions_tick():
                 ("1321", "JP"), ("1306", "JP"), ("SPY", "US"), ("QQQ", "US")):
             _chart_reports.append(_chart_public_report(
                 _market_symbol, _market_code, "daily",
-                market_scope=_market_symbol == "1321", cached_only=True,
+                market_scope=_market_symbol == "1321", cached_only=False,
                 precompute_replay=True))
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
