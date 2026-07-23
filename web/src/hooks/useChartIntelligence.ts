@@ -20,20 +20,32 @@ function endpoint(options: Options) {
   return `${base}/api/argus/chart-intelligence?${params}`;
 }
 
-async function load(url: string, force = false) {
+function matchesInstrument(data: ChartIntelligencePayload, expectedSymbol?: string) {
+  if (!expectedSymbol) return true;
+  const actual = data.instrumentMetadata?.symbol ?? data.symbol;
+  return actual?.toUpperCase() === expectedSymbol.toUpperCase();
+}
+
+async function load(url: string, force = false, expectedSymbol?: string) {
   if (!force && (failedUntil.get(url) ?? 0) > Date.now()) throw new Error('再試行待機中');
   const current = cache.get(url);
-  if (!force && current && Date.now() - current.at < STALE_MS) return current.data;
+  if (!force && current && Date.now() - current.at < STALE_MS
+    && matchesInstrument(current.data, expectedSymbol)) return current.data;
+  if (current && !matchesInstrument(current.data, expectedSymbol)) cache.delete(url);
   const pending = inflight.get(url);
   if (pending) return pending;
-  const request = fetch(url, { method: 'GET', headers: { Accept: 'application/json' } })
+  const request = fetch(url, {
+    method: 'GET', cache: 'no-store', headers: { Accept: 'application/json' },
+  })
     .then(async (response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json() as ChartIntelligencePayload;
+      if (!matchesInstrument(data, expectedSymbol)) throw new Error('instrument_mismatch');
       cache.set(url, { at: Date.now(), data });
       return data;
     }).catch((error) => {
-      failedUntil.set(url, Date.now() + 5 * 60 * 1000);
+      failedUntil.set(url, Date.now() + (
+        error instanceof Error && error.message === 'instrument_mismatch' ? 5_000 : 5 * 60 * 1000));
       throw error;
     }).finally(() => inflight.delete(url));
   inflight.set(url, request);
@@ -54,7 +66,7 @@ export function useChartIntelligence(options: Options) {
     const run = () => {
       if (document.visibilityState === 'hidden') return;
       setLoading(true);
-      void load(url).then((value) => {
+      void load(url, false, options.symbol).then((value) => {
         if (!cancelled) { setData(value); setDataUrl(url); setError(null); }
       })
         .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : '取得失敗'); })
@@ -66,7 +78,7 @@ export function useChartIntelligence(options: Options) {
     const visible = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', visible);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', visible); };
-  }, [url, options.enabled]);
+  }, [url, options.enabled, options.symbol]);
   // A failed or pending instrument switch must never render the previous
   // instrument under the new heading. Keep the cache, but fail closed until
   // the payload resolved for the exact current URL.

@@ -6,6 +6,7 @@ const css = fs.readFileSync(new URL('../src/components/marketReplay/MarketContex
 const today = fs.readFileSync(new URL('../src/components/today/ArgusTodayPanel.tsx', import.meta.url), 'utf8');
 const route = fs.readFileSync(new URL('../src/routes/MarketRegime.tsx', import.meta.url), 'utf8');
 const chartHook = fs.readFileSync(new URL('../src/hooks/useChartIntelligence.ts', import.meta.url), 'utf8');
+const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
 
 for (const tab of ['OVERVIEW', 'REPLAY', 'LEDGER']) assert.match(replay, new RegExp(`'${tab}'`));
 for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) assert.match(replay, new RegExp(symbol));
@@ -16,10 +17,14 @@ for (const tool of ['horizontal', 'trend', 'zone', 'arrow', 'text', 'select']) {
 assert.match(replay, /argus\.marketReplay\.drawings\.v1:/);
 assert.match(replay, /localStorage\.setItem\(key/);
 assert.doesNotMatch(replay, /fetch\s*\(/, 'component delegates only to GET hooks');
-assert.match(chartHook, /fetch\(url, \{ method: 'GET'/);
+assert.match(chartHook, /method: 'GET', cache: 'no-store'/);
 assert.doesNotMatch(chartHook, /method:\s*'POST'/);
 assert.match(chartHook, /dataUrl === url \? data : null/,
   'instrument switches must fail closed instead of relabeling stale data');
+assert.match(chartHook, /instrument_mismatch/);
+assert.match(chartHook, /instrumentMetadata\?\.symbol \?\? data\.symbol/);
+assert.match(vite, /chart-intelligence[\s\S]+handler: 'NetworkFirst'/,
+  'Market chart API must not use the broad stale-while-revalidate cache');
 assert.match(today, /argus\.replayContext/);
 assert.match(today, /finalAction: view\.finalAction/);
 assert.match(route, /MarketContextReplay/);
