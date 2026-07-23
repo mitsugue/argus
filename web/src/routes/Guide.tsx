@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.2.0', 'Market Context Replay — 一つのToday判断を類似局面、反応遅延、Event Study、極値・反転、Brier Skill、JP／US Ledgerと端末内描画で検証。通常操作のAI呼び出しと自動売買は0。'],
   ['v13.1.2', 'Today最終受け入れ — 確率適格性をサーバーへ一元化し、価格時点・チャート意味論を明確化。'],
   ['v13.1.1', 'Today予測意味論を統一 — 終値方向確率、Brier Skill、価格中心チャート、ニュース状態、日経指数の権利監査を明確化。'],
   ['v13.1.0', 'Today Forecast／Replay完成 — JP・USのETF proxyをinstrument IDごとに分離し、S&P 500／Nasdaq切替、5年類似局面のwalk-forward校正、日次空売り比率、上昇失敗検出、Remote Journal保存を接続。通常操作のAI呼び出しと自動売買は0。'],

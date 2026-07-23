@@ -1,4 +1,6 @@
-export interface MarketLedgerHistoryPoint { periodEnd: string; value: number | null; unit: string }
+export interface MarketLedgerHistoryPoint {
+  periodEnd: string; value: number | null; unit: string; availableFrom?: string;
+}
 export interface MarketLedgerBacktestSummary {
   average1dPct?: number | null; average5dPct?: number | null; average20dPct?: number | null;
   hitRate5d?: number | null; falsePositiveRate5d?: number | null;
