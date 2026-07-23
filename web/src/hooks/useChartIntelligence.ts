@@ -45,6 +45,7 @@ export function useChartIntelligence(options: Options) {
     options.market, options.timeframe]);
   const initial = url ? cache.get(url)?.data ?? null : null;
   const [data, setData] = useState<ChartIntelligencePayload | null>(initial);
+  const [dataUrl, setDataUrl] = useState<string | null>(initial ? url : null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -53,7 +54,9 @@ export function useChartIntelligence(options: Options) {
     const run = () => {
       if (document.visibilityState === 'hidden') return;
       setLoading(true);
-      void load(url).then((value) => { if (!cancelled) { setData(value); setError(null); } })
+      void load(url).then((value) => {
+        if (!cancelled) { setData(value); setDataUrl(url); setError(null); }
+      })
         .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : '取得失敗'); })
         .finally(() => { if (!cancelled) setLoading(false); });
     };
@@ -64,5 +67,8 @@ export function useChartIntelligence(options: Options) {
     document.addEventListener('visibilitychange', visible);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', visible); };
   }, [url, options.enabled]);
-  return { data, loading, error };
+  // A failed or pending instrument switch must never render the previous
+  // instrument under the new heading. Keep the cache, but fail closed until
+  // the payload resolved for the exact current URL.
+  return { data: dataUrl === url ? data : null, loading, error };
 }
