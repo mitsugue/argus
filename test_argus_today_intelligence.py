@@ -56,10 +56,29 @@ def test_probability_calibration_uses_effective_episodes_and_sums_to_100():
         assert row["walkForward"] is True
         assert row["noFutureLeakage"] is True
         assert row["brierScore"] is not None
+        assert row["modelBrier"] == row["brierScore"]
+        assert row["baselineBrier"] is not None
+        assert row["calibrationIntegrity"] == "PASS"
+        assert row["evaluationSampleCount"] > 0
+        assert row["expectedValue"]["horizon"] == int(horizon)
         if row["calibrationStatus"] == "calibrated":
             assert sum(row["probabilities"].values()) == 100
+            assert row["directionProbabilities"] == row["probabilities"]
+            assert row["brierSkill"] > 0
             assert row["confidenceInterval"]
-            assert row["targetProbabilities"]["upperTargetTouch"] is not None
+            assert row["levelProbabilities"]["upperTargetTouch"] is not None
+
+
+def test_walk_forward_baseline_is_past_only_and_skill_is_paired():
+    episodes = [{"index": index * 5 + 20, "direction": "UP"}
+                for index in range(45)]
+    baseline = [{"index": index, "direction": ("UP", "RANGE", "DOWN")[index % 3]}
+                for index in range(250)]
+    result = ti._walk_forward_brier(episodes, baseline, "fixed-seed")
+    assert result["evaluationSampleCount"] == 35
+    assert result["modelBrier"] < result["baselineBrier"]
+    assert result["brierSkill"] > 0
+    assert result["confidenceInterval"]["low"] is not None
 
 
 def test_small_sample_never_displays_percentages():

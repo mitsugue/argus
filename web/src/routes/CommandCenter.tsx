@@ -40,6 +40,7 @@ const formatDate = (iso: string) => {
 };
 
 function instrumentLabel(payload: ChartIntelligencePayload): string {
+  if (payload.symbol === '1321') return '日経225 ETF（1321）';
   const name = (payload.displayNameJa || payload.symbol).trim();
   return name.includes(payload.symbol) ? name : `${name}（${payload.symbol}）`;
 }
@@ -52,6 +53,12 @@ function projectionInput(payload: ChartIntelligencePayload | null): TodayProject
     instrumentId: payload.instrumentMetadata?.instrumentId,
     source: payload.instrumentMetadata?.source ?? 'existing_market_data_cache',
     availableFrom: payload.instrumentMetadata?.availableFrom,
+    assetType: payload.instrumentMetadata?.assetType,
+    proxyFor: payload.symbol === '1321'
+      ? (payload.instrumentMetadata?.proxyFor ?? 'Nikkei 225') : payload.instrumentMetadata?.proxyFor,
+    licenseStatus: payload.symbol === '1321'
+      ? (payload.instrumentMetadata?.licenseStatus ?? 'license_unverified')
+      : (payload.instrumentMetadata?.licenseStatus ?? 'not_applicable'),
     bars: payload.indicators.bars, zones: payload.zones,
     eventMarkers: payload.eventMarkers,
     turningPoints: payload.turningPoints,
@@ -426,6 +433,16 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
       factors: { JP: jpFactors, US: usFactors },
       evidence: { JP: judgment.reasons, US: judgment.reasons },
       events: eventRows, indexMoves, macroMoves, positioning, attention, holdings, news,
+      newsCardState: {
+        status: marketNews.data?.status ?? 'unavailable',
+        lastChecked: marketNews.lastChecked,
+        lastSuccessfulPollAt: marketNews.data?.lastSuccessfulPollAt
+          ?? (marketNews.data?.status === 'live' ? marketNews.data.asOf : null),
+        fetchedCount: marketNews.data?.fetchedCount ?? marketNews.data?.items.length ?? 0,
+        relevantCount: news.length,
+        stale: marketNews.data?.stale ?? marketNews.data?.status !== 'live',
+        failureClass: marketNews.failureClass,
+      },
       projection: {
         JP: projectionInput(selectedJpChart),
         US: projectionInput(selectedUsChart),
@@ -445,6 +462,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     regime.data, impEvents, rates.data, apItems, positionExposure, events247,
     commandSummary, positionRisk, assets, al.data, sessionBrief, marketMode,
     jpChart.data, topixChart.data, sp500Chart.data, nasdaqChart.data, marketNews.data,
+    marketNews.lastChecked, marketNews.failureClass,
     selectedInstrument]);
 
 
