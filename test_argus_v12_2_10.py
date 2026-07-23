@@ -106,13 +106,21 @@ def test_compact_readback_preserves_proof_without_large_ledger():
                                                  for i in range(1000)]},
             "marketLedgerStateHash": "market-hash",
             "chartIntelligence": {"snapshots": [{"id": "chart"}]},
-            "chartIntelligenceStateHash": "chart-hash"}
+            "chartIntelligenceStateHash": "chart-hash",
+            "todayIntelligence": {"analyses": [{"id": "today"}]},
+            "todayIntelligenceStateHash": "today-hash",
+            "marketReplay": {"contexts": [{"id": "replay"}]},
+            "marketReplayStateHash": "replay-hash"}
     receipt = rj.compact_readback_snapshot(full)
     assert rj.verify_compact_readback_snapshot(receipt) is True
     assert receipt["receiptSchemaVersion"] == rj.READBACK_RECEIPT_SCHEMA
     assert "marketLedger" not in receipt
     assert "chartIntelligence" not in receipt
+    assert "todayIntelligence" not in receipt
+    assert "marketReplay" not in receipt
     assert receipt["marketLedgerStateHash"] == "market-hash"
+    assert receipt["todayIntelligenceStateHash"] == "today-hash"
+    assert receipt["marketReplayStateHash"] == "replay-hash"
     rec = rj.read_back_receipt(remote_blob=receipt, local_events=evs,
                                read_back_at=NOW)
     assert rec["verificationStatus"] == "verified"
@@ -694,9 +702,17 @@ def test_scheduler_remote_ack_accepts_compact_state_hash_proof():
         scanner._MARKET_LEDGER)
     full["chartIntelligenceStateHash"] = \
         scanner.argus_chart_intelligence.state_hash(scanner._CHART_INTELLIGENCE)
+    full["todayIntelligenceStateHash"] = \
+        scanner.argus_today_intelligence.state_hash(scanner._TODAY_INTELLIGENCE)
+    full["marketReplayStateHash"] = \
+        scanner.argus_market_replay.state_hash(scanner._MARKET_REPLAY)
     receipt = rj.compact_readback_snapshot(full)
     old_events = list(scanner._OPS_JOURNAL)
     old_cycle = dict(scanner._REMOTE_CYCLE)
+    old_market_remote = dict(scanner._MARKET_LEDGER_REMOTE)
+    old_chart_remote = dict(scanner._CHART_INTELLIGENCE_REMOTE)
+    old_today_remote = dict(scanner._TODAY_INTELLIGENCE_REMOTE)
+    old_replay_remote = dict(scanner._MARKET_REPLAY_REMOTE)
     try:
         scanner._OPS_JOURNAL[:] = [event]
         scanner._REMOTE_CYCLE.update({
@@ -708,10 +724,19 @@ def test_scheduler_remote_ack_accepts_compact_state_hash_proof():
         assert scanner._REMOTE_CYCLE["readBackVerified"] is True
         assert scanner._MARKET_LEDGER_REMOTE["verificationStatus"] == "verified"
         assert scanner._CHART_INTELLIGENCE_REMOTE["verificationStatus"] == "verified"
+        assert scanner._TODAY_INTELLIGENCE_REMOTE["verificationStatus"] == "verified"
+        assert scanner._MARKET_REPLAY_REMOTE["verificationStatus"] == "verified"
     finally:
         scanner._OPS_JOURNAL[:] = old_events
         scanner._REMOTE_CYCLE.clear()
         scanner._REMOTE_CYCLE.update(old_cycle)
+        for target, old in (
+                (scanner._MARKET_LEDGER_REMOTE, old_market_remote),
+                (scanner._CHART_INTELLIGENCE_REMOTE, old_chart_remote),
+                (scanner._TODAY_INTELLIGENCE_REMOTE, old_today_remote),
+                (scanner._MARKET_REPLAY_REMOTE, old_replay_remote)):
+            target.clear()
+            target.update(old)
 
 
 def test_workflows_build_compact_receipt_before_ledger_checkout():
