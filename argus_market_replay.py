@@ -46,6 +46,19 @@ def _hash(value: Any, length: int = 32) -> str:
     return hashlib.sha256(raw).hexdigest()[:length]
 
 
+def _dataset_hash_from_bars(bars: Sequence[Dict[str, Any]]) -> str:
+    return _hash([{
+        "date": row["date"], "close": row["close"],
+        "availableFrom": row["availableFrom"],
+    } for row in bars])
+
+
+def dataset_hash(rows: Iterable[Dict[str, Any]]) -> str:
+    """Return the public cache-key hash without running Replay analysis."""
+    return _dataset_hash_from_bars(
+        argus_today_intelligence.normalize_bars(rows))
+
+
 def _mean(values: Sequence[float]) -> Optional[float]:
     return sum(values) / len(values) if values else None
 
@@ -478,9 +491,7 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
     selected_calibration = (((calibration or {}).get("horizons") or {})
                             .get(str(horizon)) or {})
     extremes = _ledger_extremes(ledger or {}, bars, as_of)
-    dataset_hash = _hash([{
-        "date": row["date"], "close": row["close"], "availableFrom": row["availableFrom"],
-    } for row in bars])
+    dataset_hash = _dataset_hash_from_bars(bars)
     outcome_hash = _hash([{
         "id": row.get("episodeId"), "outcomes": row.get("outcomes"),
     } for row in episodes])
