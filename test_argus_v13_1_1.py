@@ -3,11 +3,35 @@ import sys
 import types
 from unittest import mock
 
-import pandas as pd
-
 sys.modules.setdefault("moomoo", types.SimpleNamespace(
     OpenQuoteContext=object, OpenSecTradeContext=object, RET_OK=0))
 import scanner
+
+
+class FakeSeries(list):
+    def dropna(self):
+        return FakeSeries(value for value in self if value is not None)
+
+    def drop_duplicates(self):
+        return FakeSeries(dict.fromkeys(self))
+
+    def tolist(self):
+        return list(self)
+
+    def max(self):
+        return max(self)
+
+
+class FakeFrame:
+    def __init__(self, rows):
+        self.rows = rows
+        self.columns = list(rows[0]) if rows else []
+
+    def __len__(self):
+        return len(self.rows)
+
+    def __getitem__(self, key):
+        return FakeSeries(row.get(key) for row in self.rows)
 
 
 def test_jquants_index_audit_uses_official_v2_without_persisting_rows():
@@ -20,13 +44,13 @@ def test_jquants_index_audit_uses_official_v2_without_persisting_rows():
                 "from_yyyymmdd": mock.ANY,
                 "to_yyyymmdd": mock.ANY,
             }
-            return pd.DataFrame([
+            return FakeFrame([
                 {"Date": "2026-07-22", "Code": "0000", "O": 100,
                  "H": 102, "L": 99, "C": 101},
             ])
 
         def get_idx_bars_daily_topix(self, **kwargs):
-            return pd.DataFrame([
+            return FakeFrame([
                 {"Date": "2026-07-22", "O": 3000, "H": 3010,
                  "L": 2990, "C": 3005},
             ])
