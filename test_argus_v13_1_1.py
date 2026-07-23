@@ -36,13 +36,18 @@ class FakeFrame:
 
 def test_jquants_index_audit_uses_official_v2_without_persisting_rows():
     class ClientV2:
+        generic_calls = []
+
         def __init__(self, api_key):
             assert api_key == "configured-secret"
 
         def get_idx_bars_daily(self, **kwargs):
-            assert set(kwargs) == {"from_yyyymmdd", "to_yyyymmdd"}
+            assert set(kwargs) == {"date_yyyymmdd"}
             assert all(len(value) == 8 and value.isdigit()
                        for value in kwargs.values())
+            self.generic_calls.append(kwargs["date_yyyymmdd"])
+            if len(self.generic_calls) == 1:
+                return FakeFrame([])
             return FakeFrame([
                 {"Date": "2026-07-22", "Code": "0000", "O": 100,
                  "H": 102, "L": 99, "C": 101},
@@ -61,6 +66,8 @@ def test_jquants_index_audit_uses_official_v2_without_persisting_rows():
     assert result["status"] == "success"
     assert result["providerConfigured"] is True
     assert result["credentialLengthPositive"] is True
+    assert len(ClientV2.generic_calls) == 2
+    assert len(result["genericProbeDate"]) == 8
     assert result["generic"]["ohlcFieldsPresent"] is True
     assert result["topix"]["latestDate"] == "2026-07-22"
     assert result["nikkeiIdentityStatus"] == "not_identifiable_from_response_schema"

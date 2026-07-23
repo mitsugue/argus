@@ -20330,10 +20330,21 @@ def _jquants_index_audit():
         import jquantsapi
         result["clientVersion"] = getattr(jquantsapi, "__version__", None)
         client = jquantsapi.ClientV2(api_key=_JQUANTS_API_KEY)
-        end = datetime.now(TZ_JST).strftime("%Y%m%d")
-        start = (datetime.now(TZ_JST) - timedelta(days=21)).strftime("%Y%m%d")
-        generic = client.get_idx_bars_daily(
-            from_yyyymmdd=start, to_yyyymmdd=end)
+        now_jst = datetime.now(TZ_JST)
+        end = now_jst.strftime("%Y%m%d")
+        start = (now_jst - timedelta(days=21)).strftime("%Y%m%d")
+        # Without an index code the generic endpoint accepts a single date,
+        # not an all-indices date range. Walk back over at most one week so
+        # weekends/holidays do not turn a read-only audit into a false failure.
+        generic = None
+        generic_probe_date = None
+        for offset in range(1, 8):
+            probe_date = (now_jst - timedelta(days=offset)).strftime("%Y%m%d")
+            candidate = client.get_idx_bars_daily(date_yyyymmdd=probe_date)
+            generic = candidate
+            if len(candidate):
+                generic_probe_date = probe_date
+                break
         topix = client.get_idx_bars_daily_topix(
             from_yyyymmdd=start, to_yyyymmdd=end)
 
@@ -20361,6 +20372,7 @@ def _jquants_index_audit():
         generic_audit = _frame_audit(generic)
         topix_audit = _frame_audit(topix)
         result["generic"] = generic_audit
+        result["genericProbeDate"] = generic_probe_date
         result["topix"] = topix_audit
         nikkei_names = [name for name in generic_audit["availableNames"]
                          if "nikkei" in name.lower() or "日経" in name]
