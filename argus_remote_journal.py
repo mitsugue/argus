@@ -198,6 +198,8 @@ def compact_readback_snapshot(blob: Any) -> Dict[str, Any]:
         "outcomes": list(blob.get("outcomes") or []),
         "marketLedgerStateHash": blob.get("marketLedgerStateHash"),
         "chartIntelligenceStateHash": blob.get("chartIntelligenceStateHash"),
+        "todayIntelligenceStateHash": blob.get("todayIntelligenceStateHash"),
+        "marketReplayStateHash": blob.get("marketReplayStateHash"),
     }
     receipt["receiptHash"] = _h(receipt)
     return receipt
