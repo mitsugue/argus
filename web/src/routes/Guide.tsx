@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.1.2', 'Today最終受け入れ — 確率適格性をサーバーへ一元化し、価格時点・チャート意味論を明確化。'],
   ['v13.1.1', 'Today予測意味論を統一 — 終値方向確率、Brier Skill、価格中心チャート、ニュース状態、日経指数の権利監査を明確化。'],
   ['v13.1.0', 'Today Forecast／Replay完成 — JP・USのETF proxyをinstrument IDごとに分離し、S&P 500／Nasdaq切替、5年類似局面のwalk-forward校正、日次空売り比率、上昇失敗検出、Remote Journal保存を接続。通常操作のAI呼び出しと自動売買は0。'],
   ['v13.0.2', 'Todayの簡潔さを維持したまま、予測図のinstrument・期間・実績境界を明示し、実績線を白へ変更。指数のas-of／騰落色／sparkline、需給の実数、Market Ledger導線、MACROのVIX、重大ニュースの処理済みフィルター、前回判断の翌1営業日評価を整合。'],

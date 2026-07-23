@@ -57,6 +57,7 @@ export interface TodayCalibrationInput {
   brierSkillConfidenceInterval?: { low: number | null; high: number | null } | null;
   calibrationError?: number | null; calibrationIntegrity?: string;
   calibrationDatasetHash?: string; calibrationVersion?: string;
+  probabilityEligibility?: ProbabilityEligibility;
   averageReactionDelay?: number | null;
   returnDistribution?: { q10: number | null; q25: number | null; median: number | null;
     q75: number | null; q90: number | null; meanMfe: number | null; meanMae: number | null };
@@ -65,6 +66,13 @@ export interface TodayCalibrationInput {
   expectedValue?: { horizon: number; expectedReturn: number | null; medianReturn: number | null;
     q10: number | null; q90: number | null; expectedUpside: number | null;
     expectedDownside: number | null; rewardRisk: number | null };
+}
+export interface ProbabilityEligibility {
+  eligible: boolean; reasonCodes: string[]; effectiveSample: number;
+  modelBrier: number | null; baselineBrier: number | null; brierSkill: number | null;
+  calibrationIntegrity: string; probabilitySum: number | null;
+  calibrationVersion: string; datasetHash: string | null; evaluatedAt: string | null;
+  contractVersion: string;
 }
 export interface TodayShortSellingSummary {
   status: string; historyStart: string | null; historyCount: number; latestDate?: string;
@@ -80,16 +88,18 @@ export interface TodayFailedRally {
 }
 export interface TodayProjection {
   symbol: string; instrumentId: string; label: string; asOf: string | null; current: number;
-  history: Array<{ date: string; value: number }>;
+  history: Array<{ date: string; value: number; open: number; high: number; low: number;
+    volume: number | null }>;
   baseLow: number; baseHigh: number; upside: number; downside: number;
-  invalidation: number; support: { low: number; high: number } | null;
-  resistance: { low: number; high: number } | null;
+  invalidation: number; support: { low: number; high: number; status: PriceZone['status'] } | null;
+  resistance: { low: number; high: number; status: PriceZone['status'] } | null;
   horizon: string; horizonDays: 1 | 5 | 20; directionLabel: string;
   confidenceLabel: '低' | '中' | '高'; directionProbabilities: { UP: number; RANGE: number; DOWN: number } | null;
   calibrationStatus: string; rawSampleCount: number; episodeCount: number; effectiveSampleCount: number;
   modelBrier: number | null; baselineBrier: number | null; brierSkill: number | null;
   brierSkillConfidenceInterval: { low: number | null; high: number | null } | null;
   calibrationError: number | null; calibrationVersion: string | null; datasetHash: string | null;
+  probabilityEligibility: ProbabilityEligibility;
   expectedValue: TodayCalibrationInput['expectedValue'] | null;
   levelProbabilities: TodayCalibrationInput['levelProbabilities']; reactionDelay: number | null;
   methodLabel: string; timeframeLabel: string; quoteState: string; sourceHistoryCount: number;
@@ -189,6 +199,11 @@ export interface ArgusTodayView {
 
 const OPEN_JP = new Set(['MORNING_SESSION', 'AFTERNOON_SESSION']);
 const ACTIVE_US = new Set(['PRE_MARKET', 'REGULAR']);
+
+export function quoteDisplayLabel(state: string): string {
+  return state === 'realtime' ? 'リアルタイム'
+    : state === 'delayed' ? '遅延値' : '終値';
+}
 
 function sessionLabel(market: ArgusMarket, state?: MarketCalendarState): string {
   if (!state) return `${market} CLOSED`;
@@ -357,7 +372,7 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
   const atr = last?.atr14;
   if (!last || bars.length < 20 || atr == null || !Number.isFinite(atr) || atr <= 0) return null;
   const current = last.close;
-  const zones = input.zones.filter((zone) => zone.status !== 'unconfirmed'
+  const zones = input.zones.filter((zone) => ['active', 'reclaimed'].includes(zone.status)
     && Number.isFinite(zone.lower) && Number.isFinite(zone.upper));
   const below = zones.filter((zone) => zone.center < current).sort((a, b) => b.center - a.center)[0];
   const above = zones.filter((zone) => zone.center > current).sort((a, b) => a.center - b.center)[0];
@@ -378,13 +393,21 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
   const activePoint = [...(input.turningPoints ?? [])].reverse()
     .find((point) => point.status === 'confirmed' || point.status === 'candidate');
   const candidateProbabilities = calibrated?.directionProbabilities ?? calibrated?.probabilities ?? null;
-  const probabilitySum = candidateProbabilities
-    ? candidateProbabilities.UP + candidateProbabilities.RANGE + candidateProbabilities.DOWN : 0;
-  const probabilities = calibrated?.calibrationStatus === 'calibrated'
-    && calibrated.calibrationIntegrity === 'PASS'
-    && (calibrated.effectiveSampleCount ?? 0) >= 30
-    && (calibrated.brierSkill ?? 0) > 0
-    && probabilitySum === 100 ? candidateProbabilities : null;
+  // The backend ProbabilityEligibility result is authoritative. Today must not
+  // invent a second sample/skill/integrity gate that can contradict the API.
+  const probabilities = calibrated?.probabilityEligibility?.eligible
+    ? candidateProbabilities : null;
+  const probabilityEligibility: ProbabilityEligibility = calibrated?.probabilityEligibility ?? {
+    eligible: false, reasonCodes: ['server_eligibility_unavailable'],
+    effectiveSample: calibrated?.effectiveSampleCount ?? 0,
+    modelBrier: calibrated?.modelBrier ?? null, baselineBrier: calibrated?.baselineBrier ?? null,
+    brierSkill: calibrated?.brierSkill ?? null,
+    calibrationIntegrity: calibrated?.calibrationIntegrity ?? 'UNKNOWN',
+    probabilitySum: null, calibrationVersion: calibrated?.calibrationVersion
+      ?? input.calibration?.calibrationVersion ?? 'unknown',
+    datasetHash: calibrated?.calibrationDatasetHash ?? null,
+    evaluatedAt: input.asOf, contractVersion: 'unavailable',
+  };
   const turningPointMarkers = [...(input.turningPoints ?? [])].reverse()
     .filter((point) => point.status === 'confirmed' || point.status === 'candidate')
     .slice(0, 3).map((point) => ({ id: point.id, date: point.effectiveFrom,
@@ -399,11 +422,12 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
   return {
     symbol: input.symbol, instrumentId,
     label: input.label, asOf: input.asOf, current,
-    history: bars.map((bar) => ({ date: bar.date, value: bar.close })),
+    history: bars.map((bar) => ({ date: bar.date, value: bar.close,
+      open: bar.open, high: bar.high, low: bar.low, volume: bar.volume })),
     baseLow: Math.min(baseLow, baseHigh), baseHigh: Math.max(baseLow, baseHigh),
     upside, downside, invalidation,
-    support: below ? { low: below.lower, high: below.upper } : null,
-    resistance: above ? { low: above.lower, high: above.upper } : null,
+    support: below ? { low: below.lower, high: below.upper, status: below.status } : null,
+    resistance: above ? { low: above.lower, high: above.upper, status: above.status } : null,
     horizon: `${horizonDays}営業日`, horizonDays,
     directionLabel: probabilities
       ? (probabilities.UP > probabilities.DOWN && probabilities.UP > probabilities.RANGE ? '上方向優勢'
@@ -421,6 +445,7 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     brierSkill: calibrated?.brierSkill ?? null,
     brierSkillConfidenceInterval: calibrated?.brierSkillConfidenceInterval ?? null,
     calibrationError: calibrated?.calibrationError ?? null,
+    probabilityEligibility,
     calibrationVersion: calibrated?.calibrationVersion ?? input.calibration?.calibrationVersion ?? null,
     datasetHash: calibrated?.calibrationDatasetHash ?? null,
     expectedValue: calibrated?.expectedValue ?? null,

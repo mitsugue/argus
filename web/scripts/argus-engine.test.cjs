@@ -11,7 +11,7 @@ require.extensions['.ts'] = (mod, filename) => {
 };
 const { synthesizeArgusDecision, finalActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
 const { buildArgusTodayView, buildTodayProjection, buildTodayReview, selectTodayNews,
-  selectAutoMarket } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
+  selectAutoMarket, quoteDisplayLabel } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
 let failed = 0;
 function check(name, condition) { if (condition) console.log(`  ok  ${name}`); else { failed++; console.error(`FAIL  ${name}`); } }
 
@@ -84,8 +84,19 @@ check('projection levels cannot invert', projection.downside < projection.baseLo
 check('projection does not fabricate probability', projection?.directionProbabilities === null && projection.confidenceLabel === '中');
 check('projection identifies timeframe, state and source coverage', projection?.timeframeLabel === '日足'
   && projection.quoteState === 'close' && projection.sourceHistoryCount === 25);
+check('quote time semantics never call prior close current', quoteDisplayLabel('close') === '終値'
+  && quoteDisplayLabel('delayed') === '遅延値' && quoteDisplayLabel('realtime') === 'リアルタイム');
 check('projection refuses insufficient history', buildTodayProjection({ symbol: '1321', label: 'x', asOf: null,
   status: 'live', bars: bars.slice(0, 5), zones: [] }, 'WAIT') === null);
+const reclaimedProjection = buildTodayProjection({ symbol: '1321', label: '日経225 ETF',
+  asOf: '2026-07-21', status: 'live', bars,
+  zones: [{ id: 'broken', center: 122, lower: 121, upper: 123, status: 'broken' },
+    { id: 'reclaimed', center: 120, lower: 119, upper: 121, status: 'reclaimed' },
+    { id: 'resistance', center: 130, lower: 129, upper: 131, status: 'active' }] }, 'WAIT');
+check('zone roles are price-relative and reclaimed becomes support', reclaimedProjection.support.status === 'reclaimed'
+  && reclaimedProjection.support.high < reclaimedProjection.current
+  && reclaimedProjection.resistance.low > reclaimedProjection.current
+  && !reclaimedProjection.supportResistanceIds.includes('broken'));
 const calibratedInput = { symbol: 'SPY', instrumentId: 'US:SPY:ETF', label: 'S&P 500 ETF（SPY）',
   asOf: '2026-07-22', status: 'live', timeframe: 'daily', quoteState: 'close', bars, zones: [],
   calibration: { historyCount: 1338, calibrationVersion: 'beta-dirichlet-walk-forward-v2', horizons: {
@@ -93,6 +104,11 @@ const calibratedInput = { symbol: 'SPY', instrumentId: 'US:SPY:ETF', label: 'S&P
       calibrationStatus: 'calibrated', probabilities: { UP: 28, RANGE: 51, DOWN: 21 },
       directionProbabilities: { UP: 28, RANGE: 51, DOWN: 21 },
       calibrationIntegrity: 'PASS', modelBrier: .54, baselineBrier: .6, brierSkill: .1,
+      probabilityEligibility: { eligible: true, reasonCodes: [], effectiveSample: 38,
+        modelBrier: .54, baselineBrier: .6, brierSkill: .1, calibrationIntegrity: 'PASS',
+        probabilitySum: 100, calibrationVersion: 'beta-dirichlet-walk-forward-v2',
+        datasetHash: 'fixture', evaluatedAt: '2026-07-22T00:00:00Z',
+        contractVersion: 'probability-eligibility-v1' },
       confidenceInterval: { UP: { low: 18, high: 39 } }, averageReactionDelay: 2.6,
       returnDistribution: { q10: -.08, q25: -.02, median: .01, q75: .04, q90: .09, meanMfe: .03, meanMae: -.02 },
       expectedValue: { horizon: 5, expectedReturn: .01, medianReturn: .01, q10: -.08, q90: .09,
@@ -107,10 +123,14 @@ check('level touch and close-in-band remain distinct', calibratedProjection.leve
   && calibratedProjection.levelProbabilities.baseRangeClose === 55);
 const uncalibrated = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
   horizons: { '5': { ...calibratedInput.calibration.horizons['5'], calibrationStatus: 'insufficient_sample',
-    effectiveSampleCount: 29, probabilities: null } } } }, 'WAIT');
+    effectiveSampleCount: 29, probabilities: null,
+    probabilityEligibility: { ...calibratedInput.calibration.horizons['5'].probabilityEligibility,
+      eligible: false, reasonCodes: ['effective_sample_below_30'], effectiveSample: 29 } } } } }, 'WAIT');
 check('uncalibrated probability is hidden', uncalibrated.directionProbabilities === null && uncalibrated.effectiveSampleCount === 29);
 const weakSkill = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
-  horizons: { '5': { ...calibratedInput.calibration.horizons['5'], brierSkill: 0 } } } }, 'WAIT');
+  horizons: { '5': { ...calibratedInput.calibration.horizons['5'], brierSkill: 0,
+    probabilityEligibility: { ...calibratedInput.calibration.horizons['5'].probabilityEligibility,
+      eligible: false, reasonCodes: ['brier_skill_non_positive'], brierSkill: 0 } } } } }, 'WAIT');
 check('BSS zero hides probability', weakSkill.directionProbabilities === null);
 const upPluralityInput = { ...calibratedInput, calibration: { ...calibratedInput.calibration,
   horizons: { '5': { ...calibratedInput.calibration.horizons['5'],

@@ -76,6 +76,13 @@ export interface ChartIntelligencePayload {
         brierSkillConfidenceInterval?: { low: number | null; high: number | null } | null;
         calibrationError?: number | null; calibrationIntegrity?: string; calibrationDatasetHash?: string;
         noFutureLeakage?: boolean; walkForward?: boolean; calibrationVersion?: string;
+        probabilityEligibility?: {
+          eligible: boolean; reasonCodes: string[]; effectiveSample: number;
+          modelBrier: number | null; baselineBrier: number | null; brierSkill: number | null;
+          calibrationIntegrity: string; probabilitySum: number | null;
+          calibrationVersion: string; datasetHash: string | null; evaluatedAt: string | null;
+          contractVersion: string;
+        };
         methodVersion?: string; averageReactionDelay?: number | null;
         returnDistribution?: { q10: number | null; q25: number | null; median: number | null;
           q75: number | null; q90: number | null; meanMfe: number | null; meanMae: number | null };
