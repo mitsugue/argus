@@ -40,10 +40,9 @@ def test_jquants_index_audit_uses_official_v2_without_persisting_rows():
             assert api_key == "configured-secret"
 
         def get_idx_bars_daily(self, **kwargs):
-            assert kwargs == {
-                "from_yyyymmdd": mock.ANY,
-                "to_yyyymmdd": mock.ANY,
-            }
+            assert set(kwargs) == {"from_yyyymmdd", "to_yyyymmdd"}
+            assert all(len(value) == 8 and value.isdigit()
+                       for value in kwargs.values())
             return FakeFrame([
                 {"Date": "2026-07-22", "Code": "0000", "O": 100,
                  "H": 102, "L": 99, "C": 101},

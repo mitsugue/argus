@@ -20330,8 +20330,8 @@ def _jquants_index_audit():
         import jquantsapi
         result["clientVersion"] = getattr(jquantsapi, "__version__", None)
         client = jquantsapi.ClientV2(api_key=_JQUANTS_API_KEY)
-        end = datetime.now(TZ_JST).strftime("%Y-%m-%d")
-        start = (datetime.now(TZ_JST) - timedelta(days=21)).strftime("%Y-%m-%d")
+        end = datetime.now(TZ_JST).strftime("%Y%m%d")
+        start = (datetime.now(TZ_JST) - timedelta(days=21)).strftime("%Y%m%d")
         generic = client.get_idx_bars_daily(
             from_yyyymmdd=start, to_yyyymmdd=end)
         topix = client.get_idx_bars_daily_topix(
