@@ -101,6 +101,7 @@ import argus_market_ledger          # append-only Market Ledger
 import argus_research_benchmark     # v12.3.3: frozen/manual Gemini 2X formal closure
 import argus_research_benchmark_v2  # v12.7.0: validity-separated one-time v2 closure
 import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point engine
+import argus_today_intelligence     # v13.1.0: replay calibration/daily short/failed-rally
 import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 from flask import Flask, jsonify, request
@@ -133,6 +134,9 @@ _MARKET_LEDGER_REMOTE = {"lastVerifiedReadBackAt": None,
                          "verificationStatus": "not_verified"}
 _CHART_INTELLIGENCE = argus_chart_intelligence.empty_state()
 _CHART_INTELLIGENCE_REMOTE = {"lastVerifiedReadBackAt": None,
+                              "verificationStatus": "not_verified"}
+_TODAY_INTELLIGENCE = argus_today_intelligence.empty_state()
+_TODAY_INTELLIGENCE_REMOTE = {"lastVerifiedReadBackAt": None,
                               "verificationStatus": "not_verified"}
 
 
@@ -15554,6 +15558,8 @@ def _osint_persist():
                 "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
                 "chartIntelligence": argus_chart_intelligence.normalize_state(_CHART_INTELLIGENCE),
                 "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
+                "todayIntelligence": argus_today_intelligence.normalize_state(_TODAY_INTELLIGENCE),
+                "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
                 "soakLastPersistAt": _ai_now_iso()}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -15817,6 +15823,12 @@ def _osint_restore_once():
             _CHART_INTELLIGENCE["lastUpdatedAt"] = max(
                 str(_CHART_INTELLIGENCE.get("lastUpdatedAt") or ""),
                 str(_restored_ci.get("lastUpdatedAt") or "")) or None
+        _ti = blob.get("todayIntelligence")
+        if isinstance(_ti, dict):
+            _restored_ti = argus_today_intelligence.merge_state(
+                _TODAY_INTELLIGENCE, _ti)
+            _TODAY_INTELLIGENCE.clear()
+            _TODAY_INTELLIGENCE.update(_restored_ti)
         _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
         for h in _jr["events"]:
             argus_state_journal.append(_OPS_JOURNAL, h)
@@ -17070,9 +17082,27 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _CHART_INTELLIGENCE_REMOTE["verificationStatus"] = "hash_mismatch"
     else:
         _CHART_INTELLIGENCE_REMOTE["verificationStatus"] = "not_present"
+    remote_today = blob.get("todayIntelligence") if isinstance(blob, dict) else None
+    remote_today_hash = (blob.get("todayIntelligenceStateHash")
+                         if isinstance(blob, dict) else None)
+    if isinstance(remote_today, dict) and argus_today_intelligence.read_back_verified(
+            _TODAY_INTELLIGENCE, remote_today):
+        _TODAY_INTELLIGENCE_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif remote_today_hash and remote_today_hash == \
+            argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE):
+        _TODAY_INTELLIGENCE_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_today, dict) or remote_today_hash:
+        _TODAY_INTELLIGENCE_REMOTE["verificationStatus"] = "hash_mismatch"
+    else:
+        _TODAY_INTELLIGENCE_REMOTE["verificationStatus"] = "not_present"
     rec["outcomeReadBack"] = outcome_rec
     rec["marketLedgerReadBack"] = dict(_MARKET_LEDGER_REMOTE)
     rec["chartIntelligenceReadBack"] = dict(_CHART_INTELLIGENCE_REMOTE)
+    rec["todayIntelligenceReadBack"] = dict(_TODAY_INTELLIGENCE_REMOTE)
     return rec
 
 
@@ -17342,6 +17372,27 @@ def api_argus_admin_missions_tick():
     us_session = calendar_states["US"]
     jp_holiday = not jp_session["isTradingDay"]
     ledger_tick = _market_ledger_tick(now_iso)
+    daily_short_tick = {"status": "expected_skip", "reason": "outside_publication_window",
+                        "rowCount": len(_TODAY_INTELLIGENCE.get("shortSellingHistory") or [])}
+    # J-Quants publishes this close-based aggregate after the JP session.  The
+    # natural scheduler owns the bounded provider refresh; public chart GETs
+    # remain cache/read-only and therefore cannot create provider cost.
+    if jp_session.get("isTradingDay") and (now.hour, now.minute) >= (16, 30):
+        try:
+            _daily_short_rows = _jp_daily_short_history(cached_only=False)
+            daily_short_tick = {
+                "status": _JP_DAILY_SHORT_CACHE.get("status") or
+                ("live" if _daily_short_rows else "missing"),
+                "reason": _JP_DAILY_SHORT_CACHE.get("errorClass"),
+                "rowCount": len(_daily_short_rows),
+                "latestDate": (_daily_short_rows[-1].get("date")
+                               if _daily_short_rows else None),
+            }
+        except Exception as _short_exc:
+            daily_short_tick = {"status": "degraded",
+                                "reason": type(_short_exc).__name__,
+                                "rowCount": len(_TODAY_INTELLIGENCE.get(
+                                    "shortSellingHistory") or [])}
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
     try:
         _chart_report = _chart_public_report(
@@ -17657,6 +17708,7 @@ def api_argus_admin_missions_tick():
                     "recovered": recovered,
                     "marketLedger": ledger_tick,
                     "chartIntelligence": chart_tick,
+                    "dailyShortSelling": daily_short_tick,
                     "missionWindow": window_record,
                     "outcomeRetry": {
                         "evaluated": outcome_retry_candidates,
@@ -19431,6 +19483,8 @@ def api_argus_osint_memory_snapshot():
                     "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
                     "chartIntelligence": argus_chart_intelligence.normalize_state(_CHART_INTELLIGENCE),
                     "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
+                    "todayIntelligence": argus_today_intelligence.normalize_state(_TODAY_INTELLIGENCE),
+                    "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
@@ -19581,12 +19635,63 @@ def _chart_history_cached(symbol, market):
     return _chart_rows_from_history(cache.get("data"))
 
 
+_JP_DAILY_SHORT_CACHE = {"rows": None, "expires": 0.0,
+                         "status": "not_loaded", "errorClass": None}
+
+
+def _jp_daily_short_history(cached_only=False):
+    """Five-year TSE aggregate daily short-selling turnover (S33=0050).
+
+    The Standard-plan series is distinct from weekly credit balances and from
+    threshold-reported institutional short positions.  A chart GET may reuse a
+    six-hour cache; scheduled cached-only ticks never make a provider request.
+    """
+    now = time.time()
+    if isinstance(_JP_DAILY_SHORT_CACHE.get("rows"), list) and \
+            now < float(_JP_DAILY_SHORT_CACHE.get("expires") or 0):
+        return list(_JP_DAILY_SHORT_CACHE["rows"])
+    durable_rows = list(_TODAY_INTELLIGENCE.get("shortSellingHistory") or [])
+    if cached_only or not _JQUANTS_API_KEY:
+        return durable_rows
+    today = datetime.now(TZ_JST).date()
+    try:
+        start = today.replace(year=today.year - 5)
+    except ValueError:
+        start = today.replace(year=today.year - 5, day=28)
+    try:
+        raw = _jquants_paginated(
+            "/markets/short-ratio",
+            {"s33": "0050", "from": start.isoformat(), "to": today.isoformat()},
+            max_pages=10)
+        observed = _ai_now_iso()
+        rows = argus_today_intelligence.normalize_short_history([
+            {**item, "source": "J-Quants /markets/short-ratio S33=0050",
+             "availableFrom": str(item.get("Date") or "")[:10],
+             "observedAt": observed, "revision": 0}
+            for item in raw if isinstance(item, dict)
+        ])
+        if rows:
+            _JP_DAILY_SHORT_CACHE.update({"rows": rows, "expires": now + 18 * 3600,
+                                          "status": "live", "errorClass": None})
+            return rows
+        _JP_DAILY_SHORT_CACHE.update({"rows": durable_rows,
+                                      "expires": now + 30 * 60,
+                                      "status": "missing",
+                                      "errorClass": "empty_provider_response"})
+    except Exception as exc:
+        _JP_DAILY_SHORT_CACHE.update({"rows": durable_rows,
+                                      "expires": now + 30 * 60,
+                                      "status": "degraded",
+                                      "errorClass": type(exc).__name__})
+    return durable_rows
+
+
 def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                          cached_only=False):
     now_iso = _ai_now_iso()
     history = _chart_history_cached if cached_only else _chart_history
-    rows = history(symbol, market)
-    if cached_only and not rows:
+    daily_rows = history(symbol, market)
+    if cached_only and not daily_rows:
         return {
             "reportId": None,
             "status": "expected_skip",
@@ -19599,9 +19704,12 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "persistence": {
                 "stateHash": argus_chart_intelligence.state_hash(
                     _CHART_INTELLIGENCE),
+                "todayIntelligenceStateHash": argus_today_intelligence.state_hash(
+                    _TODAY_INTELLIGENCE),
                 **_CHART_INTELLIGENCE_REMOTE,
             },
         }
+    rows = daily_rows
     if timeframe == "weekly":
         rows = _chart_weekly_rows(rows)
     ledger = argus_market_ledger.public_view(_MARKET_LEDGER, now_iso)
@@ -19671,6 +19779,44 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     report["reportId"] = f"{report['reportId']}-{timeframe}"
     report["automaticAiCalls"] = 0
     report["costPolicyMode"] = _COST_POLICY.get("mode")
+    _comparison_symbol = ("1306" if market == "JP" and symbol != "1306" else
+                          "1321" if market == "JP" else
+                          "QQQ" if symbol != "QQQ" else "SPY")
+    _comparison_rows = history(_comparison_symbol, market)
+    # Public chart GETs only consume a verified cache/durable snapshot.  Provider
+    # refresh is owned by the natural scheduled tick below, never UI interaction.
+    _short_rows = _jp_daily_short_history(cached_only=True) if market == "JP" else []
+    _today_intel = argus_today_intelligence.analyze(
+        daily_rows, symbol=symbol, market=market,
+        short_history=_short_rows, comparison_rows=_comparison_rows,
+        as_of=report.get("periodEnd"))
+    report["todayIntelligence"] = _today_intel
+    report["shortDataAudit"] = argus_today_intelligence.data_source_audit(
+        _today_intel.get("shortSelling") or {},
+        "available_per_symbol_via_jpx_disclosure" if market == "JP" else
+        "not_connected_for_us")
+    _instrument_type = "ETF" if symbol in {"1321", "1306", "SPY", "QQQ"} else "EQUITY"
+    report["instrumentMetadata"] = {
+        "instrumentId": f"{market}:{symbol}:{_instrument_type}",
+        "symbol": symbol, "market": market, "assetType": _instrument_type,
+        "displayNameJa": report["displayNameJa"],
+        "source": report.get("source"),
+        "availableFrom": (daily_rows[0].get("date") if daily_rows else None),
+        "observedAt": now_iso, "revision": 0,
+    }
+    report["turningPointPage"] = {
+        "totalStoredCount": len([point for point in
+                                 _CHART_INTELLIGENCE.get("turningPoints", [])
+                                 if point.get("symbol") == symbol and
+                                 point.get("market") == market]),
+        "apiReturnCount": len(report.get("turningPoints") or []),
+        "uiDisplayLimit": 3,
+        "activeCount": len([point for point in report.get("turningPoints") or []
+                            if point.get("status") in ("candidate", "confirmed")]),
+        "confirmedCount": len([point for point in report.get("turningPoints") or []
+                               if point.get("status") == "confirmed"]),
+        "periodFilter": None, "limit": None, "nextCursor": None,
+    }
     report["ledgerTurningPoints"] = []
     if market_scope:
         histories = {
@@ -19723,6 +19869,9 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         report["persistence"] = {
             "stateHash": argus_chart_intelligence.state_hash(
                 _CHART_INTELLIGENCE),
+            "todayIntelligenceStateHash": argus_today_intelligence.state_hash(
+                _TODAY_INTELLIGENCE),
+            "todayIntelligenceReadBack": dict(_TODAY_INTELLIGENCE_REMOTE),
             **_CHART_INTELLIGENCE_REMOTE,
         }
         return report
@@ -19730,9 +19879,21 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         _CHART_INTELLIGENCE, report, now_iso)
     _CHART_INTELLIGENCE.clear()
     _CHART_INTELLIGENCE.update(merged)
+    _today_merged = argus_today_intelligence.merge_analysis(
+        _TODAY_INTELLIGENCE, _today_intel,
+        daily_rows[-1] if daily_rows else None, _short_rows, now_iso)
+    _TODAY_INTELLIGENCE.clear()
+    _TODAY_INTELLIGENCE.update(_today_merged)
+    _total_points = [point for point in _CHART_INTELLIGENCE.get("turningPoints", [])
+                     if point.get("symbol") == symbol and point.get("market") == market]
+    report["turningPointPage"]["totalStoredCount"] = len(_total_points)
     report["stateUpdate"] = {"status": "updated", "reason": None}
     report["persistence"] = {"stateHash": argus_chart_intelligence.state_hash(
-        _CHART_INTELLIGENCE), **_CHART_INTELLIGENCE_REMOTE}
+        _CHART_INTELLIGENCE),
+        "todayIntelligenceStateHash": argus_today_intelligence.state_hash(
+            _TODAY_INTELLIGENCE),
+        "todayIntelligenceReadBack": dict(_TODAY_INTELLIGENCE_REMOTE),
+        **_CHART_INTELLIGENCE_REMOTE}
     return report
 
 

@@ -10,6 +10,8 @@
   border-right: 1px solid var(--line);
   background: transparent;
 }
+.nav__desktop { display: contents; }
+.nav__mobile { display: none; }
 
 /* "Today's call" pinned at the top — always-visible 10-second answer. */
 .nav__today {
@@ -130,53 +132,74 @@
 }
 
 @media (max-width: 720px) {
-  /* v11.3 (owner request): the dots-only rail was wider than it needs to be on
-     phones — shrink 64→44px and give the space to the main page. Tap targets stay
-     full-rail-width; the footer text drops a point so v-numbers still fit. */
+  /* Today needs the full phone width.  Five primary destinations live in a
+     bottom bar; System keeps direct Data Quality/Backup access in a small menu. */
   .nav {
-    width: 44px;
-    padding: 10px 3px;
+    position: fixed;
+    z-index: 40;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: calc(58px + env(safe-area-inset-bottom));
+    padding: 0 4px env(safe-area-inset-bottom);
+    border-right: 0;
+    border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    backdrop-filter: blur(14px);
   }
-  .nav__group-label,
-  .nav__today-label {
-    display: none;
+  .nav__desktop { display: none; }
+  .nav__mobile {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    width: 100%;
+    height: 58px;
   }
-  .nav__today {
-    padding: 8px;
-    align-items: center;
-    margin-bottom: 4px;
-  }
-  .nav__btn {
-    justify-content: center;
-    font-size: 0;
-    padding: 10px 0;
-    /* v11.3.1 (owner): the 10px dot↔label gap counted toward centering even though the
-       label is invisible (font-size:0 keeps a 0-width flex item), pushing the dot ~5px
-       left of true center. Kill the gap on mobile so the dot is dead-center. */
-    gap: 0;
-  }
-  .nav__today {
-    gap: 0;
-  }
-  .nav__dot {
-    width: 7px;
-    height: 7px;
-  }
-  /* Footer stays — stack version above the AI-review link tightly,
-     no horizontal dot. */
-  .nav__footer {
+  .nav__mobile-btn {
+    position: relative;
+    display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 10px 0 max(4px, env(safe-area-inset-bottom));
-    font-size: 8px;
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 6px 2px;
+    color: var(--text-muted);
+    background: transparent;
+    font-size: 10px;
+    line-height: 1;
+    list-style: none;
   }
-  .nav__footer-dot {
-    display: none;
+  .nav__mobile-btn::-webkit-details-marker { display: none; }
+  .nav__mobile-btn.is-active,
+  .nav__mobile-system.is-active > .nav__mobile-btn { color: var(--text-main); }
+  .nav__mobile-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
   }
-  .nav__review-link {
-    margin-left: 0;
-    font-size: 9px;
-    text-align: center;
+  .nav__mobile-btn.is-active .nav__mobile-dot,
+  .nav__mobile-system.is-active .nav__mobile-dot { background: var(--blue); }
+  .nav__mobile-system { position: relative; min-width: 0; }
+  .nav__mobile-system-menu {
+    position: absolute;
+    right: 4px;
+    bottom: 56px;
+    display: grid;
+    min-width: 142px;
+    padding: 6px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
   }
+  .nav__mobile-system-menu button {
+    padding: 10px;
+    color: var(--text-sub);
+    text-align: left;
+    background: transparent;
+    border-radius: 5px;
+  }
+  .nav__mobile-system-menu button:hover { background: var(--surface-soft); color: var(--text-main); }
 }

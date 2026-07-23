@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 
 // Market News feed (news-v2, v10.12) — Finnhub general headlines with
-// market-moving keywords flagged. Refreshes every 5 min while visible
-// (server caches 10 min, so this stays well inside the free tier).
+// market-moving keywords flagged.  This is the broad-headline lane, distinct
+// from the existing official-disclosure/TDnet 15-minute lane.  It polls hourly
+// while either JP or US cash trading can be active, and every two hours outside
+// those windows.  GET only; it does not trigger the Research/LLM pipeline.
 
 export interface MarketNewsItem {
   headline: string;
@@ -33,7 +35,25 @@ export interface MarketNews {
   noteJa: string;
 }
 
-const REFRESH_INTERVAL_MS = 5 * 60_000;
+export const MARKET_NEWS_OPEN_INTERVAL_MS = 60 * 60_000;
+export const MARKET_NEWS_CLOSED_INTERVAL_MS = 120 * 60_000;
+
+export function marketNewsRefreshInterval(now = new Date()): number {
+  const clock = (timeZone: string) => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(now);
+    const read = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+    return { weekday: read('weekday'), minutes: Number(read('hour')) * 60 + Number(read('minute')) };
+  };
+  const jp = clock('Asia/Tokyo');
+  const us = clock('America/New_York');
+  // Holidays and early closes are still enforced by the canonical backend
+  // calendar.  These broad windows only choose a conservative client GET rate.
+  const jpWindow = !['Sat', 'Sun'].includes(jp.weekday) && jp.minutes >= 8 * 60 && jp.minutes <= 16 * 60;
+  const usWindow = !['Sat', 'Sun'].includes(us.weekday) && us.minutes >= 4 * 60 && us.minutes <= 20 * 60;
+  return jpWindow || usWindow ? MARKET_NEWS_OPEN_INTERVAL_MS : MARKET_NEWS_CLOSED_INTERVAL_MS;
+}
 
 interface State {
   data: MarketNews | null;
@@ -69,12 +89,15 @@ export function useMarketNews(): State {
     }
 
     void fetchOnce();
-    const t = setInterval(() => void fetchOnce(), REFRESH_INTERVAL_MS);
+    let t = window.setTimeout(function poll() {
+      void fetchOnce();
+      t = window.setTimeout(poll, marketNewsRefreshInterval());
+    }, marketNewsRefreshInterval());
     const onVisible = () => { if (!document.hidden) void fetchOnce(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      clearTimeout(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);

@@ -4,7 +4,7 @@ export type ArgusFinalAction = 'BUY' | 'WAIT' | 'SELL';
 export type ArgusMarket = 'JP' | 'US';
 
 export interface ArgusFactor {
-  key: 'TREND' | 'BREADTH' | 'FLOW' | 'CREDIT' | 'CLOSE' | 'RELATIVE' | 'VALUE';
+  key: 'TREND' | 'BREADTH' | 'FLOW' | 'CREDIT' | 'SHORT' | 'CLOSE' | 'RELATIVE' | 'VALUE';
   state: '↑' | '→' | '↓' | '△' | '—' | 'JP' | 'US' | 'HIGH' | 'LOW';
   source?: string;
 }

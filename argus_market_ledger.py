@@ -776,6 +776,18 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
             "derivedMetrics": list(latest_metrics.values()),
             "turningPoints": [{**x, "subsequentOutcome": "not_evaluated"}
                                for x in st["turningPoints"][-200:]],
+            "turningPointPage": {
+                "totalStoredCount": len(st["turningPoints"]),
+                "apiReturnCount": min(200, len(st["turningPoints"])),
+                "uiDisplayCount": min(200, len(st["turningPoints"])),
+                "activeCount": sum(1 for x in st["turningPoints"]
+                                   if x.get("status") in ("candidate", "confirmed")),
+                "confirmedCount": sum(1 for x in st["turningPoints"]
+                                      if x.get("status") == "confirmed"),
+                "periodFilter": None, "limit": 200,
+                "nextCursor": (str(max(0, len(st["turningPoints"]) - 200))
+                               if len(st["turningPoints"]) > 200 else None),
+            },
             "backtests": st["backtests"][-20:],
             "observationCount": len(st["observations"]),
             "stateHash": state_hash(st),

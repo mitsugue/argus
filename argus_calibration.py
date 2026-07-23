@@ -59,7 +59,7 @@ REGIME_SENSORS: Tuple[str, ...] = (
 )
 DISPLAY_NAMES: Dict[str, str] = {
     "1306": "TOPIX ETF", "1321": "日経225 ETF", "1615": "東証銀行業ETF",
-    "1343": "東証REIT ETF", "SPY": "S&P500 ETF", "QQQ": "Nasdaq100 ETF",
+    "1343": "東証REIT ETF", "SPY": "S&P 500 ETF", "QQQ": "Nasdaq 100 ETF",
     "IWM": "Russell2000 ETF", "SMH": "半導体ETF", "XLF": "米金融セクターETF",
     "XLE": "米エネルギーETF", "XLU": "米公益(ディフェンシブ)ETF",
     "TLT": "米長期国債ETF", "LQD": "米投資適格社債ETF", "HYG": "米ハイイールド債ETF",

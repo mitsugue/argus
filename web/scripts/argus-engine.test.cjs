@@ -86,6 +86,25 @@ check('projection identifies timeframe, state and source coverage', projection?.
   && projection.quoteState === 'close' && projection.sourceHistoryCount === 25);
 check('projection refuses insufficient history', buildTodayProjection({ symbol: '1321', label: 'x', asOf: null,
   status: 'live', bars: bars.slice(0, 5), zones: [] }, 'WAIT') === null);
+const calibratedInput = { symbol: 'SPY', instrumentId: 'US:SPY:ETF', label: 'S&P 500 ETF（SPY）',
+  asOf: '2026-07-22', status: 'live', timeframe: 'daily', quoteState: 'close', bars, zones: [],
+  calibration: { historyCount: 1338, calibrationVersion: 'beta-dirichlet-walk-forward-v1', horizons: {
+    '5': { horizon: 5, rawOccurrenceCount: 64, episodeCount: 38, effectiveSampleCount: 38,
+      calibrationStatus: 'calibrated', probabilities: { UP: 28, RANGE: 51, DOWN: 21 }, brierScore: .54,
+      confidenceInterval: { UP: { low: 18, high: 39 } }, averageReactionDelay: 2.6,
+      returnDistribution: { q10: -.08, q25: -.02, median: .01, q75: .04, q90: .09, meanMfe: .03, meanMae: -.02 },
+      targetProbabilities: { upperTargetTouch: 24, baseRangeClose: 55, lowerTargetTouch: 21, invalidationTouch: 16 } },
+  } } };
+const calibratedProjection = buildTodayProjection(calibratedInput, 'WAIT');
+check('calibrated probabilities use server result and sum to 100', calibratedProjection.instrumentId === 'US:SPY:ETF'
+  && Object.values(calibratedProjection.probability).reduce((a, b) => a + b, 0) === 100
+  && calibratedProjection.effectiveSampleCount === 38 && calibratedProjection.brierScore === .54);
+check('target touch and close-in-band remain distinct', calibratedProjection.targetProbabilities.upperTargetTouch === 24
+  && calibratedProjection.targetProbabilities.baseRangeClose === 55);
+const uncalibrated = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
+  horizons: { '5': { ...calibratedInput.calibration.horizons['5'], calibrationStatus: 'insufficient_sample',
+    effectiveSampleCount: 29, probabilities: null } } } }, 'WAIT');
+check('uncalibrated probability is hidden', uncalibrated.probability === null && uncalibrated.effectiveSampleCount === 29);
 
 const reviewBars = [{ date: '2026-07-20', close: 100 }, { date: '2026-07-21', close: 101.4 }];
 const matureReview = buildTodayReview(reviewBars, '日経225 ETF（1321）', 'WAIT', '2026-07-20');
@@ -117,10 +136,17 @@ const panel = fs.readFileSync(path.join(__dirname, '..', 'src/components/today/A
 const css = fs.readFileSync(path.join(__dirname, '..', 'src/components/today/ArgusToday.css'), 'utf8');
 const route = fs.readFileSync(path.join(__dirname, '..', 'src/routes/CommandCenter.tsx'), 'utf8');
 const shell = fs.readFileSync(path.join(__dirname, '..', 'src/components/AppShell.tsx'), 'utf8');
+const nav = fs.readFileSync(path.join(__dirname, '..', 'src/components/NavRail.tsx'), 'utf8');
+const navCss = fs.readFileSync(path.join(__dirname, '..', 'src/components/NavRail.css'), 'utf8');
+const marketNewsHook = fs.readFileSync(path.join(__dirname, '..', 'src/hooks/useMarketNews.ts'), 'utf8');
 check('single decision card', (panel.match(/at-decision card/g) || []).length === 1);
 check('Market changes and Next Check absent', !route.includes('<MarketIntelligenceChanges') && !route.includes('<NextCheckCard'));
 check('Today notification bell hidden', shell.includes('hideNotifications') && route.includes('ArgusTodayPanel'));
 check('manual market local persistence', route.includes('argus.today.marketSelection.v1'));
+check('selected instrument is device-local only', route.includes('argus.today.selectedInstrument.v1')
+  && !/fetch\([^)]*selectedInstrument/.test(route));
+check('four instrument contracts are isolated', route.includes("symbol: '1306'") && route.includes("symbol: 'SPY'")
+  && route.includes("symbol: 'QQQ'") && route.includes('selectedJpChart') && route.includes('selectedUsChart'));
 check('no AI POST on Today interactions', !/fetch\([^\n]+method:\s*['"]POST/.test(route + panel));
 check('unknown event time is not fabricated', !route.includes('T23:59:00+09:00'));
 check('market levels do not get a synthetic plus sign', !panel.includes("v > 0 ? '+'"));
@@ -128,6 +154,12 @@ check('Today removes FIRE and duplicate concentration card', !panel.includes('fi
 check('Today has required prediction graphic', panel.includes('at-proj-actual') && panel.includes('at-proj-base')
   && panel.includes('at-proj-up') && panel.includes('at-proj-down') && panel.includes('at-proj-inv')
   && panel.includes('at-proj-boundary'));
+check('forecast supports 1D 5D 20D and replay deep-link', panel.includes("['1D', '5D', '20D']")
+  && panel.includes('argus.replayContext') && panel.includes("onNavigate('regime')"));
+check('mobile nav is bottom five with direct system destinations', nav.includes('Today</button>')
+  && nav.includes('Market</button>') && nav.includes('Assets</button>') && nav.includes('Review</button>')
+  && nav.includes('System</summary>') && nav.includes("onSelect('quality')") && nav.includes("onSelect('backup')")
+  && navCss.includes('position: fixed') && navCss.includes('grid-template-columns: repeat(5'));
 check('actual line alone is white', css.includes('.at-proj-actual { fill:none; stroke:#fff')
   && css.includes('.at-proj-up { stroke:#22c55e') && css.includes('.at-proj-down { stroke:#ef4444'));
 check('market card renamed MACRO and VIX retained', panel.includes('title="MACRO"') && route.includes("addRate('vix'"));
@@ -135,6 +167,8 @@ check('JP positioning deep-links to canonical ledger', panel.includes("argus.scr
 check('zero-news state is a compact line', panel.includes('at-news-zero') && panel.includes('<span>0</span>'));
 check('seven action stages have seven distinct colors', [1,2,3,4,5,6,7].every((n) => css.includes(`nth-child(${n})`)));
 check('major news is capped and processed', panel.includes('重大ニュース') && !panel.includes('Related Signal'));
+check('market headlines poll 60m in-session and 120m off-hours', marketNewsHook.includes('60 * 60_000')
+  && marketNewsHook.includes('120 * 60_000') && marketNewsHook.includes('marketNewsRefreshInterval()'));
 check('market positioning is explicitly scoped', panel.includes('`${view.selectedMarket} 需給`'));
 const handoff = fs.readFileSync(path.join(__dirname, '..', 'src/components/dashboard/ProHandoffButton.tsx'), 'utf8');
 check('AI consultation scope is honest', handoff.includes("kind === 'event' && nextEvent ? 'event'")
