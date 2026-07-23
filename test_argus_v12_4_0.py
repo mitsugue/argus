@@ -133,6 +133,32 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
                          set(body["marketReplay"]["contexts"]))
         self.assertEqual(body["automaticAiCalls"], 0)
 
+    def test_scheduled_replay_precompute_is_idempotent_for_same_dataset(self):
+        fake = history()
+        patches = (
+            mock.patch.object(scanner, "_ai_now_iso",
+                              return_value="2026-07-21T15:00:00+09:00"),
+            mock.patch.object(scanner, "_jq_price_history", return_value=fake),
+            mock.patch.object(scanner, "_td_price_history", return_value=fake),
+            mock.patch.object(scanner, "get_events_snapshot",
+                              return_value={"events": []}),
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            first = scanner._chart_public_report(
+                "1321", "JP", market_scope=True, cached_only=False,
+                precompute_replay=True)
+            first_hash = first["marketReplay"]["stateHash"]
+            with mock.patch.object(
+                    mr, "build_context",
+                    side_effect=AssertionError("duplicate replay computation")):
+                second = scanner._chart_public_report(
+                    "1321", "JP", market_scope=True, cached_only=False,
+                    precompute_replay=True)
+        self.assertEqual("updated", first["marketReplay"]["cacheStatus"])
+        self.assertEqual("hit", second["marketReplay"]["cacheStatus"])
+        self.assertEqual(first_hash, second["marketReplay"]["stateHash"])
+        self.assertEqual(3, len(scanner._MARKET_REPLAY["contexts"]))
+
     def test_scheduled_chart_tick_uses_only_fresh_price_caches(self):
         fake = history()
         fresh = {"data": fake, "expires": 9_999_999_999.0}

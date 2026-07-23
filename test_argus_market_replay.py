@@ -69,6 +69,14 @@ class MarketReplayTests(unittest.TestCase):
         self.assertTrue(all(right["index"] - left["index"] > replay.COOLDOWN_TRADING_DAYS
                             for left, right in zip(ordered, ordered[1:])))
 
+    def test_dataset_hash_is_stable_and_changes_with_price_data(self):
+        self.assertEqual(replay.dataset_hash(self.rows),
+                         replay.dataset_hash(copy.deepcopy(self.rows)))
+        changed = copy.deepcopy(self.rows)
+        changed[-1]["close"] += 0.01
+        self.assertNotEqual(replay.dataset_hash(self.rows),
+                            replay.dataset_hash(changed))
+
     def test_no_future_leakage_and_all_outcomes(self):
         self.assertTrue(self.context["computation"]["noFutureLeakage"])
         self.assertTrue(self.context["eventStudy"]["noFutureLeakage"])

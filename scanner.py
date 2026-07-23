@@ -19873,7 +19873,18 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 daily_rows, _comparison_rows, classification="derived")
     }
     _instrument_id = f"{market}:{symbol}:ETF"
-    if precompute_replay and timeframe == "daily":
+    _replay_dataset_hash = argus_market_replay.dataset_hash(daily_rows)
+    _existing_replay = argus_market_replay.latest_contexts(
+        _MARKET_REPLAY, _instrument_id)
+    _replay_cache_hit = bool(daily_rows) and all(
+        str(_horizon) in _existing_replay
+        and _existing_replay[str(_horizon)].get("methodVersion")
+        == argus_market_replay.METHOD_VERSION
+        and _existing_replay[str(_horizon)].get("datasetHash")
+        == _replay_dataset_hash
+        for _horizon in argus_market_replay.HORIZONS
+    )
+    if precompute_replay and timeframe == "daily" and not _replay_cache_hit:
         _replay_ledger = {**ledger, "table": list(ledger.get("table") or [])}
         if market == "JP" and _short_rows:
             _replay_ledger["table"].append({
@@ -19918,6 +19929,9 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         "readBack": dict(_MARKET_REPLAY_REMOTE),
         "automaticAiCalls": 0,
         "computationMode": "deterministic_background_cache",
+        "cacheStatus": ("hit" if _replay_cache_hit else
+                        "updated" if precompute_replay and timeframe == "daily"
+                        else "read_only"),
     }
     report["shortDataAudit"] = argus_today_intelligence.data_source_audit(
         _today_intel.get("shortSelling") or {},
