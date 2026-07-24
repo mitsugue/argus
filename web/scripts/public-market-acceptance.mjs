@@ -147,7 +147,9 @@ function attachEvidence(page, evidence) {
       // Response listeners can finish after an intentionally closed audit
       // context. That is a Playwright teardown condition, not malformed JSON.
       if (page.isClosed()
-          || /Target page, context or browser has been closed/i.test(message)) {
+          || /Target page, context or browser has been closed/i.test(message)
+          || /Network\.getResponseBody.*No resource with given identifier found/i
+            .test(message)) {
         return;
       }
       evidence.consoleErrors.push({

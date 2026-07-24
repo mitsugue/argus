@@ -44,6 +44,7 @@ assert.match(script, /warmOffline\.snapshotId !== warmSeedSnapshotId/);
 assert.match(script, /fs\.access\(path\.join\(OUT_DIR, 'acceptance\.json'\)\)/,
   'a complete failure artifact must not be replaced by the outer catch');
 assert.match(script, /Target page, context or browser has been closed/);
+assert.match(script, /Network\\\.getResponseBody/);
 assert.match(script, /page\.isClosed\(\)/);
 assert.match(script, /loader-flicker-before-225ms/);
 assert.match(script, /__ARGUS_LOADER_FIRST_AT__/);
