@@ -1,6 +1,6 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
-import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures
+import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy
 import gc, multiprocessing, resource, sys, tempfile
 try:
     from google import genai as google_genai
@@ -17453,10 +17453,14 @@ def api_argus_admin_missions_tick():
         _chart_reports = []
         for _market_symbol, _market_code in (
                 ("1321", "JP"), ("1306", "JP"), ("SPY", "US"), ("QQQ", "US")):
-            _chart_reports.append(_chart_public_report(
+            _chart_report = _chart_public_report(
                 _market_symbol, _market_code, "daily",
                 market_scope=_market_symbol == "1321", cached_only=False,
-                precompute_replay=True))
+                precompute_replay=True)
+            _chart_reports.append(_chart_report)
+            _MARKET_PUBLIC_REPORT_CACHE[
+                ("market", _market_symbol, "daily")] = copy.deepcopy(
+                    _chart_report)
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
         _chart_changed = _chart_before_hash != _chart_after_hash
@@ -19710,6 +19714,7 @@ def _chart_history_cached(symbol, market):
 
 _JP_DAILY_SHORT_CACHE = {"rows": None, "expires": 0.0,
                          "status": "not_loaded", "errorClass": None}
+_MARKET_PUBLIC_REPORT_CACHE = {}
 
 
 def _jp_daily_short_history(cached_only=False):
@@ -20070,9 +20075,12 @@ def api_argus_chart_intelligence():
         # This provider-free GET boundary is backend-sensitive. Scheduled ticks
         # alone refresh the cache before public acceptance starts.
         # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
-        report = _chart_public_report(
-            symbol, market, timeframe, market_scope=symbol == "1321",
-            cached_only=True)
+        _public_cache_key = ("market", symbol, timeframe)
+        _public_cached = _MARKET_PUBLIC_REPORT_CACHE.get(_public_cache_key)
+        report = (copy.deepcopy(_public_cached) if isinstance(_public_cached, dict)
+                  else _chart_public_report(
+                      symbol, market, timeframe, market_scope=symbol == "1321",
+                      cached_only=True))
         report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(symbol, symbol)
         if symbol == "1321":
             report["proxyDisclosureJa"] = (

@@ -93,8 +93,10 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
             "symbol": "1321", "market": "JP", "displayNameJa": "日経225 ETF",
             "instrumentMetadata": {"displayNameJa": "日経225 ETF"},
         }
-        with mock.patch.object(
-                scanner, "_chart_public_report", return_value=report) as build:
+        with mock.patch.dict(
+                scanner._MARKET_PUBLIC_REPORT_CACHE, {}, clear=True), \
+                mock.patch.object(
+                    scanner, "_chart_public_report", return_value=report) as build:
             client = scanner.app.test_client()
             self.assertEqual(200, client.get(
                 "/api/argus/chart-intelligence?scope=market&symbol=1321"
@@ -104,6 +106,26 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
             ).status_code)
         self.assertTrue(build.call_args_list[0].kwargs["cached_only"])
         self.assertTrue(build.call_args_list[1].kwargs["cached_only"])
+
+    def test_market_get_reuses_natural_tick_report_without_recompute(self):
+        cached = {
+            "symbol": "1321", "market": "JP", "displayNameJa": "日経225 ETF",
+            "instrumentMetadata": {"displayNameJa": "日経225 ETF"},
+            "automaticAiCalls": 0,
+            "marketReplay": {"cacheStatus": "hit", "contexts": {}},
+        }
+        key = ("market", "1321", "daily")
+        with mock.patch.dict(
+                scanner._MARKET_PUBLIC_REPORT_CACHE, {key: cached}, clear=True), \
+                mock.patch.object(
+                    scanner, "_chart_public_report",
+                    side_effect=AssertionError("report recompute")):
+            body = scanner.app.test_client().get(
+                "/api/argus/chart-intelligence?scope=market&symbol=1321"
+            ).get_json()
+        self.assertEqual("1321", body["symbol"])
+        self.assertEqual("hit", body["marketReplay"]["cacheStatus"])
+        self.assertEqual(0, body["automaticAiCalls"])
 
     def test_natural_tick_has_bounded_initial_short_seed(self):
         source = pathlib.Path("scanner.py").read_text()
