@@ -20069,7 +20069,8 @@ def api_argus_chart_intelligence():
         market = "JP" if symbol in {"1321", "1306"} else "US"
         # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
         report = _chart_public_report(
-            symbol, market, timeframe, market_scope=symbol == "1321")
+            symbol, market, timeframe, market_scope=symbol == "1321",
+            cached_only=True)
         report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(symbol, symbol)
         if symbol == "1321":
             report["proxyDisclosureJa"] = (
@@ -20082,7 +20083,8 @@ def api_argus_chart_intelligence():
     if market == "US" and not _US_SYM_RE.match(symbol):
         return jsonify({"error": "bad_symbol"}), 400
     return jsonify(argus_market_intelligence.normalize_public_names(
-        _chart_public_report(symbol, market, timeframe, market_scope=False)))
+        _chart_public_report(
+            symbol, market, timeframe, market_scope=False, cached_only=True)))
 
 
 @app.route("/api/argus/admin/market-ledger/import", methods=["POST"])

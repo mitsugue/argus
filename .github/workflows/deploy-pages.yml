@@ -150,9 +150,11 @@ jobs:
   public-acceptance:
     needs: [deploy, seed-warm-profile]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@v5
         with:
           node-version: 20
@@ -174,6 +176,17 @@ jobs:
         run: |
           node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
           python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import subprocess
+          from scripts.deploy_scope import classify
+          paths = subprocess.check_output(
+              ["git", "diff", "--name-only", "HEAD^", "HEAD"], text=True
+          ).splitlines()
+          print("backend_sha=" + (
+              os.environ["GITHUB_SHA"] if classify(paths)["backendDeploy"] else ""
+          ))
+          PY
       - name: Verify deployed public URL and PWA upgrade
         working-directory: web
         env:
@@ -181,6 +194,7 @@ jobs:
           ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
           ARGUS_EXPECTED_BACKEND_VERSION: ${{ steps.release.outputs.backend_version }}
+          ARGUS_EXPECTED_BACKEND_SHA: ${{ steps.release.outputs.backend_sha }}
           ARGUS_WARM_PROFILE_DIR: ../artifacts/warm-seed
           ARGUS_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance
         run: node scripts/public-market-acceptance.mjs
