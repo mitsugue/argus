@@ -1,0 +1,72 @@
+name: Market public acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      pages_run_id:
+        description: Pages run containing the pre-deploy warm profile
+        required: true
+        type: string
+      frontend_sha:
+        description: Exact deployed Pages commit SHA
+        required: true
+        type: string
+      backend_sha:
+        description: Exact deployed Render commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  public-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.frontend_sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: Install pinned public-acceptance browser
+        working-directory: web
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v5
+        with:
+          name: market-warm-profile-${{ inputs.frontend_sha }}
+          path: artifacts/warm-seed
+          run-id: ${{ inputs.pages_run_id }}
+          github-token: ${{ github.token }}
+      - name: Resolve independent release versions
+        id: release
+        run: |
+          node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
+      - name: Verify deployed public URL and PWA upgrade
+        working-directory: web
+        env:
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
+          ARGUS_EXPECTED_SHA: ${{ inputs.frontend_sha }}
+          ARGUS_EXPECTED_BACKEND_VERSION: ${{ steps.release.outputs.backend_version }}
+          ARGUS_EXPECTED_BACKEND_SHA: ${{ inputs.backend_sha }}
+          ARGUS_WARM_PROFILE_DIR: ../artifacts/warm-seed
+          ARGUS_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance
+        run: node scripts/public-market-acceptance.mjs
+      - name: Publish reproducible public acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-public-acceptance-${{ inputs.frontend_sha }}
+          path: artifacts/market-public-acceptance
+          if-no-files-found: error
+          retention-days: 30

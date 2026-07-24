@@ -29,7 +29,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_deploy: ${{ steps.scope.outputs.backend_deploy }}
+      backend_sha: ${{ steps.scope.outputs.backend_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - id: scope
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          python3 -B - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import subprocess
+          from scripts.deploy_scope import classify
+          paths = subprocess.check_output(
+              ["git", "diff", "--name-only", "HEAD^", "HEAD"], text=True
+          ).splitlines()
+          backend = classify(paths)["backendDeploy"]
+          print("backend_deploy=" + str(backend).lower())
+          print("backend_sha=" + (os.environ["CURRENT_SHA"] if backend else ""))
+          PY
+
   build:
+    needs: scope
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -148,13 +174,16 @@ jobs:
           timeout: 300000
 
   public-acceptance:
-    needs: [deploy, seed-warm-profile]
+    needs: [scope, deploy, seed-warm-profile]
+    # The live directly linked Render service still uses checksPass. A
+    # backend-sensitive public check would wait for Render while Render waits
+    # for that same check. Complete it through market-public-acceptance.yml
+    # after Render deploys, using this run's pre-deploy warm-profile artifact.
+    if: needs.scope.outputs.backend_deploy != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 2
       - uses: actions/setup-node@v5
         with:
           node-version: 20
@@ -176,17 +205,6 @@ jobs:
         run: |
           node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
           python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os
-          import subprocess
-          from scripts.deploy_scope import classify
-          paths = subprocess.check_output(
-              ["git", "diff", "--name-only", "HEAD^", "HEAD"], text=True
-          ).splitlines()
-          print("backend_sha=" + (
-              os.environ["GITHUB_SHA"] if classify(paths)["backendDeploy"] else ""
-          ))
-          PY
       - name: Verify deployed public URL and PWA upgrade
         working-directory: web
         env:
@@ -194,7 +212,7 @@ jobs:
           ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
           ARGUS_EXPECTED_BACKEND_VERSION: ${{ steps.release.outputs.backend_version }}
-          ARGUS_EXPECTED_BACKEND_SHA: ${{ steps.release.outputs.backend_sha }}
+          ARGUS_EXPECTED_BACKEND_SHA: ${{ needs.scope.outputs.backend_sha }}
           ARGUS_WARM_PROFILE_DIR: ../artifacts/warm-seed
           ARGUS_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance
         run: node scripts/public-market-acceptance.mjs

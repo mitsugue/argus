@@ -20067,6 +20067,8 @@ def api_argus_chart_intelligence():
         if symbol not in {"1321", "1306", "SPY", "QQQ"}:
             return jsonify({"error": "unsupported_market_instrument"}), 400
         market = "JP" if symbol in {"1321", "1306"} else "US"
+        # This provider-free GET boundary is backend-sensitive. Scheduled ticks
+        # alone refresh the cache before public acceptance starts.
         # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
         report = _chart_public_report(
             symbol, market, timeframe, market_scope=symbol == "1321",
