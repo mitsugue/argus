@@ -2,8 +2,6 @@ import json
 import pathlib
 import unittest
 
-import yaml
-
 from scripts import deploy_scope
 
 
@@ -43,12 +41,17 @@ class DeployScopeTests(unittest.TestCase):
         self.assertFalse(result["backendDeploy"])
 
     def test_render_blueprint_allowlist_matches_classifier(self):
-        blueprint = yaml.safe_load((ROOT / "render.yaml").read_text())
-        service = blueprint["services"][0]
-        self.assertEqual("checksPass", service["autoDeployTrigger"])
+        blueprint = (ROOT / "render.yaml").read_text()
+        self.assertIn("autoDeployTrigger: checksPass", blueprint)
+        path_block = blueprint.split("buildFilter:", 1)[1].split(
+            "ignoredPaths:", 1)[0]
+        configured = [
+            line.strip()[2:] for line in path_block.splitlines()
+            if line.strip().startswith("- ")
+        ]
         self.assertEqual(list(deploy_scope.RENDER_BACKEND_PATHS),
-                         service["buildFilter"]["paths"])
-        self.assertEqual([], service["buildFilter"]["ignoredPaths"])
+                         configured)
+        self.assertIn("ignoredPaths: []", blueprint)
 
     def test_release_versions_are_independent(self):
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
