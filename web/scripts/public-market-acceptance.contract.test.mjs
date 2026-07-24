@@ -30,6 +30,10 @@ assert.match(script, /ARGUS_EXPECTED_BACKEND_SHA/);
 assert.match(script, /marketProductStatus: evidence\.failures\.length \? 'NOT_FROZEN' : 'FROZEN'/);
 assert.match(script, /page\.screenshot\(\{/);
 assert.match(script, /fullPage: false/);
+assert.match(script, /animations: 'disabled'/);
+assert.match(script, /timeout: 10_000/);
+assert.match(script, /tab === 'OVERVIEW' \|\| viewport\.width === 1280/);
+assert.match(script, /screenshotCount/);
 assert.doesNotMatch(script, /\.market-replay'\)\.screenshot\(/,
   'representative screenshots must remain viewport-bounded');
 assert.doesNotMatch(script, /localStorage\./,
