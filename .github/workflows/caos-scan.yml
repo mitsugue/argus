@@ -45,11 +45,30 @@ jobs:
           fi
           export TRIGGER_SOURCE
           TICK_PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"triggerSource":os.environ["TRIGGER_SOURCE"],"expectedBuildSha":os.environ["GITHUB_SHA"],"runId":os.environ["GITHUB_RUN_ID"]},separators=(",",":")))')
-          MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 180 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --header 'Content-Type: application/json' --data "$TICK_PAYLOAD" \
-            --url "$BE/api/argus/admin/missions/tick")
-          echo "missions-tick: $MT"
+          LAST_RESULT=""
+          for BATCH in 1 2 3; do
+            set +e
+            MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 90 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --header 'Content-Type: application/json' --data "$TICK_PAYLOAD" \
+              --url "$BE/api/argus/admin/missions/tick")
+            RC=$?
+            set -e
+            echo "missions-tick[$BATCH]: $MT"
+            LAST_RESULT=$(printf '%s' "$MT" | python3 -c \
+              'import json,sys; print(json.load(sys.stdin).get("result",""))')
+            if [ "$RC" -eq 0 ]; then
+              break
+            fi
+            if [ "$RC" -eq 2 ] && [ "$LAST_RESULT" = "partial" ]; then
+              continue
+            fi
+            exit "$RC"
+          done
+          if [ "$LAST_RESULT" = "partial" ]; then
+            echo "missions-tick remained partial after bounded retries"
+            exit 2
+          fi
 
       - name: Collect C.A.O.S. public sources
         env:

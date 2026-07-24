@@ -180,7 +180,7 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         lock = json.loads(pathlib.Path("web/package-lock.json").read_text())
         backend = json.loads(pathlib.Path("backend-version.json").read_text())
         self.assertEqual(package["version"], "13.3.0")
-        self.assertEqual(backend["version"], "13.3.0")
+        self.assertEqual(backend["version"], "13.3.1")
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertEqual(scanner._semantic_app_version(), backend["version"])
