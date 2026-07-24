@@ -32,8 +32,9 @@ assert.doesNotMatch(script, /localStorage\./,
   'acceptance artifact must not read device-local owner data');
 assert.match(workflow, /market-public-acceptance-/);
 assert.match(workflow, /needs: \[build, seed-warm-profile\]/);
-assert.match(workflow, /ARGUS_EXPECTED_BACKEND_VERSION: 13\.2\.2/);
-assert.match(workflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ github\.sha \}\}/);
+assert.match(workflow, /ARGUS_EXPECTED_BACKEND_VERSION: \$\{\{ steps\.release\.outputs\.backend_version \}\}/);
+assert.doesNotMatch(workflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ github\.sha \}\}/,
+  'backend and frontend SHA must be independently observed');
 assert.match(workflow, /-name 'Local Storage'/);
 assert.match(vite, /cleanupOutdatedCaches: true/);
 assert.match(vite, /clientsClaim: true/);
