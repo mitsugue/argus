@@ -62,5 +62,5 @@ class DeployScopeTests(unittest.TestCase):
     def test_release_gate_enforces_render_skip_contract(self):
         workflow = (ROOT / ".github/workflows/release-gate.yml").read_text()
         self.assertIn("fetch-depth: 0", workflow)
-        self.assertIn("python3 scripts/render_deploy_guard.py", workflow)
+        self.assertIn("python3 -B scripts/render_deploy_guard.py", workflow)
         self.assertIn("github.event.pull_request.title", workflow)
