@@ -14,9 +14,12 @@ checkout.
 ## Backend-sensitive paths
 
 `render.yaml` uses Render's documented `buildFilter.paths` allowlist. The list
-is mirrored and regression-tested in `scripts/deploy_scope.py`. Backend Python,
-runtime entry points, dependencies, bridge code, backend version, runtime seed,
-and the shared frontend API type directory trigger a backend deployment.
+is mirrored and regression-tested in `scripts/deploy_scope.py`. A matching main
+commit deploys immediately because PR checks have already passed; waiting for
+all main checks would create a cycle with public acceptance, which waits for the
+new backend. Backend Python, runtime entry points, dependencies, bridge code,
+backend version, runtime seed, and the shared frontend API type directory
+trigger a backend deployment.
 
 Frontend implementation, CSS, frontend-only tests/build configuration, and the
 Guide do not match that allowlist. They deploy through Pages without restarting

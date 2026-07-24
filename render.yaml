@@ -12,7 +12,10 @@ services:
     # Render's documented monorepo build filter is an allowlist. A main commit
     # that only changes Pages/frontend files must not restart this process or
     # supersede its build-scoped Soak.
-    autoDeployTrigger: checksPass
+    # PR checks are required before merge. On main, deploy immediately for a
+    # matching backend path; waiting for every main check would deadlock with
+    # public-acceptance, which intentionally waits for this backend release.
+    autoDeployTrigger: commit
     buildFilter:
       paths:
         - scanner.py

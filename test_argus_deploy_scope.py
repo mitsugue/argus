@@ -42,7 +42,7 @@ class DeployScopeTests(unittest.TestCase):
 
     def test_render_blueprint_allowlist_matches_classifier(self):
         blueprint = (ROOT / "render.yaml").read_text()
-        self.assertIn("autoDeployTrigger: checksPass", blueprint)
+        self.assertIn("autoDeployTrigger: commit", blueprint)
         path_block = blueprint.split("buildFilter:", 1)[1].split(
             "ignoredPaths:", 1)[0]
         configured = [

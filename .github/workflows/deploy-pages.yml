@@ -169,14 +169,18 @@ jobs:
         with:
           name: market-warm-profile-${{ github.sha }}
           path: artifacts/warm-seed
+      - name: Resolve independent release versions
+        id: release
+        run: |
+          node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
       - name: Verify deployed public URL and PWA upgrade
         working-directory: web
         env:
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
-          ARGUS_EXPECTED_VERSION: 13.2.2
+          ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
-          ARGUS_EXPECTED_BACKEND_VERSION: 13.2.2
-          ARGUS_EXPECTED_BACKEND_SHA: ${{ github.sha }}
+          ARGUS_EXPECTED_BACKEND_VERSION: ${{ steps.release.outputs.backend_version }}
           ARGUS_WARM_PROFILE_DIR: ../artifacts/warm-seed
           ARGUS_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance
         run: node scripts/public-market-acceptance.mjs
