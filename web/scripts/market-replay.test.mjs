@@ -9,9 +9,11 @@ const chartHook = fs.readFileSync(new URL('../src/hooks/useChartIntelligence.ts'
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
 const theme = fs.readFileSync(new URL('../src/styles/theme.css', import.meta.url), 'utf8');
 const types = fs.readFileSync(new URL('../src/types/chartIntelligence.ts', import.meta.url), 'utf8');
+const instruments = fs.readFileSync(new URL('../src/domain/marketInstruments.ts', import.meta.url), 'utf8');
 
 for (const tab of ['OVERVIEW', 'REPLAY', 'LEDGER']) assert.match(replay, new RegExp(`'${tab}'`));
-for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) assert.match(replay, new RegExp(symbol));
+for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) assert.match(instruments, new RegExp(symbol));
+assert.match(replay, /MARKET_INSTRUMENTS\.map/);
 for (const horizon of ['1', '5', '20']) assert.match(replay, new RegExp(horizon));
 for (const tool of ['horizontal', 'trend', 'zone', 'arrow', 'text', 'select']) {
   assert.match(replay, new RegExp(`'${tool}'`));

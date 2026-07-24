@@ -15,7 +15,8 @@ import type { RouteKey } from '../components/NavRail';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
 import { buildArgusTodayView, buildTodayReview, selectTodayNews,
-  type MarketSelectionMode, type TodayMoveInput, type TodayPositioningRow } from '../domain/argusTodayView';
+  selectAutoMarket, type MarketSelectionMode, type TodayMoveInput,
+  type TodayPositioningRow } from '../domain/argusTodayView';
 import { resolveCommandSummary } from '../domain/commandSummary';
 import { SIGNALS, type SignalCode } from '../domain/actionLevel';
 import { useMarketLedger } from '../hooks/useMarketLedger';
@@ -23,6 +24,10 @@ import { useChartIntelligence } from '../hooks/useChartIntelligence';
 import { useMarketNews } from '../hooks/useMarketNews';
 import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 import type { TodayProjectionInput } from '../domain/argusTodayView';
+import {
+  MARKET_INSTRUMENTS, marketInstrument, normalizeMarketInstrument,
+  type MarketHorizon, type MarketInstrumentSymbol,
+} from '../domain/marketInstruments';
 
 interface Props {
   onNavigate: (key: RouteKey) => void;
@@ -100,10 +105,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     positionRisk, overlay,
   } = useAssetIntel({ publish: true });
   const marketLedger = useMarketLedger();
-  const jpChart = useChartIntelligence({ scope: 'market', timeframe: 'daily', enabled: true });
-  const topixChart = useChartIntelligence({ scope: 'asset', symbol: '1306', market: 'JP', timeframe: 'daily', enabled: true });
-  const sp500Chart = useChartIntelligence({ scope: 'asset', symbol: 'SPY', market: 'US', timeframe: 'daily', enabled: true });
-  const nasdaqChart = useChartIntelligence({ scope: 'asset', symbol: 'QQQ', market: 'US', timeframe: 'daily', enabled: true });
   const marketNews = useMarketNews();
   const [marketMode, setMarketMode] = useState<MarketSelectionMode>(() => {
     try {
@@ -115,17 +116,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     setMarketMode(mode);
     try { localStorage.setItem('argus.today.marketSelection.v1', mode); } catch { /* device-local best effort */ }
   };
-  const [selectedInstrument, setSelectedInstrument] = useState<{ JP: '1321' | '1306'; US: 'SPY' | 'QQQ' }>(() => {
+  const [selectedInstrument, setSelectedInstrument] = useState<{
+    JP: MarketInstrumentSymbol; US: MarketInstrumentSymbol;
+  }>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('argus.today.selectedInstrument.v1') || '{}') as Record<string, string>;
-      return { JP: saved.JP === '1306' ? '1306' : '1321', US: saved.US === 'QQQ' ? 'QQQ' : 'SPY' };
+      return {
+        JP: normalizeMarketInstrument('JP', saved.JP),
+        US: normalizeMarketInstrument('US', saved.US),
+      };
     } catch { return { JP: '1321', US: 'SPY' }; }
   });
   const changeInstrument = (market: 'JP' | 'US', symbol: string) => {
     const next = { ...selectedInstrument,
-      [market]: market === 'JP' && symbol === '1306' ? '1306'
-        : market === 'US' && symbol === 'QQQ' ? 'QQQ'
-          : market === 'JP' ? '1321' : 'SPY' } as typeof selectedInstrument;
+      [market]: normalizeMarketInstrument(market, symbol) };
     setSelectedInstrument(next);
     setMarketMode(market);
     try {
@@ -133,6 +137,36 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
       localStorage.setItem('argus.today.marketSelection.v1', market);
     } catch { /* device-local best effort */ }
   };
+  const [chartHorizon, setChartHorizon] = useState<MarketHorizon>(() => {
+    try {
+      const saved = Number(localStorage.getItem('argus.today.chartHorizon.v1'));
+      return saved === 1 || saved === 20 ? saved : 5;
+    } catch { return 5; }
+  });
+  const changeChartHorizon = (value: MarketHorizon) => {
+    setChartHorizon(value);
+    try { localStorage.setItem('argus.today.chartHorizon.v1', String(value)); } catch { /* device-local */ }
+  };
+  const effectiveMarket = marketMode === 'AUTO'
+    ? selectAutoMarket(marketLedger.ledger?.phase3?.calendar)
+    : marketMode;
+  const selectedSymbol = selectedInstrument[effectiveMarket];
+  const selectedDefinition = marketInstrument(selectedSymbol)!;
+  const selectedChart = useChartIntelligence({
+    scope: 'market', symbol: selectedSymbol, market: selectedDefinition.market,
+    timeframe: 'daily', horizon: chartHorizon, enabled: true,
+  });
+  // Selector summaries use one verified 5D snapshot per instrument. These
+  // hooks follow the selected view so its network/cache effect is scheduled
+  // first; the URL-level inflight map deduplicates the selected 5D request.
+  const jpChart = useChartIntelligence({ scope: 'market', symbol: '1321',
+    market: 'JP', timeframe: 'daily', horizon: 5, enabled: true });
+  const topixChart = useChartIntelligence({ scope: 'market', symbol: '1306',
+    market: 'JP', timeframe: 'daily', horizon: 5, enabled: true });
+  const sp500Chart = useChartIntelligence({ scope: 'market', symbol: 'SPY',
+    market: 'US', timeframe: 'daily', horizon: 5, enabled: true });
+  const nasdaqChart = useChartIntelligence({ scope: 'market', symbol: 'QQQ',
+    market: 'US', timeframe: 'daily', horizon: 5, enabled: true });
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
   useEffect(() => {
@@ -301,8 +335,12 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
       if (value === 'HIGH' || value === 'LOW') return value;
       return value && value !== 'UNKNOWN' ? '△' : '—';
     };
-    const selectedJpChart = selectedInstrument.JP === '1306' ? topixChart.data : jpChart.data;
-    const selectedUsChart = selectedInstrument.US === 'QQQ' ? nasdaqChart.data : sp500Chart.data;
+    const selectedJpChart = effectiveMarket === 'JP'
+      ? selectedChart.data
+      : selectedInstrument.JP === '1306' ? topixChart.data : jpChart.data;
+    const selectedUsChart = effectiveMarket === 'US'
+      ? selectedChart.data
+      : selectedInstrument.US === 'QQQ' ? nasdaqChart.data : sp500Chart.data;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
       { key: 'TREND' as const, state: regime.data?.regime?.label === 'RISK_ON' ? '↑' as const : regime.data?.regime?.label === 'RISK_OFF' ? '↓' as const : '△' as const, source: 'market-regime' },
@@ -464,16 +502,31 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     commandSummary, positionRisk, assets, al.data, sessionBrief, marketMode,
     jpChart.data, topixChart.data, sp500Chart.data, nasdaqChart.data, marketNews.data,
     marketNews.lastChecked, marketNews.failureClass,
-    selectedInstrument]);
+    selectedInstrument, effectiveMarket, selectedChart.data]);
 
+  const todayInstruments = useMemo(() => {
+    const charts = {
+      '1321': jpChart, '1306': topixChart, SPY: sp500Chart, QQQ: nasdaqChart,
+    };
+    const moves = new Map(argusToday.indexMoves.map((move) => [move.symbol, move]));
+    return MARKET_INSTRUMENTS.map((item) => ({
+      symbol: item.symbol, market: item.market, shortLabel: item.shortLabel,
+      fullLabel: item.fullLabel, move: moves.get(item.symbol) ?? null,
+      statusText: charts[item.symbol].statusText,
+      loading: charts[item.symbol].loading,
+      error: charts[item.symbol].error,
+    }));
+  }, [argusToday.indexMoves, jpChart, topixChart, sp500Chart, nasdaqChart]);
 
   return (
     <PageShell
       title={tEn('page.today')}
       subtitle={<span>{formatDate(judgment.date)}</span>}
     >
-      <ArgusTodayPanel view={argusToday} onMode={changeMarketMode}
-        onInstrument={changeInstrument}
+      <ArgusTodayPanel view={argusToday} instruments={todayInstruments}
+        selectedSymbol={selectedSymbol} horizon={chartHorizon}
+        chartLoad={selectedChart} onMode={changeMarketMode}
+        onInstrument={changeInstrument} onHorizon={changeChartHorizon}
         onNavigate={onNavigate} onOpenAsset={(symbol) => onNavigateToAsset?.(symbol)}
         aiButton={<ProHandoffButton nextEvent={argusToday.nextEvent} />} />
       <MobileStickyCommand text={argusToday.footerText} />
