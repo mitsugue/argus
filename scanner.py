@@ -31,6 +31,7 @@ import argus_state_journal  # v12.2.7: write-through運用ジャーナル(buffer
 import argus_schemas  # v12.2.7: Structured Outputsスキーマ検証(feature-flagged)
 import argus_remote_durability  # v12.2.8: ローカル/リモート耐久の明示区別(正直な保証)
 import argus_runtime  # v12.2.9: Runtime Truth(build-scoped soak/起動復元/鮮度カレンダー)
+import argus_release_identity
 import argus_remote_journal  # v12.2.10: journalリモート同乗+検証済みread-back ack+SLO
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
@@ -1550,6 +1551,7 @@ def healthz():
     return jsonify({
         "status": "ok",
         "engineVersion": "argus-backend-v1",
+        "backendVersion": _semantic_app_version() or None,
         "buildSha": (os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None),
         "asOf": _ai_now_iso(),
     })
@@ -7700,7 +7702,8 @@ def _data_quality_console():
         console["buildIdentity"] = argus_remote_durability.build_identity(
             app_version=_semantic_app_version(),
             backend_sha=os.environ.get("RENDER_GIT_COMMIT", "")[:7],
-            frontend_version=_semantic_app_version())
+            frontend_version=_frontend_semantic_version(),
+            frontend_sha=os.environ.get("ARGUS_FRONTEND_BUILD_SHA", "")[:7])
         console["rcBlockers"] = [
             "リモート耐久(60秒級)未実測", "forward-live初証拠待ち",
             "初成熟成果待ち", "72h soak未完", "オーナー2設定(branch protection/Render)",
@@ -16810,14 +16813,13 @@ _SOAK = {"soakId": None, "buildSha": None, "appVersion": None,
          "lastHeartbeatSource": None}
 _INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
 def _semantic_app_version():
-    """package.jsonのセマンティック版。Git SHAをappVersionとして表示しない。"""
-    try:
-        import json as _j
-        with open(os.path.join(os.path.dirname(__file__), "web", "package.json"),
-                  encoding="utf-8") as _pkg:
-            return _j.load(_pkg)["version"]
-    except Exception:
-        return ""
+    """Backendのセマンティック版。frontend package版から独立させる。"""
+    return argus_release_identity.backend_version()
+
+
+def _frontend_semantic_version():
+    """同じcheckoutに同梱されたfrontend版。live Pages SHAはCI証拠を正本とする。"""
+    return argus_release_identity.frontend_version()
 
 
 _OPS_JOURNAL = []                       # v12.2.7 運用イベントジャーナル(有界400)

@@ -9,7 +9,26 @@ services:
     branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: python scanner.py
-    autoDeploy: true
+    # Render's documented monorepo build filter is an allowlist. A main commit
+    # that only changes Pages/frontend files must not restart this process or
+    # supersede its build-scoped Soak.
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - scanner.py
+        - wsgi.py
+        - argus_*.py
+        - bridge/**
+        - scripts/argus_mission_tick.py
+        - scripts/caos_watchtower_worker.py
+        - scripts/run_foundation_job.py
+        - requirements.txt
+        - Procfile
+        - gunicorn.conf.py
+        - backend-version.json
+        - entity_profiles_seed.json
+        - web/src/types/**
+      ignoredPaths: []
     # The instance filesystem is ephemeral on every plan without an attached Disk.
     # The predictions ledger already persists via the git `ledger` branch, so no
     # Disk is required. To use a Disk instead, attach one (1 GB / $1 mo) and set:

@@ -17,15 +17,22 @@ import argus_today_intelligence
 
 
 SCHEMA_VERSION = "argus-market-replay-v1"
-METHOD_VERSION = "market-context-replay-v1"
+OLD_METHOD_VERSION = "market-context-replay-v1"
+METHOD_VERSION = "market-context-replay-v2-standard-excursion"
 FEATURE_VERSION = "replay-features-past-window-v1"
 REACTION_VERSION = "reaction-classification-v1"
-EXTREME_VERSION = "ledger-extremes-fixed-thresholds-v1"
+EXTREME_VERSION = "ledger-extremes-fixed-thresholds-v2-standard-excursion"
 HORIZONS = (1, 5, 20)
 COOLDOWN_TRADING_DAYS = 5
 MAX_EPISODES = 40
 MIN_REGIME_SAMPLE = 20
 EXTREME_THRESHOLDS = (1, 5, 10, 90, 95, 99)
+METRIC_DEFINITION = {
+    "mae": "min(0, minimum forward low return during the selected horizon)",
+    "mfe": "max(0, maximum forward high return during the selected horizon)",
+    "direction": "long",
+    "unit": "percent",
+}
 
 
 def _number(value: Any) -> Optional[float]:
@@ -48,7 +55,12 @@ def _hash(value: Any, length: int = 32) -> str:
 
 def _dataset_hash_from_bars(bars: Sequence[Dict[str, Any]]) -> str:
     return _hash([{
-        "date": row["date"], "close": row["close"],
+        "date": row["date"],
+        "open": row.get("open"),
+        "high": row.get("high"),
+        "low": row.get("low"),
+        "close": row.get("close"),
+        "volume": row.get("volume"),
         "availableFrom": row["availableFrom"],
     } for row in bars])
 
@@ -81,10 +93,11 @@ def _distribution(values: Iterable[Optional[float]]) -> Dict[str, Any]:
                 "q75": None, "q90": None, "min": None, "max": None,
                 "histogram": []}
     low, high = min(clean), max(clean)
-    width = (high - low) / 10 if high > low else 1.0
+    width = (high - low) / 10 if high > low else 0.0
     counts = [0] * 10
     for value in clean:
-        index = min(9, max(0, int((value - low) / width)))
+        index = (min(9, max(0, int((value - low) / width)))
+                 if width > 0 else 0)
         counts[index] += 1
     return {
         "count": len(clean),
@@ -176,27 +189,63 @@ def _classify_reaction(changes: Sequence[float], threshold: float) -> Tuple[str,
     return "range", min(value for value in (first_up, first_down) if value is not None)
 
 
-def _outcome(bars: Sequence[Dict[str, Any]], index: int) -> Dict[str, Any]:
-    start = float(bars[index]["close"])
-    future = bars[index + 1:index + 21]
-    changes = [(float(row["close"]) / start - 1) * 100 for row in future]
+def _outcome(bars: Sequence[Dict[str, Any]], index: int,
+             horizon: int = 20) -> Dict[str, Any]:
+    """Calculate close returns plus standard long-direction excursions.
+
+    Missing/zero prices never become zero returns. Excursions are calculated
+    independently for the selected 1D/5D/20D horizon.
+    """
+    start = _number((bars[index] if 0 <= index < len(bars) else {}).get("close"))
+    empty = {
+        "1": None, "5": None, "20": None, "mfe": None, "mae": None,
+        "reactionClass": "unavailable", "reactionDelayDays": None,
+    }
+    if start is None or start <= 0 or horizon not in HORIZONS:
+        return empty
+    future = list(bars[index + 1:index + 21])
+    close_changes = []
+    for row in future:
+        close = _number(row.get("close"))
+        if close is None:
+            close_changes.append(None)
+        else:
+            close_changes.append((close / start - 1) * 100)
+    complete_changes = [value for value in close_changes if value is not None]
     atr_pct = float((argus_today_intelligence._feature(bars, index) or {})
                     .get("atrPct") or .01)
-    reaction, delay = _classify_reaction(
-        changes, max(.3, atr_pct * 100 * .35))
+    reaction, delay = (("unavailable", None)
+                       if len(complete_changes) != len(future) or not future
+                       else _classify_reaction(
+                           complete_changes, max(.3, atr_pct * 100 * .35)))
+
+    def close_return(day: int) -> Optional[float]:
+        return (close_changes[day - 1]
+                if len(close_changes) >= day else None)
+
+    excursion_rows = future[:horizon]
+    highs = [_number(row.get("high")) for row in excursion_rows]
+    lows = [_number(row.get("low")) for row in excursion_rows]
+    mfe = (max(0.0, max((value / start - 1) * 100 for value in highs
+                        if value is not None))
+           if len(excursion_rows) == horizon and all(value is not None for value in highs)
+           else None)
+    mae = (min(0.0, min((value / start - 1) * 100 for value in lows
+                        if value is not None))
+           if len(excursion_rows) == horizon and all(value is not None for value in lows)
+           else None)
     return {
-        "1": _round(changes[0], 3) if len(changes) >= 1 else None,
-        "5": _round(changes[4], 3) if len(changes) >= 5 else None,
-        "20": _round(changes[19], 3) if len(changes) >= 20 else None,
-        "mfe": _round(max((float(row["high"]) / start - 1) * 100
-                          for row in future), 3) if future else None,
-        "mae": _round(min((float(row["low"]) / start - 1) * 100
-                          for row in future), 3) if future else None,
+        "1": _round(close_return(1), 3),
+        "5": _round(close_return(5), 3),
+        "20": _round(close_return(20), 3),
+        "mfe": _round(mfe, 3),
+        "mae": _round(mae, 3),
         "reactionClass": reaction, "reactionDelayDays": delay,
     }
 
 
-def _episode_index(bars: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+def _episode_index(bars: Sequence[Dict[str, Any]],
+                   horizon: int = 20) -> Dict[str, Any]:
     features = _feature_rows(bars)
     if not features:
         return {"rawOccurrenceCount": 0, "effectiveSampleCount": 0,
@@ -212,7 +261,7 @@ def _episode_index(bars: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             "similarityPct": _round(100 / (1 + distance), 1),
             "features": feature["raw"],
             "dataCoverage": "price_volume",
-            "outcomes": _outcome(bars, feature["index"]),
+            "outcomes": _outcome(bars, feature["index"], horizon),
         })
     raw_count = len(candidates)
     # One best observation per rolling cooldown window, then nearest 40.
@@ -482,7 +531,7 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
     bars = argus_today_intelligence.normalize_bars(rows)
     as_of = now_iso or (bars[-1]["date"] if bars else
                         datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-    episode_index = _episode_index(bars)
+    episode_index = _episode_index(bars, horizon)
     episodes = episode_index["episodes"]
     distributions = {
         key: _distribution((row.get("outcomes") or {}).get(key) for row in episodes)
@@ -509,6 +558,14 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             "count": len(bars)},
         "datasetHash": dataset_hash, "outcomeHash": outcome_hash,
         "calibrationHash": calibration_hash,
+        "derivedMetricMigration": {
+            "oldMethodVersion": OLD_METHOD_VERSION,
+            "newMethodVersion": METHOD_VERSION,
+            "metricDefinition": dict(METRIC_DEFINITION),
+            "recomputedAt": as_of,
+            "sourceDatasetHash": dataset_hash,
+            "rawObservationsModified": False,
+        },
         "currentFeatures": episode_index.get("currentFeatures"),
         "currentRegime": episode_index.get("currentRegime"),
         "similarEpisodes": {
@@ -602,6 +659,7 @@ def merge_context(state: Dict[str, Any], context: Dict[str, Any],
         "datasetHash": context.get("datasetHash"),
         "outcomeHash": context.get("outcomeHash"),
         "calibrationHash": context.get("calibrationHash"),
+        "derivedMetricMigration": context.get("derivedMetricMigration"),
         "episodeCount": ((context.get("similarEpisodes") or {})
                          .get("effectiveSampleCount")),
     }
@@ -629,7 +687,9 @@ def latest_contexts(state: Dict[str, Any], instrument_id: str) -> Dict[str, Any]
         candidates = [row for row in contexts if int(row.get("horizon") or 0) == horizon]
         if candidates:
             result[str(horizon)] = max(
-                candidates, key=lambda row: str(row.get("asOf") or ""))
+                candidates, key=lambda row: (
+                    row.get("methodVersion") == METHOD_VERSION,
+                    str(row.get("asOf") or "")))
     return result
 
 

@@ -412,14 +412,17 @@ def agent_reliability_summary(missions: List[Dict[str, Any]],
 
 
 def build_identity(*, app_version: str, backend_sha: str,
-                   frontend_version: str) -> Dict[str, Any]:
-    """版同一性 — 空値は捏造せずincomplete。"""
+                   frontend_version: str,
+                   frontend_sha: str = "") -> Dict[str, Any]:
+    """Frontend/backendを独立表示。空SHAを別planeから推測しない。"""
     incomplete = not app_version or not backend_sha
     mismatch = (bool(app_version) and bool(frontend_version)
                 and app_version != frontend_version)
     return {"appVersion": app_version or "unknown",
+            "backendVersion": app_version or "unknown",
             "backendBuildSha": backend_sha or "unknown",
             "frontendVersion": frontend_version or "unknown",
+            "frontendBuildSha": frontend_sha or "unknown",
             "consistency": ("mismatch" if mismatch else
                             "incomplete" if incomplete else "consistent"),
             "ownerReadableJa": ("版不一致 — 要確認" if mismatch else

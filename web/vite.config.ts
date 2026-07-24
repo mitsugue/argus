@@ -11,6 +11,7 @@ const base = process.env.DEPLOY_BASE ?? '/';
 const packageJsonUrl = new URL('./package.json', import.meta.url);
 const readVersion = (): string =>
   (JSON.parse(readFileSync(packageJsonUrl, 'utf-8')) as { version: string }).version;
+const frontendBuildSha = process.env.VITE_ARGUS_BUILD_SHA ?? 'local';
 
 // `__APP_VERSION__` resolves to a runtime global that this plugin injects fresh
 // into index.html on EVERY load (dev-serve per reload, and once at build time).
@@ -25,7 +26,10 @@ const argusVersionInjector = {
     return [{
       tag: 'script',
       injectTo: 'head-prepend' as const,
-      children: `globalThis.__ARGUS_VERSION__=${JSON.stringify(readVersion())};`,
+      children: [
+        `globalThis.__ARGUS_VERSION__=${JSON.stringify(readVersion())};`,
+        `globalThis.__ARGUS_BUILD_SHA__=${JSON.stringify(frontendBuildSha)};`,
+      ].join(''),
     }];
   },
 };
@@ -34,6 +38,7 @@ export default defineConfig({
   base,
   define: {
     __APP_VERSION__: 'globalThis.__ARGUS_VERSION__',
+    __FRONTEND_BUILD_SHA__: 'globalThis.__ARGUS_BUILD_SHA__',
   },
   plugins: [
     argusVersionInjector,
@@ -72,6 +77,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
         navigateFallback: `${base}index.html`,
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         runtimeCaching: [

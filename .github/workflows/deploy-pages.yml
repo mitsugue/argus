@@ -48,6 +48,7 @@ jobs:
       - name: Build
         env:
           DEPLOY_BASE: /argus/
+          VITE_ARGUS_BUILD_SHA: ${{ github.sha }}
           # Wire the ARGUS UI to the live Render backend so the Rates
           # Snapshot / status pill render `live` instead of `mock`. This
           # is also set in web/.env.production (auto-loaded by Vite); the
@@ -64,8 +65,50 @@ jobs:
         with:
           path: web/dist
 
-  deploy:
+  seed-warm-profile:
     needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: Install pinned public-acceptance browser
+        working-directory: web
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Seed pre-deploy PWA profile from current public release
+        working-directory: web
+        env:
+          ARGUS_ACCEPTANCE_MODE: seed
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_WARM_PROFILE_DIR: ../artifacts/market-warm-profile
+        run: node scripts/public-market-acceptance.mjs
+      - name: Remove browser-private stores before transfer
+        run: |
+          find artifacts/market-warm-profile -type d \
+            \( -name 'Local Storage' -o -name 'Session Storage' \
+               -o -name 'IndexedDB' \) \
+            -prune -exec rm -rf '{}' +
+          find artifacts/market-warm-profile -type f \
+            \( -name 'Cookies' -o -name 'Cookies-journal' \
+               -o -name 'History' -o -name 'History-journal' \) \
+            -delete
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-warm-profile-${{ github.sha }}
+          path: artifacts/market-warm-profile
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy:
+    needs: [build, seed-warm-profile]
     runs-on: ubuntu-latest
     # Pages publish flakes with an instant "Deployment cancelled" (or a 5-min hang)
     # when GitHub's backend races deployments for the same commit. Observed fix
@@ -103,3 +146,45 @@ jobs:
         uses: actions/deploy-pages@v4    # final attempt — a real failure should fail the job
         with:
           timeout: 300000
+
+  public-acceptance:
+    needs: [deploy, seed-warm-profile]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: Install pinned public-acceptance browser
+        working-directory: web
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v5
+        with:
+          name: market-warm-profile-${{ github.sha }}
+          path: artifacts/warm-seed
+      - name: Verify deployed public URL and PWA upgrade
+        working-directory: web
+        env:
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_EXPECTED_VERSION: 13.2.2
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
+          ARGUS_EXPECTED_BACKEND_VERSION: 13.2.2
+          ARGUS_EXPECTED_BACKEND_SHA: ${{ github.sha }}
+          ARGUS_WARM_PROFILE_DIR: ../artifacts/warm-seed
+          ARGUS_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance
+        run: node scripts/public-market-acceptance.mjs
+      - name: Publish reproducible public acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-public-acceptance-${{ github.sha }}
+          path: artifacts/market-public-acceptance
+          if-no-files-found: error
+          retention-days: 30

@@ -36,8 +36,19 @@ const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   guide:     Guide as React.FC<RouteProps>,
 };
 
+const HASH_ROUTES: Partial<Record<string, RouteKey>> = {
+  '#today': 'command',
+  '#assets': 'watchlist',
+  '#positions': 'core',
+  '#market': 'regime',
+  '#backup': 'backup',
+  '#quality': 'quality',
+  '#guide': 'guide',
+};
+
 const App: React.FC = () => {
-  const [route, setRoute] = useState<RouteKey>('command');
+  const [route, setRoute] = useState<RouteKey>(
+    () => HASH_ROUTES[window.location.hash] ?? 'command');
   // V12.2.12: Asset Desk deep-link intent — Today(OWNER CRITICAL/Your Exposure/
   // Action Queue/例外サマリー)から「この銘柄を開く」。nonceで同一銘柄の再クリック
   // も再スクロールされる。localStorageには保存しない(一時的なUI意図のみ)。
@@ -48,7 +59,11 @@ const App: React.FC = () => {
   const [isReview, setIsReview] = useState(() => window.location.hash === '#review');
 
   useEffect(() => {
-    const onHash = () => setIsReview(window.location.hash === '#review');
+    const onHash = () => {
+      setIsReview(window.location.hash === '#review');
+      const target = HASH_ROUTES[window.location.hash];
+      if (target) setRoute(target);
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -134,6 +149,9 @@ const App: React.FC = () => {
 
   const handleNavSelect = (key: RouteKey) => {
     exitReview();
+    const hash = Object.entries(HASH_ROUTES)
+      .find(([, value]) => value === key)?.[0] ?? '';
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
     setRoute(key);
   };
 

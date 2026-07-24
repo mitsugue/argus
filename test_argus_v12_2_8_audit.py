@@ -12,7 +12,9 @@ def test_app_version_is_semantic_not_sha():
         assert d.get("appVersion") == v             # SHAではない
         b = d.get("buildIdentity") or {}
         assert b["appVersion"] == v
-        assert b["frontendVersion"] == v
+        assert b["backendVersion"] == v
+        assert b["frontendVersion"] == scanner._frontend_semantic_version()
+        assert "frontendBuildSha" in b
         # backendBuildShaはSHA枠(ローカルでは未設定=unknownでよい)
         assert b["appVersion"] != b["backendBuildSha"] or             b["backendBuildSha"] == "unknown"
 

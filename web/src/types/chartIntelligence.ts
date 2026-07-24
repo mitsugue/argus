@@ -143,6 +143,11 @@ export interface MarketReplayContext {
   reactionVersion: string; contextId: string; instrumentId: string; symbol: string;
   market: string; horizon: number; asOf: string; datasetHash: string;
   outcomeHash: string; calibrationHash: string; automaticAiCalls: number;
+  derivedMetricMigration?: {
+    oldMethodVersion: string; newMethodVersion: string;
+    metricDefinition: { mae: string; mfe: string; direction: string; unit: string };
+    recomputedAt: string; sourceDatasetHash: string; rawObservationsModified: false;
+  };
   historyCoverage: { start: string | null; end: string | null; count: number };
   currentFeatures: Record<string, number>;
   currentRegime: { trend: string; volatility: string };
