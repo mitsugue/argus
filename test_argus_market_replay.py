@@ -76,6 +76,10 @@ class MarketReplayTests(unittest.TestCase):
         changed[-1]["close"] += 0.01
         self.assertNotEqual(replay.dataset_hash(self.rows),
                             replay.dataset_hash(changed))
+        changed_low = copy.deepcopy(self.rows)
+        changed_low[-1]["low"] -= 0.01
+        self.assertNotEqual(replay.dataset_hash(self.rows),
+                            replay.dataset_hash(changed_low))
 
     def test_no_future_leakage_and_all_outcomes(self):
         self.assertTrue(self.context["computation"]["noFutureLeakage"])
@@ -85,6 +89,12 @@ class MarketReplayTests(unittest.TestCase):
         self.assertEqual({"1", "5", "20", "mfe", "mae", "reactionClass",
                           "reactionDelayDays"}, set(episode["outcomes"]))
         self.assertLess(episode["date"], self.context["historyCoverage"]["end"])
+        migration = self.context["derivedMetricMigration"]
+        self.assertEqual(replay.OLD_METHOD_VERSION, migration["oldMethodVersion"])
+        self.assertEqual(replay.METHOD_VERSION, migration["newMethodVersion"])
+        self.assertEqual(self.context["datasetHash"],
+                         migration["sourceDatasetHash"])
+        self.assertFalse(migration["rawObservationsModified"])
 
     def test_reaction_classification_boundaries(self):
         self.assertEqual(("immediate_up", 1), replay._classify_reaction([1, 1.1], .5))
@@ -101,6 +111,10 @@ class MarketReplayTests(unittest.TestCase):
             distribution = self.context["outcomeDistributions"][key]
             self.assertIn("median", distribution)
             self.assertEqual(10, len(distribution["histogram"]))
+        mae = self.context["outcomeDistributions"]["mae"]
+        self.assertLessEqual(mae["q90"], 0)
+        self.assertLessEqual(mae["median"], 0)
+        self.assertTrue(all(row["to"] <= 0 for row in mae["histogram"]))
 
     def test_extremes_respect_publication_time(self):
         extremes = self.context["extremes"]
@@ -144,6 +158,83 @@ class MarketReplayTests(unittest.TestCase):
         self.assertEqual(0, self.context["automaticAiCalls"])
         self.assertEqual("deterministic_background_cache",
                          self.context["computation"]["mode"])
+
+    def test_standard_mae_all_up_is_zero_and_mfe_positive(self):
+        rows = [{"date": "2026-01-01", "open": 100, "high": 100,
+                 "low": 100, "close": 100, "volume": 1}]
+        for day in range(1, 21):
+            rows.append({"date": f"2026-01-{day + 1:02d}", "open": 100 + day,
+                         "high": 101 + day, "low": 100.5 + day,
+                         "close": 101 + day, "volume": 1})
+        outcome = replay._outcome(rows, 0, 20)
+        self.assertEqual(0.0, outcome["mae"])
+        self.assertGreater(outcome["mfe"], 0)
+
+    def test_standard_mae_records_worst_drop_then_recovery(self):
+        rows = [{"date": "2026-01-01", "open": 100, "high": 100,
+                 "low": 100, "close": 100, "volume": 1}]
+        for day in range(1, 21):
+            low = 97 if day == 3 else 100 + day * .1
+            rows.append({"date": f"2026-01-{day + 1:02d}", "open": 100,
+                         "high": 101 + day * .1, "low": low,
+                         "close": 100 + day * .2, "volume": 1})
+        self.assertEqual(-3.0, replay._outcome(rows, 0, 20)["mae"])
+
+    def test_standard_mae_first_day_drop_is_minimum(self):
+        rows = [{"date": "2026-01-01", "open": 100, "high": 100,
+                 "low": 100, "close": 100, "volume": 1}]
+        for day in range(1, 21):
+            rows.append({"date": f"2026-01-{day + 1:02d}", "open": 100,
+                         "high": 101, "low": 94 if day == 1 else 98,
+                         "close": 100, "volume": 1})
+        self.assertEqual(-6.0, replay._outcome(rows, 0, 20)["mae"])
+
+    def test_missing_low_and_zero_start_are_not_scored(self):
+        rows = [{"date": "2026-01-01", "open": 100, "high": 100,
+                 "low": 100, "close": 100, "volume": 1}]
+        for day in range(1, 21):
+            rows.append({"date": f"2026-01-{day + 1:02d}", "open": 100,
+                         "high": 101, "low": 99, "close": 100, "volume": 1})
+        rows[3]["low"] = None
+        self.assertIsNone(replay._outcome(rows, 0, 5)["mae"])
+        zero = copy.deepcopy(rows)
+        zero[0]["close"] = 0
+        outcome = replay._outcome(zero, 0, 5)
+        self.assertIsNone(outcome["mae"])
+        self.assertIsNone(outcome["mfe"])
+        self.assertIsNone(outcome["1"])
+
+    def test_excursions_are_independent_by_horizon(self):
+        rows = [{"date": "2026-01-01", "open": 100, "high": 100,
+                 "low": 100, "close": 100, "volume": 1}]
+        for day in range(1, 21):
+            low = 99 if day == 1 else 97 if day == 4 else 90 if day == 10 else 100
+            high = 102 if day <= 5 else 108 if day == 10 else 101
+            rows.append({"date": f"2026-01-{day + 1:02d}", "open": 100,
+                         "high": high, "low": low, "close": 100, "volume": 1})
+        self.assertEqual(-1.0, replay._outcome(rows, 0, 1)["mae"])
+        self.assertEqual(-3.0, replay._outcome(rows, 0, 5)["mae"])
+        self.assertEqual(-10.0, replay._outcome(rows, 0, 20)["mae"])
+        self.assertEqual(2.0, replay._outcome(rows, 0, 1)["mfe"])
+        self.assertEqual(2.0, replay._outcome(rows, 0, 5)["mfe"])
+        self.assertEqual(8.0, replay._outcome(rows, 0, 20)["mfe"])
+
+    def test_legacy_context_is_preserved_but_current_prefers_new_method(self):
+        old = copy.deepcopy(self.context)
+        old["methodVersion"] = replay.OLD_METHOD_VERSION
+        old["contextId"] = "legacy-v1-context"
+        old["asOf"] = "2025-02-21T00:00:00Z"
+        old.pop("derivedMetricMigration", None)
+        state = replay.merge_context(replay.empty_state(), old,
+                                     "2025-02-20T00:00:00Z")
+        state = replay.merge_context(state, self.context,
+                                     "2025-02-20T00:01:00Z")
+        self.assertEqual(2, len(state["contexts"]))
+        latest = replay.latest_contexts(state, self.context["instrumentId"])
+        self.assertEqual(replay.METHOD_VERSION,
+                         latest["5"]["methodVersion"])
+        self.assertIn("legacy-v1-context",
+                      {row["contextId"] for row in state["contextHistory"]})
 
 
 if __name__ == "__main__":

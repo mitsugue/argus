@@ -8,6 +8,7 @@ const route = fs.readFileSync(new URL('../src/routes/MarketRegime.tsx', import.m
 const chartHook = fs.readFileSync(new URL('../src/hooks/useChartIntelligence.ts', import.meta.url), 'utf8');
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
 const theme = fs.readFileSync(new URL('../src/styles/theme.css', import.meta.url), 'utf8');
+const types = fs.readFileSync(new URL('../src/types/chartIntelligence.ts', import.meta.url), 'utf8');
 
 for (const tab of ['OVERVIEW', 'REPLAY', 'LEDGER']) assert.match(replay, new RegExp(`'${tab}'`));
 for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) assert.match(replay, new RegExp(symbol));
@@ -36,6 +37,9 @@ assert.match(replay, /layoutReplayPriceLabels/);
 assert.match(replay, /slice\(-20\)/);
 assert.match(replay, /slice\(-10\)/);
 assert.match(replay, /AI POST 0/);
+assert.match(replay, /label === 'MAE'/,
+  'standard MAE remains explicitly labelled in the current UI');
+assert.match(types, /derivedMetricMigration/);
 
 for (const token of [
   '--chart-bg', '--chart-grid', '--chart-axis', '--chart-text-primary',

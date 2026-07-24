@@ -26,11 +26,13 @@ ROOT = pathlib.Path(__file__).parent
 class MissionWindowTests(unittest.TestCase):
     def test_version_contract_is_consistent_and_retains_12_3_1_history(self):
         package = json.loads((ROOT / "web/package.json").read_text())
+        backend = json.loads((ROOT / "backend-version.json").read_text())
         lock = json.loads((ROOT / "web/package-lock.json").read_text())
         guide = (ROOT / "web/src/routes/Guide.tsx").read_text()
         self.assertGreaterEqual(tuple(int(x) for x in package["version"].split(".")),
                                 (12, 3, 1))
-        self.assertEqual(scanner._semantic_app_version(), package["version"])
+        self.assertEqual(scanner._semantic_app_version(), backend["version"])
+        self.assertEqual(scanner._frontend_semantic_version(), package["version"])
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertIn("['v12.3.1'", guide)

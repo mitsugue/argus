@@ -7,6 +7,8 @@ cd "$(dirname "$0")/.."
 mkdir -p artifacts
 SHA=$(git rev-parse HEAD)
 SHORT=$(git rev-parse --short HEAD)
+FRONTEND_VERSION=$(python3 -c "import json;print(json.load(open('web/package.json'))['version'])")
+BACKEND_VERSION=$(python3 -c "import json;print(json.load(open('backend-version.json'))['version'])")
 # クリーンツリー判定を最初に行う(artifacts/はgitignoreで除外される)
 DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
 PY=fail; TS=fail; BUILD=fail
@@ -25,7 +27,9 @@ REASONS=""
 [ "$BUILD" = pass ] || REASONS="$REASONS build_failed"
 [ "$DIRTY" = "0" ]  || REASONS="$REASONS dirty_tree($DIRTY files)"
 cat > artifacts/release_manifest.json <<EOF
-{"version": "$(python3 -c "import json;print(json.load(open('web/package.json'))['version'])")",
+{"version": "$FRONTEND_VERSION",
+ "frontendVersion": "$FRONTEND_VERSION", "frontendBuildSha": "$SHA",
+ "backendVersion": "$BACKEND_VERSION", "backendBuildShaCandidate": "$SHA",
  "commitSha": "$SHA", "commitShaShort": "$SHORT", "dirtyFiles": $DIRTY,
  "testResult": "$PY", "testCount": "${TESTCOUNT:-0}",
  "typecheckResult": "$TS", "buildResult": "$BUILD",
