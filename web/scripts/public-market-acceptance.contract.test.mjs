@@ -59,6 +59,18 @@ assert.doesNotMatch(script, /\.market-replay'\)\.screenshot\(/,
   'representative screenshots must remain viewport-bounded');
 assert.doesNotMatch(script, /localStorage\./,
   'acceptance artifact must not read device-local owner data');
+const warmSeedFlow = script.slice(
+  script.indexOf("await warmSeedPage.getByRole('button', { name: 'SPY'"),
+  script.indexOf('const warmSeedSnapshotId'),
+);
+assert.ok(
+  warmSeedFlow.indexOf("name: '3M'") < warmSeedFlow.indexOf("name: 'REPLAY'"),
+  'OVERVIEW-only range controls must be used before switching to REPLAY',
+);
+assert.ok(
+  warmSeedFlow.indexOf('const overlays') < warmSeedFlow.indexOf("name: 'REPLAY'"),
+  'OVERVIEW-only overlay controls must be used before switching to REPLAY',
+);
 assert.match(workflow, /market-public-acceptance-/);
 assert.match(workflow, /seed-warm-profile:[\s\S]+needs: build/);
 assert.match(workflow,
