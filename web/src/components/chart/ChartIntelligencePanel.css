@@ -1,4 +1,8 @@
 .ci-panel { min-width: 0; scroll-margin-top: 76px; }
+.ci-panel .section-head__count{display:inline-flex;align-items:center;gap:5px}
+.ci-snapshot-skeleton{height:430px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px}
+.ci-snapshot-skeleton small{color:var(--text-faint);font-size:10px}
 .ci-toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 12px; }
 .ci-toolbar > div { display: flex; gap: 4px; }
 .ci-toolbar button { border: 1px solid var(--line); color: var(--text-sub); background: transparent; border-radius: 5px; padding: 3px 8px; cursor: pointer; }

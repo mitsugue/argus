@@ -45,6 +45,17 @@ render.yaml           Render Blueprint (deploys from main, autoDeploy).
 DEPLOY_BACKEND.md     Backend deploy + env-var guide.
 ```
 
+## Verified chart startup (v13.3.0)
+
+Market Context restores the last schema/hash-verified view from a bounded
+IndexedDB store before network completion, then revalidates it with ETag while
+keeping the chart mounted. The existing authoritative 30-minute mission tick
+precomputes changed 1321/1306/SPY/QQQ chart, probability, Replay, and Ledger
+views and publishes them atomically into `argus-durable-v3`; the verified GET
+never runs that generator. Static PWA assets, UI preferences, device-local
+drawings, browser snapshots, and backend snapshots remain separate. Page load
+does not call an AI API or upload holdings.
+
 ## Action vocabulary
 
 Tactical (individual stocks, satellites): `EXIT` · `TRIM` · `WAIT` ·

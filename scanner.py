@@ -105,8 +105,9 @@ import argus_chart_intelligence     # v12.4.0: deterministic OHLCV/turning-point
 import argus_today_intelligence     # v13.1.1: replay calibration/daily short/failed-rally
 import argus_market_replay          # v13.2.0: deterministic Market Context replay/extremes
 import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
+import argus_verified_snapshot      # v13.3.0: atomic precomputed public view snapshots
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 from collections import deque
 import hashlib
 import hmac
@@ -143,6 +144,10 @@ _TODAY_INTELLIGENCE_REMOTE = {"lastVerifiedReadBackAt": None,
 _MARKET_REPLAY = argus_market_replay.empty_state()
 _MARKET_REPLAY_REMOTE = {"lastVerifiedReadBackAt": None,
                          "verificationStatus": "not_verified"}
+_VERIFIED_VIEW_SNAPSHOTS = argus_verified_snapshot.empty_store()
+_VERIFIED_VIEW_SNAPSHOT_REMOTE = {"lastVerifiedReadBackAt": None,
+                                  "verificationStatus": "not_verified"}
+_VERIFIED_VIEW_SINGLEFLIGHT = argus_verified_snapshot.SingleFlight()
 
 
 def _cost_policy_authorize(provider, purpose, *, automatic=True,
@@ -514,6 +519,13 @@ if CORS is not None:
 
 @app.after_request
 def add_no_cache(response):
+    if request.path == "/api/argus/chart-intelligence" and \
+            request.args.get("snapshot") == "verified":
+        # This endpoint sets a private must-revalidate policy plus ETag.  Do not
+        # let the global legacy no-store guard erase that explicit contract.
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -15588,6 +15600,10 @@ def _osint_persist():
                 "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
                 "marketReplay": argus_market_replay.normalize_state(_MARKET_REPLAY),
                 "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
+                "verifiedViewSnapshots": argus_verified_snapshot.normalize_store(
+                    _VERIFIED_VIEW_SNAPSHOTS),
+                "verifiedViewSnapshotsStateHash": argus_verified_snapshot.state_hash(
+                    _VERIFIED_VIEW_SNAPSHOTS),
                 "soakLastPersistAt": _ai_now_iso()}
         tmp = f"{_OSINT_PERSIST_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -15862,6 +15878,16 @@ def _osint_restore_once():
             _restored_mr = argus_market_replay.merge_state(_MARKET_REPLAY, _mr)
             _MARKET_REPLAY.clear()
             _MARKET_REPLAY.update(_restored_mr)
+        _vvs = blob.get("verifiedViewSnapshots")
+        if isinstance(_vvs, dict):
+            # Restore is monotonic per pointer: a remote/ephemeral older view
+            # can add a missing key but cannot roll back a newer local view.
+            for _snapshot in argus_verified_snapshot.normalize_store(
+                    _vvs).get("current", {}).values():
+                _restored_vvs, _ = argus_verified_snapshot.publish_atomic(
+                    _VERIFIED_VIEW_SNAPSHOTS, _snapshot, now_iso=_ai_now_iso())
+                _VERIFIED_VIEW_SNAPSHOTS.clear()
+                _VERIFIED_VIEW_SNAPSHOTS.update(_restored_vvs)
         _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
         for h in _jr["events"]:
             argus_state_journal.append(_OPS_JOURNAL, h)
@@ -17148,11 +17174,32 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _MARKET_REPLAY_REMOTE["verificationStatus"] = "hash_mismatch"
     else:
         _MARKET_REPLAY_REMOTE["verificationStatus"] = "not_present"
+    remote_views = (blob.get("verifiedViewSnapshots")
+                    if isinstance(blob, dict) else None)
+    remote_views_hash = (blob.get("verifiedViewSnapshotsStateHash")
+                         if isinstance(blob, dict) else None)
+    if isinstance(remote_views, dict) and \
+            argus_verified_snapshot.read_back_verified(
+                _VERIFIED_VIEW_SNAPSHOTS, remote_views):
+        _VERIFIED_VIEW_SNAPSHOT_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif remote_views_hash and remote_views_hash == \
+            argus_verified_snapshot.state_hash(_VERIFIED_VIEW_SNAPSHOTS):
+        _VERIFIED_VIEW_SNAPSHOT_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_views, dict) or remote_views_hash:
+        _VERIFIED_VIEW_SNAPSHOT_REMOTE["verificationStatus"] = "hash_mismatch"
+    else:
+        _VERIFIED_VIEW_SNAPSHOT_REMOTE["verificationStatus"] = "not_present"
     rec["outcomeReadBack"] = outcome_rec
     rec["marketLedgerReadBack"] = dict(_MARKET_LEDGER_REMOTE)
     rec["chartIntelligenceReadBack"] = dict(_CHART_INTELLIGENCE_REMOTE)
     rec["todayIntelligenceReadBack"] = dict(_TODAY_INTELLIGENCE_REMOTE)
     rec["marketReplayReadBack"] = dict(_MARKET_REPLAY_REMOTE)
+    rec["verifiedViewSnapshotsReadBack"] = dict(
+        _VERIFIED_VIEW_SNAPSHOT_REMOTE)
     return rec
 
 
@@ -17449,24 +17496,30 @@ def api_argus_admin_missions_tick():
                                     "shortSellingHistory") or [])}
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
     _replay_before_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
+    _view_before_hash = argus_verified_snapshot.state_hash(
+        _VERIFIED_VIEW_SNAPSHOTS)
     try:
         _chart_reports = []
+        _view_publications = []
         for _market_symbol, _market_code in (
                 ("1321", "JP"), ("1306", "JP"), ("SPY", "US"), ("QQQ", "US")):
-            _chart_report = _chart_public_report(
-                _market_symbol, _market_code, "daily",
-                market_scope=_market_symbol == "1321", cached_only=False,
-                precompute_replay=True)
+            _chart_report, _view_publication = \
+                _precompute_verified_market_view(
+                    _market_symbol, _market_code,
+                    market_scope=_market_symbol == "1321")
             _chart_reports.append(_chart_report)
-            _MARKET_PUBLIC_REPORT_CACHE[
-                ("market", _market_symbol, "daily")] = copy.deepcopy(
-                    _chart_report)
+            _view_publications.append({
+                "instrument": _market_symbol, **_view_publication})
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
+        _view_after_hash = argus_verified_snapshot.state_hash(
+            _VERIFIED_VIEW_SNAPSHOTS)
         _chart_changed = _chart_before_hash != _chart_after_hash
         _replay_changed = _replay_before_hash != _replay_after_hash
+        _view_changed = _view_before_hash != _view_after_hash
         chart_tick = {
             "changed": _chart_changed, "replayChanged": _replay_changed,
+            "verifiedViewsChanged": _view_changed,
             # Preserve the pre-v13.2 primary report fields for operations
             # consumers while exposing all four cache results additively.
             "reportId": _chart_reports[0].get("reportId"),
@@ -17475,12 +17528,15 @@ def api_argus_admin_missions_tick():
             "statuses": [row.get("status") for row in _chart_reports],
             "stateHash": _chart_after_hash,
             "replayStateHash": _replay_after_hash,
+            "verifiedViewsStateHash": _view_after_hash,
+            "viewPublications": _view_publications,
         }
-        if _chart_changed or _replay_changed:
+        if _chart_changed or _replay_changed or _view_changed:
             _journal("market_context_replay_updated", "market_replay",
                      _replay_after_hash,
                      {"chartStateHash": _chart_after_hash,
                       "replayStateHash": _replay_after_hash,
+                      "verifiedViewsStateHash": _view_after_hash,
                       "methodVersion": argus_market_replay.METHOD_VERSION,
                       "instrumentCount": 4})
     except Exception as _chart_exc:
@@ -19562,6 +19618,10 @@ def api_argus_osint_memory_snapshot():
                     "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
                     "marketReplay": argus_market_replay.normalize_state(_MARKET_REPLAY),
                     "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
+                    "verifiedViewSnapshots": argus_verified_snapshot.normalize_store(
+                        _VERIFIED_VIEW_SNAPSHOTS),
+                    "verifiedViewSnapshotsStateHash": argus_verified_snapshot.state_hash(
+                        _VERIFIED_VIEW_SNAPSHOTS),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
@@ -19715,6 +19775,115 @@ def _chart_history_cached(symbol, market):
 _JP_DAILY_SHORT_CACHE = {"rows": None, "expires": 0.0,
                          "status": "not_loaded", "errorClass": None}
 _MARKET_PUBLIC_REPORT_CACHE = {}
+_VERIFIED_VIEW_METHOD_VERSION = (
+    f"{argus_verified_snapshot.METHOD_VERSION}:"
+    f"{argus_chart_intelligence.METHOD_VERSION}:"
+    f"{argus_market_replay.METHOD_VERSION}"
+)
+
+
+def _verified_market_snapshot(symbol, horizon):
+    key = argus_verified_snapshot.snapshot_key(
+        "market-chart", symbol, f"{int(horizon)}D")
+    snapshot = (_VERIFIED_VIEW_SNAPSHOTS.get("current") or {}).get(key)
+    ok, _ = argus_verified_snapshot.verify_snapshot(
+        snapshot, expected_kind="market-chart",
+        expected_instrument=symbol, expected_horizon=f"{int(horizon)}D",
+        expected_method_version=_VERIFIED_VIEW_METHOD_VERSION)
+    return copy.deepcopy(snapshot) if ok else None
+
+
+def _publish_verified_market_views(report, symbol, now_iso):
+    """Publish all horizon pointers only after each complete report validates."""
+    normalized = argus_market_intelligence.normalize_public_names(report)
+    replay = normalized.get("marketReplay") or {}
+    contexts = replay.get("contexts") or {}
+    published = []
+    for horizon in argus_market_replay.HORIZONS:
+        context = contexts.get(str(horizon))
+        if not isinstance(context, dict):
+            raise ValueError(f"replay_context_missing_{horizon}")
+        status = str(normalized.get("status") or "partial")
+        indicator_status = str(
+            (normalized.get("indicators") or {}).get("status") or "missing")
+        quality = ("live" if status in {"complete", "live", "ok"}
+                   and indicator_status not in {"missing", "error", "mock"}
+                   else "partial")
+        candidate = argus_verified_snapshot.build_snapshot(
+            payload=normalized, kind="market-chart", instrument=symbol,
+            horizon=f"{horizon}D",
+            dataset_hash=str(context.get("datasetHash") or ""),
+            method_version=_VERIFIED_VIEW_METHOD_VERSION,
+            as_of=str(context.get("asOf") or normalized.get("asOf") or
+                      normalized.get("periodEnd") or ""),
+            generated_at=now_iso, quality=quality,
+            source_status={
+                "chart": status,
+                "indicators": indicator_status,
+                "replay": str(replay.get("cacheStatus") or "updated"),
+                "durableReadBack": str(
+                    _VERIFIED_VIEW_SNAPSHOT_REMOTE.get(
+                        "verificationStatus") or "not_verified"),
+            })
+        next_store, publication = argus_verified_snapshot.publish_atomic(
+            _VERIFIED_VIEW_SNAPSHOTS, candidate, now_iso=now_iso)
+        if publication not in {"published", "unchanged"}:
+            raise ValueError(f"verified_snapshot_{publication}")
+        _VERIFIED_VIEW_SNAPSHOTS.clear()
+        _VERIFIED_VIEW_SNAPSHOTS.update(next_store)
+        published.append({
+            "horizon": horizon, "snapshotId": candidate["snapshotId"],
+            "publication": publication,
+        })
+    _MARKET_PUBLIC_REPORT_CACHE[
+        ("market", symbol, "daily")] = copy.deepcopy(normalized)
+    return published
+
+
+def _precompute_verified_market_view(symbol, market, *, market_scope=False):
+    """Natural-tick producer; unchanged verified datasets never re-run analysis."""
+    daily_rows = _chart_history(symbol, market)
+    dataset_hash = argus_market_replay.dataset_hash(daily_rows)
+    if not daily_rows or not dataset_hash:
+        raise ValueError("price_history_unavailable")
+    needs = [
+        horizon for horizon in argus_market_replay.HORIZONS
+        if argus_verified_snapshot.needs_generation(
+            _VERIFIED_VIEW_SNAPSHOTS, kind="market-chart",
+            instrument=symbol, horizon=f"{horizon}D",
+            dataset_hash=dataset_hash,
+            method_version=_VERIFIED_VIEW_METHOD_VERSION)
+    ]
+    if not needs:
+        existing = _verified_market_snapshot(symbol, 5)
+        if not existing:
+            raise ValueError("verified_snapshot_pointer_missing")
+        _MARKET_PUBLIC_REPORT_CACHE[
+            ("market", symbol, "daily")] = copy.deepcopy(existing["payload"])
+        return existing["payload"], {
+            "status": "unchanged", "generated": False,
+            "datasetHash": dataset_hash, "horizons": [],
+        }
+
+    flight_key = (
+        f"market-chart:{symbol}:{dataset_hash}:"
+        f"{_VERIFIED_VIEW_METHOD_VERSION}"
+    )
+
+    def _produce():
+        report = _chart_public_report(
+            symbol, market, "daily", market_scope=market_scope,
+            cached_only=False, precompute_replay=True,
+            daily_rows_override=daily_rows)
+        published = _publish_verified_market_views(
+            report, symbol, _ai_now_iso())
+        return report, published
+
+    report, published = _VERIFIED_VIEW_SINGLEFLIGHT.run(flight_key, _produce)
+    return report, {
+        "status": "published", "generated": True,
+        "datasetHash": dataset_hash, "horizons": published,
+    }
 
 
 def _jp_daily_short_history(cached_only=False):
@@ -19765,10 +19934,13 @@ def _jp_daily_short_history(cached_only=False):
 
 
 def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
-                         cached_only=False, precompute_replay=False):
+                         cached_only=False, precompute_replay=False,
+                         daily_rows_override=None):
     now_iso = _ai_now_iso()
     history = _chart_history_cached if cached_only else _chart_history
-    daily_rows = history(symbol, market)
+    daily_rows = (list(daily_rows_override)
+                  if isinstance(daily_rows_override, list)
+                  else history(symbol, market))
     if cached_only and not daily_rows:
         return {
             "reportId": None,
@@ -20072,6 +20244,42 @@ def api_argus_chart_intelligence():
         if symbol not in {"1321", "1306", "SPY", "QQQ"}:
             return jsonify({"error": "unsupported_market_instrument"}), 400
         market = "JP" if symbol in {"1321", "1306"} else "US"
+        horizon = (request.args.get("horizon") or "5D").strip().upper()
+        if horizon not in {"1D", "5D", "20D"}:
+            return jsonify({"error": "invalid_horizon"}), 400
+        verified = _verified_market_snapshot(
+            symbol, int(horizon.removesuffix("D")))
+        if request.args.get("snapshot") == "verified":
+            if not verified:
+                response = jsonify({
+                    "status": "not_ready", "reason": "verified_snapshot_missing",
+                    "instrument": symbol, "horizon": horizon,
+                    "automaticAiCalls": 0,
+                })
+                response.status_code = 503
+                response.headers["Cache-Control"] = "private, no-store"
+                return response
+            etag = f'"{verified["snapshotId"]}"'
+            supplied = request.headers.get("If-None-Match", "")
+            if etag in [part.strip() for part in supplied.split(",")]:
+                response = make_response("", 304)
+            else:
+                response = jsonify(verified)
+            response.headers["ETag"] = etag
+            response.headers["Cache-Control"] = \
+                "private, max-age=0, must-revalidate"
+            response.headers["Vary"] = "If-None-Match"
+            try:
+                generated = datetime.fromisoformat(
+                    str(verified["generatedAt"]).replace(
+                        "Z", "+00:00")).astimezone(pytz.utc)
+                response.headers["Last-Modified"] = generated.strftime(
+                    "%a, %d %b %Y %H:%M:%S GMT")
+            except (TypeError, ValueError):
+                pass
+            response.headers["X-ARGUS-Snapshot-Id"] = verified["snapshotId"]
+            response.headers["X-ARGUS-Compute-Mode"] = "read-only"
+            return response
         # This provider-free GET boundary is backend-sensitive. Scheduled ticks
         # alone refresh the cache before public acceptance starts.
         # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
@@ -20079,13 +20287,19 @@ def api_argus_chart_intelligence():
         _public_cached = _MARKET_PUBLIC_REPORT_CACHE.get(_public_cache_key)
         _public_cache_hit = isinstance(_public_cached, dict)
         report = (copy.deepcopy(_public_cached) if _public_cache_hit
+                  else copy.deepcopy(verified["payload"])
+                  if verified and timeframe == "daily"
+                  # Backward-compatible raw route only. The v13.3 frontend
+                  # never calls this path: it requests snapshot=verified,
+                  # whose missing branch above is strict not_ready and cannot
+                  # invoke this deterministic legacy assembler.
                   else _chart_public_report(
-                      symbol, market, timeframe, market_scope=symbol == "1321",
-                      cached_only=True))
+                      symbol, market, timeframe,
+                      market_scope=symbol == "1321", cached_only=True))
         # The cached report records how the scheduler produced its replay
         # ("updated").  At this GET boundary the contract is instead whether
         # the immutable scheduled report was reused without recomputation.
-        if _public_cache_hit and isinstance(report.get("marketReplay"), dict):
+        if isinstance(report.get("marketReplay"), dict):
             report["marketReplay"]["cacheStatus"] = "hit"
         report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(symbol, symbol)
         if symbol == "1321":

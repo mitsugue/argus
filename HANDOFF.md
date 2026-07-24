@@ -1,5 +1,12 @@
 # ⚠️ このHANDOFFは旧版(v10.36.0時点)です — DEPRECATED
 
+> **v13.3.0運用追記:** Market Contextの1321/1306/SPY/QQQ ×
+> 1D/5D/20Dは、既存30分mission tickで`verifiedViewSnapshots`へ事前生成し、
+> `argus-durable-v3`／Remote Journalへ同乗する。公開frontendは
+> `snapshot=verified`のread-only GETとIndexedDB SWRを使用し、GETから生成しない。
+> 静的PWA cacheとmarket snapshotは分離済み。詳細契約は
+> `argus_verified_snapshot.py`と`web/src/lib/verifiedSnapshot.ts`を正本とする。
+
 > **v12.0.7時点の注意(2026-07-06):** このファイルはv10.36.0で凍結された歴史的資料です。
 > **現在の一次情報**: ①アプリ内Guideページ(CAPABILITIES/RECENT_UPDATES=リリース毎に自動更新)
 > ②bridge/README.md(OpenD/EC2運用・JP復帰・再起動ランブック) ③test_argus_v12_rc.py(恒久不変条件)

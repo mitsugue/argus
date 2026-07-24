@@ -62,8 +62,8 @@ class DeployScopeTests(unittest.TestCase):
     def test_release_versions_are_independent(self):
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
-        self.assertEqual("13.2.2", frontend)
-        self.assertEqual("13.2.2", backend)
+        self.assertEqual("13.3.0", frontend)
+        self.assertEqual("13.3.0", backend)
 
     def test_release_gate_enforces_render_skip_contract(self):
         workflow = (ROOT / ".github/workflows/release-gate.yml").read_text()

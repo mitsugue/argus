@@ -17,15 +17,17 @@ for (const tool of ['horizontal', 'trend', 'zone', 'arrow', 'text', 'select']) {
   assert.match(replay, new RegExp(`'${tool}'`));
 }
 assert.match(replay, /argus\.marketReplay\.drawings\.v1:/);
-assert.match(replay, /localStorage\.setItem\(key/);
+assert.match(replay, /market-replay-drawings-v2:/);
+assert.match(replay, /readDrawingState/);
+assert.match(replay, /writeDrawingState/);
 assert.doesNotMatch(replay, /fetch\s*\(/, 'component delegates only to GET hooks');
 assert.match(chartHook, /method: 'GET', cache: 'no-store'/);
 assert.doesNotMatch(chartHook, /method:\s*'POST'/);
-assert.match(chartHook, /dataUrl === url \? data : null/,
+assert.match(chartHook, /view\.key === expectedKey \? view\.snapshot : null/,
   'instrument switches must fail closed instead of relabeling stale data');
 assert.match(chartHook, /instrument_mismatch/);
 assert.match(chartHook, /instrumentMetadata\?\.symbol \?\? data\.symbol/);
-assert.match(vite, /chart-intelligence[\s\S]+handler: 'NetworkFirst'/,
+assert.match(vite, /chart-intelligence[\s\S]+handler: 'NetworkOnly'/,
   'Market chart API must not use the broad stale-while-revalidate cache');
 assert.match(today, /argus\.replayContext/);
 assert.match(today, /finalAction: view\.finalAction/);

@@ -3,6 +3,14 @@
 .mr-header{display:flex;justify-content:space-between;gap:20px;align-items:end;padding:6px 2px}
 .mr-header span,.mr-card-head span,.mr-header small{font-size:10px;letter-spacing:.08em;color:var(--text-faint)}
 .mr-header h2{font-size:21px;line-height:1.2;margin:3px 0}
+.mr-snapshot-status{display:flex;align-items:center;gap:7px;min-height:24px;margin-top:3px}
+.mr-snapshot-status>span{color:var(--text-sub);letter-spacing:.02em}
+.mr-snapshot-status.is-error_with_cache>span,.mr-snapshot-status.is-stale_fallback>span{color:var(--amber,#fbbf24)}
+.mr-snapshot-skeleton{height:clamp(500px,52vw,620px);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:9px;overflow:hidden;
+  background:linear-gradient(110deg,var(--surface),color-mix(in srgb,var(--surface) 88%,white 2%),var(--surface))}
+.mr-snapshot-skeleton small{font-size:10px;color:var(--text-faint)}
+.mr-skeleton-placeholder{display:block;width:24px;height:24px}
 .mr-decision{display:grid;grid-template-columns:auto auto;gap:0 10px;align-items:baseline;text-align:right}
 .mr-decision span{grid-column:1/-1}.mr-decision strong{font-size:27px}.mr-decision b{font-size:15px}
 .mr-decision.is-buy strong{color:var(--value-positive)}.mr-decision.is-wait strong{color:var(--amber,#fbbf24)}
@@ -90,7 +98,7 @@
   .mr-header h2{font-size:17px}.mr-decision strong{font-size:23px}
   .mr-selectors{overflow:hidden}.mr-selectors button{padding:6px 8px}.mr-tabs{top:50px}
   .mr-summary-row{grid-template-columns:1fr 1fr}.mr-direction{grid-column:1/-1;grid-row:2;justify-content:space-around}.mr-skill{justify-content:center}
-  .mr-chart-frame{height:390px}.mr-chart-toolbar{align-items:center}.mr-chart-toolbar button{font-size:9px;padding:4px}
+  .mr-chart-frame,.mr-snapshot-skeleton{height:390px}.mr-chart-toolbar{align-items:center}.mr-chart-toolbar button{font-size:9px;padding:4px}
   .mr-drawing-tools label{width:100%;margin-left:0}.mr-overview-grid,.mr-visual-grid{grid-template-columns:1fr}
   .mr-distributions,.mr-ledger-grid,.mr-us-ledger{grid-template-columns:repeat(2,1fr)}
   .mr-extreme-grid{grid-template-columns:repeat(2,1fr)}
@@ -99,7 +107,7 @@
 @media(max-width:420px){
   .market-replay{gap:9px}.mr-header{align-items:center}.mr-header small{display:block;max-width:210px}
   .mr-selectors{display:grid;grid-template-columns:1fr auto}.mr-selectors>div:first-child{display:grid;grid-template-columns:repeat(4,1fr)}
-  .mr-selectors button{padding:6px}.mr-chart-frame{height:360px}.mr-chart-card{padding:5px}
+  .mr-selectors button{padding:6px}.mr-chart-frame,.mr-snapshot-skeleton{height:360px}.mr-chart-card{padding:5px}
   .mr-distributions,.mr-ledger-grid,.mr-us-ledger{grid-template-columns:1fr}
   .mr-extreme-grid{grid-template-columns:1fr}
   .mr-analogs button{grid-template-columns:1fr 1fr}.mr-analogs em{text-align:left}
