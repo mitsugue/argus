@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import http.client
 import json
 import os
 import socket
@@ -115,20 +116,38 @@ def seed_snapshots(base_url: str, expected_sha: str) -> Dict[str, Any]:
     token = os.environ.get("ARGUS_ADMIN_TOKEN", "")
     if not token:
         raise GateFailure("ARGUS_ADMIN_TOKEN_missing")
-    status, _, result = _request(
-        f"{base_url}/api/argus/admin/missions/tick",
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-ARGUS-ADMIN-TOKEN": token,
-        },
-        body={
-            "triggerSource": "manual",
-            "runId": f"verified-snapshot-release-{expected_sha[:12]}",
-            "expectedBuildSha": expected_sha,
-        },
-        timeout=360,
-    )
+    try:
+        status, _, result = _request(
+            f"{base_url}/api/argus/admin/missions/tick",
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-ARGUS-ADMIN-TOKEN": token,
+            },
+            body={
+                "triggerSource": "manual",
+                "runId": f"verified-snapshot-release-{expected_sha[:12]}",
+                "expectedBuildSha": expected_sha,
+            },
+            timeout=360,
+        )
+    except http.client.RemoteDisconnected:
+        # Render can close a long admin response after accepting the request.
+        # This is not treated as success by itself: the following 12-snapshot
+        # schema/read-back/ETag checks remain the fail-closed authority.
+        return {
+            "httpStatus": None,
+            "businessStatus": "response_disconnected_verify_readback",
+            "responseDisconnected": True,
+            "verifiedViewsStateHash": None,
+            "viewPublications": None,
+            "remoteJournal": {
+                "readBackVerified": None,
+                "remoteCommitSha": None,
+                "errorClass": "response_disconnected",
+            },
+            "automaticAiExecutions": None,
+        }
     if status != 200 or not isinstance(result, dict):
         raise GateFailure(f"seed_http_{status}")
     if result.get("status") not in ("completed", "expected_skip"):

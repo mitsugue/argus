@@ -1,4 +1,5 @@
 import os
+import http.client
 import tempfile
 import unittest
 from unittest import mock
@@ -109,6 +110,20 @@ class VerifiedSnapshotReleaseGateTests(unittest.TestCase):
         headers = request.call_args.kwargs["headers"]
         self.assertEqual("do-not-copy", headers["X-ARGUS-ADMIN-TOKEN"])
         self.assertNotIn("do-not-copy", request.call_args.args)
+
+    def test_seed_disconnect_defers_success_to_snapshot_readback(self):
+        with mock.patch.dict(
+                os.environ, {"ARGUS_ADMIN_TOKEN": "do-not-copy"}), \
+                mock.patch.object(
+                    gate, "_request",
+                    side_effect=http.client.RemoteDisconnected()):
+            value = gate.seed_snapshots(
+                "https://example.invalid", "abcdef0123456789")
+        self.assertTrue(value["responseDisconnected"])
+        self.assertEqual(
+            "response_disconnected_verify_readback",
+            value["businessStatus"])
+        self.assertNotIn("do-not-copy", str(value))
 
     def test_matrix_requires_all_12_snapshots_and_304(self):
         responses = []
