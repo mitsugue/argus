@@ -9,6 +9,10 @@ const manualWorkflow = fs.readFileSync(
   new URL('../../.github/workflows/market-public-acceptance.yml', import.meta.url), 'utf8');
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const navigation = fs.readFileSync(
+  new URL('../src/navigation.ts', import.meta.url), 'utf8');
+const mobileAcceptance = fs.readFileSync(
+  new URL('./mobile-today-acceptance.mjs', import.meta.url), 'utf8');
 
 for (const viewport of ['1440', '1280', '1024', '430', '390']) {
   assert.match(script, new RegExp(`width: ${viewport}`));
@@ -135,5 +139,17 @@ assert.match(vite, /cleanupOutdatedCaches: true/);
 assert.match(vite, /clientsClaim: true/);
 assert.match(vite, /skipWaiting: true/);
 assert.match(vite, /__ARGUS_BUILD_SHA__/);
-assert.match(app, /'#market': 'regime'/);
+assert.match(app, /HASH_ROUTES/);
+assert.match(navigation, /hash: '#market'[\s\S]+route: 'regime'|route: 'regime'[\s\S]+hash: '#market'/);
+assert.match(workflow, /mobile-today-acceptance\.mjs/);
+for (const value of ['320', '375', '390', '393', '414', '430', '932']) {
+  assert.match(mobileAcceptance, new RegExp(`width: ${value}`));
+}
+for (const value of ['1321', '1306', 'SPY', 'QQQ', '1D', '5D', '20D']) {
+  assert.match(mobileAcceptance, new RegExp(`'${value}'`));
+}
+for (const artifact of ['geometry.json', 'network.json', 'console.json',
+  'combinations.json', 'iphone-14-pro-max-full.png']) {
+  assert.match(mobileAcceptance, new RegExp(artifact.replace('.', '\\.')));
+}
 console.log('public-market-acceptance.contract.test: ok');

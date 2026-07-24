@@ -136,6 +136,8 @@ assert.match(hook, /networkPromise\.then\([\s\S]*ok: false as const/,
   'superseded requests must be handled before the IndexedDB await');
 assert.match(hook, /requestSequence !== sequence\.current/,
   'request sequence must reject an old instrument response');
+assert.match(hook, /key,\s*snapshot: cached,[\s\S]*ERROR_WITHOUT_CACHE/,
+  'a cold network error must retain its requested key and expose retry state');
 assert.match(hook, /new AbortController\(\)/);
 assert.match(hook, /writeVerifiedSnapshot[\s\S]*atomic-swap-complete/);
 assert.match(cacheSource,

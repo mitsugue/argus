@@ -123,6 +123,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.3.1', 'Mobile Today integrity — canonical navigation、4銘柄×3期間のverified snapshot、safe-area/sticky配置、cold error retryを修復。'],
   ['v13.3.0', 'Verified Snapshot SWR — 前回検証済みMarket chartをIndexedDBから即時復元し、既存表示を保ったままETag再検証。30分自然tickがOHLCV・確率・Replay・Ledgerを原子的に事前生成し、静かなTriangle Step Loaderで更新状態を表示。'],
   ['v13.2.2', 'Market最終freeze — 公開URL受入れをartifact化し、long方向MAE/MFEを標準定義へversioned再計算。frontend／backend版とRender deploy対象を分離し、frontend-only releaseでbackend Soakを維持。'],
   ['v13.2.1', 'Market Contextのダークテーマ可視性を修復。Replay分布、校正点、出来高、価格chip、軸、端末内描画へ一元chart tokenを適用。分析値とTodayは不変。'],

@@ -18,7 +18,7 @@ import scanner
 class ReleaseIdentityTests(unittest.TestCase):
     def test_version_sources_are_independent_and_current(self):
         self.assertEqual("13.3.0", identity.backend_version())
-        self.assertEqual("13.3.0", identity.frontend_version())
+        self.assertEqual("13.3.1", identity.frontend_version())
         self.assertEqual(identity.backend_version(),
                          scanner._semantic_app_version())
         self.assertEqual(identity.frontend_version(),
@@ -30,7 +30,7 @@ class ReleaseIdentityTests(unittest.TestCase):
         self.assertEqual({
             "backendVersion": "13.3.0",
             "backendBuildSha": "backend1",
-            "frontendVersion": "13.3.0",
+            "frontendVersion": "13.3.1",
             "frontendBuildSha": "frontend1",
         }, value)
         unknown = identity.release_identity(backend_sha=None)
@@ -51,7 +51,7 @@ class ReleaseIdentityTests(unittest.TestCase):
         backend = json.loads(identity.BACKEND_VERSION_FILE.read_text())
         frontend = json.loads(identity.FRONTEND_VERSION_FILE.read_text())
         self.assertEqual({"version": "13.3.0"}, backend)
-        self.assertEqual("13.3.0", frontend["version"])
+        self.assertEqual("13.3.1", frontend["version"])
 
 
 if __name__ == "__main__":

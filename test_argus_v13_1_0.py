@@ -172,21 +172,21 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         panel = pathlib.Path("web/src/components/today/ArgusTodayPanel.tsx").read_text()
         self.assertIn("argus.today.selectedInstrument.v1", route)
         self.assertIn("argus.replayContext", panel)
-        self.assertIn("['1D', '5D', '20D']", panel)
+        self.assertIn("([1, 5, 20] as const)", panel)
         self.assertNotIn("method: 'POST'", route + panel)
 
     def test_version_consistency(self):
         package = json.loads(pathlib.Path("web/package.json").read_text())
         lock = json.loads(pathlib.Path("web/package-lock.json").read_text())
         backend = json.loads(pathlib.Path("backend-version.json").read_text())
-        self.assertEqual(package["version"], "13.3.0")
+        self.assertEqual(package["version"], "13.3.1")
         self.assertEqual(backend["version"], "13.3.0")
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertEqual(scanner._semantic_app_version(), backend["version"])
         self.assertEqual(scanner._frontend_semantic_version(), package["version"])
         guide = pathlib.Path("web/src/routes/Guide.tsx").read_text()
-        self.assertIn("['v13.3.0'", guide)
+        self.assertIn("['v13.3.1'", guide)
 
 
 if __name__ == "__main__":

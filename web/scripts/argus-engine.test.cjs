@@ -185,6 +185,7 @@ const route = fs.readFileSync(path.join(__dirname, '..', 'src/routes/CommandCent
 const shell = fs.readFileSync(path.join(__dirname, '..', 'src/components/AppShell.tsx'), 'utf8');
 const nav = fs.readFileSync(path.join(__dirname, '..', 'src/components/NavRail.tsx'), 'utf8');
 const navCss = fs.readFileSync(path.join(__dirname, '..', 'src/components/NavRail.css'), 'utf8');
+const navigation = fs.readFileSync(path.join(__dirname, '..', 'src/navigation.ts'), 'utf8');
 const marketNewsHook = fs.readFileSync(path.join(__dirname, '..', 'src/hooks/useMarketNews.ts'), 'utf8');
 check('single decision card', (panel.match(/at-decision card/g) || []).length === 1);
 check('Market changes and Next Check absent', !route.includes('<MarketIntelligenceChanges') && !route.includes('<NextCheckCard'));
@@ -201,11 +202,13 @@ check('Today removes FIRE and duplicate concentration card', !panel.includes('fi
 check('Today has required prediction graphic', panel.includes('at-proj-actual') && panel.includes('at-proj-base')
   && panel.includes('at-proj-up') && panel.includes('at-proj-down') && panel.includes('at-proj-inv')
   && panel.includes('at-proj-boundary'));
-check('forecast supports 1D 5D 20D and replay deep-link', panel.includes("['1D', '5D', '20D']")
+check('forecast supports 1D 5D 20D and replay deep-link', panel.includes('([1, 5, 20] as const)')
   && panel.includes('argus.replayContext') && panel.includes("onNavigate('regime')"));
-check('mobile nav is bottom five with direct system destinations', nav.includes('Today</button>')
-  && nav.includes('Market</button>') && nav.includes('Assets</button>') && nav.includes('Review</button>')
-  && nav.includes('System</summary>') && nav.includes("onSelect('quality')") && nav.includes("onSelect('backup')")
+check('mobile nav is bottom five with direct system destinations',
+  nav.includes('PRIMARY_NAVIGATION.map') && nav.includes('SYSTEM_NAVIGATION.map')
+  && nav.includes('System</summary>') && navigation.includes("mobileLabel: 'Today'")
+  && navigation.includes("mobileLabel: 'Assets'") && navigation.includes("mobileLabel: 'Review'")
+  && navigation.includes("mobileLabel: 'Market'")
   && navCss.includes('position: fixed') && navCss.includes('grid-template-columns: repeat(5'));
 check('actual line alone is white', css.includes('.at-proj-actual { fill:none; stroke:#fff')
   && css.includes('.at-proj-up { stroke:#22c55e') && css.includes('.at-proj-down { stroke:#ef4444'));
