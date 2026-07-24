@@ -138,7 +138,7 @@ class VerifiedSnapshotReleaseGateTests(unittest.TestCase):
                 etag = f'"{snapshot["snapshotId"]}"'
                 responses.extend([
                     (200, {
-                        "etag": etag,
+                        "etag": f"W/{etag}",
                         "x-argus-compute-mode": "read-only",
                     }, snapshot),
                     (304, {"etag": etag}, None),
