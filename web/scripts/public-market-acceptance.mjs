@@ -310,7 +310,8 @@ async function styleAudit(page) {
         (value) => contrast(value, distributionBackground)),
       blackFallbackCount,
       horizontalOverflow: Math.max(0, document.documentElement.scrollWidth - innerWidth),
-      chartDataEmpty: !document.querySelector('.mr-chart, .mr-event-study svg, .mr-dist svg, .mr-ledger-grid'),
+      chartDataEmpty: !document.querySelector(
+        '.mr-chart, .mr-event-study svg, .mr-dist svg, .mr-ledger-grid, .mr-us-ledger'),
       tooltipCount: tooltipTitles.length,
     };
   });
