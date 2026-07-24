@@ -56,6 +56,12 @@ never runs that generator. Static PWA assets, UI preferences, device-local
 drawings, browser snapshots, and backend snapshots remain separate. Page load
 does not call an AI API or upload holdings.
 
+## Mission tick durability (backend v13.3.1)
+
+Mission catch-up now uses a single-flight, bounded synchronous batch. Critical
+transitions are fsynced to a small replayable WAL and the full durable-v3
+snapshot is written once per verified checkpoint instead of once per event.
+
 ## Action vocabulary
 
 Tactical (individual stocks, satellites): `EXIT` · `TRIM` · `WAIT` ·
