@@ -11,6 +11,7 @@ on:
     paths:
       - 'web/**'
       - '.github/workflows/deploy-pages.yml'
+      - 'scripts/verified_snapshot_release_gate.py'
   workflow_dispatch:
 
 permissions:
@@ -116,16 +117,20 @@ jobs:
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
           ARGUS_WARM_PROFILE_DIR: ../artifacts/market-warm-profile
         run: node scripts/public-market-acceptance.mjs
-      - name: Remove browser-private stores before transfer
+      - name: Remove credentials and private local stores before transfer
         run: |
           find artifacts/market-warm-profile -type d \
             \( -name 'Local Storage' -o -name 'Session Storage' \
-               -o -name 'IndexedDB' \) \
+            \) \
             -prune -exec rm -rf '{}' +
           find artifacts/market-warm-profile -type f \
             \( -name 'Cookies' -o -name 'Cookies-journal' \
                -o -name 'History' -o -name 'History-journal' \) \
             -delete
+          # Keep IndexedDB: this profile only visits the public Market screen,
+          # so it contains no holdings/watchlist data. Its verified market
+          # snapshot is the evidence that a frontend-only upgrade does not
+          # erase the previous release's durable browser cache.
       - uses: actions/upload-artifact@v4
         with:
           name: market-warm-profile-${{ github.sha }}
@@ -133,8 +138,52 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
+  backend-readiness:
+    needs: [scope, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Record frontend-only release
+        if: needs.scope.outputs.backend_deploy != 'true'
+        run: |
+          mkdir -p artifacts/backend-snapshot-readiness
+          python3 -B - <<'PY'
+          import json
+          from pathlib import Path
+          Path("artifacts/backend-snapshot-readiness/gate.json").write_text(
+              json.dumps({
+                  "schemaVersion": "verified-snapshot-release-gate-v1",
+                  "status": "not_required",
+                  "reason": "frontend_only_release",
+              }, indent=2) + "\n")
+          PY
+      - name: Wait for Render, seed once, and verify 12 snapshots
+        if: needs.scope.outputs.backend_deploy == 'true'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          EXPECTED_SHA: ${{ needs.scope.outputs.backend_sha }}
+        run: |
+          BACKEND_VERSION=$(python3 -c \
+            'import json; print(json.load(open("backend-version.json"))["version"])')
+          python3 -B scripts/verified_snapshot_release_gate.py \
+            --base-url https://argus-backend-3j2m.onrender.com \
+            --expected-version "$BACKEND_VERSION" \
+            --expected-sha "$EXPECTED_SHA" \
+            --timeout-seconds 900 \
+            --poll-seconds 15 \
+            --artifact artifacts/backend-snapshot-readiness/gate.json
+      - name: Publish backend snapshot readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-snapshot-readiness-${{ github.sha }}
+          path: artifacts/backend-snapshot-readiness
+          if-no-files-found: error
+          retention-days: 30
+
   deploy:
-    needs: [build, seed-warm-profile]
+    needs: [build, seed-warm-profile, backend-readiness]
     runs-on: ubuntu-latest
     # Pages publish flakes with an instant "Deployment cancelled" (or a 5-min hang)
     # when GitHub's backend races deployments for the same commit. Observed fix
@@ -174,12 +223,10 @@ jobs:
           timeout: 300000
 
   public-acceptance:
-    needs: [scope, deploy, seed-warm-profile]
-    # The live directly linked Render service still uses checksPass. A
-    # backend-sensitive public check would wait for Render while Render waits
-    # for that same check. Complete it through market-public-acceptance.yml
-    # after Render deploys, using this run's pre-deploy warm-profile artifact.
-    if: needs.scope.outputs.backend_deploy != 'true'
+    needs: [scope, deploy, seed-warm-profile, backend-readiness]
+    # backend-readiness has already waited for the exact Render SHA and seeded
+    # every verified snapshot. This job can therefore run for both combined
+    # backend/frontend releases and frontend-only releases without a cycle.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

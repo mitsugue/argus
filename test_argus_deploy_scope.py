@@ -46,6 +46,22 @@ class DeployScopeTests(unittest.TestCase):
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
+    def test_snapshot_release_gate_is_frontend_deploy_plane_only(self):
+        result = deploy_scope.classify(
+            ["scripts/verified_snapshot_release_gate.py"])
+        self.assertTrue(result["frontendDeploy"])
+        self.assertFalse(result["backendDeploy"])
+
+    def test_pages_waits_for_verified_snapshot_readiness(self):
+        workflow = (ROOT / ".github/workflows/deploy-pages.yml").read_text()
+        self.assertIn("backend-readiness:", workflow)
+        self.assertIn(
+            "needs: [build, seed-warm-profile, backend-readiness]", workflow)
+        self.assertIn(
+            "scripts/verified_snapshot_release_gate.py", workflow)
+        self.assertIn(
+            "backend-snapshot-readiness-${{ github.sha }}", workflow)
+
     def test_render_blueprint_allowlist_matches_classifier(self):
         blueprint = (ROOT / "render.yaml").read_text()
         self.assertIn("autoDeployTrigger: commit", blueprint)

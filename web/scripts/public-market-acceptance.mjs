@@ -113,13 +113,24 @@ function attachEvidence(page, evidence) {
     if (!match || response.status() !== 200) return;
     try {
       const body = await response.json();
-      const symbol = String(body.symbol || parsed.searchParams.get('symbol') || '');
-      const contexts = body.marketReplay?.contexts || {};
+      const view = body.payload || body;
+      const symbol = String(body.instrument || view.symbol
+        || parsed.searchParams.get('symbol') || '');
+      const requestedHorizon = String(body.horizon
+        || parsed.searchParams.get('horizon') || '').replace(/D$/i, '');
+      const contexts = view.marketReplay?.contexts || {};
+      const prior = evidence.marketData[symbol] || {};
       evidence.marketData[symbol] = {
-        cacheStatus: body.marketReplay?.cacheStatus || null,
-        methodVersion: body.marketReplay?.methodVersion || null,
-        stateHash: body.marketReplay?.stateHash || null,
-        automaticAiCalls: body.marketReplay?.automaticAiCalls ?? null,
+        cacheStatus: view.marketReplay?.cacheStatus || prior.cacheStatus || null,
+        methodVersion: view.marketReplay?.methodVersion || prior.methodVersion || null,
+        stateHash: view.marketReplay?.stateHash || prior.stateHash || null,
+        automaticAiCalls: view.automaticAiCalls
+          ?? view.marketReplay?.automaticAiCalls ?? prior.automaticAiCalls ?? null,
+        snapshotIds: {
+          ...(prior.snapshotIds || {}),
+          ...(requestedHorizon && body.snapshotId
+            ? { [requestedHorizon]: body.snapshotId } : {}),
+        },
         contexts: Object.fromEntries(Object.entries(contexts).map(([key, value]) => [
           key,
           {
@@ -363,6 +374,8 @@ async function recordCombination(page, evidence, backend, viewport, tab, instrum
   const horizonNumber = horizon.replace('D', '');
   const market = evidence.marketData[instrument] || {};
   const context = market.contexts?.[horizonNumber] || {};
+  const renderedSnapshotId = await page.locator(
+    '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
   const record = {
     publicUrl: page.url(),
     testedAt: new Date().toISOString(),
@@ -378,6 +391,8 @@ async function recordCombination(page, evidence, backend, viewport, tab, instrum
     dataLoadMs,
     cacheStatus: market.cacheStatus || null,
     datasetHash: context.datasetHash || null,
+    snapshotId: renderedSnapshotId,
+    responseSnapshotId: market.snapshotIds?.[horizonNumber] || null,
     replayMethodVersion: context.methodVersion || market.methodVersion || null,
     maeQ90: context.maeQ90 ?? null,
     maeMedian: context.maeMedian ?? null,
@@ -434,6 +449,69 @@ async function deployedAssets(page) {
   }, new URL(PUBLIC_URL).pathname);
 }
 
+async function firstUseLoaderAudit(browser, evidence) {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    serviceWorkers: 'block',
+  });
+  const page = await context.newPage();
+  attachEvidence(page, evidence);
+  let resolveRequestStart;
+  const requestStart = new Promise((resolve) => {
+    resolveRequestStart = resolve;
+  });
+  await page.route('**/api/argus/chart-intelligence?*', async (route) => {
+    const parsed = new URL(route.request().url());
+    if (parsed.searchParams.get('snapshot') === 'verified') {
+      resolveRequestStart?.(Date.now());
+      resolveRequestStart = null;
+      await new Promise((resolve) => setTimeout(resolve, 6_200));
+    }
+    await route.continue();
+  });
+  await page.goto(NORMAL_URL, {
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+  });
+  await waitForVersion(page, EXPECTED_VERSION);
+  const startedAt = await Promise.race([
+    requestStart,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('verified snapshot request did not start')),
+      5_000)),
+  ]);
+  await page.waitForTimeout(Math.max(0, 200 - (Date.now() - startedAt)));
+  const beforeThreshold = await page.locator(
+    '.triangle-step-loader').count();
+  await page.waitForTimeout(Math.max(0, 300 - (Date.now() - startedAt)));
+  const afterThreshold = await page.locator(
+    '.triangle-step-loader').count();
+  const skeletonCount = await page.locator(
+    '.mr-snapshot-skeleton').count();
+  await page.waitForTimeout(Math.max(0, 5_250 - (Date.now() - startedAt)));
+  const slowLabel = await page.locator(
+    '.mr-snapshot-skeleton').innerText().catch(() => '');
+  const screenshot = await captureScreenshot(
+    page, evidence, '1280x800-first-use-loader.png',
+    'first-use-loader');
+  await waitForData(page, 30_000);
+  const chartCount = await page.locator(
+    '.market-replay[data-snapshot-id]').count();
+  const result = {
+    beforeThreshold, afterThreshold, skeletonCount,
+    beforeThresholdAtMs: 200, afterThresholdAtMs: 300,
+    slowLabel, chartCount,
+  };
+  if (beforeThreshold) evidence.failures.push('loader-flicker-before-225ms');
+  if (!afterThreshold) evidence.failures.push('loader-missing-after-225ms');
+  if (!skeletonCount) evidence.failures.push('first-use-skeleton-missing');
+  if (!slowLabel.includes('初回データを準備中')) {
+    evidence.failures.push('first-use-five-second-label-missing');
+  }
+  if (!chartCount) evidence.failures.push('first-use-chart-missing');
+  await context.close();
+  return { result, screenshot };
+}
+
 async function mainAcceptance() {
   await fs.rm(OUT_DIR, { recursive: true, force: true });
   await fs.mkdir(path.join(OUT_DIR, 'screenshots'), { recursive: true });
@@ -442,6 +520,7 @@ async function mainAcceptance() {
     marketData: {}, computedStyles: [], aiPostCount: 0, failures: [],
   };
   const browser = await chromium.launch({ headless: true });
+  let screenshotCount = 0;
   const fresh = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     serviceWorkers: 'allow',
@@ -453,6 +532,8 @@ async function mainAcceptance() {
   console.log('public-market-acceptance: backend-ready');
   await waitForMarketCache(page.request);
   console.log('public-market-acceptance: market-cache-ready');
+  const firstUse = await firstUseLoaderAudit(browser, evidence);
+  if (firstUse.screenshot) screenshotCount += 1;
   await page.goto(NORMAL_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
   await waitForVersion(page, EXPECTED_VERSION);
   await waitForMarket(page);
@@ -477,7 +558,15 @@ async function mainAcceptance() {
           tab, instrument, horizon, Math.max(instrumentLoadMs, horizonLoadMs));
         validateStyles(audit, evidence.failures, `${instrument}:${horizon}:${tab}`, tab);
         if (!record.datasetHash) evidence.failures.push(`${instrument}:${horizon}:no-dataset-hash`);
-        if (record.cacheStatus !== 'hit') evidence.failures.push(`${instrument}:${horizon}:cache-${record.cacheStatus}`);
+        if (!record.snapshotId
+            || record.snapshotId !== record.responseSnapshotId) {
+          evidence.failures.push(
+            `${instrument}:${horizon}:snapshot-id-mismatch`);
+        }
+        if (!['hit', 'updated'].includes(record.cacheStatus)) {
+          evidence.failures.push(
+            `${instrument}:${horizon}:cache-${record.cacheStatus}`);
+        }
         if (record.replayMethodVersion !== 'market-context-replay-v2-standard-excursion') {
           evidence.failures.push(`${instrument}:${horizon}:method-${record.replayMethodVersion}`);
         }
@@ -491,7 +580,6 @@ async function mainAcceptance() {
 
   await page.getByRole('button', { name: '1321', exact: true }).click();
   await page.getByRole('button', { name: '5D', exact: true }).click();
-  let screenshotCount = 0;
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
     for (const tab of TABS) {
@@ -535,33 +623,188 @@ async function mainAcceptance() {
   await fresh.close();
   await browser.close();
 
-  const warmContext = await chromium.launchPersistentContext(PROFILE_DIR, {
+  // Upgrade the pre-deploy profile once, seed verified IndexedDB entries, and
+  // persist a non-default UI state before a full browser close.
+  const warmSeedContext = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: true,
     viewport: { width: 1280, height: 800 },
   });
-  const warmPage = warmContext.pages()[0] || await warmContext.newPage();
-  attachEvidence(warmPage, evidence);
-  await warmPage.goto(NORMAL_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
-  await waitForVersion(warmPage, EXPECTED_VERSION, PAGE_TIMEOUT_MS);
-  await waitForMarket(warmPage);
-  await waitForData(warmPage);
-  const assets = await deployedAssets(warmPage);
+  const warmSeedPage = warmSeedContext.pages()[0] || await warmSeedContext.newPage();
+  attachEvidence(warmSeedPage, evidence);
+  await warmSeedPage.goto(NORMAL_URL, {
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+  });
+  await waitForVersion(warmSeedPage, EXPECTED_VERSION, PAGE_TIMEOUT_MS);
+  await waitForMarket(warmSeedPage);
+  await waitForData(warmSeedPage, 30_000);
+  await warmSeedPage.getByRole('button', { name: 'SPY', exact: true }).click();
+  await warmSeedPage.getByRole('button', { name: '5D', exact: true }).click();
+  await waitForData(warmSeedPage, 30_000);
+  await warmSeedPage.getByRole('button', { name: 'QQQ', exact: true }).click();
+  await warmSeedPage.getByRole('button', { name: '20D', exact: true }).click();
+  await warmSeedPage.getByRole('button', { name: 'REPLAY', exact: true }).click();
+  await warmSeedPage.getByRole('button', { name: '3M', exact: true }).click();
+  const overlays = warmSeedPage.locator('details.mr-overlays');
+  if (!await overlays.evaluate((element) => element.open)) {
+    await overlays.locator('summary').click();
+  }
+  await waitForData(warmSeedPage, 30_000);
+  const warmSeedSnapshotId = await warmSeedPage.locator(
+    '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
+  const assets = await deployedAssets(warmSeedPage);
   if (assets.mixed) evidence.failures.push('pwa-mixed-old-assets');
-  const warmOnline = await warmPage.evaluate(async () => ({
+  const warmOnline = await warmSeedPage.evaluate(async () => ({
     frontendVersion: globalThis.__ARGUS_VERSION__ || null,
     frontendBuildSha: globalThis.__ARGUS_BUILD_SHA__ || null,
     serviceWorkerCount: (await navigator.serviceWorker.getRegistrations()).length,
     cacheNames: await caches.keys(),
   }));
-  await warmContext.setOffline(true);
-  await warmPage.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
-  await waitForVersion(warmPage, EXPECTED_VERSION);
-  const warmOffline = await warmPage.evaluate(() => ({
+  if (warmOnline.serviceWorkerCount !== 1) {
+    evidence.failures.push(
+      `warm-service-worker-count:${warmOnline.serviceWorkerCount}`);
+  }
+  await warmSeedContext.close();
+
+  // Reopen the exact profile with SW interception disabled only for this
+  // controlled 12-second backend-delay test. IndexedDB remains the source of
+  // the first chart; no production latency setting is changed.
+  const slowContext = await chromium.launchPersistentContext(PROFILE_DIR, {
+    headless: true,
+    viewport: { width: 1280, height: 800 },
+    serviceWorkers: 'block',
+  });
+  await slowContext.route('**/api/argus/chart-intelligence?*', async (route) => {
+    const parsed = new URL(route.request().url());
+    if (parsed.searchParams.get('snapshot') === 'verified') {
+      await new Promise((resolve) => setTimeout(resolve, 12_000));
+    }
+    await route.continue();
+  });
+  const slowPage = slowContext.pages()[0] || await slowContext.newPage();
+  attachEvidence(slowPage, evidence);
+  const warmStarted = Date.now();
+  await slowPage.goto(NORMAL_URL, {
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+  });
+  await waitForVersion(slowPage, EXPECTED_VERSION, PAGE_TIMEOUT_MS);
+  await waitForMarket(slowPage);
+  await slowPage.locator(
+    '.market-replay[data-snapshot-id]').waitFor({ timeout: 500 });
+  const warmCachedRenderMs = Date.now() - warmStarted;
+  const restoredState = {
+    instrument: await slowPage.getByRole(
+      'button', { name: 'QQQ', exact: true }).getAttribute('class'),
+    horizon: await slowPage.getByRole(
+      'button', { name: '20D', exact: true }).getAttribute('class'),
+    tab: await slowPage.getByRole(
+      'button', { name: 'REPLAY', exact: true }).getAttribute('aria-selected'),
+    range: await slowPage.getByRole(
+      'button', { name: '3M', exact: true }).getAttribute('class'),
+    overlaysOpen: await slowPage.locator(
+      'details.mr-overlays').evaluate((element) => element.open),
+  };
+  await slowPage.waitForTimeout(350);
+  const loaderDuringRevalidation = await slowPage.locator(
+    '.mr-snapshot-status .triangle-step-loader').count();
+  const slowSnapshotBefore = await slowPage.locator(
+    '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
+  if (await captureScreenshot(
+    slowPage, evidence, '1280x800-warm-slow-revalidation.png',
+    'warm-slow-revalidation',
+  )) screenshotCount += 1;
+  await slowPage.waitForTimeout(12_200);
+  await waitForData(slowPage, 30_000);
+  const slowSnapshotAfter = await slowPage.locator(
+    '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
+  if (warmCachedRenderMs > 500) {
+    evidence.failures.push(`warm-cache-over-500ms:${warmCachedRenderMs}`);
+  }
+  if (!loaderDuringRevalidation) {
+    evidence.failures.push('warm-revalidation-loader-missing');
+  }
+  if (slowSnapshotBefore !== warmSeedSnapshotId
+      || slowSnapshotAfter !== warmSeedSnapshotId) {
+    evidence.failures.push('warm-snapshot-continuity');
+  }
+  if (!String(restoredState.instrument).includes('active')
+      || !String(restoredState.horizon).includes('active')
+      || restoredState.tab !== 'true'
+      || !String(restoredState.range).includes('active')
+      || !restoredState.overlaysOpen) {
+    evidence.failures.push('warm-ui-state-not-restored');
+  }
+
+  // Stale-response race: SPY is delayed longer than QQQ. The final identity
+  // must remain QQQ after both requests settle.
+  await slowContext.unroute('**/api/argus/chart-intelligence?*');
+  await slowContext.route('**/api/argus/chart-intelligence?*', async (route) => {
+    const parsed = new URL(route.request().url());
+    const symbol = parsed.searchParams.get('symbol');
+    await new Promise((resolve) => setTimeout(
+      resolve, symbol === 'SPY' ? 1_200 : 100));
+    await route.continue();
+  });
+  await slowPage.getByRole('button', { name: 'SPY', exact: true }).click();
+  await slowPage.getByRole('button', { name: 'QQQ', exact: true }).click();
+  await slowPage.waitForTimeout(1_500);
+  const race = {
+    heading: await slowPage.locator('.mr-header h2').innerText(),
+    snapshotId: await slowPage.locator(
+      '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id'),
+    expectedSnapshotId: evidence.marketData.QQQ?.snapshotIds?.['20'] || null,
+  };
+  if (!race.heading.includes('QQQ') || !race.snapshotId
+      || race.snapshotId !== race.expectedSnapshotId) {
+    evidence.failures.push('asset-switching-race');
+  }
+  await slowContext.close();
+
+  // Re-enable the installed Service Worker and prove the same verified
+  // IndexedDB snapshot survives a fully offline restart.
+  const offlineContext = await chromium.launchPersistentContext(PROFILE_DIR, {
+    headless: true,
+    viewport: { width: 1280, height: 800 },
+  });
+  const offlinePage = offlineContext.pages()[0] || await offlineContext.newPage();
+  attachEvidence(offlinePage, evidence);
+  await offlinePage.goto(NORMAL_URL, {
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+  });
+  await waitForVersion(offlinePage, EXPECTED_VERSION);
+  await waitForMarket(offlinePage);
+  await waitForData(offlinePage, 30_000);
+  await offlineContext.setOffline(true);
+  await offlinePage.reload({
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+  });
+  await waitForVersion(offlinePage, EXPECTED_VERSION);
+  await waitForMarket(offlinePage);
+  await offlinePage.locator(
+    '.market-replay[data-snapshot-id]').waitFor({ timeout: 500 });
+  const warmOffline = await offlinePage.evaluate(() => ({
     frontendVersion: globalThis.__ARGUS_VERSION__ || null,
     frontendBuildSha: globalThis.__ARGUS_BUILD_SHA__ || null,
+    snapshotId: document.querySelector(
+      '.market-replay[data-snapshot-id]')?.getAttribute('data-snapshot-id') || null,
+    snapshotStatus: document.querySelector(
+      '.mr-snapshot-status')?.textContent?.trim() || null,
   }));
-  await warmContext.setOffline(false);
-  await warmContext.close();
+  if (!warmOffline.snapshotId
+      || !String(warmOffline.snapshotStatus).includes('更新要確認')) {
+    evidence.failures.push('offline-verified-snapshot-fallback');
+  }
+  await offlineContext.setOffline(false);
+  await offlineContext.close();
+
+  const warmPerformance = {
+    warmCachedRenderMs,
+    loaderDuringRevalidation,
+    snapshotBefore: slowSnapshotBefore,
+    snapshotAfter: slowSnapshotAfter,
+    restoredState,
+    race,
+    controlledBackendDelayMs: 12_000,
+  };
 
   if (evidence.consoleErrors.length) evidence.failures.push('console-errors');
   if (evidence.reactWarnings.length) evidence.failures.push('react-warnings');
@@ -577,7 +820,10 @@ async function mainAcceptance() {
     backendVersion: backend.backendVersion || backend.appVersion || null,
     backendBuildSha: backend.backendBuildSha || null,
   };
-  const pwa = { freshBefore, freshAfter, warmOnline, warmOffline, assets };
+  const pwa = {
+    freshBefore, freshAfter, warmOnline, warmOffline, assets,
+    firstUse: firstUse.result, warmPerformance,
+  };
   const acceptance = {
     marketProductStatus: evidence.failures.length ? 'NOT_FROZEN' : 'FROZEN',
     testedAt,
