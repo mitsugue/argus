@@ -20077,10 +20077,16 @@ def api_argus_chart_intelligence():
         # 1321 is explicitly a Nikkei-linked ETF proxy, not the cash index.
         _public_cache_key = ("market", symbol, timeframe)
         _public_cached = _MARKET_PUBLIC_REPORT_CACHE.get(_public_cache_key)
-        report = (copy.deepcopy(_public_cached) if isinstance(_public_cached, dict)
+        _public_cache_hit = isinstance(_public_cached, dict)
+        report = (copy.deepcopy(_public_cached) if _public_cache_hit
                   else _chart_public_report(
                       symbol, market, timeframe, market_scope=symbol == "1321",
                       cached_only=True))
+        # The cached report records how the scheduler produced its replay
+        # ("updated").  At this GET boundary the contract is instead whether
+        # the immutable scheduled report was reused without recomputation.
+        if _public_cache_hit and isinstance(report.get("marketReplay"), dict):
+            report["marketReplay"]["cacheStatus"] = "hit"
         report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(symbol, symbol)
         if symbol == "1321":
             report["proxyDisclosureJa"] = (
