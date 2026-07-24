@@ -3,6 +3,7 @@ import pathlib
 import sys
 import types
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 import argus_chart_intelligence as ci
@@ -30,6 +31,16 @@ def history(count=260, start=100.0, step=0.2):
             "lows": lows[::-1], "closes": closes[::-1], "volumes": volumes[::-1]}
 
 
+@contextmanager
+def price_cache(fake):
+    fresh = {"data": fake, "expires": 9_999_999_999.0}
+    jp = {code: dict(fresh) for code in ("7203", "1321", "1306", "2644", "2516")}
+    us = {symbol: dict(fresh) for symbol in ("SPY", "QQQ", "USD/JPY")}
+    with mock.patch.dict(scanner._JQ_HISTORY_CACHE, jp, clear=True), \
+            mock.patch.dict(scanner._TD_HISTORY_CACHE, us, clear=True):
+        yield
+
+
 class ArgusV1240IntegrationTests(unittest.TestCase):
     def setUp(self):
         self.chart_state = ci.normalize_state(scanner._CHART_INTELLIGENCE)
@@ -47,8 +58,11 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
 
     def test_asset_chart_get_is_deterministic_and_provider_ai_zero(self):
         fake = history()
-        with mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
-                mock.patch.object(scanner, "_td_price_history", return_value=fake), \
+        with price_cache(fake), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}), \
                 mock.patch.object(scanner, "_execute_ai_judgment") as ai:
             response = scanner.app.test_client().get(
@@ -69,8 +83,11 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
 
     def test_market_chart_has_relative_rotation_and_proxy_disclosure(self):
         fake = history()
-        with mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
-                mock.patch.object(scanner, "_td_price_history", return_value=fake), \
+        with price_cache(fake), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}):
             body = scanner.app.test_client().get(
                 "/api/argus/chart-intelligence?scope=market").get_json()
@@ -88,8 +105,10 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         cached = {"items": [{"symbol": "7203", "earnings": {
             "date": event_date, "epsEstimate": 10, "epsActual": 12},
             "filings": [], "disclosures": []}]}
-        with mock.patch.dict(scanner._CAT_CACHE, {"data": cached}, clear=False), \
-                mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
+        with price_cache(fake), \
+                mock.patch.dict(scanner._CAT_CACHE, {"data": cached}, clear=False), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}), \
                 mock.patch.object(scanner, "get_catalysts_snapshot") as provider_path:
             body = scanner.app.test_client().get(
@@ -99,7 +118,9 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
 
     def test_weekly_switch_and_invalid_timeframe(self):
         fake = history()
-        with mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
+        with price_cache(fake), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}):
             client = scanner.app.test_client()
             daily = client.get("/api/argus/chart-intelligence?scope=asset&symbol=7203&market=JP&timeframe=daily")
@@ -201,8 +222,11 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
 
     def test_market_endpoint_supports_four_isolated_instruments(self):
         fake = history()
-        with mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
-                mock.patch.object(scanner, "_td_price_history", return_value=fake), \
+        with price_cache(fake), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot",
                                   return_value={"events": []}):
             client = scanner.app.test_client()

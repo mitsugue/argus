@@ -15,6 +15,7 @@ const NORMAL_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#market`;
 const DATA_TIMEOUT_MS = 5_000;
 const PAGE_TIMEOUT_MS = 25_000;
 const BACKEND_READY_TIMEOUT_MS = 8 * 60_000;
+const MARKET_CACHE_READY_TIMEOUT_MS = 30 * 60_000;
 const BACKEND_IDENTITY_URL =
   'https://argus-backend-3j2m.onrender.com/api/argus/data-quality';
 const VIEWPORTS = [
@@ -66,7 +67,9 @@ async function seedWarmProfile() {
   const page = context.pages()[0] || await context.newPage();
   await page.goto(NORMAL_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
   await page.waitForSelector('text=A.R.G.U.S.', { timeout: PAGE_TIMEOUT_MS });
-  await page.waitForTimeout(5_000);
+  // Warm the actual Market GET path, not just the shell/PWA files. This remains
+  // outside formal timing: mainAcceptance still enforces the 5-second gate.
+  await waitForData(page, 30_000);
   const evidence = await page.evaluate(async () => ({
     frontendVersion: globalThis.__ARGUS_VERSION__ || null,
     frontendBuildSha: globalThis.__ARGUS_BUILD_SHA__ || null,
@@ -150,7 +153,7 @@ async function waitForMarket(page) {
   await marker.waitFor({ state: 'visible', timeout: PAGE_TIMEOUT_MS });
 }
 
-async function waitForData(page) {
+async function waitForData(page, timeout = DATA_TIMEOUT_MS) {
   const started = Date.now();
   await page.waitForFunction(() => {
     const text = document.body?.innerText || '';
@@ -158,7 +161,7 @@ async function waitForData(page) {
       && !text.includes('no dataset hash')
       && !text.includes('replay cache pending')
       && !text.includes('キャッシュ取得中');
-  }, null, { timeout: DATA_TIMEOUT_MS });
+  }, null, { timeout });
   return Date.now() - started;
 }
 
@@ -191,6 +194,44 @@ async function waitForBackendIdentity(request) {
     await new Promise((resolve) => setTimeout(resolve, 10_000));
   }
   throw new Error(`backend identity did not become ready (${last})`);
+}
+
+async function waitForMarketCache(request) {
+  // A new backend process is cache-only by contract. Give the independent
+  // 30-minute natural scheduler one bounded window to publish all instruments.
+  const deadline = Date.now() + MARKET_CACHE_READY_TIMEOUT_MS;
+  let last = 'no_response';
+  while (Date.now() < deadline) {
+    try {
+      const states = await Promise.all(INSTRUMENTS.map(async (symbol) => {
+        const market = ['1321', '1306'].includes(symbol) ? 'JP' : 'US';
+        const url = new URL('/api/argus/chart-intelligence',
+          'https://argus-backend-3j2m.onrender.com');
+        url.searchParams.set('scope', 'market');
+        url.searchParams.set('timeframe', 'daily');
+        url.searchParams.set('symbol', symbol);
+        url.searchParams.set('market', market);
+        const response = await request.get(url.toString(), {
+          timeout: PAGE_TIMEOUT_MS,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok()) return `${symbol}:http_${response.status()}`;
+        const body = await response.json();
+        const contexts = body.marketReplay?.contexts || {};
+        const ready = body.marketReplay?.cacheStatus === 'hit'
+          && body.automaticAiCalls === 0
+          && HORIZONS.every((horizon) =>
+            Boolean(contexts[horizon.replace('D', '')]?.datasetHash));
+        return ready ? `${symbol}:ready` : `${symbol}:cache_not_ready`;
+      }));
+      if (states.every((state) => state.endsWith(':ready'))) return states;
+      last = states.join(',');
+    } catch (error) {
+      last = error instanceof Error ? error.name : 'request_error';
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+  throw new Error(`market cache did not become ready (${last})`);
 }
 
 async function styleAudit(page) {
@@ -407,11 +448,13 @@ async function mainAcceptance() {
   const page = await fresh.newPage();
   attachEvidence(page, evidence);
   const freshBefore = { serviceWorkerCount: 0, cacheNames: [] };
+  const publicIdentity = await waitForBackendIdentity(page.request);
+  console.log('public-market-acceptance: backend-ready');
+  await waitForMarketCache(page.request);
+  console.log('public-market-acceptance: market-cache-ready');
   await page.goto(NORMAL_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
   await waitForVersion(page, EXPECTED_VERSION);
   await waitForMarket(page);
-  const publicIdentity = await waitForBackendIdentity(page.request);
-  console.log('public-market-acceptance: backend-ready');
   const initialDataLoadMs = await waitForData(page);
   if (initialDataLoadMs > DATA_TIMEOUT_MS) evidence.failures.push(`initial-pending:${initialDataLoadMs}`);
   const backendBody = publicIdentity.body;
@@ -568,11 +611,33 @@ if (MODE === 'seed') {
     .then((result) => console.log(`public-market-acceptance seed: ${JSON.stringify(result)}`))
     .catch((error) => {
       console.error(sanitize(error.stack || error.message));
-      process.exitCode = 1;
+      process.exit(1);
     });
 } else {
-  mainAcceptance().catch((error) => {
-    console.error(sanitize(error.stack || error.message));
-    process.exitCode = 1;
+  mainAcceptance().catch(async (error) => {
+    const testedAt = new Date().toISOString();
+    const failure = sanitize(error.stack || error.message);
+    await fs.mkdir(path.join(OUT_DIR, 'screenshots'), { recursive: true });
+    await Promise.all([
+      writeJson('acceptance.json', {
+        marketProductStatus: 'NOT_FROZEN',
+        testedAt,
+        publicUrl: NORMAL_URL,
+        cacheBustedUrl: CACHE_BUSTED_URL,
+        failures: [failure],
+      }),
+      writeJson('console.json', { errors: [{ type: 'acceptance', message: failure }], reactWarnings: [] }),
+      writeJson('network.json', { aiPostCount: null, requests: [] }),
+      writeJson('computed-styles.json', []),
+      writeJson('version.json', {
+        testedAt,
+        frontendVersion: EXPECTED_VERSION,
+        frontendBuildSha: EXPECTED_SHA,
+        backendVersion: EXPECTED_BACKEND_VERSION,
+        backendBuildSha: null,
+      }),
+    ]);
+    console.error(failure);
+    process.exit(1);
   });
 }

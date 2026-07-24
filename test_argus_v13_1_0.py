@@ -4,6 +4,7 @@ import pathlib
 import sys
 import types
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 import argus_market_ledger as ml
@@ -33,6 +34,16 @@ def provider_history(count=420, start=100.0):
             "closes": [x[4] for x in rows], "volumes": [x[5] for x in rows]}
 
 
+@contextmanager
+def price_cache(fake):
+    fresh = {"data": fake, "expires": 9_999_999_999.0}
+    jp = {code: dict(fresh) for code in ("7203", "1321", "1306", "2644", "2516")}
+    us = {symbol: dict(fresh) for symbol in ("SPY", "QQQ", "USD/JPY")}
+    with mock.patch.dict(scanner._JQ_HISTORY_CACHE, jp, clear=True), \
+            mock.patch.dict(scanner._TD_HISTORY_CACHE, us, clear=True):
+        yield
+
+
 class ArgusV1310IntegrationTests(unittest.TestCase):
     def setUp(self):
         self.today_state = ti.normalize_state(scanner._TODAY_INTELLIGENCE)
@@ -45,8 +56,11 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
 
     def test_four_instrument_metadata_and_us_isolation(self):
         fake = provider_history()
-        with mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
-                mock.patch.object(scanner, "_td_price_history", return_value=fake), \
+        with price_cache(fake), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}), \
                 mock.patch.object(scanner, "_jp_daily_short_history", return_value=[]):
             client = scanner.app.test_client()
@@ -65,12 +79,31 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
 
     def test_public_chart_get_never_refreshes_short_provider(self):
         fake = provider_history()
-        with mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
+        with price_cache(fake), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}), \
                 mock.patch.object(scanner, "_jp_daily_short_history", return_value=[]) as short:
             scanner.app.test_client().get(
                 "/api/argus/chart-intelligence?scope=asset&market=JP&symbol=1321")
         short.assert_called_once_with(cached_only=True)
+
+    def test_public_chart_routes_are_strictly_price_cache_only(self):
+        report = {
+            "symbol": "1321", "market": "JP", "displayNameJa": "日経225 ETF",
+            "instrumentMetadata": {"displayNameJa": "日経225 ETF"},
+        }
+        with mock.patch.object(
+                scanner, "_chart_public_report", return_value=report) as build:
+            client = scanner.app.test_client()
+            self.assertEqual(200, client.get(
+                "/api/argus/chart-intelligence?scope=market&symbol=1321"
+            ).status_code)
+            self.assertEqual(200, client.get(
+                "/api/argus/chart-intelligence?scope=asset&market=JP&symbol=1321"
+            ).status_code)
+        self.assertTrue(build.call_args_list[0].kwargs["cached_only"])
+        self.assertTrue(build.call_args_list[1].kwargs["cached_only"])
 
     def test_natural_tick_has_bounded_initial_short_seed(self):
         source = pathlib.Path("scanner.py").read_text()
