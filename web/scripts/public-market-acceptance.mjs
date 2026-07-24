@@ -642,6 +642,7 @@ async function mainAcceptance() {
   await waitForData(warmSeedPage, 30_000);
   await warmSeedPage.getByRole('button', { name: 'QQQ', exact: true }).click();
   await warmSeedPage.getByRole('button', { name: '20D', exact: true }).click();
+  await warmSeedPage.getByRole('button', { name: 'OVERVIEW', exact: true }).click();
   await warmSeedPage.getByRole('button', { name: '3M', exact: true }).click();
   const overlays = warmSeedPage.locator('details.mr-overlays');
   if (!await overlays.evaluate((element) => element.open)) {
@@ -690,7 +691,25 @@ async function mainAcceptance() {
   await waitForMarket(slowPage);
   await slowPage.locator(
     '.market-replay[data-snapshot-id]').waitFor({ timeout: 500 });
-  const warmCachedRenderMs = Date.now() - warmStarted;
+  const warmNavigationToChartMs = Date.now() - warmStarted;
+  const warmTiming = await slowPage.evaluate(() => {
+    const lastMark = (name) => {
+      const entries = performance.getEntriesByName(`argus-snapshot:${name}`);
+      return entries.length ? entries[entries.length - 1].startTime : null;
+    };
+    const navigationStart = lastMark('navigation-start');
+    const cachedChart = lastMark('first-cached-chart-render');
+    return {
+      navigationStart,
+      cachedChart,
+      cacheRestoreMs: navigationStart != null && cachedChart != null
+        ? Math.max(0, cachedChart - navigationStart) : null,
+    };
+  });
+  const warmCachedRenderMs = warmTiming.cacheRestoreMs;
+  await slowPage.waitForTimeout(350);
+  const loaderDuringRevalidation = await slowPage.locator(
+    '.mr-snapshot-status .triangle-step-loader').count();
   const restoredTab = await slowPage.getByRole(
     'button', { name: 'REPLAY', exact: true }).getAttribute('aria-selected');
   await slowPage.getByRole(
@@ -708,9 +727,6 @@ async function mainAcceptance() {
   };
   await slowPage.getByRole(
     'button', { name: 'REPLAY', exact: true }).click();
-  await slowPage.waitForTimeout(350);
-  const loaderDuringRevalidation = await slowPage.locator(
-    '.mr-snapshot-status .triangle-step-loader').count();
   const slowSnapshotBefore = await slowPage.locator(
     '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
   if (await captureScreenshot(
@@ -721,8 +737,18 @@ async function mainAcceptance() {
   await waitForData(slowPage, 30_000);
   const slowSnapshotAfter = await slowPage.locator(
     '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
-  if (warmCachedRenderMs > 500) {
+  const networkResponseAt = await slowPage.evaluate(() => {
+    const entries = performance.getEntriesByName('argus-snapshot:network-response');
+    return entries.length ? entries[entries.length - 1].startTime : null;
+  });
+  if (warmCachedRenderMs == null) {
+    evidence.failures.push('warm-cache-timing-missing');
+  } else if (warmCachedRenderMs > 500) {
     evidence.failures.push(`warm-cache-over-500ms:${warmCachedRenderMs}`);
+  }
+  if (warmTiming.cachedChart == null || networkResponseAt == null
+      || warmTiming.cachedChart >= networkResponseAt) {
+    evidence.failures.push('warm-cache-not-before-network');
   }
   if (!loaderDuringRevalidation) {
     evidence.failures.push('warm-revalidation-loader-missing');
@@ -789,13 +815,15 @@ async function mainAcceptance() {
   const warmOffline = await offlinePage.evaluate(() => ({
     frontendVersion: globalThis.__ARGUS_VERSION__ || null,
     frontendBuildSha: globalThis.__ARGUS_BUILD_SHA__ || null,
+    online: navigator.onLine,
     snapshotId: document.querySelector(
       '.market-replay[data-snapshot-id]')?.getAttribute('data-snapshot-id') || null,
     snapshotStatus: document.querySelector(
       '.mr-snapshot-status')?.textContent?.trim() || null,
   }));
   if (!warmOffline.snapshotId
-      || !String(warmOffline.snapshotStatus).includes('更新要確認')) {
+      || warmOffline.snapshotId !== warmSeedSnapshotId
+      || warmOffline.online !== false) {
     evidence.failures.push('offline-verified-snapshot-fallback');
   }
   await offlineContext.setOffline(false);
@@ -803,6 +831,9 @@ async function mainAcceptance() {
 
   const warmPerformance = {
     warmCachedRenderMs,
+    warmNavigationToChartMs,
+    warmTiming,
+    networkResponseAt,
     loaderDuringRevalidation,
     snapshotBefore: slowSnapshotBefore,
     snapshotAfter: slowSnapshotAfter,
@@ -870,25 +901,29 @@ if (MODE === 'seed') {
     const testedAt = new Date().toISOString();
     const failure = sanitize(error.stack || error.message);
     await fs.mkdir(path.join(OUT_DIR, 'screenshots'), { recursive: true });
-    await Promise.all([
-      writeJson('acceptance.json', {
-        marketProductStatus: 'NOT_FROZEN',
-        testedAt,
-        publicUrl: NORMAL_URL,
-        cacheBustedUrl: CACHE_BUSTED_URL,
-        failures: [failure],
-      }),
-      writeJson('console.json', { errors: [{ type: 'acceptance', message: failure }], reactWarnings: [] }),
-      writeJson('network.json', { aiPostCount: null, requests: [] }),
-      writeJson('computed-styles.json', []),
-      writeJson('version.json', {
-        testedAt,
-        frontendVersion: EXPECTED_VERSION,
-        frontendBuildSha: EXPECTED_SHA,
-        backendVersion: EXPECTED_BACKEND_VERSION,
-        backendBuildSha: null,
-      }),
-    ]);
+    try {
+      await fs.access(path.join(OUT_DIR, 'acceptance.json'));
+    } catch {
+      await Promise.all([
+        writeJson('acceptance.json', {
+          marketProductStatus: 'NOT_FROZEN',
+          testedAt,
+          publicUrl: NORMAL_URL,
+          cacheBustedUrl: CACHE_BUSTED_URL,
+          failures: [failure],
+        }),
+        writeJson('console.json', { errors: [{ type: 'acceptance', message: failure }], reactWarnings: [] }),
+        writeJson('network.json', { aiPostCount: null, requests: [] }),
+        writeJson('computed-styles.json', []),
+        writeJson('version.json', {
+          testedAt,
+          frontendVersion: EXPECTED_VERSION,
+          frontendBuildSha: EXPECTED_SHA,
+          backendVersion: EXPECTED_BACKEND_VERSION,
+          backendBuildSha: null,
+        }),
+      ]);
+    }
     console.error(failure);
     process.exit(1);
   });

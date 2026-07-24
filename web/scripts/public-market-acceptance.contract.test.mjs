@@ -37,6 +37,12 @@ assert.match(script, /const view = body\.payload \|\| body/);
 assert.match(script, /responseSnapshotId/);
 assert.match(script, /controlledBackendDelayMs: 12_000/);
 assert.match(script, /warmCachedRenderMs > 500/);
+assert.match(script, /cacheRestoreMs/);
+assert.match(script, /warm-cache-not-before-network/);
+assert.match(script, /navigator\.onLine/);
+assert.match(script, /warmOffline\.snapshotId !== warmSeedSnapshotId/);
+assert.match(script, /fs\.access\(path\.join\(OUT_DIR, 'acceptance\.json'\)\)/,
+  'a complete failure artifact must not be replaced by the outer catch');
 assert.match(script, /loader-flicker-before-225ms/);
 assert.match(script, /first-use-five-second-label-missing/);
 assert.match(script, /asset-switching-race/);
@@ -64,6 +70,10 @@ const warmSeedFlow = script.slice(
   script.indexOf('const warmSeedSnapshotId'),
 );
 assert.ok(
+  warmSeedFlow.indexOf("name: 'OVERVIEW'") < warmSeedFlow.indexOf("name: '3M'"),
+  'warm seed must mount OVERVIEW controls regardless of the prior profile tab',
+);
+assert.ok(
   warmSeedFlow.indexOf("name: '3M'") < warmSeedFlow.indexOf("name: 'REPLAY'"),
   'OVERVIEW-only range controls must be used before switching to REPLAY',
 );
@@ -73,7 +83,7 @@ assert.ok(
 );
 const restoredFlow = script.slice(
   script.indexOf('const restoredTab'),
-  script.indexOf('await slowPage.waitForTimeout(350)'),
+  script.indexOf('const slowSnapshotBefore'),
 );
 assert.ok(
   restoredFlow.indexOf("name: 'OVERVIEW'") < restoredFlow.indexOf("name: '3M'"),
