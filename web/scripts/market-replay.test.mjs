@@ -7,6 +7,7 @@ const today = fs.readFileSync(new URL('../src/components/today/ArgusTodayPanel.t
 const route = fs.readFileSync(new URL('../src/routes/MarketRegime.tsx', import.meta.url), 'utf8');
 const chartHook = fs.readFileSync(new URL('../src/hooks/useChartIntelligence.ts', import.meta.url), 'utf8');
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
+const theme = fs.readFileSync(new URL('../src/styles/theme.css', import.meta.url), 'utf8');
 
 for (const tab of ['OVERVIEW', 'REPLAY', 'LEDGER']) assert.match(replay, new RegExp(`'${tab}'`));
 for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) assert.match(replay, new RegExp(symbol));
@@ -35,4 +36,31 @@ assert.match(replay, /layoutReplayPriceLabels/);
 assert.match(replay, /slice\(-20\)/);
 assert.match(replay, /slice\(-10\)/);
 assert.match(replay, /AI POST 0/);
+
+for (const token of [
+  '--chart-bg', '--chart-grid', '--chart-axis', '--chart-text-primary',
+  '--chart-text-secondary', '--chart-bar-primary', '--chart-bar-positive',
+  '--chart-bar-negative', '--chart-point', '--chart-chip-bg',
+  '--chart-chip-text', '--chart-focus',
+]) assert.match(theme, new RegExp(`${token}:\\s*[^;]+;`), `${token} must be centrally defined`);
+assert.doesNotMatch(css, /var\(--accent\)|var\(--text\)/,
+  'Market charts must not use undefined legacy color variables');
+assert.match(css, /\.market-replay svg\{fill:none;stroke:none\}/,
+  'SVG elements must inherit an explicit non-black default');
+assert.match(css, /\.mr-dist rect\.is-positive[^}]+fill:var\(--chart-bar-positive\)/);
+assert.match(css, /\.mr-dist rect\.is-negative[^}]+fill:var\(--chart-bar-negative\)/);
+assert.match(css, /\.mr-calibration circle\{[^}]*fill:var\(--chart-point\)/);
+assert.match(css, /\.mr-volume\.is-up\{fill:var\(--chart-volume-positive\)/);
+assert.match(css, /\.mr-volume\.is-down\{fill:var\(--chart-volume-negative\)/);
+assert.match(css, /\.mr-price-chip rect\{fill:var\(--chart-chip-bg\)/);
+assert.match(css, /\.mr-price-chip text\{fill:var\(--chart-chip-text\)!important\}/);
+assert.match(css, /\.mr-chart text\{fill:var\(--chart-axis\)/);
+assert.match(css, /\.mr-dist-labels strong\{color:var\(--chart-text-primary\)/);
+assert.match(css, /\.mr-selection-handle\{fill:var\(--chart-point-highlight\)!important/);
+assert.match(replay, /className={`mr-volume \${tone}`}/);
+assert.match(replay, /className="chip-label"/);
+assert.match(replay, /className="chip-value"/);
+assert.match(replay, /className="mr-dist-labels"/);
+assert.match(replay, /<title>\{fmt\(row\.from\)}/, 'histograms expose bin tooltips');
+assert.match(replay, /誤差 \{Math\.round/, 'calibration tooltip exposes error');
 console.log('market-replay.test: ok');

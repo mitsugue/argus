@@ -25,6 +25,36 @@
   --green:  #34D399;
   --gray:   #64748B;
 
+  /* Market chart contract — explicit SVG-safe colors for the dark surface.
+     Chart components must not rely on SVG's default black fill/stroke. */
+  --chart-bg:              #0F1822;
+  --chart-panel:           #172333;
+  --chart-grid:            rgba(148, 163, 184, 0.16);
+  --chart-axis:            #AAB6C4;
+  --chart-text-primary:    #F8FAFC;
+  --chart-text-secondary:  #B6C2D0;
+  --chart-muted:           #8797A9;
+  --chart-line-primary:    #F8FAFC;
+  --chart-line-secondary:  #38BDF8;
+  --chart-bar-primary:     #60A5FA;
+  --chart-bar-positive:    #34D399;
+  --chart-bar-negative:    #FB7185;
+  --chart-bar-neutral:     #7C9ABB;
+  --chart-band:            rgba(250, 204, 21, 0.18);
+  --chart-point:           #22D3EE;
+  --chart-point-muted:     #94A3B8;
+  --chart-point-highlight: #F8FAFC;
+  --chart-tooltip-bg:      #172333;
+  --chart-tooltip-border:  rgba(226, 232, 240, 0.28);
+  --chart-chip-bg:         #172333;
+  --chart-chip-text:       #F8FAFC;
+  --chart-focus:           #F8FAFC;
+  --chart-drawing:         #38BDF8;
+  --chart-volume-positive: #2BAF98;
+  --chart-volume-negative: #D45F70;
+  --chart-volume-neutral:  #7189A5;
+  --chart-delay:           #A78BFA;
+
   /* Action label tokens — single source of truth.
      Foreground + soft wash background, each. */
   --action-exit:        var(--red);

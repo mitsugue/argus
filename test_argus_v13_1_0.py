@@ -121,12 +121,12 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
     def test_version_consistency(self):
         package = json.loads(pathlib.Path("web/package.json").read_text())
         lock = json.loads(pathlib.Path("web/package-lock.json").read_text())
-        self.assertEqual(package["version"], "13.2.0")
+        self.assertEqual(package["version"], "13.2.1")
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertEqual(scanner._semantic_app_version(), package["version"])
         guide = pathlib.Path("web/src/routes/Guide.tsx").read_text()
-        self.assertIn("['v13.2.0'", guide)
+        self.assertIn("['v13.2.1'", guide)
 
 
 if __name__ == "__main__":

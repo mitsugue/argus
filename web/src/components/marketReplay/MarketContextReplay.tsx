@@ -121,15 +121,21 @@ const DrawingLayer: React.FC<{ drawings: Drawing[]; selected: string | null;
       const [a, b = a] = drawing.points;
       const common = { onClick: (event: React.MouseEvent) => { event.stopPropagation(); onSelect(drawing.id); },
         className: selected === drawing.id ? 'is-selected' : '' };
-      if (drawing.kind === 'horizontal') return <line key={drawing.id} {...common}
-        x1="36" x2="882" y1={a.y} y2={a.y} />;
-      if (drawing.kind === 'zone') return <rect key={drawing.id} {...common}
-        x={Math.min(a.x, b.x)} y={Math.min(a.y, b.y)}
-        width={Math.abs(a.x - b.x)} height={Math.abs(a.y - b.y)} />;
-      if (drawing.kind === 'text') return <text key={drawing.id} {...common}
-        x={a.x} y={a.y}>{drawing.text || 'memo'}</text>;
-      return <line key={drawing.id} {...common} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-        markerEnd={drawing.kind === 'arrow' ? 'url(#mr-arrow)' : undefined} />;
+      const shape = drawing.kind === 'horizontal'
+        ? <line {...common} x1="36" x2="882" y1={a.y} y2={a.y} />
+        : drawing.kind === 'zone'
+          ? <rect {...common} x={Math.min(a.x, b.x)} y={Math.min(a.y, b.y)}
+            width={Math.abs(a.x - b.x)} height={Math.abs(a.y - b.y)} />
+          : drawing.kind === 'text'
+            ? <text {...common} x={a.x} y={a.y}>{drawing.text || 'memo'}</text>
+            : <line {...common} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+              markerEnd={drawing.kind === 'arrow' ? 'url(#mr-arrow)' : undefined} />;
+      const handles = drawing.kind === 'horizontal'
+        ? [{ x: 36, y: a.y }, { x: 882, y: a.y }]
+        : drawing.kind === 'text' ? [a] : [a, b];
+      return <g key={drawing.id}>{shape}{selected === drawing.id && handles.map((point, index) =>
+        <circle key={`${drawing.id}-handle-${index}`} className="mr-selection-handle"
+          cx={point.x} cy={point.y} r="4" />)}</g>;
     })}
   </g>
 );
@@ -187,7 +193,7 @@ const MarketChart: React.FC<{ data: ChartIntelligencePayload; replay: MarketRepl
   };
   const lineValues = bars.map((bar, index) => ({ x: x(index), y: y(bar.close) }));
   return <div className="mr-chart-frame">
-    <svg className="mr-chart" viewBox="0 0 940 480" role="img"
+    <svg className="mr-chart" viewBox="0 0 940 480" role="img" tabIndex={0}
       aria-label={`${data.displayNameJa ?? data.symbol} Market Context chart`}
       onClick={click} onMouseLeave={() => setHover(null)}>
       <rect width="940" height="480" className="mr-chart-bg" />
@@ -218,9 +224,17 @@ const MarketChart: React.FC<{ data: ChartIntelligencePayload; replay: MarketRepl
         </g>;
       }) : <path d={path(lineValues)} className="mr-price-line" />}
       <circle cx={x(bars.length - 1)} cy={y(current.close)} r="4.5" className="mr-current-dot" />
-      {bars.map((bar, index) => <rect key={`vol-${bar.date}`} x={x(index) - 1.5} width="3"
-        y={462 - ((bar.volume ?? 0) / maxVolume) * 48}
-        height={((bar.volume ?? 0) / maxVolume) * 48} className="mr-volume" />)}
+      {bars.map((bar, index) => {
+        const volume = bar.volume;
+        const missing = volume == null;
+        const height = missing ? 2 : Math.max(1, (volume / maxVolume) * 48);
+        const tone = missing ? 'is-missing' : bar.close > bar.open ? 'is-up'
+          : bar.close < bar.open ? 'is-down' : 'is-neutral';
+        return <rect key={`vol-${bar.date}`} x={x(index) - 1.5} width="3"
+          y={462 - height} height={height} className={`mr-volume ${tone}`}>
+          <title>{bar.date} · 出来高 {missing ? '未取得' : fmt(bar.volume, 0)}</title>
+        </rect>;
+      })}
       {overlays.ma && <path d={path(bars.map((bar, index) => ({
         x: x(index), y: y(bar.ma['25'] ?? bar.close),
       })))} className="mr-ma" />}
@@ -268,7 +282,8 @@ const MarketChart: React.FC<{ data: ChartIntelligencePayload; replay: MarketRepl
       {labels.map((label) => <g key={label.id} className={`mr-price-chip is-${label.tone}`}>
         <line x1="780" x2="816" y1={y(label.value)} y2={label.y} />
         <rect x="816" y={label.y - 9} width="120" height="18" rx="3" />
-        <text x="821" y={label.y + 4}>{label.label} {fmt(label.value)}</text>
+        <text x="821" y={label.y + 4}><tspan className="chip-label">{label.label}</tspan>
+          <tspan className="chip-value"> {fmt(label.value)}</tspan></text>
       </g>)}
       {hover != null && bars[hover] && <g className="mr-crosshair">
         <line x1={x(hover)} x2={x(hover)} y1="24" y2="462" />
@@ -286,13 +301,25 @@ const MarketChart: React.FC<{ data: ChartIntelligencePayload; replay: MarketRepl
 const DistributionChart: React.FC<{ label: string; data?: ReplayDistribution }> = ({ label, data }) => {
   if (!data || !data.count) return null;
   const max = Math.max(1, ...data.histogram.map((row) => row.count));
-  return <div className="mr-dist"><div><b>{label}</b><span>n={data.count}</span></div>
+  const chartTone = label === 'MFE' ? 'is-mfe' : label === 'MAE' ? 'is-mae'
+    : label === 'REACTION DELAY' ? 'is-delay' : 'is-return';
+  const unit = chartTone === 'is-delay' ? '日' : '%';
+  return <div className={`mr-dist ${chartTone}`}><div><b>{label}</b></div>
     <svg viewBox="0 0 260 96" role="img" aria-label={`${label} distribution`}>
-      {data.histogram.map((row, index) => <rect key={index} x={8 + index * 24} width="18"
-        y={72 - row.count / max * 58} height={row.count / max * 58} />)}
+      {data.histogram.map((row, index) => {
+        const height = Math.max(1, row.count / max * 58);
+        const sign = row.to <= 0 ? 'is-negative' : row.from >= 0 ? 'is-positive' : 'is-neutral';
+        return <rect key={index} x={8 + index * 24} width="18"
+          y={72 - height} height={height}
+          className={`${chartTone === 'is-return' ? sign : ''} ${row.count === 0 ? 'is-zero' : ''}`}>
+          <title>{fmt(row.from)}–{fmt(row.to)}{unit} · {row.count}件 · {fmt(row.count / data.count * 100, 1)}%</title>
+        </rect>;
+      })}
       <line x1="8" x2="250" y1="72" y2="72" />
     </svg>
-    <small>q10 {fmt(data.q10)}　中央値 {fmt(data.median)}　q90 {fmt(data.q90)}</small>
+    <small className="mr-dist-labels"><span>q10 {fmt(data.q10)}</span>
+      <strong>中央値 {fmt(data.median)}</strong><span>q90 {fmt(data.q90)}</span>
+      <em>n={data.count} · {unit}</em></small>
   </div>;
 };
 
@@ -322,13 +349,18 @@ const CalibrationCurve: React.FC<{ context: MarketReplayContext }> = ({ context 
   if (!points.length) return null;
   return <div className="card mr-calibration"><div className="mr-card-head"><b>CALIBRATION</b><span>past-only</span></div>
     <svg viewBox="0 0 250 210" role="img" aria-label="予測確率と実現頻度">
+      <line x1="30" x2="30" y1="20" y2="180" className="cal-axis" />
+      <line x1="30" x2="220" y1="180" y2="180" className="cal-axis" />
       <line x1="30" x2="220" y1="180" y2="20" className="ideal" />
       {points.map((point) => <g key={point.bin}>
         <circle cx={30 + point.predicted * 190} cy={180 - point.observed * 160}
           r={point.smallSample ? 3 : Math.min(9, 3 + point.sample / 3)}
-          className={point.smallSample ? 'small' : ''}><title>予測 {Math.round(point.predicted * 100)}% / 実現 {Math.round(point.observed * 100)}% / n={point.sample}</title></circle>
+          tabIndex={0} className={point.smallSample ? 'small' : 'valid'}>
+          <title>予測 {Math.round(point.predicted * 100)}% / 実現 {Math.round(point.observed * 100)}% / n={point.sample} / 誤差 {Math.round(Math.abs(point.predicted - point.observed) * 100)}pt</title>
+        </circle>
       </g>)}
-      <text x="84" y="204">予測確率 →</text><text x="2" y="18">実現</text>
+      <text x="84" y="204">予測確率 →</text><text x="2" y="18">実現頻度</text>
+      <text x="20" y="193">0</text><text x="210" y="193">100%</text>
     </svg>
   </div>;
 };
