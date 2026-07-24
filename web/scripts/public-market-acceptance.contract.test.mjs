@@ -71,6 +71,18 @@ assert.ok(
   warmSeedFlow.indexOf('const overlays') < warmSeedFlow.indexOf("name: 'REPLAY'"),
   'OVERVIEW-only overlay controls must be used before switching to REPLAY',
 );
+const restoredFlow = script.slice(
+  script.indexOf('const restoredTab'),
+  script.indexOf('await slowPage.waitForTimeout(350)'),
+);
+assert.ok(
+  restoredFlow.indexOf("name: 'OVERVIEW'") < restoredFlow.indexOf("name: '3M'"),
+  'restored range must be inspected while the OVERVIEW surface is mounted',
+);
+assert.ok(
+  restoredFlow.lastIndexOf("name: 'REPLAY'") > restoredFlow.indexOf("name: '3M'"),
+  'acceptance must return to the restored REPLAY tab after inspecting range',
+);
 assert.match(workflow, /market-public-acceptance-/);
 assert.match(workflow, /seed-warm-profile:[\s\S]+needs: build/);
 assert.match(workflow,
