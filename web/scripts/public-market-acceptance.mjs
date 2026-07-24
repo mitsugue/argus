@@ -40,6 +40,22 @@ async function writeJson(name, value) {
   await fs.writeFile(path.join(OUT_DIR, name), `${JSON.stringify(value, null, 2)}\n`);
 }
 
+async function captureScreenshot(page, evidence, filename, label) {
+  try {
+    await page.screenshot({
+      path: path.join(OUT_DIR, 'screenshots', filename),
+      fullPage: false,
+      animations: 'disabled',
+      timeout: 10_000,
+    });
+    return true;
+  } catch (error) {
+    const errorClass = error instanceof Error ? error.name : 'ScreenshotError';
+    evidence.failures.push(`screenshot:${label}:${errorClass}`);
+    return false;
+  }
+}
+
 async function seedWarmProfile() {
   await fs.rm(PROFILE_DIR, { recursive: true, force: true });
   await fs.mkdir(PROFILE_DIR, { recursive: true });
@@ -395,6 +411,7 @@ async function mainAcceptance() {
   await waitForVersion(page, EXPECTED_VERSION);
   await waitForMarket(page);
   const publicIdentity = await waitForBackendIdentity(page.request);
+  console.log('public-market-acceptance: backend-ready');
   const initialDataLoadMs = await waitForData(page);
   if (initialDataLoadMs > DATA_TIMEOUT_MS) evidence.failures.push(`initial-pending:${initialDataLoadMs}`);
   const backendBody = publicIdentity.body;
@@ -426,9 +443,11 @@ async function mainAcceptance() {
       }
     }
   }
+  console.log(`public-market-acceptance: combinations=${evidence.acceptance.length}`);
 
   await page.getByRole('button', { name: '1321', exact: true }).click();
   await page.getByRole('button', { name: '5D', exact: true }).click();
+  let screenshotCount = 0;
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
     for (const tab of TABS) {
@@ -440,22 +459,24 @@ async function mainAcceptance() {
       });
       validateStyles(audit, evidence.failures,
         `${viewport.width}x${viewport.height}:${tab}`, tab);
-      await page.screenshot({
-        path: path.join(OUT_DIR, 'screenshots',
-          `${viewport.width}x${viewport.height}-${tab.toLowerCase()}.png`),
-        fullPage: false,
-      });
+      const representative = tab === 'OVERVIEW' || viewport.width === 1280;
+      if (representative && await captureScreenshot(
+        page,
+        evidence,
+        `${viewport.width}x${viewport.height}-${tab.toLowerCase()}.png`,
+        `${viewport.width}x${viewport.height}:${tab}`,
+      )) screenshotCount += 1;
     }
   }
+  console.log(`public-market-acceptance: screenshots=${screenshotCount}`);
   await page.setViewportSize({ width: 1280, height: 800 });
   const drawing = await drawingAudit(page);
   if (drawing.handleCount < 2 || drawing.handles.some((row) => isBlack(row.fill))) {
     evidence.failures.push('drawing-handles-invisible');
   }
-  await page.screenshot({
-    path: path.join(OUT_DIR, 'screenshots', '1280x800-drawing-selected.png'),
-    fullPage: false,
-  });
+  if (await captureScreenshot(
+    page, evidence, '1280x800-drawing-selected.png', '1280x800:drawing-selected',
+  )) screenshotCount += 1;
 
   await page.goto(CACHE_BUSTED_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
   await waitForVersion(page, EXPECTED_VERSION);
@@ -519,6 +540,7 @@ async function mainAcceptance() {
     publicUrl: NORMAL_URL,
     cacheBustedUrl: CACHE_BUSTED_URL,
     combinationCount: evidence.acceptance.length,
+    screenshotCount,
     initialDataLoadMs,
     drawing,
     pwa,

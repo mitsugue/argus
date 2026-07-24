@@ -15,10 +15,19 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
       - uses: actions/setup-node@v5
         with: {node-version: "22"}
+      - name: Enforce Render deploy-plane contract
+        env:
+          ARGUS_RENDER_EVENT: ${{ github.event_name }}
+          ARGUS_RENDER_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ARGUS_RENDER_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ARGUS_RENDER_SKIP_TEXT: ${{ github.event.pull_request.title || github.event.head_commit.message || '' }}
+        run: python3 -B scripts/render_deploy_guard.py
       - name: Install deps (ci.ymlと同一セット)
         run: pip install --quiet anthropic flask flask-cors requests pytz python-dotenv json-repair pytest
       - name: Install web deps
