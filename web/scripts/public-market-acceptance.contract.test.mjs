@@ -41,6 +41,10 @@ assert.match(script, /cacheRestoreMs/);
 assert.match(script, /warm-cache-not-before-network/);
 assert.match(script, /navigator\.onLine/);
 assert.match(script, /warmOffline\.snapshotId !== warmSeedSnapshotId/);
+assert.match(script, /ensureCurrentPwaBuild/);
+assert.match(script, /registration\.update\(\)/);
+assert.match(script, /warmOnline\.frontendBuildSha !== EXPECTED_SHA/);
+assert.match(script, /warmOffline\.frontendBuildSha !== EXPECTED_SHA/);
 assert.match(script, /fs\.access\(path\.join\(OUT_DIR, 'acceptance\.json'\)\)/,
   'a complete failure artifact must not be replaced by the outer catch');
 assert.match(script, /Target page, context or browser has been closed/);

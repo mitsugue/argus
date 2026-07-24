@@ -166,6 +166,43 @@ async function waitForVersion(page, version, timeout = PAGE_TIMEOUT_MS) {
     && document.body?.innerText.includes(`v${expected}`), version, { timeout });
 }
 
+async function ensureCurrentPwaBuild(page, expectedSha) {
+  const before = await page.evaluate(
+    () => globalThis.__ARGUS_BUILD_SHA__ || null);
+  if (before === expectedSha) {
+    return { before, after: before, registrationCount: null, controllerChanged: false };
+  }
+  const update = await page.evaluate(async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    let controllerChanged = false;
+    const changed = new Promise((resolve) => {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        controllerChanged = true;
+        resolve(true);
+      }, { once: true });
+    });
+    await Promise.all(registrations.map(
+      (registration) => registration.update()));
+    for (const registration of registrations) {
+      registration.waiting?.postMessage({ type: 'SKIP_WAITING' });
+    }
+    await Promise.race([
+      changed,
+      new Promise((resolve) => setTimeout(() => resolve(false), 8_000)),
+    ]);
+    return { registrationCount: registrations.length, controllerChanged };
+  });
+  await page.reload({
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+  });
+  await page.waitForFunction(
+    (expected) => globalThis.__ARGUS_BUILD_SHA__ === expected,
+    expectedSha, { timeout: PAGE_TIMEOUT_MS });
+  const after = await page.evaluate(
+    () => globalThis.__ARGUS_BUILD_SHA__ || null);
+  return { before, after, ...update };
+}
+
 async function waitForMarket(page) {
   const marker = page.getByText('MARKET CONTEXT REPLAY', { exact: true });
   if (!await marker.isVisible().catch(() => false)) {
@@ -680,6 +717,8 @@ async function mainAcceptance() {
   await warmSeedPage.goto(NORMAL_URL, {
     waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
   });
+  const pwaUpgrade = await ensureCurrentPwaBuild(
+    warmSeedPage, EXPECTED_SHA);
   await waitForVersion(warmSeedPage, EXPECTED_VERSION, PAGE_TIMEOUT_MS);
   await waitForMarket(warmSeedPage);
   await waitForData(warmSeedPage, 30_000);
@@ -709,6 +748,10 @@ async function mainAcceptance() {
   if (warmOnline.serviceWorkerCount !== 1) {
     evidence.failures.push(
       `warm-service-worker-count:${warmOnline.serviceWorkerCount}`);
+  }
+  if (warmOnline.frontendBuildSha !== EXPECTED_SHA) {
+    evidence.failures.push(
+      `warm-pwa-build:${warmOnline.frontendBuildSha}:${EXPECTED_SHA}`);
   }
   await warmSeedContext.close();
 
@@ -913,7 +956,8 @@ async function mainAcceptance() {
   }));
   if (!warmOffline.snapshotId
       || warmOffline.snapshotId !== warmSeedSnapshotId
-      || warmOffline.online !== false) {
+      || warmOffline.online !== false
+      || warmOffline.frontendBuildSha !== EXPECTED_SHA) {
     evidence.failures.push('offline-verified-snapshot-fallback');
   }
   await offlineContext.setOffline(false);
@@ -951,7 +995,7 @@ async function mainAcceptance() {
   };
   const pwa = {
     freshBefore, freshAfter, warmOnline, warmOffline, assets,
-    firstUse: firstUse.result, warmPerformance,
+    pwaUpgrade, firstUse: firstUse.result, warmPerformance,
   };
   const acceptance = {
     marketProductStatus: evidence.failures.length ? 'NOT_FROZEN' : 'FROZEN',
