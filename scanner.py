@@ -20261,7 +20261,16 @@ def api_argus_chart_intelligence():
                 return response
             etag = f'"{verified["snapshotId"]}"'
             supplied = request.headers.get("If-None-Match", "")
-            if etag in [part.strip() for part in supplied.split(",")]:
+            # RFC 9110 uses weak comparison for If-None-Match on GET. Render's
+            # edge may legitimately rewrite our strong validator as W/"...".
+            # Compare the opaque tag after removing only that weakness marker.
+            supplied_tags = []
+            for part in supplied.split(","):
+                candidate = part.strip()
+                if candidate[:2].lower() == "w/":
+                    candidate = candidate[2:].strip()
+                supplied_tags.append(candidate)
+            if "*" in supplied_tags or etag in supplied_tags:
                 response = make_response("", 304)
             else:
                 response = jsonify(verified)

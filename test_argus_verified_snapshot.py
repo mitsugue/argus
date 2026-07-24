@@ -212,6 +212,12 @@ def test_public_verified_get_is_read_only_and_etag_returns_304(monkeypatch):
         headers={"If-None-Match": response.headers["ETag"]})
     assert not_modified.status_code == 304
     assert not_modified.data == b""
+    weak_not_modified = client.get(
+        "/api/argus/chart-intelligence?"
+        "scope=market&symbol=1321&horizon=5D&snapshot=verified",
+        headers={"If-None-Match": f'W/{response.headers["ETag"]}'})
+    assert weak_not_modified.status_code == 304
+    assert weak_not_modified.data == b""
 
 
 def test_public_get_returns_not_ready_without_invoking_generator(monkeypatch):
