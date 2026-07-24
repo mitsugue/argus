@@ -112,7 +112,9 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
             "symbol": "1321", "market": "JP", "displayNameJa": "日経225 ETF",
             "instrumentMetadata": {"displayNameJa": "日経225 ETF"},
             "automaticAiCalls": 0,
-            "marketReplay": {"cacheStatus": "hit", "contexts": {}},
+            # Natural generation records "updated"; public reuse must expose
+            # the cache-boundary contract as "hit".
+            "marketReplay": {"cacheStatus": "updated", "contexts": {}},
         }
         key = ("market", "1321", "daily")
         with mock.patch.dict(
