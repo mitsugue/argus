@@ -40,6 +40,12 @@ class DeployScopeTests(unittest.TestCase):
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
+    def test_public_acceptance_workflow_is_frontend_plane(self):
+        result = deploy_scope.classify(
+            [".github/workflows/market-public-acceptance.yml"])
+        self.assertTrue(result["frontendDeploy"])
+        self.assertFalse(result["backendDeploy"])
+
     def test_render_blueprint_allowlist_matches_classifier(self):
         blueprint = (ROOT / "render.yaml").read_text()
         self.assertIn("autoDeployTrigger: commit", blueprint)

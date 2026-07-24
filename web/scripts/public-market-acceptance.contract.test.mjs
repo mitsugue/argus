@@ -5,6 +5,8 @@ const script = fs.readFileSync(
   new URL('./public-market-acceptance.mjs', import.meta.url), 'utf8');
 const workflow = fs.readFileSync(
   new URL('../../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8');
+const manualWorkflow = fs.readFileSync(
+  new URL('../../.github/workflows/market-public-acceptance.yml', import.meta.url), 'utf8');
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 
@@ -49,11 +51,19 @@ assert.doesNotMatch(script, /localStorage\./,
   'acceptance artifact must not read device-local owner data');
 assert.match(workflow, /market-public-acceptance-/);
 assert.match(workflow, /needs: \[build, seed-warm-profile\]/);
+assert.match(workflow, /needs: \[scope, deploy, seed-warm-profile\]/);
+assert.match(workflow, /if: needs\.scope\.outputs\.backend_deploy != 'true'/);
 assert.match(workflow, /ARGUS_EXPECTED_BACKEND_VERSION: \$\{\{ steps\.release\.outputs\.backend_version \}\}/);
 assert.doesNotMatch(workflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ github\.sha \}\}/,
   'backend and frontend SHA must be independently observed');
-assert.match(workflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ steps\.release\.outputs\.backend_sha \}\}/);
+assert.match(workflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ needs\.scope\.outputs\.backend_sha \}\}/);
 assert.match(workflow, /from scripts\.deploy_scope import classify/);
+for (const input of ['pages_run_id', 'frontend_sha', 'backend_sha']) {
+  assert.match(manualWorkflow, new RegExp(`${input}:`));
+}
+assert.match(manualWorkflow, /run-id: \$\{\{ inputs\.pages_run_id \}\}/);
+assert.match(manualWorkflow, /github-token: \$\{\{ github\.token \}\}/);
+assert.match(manualWorkflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ inputs\.backend_sha \}\}/);
 assert.match(workflow, /-name 'Local Storage'/);
 assert.match(vite, /cleanupOutdatedCaches: true/);
 assert.match(vite, /clientsClaim: true/);

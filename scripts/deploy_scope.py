@@ -29,17 +29,22 @@ BACKEND_EXCEPTIONS = ("render.yaml",)
 FRONTEND_PATHS: Tuple[str, ...] = (
     "web/**",
     ".github/workflows/deploy-pages.yml",
+    ".github/workflows/market-public-acceptance.yml",
 )
 
 
+def _clean(path: str) -> str:
+    clean = str(path).replace("\\", "/")
+    return clean[2:] if clean.startswith("./") else clean
+
+
 def _matches(path: str, patterns: Iterable[str]) -> bool:
-    clean = path.replace("\\", "/").lstrip("./")
+    clean = _clean(path)
     return any(fnmatch.fnmatchcase(clean, pattern) for pattern in patterns)
 
 
 def classify(changed_paths: Iterable[str]) -> Dict[str, bool]:
-    paths = tuple(str(path).replace("\\", "/").lstrip("./")
-                  for path in changed_paths)
+    paths = tuple(_clean(path) for path in changed_paths)
     backend = any(_matches(path, RENDER_BACKEND_PATHS + BACKEND_EXCEPTIONS)
                   for path in paths)
     frontend = any(_matches(path, FRONTEND_PATHS) for path in paths)
