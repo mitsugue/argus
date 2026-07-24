@@ -75,6 +75,14 @@ def _sha_matches(expected: str, actual: Any) -> bool:
         actual_text.startswith(expected_text)))
 
 
+def _weak_etag_value(value: Any) -> str:
+    """Return an ETag value normalized for RFC 9110 weak comparison."""
+    text = str(value or "").strip()
+    if text[:2].lower() == "w/":
+        text = text[2:].strip()
+    return text
+
+
 def wait_for_backend(
         base_url: str, expected_version: str, expected_sha: str,
         timeout_seconds: int, poll_seconds: int) -> Dict[str, Any]:
@@ -131,20 +139,21 @@ def seed_snapshots(base_url: str, expected_sha: str) -> Dict[str, Any]:
             },
             timeout=360,
         )
-    except http.client.RemoteDisconnected:
+    except (http.client.RemoteDisconnected, TimeoutError, socket.timeout) as exc:
         # Render can close a long admin response after accepting the request.
         # This is not treated as success by itself: the following 12-snapshot
         # schema/read-back/ETag checks remain the fail-closed authority.
+        error_class = type(exc).__name__
         return {
             "httpStatus": None,
-            "businessStatus": "response_disconnected_verify_readback",
-            "responseDisconnected": True,
+            "businessStatus": "response_unconfirmed_verify_readback",
+            "responseUnconfirmed": True,
             "verifiedViewsStateHash": None,
             "viewPublications": None,
             "remoteJournal": {
                 "readBackVerified": None,
                 "remoteCommitSha": None,
-                "errorClass": "response_disconnected",
+                "errorClass": error_class,
             },
             "automaticAiExecutions": None,
         }
@@ -218,7 +227,8 @@ def verify_matrix(base_url: str) -> list[Dict[str, Any]]:
             if second_status != 304 or second_body is not None:
                 raise GateFailure(
                     f"snapshot_{instrument}_{horizon}_304_failed")
-            if second_headers.get("etag") != etag:
+            if _weak_etag_value(second_headers.get("etag")) != \
+                    _weak_etag_value(etag):
                 raise GateFailure(
                     f"snapshot_{instrument}_{horizon}_etag_changed")
             matrix.append({

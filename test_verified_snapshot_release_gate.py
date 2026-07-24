@@ -111,19 +111,24 @@ class VerifiedSnapshotReleaseGateTests(unittest.TestCase):
         self.assertEqual("do-not-copy", headers["X-ARGUS-ADMIN-TOKEN"])
         self.assertNotIn("do-not-copy", request.call_args.args)
 
-    def test_seed_disconnect_defers_success_to_snapshot_readback(self):
-        with mock.patch.dict(
-                os.environ, {"ARGUS_ADMIN_TOKEN": "do-not-copy"}), \
-                mock.patch.object(
-                    gate, "_request",
-                    side_effect=http.client.RemoteDisconnected()):
-            value = gate.seed_snapshots(
-                "https://example.invalid", "abcdef0123456789")
-        self.assertTrue(value["responseDisconnected"])
-        self.assertEqual(
-            "response_disconnected_verify_readback",
-            value["businessStatus"])
-        self.assertNotIn("do-not-copy", str(value))
+    def test_seed_unconfirmed_response_defers_success_to_snapshot_readback(self):
+        for exception in (
+                http.client.RemoteDisconnected(), TimeoutError()):
+            with self.subTest(exception=type(exception).__name__), \
+                    mock.patch.dict(
+                        os.environ, {"ARGUS_ADMIN_TOKEN": "do-not-copy"}), \
+                    mock.patch.object(
+                        gate, "_request", side_effect=exception):
+                value = gate.seed_snapshots(
+                    "https://example.invalid", "abcdef0123456789")
+            self.assertTrue(value["responseUnconfirmed"])
+            self.assertEqual(
+                "response_unconfirmed_verify_readback",
+                value["businessStatus"])
+            self.assertEqual(
+                type(exception).__name__,
+                value["remoteJournal"]["errorClass"])
+            self.assertNotIn("do-not-copy", str(value))
 
     def test_matrix_requires_all_12_snapshots_and_304(self):
         responses = []
@@ -133,7 +138,7 @@ class VerifiedSnapshotReleaseGateTests(unittest.TestCase):
                 etag = f'"{snapshot["snapshotId"]}"'
                 responses.extend([
                     (200, {
-                        "etag": etag,
+                        "etag": f"W/{etag}",
                         "x-argus-compute-mode": "read-only",
                     }, snapshot),
                     (304, {"etag": etag}, None),
