@@ -44,6 +44,12 @@ assert.match(script, /warmOffline\.snapshotId !== warmSeedSnapshotId/);
 assert.match(script, /fs\.access\(path\.join\(OUT_DIR, 'acceptance\.json'\)\)/,
   'a complete failure artifact must not be replaced by the outer catch');
 assert.match(script, /loader-flicker-before-225ms/);
+assert.match(script, /__ARGUS_LOADER_FIRST_AT__/);
+assert.match(script, /loaderDelayMs/);
+assert.match(script, /controlled verified snapshot delay did not start/);
+assert.match(script, /name === 'argus-api'/);
+assert.match(script, /slowProfileDir/);
+assert.match(script, /registration\.unregister\(\)/);
 assert.match(script, /first-use-five-second-label-missing/);
 assert.match(script, /asset-switching-race/);
 assert.match(script, /offline-verified-snapshot-fallback/);
