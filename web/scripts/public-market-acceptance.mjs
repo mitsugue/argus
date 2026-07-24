@@ -142,10 +142,17 @@ function attachEvidence(page, evidence) {
         ])),
       };
     } catch (error) {
+      const message = error instanceof Error
+        ? error.message : 'chart-intelligence response was not valid JSON';
+      // Response listeners can finish after an intentionally closed audit
+      // context. That is a Playwright teardown condition, not malformed JSON.
+      if (page.isClosed()
+          || /Target page, context or browser has been closed/i.test(message)) {
+        return;
+      }
       evidence.consoleErrors.push({
         type: 'acceptance-parser',
-        message: sanitize(error instanceof Error
-          ? error.message : 'chart-intelligence response was not valid JSON'),
+        message: sanitize(message),
       });
     }
   });
