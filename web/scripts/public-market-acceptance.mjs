@@ -642,12 +642,12 @@ async function mainAcceptance() {
   await waitForData(warmSeedPage, 30_000);
   await warmSeedPage.getByRole('button', { name: 'QQQ', exact: true }).click();
   await warmSeedPage.getByRole('button', { name: '20D', exact: true }).click();
-  await warmSeedPage.getByRole('button', { name: 'REPLAY', exact: true }).click();
   await warmSeedPage.getByRole('button', { name: '3M', exact: true }).click();
   const overlays = warmSeedPage.locator('details.mr-overlays');
   if (!await overlays.evaluate((element) => element.open)) {
     await overlays.locator('summary').click();
   }
+  await warmSeedPage.getByRole('button', { name: 'REPLAY', exact: true }).click();
   await waitForData(warmSeedPage, 30_000);
   const warmSeedSnapshotId = await warmSeedPage.locator(
     '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
