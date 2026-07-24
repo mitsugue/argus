@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import { useMarketLedger } from '../../hooks/useMarketLedger';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
+import { readDrawingState, writeDrawingState } from '../../lib/verifiedSnapshot';
 import type {
   ChartBar, ChartIntelligencePayload, MarketReplayContext, ReplayDistribution,
   ReplayLedgerSeries,
@@ -87,27 +89,40 @@ export function layoutReplayPriceLabels(labels: ReplayPriceLabel[],
 }
 
 function useDrawings(instrument: Instrument) {
-  const key = `argus.marketReplay.drawings.v1:${instrument}:daily`;
-  const [drawings, setDrawingsState] = useState<Drawing[]>(() => readLocal(key, []));
+  const legacyKey = `argus.marketReplay.drawings.v1:${instrument}:daily`;
+  const key = `market-replay-drawings-v2:${instrument}:daily`;
+  const [drawings, setDrawingsState] = useState<Drawing[]>(() => readLocal(legacyKey, []));
   const [history, setHistory] = useState<Drawing[][]>([]);
   const [future, setFuture] = useState<Drawing[][]>([]);
   useEffect(() => {
-    setDrawingsState(readLocal(key, [])); setHistory([]); setFuture([]);
-  }, [key]);
+    let active = true;
+    const legacy = readLocal<Drawing[]>(legacyKey, []);
+    setDrawingsState(legacy); setHistory([]); setFuture([]);
+    void readDrawingState<Drawing[]>(key, legacy).then((restored) => {
+      if (active) setDrawingsState(restored);
+      if (restored === legacy && legacy.length) {
+        void writeDrawingState(key, legacy).then((written) => {
+          if (written) try { localStorage.removeItem(legacyKey); } catch { /* ignore */ }
+        });
+      }
+    });
+    return () => { active = false; };
+  }, [key, legacyKey]);
+  const persist = (next: Drawing[]) => { void writeDrawingState(key, next); };
   const setDrawings = (next: Drawing[]) => {
     setHistory((rows) => [...rows.slice(-29), drawings]);
     setFuture([]); setDrawingsState(next);
-    try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* device-local best effort */ }
+    persist(next);
   };
   const undo = () => {
     const previous = history.at(-1); if (!previous) return;
     setFuture((rows) => [drawings, ...rows]); setHistory((rows) => rows.slice(0, -1));
-    setDrawingsState(previous); try { localStorage.setItem(key, JSON.stringify(previous)); } catch { /* ignore */ }
+    setDrawingsState(previous); persist(previous);
   };
   const redo = () => {
     const next = future[0]; if (!next) return;
     setHistory((rows) => [...rows, drawings]); setFuture((rows) => rows.slice(1));
-    setDrawingsState(next); try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* ignore */ }
+    setDrawingsState(next); persist(next);
   };
   return { drawings, setDrawings, undo, redo, canUndo: history.length > 0, canRedo: future.length > 0 };
 }
@@ -441,12 +456,18 @@ export const MarketContextReplay: React.FC = () => {
   const [range, setRange] = useState<Range>(() => readLocal('argus.marketReplay.range.v1', '1Y'));
   const [mode, setMode] = useState<ChartMode>('CANDLE');
   const [overlays, setOverlays] = useState(() => readLocal('argus.marketReplay.overlays.v1', OVERLAY_DEFAULTS));
+  const [overlaysExpanded, setOverlaysExpanded] = useState(
+    () => readLocal('argus.marketReplay.overlaysExpanded.v1', false));
   const [tool, setTool] = useState<DrawTool>('select');
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [focusDate, setFocusDate] = useState<string | null>(null);
   const info = INSTRUMENTS[instrument];
-  const { data, loading, error } = useChartIntelligence({
-    scope: 'market', symbol: instrument, market: info.market, timeframe: 'daily',
+  const {
+    data, loading, error, snapshotState, statusText, loaderVisible,
+    slowInitial, snapshotId,
+  } = useChartIntelligence({
+    scope: 'market', symbol: instrument, market: info.market,
+    timeframe: 'daily', horizon,
   });
   const replay = data?.marketReplay?.contexts?.[String(horizon)] ?? null;
   const draw = useDrawings(instrument);
@@ -482,11 +503,16 @@ export const MarketContextReplay: React.FC = () => {
     draw.setDrawings(draw.drawings.filter((row) => row.id !== selectedDrawing));
     setSelectedDrawing(null);
   };
-  return <div className="market-replay">
+  return <div className="market-replay" data-snapshot-id={snapshotId ?? undefined}>
     <header className="mr-header">
       <div><span>MARKET CONTEXT REPLAY</span><h2>{info.label}</h2>
         <small>{horizon}営業日 · {data?.periodEnd ?? 'データ確認中'} · 日足 · {data?.quoteState ?? 'CLOSE'}
-          {data && data.status !== 'live' ? ' · 暫定' : ''}</small></div>
+          {data && data.status !== 'live' ? ' · 暫定' : ''}</small>
+        <div className={`mr-snapshot-status is-${snapshotState.toLowerCase()}`}>
+          <span>{statusText}</span>
+          {data && loading && loaderVisible &&
+            <TriangleStepLoader compact label="" />}
+        </div></div>
       <div className={`mr-decision is-${(action ?? 'unknown').toLowerCase()}`}>
         <span>TODAY MIRROR</span><strong>{action ?? '判断待ち'}</strong><b>{score == null ? '' : `${score}/7`}</b>
       </div>
@@ -502,8 +528,12 @@ export const MarketContextReplay: React.FC = () => {
     <nav className="mr-tabs" aria-label="Market views">{TABS.map((value) =>
       <button type="button" key={value} aria-selected={tab === value}
         onClick={() => switchTab(value)}>{value}</button>)}</nav>
-    {loading && !data && <div className="card mr-empty">キャッシュ取得中…</div>}
-    {error && <div className="card mr-empty">前回値を保持 · {error}</div>}
+    {!data && <div className="card mr-snapshot-skeleton" aria-busy={loading}>
+      {loaderVisible && <TriangleStepLoader
+        label={slowInitial ? '初回データを準備中' : 'データ確認中'} />}
+      {!loaderVisible && <span className="mr-skeleton-placeholder" aria-hidden="true" />}
+      {error && <small>取得できません · {error}</small>}
+    </div>}
     {data && tab === 'OVERVIEW' && <div className="mr-overview">
       <section className="mr-summary-row">
         <div className="mr-price"><span>{data.quoteState ?? 'CLOSE'}</span>
@@ -540,7 +570,13 @@ export const MarketContextReplay: React.FC = () => {
           <button type="button" disabled={!draw.canRedo} onClick={draw.redo}>Redo</button>
           <label><input type="checkbox" disabled /> 判断条件に使用 OFF</label>
         </div>
-        <details className="mr-overlays"><summary>OVERLAYS</summary><div>
+        <details className="mr-overlays" open={overlaysExpanded}
+          onToggle={(event) => {
+            const open = event.currentTarget.open;
+            setOverlaysExpanded(open);
+            try { localStorage.setItem('argus.marketReplay.overlaysExpanded.v1',
+              JSON.stringify(open)); } catch { /* device-local */ }
+          }}><summary>OVERLAYS</summary><div>
           {(Object.keys(overlays) as OverlayKey[]).map((key) => <label key={key}>
             <input type="checkbox" checked={overlays[key]} onChange={() => toggleOverlay(key)} />{key}</label>)}
         </div></details>

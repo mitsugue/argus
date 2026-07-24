@@ -33,6 +33,14 @@ assert.match(script, /MARKET_CACHE_READY_TIMEOUT_MS = 30 \* 60_000/);
 assert.match(script, /waitForMarketCache\(page\.request\)/);
 assert.match(script, /market cache did not become ready/);
 assert.match(script, /body\.automaticAiCalls === 0/);
+assert.match(script, /const view = body\.payload \|\| body/);
+assert.match(script, /responseSnapshotId/);
+assert.match(script, /controlledBackendDelayMs: 12_000/);
+assert.match(script, /warmCachedRenderMs > 500/);
+assert.match(script, /loader-flicker-before-225ms/);
+assert.match(script, /first-use-five-second-label-missing/);
+assert.match(script, /asset-switching-race/);
+assert.match(script, /offline-verified-snapshot-fallback/);
 assert.match(script, /ARGUS_EXPECTED_BACKEND_VERSION/);
 assert.match(script, /ARGUS_EXPECTED_BACKEND_SHA/);
 assert.match(script, /marketProductStatus: evidence\.failures\.length \? 'NOT_FROZEN' : 'FROZEN'/);
@@ -52,9 +60,16 @@ assert.doesNotMatch(script, /\.market-replay'\)\.screenshot\(/,
 assert.doesNotMatch(script, /localStorage\./,
   'acceptance artifact must not read device-local owner data');
 assert.match(workflow, /market-public-acceptance-/);
-assert.match(workflow, /needs: \[build, seed-warm-profile\]/);
-assert.match(workflow, /needs: \[scope, deploy, seed-warm-profile\]/);
-assert.match(workflow, /if: needs\.scope\.outputs\.backend_deploy != 'true'/);
+assert.match(workflow, /seed-warm-profile:[\s\S]+needs: build/);
+assert.match(workflow,
+  /needs: \[build, seed-warm-profile, backend-readiness\]/);
+assert.match(workflow,
+  /needs: \[scope, deploy, seed-warm-profile, backend-readiness\]/);
+const publicAcceptanceJob = workflow.split('  public-acceptance:')[1] || '';
+assert.doesNotMatch(publicAcceptanceJob,
+  /if: needs\.scope\.outputs\.backend_deploy != 'true'/);
+assert.match(workflow, /backend-snapshot-readiness-/);
+assert.match(workflow, /verified_snapshot_release_gate\.py/);
 assert.match(workflow, /ARGUS_EXPECTED_BACKEND_VERSION: \$\{\{ steps\.release\.outputs\.backend_version \}\}/);
 assert.doesNotMatch(workflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ github\.sha \}\}/,
   'backend and frontend SHA must be independently observed');
@@ -67,6 +82,8 @@ assert.match(manualWorkflow, /run-id: \$\{\{ inputs\.pages_run_id \}\}/);
 assert.match(manualWorkflow, /github-token: \$\{\{ github\.token \}\}/);
 assert.match(manualWorkflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ inputs\.backend_sha \}\}/);
 assert.match(workflow, /-name 'Local Storage'/);
+assert.doesNotMatch(workflow, /-name 'IndexedDB'/,
+  'the public verified market snapshot must survive a frontend upgrade');
 assert.match(vite, /cleanupOutdatedCaches: true/);
 assert.match(vite, /clientsClaim: true/);
 assert.match(vite, /skipWaiting: true/);

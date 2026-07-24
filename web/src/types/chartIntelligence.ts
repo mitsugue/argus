@@ -112,6 +112,10 @@ export interface ChartIntelligencePayload {
     readBack: { verificationStatus: string; lastVerifiedReadBackAt: string | null };
     contexts: Record<string, MarketReplayContext>;
   };
+  marketCalendar?: {
+    market?: string; marketDate?: string; isTradingDay?: boolean;
+    session?: string; holidayName?: string | null; nextTradingDay?: string;
+  };
   shortDataAudit?: Array<Record<string, unknown>>;
   noteJa: string;
 }

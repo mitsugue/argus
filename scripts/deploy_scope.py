@@ -30,6 +30,7 @@ FRONTEND_PATHS: Tuple[str, ...] = (
     "web/**",
     ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
+    "scripts/verified_snapshot_release_gate.py",
 )
 
 

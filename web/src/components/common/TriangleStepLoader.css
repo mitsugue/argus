@@ -1,0 +1,38 @@
+.triangle-step-loader{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:24px;color:var(--text-sub);font-size:10px;line-height:1;
+  opacity:1;transition:opacity .14s ease
+}
+.triangle-step-loader svg{display:block;width:24px;height:24px;overflow:visible}
+.triangle-step-loader.is-compact svg{width:20px;height:20px}
+.triangle-step-loader__dot{fill:rgba(255,255,255,.92);transform-box:view-box;
+  animation-duration:5.2s;animation-timing-function:linear;
+  animation-iteration-count:infinite}
+.triangle-step-loader__dot.dot-1{animation-name:argus-triangle-dot-1}
+.triangle-step-loader__dot.dot-2{animation-name:argus-triangle-dot-2}
+.triangle-step-loader__dot.dot-3{animation-name:argus-triangle-dot-3}
+@keyframes argus-triangle-dot-1{
+  0%,19.2308%{transform:translate(0,0)}
+  25%,44.2308%{transform:translate(4.7px,4.7px)}
+  50%,69.2308%{transform:translate(0,9.4px)}
+  75%,94.2308%{transform:translate(-4.7px,4.7px)}
+  100%{transform:translate(0,0)}
+}
+@keyframes argus-triangle-dot-2{
+  0%,19.2308%{transform:translate(0,0)}
+  25%,44.2308%{transform:translate(-6.45px,1.75px)}
+  50%,69.2308%{transform:translate(-8.2px,-4.7px)}
+  75%,94.2308%{transform:translate(-1.75px,-6.45px)}
+  100%{transform:translate(0,0)}
+}
+@keyframes argus-triangle-dot-3{
+  0%,19.2308%{transform:translate(0,0)}
+  25%,44.2308%{transform:translate(1.75px,-6.45px)}
+  50%,69.2308%{transform:translate(8.2px,-4.7px)}
+  75%,94.2308%{transform:translate(6.45px,1.75px)}
+  100%{transform:translate(0,0)}
+}
+@media(prefers-reduced-motion:reduce){
+  .triangle-step-loader__dot{animation:none}
+  .triangle-step-loader{transition:none}
+}

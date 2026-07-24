@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import type { ChartBar, ChartIntelligencePayload } from '../../types/chartIntelligence';
 import { useMarketLedger } from '../../hooks/useMarketLedger';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import './ChartIntelligencePanel.css';
 
 const RANGE_COUNT: Record<string, number> = { '3M': 66, '6M': 132, '1Y': 264, '3Y': 792, '5Y': 1320, ALL: Infinity };
@@ -116,12 +117,17 @@ export const ChartIntelligencePanel: React.FC<{ scope: 'market' | 'asset'; symbo
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly'>('daily');
   const [showBB, setShowBB] = useState(false), [showCloud, setShowCloud] = useState(false);
   const [showLongMA, setShowLongMA] = useState(false);
-  const { data, loading, error } = useChartIntelligence({ scope, symbol, market, timeframe, enabled: true });
+  const { data, loading, error, statusText, loaderVisible, slowInitial } =
+    useChartIntelligence({ scope, symbol, market, timeframe, enabled: true });
   return <section id={scope === 'market' ? 'chart-intelligence' : undefined} className="ci-panel">
     <div className="section-head"><span className="section-head__title">CHART INTELLIGENCE</span>
-      <span className="section-head__count">deterministic · AI API 0</span></div>
-    {loading && !data && <div className="card ci-empty">日足キャッシュを確認中…</div>}
-    {error && <div className="card ci-empty">取得失敗。前回値があれば保持します。({error})</div>}
+      <span className="section-head__count">{data ? statusText : 'deterministic · AI API 0'}
+        {data && loading && loaderVisible && <TriangleStepLoader compact label="" />}</span></div>
+    {!data && <div className="card ci-snapshot-skeleton">
+      {loaderVisible && <TriangleStepLoader
+        label={slowInitial ? '初回データを準備中' : 'データ確認中'} />}
+      {error && <small>取得失敗 ({error})</small>}
+    </div>}
     {data && <>
       <div className="card ci-toolbar"><div>{Object.keys(RANGE_COUNT).map((item) => <button type="button" key={item}
         className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div>

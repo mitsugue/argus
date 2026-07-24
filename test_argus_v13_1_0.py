@@ -179,14 +179,14 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         package = json.loads(pathlib.Path("web/package.json").read_text())
         lock = json.loads(pathlib.Path("web/package-lock.json").read_text())
         backend = json.loads(pathlib.Path("backend-version.json").read_text())
-        self.assertEqual(package["version"], "13.2.2")
-        self.assertEqual(backend["version"], "13.2.2")
+        self.assertEqual(package["version"], "13.3.0")
+        self.assertEqual(backend["version"], "13.3.0")
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertEqual(scanner._semantic_app_version(), backend["version"])
         self.assertEqual(scanner._frontend_semantic_version(), package["version"])
         guide = pathlib.Path("web/src/routes/Guide.tsx").read_text()
-        self.assertIn("['v13.2.2'", guide)
+        self.assertIn("['v13.3.0'", guide)
 
 
 if __name__ == "__main__":
