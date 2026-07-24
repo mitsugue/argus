@@ -26,6 +26,16 @@ Guide do not match that allowlist. They deploy through Pages without restarting
 the Render process. `render.yaml` is the documented exception: Render always
 processes a Blueprint file change regardless of build filters.
 
+Production verification on 2026-07-24 showed that the directly linked Render
+service had not consumed the repository Blueprint filter: frontend-only merge
+`fe296c8` still restarted the backend. The release gate therefore also enforces
+Render's documented commit-message skip contract. A frontend-only PR title and
+its squash merge commit must contain `[skip render]`; a backend-sensitive change
+must not contain any Render skip phrase. This fail-closed guard is active even
+when the dashboard/Blueprint association is absent. Attaching the service to the
+Blueprint (or applying the identical allowlist through the Render API) remains
+recommended defense in depth, not a prerequisite for the guarded merge path.
+
 ## Soak
 
 - Frontend-only: backend SHA and Soak ID remain unchanged; heartbeat continues.
@@ -41,4 +51,7 @@ backend deployment because no build filter existed. The process restarted,
 `soak-8f13904-30411910` began at the first valid natural heartbeat. Production
 read-only evidence showed `restartCount=0` after that boot, two natural
 heartbeats, and source `ec2_systemd`; the supersession record is not rewritten.
-The v13.2.2 filter closes the triggering configuration defect.
+The v13.2.2 repository filter defined the intended allowlist. A second
+frontend-only merge `fe296c8` proved the live directly linked service had not
+applied it and superseded the `0d6589d` Soak. This incident is retained; the
+fail-closed skip guard closes the effective production merge path.

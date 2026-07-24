@@ -58,3 +58,9 @@ class DeployScopeTests(unittest.TestCase):
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
         self.assertEqual("13.2.2", frontend)
         self.assertEqual("13.2.2", backend)
+
+    def test_release_gate_enforces_render_skip_contract(self):
+        workflow = (ROOT / ".github/workflows/release-gate.yml").read_text()
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn("python3 scripts/render_deploy_guard.py", workflow)
+        self.assertIn("github.event.pull_request.title", workflow)
