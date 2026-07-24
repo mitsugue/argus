@@ -2,14 +2,29 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  calculatePayloadHash, calculateSnapshotId, memorySnapshot, resetVerifiedSnapshotMemoryForTests,
-  shouldReplaceSnapshot, verifySnapshot, writeVerifiedSnapshot,
-} from '../src/lib/verifiedSnapshot.ts';
-import { formatSnapshotStatus, snapshotFreshness } from
-  '../src/lib/snapshotFreshness.ts';
+import ts from 'typescript';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+async function importTypeScriptModule(relativePath) {
+  const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+    },
+    fileName: relativePath,
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
+}
+
+const {
+  calculatePayloadHash, calculateSnapshotId, memorySnapshot, resetVerifiedSnapshotMemoryForTests,
+  shouldReplaceSnapshot, verifySnapshot, writeVerifiedSnapshot,
+} = await importTypeScriptModule('src/lib/verifiedSnapshot.ts');
+const { formatSnapshotStatus, snapshotFreshness } = await
+  importTypeScriptModule('src/lib/snapshotFreshness.ts');
+
 const expectation = {
   kind: 'market-chart', instrument: '1321', horizon: '5D',
   methodVersion: 'view-method-a',
