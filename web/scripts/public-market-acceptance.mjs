@@ -440,9 +440,10 @@ async function mainAcceptance() {
       });
       validateStyles(audit, evidence.failures,
         `${viewport.width}x${viewport.height}:${tab}`, tab);
-      await page.locator('.market-replay').screenshot({
+      await page.screenshot({
         path: path.join(OUT_DIR, 'screenshots',
           `${viewport.width}x${viewport.height}-${tab.toLowerCase()}.png`),
+        fullPage: false,
       });
     }
   }
@@ -451,8 +452,9 @@ async function mainAcceptance() {
   if (drawing.handleCount < 2 || drawing.handles.some((row) => isBlack(row.fill))) {
     evidence.failures.push('drawing-handles-invisible');
   }
-  await page.locator('.market-replay').screenshot({
+  await page.screenshot({
     path: path.join(OUT_DIR, 'screenshots', '1280x800-drawing-selected.png'),
+    fullPage: false,
   });
 
   await page.goto(CACHE_BUSTED_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });

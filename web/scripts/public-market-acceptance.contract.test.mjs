@@ -28,6 +28,10 @@ assert.match(script, /BACKEND_READY_TIMEOUT_MS = 8 \* 60_000/);
 assert.match(script, /ARGUS_EXPECTED_BACKEND_VERSION/);
 assert.match(script, /ARGUS_EXPECTED_BACKEND_SHA/);
 assert.match(script, /marketProductStatus: evidence\.failures\.length \? 'NOT_FROZEN' : 'FROZEN'/);
+assert.match(script, /page\.screenshot\(\{/);
+assert.match(script, /fullPage: false/);
+assert.doesNotMatch(script, /\.market-replay'\)\.screenshot\(/,
+  'representative screenshots must remain viewport-bounded');
 assert.doesNotMatch(script, /localStorage\./,
   'acceptance artifact must not read device-local owner data');
 assert.match(workflow, /market-public-acceptance-/);
