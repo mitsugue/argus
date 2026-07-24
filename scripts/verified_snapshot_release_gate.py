@@ -131,20 +131,21 @@ def seed_snapshots(base_url: str, expected_sha: str) -> Dict[str, Any]:
             },
             timeout=360,
         )
-    except http.client.RemoteDisconnected:
+    except (http.client.RemoteDisconnected, TimeoutError, socket.timeout) as exc:
         # Render can close a long admin response after accepting the request.
         # This is not treated as success by itself: the following 12-snapshot
         # schema/read-back/ETag checks remain the fail-closed authority.
+        error_class = type(exc).__name__
         return {
             "httpStatus": None,
-            "businessStatus": "response_disconnected_verify_readback",
-            "responseDisconnected": True,
+            "businessStatus": "response_unconfirmed_verify_readback",
+            "responseUnconfirmed": True,
             "verifiedViewsStateHash": None,
             "viewPublications": None,
             "remoteJournal": {
                 "readBackVerified": None,
                 "remoteCommitSha": None,
-                "errorClass": "response_disconnected",
+                "errorClass": error_class,
             },
             "automaticAiExecutions": None,
         }
