@@ -141,10 +141,11 @@ function attachEvidence(page, evidence) {
           },
         ])),
       };
-    } catch {
+    } catch (error) {
       evidence.consoleErrors.push({
         type: 'acceptance-parser',
-        message: 'chart-intelligence response was not valid JSON',
+        message: sanitize(error instanceof Error
+          ? error.message : 'chart-intelligence response was not valid JSON'),
       });
     }
   });
@@ -454,6 +455,25 @@ async function firstUseLoaderAudit(browser, evidence) {
     viewport: { width: 1280, height: 800 },
     serviceWorkers: 'block',
   });
+  await context.addInitScript(() => {
+    globalThis.__ARGUS_LOADER_FIRST_AT__ = null;
+    const observe = () => {
+      const root = document.documentElement;
+      if (!root) return;
+      const record = () => {
+        if (globalThis.__ARGUS_LOADER_FIRST_AT__ == null
+            && document.querySelector('.triangle-step-loader')) {
+          globalThis.__ARGUS_LOADER_FIRST_AT__ = performance.now();
+        }
+      };
+      new MutationObserver(record).observe(root, {
+        childList: true, subtree: true,
+      });
+      record();
+    };
+    if (document.documentElement) observe();
+    else document.addEventListener('DOMContentLoaded', observe, { once: true });
+  });
   const page = await context.newPage();
   attachEvidence(page, evidence);
   let resolveRequestStart;
@@ -485,6 +505,19 @@ async function firstUseLoaderAudit(browser, evidence) {
   await page.waitForTimeout(Math.max(0, 300 - (Date.now() - startedAt)));
   const afterThreshold = await page.locator(
     '.triangle-step-loader').count();
+  const loaderTiming = await page.evaluate(() => {
+    const entries = performance.getEntriesByName(
+      'argus-snapshot:network-revalidation-start');
+    const networkStart = entries.length
+      ? entries[entries.length - 1].startTime : null;
+    const firstLoaderAt = globalThis.__ARGUS_LOADER_FIRST_AT__;
+    return {
+      networkStart,
+      firstLoaderAt,
+      loaderDelayMs: networkStart != null && firstLoaderAt != null
+        ? firstLoaderAt - networkStart : null,
+    };
+  });
   const skeletonCount = await page.locator(
     '.mr-snapshot-skeleton').count();
   await page.waitForTimeout(Math.max(0, 5_250 - (Date.now() - startedAt)));
@@ -499,10 +532,14 @@ async function firstUseLoaderAudit(browser, evidence) {
   const result = {
     beforeThreshold, afterThreshold, skeletonCount,
     beforeThresholdAtMs: 200, afterThresholdAtMs: 300,
-    slowLabel, chartCount,
+    loaderTiming, slowLabel, chartCount,
   };
-  if (beforeThreshold) evidence.failures.push('loader-flicker-before-225ms');
-  if (!afterThreshold) evidence.failures.push('loader-missing-after-225ms');
+  if (loaderTiming.loaderDelayMs == null) {
+    evidence.failures.push('loader-timing-missing');
+  } else if (loaderTiming.loaderDelayMs < 225) {
+    evidence.failures.push(
+      `loader-flicker-before-225ms:${loaderTiming.loaderDelayMs}`);
+  }
   if (!skeletonCount) evidence.failures.push('first-use-skeleton-missing');
   if (!slowLabel.includes('初回データを準備中')) {
     evidence.failures.push('first-use-five-second-label-missing');
@@ -666,17 +703,54 @@ async function mainAcceptance() {
   }
   await warmSeedContext.close();
 
+  // Use an isolated copy for the controlled network-delay test. Unregister its
+  // Service Worker so Chromium cannot satisfy the request from runtime Cache
+  // Storage before Playwright applies the 12-second route. The original PWA
+  // profile remains intact for the later real offline-restart proof.
+  const slowProfileDir = `${PROFILE_DIR}-controlled-delay`;
+  await fs.rm(slowProfileDir, { recursive: true, force: true });
+  await fs.cp(PROFILE_DIR, slowProfileDir, { recursive: true });
+  const slowPrepContext = await chromium.launchPersistentContext(slowProfileDir, {
+    headless: true,
+    viewport: { width: 1280, height: 800 },
+    serviceWorkers: 'allow',
+  });
+  const slowPrepPage = slowPrepContext.pages()[0]
+    || await slowPrepContext.newPage();
+  await slowPrepPage.goto(NORMAL_URL, {
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+  });
+  const slowProfilePreparation = await slowPrepPage.evaluate(async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    const unregistered = (await Promise.all(
+      registrations.map((registration) => registration.unregister()),
+    )).filter(Boolean).length;
+    const removedRuntimeApiCaches = (await caches.keys())
+      .filter((name) => name === 'argus-api');
+    await Promise.all(removedRuntimeApiCaches.map((name) => caches.delete(name)));
+    return { unregistered, removedRuntimeApiCaches };
+  });
+  await slowPrepContext.close();
+
   // Reopen the exact profile with SW interception disabled only for this
   // controlled 12-second backend-delay test. IndexedDB remains the source of
   // the first chart; no production latency setting is changed.
-  const slowContext = await chromium.launchPersistentContext(PROFILE_DIR, {
+  const slowContext = await chromium.launchPersistentContext(slowProfileDir, {
     headless: true,
     viewport: { width: 1280, height: 800 },
     serviceWorkers: 'block',
   });
+  let resolveSlowRequest;
+  const slowRequestStarted = new Promise((resolve) => {
+    resolveSlowRequest = resolve;
+  });
+  let delayedReadCount = 0;
   await slowContext.route('**/api/argus/chart-intelligence?*', async (route) => {
     const parsed = new URL(route.request().url());
     if (parsed.searchParams.get('snapshot') === 'verified') {
+      delayedReadCount += 1;
+      resolveSlowRequest?.(Date.now());
+      resolveSlowRequest = null;
       await new Promise((resolve) => setTimeout(resolve, 12_000));
     }
     await route.continue();
@@ -691,6 +765,12 @@ async function mainAcceptance() {
   await waitForMarket(slowPage);
   await slowPage.locator(
     '.market-replay[data-snapshot-id]').waitFor({ timeout: 500 });
+  const controlledDelayStartedAt = await Promise.race([
+    slowRequestStarted,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('controlled verified snapshot delay did not start')),
+      5_000)),
+  ]);
   const warmNavigationToChartMs = Date.now() - warmStarted;
   const warmTiming = await slowPage.evaluate(() => {
     const lastMark = (name) => {
@@ -789,6 +869,7 @@ async function mainAcceptance() {
     evidence.failures.push('asset-switching-race');
   }
   await slowContext.close();
+  await fs.rm(slowProfileDir, { recursive: true, force: true });
 
   // Re-enable the installed Service Worker and prove the same verified
   // IndexedDB snapshot survives a fully offline restart.
@@ -834,6 +915,9 @@ async function mainAcceptance() {
     warmNavigationToChartMs,
     warmTiming,
     networkResponseAt,
+    controlledDelayStartedAt,
+    delayedReadCount,
+    slowProfilePreparation,
     loaderDuringRevalidation,
     snapshotBefore: slowSnapshotBefore,
     snapshotAfter: slowSnapshotAfter,
