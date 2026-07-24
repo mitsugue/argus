@@ -691,18 +691,23 @@ async function mainAcceptance() {
   await slowPage.locator(
     '.market-replay[data-snapshot-id]').waitFor({ timeout: 500 });
   const warmCachedRenderMs = Date.now() - warmStarted;
+  const restoredTab = await slowPage.getByRole(
+    'button', { name: 'REPLAY', exact: true }).getAttribute('aria-selected');
+  await slowPage.getByRole(
+    'button', { name: 'OVERVIEW', exact: true }).click();
   const restoredState = {
     instrument: await slowPage.getByRole(
       'button', { name: 'QQQ', exact: true }).getAttribute('class'),
     horizon: await slowPage.getByRole(
       'button', { name: '20D', exact: true }).getAttribute('class'),
-    tab: await slowPage.getByRole(
-      'button', { name: 'REPLAY', exact: true }).getAttribute('aria-selected'),
+    tab: restoredTab,
     range: await slowPage.getByRole(
       'button', { name: '3M', exact: true }).getAttribute('class'),
     overlaysOpen: await slowPage.locator(
       'details.mr-overlays').evaluate((element) => element.open),
   };
+  await slowPage.getByRole(
+    'button', { name: 'REPLAY', exact: true }).click();
   await slowPage.waitForTimeout(350);
   const loaderDuringRevalidation = await slowPage.locator(
     '.mr-snapshot-status .triangle-step-loader').count();
