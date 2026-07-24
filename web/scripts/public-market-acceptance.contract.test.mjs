@@ -45,6 +45,8 @@ assert.match(script, /screenshotCount/);
 assert.match(script, /marketProductStatus: 'NOT_FROZEN'/);
 assert.match(script, /process\.exit\(1\)/,
   'a failed acceptance must not leak Chromium until the workflow timeout');
+assert.match(script, /\.mr-ledger-grid, \.mr-us-ledger/,
+  'both JP and US ledger containers must count as visible chart data');
 assert.doesNotMatch(script, /\.market-replay'\)\.screenshot\(/,
   'representative screenshots must remain viewport-bounded');
 assert.doesNotMatch(script, /localStorage\./,
