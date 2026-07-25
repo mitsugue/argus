@@ -39,10 +39,7 @@ def _record_hash(record: Dict[str, Any]) -> str:
 
 def _fsync_parent(path: str) -> None:
     parent = os.path.dirname(os.path.abspath(path)) or "."
-    try:
-        descriptor = os.open(parent, os.O_RDONLY)
-    except OSError:
-        return
+    descriptor = os.open(parent, os.O_RDONLY)
     try:
         os.fsync(descriptor)
     finally:
@@ -59,15 +56,77 @@ def current_rss_bytes() -> Optional[int]:
         return None
 
 
+def _last_valid_record(path: str, *, before_sequence: int
+                       ) -> Optional[Dict[str, Any]]:
+    """Read backward so WAL append cost does not grow with retained history."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            pending = b""
+            while position > 0:
+                size = min(64 * 1024, position)
+                position -= size
+                handle.seek(position)
+                pending = handle.read(size) + pending
+                lines = pending.split(b"\n")
+                pending = lines[0]
+                for raw in reversed(lines[1:]):
+                    if not raw:
+                        continue
+                    try:
+                        row = json.loads(raw.decode("utf-8"))
+                        sequence = int(row.get("sequence") or 0)
+                        if row.get("recordHash") == _record_hash(row) and \
+                                0 < sequence < int(before_sequence):
+                            return row
+                    except (UnicodeDecodeError, json.JSONDecodeError,
+                            TypeError, ValueError):
+                        continue
+            if pending:
+                try:
+                    row = json.loads(pending.decode("utf-8"))
+                    sequence = int(row.get("sequence") or 0)
+                    if row.get("recordHash") == _record_hash(row) and \
+                            0 < sequence < int(before_sequence):
+                        return row
+                except (UnicodeDecodeError, json.JSONDecodeError,
+                        TypeError, ValueError):
+                    pass
+    except FileNotFoundError:
+        pass
+    return None
+
+
 def append_wal(path: str, *, sequence: int, kind: str,
                payload: Dict[str, Any], job_id: str,
-               occurred_at: Optional[str] = None) -> Dict[str, Any]:
+               occurred_at: Optional[str] = None,
+               transition_id: Optional[str] = None,
+               mission_window_id: Optional[str] = None,
+               build_sha: Optional[str] = None) -> Dict[str, Any]:
+    previous = _last_valid_record(path, before_sequence=int(sequence))
+    payload_hash = hashlib.sha256(_canonical(payload)).hexdigest()
+    created_at = occurred_at or _iso_now()
     record = {
         "schemaVersion": "argus-mission-wal-v1",
         "sequence": int(sequence),
         "kind": str(kind),
         "jobId": str(job_id),
-        "occurredAt": occurred_at or _iso_now(),
+        "transitionId": str(
+            transition_id or payload.get("transitionId") or
+            f"{job_id}:{sequence}:{payload_hash[:16]}"),
+        "missionWindowId": (
+            mission_window_id or payload.get("missionWindowId") or
+            (payload.get("transitionState") or {}).get(
+                "missionWindowId")),
+        "buildSha": build_sha,
+        "createdAt": created_at,
+        "occurredAt": created_at,
+        "payloadHash": payload_hash,
+        "previousSequence": (
+            int(previous.get("sequence")) if previous is not None else None),
+        "previousRecordHash": (
+            previous.get("recordHash") if previous is not None else None),
         "payload": payload,
     }
     record["recordHash"] = _record_hash(record)
@@ -75,6 +134,7 @@ def append_wal(path: str, *, sequence: int, kind: str,
     with open(path, "ab", buffering=0) as handle:
         handle.write(encoded)
         os.fsync(handle.fileno())
+    _fsync_parent(path)
     return record
 
 
@@ -125,7 +185,17 @@ def compact_verified_wal(path: str, *, included_sequence: int,
         "sequence": sequence,
         "kind": "checkpoint_verified",
         "jobId": str(receipt.get("jobId") or "checkpoint"),
+        "transitionId": (
+            f"checkpoint:{receipt.get('snapshotHash')}:{included_sequence}"),
+        "missionWindowId": receipt.get("missionWindowId"),
+        "buildSha": receipt.get("buildSha"),
+        "createdAt": str(receipt.get("verifiedAt") or _iso_now()),
         "occurredAt": str(receipt.get("verifiedAt") or _iso_now()),
+        "payloadHash": hashlib.sha256(_canonical(dict(receipt))).hexdigest(),
+        "previousSequence": (
+            int(kept[-1]["sequence"]) if kept else int(included_sequence)),
+        "previousRecordHash": (
+            kept[-1].get("recordHash") if kept else None),
         "payload": dict(receipt),
     }
     checkpoint_receipt["recordHash"] = _record_hash(checkpoint_receipt)
@@ -148,7 +218,11 @@ def compact_verified_wal(path: str, *, included_sequence: int,
 
 def verified_checkpoint(path: str, blob: Dict[str, Any], *,
                         job_id: str, wal_path: Optional[str] = None,
-                        included_sequence: int = 0) -> Dict[str, Any]:
+                        included_sequence: int = 0,
+                        allow_wal_compaction: bool = True,
+                        compaction_sequence: Optional[int] = None,
+                        build_sha: Optional[str] = None,
+                        mission_window_id: Optional[str] = None) -> Dict[str, Any]:
     """Write, fsync, parse/hash read-back, then atomically replace the snapshot."""
     started = time.monotonic()
     encoded = _canonical(blob)
@@ -182,29 +256,63 @@ def verified_checkpoint(path: str, blob: Dict[str, Any], *,
         "checkpointMs": round((time.monotonic() - started) * 1000),
         "includedWalSequence": int(included_sequence),
     }
-    if wal_path:
+    if wal_path and allow_wal_compaction:
+        covered_sequence = min(
+            int(included_sequence),
+            int(compaction_sequence if compaction_sequence is not None
+                else included_sequence))
         result["walCompaction"] = compact_verified_wal(
             wal_path,
-            included_sequence=int(included_sequence),
+            included_sequence=covered_sequence,
             receipt={
                 "jobId": job_id,
                 "verifiedAt": verified_at,
                 "snapshotHash": expected_hash,
-                "includedWalSequence": int(included_sequence),
+                "includedWalSequence": covered_sequence,
+                "buildSha": build_sha,
+                "missionWindowId": mission_window_id,
             },
         )
+    elif wal_path:
+        wal_state = read_valid_wal(wal_path)
+        result["walCompaction"] = {
+            "deferred": True,
+            "reason": "remote_receipt_not_verified",
+            "compactedThrough": 0,
+            "remainingRecords": len(wal_state["records"]),
+            "receiptSequence": int(included_sequence),
+            "bytes": wal_state["bytes"],
+        }
     return result
+
+
+def sync_wal(path: str) -> Dict[str, Any]:
+    """Flush an existing WAL and its directory without creating a fake record."""
+    if not os.path.exists(path):
+        return {"synced": True, "bytes": 0, "syncedAt": _iso_now()}
+    with open(path, "rb") as handle:
+        os.fsync(handle.fileno())
+    _fsync_parent(path)
+    return {
+        "synced": True,
+        "bytes": os.path.getsize(path),
+        "syncedAt": _iso_now(),
+    }
 
 
 class TickLease:
     """A non-blocking OS lease held for one synchronous HTTP request."""
 
     def __init__(self, path: str, *, build_sha: Optional[str],
-                 owner: str, ttl_seconds: int = 240):
+                 owner: str, ttl_seconds: int = 240,
+                 boot_id: Optional[str] = None):
         self.path = path
         self.build_sha = build_sha
         self.owner = owner
         self.ttl_seconds = max(30, int(ttl_seconds))
+        self.boot_id = boot_id or "unknown"
+        self.process_identity = (
+            f"{self.boot_id}:{os.getpid()}:{uuid.uuid4().hex[:12]}")
         self.job_id = f"tick-{uuid.uuid4().hex}"
         self._handle = None
         self._process_owned = False
@@ -230,11 +338,14 @@ class TickLease:
             "schemaVersion": "argus-mission-lease-v1",
             "jobId": self.job_id,
             "owner": self.owner,
+            "processIdentity": self.process_identity,
+            "bootId": self.boot_id,
             "acquiredAt": acquired.isoformat().replace("+00:00", "Z"),
             "expiresAt": (
                 acquired + dt.timedelta(seconds=self.ttl_seconds)
             ).isoformat().replace("+00:00", "Z"),
             "heartbeatAt": acquired.isoformat().replace("+00:00", "Z"),
+            "renewedAt": acquired.isoformat().replace("+00:00", "Z"),
             "buildSha": self.build_sha,
             "pid": os.getpid(),
         }
@@ -246,6 +357,7 @@ class TickLease:
             return
         now = dt.datetime.now(UTC)
         self.metadata["heartbeatAt"] = now.isoformat().replace("+00:00", "Z")
+        self.metadata["renewedAt"] = now.isoformat().replace("+00:00", "Z")
         self.metadata["expiresAt"] = (
             now + dt.timedelta(seconds=self.ttl_seconds)
         ).isoformat().replace("+00:00", "Z")
@@ -258,6 +370,7 @@ class TickLease:
         json.dump(self.metadata, self._handle, ensure_ascii=False, sort_keys=True)
         self._handle.flush()
         os.fsync(self._handle.fileno())
+        _fsync_parent(self.path)
 
     def read_metadata(self) -> Dict[str, Any]:
         try:
@@ -279,6 +392,17 @@ class TickLease:
         if self._process_owned:
             _PROCESS_LOCK.release()
             self._process_owned = False
+
+    def expire(self) -> None:
+        """Mark the durable metadata expired; flock remains the real owner."""
+        if self._handle is None:
+            return
+        now = _iso_now()
+        self.metadata["renewedAt"] = now
+        self.metadata["expiresAt"] = now
+        self.metadata["shutdownRequestedAt"] = now
+        with contextlib.suppress(OSError):
+            self._write_metadata()
 
     def __enter__(self) -> "TickLease":
         if not self.acquire():

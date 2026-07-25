@@ -196,6 +196,8 @@ def compact_readback_snapshot(blob: Any) -> Dict[str, Any]:
         "opsJournal": list(blob.get("opsJournal") or []),
         "integrityManifest": dict(blob.get("integrityManifest") or {}),
         "outcomes": list(blob.get("outcomes") or []),
+        "missionTickDurability": dict(
+            blob.get("missionTickDurability") or {}),
         "marketLedgerStateHash": blob.get("marketLedgerStateHash"),
         "chartIntelligenceStateHash": blob.get("chartIntelligenceStateHash"),
         "todayIntelligenceStateHash": blob.get("todayIntelligenceStateHash"),
