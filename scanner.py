@@ -1,7 +1,7 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
 import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy
-import gc, multiprocessing, resource, sys, tempfile
+import gc, multiprocessing, resource, signal, sys, tempfile
 try:
     from google import genai as google_genai
     from google.genai import types as genai_types
@@ -107,6 +107,7 @@ import argus_market_replay          # v13.2.0: deterministic Market Context repl
 import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
 import argus_verified_snapshot      # v13.3.0: atomic precomputed public view snapshots
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
+import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 from flask import Flask, jsonify, request, make_response
 from collections import deque
@@ -15539,7 +15540,10 @@ _OSINT_MEMORY_MAX = 200
 _OSINT_URL_CACHE = {}                  # norm_url -> {title, publishedAt, domain, status, at}
 _OSINT_URL_CACHE_MAX = 120
 _OSINT_PROGRESS = {}                   # SYM -> {stage, loop, maxLoops, notesJa[], at}
-_OSINT_PERSIST_FILE = "/tmp/argus_osint_memory.json"
+_DURABILITY_PRODUCTION = argus_persistent_storage.production_mode()
+_DURABILITY_PATHS = argus_persistent_storage.configured_paths(
+    production=_DURABILITY_PRODUCTION)
+_OSINT_PERSIST_FILE = _DURABILITY_PATHS["checkpoint"]
 _OSINT_PERSIST_STATE = {"restored": False}
 _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
@@ -15564,10 +15568,16 @@ _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(�
 _DURABLE_STATE = {"schemaVersion": "argus-durable-v3", "lastWriteAt": None,
                   "lastRestoreAt": None, "integrityStatus": "unknown",
                   "lastKnownGoodAt": None, "restoreSource": None}
-_MISSION_WAL_FILE = os.environ.get(
-    "ARGUS_MISSION_WAL_FILE", "/tmp/argus_mission_tick.wal")
-_MISSION_LEASE_FILE = os.environ.get(
-    "ARGUS_MISSION_LEASE_FILE", "/tmp/argus_mission_tick.lease")
+_MISSION_WAL_FILE = _DURABILITY_PATHS["wal"]
+_MISSION_LEASE_FILE = _DURABILITY_PATHS["lease"]
+_MISSION_CURSOR_FILE = _DURABILITY_PATHS["cursor"]
+_MISSION_RECEIPT_FILE = _DURABILITY_PATHS["receipt"]
+_DURABLE_STORAGE_STATUS = {
+    "valid": not _DURABILITY_PRODUCTION,
+    "errorClass": None,
+    "errorReason": None,
+    "runtimeVerified": False,
+}
 _MISSION_BATCH_STATE = {
     "schemaVersion": "argus-mission-batch-v1",
     "cursor": 0,
@@ -15596,6 +15606,35 @@ _REMOTE_READBACK_PATH = "/osint/readback.json"
 def _mission_tick_context_active():
     return (bool(_MISSION_TICK_CONTEXT.get("active")) and
             _MISSION_TICK_CONTEXT.get("ownerThread") == threading.get_ident())
+
+
+def _persist_durability_metadata():
+    """Persist non-payload recovery cursors beside the checkpoint."""
+    cursor = {
+        "schemaVersion": "argus-mission-cursor-v1",
+        "savedAt": _ai_now_iso(),
+        "buildSha": os.environ.get("RENDER_GIT_COMMIT") or _backend_sha(),
+        "bootId": _RUNTIME.get("bootId") if "_RUNTIME" in globals() else None,
+        "missionTickDurability": dict(_MISSION_BATCH_STATE),
+    }
+    receipt = {
+        "schemaVersion": "argus-mission-receipt-v1",
+        "savedAt": cursor["savedAt"],
+        "remoteCommitSha": _REMOTE_CYCLE.get("remoteCommitSha"),
+        "expectedHash": _REMOTE_CYCLE.get("expectedHash"),
+        "actualHash": _REMOTE_CYCLE.get("actualHash"),
+        "readBackVerified": bool(_REMOTE_CYCLE.get("readBackVerified")),
+        "verifiedWalSequence": int(
+            _REMOTE_CYCLE.get("verifiedWalSequence") or 0),
+        "errorClass": _REMOTE_CYCLE.get("errorClass"),
+    }
+    argus_persistent_storage.atomic_write_json(
+        _MISSION_CURSOR_FILE, cursor,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"])
+    argus_persistent_storage.atomic_write_json(
+        _MISSION_RECEIPT_FILE, receipt,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"])
+    return {"cursor": _MISSION_CURSOR_FILE, "receipt": _MISSION_RECEIPT_FILE}
 
 
 def _osint_persist():
@@ -15647,14 +15686,35 @@ def _osint_persist_locked():
                 "soakLastPersistAt": _ai_now_iso()}
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                      f"checkpoint-{os.getpid()}")
+        sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
+        verified_wal_sequence = int(
+            _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+        allow_wal_compaction = bool(
+            _REMOTE_CYCLE.get("readBackVerified") is True and
+            verified_wal_sequence > 0)
         checkpoint = argus_tick_durability.verified_checkpoint(
-            _OSINT_PERSIST_FILE, blob, job_id=job_id,
+            _OSINT_PERSIST_FILE, sealed_blob, job_id=job_id,
             wal_path=_MISSION_WAL_FILE,
-            included_sequence=included_wal_sequence)
+            included_sequence=included_wal_sequence,
+            # Compact only through the WAL cursor explicitly read back from a
+            # matching Remote Journal receipt. Newer local records remain.
+            allow_wal_compaction=allow_wal_compaction,
+            compaction_sequence=verified_wal_sequence,
+            build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha(),
+            mission_window_id=(
+                _MISSION_TICK_CONTEXT.get("missionWindowId")))
+        metadata = _persist_durability_metadata()
+        checkpoint["metadata"] = metadata
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
         _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
         _DURABLE_STATE["integrityStatus"] = "ok"
         _DURABLE_STATE["lastCheckpoint"] = checkpoint
+        _DURABLE_STORAGE_STATUS["lastCheckpointVerification"] = \
+            checkpoint.get("verifiedAt")
+        _DURABLE_STORAGE_STATUS["checkpointBytes"] = checkpoint.get(
+            "snapshotBytes")
+        _DURABLE_STORAGE_STATUS["walBytes"] = (
+            checkpoint.get("walCompaction") or {}).get("bytes")
         if _mission_tick_context_active():
             _MISSION_TICK_CONTEXT["checkpoint"] = checkpoint
             _MISSION_TICK_CONTEXT["walSequence"] = int(
@@ -15753,17 +15813,33 @@ def _restore_mission_wal(after_sequence=0):
 
 
 def _osint_restore_once():
-    """再デプロイ後の復元: ①/tmp(同一インスタンス再起動) ②ledgerブランチの
-    公開安全スナップショット(watchtowerが定期コミット)。私的情報は設計上入らない。"""
+    """Restore a sealed local checkpoint or verified Remote Journal snapshot."""
     if _OSINT_PERSIST_STATE["restored"]:
-        return
+        return _DURABLE_STATE.get("restoreSource")
     _OSINT_PERSIST_STATE["restored"] = True
     blob = None
+    source = None
     try:
-        with open(_OSINT_PERSIST_FILE, encoding="utf-8") as f:
-            blob = json.load(f)
-    except Exception:
-        pass
+        if _DURABILITY_PRODUCTION:
+            blob = argus_persistent_storage.load_checkpoint(
+                _OSINT_PERSIST_FILE, require_seal=True)
+            source = "persistent_local"
+        else:
+            with open(_OSINT_PERSIST_FILE, encoding="utf-8") as handle:
+                blob = json.load(handle)
+            source = "tmp"
+    except FileNotFoundError:
+        blob = None
+    except Exception as exc:
+        _DURABLE_STATE["localCheckpointError"] = type(exc).__name__
+        if _DURABILITY_PRODUCTION:
+            try:
+                _DURABLE_STATE["quarantinedCheckpoint"] = \
+                    argus_persistent_storage.quarantine(_OSINT_PERSIST_FILE)
+            except Exception as quarantine_exc:
+                _DURABLE_STATE["quarantineError"] = type(
+                    quarantine_exc).__name__
+        blob = None
     if blob is None:
         try:
             # The five-year breadth snapshot is intentionally kept outside the
@@ -15781,7 +15857,9 @@ def _osint_restore_once():
                 try:
                     with tempfile.NamedTemporaryFile(
                             mode="wb", prefix="argus-durable-restore-",
-                            suffix=".json", dir="/tmp", delete=False) as tmp:
+                            suffix=".json",
+                            dir=_DURABILITY_PATHS["tempDirectory"],
+                            delete=False) as tmp:
                         restore_path = tmp.name
                         received = 0
                         for chunk in r.iter_content(chunk_size=1024 * 1024):
@@ -15793,6 +15871,23 @@ def _osint_restore_once():
                             tmp.write(chunk)
                     with open(restore_path, encoding="utf-8") as f:
                         blob = json.load(f)
+                    if _DURABILITY_PRODUCTION:
+                        parsed_remote = \
+                            argus_remote_journal.parse_remote_snapshot(blob)
+                        if blob.get("schemaVersion") != "argus-durable-v3" or \
+                                parsed_remote.get("status") != "ok":
+                            raise ValueError("remote_snapshot_not_verified")
+                        source = "remote_journal_verified"
+                        # The new disk is not accepted until a sealed local
+                        # checkpoint survives fsync, read-back and replacement.
+                        bootstrap = argus_persistent_storage.write_checkpoint(
+                            _OSINT_PERSIST_FILE, blob,
+                            temp_directory=_DURABILITY_PATHS["tempDirectory"])
+                        _DURABLE_STATE["bootstrapCheckpoint"] = bootstrap
+                        blob = argus_persistent_storage.load_checkpoint(
+                            _OSINT_PERSIST_FILE, require_seal=True)
+                    else:
+                        source = "ledger"
                 finally:
                     if restore_path:
                         try:
@@ -15802,17 +15897,19 @@ def _osint_restore_once():
                     r.close()
             else:
                 r.close()
-        except Exception:
+        except Exception as exc:
+            _DURABLE_STATE["remoteRestoreError"] = type(exc).__name__
             blob = None
     if blob is None:
         _DURABLE_STATE["restoreSource"] = "none_available"
-        return          # 復元対象なし(初回デプロイ/リモート到達不可) — 捏造しない
+        return None     # empty production disk must remain empty/fail closed
     if not isinstance(blob, dict):
+        # 壊れた状態を信頼しない。productionはreadyへ進めず、local/testも
+        # last-known-goodを上書きしない。
         _DURABLE_STATE["integrityStatus"] = "corrupt_ignored"
-        return                          # 壊れた状態を信頼しない(last known good維持)
+        return None
     _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
-    _DURABLE_STATE["restoreSource"] = ("tmp" if os.path.exists(_OSINT_PERSIST_FILE)
-                                       else "ledger")
+    _DURABLE_STATE["restoreSource"] = source
     try:
         for k, v in (blob.get("termOverlay") or {}).items():
             if isinstance(v, list):
@@ -16071,11 +16168,18 @@ def _osint_restore_once():
         for h in _OPS_JOURNAL:
             k = f"{h.get('aggregateType')}:{h.get('aggregateId')}"
             _OPS_SEQ[k] = max(_OPS_SEQ.get(k, 0), int(h.get("sequence") or 0))
-        _restore_mission_wal(
-            after_sequence=int(_MISSION_BATCH_STATE.get(
-                "walAppliedSequence") or 0))
-    except Exception:
-        pass
+        # Legacy local/test blobs predate mission WAL cursors. Replaying an
+        # unrelated process WAL into them would cross-contaminate state.
+        if _DURABILITY_PRODUCTION or isinstance(_mt, dict):
+            _restore_mission_wal(
+                after_sequence=int(_MISSION_BATCH_STATE.get(
+                    "walAppliedSequence") or 0))
+        _persist_durability_metadata()
+        return source
+    except Exception as exc:
+        _DURABLE_STATE["integrityStatus"] = "corrupt_ignored"
+        _DURABLE_STATE["restoreApplyError"] = type(exc).__name__
+        return None
 
 
 def _osint_fetch_url_meta(url):
@@ -17008,6 +17112,7 @@ _REMOTE_ACK = {"ackedKeys": [], "lastVerifiedRemoteAckAt": None,
 _REMOTE_CYCLE = {"remoteCommitSha": None, "committedAt": None,
                  "readBackAt": None, "readBackVerified": False,
                  "expectedHash": None, "actualHash": None,
+                 "verifiedWalSequence": 0,
                  "pendingCount": 0, "acknowledgedCount": 0,
                  "errorClass": None}
 
@@ -17073,7 +17178,9 @@ def _append_tick_wal(kind, payload):
     record = argus_tick_durability.append_wal(
         _MISSION_WAL_FILE, sequence=sequence, kind=kind,
         payload=payload, job_id=str(_MISSION_TICK_CONTEXT.get("jobId") or
-                                    "mission-tick"))
+                                    "mission-tick"),
+        mission_window_id=_MISSION_TICK_CONTEXT.get("missionWindowId"),
+        build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha())
     _MISSION_TICK_CONTEXT["walSequence"] = sequence
     _MISSION_TICK_CONTEXT["walEventCount"] = int(
         _MISSION_TICK_CONTEXT.get("walEventCount") or 0) + 1
@@ -17142,7 +17249,33 @@ _STARTUP = {"state": "bootstrapping", "restoreStartedAt": None,
             "blockerJa": None}
 _SERVER_RUNTIME = {"serverType": "unknown", "workers": None, "threads": None,
                    "startupMode": "lazy_first_request"}
-_SHUTDOWN = {"done": False}
+_SHUTDOWN = {"done": False, "requested": False, "requestedAt": None,
+             "signal": None, "walSynced": False, "cursorSaved": False}
+
+
+def _validate_durable_storage():
+    global _DURABLE_STORAGE_STATUS
+    try:
+        _DURABLE_STORAGE_STATUS = argus_persistent_storage.validate_storage(
+            _DURABILITY_PATHS, production=_DURABILITY_PRODUCTION,
+            approved_root=("/var/data" if _DURABILITY_PRODUCTION else None))
+        return True
+    except argus_persistent_storage.PersistentStorageError as exc:
+        _DURABLE_STORAGE_STATUS = {
+            "valid": False,
+            "errorClass": exc.error_class,
+            "errorReason": exc.reason,
+            "runtimeVerified": False,
+        }
+        return False
+    except Exception as exc:
+        _DURABLE_STORAGE_STATUS = {
+            "valid": False,
+            "errorClass": "persistent_storage_unavailable",
+            "errorReason": type(exc).__name__,
+            "runtimeVerified": False,
+        }
+        return False
 
 
 def _startup_bootstrap():
@@ -17155,8 +17288,17 @@ def _startup_bootstrap():
     _STARTUP["restoreStartedAt"] = _ai_now_iso()
     if not _RUNTIME["buildFirstObservedAt"]:
         _RUNTIME["buildFirstObservedAt"] = _STARTUP["restoreStartedAt"]
+    storage_valid = _validate_durable_storage()
+    if _DURABILITY_PRODUCTION and not storage_valid:
+        _STARTUP.update({
+            "state": "failed_safe",
+            "restoreOutcome": "persistent_storage_unavailable",
+            "blockerJa": "永続ストレージ検証失敗 — mission tick停止",
+            "restoreCompletedAt": _ai_now_iso(),
+        })
+        return
     try:
-        _STARTUP["state"] = "loading_remote"   # ①/tmp ②ledger(内部で順に試行)
+        _STARTUP["state"] = "loading_remote"
         _osint_restore_once()
         _STARTUP["state"] = "reconciling"      # 冪等キー照合は復元内で実施済み
     except Exception:
@@ -17177,13 +17319,18 @@ def _startup_bootstrap():
         if integ == "unknown":          # 復元成功(parse+journal検証済み)=ok
             _DURABLE_STATE["integrityStatus"] = "ok"
         _STARTUP["state"] = "ready"
-    elif integ == "corrupt_ignored":
+    elif integ == "corrupt_ignored" and not _DURABILITY_PRODUCTION:
         _STARTUP["restoreOutcome"] = "corrupt_last_known_good"
         _STARTUP["blockerJa"] = "復元snapshotが破損 — last-known-goodで稼働(degraded)"
         _STARTUP["state"] = "ready_degraded"
     else:
         _STARTUP["restoreOutcome"] = "no_prior_state"
-        _STARTUP["state"] = "ready"     # 復元対象なし=安全に不要判定(捏造なし)
+        if _DURABILITY_PRODUCTION:
+            _STARTUP["state"] = "failed_safe"
+            _STARTUP["blockerJa"] = (
+                "検証済みRemote Journal snapshotなし — 空状態を作らず停止")
+        else:
+            _STARTUP["state"] = "ready"
     if not _RUNTIME["firstReadyAt"]:
         _RUNTIME["firstReadyAt"] = _STARTUP["restoreCompletedAt"]
     if _STARTUP.get("soakRestoreAction") == "inherit_with_interruption":
@@ -17211,6 +17358,9 @@ def readyz():
         build_sha=_backend_sha(),
         restore_outcome=_STARTUP.get("restoreOutcome"),
         blocker_ja=_STARTUP.get("blockerJa"), now_iso=_ai_now_iso())
+    payload["persistentStorage"] = argus_persistent_storage.public_diagnostics(
+        _DURABLE_STORAGE_STATUS, _DURABILITY_PATHS,
+        production=_DURABILITY_PRODUCTION)
     return jsonify(payload), code
 
 
@@ -17312,10 +17462,18 @@ def _remote_readback_ack(now_iso=None, blob=None):
         cycle_error = "commit_receipt_missing"
     else:
         cycle_error = rec.get("verificationStatus") or "read_back_unverified"
+    verified_wal_sequence = int(
+        _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+    remote_tick_state = blob.get("missionTickDurability") or {}
+    if cycle_verified and isinstance(remote_tick_state, dict):
+        verified_wal_sequence = max(
+            verified_wal_sequence,
+            int(remote_tick_state.get("walAppliedSequence") or 0))
     _REMOTE_CYCLE.update({
         "readBackAt": now_iso,
         "readBackVerified": cycle_verified,
         "actualHash": actual_hash,
+        "verifiedWalSequence": verified_wal_sequence,
         "pendingCount": max(0, len(_OPS_JOURNAL) -
                             len(rec.get("ackedIdempotencyKeys") or [])),
         "acknowledgedCount": len(rec.get("ackedIdempotencyKeys") or []),
@@ -17515,19 +17673,51 @@ def _deployment_pipeline_status():
 
 
 def _graceful_shutdown():
-    """終了時の最終ローカルWAL flush(安全な場合のみ・冪等)。"""
+    """Flush recovery evidence without waiting for process teardown."""
     if _SHUTDOWN["done"]:
         return
     _SHUTDOWN["done"] = True
     try:
-        if _STARTUP["state"] in ("ready", "ready_degraded"):
+        argus_tick_durability.sync_wal(_MISSION_WAL_FILE)
+        _SHUTDOWN["walSynced"] = True
+    except Exception:
+        pass
+    try:
+        _persist_durability_metadata()
+        _SHUTDOWN["cursorSaved"] = True
+    except Exception:
+        pass
+    try:
+        # An active tick already has every completed transition in the fsynced
+        # WAL.  Avoid a second full-state serialization while it is stopping.
+        if (_STARTUP["state"] in ("ready", "ready_degraded") and
+                not _MISSION_TICK_CONTEXT.get("active")):
             _osint_persist()
     except Exception:
         pass
 
 
+def _handle_termination(signum, _frame=None, *, exit_process=True):
+    """SIGTERM/SIGINT: reject new work and leave a replayable safe boundary."""
+    _SHUTDOWN.update({
+        "requested": True,
+        "requestedAt": _ai_now_iso(),
+        "signal": int(signum),
+    })
+    lease = _MISSION_TICK_CONTEXT.get("lease")
+    if lease is not None:
+        lease.expire()
+    _graceful_shutdown()
+    if exit_process:
+        raise SystemExit(0)
+    return dict(_SHUTDOWN)
+
+
 import atexit as _atexit  # noqa: E402
 _atexit.register(_graceful_shutdown)
+if threading.current_thread() is threading.main_thread():
+    signal.signal(signal.SIGTERM, _handle_termination)
+    signal.signal(signal.SIGINT, _handle_termination)
 
 
 def _missions_persist_blob():
@@ -17602,6 +17792,8 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
     limit = (len(candidates) if max_records is None else
              max(0, int(max_records)))
     for fc in candidates[:limit]:
+        if _SHUTDOWN.get("requested"):
+            break
         if deadline_monotonic is not None and \
                 time.monotonic() >= float(deadline_monotonic):
             break
@@ -17676,6 +17868,17 @@ def api_argus_admin_missions_tick():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    if _SHUTDOWN.get("requested") or (
+            _DURABILITY_PRODUCTION and
+            (not _DURABLE_STORAGE_STATUS.get("valid") or
+             _STARTUP.get("state") not in ("ready", "ready_degraded"))):
+        return jsonify({
+            "ok": False,
+            "status": "failed",
+            "error": "persistent_storage_unavailable",
+            "errorClass": "persistent_storage_unavailable",
+            "ready": False,
+        }), 503
     body = request.get_json(silent=True) or {}
     source = (str(body.get("triggerSource") or "manual")
               if isinstance(body, dict) else "manual")
@@ -17683,6 +17886,7 @@ def api_argus_admin_missions_tick():
         _MISSION_LEASE_FILE,
         build_sha=(os.environ.get("RENDER_GIT_COMMIT") or _backend_sha()),
         owner=source,
+        boot_id=_RUNTIME.get("bootId"),
         ttl_seconds=_outcome_policy_seconds(
             "ARGUS_MISSION_LEASE_SECONDS", 240, 30))
     if not lease.acquire():
@@ -17698,6 +17902,7 @@ def api_argus_admin_missions_tick():
                 "acquiredAt": active.get("acquiredAt"),
                 "expiresAt": active.get("expiresAt"),
                 "heartbeatAt": active.get("heartbeatAt"),
+                "renewedAt": active.get("renewedAt"),
                 "buildSha": active.get("buildSha"),
             },
         })
@@ -17721,6 +17926,7 @@ def api_argus_admin_missions_tick():
     finally:
         _MISSION_TICK_CONTEXT["active"] = False
         _MISSION_TICK_CONTEXT["lease"] = None
+        _MISSION_TICK_CONTEXT["missionWindowId"] = None
         _MISSION_TICK_CONTEXT["ownerThread"] = None
         lease.release()
         _DURABLE_CHECKPOINT_LOCK.release()
@@ -17757,6 +17963,7 @@ def _api_argus_admin_missions_tick_impl():
     if window is None:
         return jsonify({"ok": False, "status": "failed",
                         "error": "invalid_mission_window"}), 400
+    _MISSION_TICK_CONTEXT["missionWindowId"] = window["missionWindowId"]
     supplied_window_id = str(body.get("missionWindowId") or "")
     if supplied_window_id and supplied_window_id != window["missionWindowId"]:
         return jsonify({"ok": False, "status": "failed",
@@ -17967,6 +18174,8 @@ def _api_argus_admin_missions_tick_impl():
     failed_in_tick = 0
     processed_missions = 0
     for m in _MISSIONS:
+        if _SHUTDOWN.get("requested"):
+            break
         if argus_scheduler.batch_limit_reached(
                 processed=processed_missions, max_events=max_missions,
                 elapsed_seconds=time.monotonic() - batch_started,

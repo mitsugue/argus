@@ -9,6 +9,9 @@ services:
     branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: python scanner.py
+    # Intended contract only. The live service is dashboard-managed; this file
+    # does not prove that scaling or the Disk is configured in production.
+    numInstances: 1
     # Render's documented monorepo build filter is an allowlist. A main commit
     # that only changes Pages/frontend files must not restart this process or
     # supersede its build-scoped Soak.
@@ -32,19 +35,31 @@ services:
         - entity_profiles_seed.json
         - web/src/types/**
       ignoredPaths: []
-    # The instance filesystem is ephemeral on every plan without an attached Disk.
-    # The predictions ledger already persists via the git `ledger` branch, so no
-    # Disk is required. To use a Disk instead, attach one (1 GB / $1 mo) and set:
-    #   ARGUS_LEDGER_PATH=/var/data/predictions.jsonl
-    # disk:
-    #   name: argus-data
-    #   mountPath: /var/data
-    #   sizeGB: 1
+    # Intended persistent topology. The owner must attach the Disk to the
+    # existing dashboard-managed service; do not convert it to a Blueprint.
+    disk:
+      name: argus-data
+      mountPath: /var/data
+      sizeGB: 5
     envVars:
       - key: PORT
         value: 8080
       - key: ARGUS_LEDGER_PATH
-        value: data/predictions.jsonl
+        value: /var/data/predictions.jsonl
+      - key: ARGUS_PERSISTENT_ROOT
+        value: /var/data
+      - key: ARGUS_MISSION_WAL_FILE
+        value: /var/data/argus_mission_tick.wal
+      - key: ARGUS_OSINT_PERSIST_FILE
+        value: /var/data/argus_osint_memory.json
+      - key: ARGUS_MISSION_LEASE_FILE
+        value: /var/data/argus_mission_tick.lease
+      - key: ARGUS_MISSION_CURSOR_FILE
+        value: /var/data/argus_mission_tick.cursor.json
+      - key: ARGUS_MISSION_RECEIPT_FILE
+        value: /var/data/argus_mission_tick.receipt.json
+      - key: ARGUS_CHECKPOINT_TEMP_DIR
+        value: /var/data
       # Provide your secrets via the Render dashboard, not in this file.
       # J-Quants V2 (live Japan watchlist): a single dashboard API key, sent
       # in the x-api-key header (v1 mailaddress/password is discontinued).
