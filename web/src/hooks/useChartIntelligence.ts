@@ -6,6 +6,9 @@ import {
   VERIFIED_VIEW_METHOD_VERSION, verifySnapshot, writeVerifiedSnapshot,
 } from '../lib/verifiedSnapshot';
 import { formatSnapshotStatus, snapshotFreshness } from '../lib/snapshotFreshness';
+import {
+  DEFAULT_MARKET_INSTRUMENT, isVerifiedMarketInstrument,
+} from '../domain/marketInstruments';
 
 const legacyCache = new Map<string, { at: number; data: ChartIntelligencePayload }>();
 const legacyInflight = new Map<string, Promise<ChartIntelligencePayload>>();
@@ -14,7 +17,7 @@ const failedUntil = new Map<string, number>();
 const LEGACY_STALE_MS = 30 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
-interface Options {
+export interface ChartIntelligenceOptions {
   scope: 'market' | 'asset'; symbol?: string; market?: string;
   timeframe?: 'daily' | 'weekly'; horizon?: 1 | 5 | 20; enabled?: boolean;
 }
@@ -35,7 +38,7 @@ function baseUrl() {
   return (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? null;
 }
 
-function legacyEndpoint(options: Options) {
+function legacyEndpoint(options: ChartIntelligenceOptions) {
   const base = baseUrl();
   if (!base) return null;
   const params = new URLSearchParams({
@@ -46,17 +49,21 @@ function legacyEndpoint(options: Options) {
   return `${base}/api/argus/chart-intelligence?${params}`;
 }
 
-function marketExpectation(options: Options): SnapshotExpectation | null {
-  if (options.scope !== 'market' || (options.timeframe ?? 'daily') !== 'daily') return null;
+export function marketExpectation(
+  options: ChartIntelligenceOptions,
+): SnapshotExpectation | null {
+  const symbol = options.symbol
+    ?? (options.scope === 'market' ? DEFAULT_MARKET_INSTRUMENT.JP : null);
+  if (!isVerifiedMarketInstrument(symbol, options.timeframe ?? 'daily')) return null;
   return {
     kind: 'market-chart',
-    instrument: (options.symbol ?? '1321').toUpperCase(),
+    instrument: symbol!.toUpperCase(),
     horizon: `${options.horizon ?? 5}D`,
     methodVersion: VERIFIED_VIEW_METHOD_VERSION,
   };
 }
 
-function verifiedEndpoint(options: Options, expectation: SnapshotExpectation | null) {
+function verifiedEndpoint(options: ChartIntelligenceOptions, expectation: SnapshotExpectation | null) {
   const base = baseUrl();
   if (!base || !expectation) return null;
   const params = new URLSearchParams({
@@ -149,7 +156,7 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal) {
   });
 }
 
-export function useChartIntelligence(options: Options) {
+export function useChartIntelligence(options: ChartIntelligenceOptions) {
   const expectation = useMemo(() => marketExpectation(options), [
     options.scope, options.symbol, options.timeframe, options.horizon,
   ]);
@@ -181,7 +188,7 @@ export function useChartIntelligence(options: Options) {
   useEffect(() => {
     const loading = expectation
       ? ['NO_CACHE_LOADING', 'CACHE_READY_REVALIDATING'].includes(view.state)
-      : !legacyData;
+      : !legacyData && !legacyError;
     if (!loading) { setLoaderVisible(false); setSlowInitial(false); return; }
     const loaderTimer = window.setTimeout(() => setLoaderVisible(true), 225);
     const slowTimer = window.setTimeout(() => setSlowInitial(true), 5_000);
@@ -258,7 +265,10 @@ export function useChartIntelligence(options: Options) {
         const message = reason instanceof Error ? reason.message : '取得失敗';
         const freshness = snapshotFreshness(cached);
         setView({
-          key: cached ? key : null, snapshot: cached,
+          // Keep the requested identity even without cache so
+          // ERROR_WITHOUT_CACHE (and its retry control) is observable. A null
+          // key made the return path reinterpret the error as perpetual loading.
+          key, snapshot: cached,
           state: cached
             ? freshness === 'expired' ? 'STALE_FALLBACK' : 'ERROR_WITH_CACHE'
             : 'ERROR_WITHOUT_CACHE',
@@ -297,11 +307,16 @@ export function useChartIntelligence(options: Options) {
 
   if (!expectation) {
     const data = legacyKey === legacyUrl ? legacyData : null;
+    const retry = () => {
+      if (legacyUrl) failedUntil.delete(legacyUrl);
+      setRefreshToken((value) => value + 1);
+    };
     return {
-      data, loading: !data, error: legacyError, snapshotState:
+      data, loading: !data && !legacyError, error: legacyError, snapshotState:
         data ? 'CURRENT_READY' as const : 'NO_CACHE_LOADING' as const,
-      statusText: data ? '更新済' : '初回データを準備中',
+      statusText: data ? '更新済' : legacyError ? '取得失敗' : '初回データを準備中',
       loaderVisible, slowInitial, snapshotId: null,
+      retry,
     };
   }
   const matching = view.key === expectedKey ? view.snapshot : null;
@@ -318,5 +333,9 @@ export function useChartIntelligence(options: Options) {
     statusText: formatSnapshotStatus(effectiveState, matching),
     loaderVisible, slowInitial,
     snapshotId: matching?.snapshotId ?? null,
+    retry: () => {
+      if (verifiedUrl) failedUntil.delete(verifiedUrl);
+      setRefreshToken((value) => value + 1);
+    },
   };
 }

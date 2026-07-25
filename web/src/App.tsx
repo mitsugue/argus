@@ -1,6 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { NavRail, type RouteKey } from './components/NavRail';
+import {
+  HASH_ROUTES, PRIMARY_NAVIGATION, pageDirection, primaryRouteIndex,
+  routeHash, routeLabel,
+} from './navigation';
 import { CommandCenter } from './routes/CommandCenter';
 import { MarketRegime } from './routes/MarketRegime';
 import { Watchlist } from './routes/Watchlist';
@@ -36,19 +40,11 @@ const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   guide:     Guide as React.FC<RouteProps>,
 };
 
-const HASH_ROUTES: Partial<Record<string, RouteKey>> = {
-  '#today': 'command',
-  '#assets': 'watchlist',
-  '#positions': 'core',
-  '#market': 'regime',
-  '#backup': 'backup',
-  '#quality': 'quality',
-  '#guide': 'guide',
-};
-
 const App: React.FC = () => {
   const [route, setRoute] = useState<RouteKey>(
     () => HASH_ROUTES[window.location.hash] ?? 'command');
+  const routeRef = useRef(route);
+  const [pageEnterDirection, setPageEnterDirection] = useState<1 | -1>(1);
   // V12.2.12: Asset Desk deep-link intent — Today(OWNER CRITICAL/Your Exposure/
   // Action Queue/例外サマリー)から「この銘柄を開く」。nonceで同一銘柄の再クリック
   // も再スクロールされる。localStorageには保存しない(一時的なUI意図のみ)。
@@ -59,13 +55,24 @@ const App: React.FC = () => {
   const [isReview, setIsReview] = useState(() => window.location.hash === '#review');
 
   useEffect(() => {
-    const onHash = () => {
+    const onLocation = () => {
       setIsReview(window.location.hash === '#review');
       const target = HASH_ROUTES[window.location.hash];
-      if (target) setRoute(target);
+      // Browsers can emit both popstate and hashchange for one history move.
+      // Ignore the duplicate event so it cannot overwrite the canonical
+      // previous-page animation direction with the same-route default.
+      if (target && target !== routeRef.current) {
+        setPageEnterDirection(pageDirection(routeRef.current, target));
+        routeRef.current = target;
+        setRoute(target);
+      }
     };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    window.addEventListener('hashchange', onLocation);
+    window.addEventListener('popstate', onLocation);
+    return () => {
+      window.removeEventListener('hashchange', onLocation);
+      window.removeEventListener('popstate', onLocation);
+    };
   }, []);
 
   // Cloud sync (sync-v1, v10.10): 20h cloud heartbeat + same-passphrase device
@@ -148,10 +155,13 @@ const App: React.FC = () => {
   }, [impEv.data]);
 
   const handleNavSelect = (key: RouteKey) => {
-    exitReview();
-    const hash = Object.entries(HASH_ROUTES)
-      .find(([, value]) => value === key)?.[0] ?? '';
-    history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+    const hash = routeHash(key);
+    setIsReview(false);
+    setPageEnterDirection(pageDirection(routeRef.current, key));
+    routeRef.current = key;
+    if (window.location.hash !== hash) {
+      history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+    }
     setRoute(key);
   };
 
@@ -159,27 +169,22 @@ const App: React.FC = () => {
   const navigateToAsset = (symbol: string, section?: string) => {
     exitReview();
     setAssetFocus({ symbol: symbol.toUpperCase(), section, nonce: Date.now() });
-    setRoute('watchlist');
+    handleNavSelect('watchlist');
   };
 
-  // Overscroll-to-next (v10.15.1): nav order for the bottom-pull page advance.
-  // Keep in sync with NavRail's NAV order (V12.2.12: Today → Asset Desk →
-  // Positions & Risk → Market Context; route keys unchanged).
-  const NAV_ORDER: RouteKey[] = ['command', 'watchlist', 'core', 'regime', 'backup', 'quality', 'guide'];
-  const NAV_LABEL: Record<RouteKey, string> = {
-    command: 'Today', regime: 'Market Context',
-    watchlist: 'Asset Desk', core: 'Positions & Risk', backup: 'Backup',
-    quality: 'Data Quality', guide: 'Guide',
-  };
-  const curIdx = NAV_ORDER.indexOf(route);
-  const overscrollNext = (!isReview && curIdx >= 0 && curIdx + 1 < NAV_ORDER.length)
-    ? { label: NAV_LABEL[NAV_ORDER[curIdx + 1]], go: () => handleNavSelect(NAV_ORDER[curIdx + 1]) }
+  // Supporting system pages are a menu and intentionally do not participate
+  // in the primary Today → Assets → Review → Market swipe sequence.
+  const curIdx = primaryRouteIndex(route);
+  const overscrollNext = (!isReview && curIdx >= 0 && curIdx + 1 < PRIMARY_NAVIGATION.length)
+    ? { label: routeLabel(PRIMARY_NAVIGATION[curIdx + 1].route),
+      go: () => handleNavSelect(PRIMARY_NAVIGATION[curIdx + 1].route) }
     : undefined;
   // Up-pull at the top → previous page (v10.28). On the FIRST page (Today) there is
   // no previous page, so an up-pull RELOADS instead (v10.153, owner request) — same
   // gesture + threshold + indicator, label "再読み込み".
   const overscrollPrev = (!isReview && curIdx > 0)
-    ? { label: NAV_LABEL[NAV_ORDER[curIdx - 1]], go: () => handleNavSelect(NAV_ORDER[curIdx - 1]) }
+    ? { label: routeLabel(PRIMARY_NAVIGATION[curIdx - 1].route),
+      go: () => handleNavSelect(PRIMARY_NAVIGATION[curIdx - 1].route) }
     : (!isReview && curIdx === 0)
       ? { label: '再読み込み', go: () => window.location.reload() }
       : undefined;
@@ -199,6 +204,7 @@ const App: React.FC = () => {
       overscrollNext={overscrollNext}
       overscrollPrev={overscrollPrev}
       pageKey={isReview ? 'review' : route}
+      pageDirection={pageEnterDirection}
       marketStatusLabel={marketStatusLabel}
       hideNotifications={!isReview && route === 'command'}
     >

@@ -263,6 +263,14 @@ jobs:
           ARGUS_WARM_PROFILE_DIR: ../artifacts/warm-seed
           ARGUS_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance
         run: node scripts/public-market-acceptance.mjs
+      - name: Verify mobile Today navigation, geometry, loaders, and 12 snapshots
+        working-directory: web
+        env:
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
+          ARGUS_MOBILE_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance/mobile-today
+        run: node scripts/mobile-today-acceptance.mjs
       - name: Publish reproducible public acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

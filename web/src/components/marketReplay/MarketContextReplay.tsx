@@ -7,11 +7,13 @@ import type {
   ChartBar, ChartIntelligencePayload, MarketReplayContext, ReplayDistribution,
   ReplayLedgerSeries,
 } from '../../types/chartIntelligence';
+import {
+  MARKET_HORIZONS, MARKET_INSTRUMENTS, marketInstrument,
+  type MarketHorizon as Horizon, type MarketInstrumentSymbol as Instrument,
+} from '../../domain/marketInstruments';
 import './MarketContextReplay.css';
 
 type Tab = 'OVERVIEW' | 'REPLAY' | 'LEDGER';
-type Instrument = '1321' | '1306' | 'SPY' | 'QQQ';
-type Horizon = 1 | 5 | 20;
 type Range = '1M' | '3M' | '6M' | '1Y' | '5Y';
 type ChartMode = 'CANDLE' | 'LINE';
 type DrawTool = 'select' | 'horizontal' | 'trend' | 'zone' | 'arrow' | 'text';
@@ -29,17 +31,10 @@ interface DeepLink {
   brierSkill?: number | null; effectiveSample?: number;
 }
 
-const INSTRUMENTS: Record<Instrument, { market: 'JP' | 'US'; label: string; short: string }> = {
-  '1321': { market: 'JP', label: '日経225 ETF（1321）', short: '1321' },
-  '1306': { market: 'JP', label: 'TOPIX ETF（1306）', short: '1306' },
-  SPY: { market: 'US', label: 'S&P 500 ETF（SPY）', short: 'SPY' },
-  QQQ: { market: 'US', label: 'Nasdaq 100 ETF（QQQ）', short: 'QQQ' },
-};
 const RANGE_COUNT: Record<Range, number> = {
   '1M': 22, '3M': 66, '6M': 132, '1Y': 264, '5Y': 1320,
 };
 const TABS: Tab[] = ['OVERVIEW', 'REPLAY', 'LEDGER'];
-const HORIZONS: Horizon[] = [1, 5, 20];
 const DRAW_TOOLS: Array<{ id: DrawTool; label: string }> = [
   { id: 'select', label: '選択' }, { id: 'horizontal', label: '水平' },
   { id: 'trend', label: '線' }, { id: 'zone', label: '帯' },
@@ -448,7 +443,7 @@ export const MarketContextReplay: React.FC = () => {
   const initialSymbol = initialDeep?.symbol ?? mirror?.symbol
     ?? readLocal<Instrument>('argus.marketReplay.instrument.v1', '1321');
   const [instrument, setInstrument] = useState<Instrument>(
-    initialSymbol in INSTRUMENTS ? initialSymbol as Instrument : '1321');
+    marketInstrument(initialSymbol)?.symbol ?? '1321');
   const [horizon, setHorizon] = useState<Horizon>(initialDeep?.horizon
     ?? readLocal<Horizon>('argus.marketReplay.horizon.v1', 5));
   const [tab, setTab] = useState<Tab>(() => initialDeep?.selectedTab
@@ -461,7 +456,7 @@ export const MarketContextReplay: React.FC = () => {
   const [tool, setTool] = useState<DrawTool>('select');
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [focusDate, setFocusDate] = useState<string | null>(null);
-  const info = INSTRUMENTS[instrument];
+  const info = marketInstrument(instrument)!;
   const {
     data, loading, error, snapshotState, statusText, loaderVisible,
     slowInitial, snapshotId,
@@ -505,7 +500,7 @@ export const MarketContextReplay: React.FC = () => {
   };
   return <div className="market-replay" data-snapshot-id={snapshotId ?? undefined}>
     <header className="mr-header">
-      <div><span>MARKET CONTEXT REPLAY</span><h2>{info.label}</h2>
+      <div><span>MARKET CONTEXT REPLAY</span><h2>{info.fullLabel}</h2>
         <small>{horizon}営業日 · {data?.periodEnd ?? 'データ確認中'} · 日足 · {data?.quoteState ?? 'CLOSE'}
           {data && data.status !== 'live' ? ' · 暫定' : ''}</small>
         <div className={`mr-snapshot-status is-${snapshotState.toLowerCase()}`}>
@@ -518,10 +513,10 @@ export const MarketContextReplay: React.FC = () => {
       </div>
     </header>
     <div className="mr-selectors">
-      <div role="group" aria-label="Instrument">{(Object.keys(INSTRUMENTS) as Instrument[]).map((value) =>
-        <button type="button" key={value} className={instrument === value ? 'active' : ''}
-          onClick={() => switchInstrument(value)}>{value}</button>)}</div>
-      <div role="group" aria-label="Forecast horizon">{HORIZONS.map((value) =>
+      <div role="group" aria-label="Instrument">{MARKET_INSTRUMENTS.map((item) =>
+        <button type="button" key={item.symbol} className={instrument === item.symbol ? 'active' : ''}
+          onClick={() => switchInstrument(item.symbol)}>{item.symbol}</button>)}</div>
+      <div role="group" aria-label="Forecast horizon">{MARKET_HORIZONS.map((value) =>
         <button type="button" key={value} className={horizon === value ? 'active' : ''}
           onClick={() => switchHorizon(value)}>{value}D</button>)}</div>
     </div>

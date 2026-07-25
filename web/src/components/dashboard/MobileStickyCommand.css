@@ -4,13 +4,14 @@
 @media (max-width: 720px) {
   .msc {
     position: fixed;
-    bottom: calc(58px + env(safe-area-inset-bottom));
+    bottom: var(--argus-mobile-nav-height);
     left: 0;
     right: 0;
     z-index: 39;
     display: flex;
     align-items: center;
     gap: 8px;
+    min-height: var(--argus-mobile-sticky-height);
     padding: 6px 10px;
     background: var(--bg-card, #0d1117);
     border-top: 1px solid var(--line);
@@ -20,7 +21,7 @@
     white-space: nowrap;
   }
   /* content never hides behind the bar */
-  .msc-spacer { display: block; height: 42px; }
+  .msc-spacer { display: block; height: var(--argus-mobile-sticky-height); }
 
   .msc__mode { font-weight: 700; color: var(--accent); }
   .msc__p0 {

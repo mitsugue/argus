@@ -47,6 +47,8 @@ interface Props {
   overscrollPrev?: { label: string; go: () => void };
   /** Changes whenever the visible page changes — drives the enter animation. */
   pageKey?: string;
+  /** Canonical route direction for taps, history navigation, and overscroll. */
+  pageDirection?: 1 | -1;
   /** Exchange-calendar-first market status; never a hard-coded global open flag. */
   marketStatusLabel?: string;
   /** Today keeps notification processing but moves critical output to Attention. */
@@ -80,7 +82,7 @@ function formatDaysAway(days: number): string {
 
 // Slim header (brand + next event + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
-export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey, marketStatusLabel, hideNotifications = false }) => {
+export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, nextEvent, overscrollNext, overscrollPrev, pageKey, pageDirection = 1, marketStatusLabel, hideNotifications = false }) => {
   const [notifOpen, setNotifOpen] = React.useState(false);
   const [notifCounts, setNotifCounts] = React.useState({ total: 0, critical: 0, high: 0 });
   React.useEffect(() => {
@@ -108,9 +110,10 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
   useEffect(() => {
     if (pageKey !== prevPageKey.current) {
       prevPageKey.current = pageKey;
+      setAnimDir(pageDirection);
       setAnimTick((t) => t + 1);
     }
-  }, [pageKey]);
+  }, [pageKey, pageDirection]);
 
   // Stable labels for the indicators (set via textContent — no re-render).
   const nextLabel = overscrollNext?.label;

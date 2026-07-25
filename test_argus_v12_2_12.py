@@ -69,17 +69,19 @@ def test_publish_side_effects_gated_to_today():
 
 def test_nav_order_and_route_keys():
     nav = _read("components", "NavRail.tsx")
-    i_today = nav.index("{ key: 'command',   label: 'Today' }")
-    i_desk = nav.index("{ key: 'watchlist', label: 'Asset Desk' }")
-    i_core = nav.index("{ key: 'core',      label: 'Positions & Risk' }")
-    i_regime = nav.index("{ key: 'regime',    label: 'Market Context' }")
+    navigation = _read("navigation.ts")
+    i_today = navigation.index("route: 'command'")
+    i_desk = navigation.index("route: 'watchlist'")
+    i_core = navigation.index("route: 'core'")
+    i_regime = navigation.index("route: 'regime'")
     assert i_today < i_desk < i_core < i_regime
     app = _read("App.tsx")
-    assert "'command', 'watchlist', 'core', 'regime'" in app     # overscroll順同期
-    assert "watchlist: 'Asset Desk'" in app
+    assert "PRIMARY_NAVIGATION" in app     # overscroll順同期
+    assert "routeLabel" in app
     # route keyは不変(localStorage/既存挙動の互換)
     for key in ("'command'", "'watchlist'", "'core'", "'regime'"):
-        assert key in nav
+        assert key in navigation
+    assert "PRIMARY_NAVIGATION" in nav
 
 
 # ── ③ deep-link(App state経由・4ソース) ─────────────────────────────────────

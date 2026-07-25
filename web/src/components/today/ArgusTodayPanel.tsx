@@ -3,12 +3,43 @@ import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../..
 import { formatEventTime, quoteDisplayLabel } from '../../domain/argusTodayView';
 import { SIGNAL_ORDER, SIGNALS } from '../../domain/actionLevel';
 import type { RouteKey } from '../NavRail';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
+import type {
+  MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
+} from '../../domain/marketInstruments';
 import './ArgusToday.css';
+
+export interface TodayInstrumentState {
+  symbol: MarketInstrumentSymbol;
+  market: MarketInstrumentMarket;
+  shortLabel: string;
+  fullLabel: string;
+  move: ArgusTodayView['indexMoves'][number] | null;
+  statusText: string;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface TodayChartLoadState {
+  loading: boolean;
+  loaderVisible: boolean;
+  slowInitial: boolean;
+  statusText: string;
+  error: string | null;
+  snapshotState: string;
+  snapshotId: string | null;
+  retry: () => void;
+}
 
 interface Props {
   view: ArgusTodayView;
+  instruments: readonly TodayInstrumentState[];
+  selectedSymbol: MarketInstrumentSymbol;
+  horizon: MarketHorizon;
+  chartLoad: TodayChartLoadState;
   onMode: (mode: MarketSelectionMode) => void;
   onInstrument: (market: 'JP' | 'US', symbol: string) => void;
+  onHorizon: (horizon: MarketHorizon) => void;
   onNavigate: (key: RouteKey) => void;
   onOpenAsset?: (symbol: string) => void;
   aiButton: React.ReactNode;
@@ -154,10 +185,12 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
   </div>;
 };
 
-export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, onNavigate, onOpenAsset, aiButton }) => {
+export const ArgusTodayPanel: React.FC<Props> = ({
+  view, instruments, selectedSymbol, horizon, chartLoad,
+  onMode, onInstrument, onHorizon, onNavigate, onOpenAsset, aiButton,
+}) => {
   const [detail, setDetail] = React.useState(false);
-  const [horizon, setHorizon] = React.useState<'1D' | '5D' | '20D'>('5D');
-  const projection = view.projectionsByHorizon[horizon] ?? view.projection;
+  const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
   const currentSignal = SIGNAL_ORDER.find((code) => SIGNALS[code].level === view.actionScore);
   React.useEffect(() => {
     try {
@@ -198,15 +231,22 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
           onClick={() => onMode(mode)}>{mode}</button>)}
         <span>SELECTED {view.selectedMarket}</span>{view.globalRisk && <em>GLOBAL {view.globalRisk}</em>}
       </div>
-      {view.indexMoves.length > 0 && <div className="at-index-strip" aria-label="主要指数データ">
-        {view.indexMoves.map((move) => <button type="button" key={move.id}
-          aria-pressed={move.symbol === view.selectedInstrument?.symbol}
-          onClick={() => move.symbol && move.market && onInstrument(move.market, move.symbol)}
-          className={`is-${moveTone(move.value, move.previous)} ${move.symbol === view.selectedInstrument?.symbol ? 'is-selected' : ''}`}>
-          <span title={move.label}>{move.label}</span><b>{fmtMove(move.value, move.suffix)}</b>
-          <Sparkline values={(move.history ?? []).map((point) => point.value)} />
-          <em>{move.directionLabel ?? ''} · {move.status ?? 'close'} {shortDate(move.asOf)}</em></button>)}
-      </div>}
+      <div className="at-index-strip" aria-label="主要指数データ">
+        {instruments.map((instrument) => {
+          const move = instrument.move;
+          return <button type="button" key={instrument.symbol}
+            aria-pressed={instrument.symbol === selectedSymbol}
+            onClick={() => onInstrument(instrument.market, instrument.symbol)}
+            className={`${move ? `is-${moveTone(move.value, move.previous)}` : 'is-pending'} ${instrument.symbol === selectedSymbol ? 'is-selected' : ''}`}>
+            <span title={instrument.fullLabel}>{instrument.shortLabel}</span>
+            {move ? <><b>{fmtMove(move.value, move.suffix)}</b>
+              <Sparkline values={(move.history ?? []).map((point) => point.value)} />
+              <em>{move.directionLabel ?? ''} · {move.status ?? 'close'} {shortDate(move.asOf)}</em></>
+              : <><b className="at-index-pending">準備中</b>
+                <em>{instrument.error ? '要更新' : instrument.statusText}</em></>}
+          </button>;
+        })}
+      </div>
       <div className="at-call">
         <strong style={{ color: ACTION_TONE[view.finalAction] }}>{view.finalAction}</strong>
         <b>{view.actionScore} / 7</b><span>{currentSignal ? SIGNALS[currentSignal].labelJa : ''}</span>
@@ -214,9 +254,18 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
       <div className="at-meter" aria-label={`7段階 ${view.actionScore}`}>
         {SIGNAL_ORDER.map((code) => <i key={code} className={SIGNALS[code].level === view.actionScore ? 'active' : ''}><span>{SIGNALS[code].level}</span></i>)}
       </div>
-      <div className="at-horizon" role="group" aria-label="予測期間">{(['1D', '5D', '20D'] as const).map((value) =>
-        <button type="button" key={value} aria-pressed={horizon === value}
-          onClick={() => setHorizon(value)}>{value}</button>)}</div>
+      <div className="at-chart-controls">
+        <div className="at-chart-status" data-snapshot-state={chartLoad.snapshotState}
+          data-snapshot-id={chartLoad.snapshotId ?? undefined}>
+          <span>{chartLoad.statusText}</span>
+          {projection && chartLoad.loading && chartLoad.loaderVisible &&
+            <TriangleStepLoader compact label="" />}
+          {chartLoad.error && <button type="button" onClick={chartLoad.retry}>再試行</button>}
+        </div>
+        <div className="at-horizon" role="group" aria-label="予測期間">{([1, 5, 20] as const).map((value) =>
+          <button type="button" key={value} aria-pressed={horizon === value}
+            onClick={() => onHorizon(value)}>{value}D</button>)}</div>
+      </div>
       {projection ? <ProjectionChart projection={projection} onActivate={() => {
         try { sessionStorage.setItem('argus.replayContext', JSON.stringify({ route: 'market-context',
           schemaVersion: 'argus-replay-deeplink-v1',
@@ -235,7 +284,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({ view, onMode, onInstrument, o
           supportResistanceIds: projection.supportResistanceIds,
           eventIds: projection.eventIds })); } catch { /* best effort */ }
         onNavigate('regime');
-      }} /> : <div className="at-projection-missing">実測OHLCV確認待ち</div>}
+      }} /> : <div className="at-projection-missing" aria-busy={chartLoad.loading}>
+        {chartLoad.loaderVisible
+          ? <TriangleStepLoader label={chartLoad.slowInitial
+            ? '初回データを準備中' : 'データ確認中'} />
+          : <span aria-hidden className="at-projection-placeholder" />}
+        {!chartLoad.loading && <span>{chartLoad.error ? '取得できません' : '実測OHLCV確認待ち'}</span>}
+        {chartLoad.error && <button type="button" onClick={chartLoad.retry}>再試行</button>}
+      </div>}
       <div className="at-kpis"><span>確度 <b>{view.projection?.confidenceLabel ?? (view.confidence == null ? '未算出' : Math.round(view.confidence * 100))}</b></span>
         <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span></div>
       {view.factors.length > 0 && <div className="at-factors">{view.factors.map((factor) =>
