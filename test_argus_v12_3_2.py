@@ -148,6 +148,22 @@ class SoakSourceIndependenceTests(unittest.TestCase):
                             "scheduler_configuration_mismatch")
         self.assertEqual(state["lastHeartbeatSource"], "ec2_systemd")
 
+        authoritative_mismatch = {
+            **self._heartbeat(
+                source="ec2_systemd",
+                expected="2026-07-20T02:07:00Z",
+                observed="2026-07-20T02:07:02Z"),
+            "healthStatus": "build_mismatch",
+        }
+        self.assertTrue(
+            runtime.append_soak_heartbeat(soak, authoritative_mismatch))
+        interrupted = runtime.build_soak_state(
+            soak=soak, now_iso="2026-07-20T02:08:00Z",
+            current_build_sha="abc1234")
+        self.assertEqual(interrupted["state"], "interrupted")
+        self.assertEqual(interrupted["failureClass"],
+                         "scheduler_configuration_mismatch")
+
 
 class SystemdContractTests(unittest.TestCase):
     def test_timer_contract(self):
