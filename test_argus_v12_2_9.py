@@ -214,6 +214,7 @@ def test_tick_starts_build_scoped_soak(monkeypatch):
     monkeypatch.setenv("RENDER_GIT_COMMIT", "abc1234def")
     _reset_soak()
     _ready_startup()
+    scanner._MISSION_WINDOWS.clear()
     scanner._OPS_JOURNAL.clear()
     scanner._OPS_SEQ.clear()
     with scanner.app.test_client() as c:
@@ -376,6 +377,7 @@ def test_incident_open_resolve_and_recovery_journaled(monkeypatch):
     _admin(monkeypatch)
     _ready_startup()
     scanner._MISSIONS.clear()
+    scanner._MISSION_WINDOWS.clear()
     scanner._INCIDENTS.clear()
     scanner._OPS_JOURNAL.clear()
     scanner._OPS_SEQ.clear()
@@ -387,7 +389,9 @@ def test_incident_open_resolve_and_recovery_journaled(monkeypatch):
     scanner._MISSIONS.append(m)
     inc_id = f"inc-{m['missionId']}"
     with scanner.app.test_client() as c:
-        c.post("/api/argus/admin/missions/tick", json={})
+        c.post("/api/argus/admin/missions/tick",
+               json={"triggerSource": "manual",
+                     "runId": "incident-first"})
     opened = [e for e in scanner._OPS_JOURNAL
               if e.get("eventType") == "incident_opened"
               and e.get("aggregateId") == inc_id]
@@ -400,9 +404,15 @@ def test_incident_open_resolve_and_recovery_journaled(monkeypatch):
     assert len(opened) == 1 and len(resolved) == 1 and len(recovered) == 1
     # 再tickでもインシデントイベントは増えない(冪等)
     with scanner.app.test_client() as c:
-        c.post("/api/argus/admin/missions/tick", json={})
+        c.post("/api/argus/admin/missions/tick",
+               json={"triggerSource": "manual",
+                     "runId": "incident-second"})
     assert len([e for e in scanner._OPS_JOURNAL
                 if e.get("aggregateId") == inc_id]) == 2
+    assert len([e for e in scanner._OPS_JOURNAL
+                if e.get("eventType") == "mission_recovered"
+                and e.get("aggregateId") == m["missionId"]]) == 1
+    assert m["status"] == "recovered"
 
 
 def test_private_payload_rejected_by_journal_helper():
@@ -554,6 +564,7 @@ def test_e2e_forward_live_fixture(monkeypatch, tmp_path):
                  scanner._OUTCOME_LEDGER, scanner._OPS_JOURNAL,
                  scanner._INCIDENTS):
         coll.clear()
+    scanner._MISSION_WINDOWS.clear()
     scanner._OPS_SEQ.clear()
     scanner._OSINT_STORE.clear()
     _reset_soak()

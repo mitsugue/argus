@@ -440,7 +440,8 @@ def detect_missed(missions: List[Dict[str, Any]], now_iso: str,
     for m in missions or []:
         if max_records is not None and len(out) >= max(0, int(max_records)):
             break
-        if m.get("status") in ("complete", "skipped", "failed_safe", "missed"):
+        if m.get("status") in (
+                "complete", "skipped", "failed_safe", "missed", "recovered"):
             continue
         sf = m.get("scheduledFor")
         if sf and _min_between(sf, now_iso) > grace_min and sf < now_iso:
