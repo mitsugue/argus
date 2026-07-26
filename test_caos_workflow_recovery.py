@@ -1,0 +1,99 @@
+from pathlib import Path
+
+from scripts.deploy_scope import classify
+
+
+WORKFLOW = Path(".github/workflows/caos-scan.yml")
+
+
+def _text() -> str:
+    return WORKFLOW.read_text(encoding="utf-8")
+
+
+def test_workflow_only_release_scope_is_backend_false():
+    scope = classify([
+        ".github/workflows/caos-scan.yml",
+        "scripts/resolve_backend_identity.py",
+        "test_backend_identity_resolver.py",
+        "test_caos_workflow_recovery.py",
+    ])
+    assert scope == {
+        "frontendDeploy": False,
+        "backendDeploy": False,
+        "newBackendSoak": False,
+        "preserveBackendSoak": True,
+    }
+
+
+def test_github_sha_is_not_sent_as_expected_backend_identity():
+    text = _text()
+    assert '"expectedBuildSha":os.environ["GITHUB_SHA"]' not in text
+    assert "EXPECTED_BACKEND_SHA" in text
+    assert "resolve_backend_identity.py" in text
+
+
+def test_workflow_has_independent_control_plane_jobs():
+    text = _text()
+    for job in (
+        "backend-identity:",
+        "mission-backup:",
+        "caos-collection:",
+        "durability-flush:",
+        "result:",
+    ):
+        assert job in text
+    assert "if: always() && !cancelled() && github.event_name == 'schedule'" in text
+    assert "needs: [backend-identity, mission-backup, caos-collection]" in text
+
+
+def test_partial_or_hard_mission_failure_does_not_suppress_flush():
+    text = _text()
+    durability = text.split("  durability-flush:", 1)[1].split(
+        "\n  result:", 1
+    )[0]
+    assert "needs.mission-backup.result == 'success'" not in durability
+    assert "durability runs independently" in text
+    assert 'if [ "$LAST_RESULT" = "partial" ]' in text
+    assert "exit 2" in text
+
+
+def test_durability_failure_is_visible_and_non_green():
+    text = _text()
+    flush = text.split("- name: Commit verified snapshot and post receipt", 1)[1]
+    assert "continue-on-error" not in flush
+    assert '[ "${{ needs.durability-flush.result }}" = "success" ] || exit 1' in text
+
+
+def test_cancelled_or_manual_workflow_performs_no_operational_write():
+    text = _text()
+    assert "if: always() && !cancelled() && github.event_name == 'schedule'" in text
+    assert "github.event_name == 'schedule'" in text.split(
+        "  mission-backup:", 1
+    )[1].split("  caos-collection:", 1)[0]
+    assert "expected_skip_manual_diagnostic" in text
+
+
+def test_stale_writer_guard_and_verified_receipt_order_remain():
+    text = _text()
+    select_pos = text.index('[ "$NEW_ASOF" \\> "$OLD_ASOF" ]')
+    remote_verify_pos = text.index(
+        '[ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ]'
+    )
+    receipt_pos = text.index("remote-journal-commit-receipt")
+    assert select_pos < remote_verify_pos < receipt_pos
+    assert '[ "$EXPECTED_HASH" = "$NEW_HASH" ]' in text
+    assert "expected_skip_stale_snapshot" in text
+
+
+def test_no_secret_value_is_logged_or_artifacted():
+    text = _text()
+    assert 'echo "$ARGUS_ADMIN_TOKEN"' not in text
+    assert "Authorization:" not in text
+    assert "upload-artifact" not in text
+
+
+def test_work_is_bounded():
+    text = _text()
+    assert "for BATCH in 1 2 3" in text
+    assert "for ROUND in 1 2 3 4" in text
+    assert "while true" not in text
