@@ -1,21 +1,15 @@
-# C.A.O.S. (Corroborated Analyst & Official Signals) — institutional-intelligence
-# source scan. Institutional/news chatter does NOT follow market hours, so this runs
-# every 30 min AROUND THE CLOCK (incl. weekends), independent of market-watch. It
-# POSTs the admin-gated /collect, which fetches the allow-listed public RSS/sitemap
-# feeds (Bloomberg EN+JP, Nikkei, CNBC, MarketWatch, Nasdaq, Yahoo, Fed, SEC),
-# normalizes + dedups + persists. All public RSS (no quota source), so 48 runs/day is
-# safe. The public GET never fetches — this cron is the only collection path.
+# C.A.O.S. collection + backup mission + independent durability flush.
+#
+# The checked-out main SHA can be frontend-only.  Backend identity is resolved
+# from the shared Render deploy scope and repository history; GITHUB_SHA is
+# never sent directly as expectedBuildSha.
 name: caos-scan
-
-# v12.3.2: mission tick authority is EC2 systemd. This workflow remains the
-# backup scheduler; workflow_dispatch is diagnostic-only.
 
 on:
   schedule:
-    - cron: '7,37 * * * *'      # every 30 min, offset from the congested :00/:30
-  workflow_dispatch: {}
+    - cron: '7,37 * * * *'
+  workflow_dispatch: {}  # read-only identity diagnostic; operational jobs skip
 
-# v11.9.1: the news-ja snapshot step pushes to the ledger branch.
 permissions:
   contents: write
 
@@ -24,189 +18,359 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scan:
+  backend-identity:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      expectedBackendSha: ${{ steps.resolve.outputs.expectedBackendSha }}
+      actualBackendSha: ${{ steps.resolve.outputs.actualBackendSha }}
+      identitySource: ${{ steps.resolve.outputs.identitySource }}
+      mainSha: ${{ steps.resolve.outputs.mainSha }}
+      latestBackendSensitiveSha: ${{ steps.resolve.outputs.latestBackendSensitiveSha }}
+      status: ${{ steps.resolve.outputs.status }}
+      transitionState: ${{ steps.resolve.outputs.transitionState }}
+      mismatchReason: ${{ steps.resolve.outputs.mismatchReason }}
     steps:
       - uses: actions/checkout@v5
-      - name: Scheduled mission tick and Soak heartbeat
-        env:
-          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        with:
+          fetch-depth: 0
+      - name: Read live backend identity
+        id: live
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
-          HEALTH=$(python3 scripts/workflow_http.py --name backend-health --timeout 60 \
-            --url "$BE/healthz")
-          echo "backend-health: $HEALTH"
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            TRIGGER_SOURCE="github_schedule"
-          else
-            TRIGGER_SOURCE="manual"
-          fi
+          HEALTH=$(python3 scripts/workflow_http.py --name backend-health \
+            --timeout 60 --url "$BE/healthz")
+          READY=$(python3 scripts/workflow_http.py --name backend-ready \
+            --timeout 60 --url "$BE/readyz")
+          ACTUAL=$(printf '%s' "$HEALTH" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          IS_READY=$(printf '%s' "$READY" | python3 -c \
+            'import json,sys; print(str(json.load(sys.stdin).get("ready") is True).lower())')
+          [ -n "$ACTUAL" ] || { echo "backend build SHA missing"; exit 1; }
+          [ "$IS_READY" = "true" ] || { echo "backend not ready"; exit 1; }
+          echo "actualBackendSha=$ACTUAL" >> "$GITHUB_OUTPUT"
+          echo "backend health=ok ready=true build=$ACTUAL"
+      - name: Resolve authoritative deployed backend
+        id: resolve
+        run: |
+          python3 scripts/resolve_backend_identity.py \
+            --main-sha "$GITHUB_SHA" \
+            --actual-backend-sha "${{ steps.live.outputs.actualBackendSha }}" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Enforce identity classification
+        run: |
+          STATUS="${{ steps.resolve.outputs.status }}"
+          echo "backend-identity status=$STATUS source=${{ steps.resolve.outputs.identitySource }}"
+          case "$STATUS" in
+            verified|deploy_transition|expected_skip) exit 0 ;;
+            genuine_mismatch|resolver_failure) exit 1 ;;
+            *) echo "unknown resolver status"; exit 1 ;;
+          esac
+
+  mission-backup:
+    needs: backend-identity
+    if: >-
+      always() &&
+      github.event_name == 'schedule' &&
+      needs.backend-identity.result == 'success' &&
+      needs.backend-identity.outputs.status == 'verified'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    outputs:
+      missionResult: ${{ steps.mission.outputs.missionResult }}
+      remaining: ${{ steps.mission.outputs.remaining }}
+      hasMore: ${{ steps.mission.outputs.hasMore }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Scheduled backup mission tick
+        id: mission
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          EXPECTED_BACKEND_SHA: ${{ needs.backend-identity.outputs.expectedBackendSha }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && {
+            echo "missionResult=expected_skip" >> "$GITHUB_OUTPUT"
+            echo "remaining=" >> "$GITHUB_OUTPUT"
+            echo "hasMore=false" >> "$GITHUB_OUTPUT"
+            echo "no admin token — expected_skip"
+            exit 0
+          }
+          export EXPECTED_BACKEND_SHA
+          TRIGGER_SOURCE="github_schedule"
           export TRIGGER_SOURCE
-          TICK_PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"triggerSource":os.environ["TRIGGER_SOURCE"],"expectedBuildSha":os.environ["GITHUB_SHA"],"runId":os.environ["GITHUB_RUN_ID"]},separators=(",",":")))')
+          TICK_PAYLOAD=$(python3 -c \
+            'import json,os; print(json.dumps({"triggerSource":os.environ["TRIGGER_SOURCE"],"expectedBuildSha":os.environ["EXPECTED_BACKEND_SHA"],"runId":os.environ["GITHUB_RUN_ID"]},separators=(",",":")))')
           LAST_RESULT=""
+          LAST_REMAINING=""
+          LAST_HAS_MORE="false"
+          LAST_RC=1
           for BATCH in 1 2 3; do
             set +e
-            MT=$(python3 scripts/workflow_http.py --name missions-tick --method POST --timeout 90 \
+            MT=$(python3 scripts/workflow_http.py --name missions-tick \
+              --method POST --timeout 90 \
               --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
               --header 'Content-Type: application/json' --data "$TICK_PAYLOAD" \
               --url "$BE/api/argus/admin/missions/tick")
-            RC=$?
+            LAST_RC=$?
             set -e
             echo "missions-tick[$BATCH]: $MT"
-            LAST_RESULT=$(printf '%s' "$MT" | python3 -c \
-              'import json,sys; print(json.load(sys.stdin).get("result",""))')
-            if [ "$RC" -eq 0 ]; then
+            VALUES=$(printf '%s' "$MT" | python3 -c \
+              'import json,sys; d=json.load(sys.stdin); print(d.get("result","")); print(d.get("remaining","")); print(str(d.get("hasMore") is True).lower())')
+            LAST_RESULT=$(printf '%s\n' "$VALUES" | sed -n '1p')
+            LAST_REMAINING=$(printf '%s\n' "$VALUES" | sed -n '2p')
+            LAST_HAS_MORE=$(printf '%s\n' "$VALUES" | sed -n '3p')
+            if [ "$LAST_RC" -eq 0 ]; then
               break
             fi
-            if [ "$RC" -eq 2 ] && [ "$LAST_RESULT" = "partial" ]; then
+            if [ "$LAST_RC" -eq 2 ] && [ "$LAST_RESULT" = "partial" ]; then
               continue
             fi
-            exit "$RC"
+            break
           done
+          echo "missionResult=${LAST_RESULT:-failure}" >> "$GITHUB_OUTPUT"
+          echo "remaining=$LAST_REMAINING" >> "$GITHUB_OUTPUT"
+          echo "hasMore=$LAST_HAS_MORE" >> "$GITHUB_OUTPUT"
           if [ "$LAST_RESULT" = "partial" ]; then
-            echo "missions-tick remained partial after bounded retries"
+            echo "bounded partial remains visible; durability runs independently"
             exit 2
           fi
+          exit "$LAST_RC"
 
+  caos-collection:
+    needs: backend-identity
+    if: >-
+      always() &&
+      github.event_name == 'schedule' &&
+      needs.backend-identity.result == 'success' &&
+      needs.backend-identity.outputs.status == 'verified'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    outputs:
+      caosResult: ${{ steps.result.outputs.caosResult }}
+    steps:
+      - uses: actions/checkout@v5
       - name: Collect C.A.O.S. public sources
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          # success=2xx+valid JSON+business ok; expected_skip=missing secret;
-          # degraded/failure=non-zero step (401/403/5xx/timeout/invalid JSON含む)。
           BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
-          RESP=$(python3 scripts/workflow_http.py --name caos-collect --method POST --timeout 120 \
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && {
+            echo "no admin token — expected_skip"
+            exit 0
+          }
+          RESP=$(python3 scripts/workflow_http.py --name caos-collect \
+            --method POST --timeout 120 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --url "$BE/api/argus/institutional-intelligence/collect")
           echo "caos-collect: $RESP"
-          # v12.1.0: OSINTスカウトのキュー消化(キューが空なら外部AIは呼ばれない=無料)
-          OS=$(python3 scripts/workflow_http.py --name osint-agents --method POST --timeout 180 \
+          OS=$(python3 scripts/workflow_http.py --name osint-agents \
+            --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status deterministic_mode \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/agents-run")
           echo "osint-agents: $OS"
-          # v12.1.7: 基準校正の加速(run最少ケースを最大2件・Gemini 2呼び出し/回)
-          BM=$(python3 scripts/workflow_http.py --name osint-benchmark --method POST --timeout 60 \
+          BM=$(python3 scripts/workflow_http.py --name osint-benchmark \
+            --method POST --timeout 60 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status deterministic_mode \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/benchmark-run")
           echo "osint-benchmark: $BM"
-          # v12.1.0: canary(見落とし監視・cached評価のみで外部AIなし)
-          CN=$(python3 scripts/workflow_http.py --name osint-canary --method POST --timeout 60 \
+          CN=$(python3 scripts/workflow_http.py --name osint-canary \
+            --method POST --timeout 60 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/canary-run")
           echo "osint-canary: $CN"
-
-      # v11.9.1 (owner: 「ニュースが全部翻訳待ち」): the ONLY translate drain used
-      # to live in caos-watchtower (weekdays only) — weekends never translated.
-      # This scan runs 24/365, so the queue now drains here too, up to 4 rounds
-      # per run (≈240 headlines) until nothing is pending.
-      - name: Translate visible headlines (24/7 drain)
+      - name: Translate visible headlines
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
-          for i in 1 2 3 4; do
-            TRV=$(python3 scripts/workflow_http.py --name translate-visible --method POST --timeout 120 \
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && {
+            echo "no admin token — expected_skip"
+            exit 0
+          }
+          for ROUND in 1 2 3 4; do
+            TRV=$(python3 scripts/workflow_http.py --name translate-visible \
+              --method POST --timeout 120 \
               --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
               --expected-status deterministic_mode \
               --url "$BE/api/argus/admin/news/translate-visible")
-            echo "translate-visible[$i]: ${TRV:0:200}"
-            TRANSLATED=$(echo "$TRV" | python3 -c "import sys,json;print(json.load(sys.stdin).get('translated',0))" 2>/dev/null || echo 0)
-            PENDING=$(echo "$TRV" | python3 -c "import sys,json;print(json.load(sys.stdin).get('pending',0))" 2>/dev/null || echo 0)
+            echo "translate-visible[$ROUND]: ${TRV:0:200}"
+            COUNTS=$(printf '%s' "$TRV" | python3 -c \
+              'import json,sys; d=json.load(sys.stdin); print(d.get("translated",0)); print(d.get("pending",0))')
+            TRANSLATED=$(printf '%s\n' "$COUNTS" | sed -n '1p')
+            PENDING=$(printf '%s\n' "$COUNTS" | sed -n '2p')
             [ "$TRANSLATED" = "0" ] && [ "$PENDING" = "0" ] && break
             sleep 5
           done
+      - name: Record C.A.O.S. result
+        id: result
+        if: always()
+        run: echo "caosResult=${{ job.status }}" >> "$GITHUB_OUTPUT"
 
-      # v11.9.1: persist the JA cache to the ledger branch — a Render redeploy
-      # wipes /tmp, and 4 same-day deploys once reset EVERY headline to 翻訳待ち.
-      # The snapshot is public-safe (hash→JA title only; no secrets/owner data).
-      - name: Fetch translation-cache snapshot
+  durability-flush:
+    needs: [backend-identity, mission-backup, caos-collection]
+    if: always() && !cancelled() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      durabilityResult: ${{ steps.flush.outputs.durabilityResult }}
+      remoteCommitSha: ${{ steps.flush.outputs.remoteCommitSha }}
+      receiptSequence: ${{ steps.flush.outputs.receiptSequence }}
+      readBackVerified: ${{ steps.flush.outputs.readBackVerified }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Independently recheck health, ready, and backend identity
+        id: recheck
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          HEALTH=$(python3 scripts/workflow_http.py --name durability-health \
+            --timeout 60 --url "$BE/healthz")
+          READY=$(python3 scripts/workflow_http.py --name durability-ready \
+            --timeout 60 --url "$BE/readyz")
+          ACTUAL=$(printf '%s' "$HEALTH" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          IS_READY=$(printf '%s' "$READY" | python3 -c \
+            'import json,sys; print(str(json.load(sys.stdin).get("ready") is True).lower())')
+          [ "$IS_READY" = "true" ] || { echo "backend not ready"; exit 1; }
+          python3 scripts/resolve_backend_identity.py \
+            --main-sha "$GITHUB_SHA" \
+            --actual-backend-sha "$ACTUAL" \
+            --github-output "$GITHUB_OUTPUT"
+          STATUS=$(python3 scripts/resolve_backend_identity.py \
+            --main-sha "$GITHUB_SHA" --actual-backend-sha "$ACTUAL" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+          if [ "$STATUS" = "verified" ]; then
+            echo "durabilityAllowed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$STATUS" = "deploy_transition" ] || [ "$STATUS" = "expected_skip" ]; then
+            echo "durabilityAllowed=false" >> "$GITHUB_OUTPUT"
+            echo "durability expected_skip: identity $STATUS"
+          else
+            echo "durability identity failure: $STATUS"
+            exit 1
+          fi
+      - name: Fetch validated durable snapshots
+        id: fetch
+        if: steps.recheck.outputs.durabilityAllowed == 'true'
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
-          for i in 1 2 3; do
-            curl -sf --max-time 60 "$BE/api/argus/news/ja-cache-snapshot" \
-              -o "$RUNNER_TEMP/news-ja.json" && break
-            echo "retry $i"; sleep 10
-          done
-          test -s "$RUNNER_TEMP/news-ja.json"
-          COUNT=$(python3 -c "import json;d=json.load(open('$RUNNER_TEMP/news-ja.json'));assert d.get('schemaVersion')=='news-ja-cache-v1';print(d.get('count',0))")
-          echo "news-ja cache entries: $COUNT"
-          echo "NEWS_JA_COUNT=$COUNT" >> "$GITHUB_ENV"
-          # v12.2.4: osint耐久状態も30分毎にledgerへ(watchtower毎時の補完)
-          for i in 1 2 3; do
-            curl -sf --max-time 60 "$BE/api/argus/osint/memory-snapshot" \
-              -o "$RUNNER_TEMP/osint-memory.json" && break
-            echo "retry memory $i"; sleep 10
-          done
-          test -s "$RUNNER_TEMP/osint-memory.json"
-          python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));assert d.get('schemaVersion')=='argus-durable-v3'"
-          # durable state/journalはnews件数に依存せず毎回flushする。
-          echo "PERSIST=1" >> "$GITHUB_ENV"
-
-      - name: Checkout (main)
-        if: env.PERSIST == '1'
-        uses: actions/checkout@v5
-        with:
-          ref: main
-
-      - name: Commit news-ja snapshot to ledger branch
-        if: env.PERSIST == '1'
-        env:
-          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
-        run: |
+          curl --fail --silent --show-error --max-time 60 \
+            "$BE/api/argus/news/ja-cache-snapshot" \
+            -o "$RUNNER_TEMP/news-ja.json"
+          curl --fail --silent --show-error --max-time 60 \
+            "$BE/api/argus/osint/memory-snapshot" \
+            -o "$RUNNER_TEMP/osint-memory.json"
+          NEWS_JA_COUNT=$(python3 -c \
+            "import json; d=json.load(open('$RUNNER_TEMP/news-ja.json')); assert d.get('schemaVersion')=='news-ja-cache-v1'; print(d.get('count',0))")
+          python3 -c \
+            "import json; d=json.load(open('$RUNNER_TEMP/osint-memory.json')); assert d.get('schemaVersion')=='argus-durable-v3'; assert d.get('integrityManifest',{}).get('manifestHash')"
           python3 scripts/build_remote_readback_receipt.py \
             "$RUNNER_TEMP/osint-memory.json" "$RUNNER_TEMP/osint-readback.json"
-          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
-            || git fetch origin ledger 2>/dev/null || true
-          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
-            git checkout -B ledger refs/remotes/origin/ledger
-          else
-            echo "::warning::origin/ledger not found — skip (never create ledger from here)"
+          echo "newsJaCount=$NEWS_JA_COUNT" >> "$GITHUB_OUTPUT"
+      - name: Commit verified snapshot and post receipt
+        id: flush
+        if: steps.recheck.outputs.durabilityAllowed == 'true'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          NEWS_JA_COUNT: ${{ steps.fetch.outputs.newsJaCount }}
+        run: |
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && {
+            echo "durabilityResult=expected_skip_missing_auth" >> "$GITHUB_OUTPUT"
+            echo "receiptSequence=0" >> "$GITHUB_OUTPUT"
+            echo "readBackVerified=false" >> "$GITHUB_OUTPUT"
+            echo "no admin token — expected_skip"
             exit 0
-          fi
+          }
+          git fetch origin "ledger:refs/remotes/origin/ledger"
+          git checkout -B ledger refs/remotes/origin/ledger
           mkdir -p ledger/news-ja ledger/osint
-          # never overwrite the ledger with an empty cache (durable state still flushes)
+          # never overwrite the ledger with an empty cache
           if [ "$NEWS_JA_COUNT" != "0" ] && [ -n "$NEWS_JA_COUNT" ]; then
             cp "$RUNNER_TEMP/news-ja.json" ledger/news-ja/latest.json
           fi
-          # v12.2.10 stale-writer guard: 複数workflow(caos-scan/watchtower)が
-          # memory.jsonを書く — 古いsnapshotで新しいものを上書きする逆行を防ぐ
-          # (generatedAt/asOfは同一Z形式=文字列比較可)。
-          NEW_ASOF=$(python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || echo "")
-          OLD_ASOF=$(python3 -c "import json;d=json.load(open('ledger/osint/memory.json'));print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || echo "")
-          if [ -s "$RUNNER_TEMP/osint-memory.json" ] && [ -n "$NEW_ASOF" ] && \
-             { [ -z "$OLD_ASOF" ] || [ "$NEW_ASOF" \> "$OLD_ASOF" ]; }; then
+          # stale-writer guard: only a newer snapshot (or the exact already
+          # committed hash) may reach the verified receipt boundary.
+          NEW_ASOF=$(python3 -c \
+            "import json; d=json.load(open('$RUNNER_TEMP/osint-memory.json')); print(d.get('generatedAt') or d.get('asOf') or '')")
+          OLD_ASOF=$(python3 -c \
+            "import json; d=json.load(open('ledger/osint/memory.json')); print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || true)
+          NEW_HASH=$(python3 -c \
+            "import json; print(json.load(open('$RUNNER_TEMP/osint-memory.json'))['integrityManifest']['manifestHash'])")
+          OLD_HASH=$(python3 -c \
+            "import json; print(json.load(open('ledger/osint/memory.json')).get('integrityManifest',{}).get('manifestHash',''))" 2>/dev/null || true)
+          if [ -n "$NEW_ASOF" ] && { [ -z "$OLD_ASOF" ] || [ "$NEW_ASOF" \> "$OLD_ASOF" ]; }; then
             cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json
             cp "$RUNNER_TEMP/osint-readback.json" ledger/osint/readback.json
+          elif [ -n "$NEW_HASH" ] && [ "$NEW_HASH" = "$OLD_HASH" ]; then
+            echo "snapshot already committed; verify and refresh receipt"
           else
-            echo "skip osint/memory.json: not newer (new=$NEW_ASOF old=$OLD_ASOF)"
+            echo "durabilityResult=expected_skip_stale_snapshot" >> "$GITHUB_OUTPUT"
+            echo "receiptSequence=0" >> "$GITHUB_OUTPUT"
+            echo "readBackVerified=false" >> "$GITHUB_OUTPUT"
+            echo "skip stale snapshot (new=$NEW_ASOF old=$OLD_ASOF)"
+            exit 0
           fi
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
-          git add ledger/news-ja/ ledger/osint/ 2>/dev/null || git add ledger/news-ja/
-          if git diff --cached --quiet; then
-            echo "no change"
-          else
+          git add ledger/news-ja/ ledger/osint/
+          if ! git diff --cached --quiet; then
             git commit -m "news-ja: $(date -u +%FT%TZ) translation-cache snapshot"
-            git push origin HEAD:ledger \
-              || { git pull --rebase origin ledger && git push origin HEAD:ledger; }
-            REMOTE_COMMIT_SHA=$(git rev-parse HEAD)
-            EXPECTED_HASH=$(python3 -c "import json; print(json.load(open('ledger/osint/memory.json'))['integrityManifest']['manifestHash'])")
-            export REMOTE_COMMIT_SHA EXPECTED_HASH
-            RECEIPT_PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"]},separators=(",",":")))')
-            RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" --name remote-journal-commit-receipt \
-              --method POST --timeout 60 \
-              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-              --header 'Content-Type: application/json' --data "$RECEIPT_PAYLOAD" \
-              --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/remote-journal/commit-receipt")
-            echo "remote-journal-commit-receipt: $RECEIPT"
+            git push origin HEAD:ledger ||
+              { git pull --rebase origin ledger && git push origin HEAD:ledger; }
           fi
+          REMOTE_COMMIT_SHA=$(git rev-parse HEAD)
+          REMOTE_HEAD=$(git ls-remote origin refs/heads/ledger | awk '{print $1}')
+          [ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ] || {
+            echo "remote ledger verification failed"
+            exit 1
+          }
+          EXPECTED_HASH=$(python3 -c \
+            "import json; print(json.load(open('ledger/osint/memory.json'))['integrityManifest']['manifestHash'])")
+          [ "$EXPECTED_HASH" = "$NEW_HASH" ] || {
+            echo "committed snapshot hash mismatch"
+            exit 1
+          }
+          export REMOTE_COMMIT_SHA EXPECTED_HASH
+          RECEIPT_PAYLOAD=$(python3 -c \
+            'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"]},separators=(",",":")))')
+          RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name remote-journal-commit-receipt \
+            --method POST --timeout 60 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header 'Content-Type: application/json' --data "$RECEIPT_PAYLOAD" \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/remote-journal/commit-receipt")
+          echo "remote-journal-commit-receipt: $RECEIPT"
+          RECEIPT_VALUES=$(printf '%s' "$RECEIPT" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print(d.get("verifiedWalSequence",0)); print(str(d.get("readBackVerified") is True).lower())')
+          echo "durabilityResult=success" >> "$GITHUB_OUTPUT"
+          echo "remoteCommitSha=$REMOTE_COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "receiptSequence=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '1p')" >> "$GITHUB_OUTPUT"
+          echo "readBackVerified=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '2p')" >> "$GITHUB_OUTPUT"
+
+  result:
+    needs: [backend-identity, mission-backup, caos-collection, durability-flush]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report independent control-plane results
+        run: |
+          echo "identityResult=${{ needs.backend-identity.outputs.status || needs.backend-identity.result }}"
+          echo "missionResult=${{ needs.mission-backup.outputs.missionResult || needs.mission-backup.result }}"
+          echo "caosResult=${{ needs.caos-collection.outputs.caosResult || needs.caos-collection.result }}"
+          echo "durabilityResult=${{ needs.durability-flush.outputs.durabilityResult || needs.durability-flush.result }}"
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "overallResult=expected_skip_manual_diagnostic"
+            exit 0
+          fi
+          [ "${{ needs.backend-identity.result }}" = "success" ] || exit 1
+          [ "${{ needs.mission-backup.result }}" = "success" ] || exit 1
+          [ "${{ needs.caos-collection.result }}" = "success" ] || exit 1
+          [ "${{ needs.durability-flush.result }}" = "success" ] || exit 1
+          echo "overallResult=success"
