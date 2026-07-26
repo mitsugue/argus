@@ -95,35 +95,48 @@ function observe(page, evidence) {
       evidence.aiPostCount += 1;
     }
   });
-  page.on('response', async (response) => {
-    const url = new URL(response.url());
-    if (url.pathname !== '/api/argus/chart-intelligence') return;
-    if (response.status() === 429) {
-      let body = null;
-      try { body = await response.json(); } catch { /* invalid contract is recorded below */ }
-      const contractValid = body?.error === 'rate_limited'
-        && typeof body?.message === 'string';
-      evidence.rateLimits.push({
-        url: response.url(), status: response.status(),
-        retryAfter: response.headers()['retry-after'] ?? null,
-        contractValid,
-      });
-      if (!contractValid) evidence.failures.push('rate-limit-response-contract');
-      return;
-    }
-    if (response.status() !== 200) return;
-    try {
-      const body = await response.json();
-      const symbol = url.searchParams.get('symbol');
-      const horizon = url.searchParams.get('horizon');
-      if (symbol && horizon) {
-        evidence.snapshotBodies.set(`${symbol}:${horizon}`, JSON.stringify(body));
+  page.on('response', (response) => {
+    const task = (async () => {
+      const url = new URL(response.url());
+      if (url.pathname !== '/api/argus/chart-intelligence') return;
+      if (response.status() === 429) {
+        let body = null;
+        try { body = await response.json(); } catch { /* invalid contract is recorded below */ }
+        const contractValid = body?.error === 'rate_limited'
+          && typeof body?.message === 'string';
+        evidence.rateLimits.push({
+          url: response.url(), status: response.status(),
+          retryAfter: response.headers()['retry-after'] ?? null,
+          contractValid,
+        });
+        if (!contractValid) evidence.failures.push('rate-limit-response-contract');
+        return;
       }
-      if ((body.payload?.automaticAiCalls ?? body.automaticAiCalls) !== 0) {
-        evidence.failures.push(`automatic-ai:${url.searchParams.get('symbol')}`);
-      }
-    } catch { /* the UI verifier is authoritative for malformed responses */ }
+      if (response.status() !== 200) return;
+      try {
+        const body = await response.json();
+        const symbol = url.searchParams.get('symbol');
+        const horizon = url.searchParams.get('horizon');
+        if (symbol && horizon) {
+          evidence.snapshotBodies.set(`${symbol}:${horizon}`, JSON.stringify(body));
+        }
+        if ((body.payload?.automaticAiCalls ?? body.automaticAiCalls) !== 0) {
+          evidence.failures.push(`automatic-ai:${url.searchParams.get('symbol')}`);
+        }
+      } catch { /* the UI verifier is authoritative for malformed responses */ }
+    })();
+    evidence.responseTasks.add(task);
+    void task.then(
+      () => evidence.responseTasks.delete(task),
+      () => evidence.responseTasks.delete(task),
+    );
   });
+}
+
+async function drainResponseTasks(evidence) {
+  while (evidence.responseTasks.size) {
+    await Promise.allSettled([...evidence.responseTasks]);
+  }
 }
 
 async function isolateChartReads(context, evidence) {
@@ -266,6 +279,7 @@ async function run() {
     failures: [], consoleErrors: [], reactWarnings: [], network: [],
     aiPostCount: 0, geometry: [], combinations: [],
     snapshotBodies: new Map(), suppressedNonChartGets: 0, rateLimits: [],
+    responseTasks: new Set(),
   };
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -505,6 +519,10 @@ async function run() {
       || rateLimitedSnapshotId !== rateLimitSeedSnapshotId) {
     evidence.failures.push('rate-limit-cache-backoff-contract');
   }
+  // Playwright emits response events asynchronously. Drain the body-contract
+  // readers before closing their context so a valid controlled 429 cannot be
+  // misclassified merely because response.json() lost its page mid-read.
+  await drainResponseTasks(evidence);
   await rateLimitContext.close();
 
   // The warmed verified snapshot must survive a fully offline reload.
@@ -534,6 +552,7 @@ async function run() {
     }
   }
   if (evidence.aiPostCount) evidence.failures.push(`ai-post:${evidence.aiPostCount}`);
+  await drainResponseTasks(evidence);
   const consoleClassification = classifyConsoleErrors(evidence);
   if (consoleClassification.unexpected.length) evidence.failures.push('console-errors');
   if (evidence.reactWarnings.length) evidence.failures.push('react-warnings');
