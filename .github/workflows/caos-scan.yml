@@ -273,6 +273,9 @@ jobs:
             "import json; d=json.load(open('$RUNNER_TEMP/osint-memory.json')); assert d.get('schemaVersion')=='argus-durable-v3'; assert d.get('integrityManifest',{}).get('manifestHash')"
           python3 scripts/build_remote_readback_receipt.py \
             "$RUNNER_TEMP/osint-memory.json" "$RUNNER_TEMP/osint-readback.json"
+          cp scripts/prepare_remote_journal_publish.py \
+            "$RUNNER_TEMP/prepare_remote_journal_publish.py"
+          cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"
           echo "newsJaCount=$NEWS_JA_COUNT" >> "$GITHUB_OUTPUT"
       - name: Commit verified snapshot and post receipt
         id: flush
@@ -295,26 +298,31 @@ jobs:
           if [ "$NEWS_JA_COUNT" != "0" ] && [ -n "$NEWS_JA_COUNT" ]; then
             cp "$RUNNER_TEMP/news-ja.json" ledger/news-ja/latest.json
           fi
-          # stale-writer guard: only a newer snapshot (or the exact already
-          # committed hash) may reach the verified receipt boundary.
-          NEW_ASOF=$(python3 -c \
-            "import json; d=json.load(open('$RUNNER_TEMP/osint-memory.json')); print(d.get('generatedAt') or d.get('asOf') or '')")
-          OLD_ASOF=$(python3 -c \
-            "import json; d=json.load(open('ledger/osint/memory.json')); print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || true)
-          NEW_HASH=$(python3 -c \
-            "import json; print(json.load(open('$RUNNER_TEMP/osint-memory.json'))['integrityManifest']['manifestHash'])")
-          OLD_HASH=$(python3 -c \
-            "import json; print(json.load(open('ledger/osint/memory.json')).get('integrityManifest',{}).get('manifestHash',''))" 2>/dev/null || true)
-          if [ -n "$NEW_ASOF" ] && { [ -z "$OLD_ASOF" ] || [ "$NEW_ASOF" \> "$OLD_ASOF" ]; }; then
-            cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json
-            cp "$RUNNER_TEMP/osint-readback.json" ledger/osint/readback.json
-          elif [ -n "$NEW_HASH" ] && [ "$NEW_HASH" = "$OLD_HASH" ]; then
-            echo "snapshot already committed; verify and refresh receipt"
-          else
+          # stale-writer guard: the compact read-back proof is the journal ACK
+          # artifact. Keep the
+          # last valid boot-restore snapshot when the new full blob exceeds the
+          # conservative GitHub single-blob limit.
+          PREPARED=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            prepare \
+            --source-full "$RUNNER_TEMP/osint-memory.json" \
+            --source-readback "$RUNNER_TEMP/osint-readback.json" \
+            --ledger-full ledger/osint/memory.json \
+            --ledger-readback ledger/osint/readback.json)
+          PREPARED_VALUES=$(printf '%s' "$PREPARED" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print(d["status"]); print(d["expectedHash"]); print(d["generatedAt"]); print(d.get("previousGeneratedAt") or ""); print(d["fullSnapshotBytes"]); print(str(d["fullSnapshotPublished"]).lower()); print(str(d["fullSnapshotRetained"]).lower())')
+          PREPARED_STATUS=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '1p')
+          NEW_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '2p')
+          NEW_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '3p')
+          OLD_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '4p')
+          FULL_BYTES=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '5p')
+          FULL_PUBLISHED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '6p')
+          FULL_RETAINED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '7p')
+          echo "remote journal publish: status=$PREPARED_STATUS old=$OLD_ASOF new=$NEW_ASOF fullBytes=$FULL_BYTES fullPublished=$FULL_PUBLISHED fullRetained=$FULL_RETAINED"
+          if [ "$PREPARED_STATUS" = "stale" ]; then
             echo "durabilityResult=expected_skip_stale_snapshot" >> "$GITHUB_OUTPUT"
             echo "receiptSequence=0" >> "$GITHUB_OUTPUT"
             echo "readBackVerified=false" >> "$GITHUB_OUTPUT"
-            echo "skip stale snapshot (new=$NEW_ASOF old=$OLD_ASOF)"
+            echo "skip stale snapshot (new=$NEW_ASOF)"
             exit 0
           fi
           git config user.name "argus-ledger[bot]"
@@ -331,12 +339,11 @@ jobs:
             echo "remote ledger verification failed"
             exit 1
           }
-          EXPECTED_HASH=$(python3 -c \
-            "import json; print(json.load(open('ledger/osint/memory.json'))['integrityManifest']['manifestHash'])")
-          [ "$EXPECTED_HASH" = "$NEW_HASH" ] || {
-            echo "committed snapshot hash mismatch"
-            exit 1
-          }
+          VERIFIED=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-committed --readback ledger/osint/readback.json \
+            --expected-hash "$NEW_HASH")
+          EXPECTED_HASH=$(printf '%s' "$VERIFIED" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["actualHash"])')
           export REMOTE_COMMIT_SHA EXPECTED_HASH
           RECEIPT_PAYLOAD=$(python3 -c \
             'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"]},separators=(",",":")))')
