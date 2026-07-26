@@ -112,7 +112,10 @@ assert.match(acceptance, /warmRequestStart/);
 assert.match(acceptance, /const warm = await browser\.newContext\(\{[\s\S]*serviceWorkers: 'block'/);
 assert.match(acceptance, /warmSeedSnapshotId/);
 assert.match(acceptance, /await warm\.unroute/);
-assert.match(acceptance, /350 - \(Date\.now\(\) - warmStartedAt\)/);
+assert.match(acceptance, /WARM_LOADER_DEADLINE_MS = 2_000/);
+assert.match(acceptance, /warmLoaderLocator\.waitFor/);
+assert.match(acceptance, /warmLoaderDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS/);
+assert.match(acceptance, /warmLoaderDelayMs > WARM_LOADER_DEADLINE_MS/);
 assert.match(acceptance, /6_200 - \(Date\.now\(\) - warmStartedAt\)/);
 
 assert.match(vite, /cleanupOutdatedCaches:\s*true/);

@@ -13,6 +13,7 @@ const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
 const LOADER_THRESHOLD_MS = 225;
 const LOADER_TIMING_TOLERANCE_MS = 1;
+const WARM_LOADER_DEADLINE_MS = 2_000;
 const COMBINATION_PACE_MS = 1_000;
 const VIEWPORTS = [
   { width: 320, height: 568 }, { width: 375, height: 812 },
@@ -486,14 +487,24 @@ async function run() {
       () => reject(new Error('controlled warm revalidation did not start')),
       5_000)),
   ]);
-  await warmPage.waitForTimeout(Math.max(0, 350 - (Date.now() - warmStartedAt)));
-  const warmLoader = await warmPage.locator(
-    '.at-chart-status .triangle-step-loader').count();
+  const warmLoaderLocator = warmPage.locator(
+    '.at-chart-status .triangle-step-loader');
+  let warmLoaderAppearedAt = null;
+  await warmLoaderLocator.waitFor({
+    state: 'visible', timeout: WARM_LOADER_DEADLINE_MS,
+  }).then(() => { warmLoaderAppearedAt = Date.now(); }).catch(() => {});
+  const warmLoaderDelayMs = warmLoaderAppearedAt == null
+    ? null : warmLoaderAppearedAt - warmStartedAt;
+  const warmLoader = await warmLoaderLocator.count();
   const warmSkeleton = await warmPage.locator('.at-projection-missing').count();
   await screenshot(warmPage, 'today-warm-revalidation-loader.png');
   await warmPage.waitForTimeout(Math.max(0, 6_200 - (Date.now() - warmStartedAt)));
   await warm.unroute('**/api/argus/chart-intelligence?*');
-  if (!warmLoader || warmSkeleton) evidence.failures.push('warm-loader-contract');
+  if (!warmLoader || warmSkeleton || warmLoaderDelayMs == null
+      || warmLoaderDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS
+      || warmLoaderDelayMs > WARM_LOADER_DEADLINE_MS) {
+    evidence.failures.push('warm-loader-contract');
+  }
 
   const before304 = await warmPage.locator(
     '.at-chart-status').getAttribute('data-snapshot-id');
@@ -606,7 +617,7 @@ async function run() {
     navigation,
     loader: {
       before225, after225, skeletonHeight, slowLabel, failureState,
-      warmLoader, warmSkeleton, loaderTiming,
+      warmLoader, warmSkeleton, warmLoaderDelayMs, loaderTiming,
     },
     offline: { onlineSnapshotId, offlineSnapshotId, before304, after304 },
     rateLimit: {
