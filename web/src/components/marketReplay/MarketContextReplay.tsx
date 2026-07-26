@@ -11,6 +11,7 @@ import {
   MARKET_HORIZONS, MARKET_INSTRUMENTS, marketInstrument,
   type MarketHorizon as Horizon, type MarketInstrumentSymbol as Instrument,
 } from '../../domain/marketInstruments';
+import { buildMarketContextView } from '../../domain/marketContextView';
 import './MarketContextReplay.css';
 
 type Tab = 'OVERVIEW' | 'REPLAY' | 'LEDGER';
@@ -475,6 +476,7 @@ export const MarketContextReplay: React.FC = () => {
       ? data.todayIntelligence.calibration.horizons[String(horizon)].directionProbabilities ?? null
       : null);
   const quality = replay?.probabilityQuality;
+  const contextView = data ? buildMarketContextView(data, replay) : null;
   const switchTab = (next: Tab) => {
     setTab(next); try { localStorage.setItem('argus.marketReplay.tab.v1', JSON.stringify(next)); } catch { /* ignore */ }
   };
@@ -512,6 +514,15 @@ export const MarketContextReplay: React.FC = () => {
         <span>TODAY MIRROR</span><strong>{action ?? '判断待ち'}</strong><b>{score == null ? '' : `${score}/7`}</b>
       </div>
     </header>
+    {contextView && <section className="mr-context-contract" aria-label="Market decision context">
+      <article className="is-primary"><span>CURRENT REGIME</span><strong>{contextView.regime}</strong></article>
+      <article><span>WHAT CHANGED</span><strong>{contextView.changed}</strong></article>
+      <article><span>PRIMARY RISK</span><strong>{contextView.primaryRisk}</strong></article>
+      <article><span>JP IMPLICATION</span><strong>{contextView.jpImplication}</strong></article>
+      <article><span>US IMPLICATION</span><strong>{contextView.usImplication}</strong></article>
+      <article><span>NEXT EVENT</span><strong>{contextView.nextEvent}</strong></article>
+      <article><span>WHAT CHANGES IT</span><strong>{contextView.changeCondition}</strong></article>
+    </section>}
     <div className="mr-selectors">
       <div role="group" aria-label="Instrument">{MARKET_INSTRUMENTS.map((item) =>
         <button type="button" key={item.symbol} className={instrument === item.symbol ? 'active' : ''}
