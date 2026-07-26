@@ -109,6 +109,7 @@ import argus_verified_snapshot      # v13.3.0: atomic precomputed public view sn
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
+import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
 from flask import Flask, jsonify, request, make_response
 from collections import deque
 import hashlib
@@ -150,6 +151,10 @@ _VERIFIED_VIEW_SNAPSHOTS = argus_verified_snapshot.empty_store()
 _VERIFIED_VIEW_SNAPSHOT_REMOTE = {"lastVerifiedReadBackAt": None,
                                   "verificationStatus": "not_verified"}
 _VERIFIED_VIEW_SINGLEFLIGHT = argus_verified_snapshot.SingleFlight()
+_ASSET_CHART_REPORTS = argus_asset_chart_cache.empty_store()
+_ASSET_CHART_REPORTS_REMOTE = {"lastVerifiedReadBackAt": None,
+                               "verificationStatus": "not_verified"}
+_ASSET_CHART_SINGLEFLIGHT = argus_verified_snapshot.SingleFlight()
 
 
 def _cost_policy_authorize(provider, purpose, *, automatic=True,
@@ -15682,6 +15687,10 @@ def _osint_persist_locked():
                     _VERIFIED_VIEW_SNAPSHOTS),
                 "verifiedViewSnapshotsStateHash": argus_verified_snapshot.state_hash(
                     _VERIFIED_VIEW_SNAPSHOTS),
+                "assetChartReports": argus_asset_chart_cache.normalize_store(
+                    _ASSET_CHART_REPORTS),
+                "assetChartReportsStateHash": argus_asset_chart_cache.state_hash(
+                    _ASSET_CHART_REPORTS),
                 "missionTickDurability": dict(_MISSION_BATCH_STATE),
                 "soakLastPersistAt": _ai_now_iso()}
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
@@ -16139,6 +16148,13 @@ def _osint_restore_once():
                     _VERIFIED_VIEW_SNAPSHOTS, _snapshot, now_iso=_ai_now_iso())
                 _VERIFIED_VIEW_SNAPSHOTS.clear()
                 _VERIFIED_VIEW_SNAPSHOTS.update(_restored_vvs)
+        _asset_reports = blob.get("assetChartReports")
+        if isinstance(_asset_reports, dict):
+            _restored_asset_reports = \
+                argus_asset_chart_cache.merge_restored(
+                    _ASSET_CHART_REPORTS, _asset_reports)
+            _ASSET_CHART_REPORTS.clear()
+            _ASSET_CHART_REPORTS.update(_restored_asset_reports)
         _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
         for h in _jr["events"]:
             argus_state_journal.append(_OPS_JOURNAL, h)
@@ -17584,6 +17600,26 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _VERIFIED_VIEW_SNAPSHOT_REMOTE["verificationStatus"] = "hash_mismatch"
     else:
         _VERIFIED_VIEW_SNAPSHOT_REMOTE["verificationStatus"] = "not_present"
+    remote_asset_reports = (blob.get("assetChartReports")
+                            if isinstance(blob, dict) else None)
+    remote_asset_reports_hash = (
+        blob.get("assetChartReportsStateHash")
+        if isinstance(blob, dict) else None)
+    if isinstance(remote_asset_reports, dict) and \
+            argus_asset_chart_cache.read_back_verified(
+                _ASSET_CHART_REPORTS, remote_asset_reports):
+        _ASSET_CHART_REPORTS_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif remote_asset_reports_hash and remote_asset_reports_hash == \
+            argus_asset_chart_cache.state_hash(_ASSET_CHART_REPORTS):
+        _ASSET_CHART_REPORTS_REMOTE.update({
+            "lastVerifiedReadBackAt": now_iso,
+            "verificationStatus": "verified"})
+    elif isinstance(remote_asset_reports, dict) or remote_asset_reports_hash:
+        _ASSET_CHART_REPORTS_REMOTE["verificationStatus"] = "hash_mismatch"
+    else:
+        _ASSET_CHART_REPORTS_REMOTE["verificationStatus"] = "not_present"
     rec["outcomeReadBack"] = outcome_rec
     rec["marketLedgerReadBack"] = dict(_MARKET_LEDGER_REMOTE)
     rec["chartIntelligenceReadBack"] = dict(_CHART_INTELLIGENCE_REMOTE)
@@ -17591,6 +17627,7 @@ def _remote_readback_ack(now_iso=None, blob=None):
     rec["marketReplayReadBack"] = dict(_MARKET_REPLAY_REMOTE)
     rec["verifiedViewSnapshotsReadBack"] = dict(
         _VERIFIED_VIEW_SNAPSHOT_REMOTE)
+    rec["assetChartReportsReadBack"] = dict(_ASSET_CHART_REPORTS_REMOTE)
     return rec
 
 
@@ -18098,6 +18135,15 @@ def _api_argus_admin_missions_tick_impl():
     except Exception as _chart_exc:
         chart_tick = {"changed": False, "status": "degraded",
                       "reason": type(_chart_exc).__name__}
+    try:
+        asset_chart_tick = _precompute_asset_chart_tick()
+    except Exception as _asset_chart_exc:
+        asset_chart_tick = {
+            "status": "degraded", "generated": False,
+            "reason": type(_asset_chart_exc).__name__,
+            "stateHash": argus_asset_chart_cache.state_hash(
+                _ASSET_CHART_REPORTS),
+        }
     # v12.2.10: 30分cron文脈で検証済みread-back ack+非criticalのcompaction。
     # (GETからは実行されない — ackとcompactはこの遷移文脈のみ。テストは
     # disabledフラグでネットワークを遮断し、blob注入で直接検証する)
@@ -18489,6 +18535,7 @@ def _api_argus_admin_missions_tick_impl():
                     "recovered": recovered,
                     "marketLedger": ledger_tick,
                     "chartIntelligence": chart_tick,
+                    "assetChartCache": asset_chart_tick,
                     "dailyShortSelling": daily_short_tick,
                     "missionWindow": window_record,
                     "outcomeRetry": {
@@ -20277,6 +20324,10 @@ def api_argus_osint_memory_snapshot():
                         _VERIFIED_VIEW_SNAPSHOTS),
                     "verifiedViewSnapshotsStateHash": argus_verified_snapshot.state_hash(
                         _VERIFIED_VIEW_SNAPSHOTS),
+                    "assetChartReports": argus_asset_chart_cache.normalize_store(
+                        _ASSET_CHART_REPORTS),
+                    "assetChartReportsStateHash": argus_asset_chart_cache.state_hash(
+                        _ASSET_CHART_REPORTS),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
@@ -20541,6 +20592,137 @@ def _precompute_verified_market_view(symbol, market, *, market_scope=False):
     }
 
 
+_ASSET_CHART_METHOD_VERSION = (
+    f"{argus_chart_intelligence.METHOD_VERSION}:"
+    f"{argus_market_intelligence.METHOD_VERSION}"
+)
+
+
+def _asset_chart_targets():
+    """Public-safe bounded universe; owner holdings never leave the device."""
+    targets = [("5803", "JP")]
+    targets.extend(
+        (str(item["symbol"]).upper(), "JP")
+        for item in _JP_WATCHLIST
+        if str(item.get("symbol") or "").upper() != "5803"
+    )
+    targets.extend(
+        (str(item["symbol"]).upper(), "US")
+        for item in _US_WATCHLIST
+    )
+    return targets
+
+
+def _precompute_asset_chart_tick():
+    """Publish one changed public-watchlist instrument from warm provider data.
+
+    The provider cache is warmed by the existing admin collectors.  This
+    mission-tick phase intentionally never performs network I/O: it is bounded
+    to one symbol, single-flight, and derives daily/weekly payloads from the
+    same daily dataset.
+    """
+    targets = _asset_chart_targets()
+    if not targets:
+        return {"status": "expected_skip", "reason": "empty_target_universe",
+                "generated": False, "targetCount": 0}
+    cursor = int(_ASSET_CHART_REPORTS.get("cursor") or 0) % len(targets)
+    symbol, market = targets[cursor]
+    _ASSET_CHART_REPORTS["cursor"] = (cursor + 1) % len(targets)
+    daily_rows = _chart_history_cached(symbol, market)
+    if not daily_rows:
+        return {
+            "status": "expected_skip",
+            "reason": "awaiting_provider_cache",
+            "generated": False,
+            "instrument": symbol,
+            "market": market,
+            "cursor": _ASSET_CHART_REPORTS["cursor"],
+            "targetCount": len(targets),
+        }
+    dataset_hash = argus_market_replay.dataset_hash(daily_rows)
+    existing = [
+        argus_asset_chart_cache.current(
+            _ASSET_CHART_REPORTS, market, symbol, timeframe)
+        for timeframe in ("daily", "weekly")
+    ]
+    if all(
+            record
+            and record.get("datasetHash") == dataset_hash
+            and record.get("methodVersion") == _ASSET_CHART_METHOD_VERSION
+            for record in existing):
+        return {
+            "status": "unchanged",
+            "generated": False,
+            "instrument": symbol,
+            "market": market,
+            "datasetHash": dataset_hash,
+            "methodVersion": _ASSET_CHART_METHOD_VERSION,
+            "cursor": _ASSET_CHART_REPORTS["cursor"],
+            "targetCount": len(targets),
+            "stateHash": argus_asset_chart_cache.state_hash(
+                _ASSET_CHART_REPORTS),
+        }
+    flight_key = (
+        f"asset-chart:{market}:{symbol}:{dataset_hash}:"
+        f"{_ASSET_CHART_METHOD_VERSION}"
+    )
+
+    def _produce():
+        publications = []
+        reports = []
+        candidate_store = argus_asset_chart_cache.normalize_store(
+            _ASSET_CHART_REPORTS)
+        for timeframe in ("daily", "weekly"):
+            report = _chart_public_report(
+                symbol, market, timeframe, market_scope=False,
+                cached_only=False, precompute_replay=False,
+                daily_rows_override=daily_rows)
+            next_store, publication = argus_asset_chart_cache.publish(
+                candidate_store,
+                market=market, symbol=symbol, timeframe=timeframe,
+                dataset_hash=dataset_hash,
+                method_version=_ASSET_CHART_METHOD_VERSION,
+                report=report, published_at=_ai_now_iso())
+            if publication not in {"published", "unchanged"}:
+                raise ValueError(
+                    f"asset_chart_publication_{publication}")
+            candidate_store = next_store
+            publications.append({
+                "timeframe": timeframe, "status": publication,
+                "reportId": report.get("reportId"),
+            })
+            reports.append(report)
+        _ASSET_CHART_REPORTS.clear()
+        _ASSET_CHART_REPORTS.update(candidate_store)
+        return reports, publications
+
+    _, publications = _ASSET_CHART_SINGLEFLIGHT.run(flight_key, _produce)
+    generated = any(
+        item["status"] == "published" for item in publications)
+    if generated:
+        state_hash = argus_asset_chart_cache.state_hash(_ASSET_CHART_REPORTS)
+        _journal(
+            "asset_chart_cache_updated", "asset_chart_cache",
+            f"{market}:{symbol}",
+            {"stateHash": state_hash, "datasetHash": dataset_hash,
+             "methodVersion": _ASSET_CHART_METHOD_VERSION,
+             "timeframes": ["daily", "weekly"]},
+        )
+    return {
+        "status": "published" if generated else "unchanged",
+        "generated": generated,
+        "instrument": symbol,
+        "market": market,
+        "datasetHash": dataset_hash,
+        "methodVersion": _ASSET_CHART_METHOD_VERSION,
+        "publications": publications,
+        "cursor": _ASSET_CHART_REPORTS["cursor"],
+        "targetCount": len(targets),
+        "stateHash": argus_asset_chart_cache.state_hash(
+            _ASSET_CHART_REPORTS),
+    }
+
+
 def _jp_daily_short_history(cached_only=False):
     """Five-year TSE aggregate daily short-selling turnover (S33=0050).
 
@@ -20596,6 +20778,11 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     daily_rows = (list(daily_rows_override)
                   if isinstance(daily_rows_override, list)
                   else history(symbol, market))
+    reference_history = (
+        _chart_history_cached
+        if isinstance(daily_rows_override, list)
+        else history
+    )
     if cached_only and not daily_rows:
         return {
             "reportId": None,
@@ -20668,7 +20855,8 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                                    "titleJa": str(_item.get("title") or _item.get("form") or
                                                   f"{symbol} 公式開示")[:100],
                                    "kind": _kind, "classification": "unconfirmed"})
-    sector_rows = history("1306", "JP") if market == "JP" and symbol != "1306" else []
+    sector_rows = (reference_history("1306", "JP")
+                   if market == "JP" and symbol != "1306" else [])
     report = argus_chart_intelligence.analyze(
         symbol, market, rows, now_iso=now_iso, market_ledger=ledger,
         events=events, sector_rows=sector_rows)
@@ -20689,7 +20877,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     _comparison_symbol = ("1306" if market == "JP" and symbol != "1306" else
                           "1321" if market == "JP" else
                           "QQQ" if symbol != "QQQ" else "SPY")
-    _comparison_rows = history(_comparison_symbol, market)
+    _comparison_rows = reference_history(_comparison_symbol, market)
     # Public chart GETs only consume a verified cache/durable snapshot.  Provider
     # refresh is owned by the natural scheduled tick below, never UI interaction.
     _short_rows = _jp_daily_short_history(cached_only=True) if market == "JP" else []
@@ -20976,6 +21164,35 @@ def api_argus_chart_intelligence():
         return jsonify({"error": "bad_symbol"}), 400
     if market == "US" and not _US_SYM_RE.match(symbol):
         return jsonify({"error": "bad_symbol"}), 400
+    cached_asset = argus_asset_chart_cache.current(
+        _ASSET_CHART_REPORTS, market, symbol, timeframe)
+    if cached_asset:
+        report = copy.deepcopy(cached_asset["payload"])
+        report["assetChartCache"] = {
+            "status": "hit",
+            "datasetHash": cached_asset.get("datasetHash"),
+            "methodVersion": cached_asset.get("methodVersion"),
+            "publishedAt": cached_asset.get("publishedAt"),
+            "readBack": dict(_ASSET_CHART_REPORTS_REMOTE),
+        }
+        return jsonify(
+            argus_market_intelligence.normalize_public_names(report))
+    if (symbol, market) in set(_asset_chart_targets()):
+        return jsonify({
+            "reportId": None,
+            "status": "expected_skip",
+            "automaticAiCalls": 0,
+            "costPolicyMode": _COST_POLICY.get("mode"),
+            "stateUpdate": {
+                "status": "expected_skip",
+                "reason": "price_cache_unavailable",
+            },
+            "assetChartCache": {
+                "status": "miss",
+                "methodVersion": _ASSET_CHART_METHOD_VERSION,
+                "readBack": dict(_ASSET_CHART_REPORTS_REMOTE),
+            },
+        })
     return jsonify(argus_market_intelligence.normalize_public_names(
         _chart_public_report(
             symbol, market, timeframe, market_scope=False, cached_only=True)))
