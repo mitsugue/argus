@@ -20,6 +20,7 @@ require.extensions['.ts'] = (m, filename) => {
 
 const dec = require(path.join(__dirname, '..', 'src', 'domain', 'assetDecision.ts'));
 const desk = require(path.join(__dirname, '..', 'src', 'domain', 'assetDesk.ts'));
+const internal = require(path.join(__dirname, '..', 'src', 'domain', 'assetDeskInternal.ts'));
 
 let failed = 0;
 function check(name, cond) {
@@ -259,7 +260,7 @@ check('E8 closed row is exactly two semantic lines',
   summarySource.includes('className=\"ad-l1\"') && summarySource.includes('className=\"ad-l2\"')
   && !summarySource.includes('ad-reason') && !summarySource.includes('ad-foot'));
 check('E9 expanded default contains required decision fields',
-  ['CURRENT ACTION', 'OWNER POSITION', 'WHY NOW', 'NEXT CHECK', 'WHAT CHANGES IT']
+  ['CURRENT ACTION', 'WHY NOW', 'NEXT CHECK', 'WHAT CHANGES IT']
     .every((label) => overviewSource.includes(label)));
 check('E10 downside initial queue is bounded to four rows',
   downsideSource.includes('maxItems = 4') && downsideSource.includes('incidents.slice(0, maxItems)'));
@@ -285,6 +286,92 @@ check('E16 unsupported Asset Why percentages are not rendered as probabilities',
   && !whySource.includes('Math.round(d.cause.confidence * 100)'));
 check('E17 per-asset cards do not repeat the page disclaimer',
   !cardSource.includes('判断支援のみ。自動売買'));
+
+// ── ⑤ Asset Desk internal function contract (PR B) ────────────────────────
+const computedPosition = internal.buildAssetPositionView({
+  held: true,
+  quantity: 100,
+  averageCost: 1200,
+  currentPrice: 1500,
+  portfolioConcentrationPct: 12.5,
+  theme: 'AIインフラ',
+  themeConcentrationPct: 28.4,
+  eventLabels: ['EARNINGS D-2'],
+  volume: 250000,
+  ownerRiskLine: 1300,
+  trimReviewCondition: '集中が25%を超えた場合',
+});
+check('F1 Position uses deterministic valuation math',
+  computedPosition.currentValue === 150000
+  && computedPosition.unrealizedPl === 30000
+  && computedPosition.unrealizedPlPct === 25
+  && Math.abs(computedPosition.breakEvenDistancePct - (-20)) < 0.0001);
+check('F2 Position computes concentration and owner risk-line distance',
+  computedPosition.portfolioConcentrationPct === 12.5
+  && computedPosition.themeConcentrationPct === 28.4
+  && Math.abs(computedPosition.ownerRiskLineDistancePct - (-13.3333333333)) < 0.0001);
+check('F3 Position never manufactures unsupported metrics',
+  computedPosition.supportDistancePct === null
+  && computedPosition.unavailable.includes('支持線距離')
+  && computedPosition.unavailable.includes('流動性判定')
+  && computedPosition.unavailable.includes('追加余力'));
+
+const supportedEvidence = internal.buildAssetEvidenceView({
+  state: 'SUPPORTED_HYPOTHESIS',
+  asOf: '2026-07-27T09:00:00+09:00',
+  confirmed: ['指数比 -2.1%', '同業比 -1.2%', '出来高 250,000', '余分'],
+  hypothesis: '決算前のポジション調整',
+  contradicting: ['状態がCONFLICTでないため表示禁止'],
+  missing: ['個別開示', '大口フロー', '余分'],
+  nextInvestigation: 'TDnetを確認',
+  sources: [
+    { label: 'Market quote', asOf: '2026-07-27', freshness: 'current' },
+    { label: 'Market quote', asOf: '2026-07-27', freshness: 'current' },
+    { label: 'Supply / Demand', asOf: '2026-07-25', freshness: 'stale' },
+  ],
+});
+check('F4 Evidence integrates verified/hypothesis/unresolved contract',
+  supportedEvidence.truth.state === 'SUPPORTED_HYPOTHESIS'
+  && supportedEvidence.truth.alternative === '決算前のポジション調整'
+  && supportedEvidence.truth.confirmed.length === 3
+  && supportedEvidence.truth.missing.length === 2);
+check('F5 Evidence only exposes contradictions in CONFLICT state',
+  supportedEvidence.contradicting.length === 0
+  && internal.buildAssetEvidenceView({
+    state: 'CONFLICT',
+    contradicting: ['価格と開示時刻が矛盾'],
+  }).contradicting.length === 1);
+check('F6 Evidence sources require source and asOf and deduplicate',
+  supportedEvidence.sources.length === 2
+  && supportedEvidence.sources[0].freshness === 'current'
+  && supportedEvidence.sources[1].freshness === 'stale');
+
+const positionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetPositionPanel.tsx'), 'utf8');
+const scenarioSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetScenarioPanel.tsx'), 'utf8');
+const riskLineSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib',
+  'assetRiskLine.ts'), 'utf8');
+check('F7 Position does not repeat Decision conclusions',
+  !positionSource.includes('readinessJa')
+  && !positionSource.includes('currentStanceJa')
+  && !positionSource.includes('summaryJa')
+  && !positionSource.includes('hp.labelJa'));
+check('F8 Scenarios are conditions inside Decision, not a primary tab',
+  cardSource.includes('<AssetScenarioPanel d={d} />')
+  && scenarioSource.includes('data-scenario-role="decision-conditions"')
+  && !cardSource.includes("{ id: 'scenarios'"));
+check('F9 Research and Data is explicitly a secondary utility',
+  cardSource.includes('data-secondary-utility="research-data"')
+  && !cardSource.includes("{ id: 'research'"));
+check('F10 Decision owns no duplicate position valuation block',
+  !overviewSource.includes('OWNER POSITION')
+  && !overviewSource.includes('fmtMoney')
+  && positionSource.includes('data-position-kind="computed"'));
+check('F11 owner risk line remains device-local and has no network fallback',
+  riskLineSource.includes('localStorage.getItem')
+  && riskLineSource.includes('localStorage.setItem')
+  && !riskLineSource.includes('fetch('));
 
 if (failed) { console.error(`\nasset-desk behavioral tests: ${failed} FAILED`); process.exit(1); }
 console.log('\nasset-desk behavioral tests: all passed');

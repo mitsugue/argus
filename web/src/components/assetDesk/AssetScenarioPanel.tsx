@@ -8,7 +8,7 @@ import { probabilityDisplay } from '../../domain/decisionView';
 export const AssetScenarioPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
   const scn = d.scn;
   return (
-    <>
+    <div data-scenario-role="decision-conditions">
       {scn && (
         <div className="ad-scenario-conditions">
           {scn.cases.map((cs) => (
@@ -24,7 +24,7 @@ export const AssetScenarioPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
       )}
       {!scn && d.strat.scenarios.length > 0 && (
         <div className="asset-scen">
-          <div className="asset-scen__head">条件付きシナリオ · {d.strat.scenarioHorizonJa}</div>
+          <div className="asset-scen__head">判断条件 · {d.strat.scenarioHorizonJa}</div>
           {d.strat.scenarios.map((s) => {
             const display = probabilityDisplay(s.probability, s.probabilityProvenance);
             return (
@@ -38,12 +38,11 @@ export const AssetScenarioPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
               </div>
             );
           })}
-          <div className="asset-scen__disc">{d.strat.scenarioDisclaimerJa}</div>
         </div>
       )}
       {!scn && d.strat.scenarios.length === 0 && (
-        <p className="uac-next" style={{ margin: 0, color: 'var(--text-faint)' }}>シナリオ合成に必要なデータが未取得です。</p>
+        <p className="uac-next" style={{ margin: 0, color: 'var(--text-faint)' }}>条件データ未取得</p>
       )}
-    </>
+    </div>
   );
 };

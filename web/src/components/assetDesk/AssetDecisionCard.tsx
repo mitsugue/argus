@@ -148,8 +148,9 @@ export const AssetDecisionCard: React.FC<Props> = ({
             )}
           </div>
           <details className="ad-research-drawer" open={supportOpen}
+            data-secondary-utility="research-data"
             onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
-            <summary>Research &amp; Data</summary>
+            <summary>Utility · Research &amp; Data</summary>
             <div className="ad-research-drawer__body">
               <Section symbol={sym} id="ai-review" title="AI REVIEW / RULE CHECK">
                 <AssetAIReview d={d} />

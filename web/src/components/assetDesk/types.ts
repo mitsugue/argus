@@ -43,6 +43,8 @@ export interface DeskCardData {
   eventTags: DeskEventTag[];
   /** Initial/closed/overview sections share this single normalized command. */
   decisionFirst: DecisionFirstView;
+  /** Device-local portfolio aggregation; never sent to the backend. */
+  themeConcentrationPct?: number | null;
 }
 
 /** 展開セクションid(deep-linkのsection指定と対応・§7の順序)。 */
