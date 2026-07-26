@@ -26,6 +26,20 @@ const RS_JA: Record<string, string> = { nikkei_sp500: 'NS倍率（日経÷S&P 50
   topix_nikkei: 'TOPIX÷日経', semiconductor_topix: '半導体÷TOPIX', growth_topix: 'グロース÷TOPIX',
   dollar_nikkei: 'ドル建て日経平均' };
 
+function uniqueTurningPoints(payload: ChartIntelligencePayload, limit: number) {
+  const seen = new Set<string>();
+  return payload.turningPoints.slice().reverse().filter((point) => {
+    const key = [
+      point.ruleId,
+      point.status,
+      point.facts.map((fact) => fact.replace(/\s+/g, ' ').trim()).join('|'),
+    ].join('::');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, limit);
+}
+
 function linePath(bars: ChartBar[], getter: (bar: ChartBar) => number | null,
                   x: (i: number) => number, y: (v: number) => number) {
   let started = false;
@@ -80,7 +94,7 @@ const PriceChart: React.FC<{ payload: ChartIntelligencePayload; range: string;
       <path d={linePath(bars, (b) => b.bollinger?.lower2 ?? null, x, y)} className="ci-line ci-bb" /></>}
     {showCloud && <><path d={linePath(bars, (b) => b.ichimoku.spanA, x, y)} className="ci-line ci-cloud" />
       <path d={linePath(bars, (b) => b.ichimoku.spanB, x, y)} className="ci-line ci-cloud" /></>}
-    {payload.turningPoints.slice(-20).map((point) => { const idx = bars.findIndex((b) => b.date === point.effectiveFrom); if (idx < 0) return null;
+    {uniqueTurningPoints(payload, 20).map((point) => { const idx = bars.findIndex((b) => b.date === point.effectiveFrom); if (idx < 0) return null;
       return <g key={point.id}><circle cx={x(idx)} cy={y(bars[idx].high) - 8} r="4" className={`ci-marker ci-marker--${point.status}`}>
         <title>{`${RULE_JA[point.ruleId] ?? point.ruleId}: ${point.facts.join(' / ')}`}</title></circle></g>; })}
     {payload.ledgerTurningPoints?.slice(-20).map((point) => { const idx = bars.findIndex((b) => b.date >= point.effectiveFrom); if (idx < 0) return null;
@@ -187,7 +201,7 @@ export const ChartIntelligencePanel: React.FC<{
         {data.proxyDisclosureJa && <p className="ci-note">{data.proxyDisclosureJa}</p>}</div>
       {scope === 'market' && <RelativePanel payload={data} />}
       <div className="ci-summary-grid">
-        <div className="card"><h3>最新転換点</h3>{data.turningPoints.length ? data.turningPoints.slice(-5).reverse().map((p) => <p key={p.id}>
+        <div className="card"><h3>最新転換点</h3>{data.turningPoints.length ? uniqueTurningPoints(data, 5).map((p) => <p key={p.id}>
           <b>{RULE_JA[p.ruleId] ?? 'テクニカル変化'}</b><span>{STATUS_JA[p.status]} · {p.detectionMode === 'live' ? 'ライブ検出' : '事後検出'}</span><small>{p.facts.join(' / ')}</small></p>)
           : <p className="ci-empty">データ不足または転換点未検出</p>}</div>
         <div className="card"><h3>テクニカル批評</h3>{data.critique.map((line) => <p key={line.label}><b>{line.label}</b><span>{line.text}</span></p>)}</div>

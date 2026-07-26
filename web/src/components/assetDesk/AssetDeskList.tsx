@@ -74,7 +74,9 @@ export const AssetDeskList: React.FC<Props> = ({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [localFocus, setLocalFocus] = useState<AssetFocusIntent | null>(null);
   const [sortMode, setSortMode] = useState<'priority' | 'manual'>('priority');
-  const [filter, setFilter] = useState<'all' | 'risk' | 'held'>('all');
+  const [filter, setFilter] = useState<
+    'all' | 'risk' | 'held' | 'exit-watch' | 'inspect' | 'hold' | 'new-stop'
+  >('all');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -227,7 +229,8 @@ export const AssetDeskList: React.FC<Props> = ({
   const riskCount = useMemo(() => rows.filter((r) => !!r.d.incident).length, [rows]);
   const keep = (r: { d: DeskCardData }) => filter === 'all' ? true
     : filter === 'risk' ? !!r.d.incident
-    : (r.d.asset.quantity ?? 0) > 0 || !!r.d.pn?.held;
+    : filter === 'held' ? (r.d.asset.quantity ?? 0) > 0 || !!r.d.pn?.held
+    : r.d.decisionFirst.bucket === filter;
 
   // 優先順(デフォルト・決定論): rank昇順→symbol昇順。
   const prioritized = useMemo(() =>
@@ -312,7 +315,11 @@ export const AssetDeskList: React.FC<Props> = ({
 
   return (
     <div className="asset-groups">
-      <AssetPortfolioCommand command={command} />
+      <AssetPortfolioCommand command={command} activeKey={filter}
+        onSelect={(key) => {
+          setSortMode('priority');
+          setFilter((current) => current === key ? 'all' : key);
+        }} />
       <DownsideIncidentQueue
         data={intel.downside}
         maxItems={4}
@@ -355,7 +362,10 @@ export const AssetDeskList: React.FC<Props> = ({
             </React.Fragment>
           ))}
           {prioritized.filter(keep).length === 0 && (
-            <div className="asset-empty">{filter === 'risk' ? t('wl.noDanger') : t('wl.noHeld')}</div>
+            <div className="asset-empty">
+              {filter === 'risk' ? t('wl.noDanger')
+                : filter === 'held' ? t('wl.noHeld') : '該当する資産はありません。'}
+            </div>
           )}
         </div>
       )}

@@ -186,9 +186,11 @@ def test_fe_collapsible_risk_escalation_effect():
 
 
 def test_fe_no_duplicate_investigate_button_in_card():
-    # v12.2.12: 銘柄カードはAsset Desk(AssetWhyPanel)へ移設 — ガード意図は不変。
+    # Asset DeskのEvidenceは再調査操作を1系統だけ持つ。
     card = _read("components", "assetDesk", "AssetWhyPanel.tsx")
-    assert "hideInvestigateButton" in card          # カードは抑止フラグを渡す
+    assert card.count("<AiExplanationBlock") == 1
+    assert "CauseStackCard" not in card
+    # 共有カード側の二重ボタン抑止契約も、他画面向けに維持する。
     csc = _read("components", "dashboard", "CauseStackCard.tsx")
     assert "hideInvestigateButton" in csc
     assert "二重" in csc or "duplicate" in csc.lower()

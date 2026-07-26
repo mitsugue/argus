@@ -241,10 +241,17 @@ const overviewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'compon
   'assetDesk', 'AssetDecisionDetails.tsx'), 'utf8');
 const downsideSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
   'dashboard', 'DownsideIncidentCard.tsx'), 'utf8');
-check('E6 detail sections are tab-gated and initially overview',
-  cardSource.includes("useState<DeskTab>('overview')")
+const commandSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetPortfolioCommand.tsx'), 'utf8');
+const evidenceSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetEvidenceSummary.tsx'), 'utf8');
+const whySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetWhyPanel.tsx'), 'utf8');
+check('E6 detail sections are tab-gated and initially decision',
+  cardSource.includes("useState<DeskTab>('decision')")
   && cardSource.includes("tab === 'chart'")
-  && cardSource.includes("tab === 'evidence'"));
+  && cardSource.includes("tab === 'evidence'")
+  && (cardSource.match(/id: '(decision|chart|evidence|position)'/g) || []).length === 4);
 check('E7 chart does not mount in closed or overview card',
   cardSource.indexOf('<ChartIntelligencePanel') > cardSource.indexOf("tab === 'chart'"));
 check('E8 closed row is exactly two semantic lines',
@@ -258,6 +265,25 @@ check('E10 downside initial queue is bounded to four rows',
 check('E11 tabs expose keyboard navigation and ARIA contract',
   cardSource.includes('role=\"tablist\"') && cardSource.includes('role=\"tab\"')
   && cardSource.includes('ArrowRight') && cardSource.includes('aria-selected'));
+check('E12 portfolio counters are exclusive accessible filters',
+  commandSource.includes('aria-pressed={activeKey === counter.key}')
+  && commandSource.includes('onClick={() => onSelect?.(counter.key)}'));
+check('E13 evidence summary keeps explicit truth states',
+  ['VERIFIED_FACT', 'SUPPORTED_HYPOTHESIS', 'UNRESOLVED', 'UNAVAILABLE', 'STALE', 'CONFLICT']
+    .every((state) => evidenceSource.includes(state))
+  && evidenceSource.includes('data-evidence-state={truth.state}'));
+check('E14 research and raw evidence are secondary disclosures',
+  cardSource.includes('className="ad-evidence-details"')
+  && cardSource.includes('className="ad-research-drawer"'));
+check('E15 chart turning points are semantically deduplicated',
+  chartPanel.includes('uniqueTurningPoints(payload')
+  && chartPanel.includes("fact.replace(/\\s+/g, ' ').trim()")
+  && chartPanel.includes('if (seen.has(key)) return false'));
+check('E16 unsupported Asset Why percentages are not rendered as probabilities',
+  whySource.includes('probabilityDisplay')
+  && !whySource.includes('Math.round(d.cause.confidence * 100)'));
+check('E17 per-asset cards do not repeat the page disclaimer',
+  !cardSource.includes('判断支援のみ。自動売買'));
 
 if (failed) { console.error(`\nasset-desk behavioral tests: ${failed} FAILED`); process.exit(1); }
 console.log('\nasset-desk behavioral tests: all passed');

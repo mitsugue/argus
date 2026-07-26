@@ -13,9 +13,12 @@
 .ad-command__copy small{font-size:10.5px;color:var(--text-faint);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .ad-command__counters{display:grid;grid-template-columns:repeat(4,minmax(54px,1fr));gap:6px}
-.ad-command__counters span{display:flex;flex-direction:column;align-items:center;gap:1px;
+.ad-command__counters button{display:flex;flex-direction:column;align-items:center;gap:1px;
   padding:5px 8px;border:1px solid var(--line);border-radius:8px;color:var(--text-faint);
-  font-size:9px;white-space:nowrap}
+  background:transparent;font-size:9px;white-space:nowrap;cursor:pointer}
+.ad-command__counters button:hover,.ad-command__counters button.is-active{border-color:var(--accent);
+  color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.ad-command__counters button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .ad-command__counters b{font-size:14px;color:var(--text-main);font-variant-numeric:tabular-nums}
 
 .ad-card { position: relative; }
@@ -88,7 +91,6 @@
 .ad-tab-section{min-width:0;scroll-margin-top:72px}
 .ad-tab-section+.ad-tab-section{margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
 .ad-tab-section h4{margin:0 0 6px;font-size:9.5px;letter-spacing:.08em;color:var(--text-faint)}
-.ad-disclaimer{margin:0 9px 8px;font-size:9px;color:var(--text-faint)}
 
 .ad-overview{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:8px}
 .ad-overview__action,.ad-overview__position,.ad-overview__facts>div{
@@ -113,6 +115,29 @@
 .ad-plan-detail{margin-top:8px;border-top:1px solid var(--line);padding-top:7px}
 .ad-plan-detail summary{cursor:pointer;font-size:10.5px;color:var(--text-faint)}
 .ad-plan-detail p{font-size:10.5px;color:var(--text-sub);line-height:1.5;margin:4px 0}
+.ad-scenario-conditions{display:grid;gap:5px;margin-top:6px}
+.ad-scenario-conditions p{display:grid;grid-template-columns:minmax(100px,.55fr) auto minmax(0,1.45fr);
+  gap:7px;align-items:start;margin:0!important}
+.ad-scenario-conditions p>b{font-size:10.5px;color:var(--text-main)}
+.ad-scenario-conditions p>span{font-size:9px;color:var(--text-faint);border:1px solid var(--line);
+  border-radius:999px;padding:0 5px}
+.ad-scenario-conditions p>small{font-size:10px;color:var(--text-sub)}
+
+.ad-evidence-summary{display:grid;gap:7px}
+.ad-evidence-summary header{display:flex;align-items:center;gap:8px;border-left:3px solid var(--accent);
+  padding:7px 9px;background:color-mix(in srgb,var(--accent) 6%,var(--surface));border-radius:7px}
+.ad-evidence-summary header>span{font-size:8.5px;letter-spacing:.08em;color:var(--text-faint)}
+.ad-evidence-summary header>strong{font-size:12px;color:var(--text-main)}
+.ad-evidence-summary header>time{margin-left:auto;font-size:9px;color:var(--text-faint)}
+.ad-evidence-summary p{display:grid;grid-template-columns:72px minmax(0,1fr);gap:8px;margin:0;
+  font-size:10.5px;line-height:1.45}
+.ad-evidence-summary p>b{color:var(--text-faint)}
+.ad-evidence-summary p>span{color:var(--text-sub)}
+.ad-evidence-details,.ad-research-drawer{border-top:1px solid var(--line)}
+.ad-evidence-details>summary,.ad-research-drawer>summary{cursor:pointer;padding:9px 10px;
+  color:var(--text-faint);font-size:10.5px}
+.ad-evidence-details>.ad-tab-section{padding:0 10px 9px}
+.ad-research-drawer__body{padding:0 9px 9px}
 
 .ad-support{margin-top:12px;padding:0;overflow:hidden}
 .ad-support>summary{cursor:pointer;padding:11px 13px;font-size:11px;color:var(--text-faint);
@@ -123,7 +148,7 @@
   .ad-command{grid-template-columns:1fr;padding:11px 12px;gap:9px}
   .ad-command__copy strong,.ad-command__copy small{white-space:normal}
   .ad-command__counters{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
-  .ad-command__counters span{padding:5px 2px;font-size:8px}
+  .ad-command__counters button{padding:5px 2px;font-size:8px;min-height:44px}
   .ad-name { max-width: 14ch; }
   .ad-mkt{display:none}
   .ad-price{font-size:11px}
@@ -142,6 +167,8 @@
   .ad-overview{grid-template-columns:1fr}
   .ad-overview__facts{grid-column:auto;grid-template-columns:1fr}
   .ad-overview__warning{grid-column:auto}
+  .ad-scenario-conditions p{grid-template-columns:1fr auto}
+  .ad-scenario-conditions p>small{grid-column:1/-1}
 }
 
 /* リサーチメモ/Holdingのラベルは縦flex内で130px基底が高さになる(旧行レイアウト用) — 打ち消し */
