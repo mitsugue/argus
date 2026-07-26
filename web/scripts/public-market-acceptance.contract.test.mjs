@@ -151,6 +151,9 @@ assert.match(workflow, /needs\.deploy\.result/);
 assert.match(mobileAcceptance, /COMBINATION_PACE_MS = 1_000/);
 assert.match(mobileAcceptance, /rate-limit-cache-backoff-contract/);
 assert.match(mobileAcceptance, /expectedRateLimitErrors/);
+assert.match(mobileAcceptance, /responseTasks:\s*new Set\(\)/);
+assert.match(mobileAcceptance,
+  /await drainResponseTasks\(evidence\);\s*await rateLimitContext\.close\(\)/);
 assert.match(mobileAcceptance, /Retry-After/);
 for (const value of ['320', '375', '390', '393', '414', '430', '932']) {
   assert.match(mobileAcceptance, new RegExp(`width: ${value}`));
