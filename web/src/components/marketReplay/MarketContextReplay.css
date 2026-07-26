@@ -21,6 +21,13 @@
 .mr-tabs{position:sticky;top:54px;z-index:7;display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(12px)}
 .mr-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--text-faint);font-weight:800;letter-spacing:.08em;padding:11px;cursor:pointer}
 .mr-tabs button[aria-selected=true]{color:var(--chart-line-secondary);border-bottom-color:var(--chart-line-secondary)}
+.mr-context-contract{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0}
+.mr-context-contract article{min-width:0;border:1px solid var(--line);border-radius:8px;
+  background:var(--surface);padding:9px 10px}
+.mr-context-contract article.is-primary{border-left:3px solid var(--chart-line-secondary)}
+.mr-context-contract span{display:block;color:var(--text-faint);font-size:8.5px;
+  font-weight:800;letter-spacing:.08em;margin-bottom:4px}
+.mr-context-contract strong{display:block;color:var(--text-main);font-size:11px;line-height:1.4}
 .mr-summary-row{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:8px}
 .mr-summary-row>div{display:flex;align-items:baseline;gap:9px;border:1px solid var(--line);border-radius:7px;padding:10px 12px;background:var(--surface)}
 .mr-price strong{font-size:23px}.mr-price span,.mr-price small,.mr-skill span,.mr-skill small{font-size:10px;color:var(--text-faint)}
@@ -95,6 +102,8 @@
 .mr-coverage .is-high{color:var(--value-positive)}.mr-coverage .is-medium{color:var(--amber,#fbbf24)}.mr-coverage .is-low{color:var(--text-faint)}
 .mr-system-line{display:flex;flex-wrap:wrap;gap:7px 18px;border-top:1px solid var(--line);padding:9px 2px;font-size:9px;color:var(--text-faint)}
 @media(max-width:700px){
+  .mr-context-contract{grid-template-columns:1fr 1fr}
+  .mr-context-contract article.is-primary{grid-column:1/-1}
   .mr-header h2{font-size:17px}.mr-decision strong{font-size:23px}
   .mr-selectors{overflow:hidden}.mr-selectors button{padding:6px 8px}.mr-tabs{top:50px}
   .mr-summary-row{grid-template-columns:1fr 1fr}.mr-direction{grid-column:1/-1;grid-row:2;justify-content:space-around}.mr-skill{justify-content:center}

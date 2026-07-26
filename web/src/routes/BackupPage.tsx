@@ -3,6 +3,7 @@ import { PageShell } from './PageShell';
 import { useAssets } from '../hooks/useAssets';
 import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
 import { BackupCard } from '../components/guide/BackupCard';
+import { BackupStatusOverview } from '../components/system/BackupStatusOverview';
 
 // V11.19.1 — Backup page (owner request 2026-07-05): バックアップ関連の操作が
 // ④Core Portfolio(PORTFOLIO SYNC & BACKUP)と⑤Guide(バックアップ/パスフレーズ)に
@@ -17,6 +18,10 @@ export const BackupPage: React.FC = () => {
       title="Backup"
       subtitle="保有・判断記録・通知・学習履歴のバックアップ操作をここに集約。①パスフレーズで暗号化バックアップ(端末間同期・クラウドには暗号文のみ)②バックアップJSONの書き出し/読み込み③スナップショット④復元ドリル(非破壊)。パスフレーズは忘れると復元不能・チャット等に絶対貼らないでください。"
     >
+      <BackupStatusOverview assets={assetsApi.assets} />
+      <details className="backup-actions">
+        <summary>Manual backup / restore / sync actions</summary>
+        <div className="backup-actions__body">
       {/* ① 暗号化バックアップ(パスフレーズ)設定 — Guideから移設 */}
       <section>
         <div className="section-head">
@@ -33,6 +38,8 @@ export const BackupPage: React.FC = () => {
         バックアップの保護状態(保護済み/一部保護/未保護)と復元ドリルの結果は上のBACKUP SAFETYに表示されます。
         サーバーはパスフレーズの有無・保護状態・バックアップ内容を一切知りません。
       </p>
+        </div>
+      </details>
     </PageShell>
   );
 };

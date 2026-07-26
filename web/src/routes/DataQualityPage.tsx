@@ -4,6 +4,8 @@ import { useAssets } from '../hooks/useAssets';
 import { assessBackupSafety } from '../lib/backupSafety';
 import { latestStrategy, latestFireCore, latestPlans, latestScenarios,
   publishDataQuality } from '../lib/positionExposureShare';
+import { buildDataQualityIncidents } from '../domain/dataQualityIncidents';
+import { DataQualityIncidents } from '../components/system/DataQualityIncidents';
 
 // V11.22.0 — Admin / Data Quality Console。「今の判断は最新データに基づいて
 // いるか」に運用者目線で答えるページ。取引機能ではない。
@@ -152,6 +154,7 @@ export const DataQualityPage: React.FC = () => {
       note: (() => { try { const b = assessBackupSafety(assets); return `保護状態: ${b.protectionLevelJa}`; }
         catch { return '判定保留'; } })() },
   ];
+  const incidents = c ? buildDataQualityIncidents(c) : [];
 
   return (
     <PageShell
@@ -165,6 +168,10 @@ export const DataQualityPage: React.FC = () => {
       )}
       {c && (
         <>
+          <DataQualityIncidents incidents={incidents} />
+          <details className="dq-diagnostics">
+            <summary>Diagnostics / healthy sources / provider details</summary>
+            <div className="dq-diagnostics__body">
           {/* 1. 総合ステータス */}
           <section>
             <div className="section-head">
@@ -697,6 +704,8 @@ export const DataQualityPage: React.FC = () => {
               </p>
             </div>
           </section>
+            </div>
+          </details>
         </>
       )}
     </PageShell>

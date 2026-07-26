@@ -1,17 +1,17 @@
 import React from 'react';
 import {
-  dismissNotification, listNotifications, markAllSeen, SEV_JA, SEV_TONE,
-  type AppNotification,
+  compactNotificationFeed, dismissNotification, listNotifications, markAllSeen, SEV_JA, SEV_TONE,
+  type CompactNotification,
 } from '../lib/notifications';
 
 // V11.14.0 — 通知センター(ベルのドロップダウン)。端末内保存・売買指示なし。
 
 export const NotificationPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [, bump] = React.useReducer((x: number) => x + 1, 0);
-  const items = listNotifications();
+  const items = compactNotificationFeed(listNotifications());
   React.useEffect(() => { markAllSeen(); }, []);
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
-  const groups: [string, AppNotification[]][] = [
+  const groups: [string, CompactNotification[]][] = [
     ['今日', items.filter((i) => i.createdAt.slice(0, 10) === today)],
     ['それ以前', items.filter((i) => i.createdAt.slice(0, 10) !== today)],
   ];
@@ -42,13 +42,13 @@ export const NotificationPanel: React.FC<{ onClose: () => void }> = ({ onClose }
                             borderRadius: 4, padding: '0 4px', fontSize: 9.5 }}>{SEV_JA[n.severity]}</b>
                 <b style={{ marginLeft: 6 }}>{n.titleJa}</b>
                 <span style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--text-faint)' }}>
-                  {n.createdAt.slice(11, 16)}
+                  {n.createdAt.slice(11, 16)}{n.occurrenceCount > 1 ? ` · ${n.occurrenceCount} updates` : ''}
                 </span>
               </p>
               <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-sub)', lineHeight: 1.6 }}>{n.bodyJa}</p>
               <p style={{ margin: '1px 0 0', fontSize: 10, color: 'var(--text-faint)' }}>次に確認: {n.checkNextJa}</p>
               <button type="button"
-                      onClick={() => { dismissNotification(n.id); bump(); }}
+                      onClick={() => { n.notificationIds.forEach(dismissNotification); bump(); }}
                       style={{ marginTop: 2, fontSize: 9.5, cursor: 'pointer', background: 'transparent',
                                color: 'var(--text-faint)', border: '1px solid var(--line)',
                                borderRadius: 5, padding: '0 6px' }}>閉じる</button>

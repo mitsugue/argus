@@ -39,10 +39,12 @@ const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
   quality:   DataQualityPage as React.FC<RouteProps>,
   guide:     Guide as React.FC<RouteProps>,
 };
+const routeFromHash = (hash: string): RouteKey | undefined =>
+  HASH_ROUTES[hash.startsWith('#guide:') ? '#guide' : hash];
 
 const App: React.FC = () => {
   const [route, setRoute] = useState<RouteKey>(
-    () => HASH_ROUTES[window.location.hash] ?? 'command');
+    () => routeFromHash(window.location.hash) ?? 'command');
   const routeRef = useRef(route);
   const [pageEnterDirection, setPageEnterDirection] = useState<1 | -1>(1);
   // V12.2.12: Asset Desk deep-link intent — Today(OWNER CRITICAL/Your Exposure/
@@ -57,7 +59,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const onLocation = () => {
       setIsReview(window.location.hash === '#review');
-      const target = HASH_ROUTES[window.location.hash];
+      const target = routeFromHash(window.location.hash);
       // Browsers can emit both popstate and hashchange for one history move.
       // Ignore the duplicate event so it cannot overwrite the canonical
       // previous-page animation direction with the same-route default.

@@ -357,6 +357,22 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
 export function listNotifications(): AppNotification[] {
   return load().items.filter((i) => i.deliveryState !== 'dismissed');
 }
+export interface CompactNotification extends AppNotification {
+  occurrenceCount: number;
+  notificationIds: string[];
+}
+export function compactNotificationFeed(items: AppNotification[]): CompactNotification[] {
+  const byMeaning = new Map<string, CompactNotification>();
+  for (const item of items) {
+    const key = `${item.eventType}|${item.symbol ?? 'system'}|${item.titleJa}`;
+    const existing = byMeaning.get(key);
+    if (existing) {
+      existing.occurrenceCount += 1;
+      existing.notificationIds.push(item.id);
+    } else byMeaning.set(key, { ...item, occurrenceCount: 1, notificationIds: [item.id] });
+  }
+  return [...byMeaning.values()];
+}
 export function unreadCounts(): { total: number; critical: number; high: number } {
   const unread = load().items.filter((i) => i.deliveryState === 'new');
   return { total: unread.length,

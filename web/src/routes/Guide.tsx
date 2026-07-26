@@ -16,6 +16,7 @@ import { PaidSourceStatusCard } from '../components/guide/PaidSourceStatusCard';
 import { DecisionSpineCard } from '../components/guide/DecisionSpineCard';
 import { SourceUniverseCard } from '../components/guide/SourceUniverseCard';
 import '../components/dashboard/Dashboard.css';
+import './Guide.css';
 
 // ── できること / 最近のアップデート ──────────────────────────────
 // RULE (v9.10.1+): バージョンアップのたびに、この2つのリストも必ず更新する。
@@ -488,8 +489,19 @@ const HOWTO: string[] = [
 
 export const Guide: React.FC = () => {
   const [showAllUpdates, setShowAllUpdates] = React.useState(false);
+  const [query, setQuery] = React.useState(() => {
+    try {
+      return window.location.hash.startsWith('#guide:')
+        ? decodeURIComponent(window.location.hash.slice('#guide:'.length)) : '';
+    } catch { return ''; }
+  });
   const RECENT_SHOWN = 5;
   const loc = useLocale();
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredPages = PAGE_GUIDE.filter((item) =>
+    !normalizedQuery || `${item.page} ${item.descJa}`.toLowerCase().includes(normalizedQuery));
+  const filteredCapabilities = CAPABILITIES.filter((item) =>
+    !normalizedQuery || `${item.area} ${item.descJa}`.toLowerCase().includes(normalizedQuery));
   return (
     <PageShell title={tEn('nav.guide')} subtitle="使い方(ページ別)・できること・用語一覧(日本語ガイド)。">
       <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -508,11 +520,12 @@ export const Guide: React.FC = () => {
         </span>
       </section>
 
-      <ArgusProAboutCard />
-
-      <DecisionSpineCard />
-
-      <SourceUniverseCard />
+      <section className="card guide-search" aria-label="Guide search">
+        <label htmlFor="guide-query">今見ている機能・用語を検索</label>
+        <input id="guide-query" type="search" value={query}
+          placeholder="例: Asset Desk / Backup / Market"
+          onChange={(event) => setQuery(event.target.value)} />
+      </section>
 
       <section>
         <div className="section-head">
@@ -520,13 +533,13 @@ export const Guide: React.FC = () => {
           <span className="section-head__count">ナビ順</span>
         </div>
         <div className="card guide-card">
-          <div className="guide-caps">
-            {PAGE_GUIDE.map((p) => (
-              <div className="guide-cap" key={p.page}>
-                <span className="guide-cap__area">{p.page}</span>
-                <span className="guide-cap__desc">{p.descJa}</span>
-              </div>
+          <div className="guide-results">
+            {filteredPages.map((p) => (
+              <details className="guide-result" key={p.page}>
+                <summary>{p.page}</summary><p>{p.descJa}</p>
+              </details>
             ))}
+            {!filteredPages.length && <p className="guide-note">該当するページガイドはありません。</p>}
           </div>
         </div>
       </section>
@@ -537,16 +550,25 @@ export const Guide: React.FC = () => {
           <span className="section-head__count">v{__APP_VERSION__} 時点</span>
         </div>
         <div className="card guide-card">
-          <div className="guide-caps">
-            {CAPABILITIES.map((c) => (
-              <div className="guide-cap" key={c.area}>
-                <span className="guide-cap__area">{c.area}</span>
-                <span className="guide-cap__desc">{c.descJa}</span>
-              </div>
+          <div className="guide-results">
+            {filteredCapabilities.map((c) => (
+              <details className="guide-result" key={c.area}>
+                <summary>{c.area}</summary><p>{c.descJa}</p>
+              </details>
             ))}
+            {!filteredCapabilities.length && <p className="guide-note">該当する機能説明はありません。</p>}
           </div>
         </div>
       </section>
+
+      <details className="guide-reference">
+        <summary>Advanced systems / methodology / release history</summary>
+        <div className="guide-reference__body">
+      <ArgusProAboutCard />
+
+      <DecisionSpineCard />
+
+      <SourceUniverseCard />
 
       <section>
         <div className="section-head"><span className="section-head__title">用語一覧</span></div>
@@ -682,6 +704,8 @@ export const Guide: React.FC = () => {
           )}
         </div>
       </section>
+        </div>
+      </details>
     </PageShell>
   );
 };
