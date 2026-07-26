@@ -47,6 +47,10 @@ assert.match(script, /navigator\.onLine/);
 assert.match(script, /warmOffline\.snapshotId !== warmSeedSnapshotId/);
 assert.match(script, /ensureCurrentPwaBuild/);
 assert.match(script, /registration\.update\(\)/);
+assert.match(script, /error\?\.name === 'InvalidStateError'/);
+assert.match(script, /deferredUpdateCount/);
+assert.match(script, /__ARGUS_BUILD_SHA__ === expected/,
+  'a deferred lifecycle update must still pass the exact post-reload build SHA gate');
 assert.match(script, /warmOnline\.frontendBuildSha !== EXPECTED_SHA/);
 assert.match(script, /warmOffline\.frontendBuildSha !== EXPECTED_SHA/);
 assert.match(script, /fs\.access\(path\.join\(OUT_DIR, 'acceptance\.json'\)\)/,
