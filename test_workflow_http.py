@@ -64,6 +64,27 @@ class WorkflowHttpTests(unittest.TestCase):
         self.assertNotIn("secret-value", out.getvalue() + err.getvalue())
         self.assertNotIn("private-body", out.getvalue() + err.getvalue())
 
+    def test_identity_contract_preserves_safe_build_and_ready_fields(self):
+        body = {
+            "status": "ok",
+            "buildSha": "6a4ac01",
+            "ready": True,
+            "token": "must-not-leak",
+            "privateState": {"owner": "must-not-leak"},
+        }
+        with mock.patch.object(wh, "request_json",
+                               return_value=(200, json.dumps(body))):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                self.assertEqual(wh.main(["--name", "identity", "--url",
+                                          "https://example.invalid"]), 0)
+        summary = json.loads(out.getvalue())
+        self.assertEqual(summary["buildSha"], "6a4ac01")
+        self.assertIs(summary["ready"], True)
+        self.assertNotIn("token", summary)
+        self.assertNotIn("privateState", summary)
+        self.assertNotIn("must-not-leak", out.getvalue() + err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
