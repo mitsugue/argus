@@ -451,17 +451,30 @@ async function run() {
   await page.locator('.nav__mobile').getByRole('button', { name: 'Today', exact: true }).click();
   await waitForTodayChart(page);
   const onlineSnapshotId = await page.locator('.at-chart-status').getAttribute('data-snapshot-id');
-  await context.route('**/api/argus/chart-intelligence?*',
-    (route) => fulfillCapturedSnapshot(route, evidence, 2_000));
+  let resolveWarmRequestStart;
+  const warmRequestStart = new Promise((resolve) => {
+    resolveWarmRequestStart = resolve;
+  });
+  await context.route('**/api/argus/chart-intelligence?*', (route) => {
+    resolveWarmRequestStart?.(Date.now());
+    resolveWarmRequestStart = null;
+    return fulfillCapturedSnapshot(route, evidence, 6_000);
+  });
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
   await waitForTodayChart(page);
-  await page.waitForTimeout(350);
+  const warmStartedAt = await Promise.race([
+    warmRequestStart,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('controlled warm revalidation did not start')),
+      5_000)),
+  ]);
+  await page.waitForTimeout(Math.max(0, 350 - (Date.now() - warmStartedAt)));
   const warmLoader = await page.locator(
     '.at-chart-status .triangle-step-loader').count();
   const warmSkeleton = await page.locator('.at-projection-missing').count();
   await screenshot(page, 'today-warm-revalidation-loader.png');
-  await page.waitForTimeout(1_900);
+  await page.waitForTimeout(Math.max(0, 6_200 - (Date.now() - warmStartedAt)));
   await context.unroute('**/api/argus/chart-intelligence?*');
   if (!warmLoader || warmSkeleton) evidence.failures.push('warm-loader-contract');
 
