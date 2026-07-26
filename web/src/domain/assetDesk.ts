@@ -116,13 +116,19 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
     : null;
   const currentActionJa = override || (input.held ? action.held : action.watch);
   const used = new Set<string>([decisionSemanticKey(currentActionJa)].filter(Boolean));
+  const guardedOwnerAction = override
+    || (['EXIT', 'DEFEND', 'REVIEW'].includes(signalCode) ? action.held : null);
   const ownerActionJa = input.held
-    ? compactDecisionText(input.ownerLabel, 42) || action.held
+    // An incident override is authoritative. Keeping an older position stance
+    // here could display "撤退検討" and "保有継続" in the same DecisionView.
+    ? guardedOwnerAction || compactDecisionText(input.ownerLabel, 42) || action.held
     : '監視のみ（保有なし）';
-  const whyJa = firstDistinct(input.whyCandidates, used, '判断根拠データを確認中');
-  const nextJa = firstDistinct(input.nextCandidates, used, '次の価格・材料更新を確認');
+  const entryActionJa = override ? '新規停止' : action.entry;
+  const whyJa = firstDistinct(input.whyCandidates, used, '検証済みの個別理由なし');
+  const nextJa = firstDistinct(
+    input.nextCandidates, used, '個別開示・出来高・同業差を確認');
   const whatChangesJa = firstDistinct(
-    input.changeCandidates, used, '価格・需給・材料の条件変化で再判定');
+    input.changeCandidates, used, '新しい確認済み材料で再判定');
   const bucket: DecisionFirstView['bucket'] =
     signalCode === 'EXIT' || signalCode === 'DEFEND' || /撤退|縮小/.test(currentActionJa)
       ? 'exit-watch'
@@ -136,14 +142,14 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
         : dataState === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'SUPPORTED_HYPOTHESIS');
   return {
     symbol: input.symbol, name: input.name, market: input.market, held: input.held,
-    signalCode, currentActionJa, ownerActionJa, entryActionJa: action.entry,
+    signalCode, currentActionJa, ownerActionJa, entryActionJa,
     whyJa, nextJa, whatChangesJa, priceText: input.priceText,
     changePct: input.changePct ?? null, pnlPct: input.pnlPct ?? null,
     priority: input.priority, dataStatus: input.dataStatus, rank: input.rank,
     bucket,
     primaryAction: currentActionJa,
     ownerAction: ownerActionJa,
-    entryAction: action.entry,
+    entryAction: entryActionJa,
     reason: whyJa,
     nextCheck: nextJa,
     changeCondition: whatChangesJa,

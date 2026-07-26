@@ -111,6 +111,19 @@ async function main() {
       && restored?.payload.symbol === '5803');
   check('C8 mismatched instrument is never cached',
     await cache.writeAssetChart({ ...identity, symbol: '7203' }, payload) === null);
+  const rateLimited = cache.assetChartUiTransition({
+    state: 'NO_CACHE_LOADING', errorClass: null, retryAt: null,
+  }, {
+    type: 'failure', hasCache: false, errorClass: 'rate_limited',
+    retryAt: now + 90_000,
+  });
+  const recovered = cache.assetChartUiTransition(rateLimited, { type: 'http_200' });
+  check('C8b successful HTTP 200 atomically clears an old 429 state',
+    rateLimited.state === 'RATE_LIMITED_WITHOUT_CACHE'
+      && rateLimited.errorClass === 'rate_limited'
+      && recovered.state === 'CURRENT_READY'
+      && recovered.errorClass === null
+      && recovered.retryAt === null);
 
   const hookSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'hooks',
     'useChartIntelligence.ts'), 'utf8');
@@ -140,6 +153,10 @@ async function main() {
         'RATE_LIMITED_WITH_CACHE', 'RATE_LIMITED_WITHOUT_CACHE',
         'ERROR_WITH_CACHE', 'ERROR_WITHOUT_CACHE',
       ].every((state) => hookSource.includes(state)));
+  check('C13a hook uses the exclusive success transition after HTTP 200',
+    hookSource.includes("type: 'http_200'")
+      && hookSource.includes('setLegacyError(null)')
+      && hookSource.includes('setLegacyRetryAt(ready.retryAt)'));
   check('C13b expected skip is not mislabeled as an instrument mismatch',
     hookSource.indexOf("data.status === 'expected_skip'")
       < hookSource.indexOf('!matchesInstrument(data, expectedSymbol)')

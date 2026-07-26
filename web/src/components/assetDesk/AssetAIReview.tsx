@@ -28,7 +28,7 @@ export const AssetAIReview: React.FC<{ d: DeskCardData }> = ({ d }) => {
             {ai.viewJa && <span style={{ color: ai.viewTone }}>{ai.viewJa}</span>}
             <span className="asset-ai__action">
               AI提案: <b>{ai.finalAction ?? '—'}</b>
-              {ai.confidencePct != null && <>（確信度{ai.confidencePct}%）</>}
+              <>（確信度 {ai.confidenceJa}）</>
             </span>
           </div>
           {ai.reasonJa && <p className="asset-ai__reason">{ai.reasonJa}</p>}

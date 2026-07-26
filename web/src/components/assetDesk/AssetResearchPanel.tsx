@@ -8,6 +8,7 @@ import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import { decisionHistoryFor } from '../../lib/decisionQuality';
 import { pastPatternLineJa } from '../../lib/learningReview';
 import { refreshMarketLedger } from '../../hooks/useMarketLedger';
+import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — RESEARCH & NOTES(§7-9)。旧Watchlistのリサーチメモ/AI相談/Removeと
 // 旧TodayのReview Packコピー/OSINT Deep Dive/DECISION HISTORYを統合。
@@ -48,14 +49,15 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
   if (sc?.shortDisclosed) L.push(`■ 機関の大口空売り(JPX開示): ${sc.shortDisclosed.ratioPct}%（${sc.shortDisclosed.reporters}社）`);
   if (sc?.flowInference && sc.flowInference.classification !== 'UNCONFIRMED') {
     const p = sc.flowInference.probabilities;
-    L.push(`■ フロー推定(誰が動かしているか): 新規買い${Math.round(p.newLongAccumulation * 100)}% / 買い戻し${Math.round(p.shortCovering * 100)}% / 分配${Math.round(p.distribution * 100)}% / ノイズ${Math.round(p.retailNoise * 100)}%（確度${sc.flowInference.confidence}）`);
+    const q = (value: number) => probabilityDisplay(value * 100).qualitative;
+    L.push(`■ フロー推定(誰が動かしているか): 新規買い=${q(p.newLongAccumulation)} / 買い戻し=${q(p.shortCovering)} / 分配=${q(p.distribution)} / ノイズ=${q(p.retailNoise)}（確度${sc.flowInference.confidence}）`);
   }
   if (sc?.scoreTrackRecord && sc.scoreTrackRecord.n >= 5) {
     const t = sc.scoreTrackRecord;
-    L.push(`■ ARGUS校正: このscore水準は過去${t.n}件中${t.upRate != null ? `${Math.round(t.upRate * 100)}%上昇` : ''}${t.avgRetPct != null ? `(平均${t.avgRetPct >= 0 ? '+' : ''}${t.avgRetPct}%)` : ''}`);
+    L.push(`■ ARGUS校正: このscore水準は過去${t.n}件・${t.upRate != null ? `上昇${probabilityDisplay(t.upRate * 100).qualitative}` : '方向判定保留'}${t.avgRetPct != null ? `(平均${t.avgRetPct >= 0 ? '+' : ''}${t.avgRetPct}%)` : ''}`);
   }
-  if (sc?.postureCalibration?.hitRate != null) L.push(`■ この地合い(${sc.postureCalibration.posture})のエンジン的中率: ${Math.round(sc.postureCalibration.hitRate * 100)}%（n=${sc.postureCalibration.n}）`);
-  else if (sc?.engineCalibration?.hitRate != null) L.push(`■ ARGUSエンジン全体の的中率: ${Math.round(sc.engineCalibration.hitRate * 100)}%（n=${sc.engineCalibration.n}）`);
+  if (sc?.postureCalibration?.hitRate != null) L.push(`■ この地合い(${sc.postureCalibration.posture})のエンジン実績: ${probabilityDisplay(sc.postureCalibration.hitRate * 100).qualitative}（n=${sc.postureCalibration.n}）`);
+  else if (sc?.engineCalibration?.hitRate != null) L.push(`■ ARGUSエンジン全体の実績: ${probabilityDisplay(sc.engineCalibration.hitRate * 100).qualitative}（n=${sc.engineCalibration.n}）`);
   if (sc?.callJa) L.push(`■ ARGUSの一言コール: ${sc.callJa}`);
   L.push(`■ ARGUS姿勢: ${d.pst?.stanceJa ?? d.decision?.rule.action ?? strat.action ?? '未確認'}`);
   L.push(`■ ルール判断: ${d.decision?.rule.action ?? strat.action ?? '未確認'}`);

@@ -1,4 +1,5 @@
 import React from 'react';
+import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — TECHNICAL & ENTRY(Entry Scout)。旧AssetStrategySection行から移設。
 // オンデマンドのみ: ボタンを押した時だけ /api/argus/entry-scout を1回叩く。
@@ -75,7 +76,8 @@ export const AssetEntryScout: React.FC<{
           {scout.scoreTrackRecord && scout.scoreTrackRecord.n >= 5 && (
             <div className="scout__track">
               📊 この水準の実績: 過去{scout.scoreTrackRecord.n}件中
-              {scout.scoreTrackRecord.upRate != null && ` ${Math.round(scout.scoreTrackRecord.upRate * 100)}%が上昇`}
+              {scout.scoreTrackRecord.upRate != null
+                && ` 上昇${probabilityDisplay(scout.scoreTrackRecord.upRate * 100).qualitative}`}
               {scout.scoreTrackRecord.avgRetPct != null && `(平均${scout.scoreTrackRecord.avgRetPct >= 0 ? '+' : ''}${scout.scoreTrackRecord.avgRetPct}%)`}
             </div>
           )}
@@ -96,7 +98,9 @@ export const AssetEntryScout: React.FC<{
                    ['不明', scout.flowInference.probabilities.unconfirmed]] as [string, number][])
                   .filter(([, v]) => v > 0)
                   .map(([k, v]) => (
-                    <span className="scout__flow-prob" key={k}>{k} {Math.round(v * 100)}%</span>
+                    <span className="scout__flow-prob" key={k}>
+                      {k} {probabilityDisplay(v * 100).qualitative}
+                    </span>
                   ))}
               </div>
               <div className="scout__flow-next">次の確認: {scout.flowInference.nextConditionJa}</div>

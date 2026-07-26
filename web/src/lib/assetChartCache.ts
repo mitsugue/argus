@@ -17,6 +17,37 @@ export type AssetChartViewState =
   | 'ERROR_WITH_CACHE'
   | 'ERROR_WITHOUT_CACHE';
 
+export interface AssetChartUiContract {
+  state: AssetChartViewState;
+  errorClass: string | null;
+  retryAt: number | null;
+}
+
+export type AssetChartUiEvent =
+  | { type: 'http_200' }
+  | { type: 'failure'; hasCache: boolean; errorClass: string;
+      retryAt: number | null };
+
+/** Exclusive chart state transition. A successful response is authoritative:
+ * it clears a prior HTTP 429/error and its retry deadline atomically. */
+export function assetChartUiTransition(
+  _previous: AssetChartUiContract,
+  event: AssetChartUiEvent,
+): AssetChartUiContract {
+  if (event.type === 'http_200') {
+    return { state: 'CURRENT_READY', errorClass: null, retryAt: null };
+  }
+  const limited = event.errorClass === 'rate_limited'
+    || event.errorClass === 'retry_wait';
+  return {
+    state: limited
+      ? event.hasCache ? 'RATE_LIMITED_WITH_CACHE' : 'RATE_LIMITED_WITHOUT_CACHE'
+      : event.hasCache ? 'ERROR_WITH_CACHE' : 'ERROR_WITHOUT_CACHE',
+    errorClass: event.errorClass,
+    retryAt: event.retryAt,
+  };
+}
+
 export interface AssetChartIdentity {
   market: string;
   symbol: string;
