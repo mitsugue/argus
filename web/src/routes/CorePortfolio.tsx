@@ -213,7 +213,7 @@ export const CorePortfolio: React.FC = () => {
                     <span style={{ marginLeft: 6 }}>{ps.summaryJa}</span>
                   </p>
                   <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はAsset Deskの各カード→SCENARIOSで。
+                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はAsset Deskの各カード→Decisionで。
                   </p>
                 </>
               )}
