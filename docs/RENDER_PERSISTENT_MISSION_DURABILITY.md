@@ -58,6 +58,13 @@ sealed local checkpoint is written, fsynced, read back, and atomically
 published. If no verified remote snapshot exists, readiness stays false and
 the empty disk is preserved.
 
+For the one-time 13.3.0 migration, the stable raw checkpoint may be accepted
+only when `/var/data/argus_osint_memory.json.legacy-seal.json` binds that exact
+path, byte length, SHA-256, durable schema, and its own canonical record hash.
+The original `/tmp` source is retained. An unsealed file without that receipt,
+or any path/hash mismatch, still fails closed. The first normal 13.3.1
+checkpoint rewrites the state with the embedded local integrity seal.
+
 Malformed local checkpoints are quarantined beside the original file and the
 verified remote snapshot remains authoritative. WAL records after the saved
 cursor are replayed idempotently. WAL compaction is deferred until a Remote

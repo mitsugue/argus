@@ -20,8 +20,11 @@ from typing import Any, Dict, Mapping, Optional
 
 UTC = dt.timezone.utc
 LOCAL_SEAL_SCHEMA = "argus-local-checkpoint-integrity-v1"
+LEGACY_FILE_SEAL_SCHEMA = "argus-legacy-checkpoint-file-seal-v1"
+LEGACY_FILE_SEAL_SUFFIX = ".legacy-seal.json"
 MINIMUM_SAFETY_RESERVE = 64 * 1024 * 1024
 MINIMUM_WAL_ALLOWANCE = 8 * 1024 * 1024
+MAXIMUM_LEGACY_FILE_SEAL_BYTES = 64 * 1024
 
 
 class PersistentStorageError(RuntimeError):
@@ -127,6 +130,92 @@ def _file_bytes(path: str) -> int:
         return os.path.getsize(path)
     except OSError:
         return 0
+
+
+def _stream_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _legacy_file_seal_path(path: str) -> str:
+    return os.path.abspath(path) + LEGACY_FILE_SEAL_SUFFIX
+
+
+def _file_identity(stat_result: os.stat_result) -> tuple:
+    return (
+        stat_result.st_dev, stat_result.st_ino, stat_result.st_size,
+        stat_result.st_mtime_ns,
+    )
+
+
+def verify_legacy_checkpoint_file_seal(
+        path: str, *, expected_identity: Optional[tuple] = None
+        ) -> Dict[str, Any]:
+    """Verify the one-time 13.3.0 raw checkpoint migration receipt.
+
+    The legacy process could only write an unsealed ``argus-durable-v3`` JSON
+    file. Operations copied that stable file to the persistent disk with a
+    streaming SHA-256 and an fsynced sidecar receipt. The sidecar is accepted
+    only when it is bound to this exact path, size and byte hash; arbitrary
+    unsealed checkpoints remain rejected.
+    """
+    checkpoint = os.path.abspath(path)
+    sidecar = _legacy_file_seal_path(checkpoint)
+    for candidate, reason in (
+            (checkpoint, "legacy_checkpoint_symlink_rejected"),
+            (sidecar, "legacy_checkpoint_seal_symlink_rejected")):
+        if os.path.lexists(candidate) and os.path.islink(candidate):
+            raise PersistentStorageError(reason)
+    if not os.path.isfile(checkpoint):
+        raise FileNotFoundError(checkpoint)
+    if not os.path.isfile(sidecar):
+        raise PersistentStorageError("legacy_checkpoint_seal_missing")
+    if os.path.getsize(sidecar) > MAXIMUM_LEGACY_FILE_SEAL_BYTES:
+        raise PersistentStorageError("legacy_checkpoint_seal_oversized")
+    try:
+        with open(sidecar, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PersistentStorageError(
+            "legacy_checkpoint_seal_invalid") from exc
+    if not isinstance(manifest, dict):
+        raise PersistentStorageError("legacy_checkpoint_seal_invalid")
+    unsigned = {
+        key: value for key, value in manifest.items()
+        if key != "recordHash"
+    }
+    record_hash = hashlib.sha256(_canonical(unsigned)).hexdigest()
+    if manifest.get("schemaVersion") != LEGACY_FILE_SEAL_SCHEMA or \
+            manifest.get("algorithm") != "sha256" or \
+            manifest.get("checkpointSchemaVersion") != "argus-durable-v3" or \
+            os.path.abspath(str(manifest.get("checkpointPath") or "")) != \
+            checkpoint or \
+            manifest.get("recordHash") != record_hash:
+        raise PersistentStorageError("legacy_checkpoint_seal_invalid")
+    before = os.stat(checkpoint, follow_symlinks=False)
+    actual_hash = _stream_sha256(checkpoint)
+    after = os.stat(checkpoint, follow_symlinks=False)
+    stable_identity = _file_identity(before) == _file_identity(after)
+    if expected_identity is not None:
+        stable_identity = stable_identity and \
+            _file_identity(after) == expected_identity
+    if not stable_identity:
+        raise PersistentStorageError("legacy_checkpoint_changed_during_read")
+    if int(manifest.get("fileBytes") or -1) != after.st_size or \
+            manifest.get("fileSha256") != actual_hash:
+        raise PersistentStorageError("legacy_checkpoint_file_hash_mismatch")
+    return {
+        "verified": True,
+        "schemaVersion": LEGACY_FILE_SEAL_SCHEMA,
+        "checkpointPath": checkpoint,
+        "sidecarPath": sidecar,
+        "fileBytes": after.st_size,
+        "fileSha256": actual_hash,
+        "recordHash": record_hash,
+    }
 
 
 def _temp_bytes(directory: str, checkpoint_name: str) -> int:
@@ -319,12 +408,30 @@ def write_checkpoint(
         validator=lambda value: verify_checkpoint(value, require_seal=True))
 
 
-def load_checkpoint(path: str, *, require_seal: bool) -> Dict[str, Any]:
+def load_checkpoint(
+        path: str, *, require_seal: bool,
+        allow_legacy_file_seal: bool = False) -> Dict[str, Any]:
+    if os.path.lexists(path) and os.path.islink(path):
+        raise PersistentStorageError("local_checkpoint_symlink_rejected")
+    before_identity = _file_identity(
+        os.stat(path, follow_symlinks=False))
     with open(path, encoding="utf-8") as handle:
         blob = json.load(handle)
-    if not verify_checkpoint(blob, require_seal=require_seal):
-        raise PersistentStorageError("local_checkpoint_integrity_invalid")
-    return blob
+    if verify_checkpoint(blob, require_seal=require_seal):
+        return blob
+    legacy_receipt = None
+    if require_seal and allow_legacy_file_seal and \
+            isinstance(blob, dict) and \
+            "localCheckpointIntegrity" not in blob:
+        # Do not apply parsed state until its raw bytes and migration receipt
+        # have both been verified. A stable stat identity closes the race
+        # between parsing and the streaming hash.
+        legacy_receipt = verify_legacy_checkpoint_file_seal(
+            path, expected_identity=before_identity)
+    if legacy_receipt is not None and verify_checkpoint(
+            blob, require_seal=False):
+        return blob
+    raise PersistentStorageError("local_checkpoint_integrity_invalid")
 
 
 def quarantine(path: str) -> Optional[str]:

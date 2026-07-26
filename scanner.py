@@ -15720,6 +15720,14 @@ def _osint_persist_locked():
             _MISSION_TICK_CONTEXT["walSequence"] = int(
                 (checkpoint.get("walCompaction") or {}).get(
                     "receiptSequence") or included_wal_sequence)
+        migration = _DURABLE_STATE.get("legacyCheckpointMigration")
+        if isinstance(migration, dict) and \
+                migration.get("status") == "verified":
+            migration.update({
+                "status": "converted_to_embedded_seal",
+                "requiresSealedRewrite": False,
+                "convertedAt": _DURABLE_STATE["lastWriteAt"],
+            })
         return checkpoint
     except Exception as exc:
         _DURABLE_STATE["integrityStatus"] = "write_failed"
@@ -15822,8 +15830,18 @@ def _osint_restore_once():
     try:
         if _DURABILITY_PRODUCTION:
             blob = argus_persistent_storage.load_checkpoint(
-                _OSINT_PERSIST_FILE, require_seal=True)
-            source = "persistent_local"
+                _OSINT_PERSIST_FILE, require_seal=True,
+                allow_legacy_file_seal=True)
+            if "localCheckpointIntegrity" in blob:
+                source = "persistent_local"
+            else:
+                source = "persistent_local_legacy_verified"
+                _DURABLE_STATE["legacyCheckpointMigration"] = {
+                    "status": "verified",
+                    "schemaVersion":
+                        argus_persistent_storage.LEGACY_FILE_SEAL_SCHEMA,
+                    "requiresSealedRewrite": True,
+                }
         else:
             with open(_OSINT_PERSIST_FILE, encoding="utf-8") as handle:
                 blob = json.load(handle)

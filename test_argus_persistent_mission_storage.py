@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import pathlib
@@ -52,6 +53,27 @@ def remote_snapshot():
         "generatedAt": "2026-07-25T00:00:00Z",
         **section,
     }
+
+
+def write_legacy_file_seal(path, *, source_path="/tmp/legacy.json"):
+    checkpoint = pathlib.Path(path)
+    manifest = {
+        "schemaVersion": storage.LEGACY_FILE_SEAL_SCHEMA,
+        "algorithm": "sha256",
+        "checkpointSchemaVersion": "argus-durable-v3",
+        "checkpointPath": os.path.abspath(str(checkpoint)),
+        "sourcePath": source_path,
+        "sourceMtimeUtc": "2026-07-26T00:00:00Z",
+        "createdAt": "2026-07-26T00:01:00Z",
+        "fileBytes": checkpoint.stat().st_size,
+        "fileSha256": storage._stream_sha256(str(checkpoint)),
+    }
+    manifest["recordHash"] = hashlib.sha256(
+        storage._canonical(manifest)).hexdigest()
+    pathlib.Path(
+        str(checkpoint) + storage.LEGACY_FILE_SEAL_SUFFIX
+    ).write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest
 
 
 class FakeResponse:
@@ -299,6 +321,89 @@ class BootstrapAndReadinessTests(unittest.TestCase):
                 source = scanner._osint_restore_once()
             self.assertEqual(source, "persistent_local")
             request_get.assert_not_called()
+
+    def test_legacy_checkpoint_with_matching_file_seal_is_restored_once(self):
+        with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
+            checkpoint = pathlib.Path(value["checkpoint"])
+            checkpoint.write_text(
+                json.dumps(remote_snapshot()), encoding="utf-8")
+            write_legacy_file_seal(checkpoint)
+            with mock.patch.object(scanner.requests, "get") as request_get:
+                source = scanner._osint_restore_once()
+            self.assertEqual(source, "persistent_local_legacy_verified")
+            self.assertEqual(
+                scanner._DURABLE_STATE["legacyCheckpointMigration"]["status"],
+                "verified")
+            self.assertTrue(
+                scanner._DURABLE_STATE["legacyCheckpointMigration"][
+                    "requiresSealedRewrite"])
+            self.assertEqual(scanner._DURABLE_STATE["missionWalReplayed"], 0)
+            request_get.assert_not_called()
+
+    def test_unsealed_checkpoint_without_legacy_file_seal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            checkpoint = pathlib.Path(root, "state.json")
+            checkpoint.write_text(
+                json.dumps(remote_snapshot()), encoding="utf-8")
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "legacy_checkpoint_seal_missing"):
+                storage.load_checkpoint(
+                    str(checkpoint), require_seal=True,
+                    allow_legacy_file_seal=True)
+
+    def test_legacy_file_seal_rejects_modified_checkpoint(self):
+        with tempfile.TemporaryDirectory() as root:
+            checkpoint = pathlib.Path(root, "state.json")
+            checkpoint.write_text(
+                json.dumps(remote_snapshot()), encoding="utf-8")
+            write_legacy_file_seal(checkpoint)
+            checkpoint.write_text(
+                json.dumps({**remote_snapshot(), "tampered": True}),
+                encoding="utf-8")
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "legacy_checkpoint_file_hash_mismatch"):
+                storage.load_checkpoint(
+                    str(checkpoint), require_seal=True,
+                    allow_legacy_file_seal=True)
+
+    def test_legacy_file_seal_is_bound_to_exact_checkpoint_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            checkpoint = pathlib.Path(root, "state.json")
+            checkpoint.write_text(
+                json.dumps(remote_snapshot()), encoding="utf-8")
+            manifest = write_legacy_file_seal(checkpoint)
+            manifest["checkpointPath"] = str(
+                pathlib.Path(root, "different.json"))
+            unsigned = {
+                key: value for key, value in manifest.items()
+                if key != "recordHash"
+            }
+            manifest["recordHash"] = hashlib.sha256(
+                storage._canonical(unsigned)).hexdigest()
+            pathlib.Path(
+                str(checkpoint) + storage.LEGACY_FILE_SEAL_SUFFIX
+            ).write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "legacy_checkpoint_seal_invalid"):
+                storage.load_checkpoint(
+                    str(checkpoint), require_seal=True,
+                    allow_legacy_file_seal=True)
+
+    def test_legacy_checkpoint_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = pathlib.Path(root, "target.json")
+            target.write_text(json.dumps(remote_snapshot()), encoding="utf-8")
+            checkpoint = pathlib.Path(root, "state.json")
+            checkpoint.symlink_to(target)
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "local_checkpoint_symlink_rejected"):
+                storage.load_checkpoint(
+                    str(checkpoint), require_seal=True,
+                    allow_legacy_file_seal=True)
 
     def test_malformed_local_checkpoint_is_quarantined(self):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
