@@ -13,9 +13,12 @@ export interface DataQualityIncidentInput {
   sourceHealth: Array<{
     sourceName: string;
     status: string;
+    freshnessBucket?: string;
     lastSuccessAt: string | null;
+    ownerReadableStatusJa?: string;
     ownerReadableImpactJa: string;
     nextStepJa: string;
+    nextRetryAt?: string | null;
     isExpectedDisabled: boolean;
   }>;
   scheduledMission?: {
@@ -45,17 +48,31 @@ const severityOf = (status: string): DataQualityIncident['severity'] =>
 
 export function buildDataQualityIncidents(input: DataQualityIncidentInput): DataQualityIncident[] {
   const incidents: DataQualityIncident[] = input.sourceHealth
-    .filter((source) => !source.isExpectedDisabled && !['ok', 'fresh', 'recent'].includes(source.status))
-    .map((source) => ({
-      id: `source:${source.sourceName}`,
-      severity: severityOf(source.status),
-      feature: source.sourceName,
-      impact: source.ownerReadableImpactJa || '影響範囲を確認中',
-      lastSuccess: source.lastSuccessAt ?? '未記録',
-      currentState: source.status,
-      nextRetry: '自動再試行',
-      ownerAction: source.nextStepJa || '次回自動更新を確認',
-    }));
+    .filter((source) => {
+      if (source.isExpectedDisabled) return false;
+      const statusHealthy = ['ok', 'fresh', 'recent'].includes(source.status);
+      const freshnessHealthy = !source.freshnessBucket
+        || ['fresh', 'recent', 'unknown'].includes(source.freshnessBucket);
+      return !(statusHealthy && freshnessHealthy);
+    })
+    .map((source) => {
+      const currentState = source.freshnessBucket
+        && ['stale', 'very_stale'].includes(source.freshnessBucket)
+        ? `${source.status} / ${source.freshnessBucket}` : source.status;
+      return {
+        id: `source:${source.sourceName}`,
+        severity: severityOf(currentState),
+        feature: source.sourceName,
+        impact: source.ownerReadableImpactJa || '影響範囲を確認中',
+        lastSuccess: source.lastSuccessAt ?? '未記録',
+        currentState: source.freshnessBucket
+          && ['stale', 'very_stale'].includes(source.freshnessBucket)
+          ? currentState : source.ownerReadableStatusJa
+          ? `${source.ownerReadableStatusJa} (${currentState})` : currentState,
+        nextRetry: source.nextRetryAt ?? '次回の自動更新',
+        ownerAction: source.nextStepJa || '次回自動更新を確認',
+      };
+    });
   if (input.scheduledMission
     && !['on_time', 'unknown'].includes(input.scheduledMission.lastDelayClassification)) {
     incidents.push({

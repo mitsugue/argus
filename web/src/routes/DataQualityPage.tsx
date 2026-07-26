@@ -5,6 +5,7 @@ import { assessBackupSafety } from '../lib/backupSafety';
 import { latestStrategy, latestFireCore, latestPlans, latestScenarios,
   publishDataQuality } from '../lib/positionExposureShare';
 import { buildDataQualityIncidents } from '../domain/dataQualityIncidents';
+import type { DataQualityIncident } from '../domain/dataQualityIncidents';
 import { DataQualityIncidents } from '../components/system/DataQualityIncidents';
 
 // V11.22.0 — Admin / Data Quality Console。「今の判断は最新データに基づいて
@@ -125,12 +126,17 @@ export const DataQualityPage: React.FC = () => {
   const { assets } = useAssets();
   const [c, setC] = React.useState<Console | null>(null);
   const [err, setErr] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
   const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
 
   const load = React.useCallback(() => {
-    if (!backend) { setErr(true); return; }
+    setLoading(true);
+    if (!backend) { setErr(true); setLoading(false); return; }
     fetch(backend.replace(/\/$/, '') + '/api/argus/data-quality')
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`data_quality_http_${r.status}`);
+        return r.json();
+      })
       .then((d: Console) => {
         setC(d); setErr(false);
         publishDataQuality({ overallStatus: d.overallStatus, overallStatusJa: d.overallStatusJa,
@@ -140,7 +146,8 @@ export const DataQualityPage: React.FC = () => {
             ? `${d.osintHealth.twoXReadiness.overallJa}${d.osintHealth.twoXReadiness.currentRatio != null ? `(現在比 ${d.osintHealth.twoXReadiness.currentRatio.toFixed(2)}x)` : ''}`
             : undefined });
       })
-      .catch(() => setErr(true));
+      .catch(() => setErr(true))
+      .finally(() => setLoading(false));
   }, [backend]);
   React.useEffect(() => { load(); }, [load]);
 
@@ -154,21 +161,28 @@ export const DataQualityPage: React.FC = () => {
       note: (() => { try { const b = assessBackupSafety(assets); return `保護状態: ${b.protectionLevelJa}`; }
         catch { return '判定保留'; } })() },
   ];
-  const incidents = c ? buildDataQualityIncidents(c) : [];
+  const connectionIncident: DataQualityIncident[] = err ? [{
+    id: 'data-quality-connection',
+    severity: 'critical',
+    feature: 'Data Quality API',
+    impact: '現在のsource healthと運用状態を取得できない',
+    lastSuccess: 'この画面では未確認',
+    currentState: 'unreachable',
+    nextRetry: '再読込時',
+    ownerAction: 'ネットワークとbackend healthを確認',
+  }] : [];
+  const incidents = [...connectionIncident, ...(c ? buildDataQualityIncidents(c) : [])];
 
   return (
     <PageShell
       title="Data Quality"
       subtitle="今の判断は最新データに基づいているか — ソース鮮度・エンジン状態・bridge・漏洩ガードを1画面で点検。古いデータのレイヤーは判断の確度を割り引いて読む。運用点検であり売買機能ではない。"
     >
-      {err && (
-        <p style={{ color: 'var(--value-negative)', fontSize: 12 }}>
-          サーバーに接続できません。ネットワーク/Renderの状態を確認してください(このページ自体が疎通チェックです)。
-        </p>
-      )}
+      {loading
+        ? <p className="cmd-alloc__note">運用状態を確認中…</p>
+        : <DataQualityIncidents incidents={incidents} />}
       {c && (
         <>
-          <DataQualityIncidents incidents={incidents} />
           <details className="dq-diagnostics">
             <summary>Diagnostics / healthy sources / provider details</summary>
             <div className="dq-diagnostics__body">

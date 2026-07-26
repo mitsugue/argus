@@ -23,7 +23,8 @@ import './Guide.css';
 // アプリ内の説明書は常に「現在の実力」を正確に語ること（HANDOFF.md にも明記）。
 // Page-by-page "how to use" — in the same order as the left nav, so the guide
 // matches how you actually move through the app. Kept in sync with every update.
-const PAGE_GUIDE: { page: string; descJa: string }[] = [
+interface PageGuideItem { page: string; descJa: string }
+const PAGE_GUIDE: PageGuideItem[] = [
   { page: '共通ヘッダー / ナビ',
     descJa: '左上の「A.R.G.U.S. Pro」をタップ → システム状態のポップアップ(AI予算・各データ源・通知などの健全性。緑=正常/橙=注意/赤=停止。外側タップで閉じる)。三角ロゴの目そのものが健康ビーコンで、状態色で美しく光ります(正常=緑・注意=橙・停止=赤)。左の縦ナビでページ移動(各ページは下端で強く引っ張ると次ページへも進める)。' },
   { page: '① Today(今日の判断)',
@@ -41,6 +42,34 @@ const PAGE_GUIDE: { page: string; descJa: string }[] = [
   { page: '⑦ Guide(このページ)',
     descJa: '使い方・用語・自己採点の成績(Ledger Health)・情報源の真実性(レジストリ)。困ったらここ。アプリ更新のたびに自動で最新化されます。バックアップ設定はBackupページへ移動しました。' },
 ];
+
+const guideText = (value: string) => value.toLowerCase()
+  .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, ' ')
+  .replace(/\([^)]*\)/g, ' ')
+  .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]+/g, ' ')
+  .trim();
+
+export function resolveGuideContext(context: string, pages = PAGE_GUIDE): PageGuideItem | null {
+  const target = guideText(context);
+  if (!target) return null;
+  const exact = pages.find((item) => {
+    const page = guideText(item.page);
+    return page === target || page.includes(target) || target.includes(page);
+  });
+  if (exact) return exact;
+  const tokens = target.split(/\s+/).filter((token) => token.length > 2);
+  return pages.find((item) => {
+    const page = guideText(item.page);
+    return tokens.length > 0 && tokens.every((token) => page.includes(token));
+  }) ?? null;
+}
+
+const contextFromHash = () => {
+  try {
+    return window.location.hash.startsWith('#guide:')
+      ? decodeURIComponent(window.location.hash.slice('#guide:'.length)) : '';
+  } catch { return ''; }
+};
 
 const CAPABILITIES: { area: string; descJa: string }[] = [
   { area: 'Daily Market Sheet / Source of Truth',
@@ -489,21 +518,38 @@ const HOWTO: string[] = [
 
 export const Guide: React.FC = () => {
   const [showAllUpdates, setShowAllUpdates] = React.useState(false);
-  const [query, setQuery] = React.useState(() => {
-    try {
-      return window.location.hash.startsWith('#guide:')
-        ? decodeURIComponent(window.location.hash.slice('#guide:'.length)) : '';
-    } catch { return ''; }
-  });
+  const [context, setContext] = React.useState(contextFromHash);
+  const [query, setQuery] = React.useState('');
+  React.useEffect(() => {
+    const onHashChange = () => setContext(contextFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
   const RECENT_SHOWN = 5;
   const loc = useLocale();
   const normalizedQuery = query.trim().toLowerCase();
+  const contextualGuide = resolveGuideContext(context);
   const filteredPages = PAGE_GUIDE.filter((item) =>
     !normalizedQuery || `${item.page} ${item.descJa}`.toLowerCase().includes(normalizedQuery));
   const filteredCapabilities = CAPABILITIES.filter((item) =>
     !normalizedQuery || `${item.area} ${item.descJa}`.toLowerCase().includes(normalizedQuery));
+  const filteredGlossary = normalizedQuery ? GLOSSARY.filter(([term, description]) =>
+    `${term} ${description}`.toLowerCase().includes(normalizedQuery)) : [];
   return (
     <PageShell title={tEn('nav.guide')} subtitle="使い方(ページ別)・できること・用語一覧(日本語ガイド)。">
+      {context && (
+        <section className="card guide-context" aria-live="polite">
+          <span>CONTEXT · {context}</span>
+          {contextualGuide ? <>
+            <h2>{contextualGuide.page}</h2>
+            <p>{contextualGuide.descJa}</p>
+          </> : <>
+            <h2>この画面の個別ガイドは未登録です</h2>
+            <p>下の検索から関連する機能名または用語を確認してください。</p>
+          </>}
+          <a href="#guide">すべてのGuideを見る</a>
+        </section>
+      )}
       <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)' }}>{t('common.language')}</span>
         {(['en', 'ja'] as const).map((l) => (
@@ -525,7 +571,28 @@ export const Guide: React.FC = () => {
         <input id="guide-query" type="search" value={query}
           placeholder="例: Asset Desk / Backup / Market"
           onChange={(event) => setQuery(event.target.value)} />
+        {normalizedQuery && (
+          <span className="guide-search__count" aria-live="polite">
+            {filteredPages.length + filteredCapabilities.length + filteredGlossary.length} results
+          </span>
+        )}
       </section>
+
+      {!!filteredGlossary.length && (
+        <section>
+          <div className="section-head">
+            <span className="section-head__title">用語の検索結果</span>
+            <span className="section-head__count">{filteredGlossary.length} terms</span>
+          </div>
+          <div className="card guide-results">
+            {filteredGlossary.map(([term, description]) => (
+              <details className="guide-result" key={term}>
+                <summary>{term}</summary><p>{description}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="section-head">

@@ -6,20 +6,32 @@ export const DataQualityIncidents: React.FC<{ incidents: DataQualityIncident[] }
   <section className="dq-incidents" aria-labelledby="active-incidents">
     <div className="section-head">
       <span className="section-head__title" id="active-incidents">ACTIVE INCIDENTS</span>
-      <span className="section-head__count">{incidents.length} actionable</span>
+      <span className="section-head__count">
+        {incidents.length} actionable
+        {incidents.some((item) => item.severity === 'critical')
+          ? ` · ${incidents.filter((item) => item.severity === 'critical').length} critical` : ''}
+      </span>
     </div>
     {!incidents.length ? <div className="card dq-incidents__quiet">
       判断へ影響するactive incidentはありません。
-    </div> : <div className="dq-incidents__table" role="table" aria-label="Actionable data incidents">
-      {incidents.map((incident) => <article key={incident.id} role="row" data-severity={incident.severity}>
-        <b>{incident.severity.toUpperCase()}</b>
-        <strong>{incident.feature}</strong>
-        <span><em>IMPACT</em>{incident.impact}</span>
-        <span><em>LAST SUCCESS</em>{incident.lastSuccess}</span>
-        <span><em>STATE</em>{incident.currentState}</span>
-        <span><em>NEXT RETRY</em>{incident.nextRetry}</span>
-        <span><em>OWNER ACTION</em>{incident.ownerAction}</span>
-      </article>)}
+    </div> : <div className="dq-incidents__table-wrap">
+      <table className="dq-incidents__table" aria-label="Actionable data incidents">
+        <thead><tr>
+          <th>SEVERITY</th><th>FEATURE</th><th>IMPACT</th><th>LAST SUCCESS</th>
+          <th>STATE</th><th>NEXT RETRY</th><th>OWNER ACTION</th>
+        </tr></thead>
+        <tbody>{incidents.map((incident) => (
+          <tr key={incident.id} data-severity={incident.severity}>
+            <td data-label="SEVERITY"><b>{incident.severity.toUpperCase()}</b></td>
+            <td data-label="FEATURE"><strong>{incident.feature}</strong></td>
+            <td data-label="IMPACT">{incident.impact}</td>
+            <td data-label="LAST SUCCESS">{incident.lastSuccess}</td>
+            <td data-label="STATE">{incident.currentState}</td>
+            <td data-label="NEXT RETRY">{incident.nextRetry}</td>
+            <td data-label="OWNER ACTION">{incident.ownerAction}</td>
+          </tr>
+        ))}</tbody>
+      </table>
     </div>}
   </section>
 );
