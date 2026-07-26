@@ -23,6 +23,7 @@ def test_recovery_issuance_idempotent(monkeypatch):
     monkeypatch.setattr(scanner, "_ai_now_iso", lambda: NOW)
     monkeypatch.setattr(scanner, "datetime", FixedBusinessDateTime)
     scanner._MISSIONS.clear()
+    scanner._MISSION_WINDOWS.clear()
     scanner._FORECAST_LEDGER.clear()
     scanner._OUTCOME_LEDGER.clear()
     scanner._OSINT_STORE.clear()
@@ -34,7 +35,9 @@ def test_recovery_issuance_idempotent(monkeypatch):
                        scheduled_for=f"{_sd}T00:01:00+09:00")
     scanner._MISSIONS.append(_due)   # 壁時計非依存: 到来済み発行ミッションを注入
     with scanner.app.test_client() as c:
-        c.post("/api/argus/admin/missions/tick", json={})   # コールド→warmup消費
+        c.post("/api/argus/admin/missions/tick",
+               json={"triggerSource": "manual",
+                     "runId": "recovery-cold"})   # コールド→warmup消費
         assert len(scanner._FORECAST_LEDGER) == 0
         # ストアが温まった状態を再現(実調査由来の形)
         scanner._OSINT_STORE["6965"] = {
@@ -42,12 +45,16 @@ def test_recovery_issuance_idempotent(monkeypatch):
             "ownerConclusion": {"statusJa": "Gemini未満"},
             "researchPower": {"statusJa": "Gemini未満"},
             "storeWarmth": {"storeWarmth": "warming"}}
-        c.post("/api/argus/admin/missions/tick", json={})   # 回収発行
+        c.post("/api/argus/admin/missions/tick",
+               json={"triggerSource": "manual",
+                     "runId": "recovery-warm"})   # 回収発行
         n1 = len(scanner._FORECAST_LEDGER)
         assert n1 >= 1, "回収ミッションがforward-live予測を発行"
         assert all(f.get("origin") == "forward_live"
                    for f in scanner._FORECAST_LEDGER)
-        c.post("/api/argus/admin/missions/tick", json={})   # 冪等
+        c.post("/api/argus/admin/missions/tick",
+               json={"triggerSource": "manual",
+                     "runId": "recovery-repeat"})   # 冪等
         assert len(scanner._FORECAST_LEDGER) == n1
 
 
@@ -66,9 +73,13 @@ def test_soak_persists_across_restore(tmp_path, monkeypatch):
 
 def test_validation_run_labeled(monkeypatch):
     _admin(monkeypatch)
+    scanner._MISSION_WINDOWS.clear()
     scanner._PERIODIC_REPORTS.clear()
     with scanner.app.test_client() as c:
-        c.post("/api/argus/admin/missions/tick", json={"validate": "weekly"})
+        c.post("/api/argus/admin/missions/tick",
+               json={"triggerSource": "manual",
+                     "runId": "validation-weekly",
+                     "validate": "weekly"})
     reps = [r for r in scanner._PERIODIC_REPORTS
             if r.get("origin") == "validation_run"]
     assert reps and "定期実行ではない" in reps[0]["ownerReadableJa"]
@@ -106,6 +117,7 @@ def test_replay_end_to_end_labeled():
 def test_incident_open_close(monkeypatch):
     _admin(monkeypatch)
     scanner._MISSIONS.clear()
+    scanner._MISSION_WINDOWS.clear()
     scanner._INCIDENTS.clear()
     old = sc.mission(mission_type="post_session_snapshot", market="JP",
                      session_date="2026-07-09",

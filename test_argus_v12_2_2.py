@@ -81,6 +81,7 @@ def test_cold_store_queues_warmup_not_forecast(monkeypatch):
     monkeypatch.setattr(scanner, "_ai_now_iso", lambda: NOW)
     monkeypatch.setattr(scanner, "datetime", FixedBusinessDateTime)
     scanner._MISSIONS.clear()
+    scanner._MISSION_WINDOWS.clear()
     scanner._FORECAST_LEDGER.clear()
     scanner._OSINT_STORE.clear()
     scanner._OSINT_AGENT_QUEUE.clear()
