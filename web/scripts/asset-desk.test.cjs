@@ -157,8 +157,9 @@ check('B8 reasonSource=ai', view({}, {}).reasonSource === 'ai');
 // 11. 一致なら不一致表示なし
 { const v = view({}, { action: 'WAIT' });
   check('B11 no disagreement when equal', v.rule.disagreementJa === null); }
-// 12. 確度は%整数
-check('B12 confidence pct', view({}, {}).confidencePct === 70);
+// 12. 未校正の確度は疑似精度を避け、定性的に表示
+check('B12 confidence stays qualitative without calibration',
+  view({}, {}).confidenceJa === '高' && view({}, {}).ai.confidenceJa === '高');
 // 13. aiViewの語彙変換(caution)
 check('B13 aiView vocab', view({}, {}).ai.viewJa === 'ルール判定より注意');
 // 14. RULE CHECKにルール原文(action/理由/次条件)が残る

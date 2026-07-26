@@ -5,6 +5,7 @@ import {
   type MoverCauseCompact,
 } from '../../hooks/useDownsideIncidents';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
+import { probabilityDisplay } from '../../domain/decisionView';
 import { AiExplanationBlock } from './AiExplanationBlock';
 import './DownsideIncidentCard.css';
 
@@ -105,8 +106,9 @@ export const IncidentRow: React.FC<{
             {inc.causeBuckets.slice(0, 4).map((b) => (
               <div className="dic-bucket" key={b.cause}>
                 <span className="dic-bucket__name">{CAUSE_JA[b.cause] ?? b.cause}</span>
-                <span className="dic-bucket__bar"><i style={{ width: `${Math.round(b.probability * 100)}%` }} /></span>
-                <span className="dic-bucket__pct">{Math.round(b.probability * 100)}%</span>
+                <span className="dic-bucket__pct">
+                  {probabilityDisplay(b.probability * 100).qualitative}
+                </span>
               </div>
             ))}
           </div>

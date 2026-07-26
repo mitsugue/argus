@@ -48,8 +48,10 @@ export interface ProbabilityDisplay {
   showPercent: boolean;
   percentText: string | null;
   qualitative: '優勢' | '中立' | '条件付き' | '判定保留';
-  reason: 'verified_probability' | 'provenance_incomplete';
+  reason: 'verified_probability' | 'provenance_incomplete' | 'invalid_probability';
 }
+
+export type ConfidenceDisplay = '高' | '中' | '低' | '判定保留';
 
 const SEMANTIC_PATTERNS: Array<[string, RegExp]> = [
   ['exit', /EXIT|撤退/],
@@ -59,7 +61,33 @@ const SEMANTIC_PATTERNS: Array<[string, RegExp]> = [
   ['hold', /HOLD|保有継続|維持/],
   ['no-entry', /新規.*(禁止|停止|見送り)|新規禁止/],
   ['no-add', /(買い増し|追加).*(禁止|停止|しない)/],
+  ['enter', /ENTER|新規可|新規.*可能/],
+  ['add', /(買い増し|追加).*(可|可能)/],
 ];
+
+const TRUTH_TEXT_MAX = 64;
+
+function compactTruthText(value: string | null | undefined,
+                          maxLength = TRUTH_TEXT_MAX): string | null {
+  const clean = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!clean) return null;
+  return clean.length <= maxLength ? clean : `${clean.slice(0, maxLength - 1)}…`;
+}
+
+function compactTruthList(values: string[] | undefined, limit: number): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values ?? []) {
+    const compact = compactTruthText(value);
+    if (!compact) continue;
+    const key = compact.toLocaleLowerCase('ja');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(compact);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
 
 export function semanticDecisionKey(value: string | null | undefined): string {
   const text = String(value ?? '').toUpperCase()
@@ -81,6 +109,37 @@ export function duplicateDecisionKeys(values: Array<string | null | undefined>):
   return [...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key);
 }
 
+/** Canonical decision surfaces may expose one primary conclusion plus three
+ * differently-scoped fields. Narrative fields must not repeat the primary
+ * conclusion or each other. Owner/entry actions are intentionally excluded:
+ * their separate roles are part of the DecisionView contract. */
+export function duplicateDecisionViewKeys(view: DecisionView): string[] {
+  return duplicateDecisionKeys([
+    view.primaryAction, view.reason, view.nextCheck, view.changeCondition,
+  ]);
+}
+
+/** Fail-closed contradiction audit for the canonical DecisionView. */
+export function contradictoryDecisionStates(view: DecisionView): string[] {
+  const primary = new Set(semanticDecisionKey(view.primaryAction).split(':'));
+  const owner = new Set(semanticDecisionKey(view.ownerAction).split(':'));
+  const entry = new Set(semanticDecisionKey(view.entryAction).split(':'));
+  const contradictions: string[] = [];
+  if ((primary.has('exit') || primary.has('trim'))
+      && (owner.has('hold') || owner.has('add'))) {
+    contradictions.push('owner_action_conflicts_with_primary');
+  }
+  if ([...primary].some((key) =>
+    ['exit', 'trim', 'review', 'wait', 'no-entry'].includes(key))
+      && entry.has('enter')) {
+    contradictions.push('entry_action_conflicts_with_primary');
+  }
+  if (view.evidenceState === 'VERIFIED_FACT' && !view.asOf) {
+    contradictions.push('verified_evidence_missing_as_of');
+  }
+  return contradictions;
+}
+
 export function normalizeDataState(value: string | null | undefined): DataState {
   const state = String(value ?? '').trim().toUpperCase();
   if (state === 'LIVE' || state === 'FRESH' || state === 'VERIFIED') return 'LIVE';
@@ -95,12 +154,16 @@ export function evidenceTruth(input: Partial<EvidenceTruth> & {
 }): EvidenceTruth {
   const truth: EvidenceTruth = {
     state: input.state,
-    source: input.source?.trim() || null,
+    source: compactTruthText(input.source, 80),
     asOf: input.asOf?.trim() || null,
-    confirmed: (input.confirmed ?? []).filter(Boolean).slice(0, 3),
-    missing: (input.missing ?? []).filter(Boolean).slice(0, 3),
-    nextCheck: input.nextCheck?.trim() || null,
-    alternative: input.alternative?.trim() || null,
+    confirmed: compactTruthList(input.confirmed, 3),
+    missing: compactTruthList(input.missing, 2),
+    nextCheck: compactTruthText(input.nextCheck),
+    // A "best hypothesis" is meaningful only when the state explicitly says
+    // that evidence supports one. UNRESOLVED must not simultaneously claim an
+    // influential candidate.
+    alternative: input.state === 'SUPPORTED_HYPOTHESIS'
+      ? compactTruthText(input.alternative) : null,
   };
   if (truth.state === 'VERIFIED_FACT' && (!truth.source || !truth.asOf)) {
     return { ...truth, state: 'UNRESOLVED' };
@@ -115,7 +178,9 @@ export function probabilityDisplay(
   value: number | null | undefined,
   provenance?: Partial<ProbabilityProvenance> | null,
 ): ProbabilityDisplay {
-  const hasCompleteProvenance = Number.isFinite(value)
+  const numeric = Number.isFinite(value) ? Number(value) : null;
+  const validRange = numeric != null && numeric >= 0 && numeric <= 100;
+  const hasCompleteProvenance = validRange
     && !!provenance?.method?.trim()
     && Number.isInteger(provenance.sampleSize)
     && (provenance.sampleSize ?? 0) > 0
@@ -123,20 +188,30 @@ export function probabilityDisplay(
     && !!provenance.outcomeDefinition?.trim()
     && !!provenance.asOf?.trim();
   if (hasCompleteProvenance) {
-    const percent = Math.max(0, Math.min(100, Number(value)));
     return {
       showPercent: true,
-      percentText: `${Math.round(percent)}%`,
-      qualitative: percent >= 45 ? '優勢' : percent >= 25 ? '中立' : '条件付き',
+      percentText: `${Math.round(numeric!)}%`,
+      qualitative: numeric! >= 45 ? '優勢' : numeric! >= 25 ? '中立' : '条件付き',
       reason: 'verified_probability',
     };
   }
-  const numeric = Number.isFinite(value) ? Number(value) : null;
   return {
     showPercent: false,
     percentText: null,
-    qualitative: numeric == null ? '判定保留'
+    qualitative: !validRange ? '判定保留'
       : numeric >= 45 ? '優勢' : numeric >= 25 ? '中立' : '条件付き',
-    reason: 'provenance_incomplete',
+    reason: numeric != null && !validRange
+      ? 'invalid_probability' : 'provenance_incomplete',
   };
+}
+
+/** Confidence without a calibration contract is a qualitative ordering, not a
+ * probability. Keep the value useful without manufacturing decimal precision. */
+export function confidenceDisplay(value: number | null | undefined): ConfidenceDisplay {
+  if (!Number.isFinite(value) || Number(value) < 0 || Number(value) > 1) {
+    return '判定保留';
+  }
+  if (Number(value) >= 0.7) return '高';
+  if (Number(value) >= 0.4) return '中';
+  return '低';
 }

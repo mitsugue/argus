@@ -10,6 +10,7 @@
 // 見せかけない(aiReasonJa=nullで正直に区別)。
 
 import type { AiFreshness } from './assetCard';
+import { confidenceDisplay, type ConfidenceDisplay } from './decisionView';
 
 // ── 入力(既存hookの形に緩く合わせる — 再計算しない) ─────────────────────────
 
@@ -149,13 +150,13 @@ export interface AssetDecisionView {
   reasonJa: string;
   /** 理由のsource(ルール理由をAI文章に見せない)。 */
   reasonSource: 'ai' | 'rule';
-  confidencePct: number | null;
+  confidenceJa: ConfidenceDisplay;
   ai: {
     available: boolean;
     finalAction: string | null;
     reasonJa: string | null;          // AI自身の理由のみ(欠落=null)
     reasonMissing: boolean;
-    confidencePct: number | null;
+    confidenceJa: ConfidenceDisplay;
     viewJa: string | null;            // ルールとの一致/注意/不同意
     viewTone: string;
     redFlags: string[];
@@ -208,13 +209,13 @@ export function resolveAssetDecision(inp: {
     ageJa,
     reasonJa,
     reasonSource: src === 'ai' && inp.merged?.aiReasonJa ? 'ai' : 'rule',
-    confidencePct: inp.merged?.confidence != null ? Math.round(inp.merged.confidence * 100) : null,
+    confidenceJa: confidenceDisplay(inp.merged?.confidence),
     ai: {
       available: !!inp.aiLabel && inp.meta.primary,
       finalAction: inp.aiLabel?.aiFinalAction ?? null,
       reasonJa: aiReason,
       reasonMissing: !!inp.aiLabel && !inp.aiLabel.reasonJa,
-      confidencePct: inp.aiLabel?.confidence != null ? Math.round(inp.aiLabel.confidence * 100) : null,
+      confidenceJa: confidenceDisplay(inp.aiLabel?.confidence),
       viewJa: view ? (AI_VIEW_JA[view] ?? view) : null,
       viewTone: AI_VIEW_TONE[view ?? 'unavailable'] ?? 'var(--text-muted)',
       redFlags: inp.aiLabel?.redFlags ?? [],

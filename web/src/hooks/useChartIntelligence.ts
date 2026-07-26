@@ -11,7 +11,7 @@ import {
 } from '../domain/marketInstruments';
 import {
   ASSET_CHART_METHOD_VERSION, assetChartRequestGate, boundedRetryAt,
-  parseRetryAfter, readAssetChart, writeAssetChart,
+  assetChartUiTransition, parseRetryAfter, readAssetChart, writeAssetChart,
   type AssetChartIdentity, type AssetChartViewState,
 } from '../lib/assetChartCache';
 
@@ -389,25 +389,34 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
         const value = await loadLegacy(legacyUrl, options.symbol);
         const published = await writeAssetChart(identity, value);
         if (cancelled || requestSequence !== sequence.current) return;
+        const ready = assetChartUiTransition({
+          state: legacyState,
+          errorClass: legacyError?.errorClass ?? null,
+          retryAt: legacyRetryAt,
+        }, { type: 'http_200' });
         setLegacyData(published?.payload ?? value);
         setLegacyKey(legacyUrl);
-        setLegacyState('CURRENT_READY');
+        setLegacyState(ready.state);
         setLegacyError(null);
-        setLegacyRetryAt(null);
+        setLegacyRetryAt(ready.retryAt);
       } catch (reason) {
         if (cancelled || requestSequence !== sequence.current) return;
         const error = reason instanceof AssetChartRequestError
           ? reason : new AssetChartRequestError('取得失敗', { errorClass: 'network' });
         const hasCache = !!cached;
-        const rateLimited = error.errorClass === 'rate_limited'
-          || error.errorClass === 'retry_wait';
+        const failed = assetChartUiTransition({
+          state: legacyState,
+          errorClass: legacyError?.errorClass ?? null,
+          retryAt: legacyRetryAt,
+        }, {
+          type: 'failure', hasCache, errorClass: error.errorClass,
+          retryAt: error.retryAt,
+        });
         setLegacyData(cached);
         setLegacyKey(legacyUrl);
-        setLegacyState(rateLimited
-          ? hasCache ? 'RATE_LIMITED_WITH_CACHE' : 'RATE_LIMITED_WITHOUT_CACHE'
-          : hasCache ? 'ERROR_WITH_CACHE' : 'ERROR_WITHOUT_CACHE');
+        setLegacyState(failed.state);
         setLegacyError(error);
-        setLegacyRetryAt(error.retryAt);
+        setLegacyRetryAt(failed.retryAt);
       }
     })();
     return () => { cancelled = true; };

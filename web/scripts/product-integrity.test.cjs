@@ -47,6 +47,38 @@ check('S8 complete probability provenance permits percent',
     outcomeDefinition: '5d positive close return',
     asOf: '2026-07-24T15:00:00+09:00',
   }).percentText === '62%');
+check('S8b out-of-range probability is rejected instead of clamped',
+  semantics.probabilityDisplay(140, {
+    method: 'walk-forward-v1',
+    sampleSize: 64,
+    calibration: 'BSS=0.075',
+    outcomeDefinition: '5d positive close return',
+    asOf: '2026-07-24T15:00:00+09:00',
+  }).reason === 'invalid_probability'
+  && semantics.probabilityDisplay(140, {
+    method: 'walk-forward-v1', sampleSize: 64, calibration: 'BSS=0.075',
+    outcomeDefinition: '5d positive close return',
+    asOf: '2026-07-24T15:00:00+09:00',
+  }).showPercent === false);
+check('S8c unresolved evidence never also claims a best hypothesis',
+  semantics.evidenceTruth({
+    state: 'UNRESOLVED',
+    alternative: '決算が原因の有力候補',
+    nextCheck: 'TDnetを確認',
+  }).alternative === null);
+check('S8d unknown evidence text is concise and deduplicated',
+  (() => {
+    const long = '未確認'.repeat(40);
+    const truth = semantics.evidenceTruth({
+      state: 'UNAVAILABLE',
+      confirmed: [long, long],
+      missing: [long, long, '追加不足'],
+      nextCheck: long,
+    });
+    return truth.confirmed.length === 1 && truth.missing.length === 2
+      && [...truth.confirmed, ...truth.missing, truth.nextCheck]
+        .filter(Boolean).every((line) => line.length <= 64);
+  })());
 
 const base = {
   name: 'Example', market: 'JP', held: false, priceText: '¥100',
@@ -66,12 +98,45 @@ check('S9 portfolio counters are mutually exclusive',
 check('S10 DecisionView contract is populated once',
   views.every((view) => view.primaryAction === view.currentActionJa
     && view.reason === view.whyJa && view.nextCheck === view.nextJa));
+check('S10b canonical views have zero duplicate primary decision keys',
+  views.every((view) => semantics.duplicateDecisionViewKeys(view).length === 0));
+check('S10c canonical views have zero contradictory states',
+  views.every((view) => semantics.contradictoryDecisionStates(view).length === 0));
+check('S10d incident override governs owner and entry actions',
+  (() => {
+    const view = desk.buildDecisionFirstView({
+      ...base, symbol: 'E', held: true, signalCode: 'ENTER',
+      actionOverride: 'EXIT_WATCH', ownerLabel: '保有継続・追加可', rank: 0,
+    });
+    return view.ownerAction === '撤退検討' && view.entryAction === '新規停止'
+      && semantics.contradictoryDecisionStates(view).length === 0;
+  })());
 
 const scenarioSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'assetDesk', 'AssetScenarioPanel.tsx',
 ), 'utf8');
 check('S11 scenario percent is gated by provenance',
   scenarioSource.includes('display.showPercent') && !scenarioSource.includes('{s.probability}%'));
+const aiReviewSource = fs.readFileSync(path.join(
+  __dirname, '..', 'src', 'components', 'assetDesk', 'AssetAIReview.tsx',
+), 'utf8');
+const scoutSource = fs.readFileSync(path.join(
+  __dirname, '..', 'src', 'components', 'assetDesk', 'AssetEntryScout.tsx',
+), 'utf8');
+const incidentSource = fs.readFileSync(path.join(
+  __dirname, '..', 'src', 'components', 'dashboard', 'DownsideIncidentCard.tsx',
+), 'utf8');
+const researchSource = fs.readFileSync(path.join(
+  __dirname, '..', 'src', 'components', 'assetDesk', 'AssetResearchPanel.tsx',
+), 'utf8');
+check('S12 uncalibrated AI and cause confidence never renders percent',
+  aiReviewSource.includes('confidenceJa') && !aiReviewSource.includes('confidencePct')
+  && scoutSource.includes('probabilityDisplay(v * 100).qualitative')
+  && !scoutSource.includes('Math.round(v * 100)')
+  && incidentSource.includes('probabilityDisplay(b.probability * 100).qualitative')
+  && !incidentSource.includes('Math.round(b.probability * 100)')
+  && researchSource.includes('probabilityDisplay(value * 100).qualitative')
+  && !researchSource.includes('Math.round(p.newLongAccumulation * 100)'));
 
 if (failed) {
   console.error(`\nproduct-integrity tests: ${failed} FAILED`);
