@@ -37,7 +37,7 @@ export const PortfolioDecisionOverview: React.FC<{ view: Overview }> = ({ view }
       </article>
       <article>
         <span>STRESS</span>
-        <p>{view.stress}</p>
+        {view.stressConditions.map((condition) => <p key={condition}>{condition}</p>)}
       </article>
       <article>
         <span>NEXT PORTFOLIO CHECK</span>

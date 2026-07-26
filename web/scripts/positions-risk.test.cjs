@@ -32,7 +32,7 @@ const empty = view.buildPortfolioDecisionOverview({
 check('P1 empty holdings has one actionable command',
   empty.command.includes('保有数量') && empty.actionQueue.length === 0);
 check('P2 empty holdings is honest about stress',
-  empty.stress.includes('未算出') && empty.exposure.valueJpy === null);
+  empty.stressConditions[0].includes('未算出') && empty.exposure.valueJpy === null);
 
 const populated = view.buildPortfolioDecisionOverview({
   combinedJpy: 12_000_000, combinedPlJpy: -350_000, pricedCount: 7,
@@ -45,7 +45,10 @@ const populated = view.buildPortfolioDecisionOverview({
     risk('TSLA', 'low', '価格更新'),
     risk('META', 'medium', '決算確認'),
     risk('8058', 'high', '需給確認'),
+    risk('5803', 'high', 'イベント条件も確認'),
   ],
+  stressConditions: ['AI調整局面', '円高局面', '金利ショック'],
+  nextPortfolioChecks: ['テーマ集中を週次確認'],
 });
 check('P3 critical risk changes the dominant command',
   populated.command.includes('新規追加を止め'));
@@ -59,25 +62,35 @@ check('P6 top risks cover concentration, theme, currency and unpriced',
     === '銘柄集中|テーマ集中|通貨|未評価');
 check('P7 next checks are bounded to two and deduplicated',
   populated.nextChecks.length <= 2 && new Set(populated.nextChecks).size === populated.nextChecks.length);
+check('P8 action queue has at most one command per asset',
+  populated.actionQueue.filter((item) => item.symbol === '5803').length === 1);
+check('P9 stress conditions are explicit, deduplicated and bounded',
+  populated.stressConditions.join('|') === 'AI調整局面|円高局面');
 
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'CorePortfolio.tsx'), 'utf8');
 const overviewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
   'dashboard', 'PortfolioDecisionOverview.tsx'), 'utf8');
-check('P8 first viewport starts with the portfolio overview',
+check('P10 first viewport starts with the portfolio overview',
   routeSource.indexOf('<PortfolioDecisionOverview') < routeSource.indexOf('<details className="cp-workspace"'));
-check('P9 detailed features remain secondary',
+check('P11 detailed features remain secondary',
   routeSource.includes('Allocation / Risk / Plan / History')
   && routeSource.includes('PortfolioExposureCard')
   && routeSource.includes('WhatIfPanel')
   && routeSource.includes('DecisionQualityCard'));
-check('P10 overview exposes the required contracts',
+check('P12 overview exposes the required contracts',
   ['PORTFOLIO COMMAND', 'TOTAL EXPOSURE', 'TOP RISKS', 'ACTION QUEUE',
     'STRESS', 'NEXT PORTFOLIO CHECK'].every((label) => overviewSource.includes(label)));
-check('P11 no Today-open dependency remains',
-  !routeSource.includes('Todayページを一度開く'));
-check('P12 queue is bounded in implementation',
+check('P13 no Today-open dependency remains',
+  routeSource.includes('useAssetIntel({ publish: true, assets })')
+  && !routeSource.includes('latestScenarios')
+  && !routeSource.includes('latestPlans')
+  && !routeSource.includes('latestStrategy')
+  && !routeSource.includes('Todayを開いた'));
+check('P14 asset-level scenario paragraph is not duplicated here',
+  !routeSource.includes('{ps.detailJa}'));
+check('P15 queue is bounded in implementation',
   fs.readFileSync(path.join(__dirname, '..', 'src', 'domain',
-    'portfolioDecisionView.ts'), 'utf8').includes('risks.slice(0, 5)'));
+    'portfolioDecisionView.ts'), 'utf8').includes('actionQueue.length === 5'));
 
 if (failed) {
   console.error(`\npositions-risk tests: ${failed} FAILED`);
