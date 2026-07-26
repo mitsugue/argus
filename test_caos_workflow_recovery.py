@@ -97,3 +97,23 @@ def test_work_is_bounded():
     assert "for BATCH in 1 2 3" in text
     assert "for ROUND in 1 2 3 4" in text
     assert "while true" not in text
+
+
+def test_identity_and_durability_recheck_use_safe_http_summary_contract():
+    text = _text()
+    identity = text.split("- name: Read live backend identity", 1)[1].split(
+        "- name: Resolve authoritative deployed backend", 1
+    )[0]
+    durability = text.split(
+        "- name: Independently recheck health, ready, and backend identity", 1
+    )[1].split("- name: Fetch validated durable snapshots", 1)[0]
+    for block in (identity, durability):
+        assert "scripts/workflow_http.py" in block
+        assert '.get("buildSha") or ""' in block
+        assert '.get("ready") is True' in block
+    assert "buildSha" in __import__(
+        "scripts.workflow_http", fromlist=["_SAFE_OUTPUT_KEYS"]
+    )._SAFE_OUTPUT_KEYS
+    assert "ready" in __import__(
+        "scripts.workflow_http", fromlist=["_SAFE_OUTPUT_KEYS"]
+    )._SAFE_OUTPUT_KEYS
