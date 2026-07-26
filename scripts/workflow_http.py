@@ -23,7 +23,8 @@ _SKIP_STATUSES = {"expected_skip", "busy", "skipped", "no_work", "noop",
                   "deterministic_mode"}
 _SECRET_KEYS = ("token", "secret", "password", "passphrase", "credential",
                 "authorization", "apikey", "api_key", "hmac")
-_SAFE_OUTPUT_KEYS = ("ok", "status", "count", "translated", "pending", "made",
+_SAFE_OUTPUT_KEYS = ("ok", "status", "buildSha", "ready",
+                     "count", "translated", "pending", "made",
                      "created", "updated", "generated", "queued", "recovered",
                      "result", "processedCount", "remainingCount", "hasMore",
                      "cursorBefore", "cursorAfter", "checkpointCreated")
