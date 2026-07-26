@@ -109,6 +109,9 @@ assert.doesNotMatch(loaderCss, /rotate\(/);
 assert.match(loaderCss, /prefers-reduced-motion:reduce/);
 assert.match(acceptance, /controlled warm revalidation did not start/);
 assert.match(acceptance, /warmRequestStart/);
+assert.match(acceptance, /const warm = await browser\.newContext\(\{[\s\S]*serviceWorkers: 'block'/);
+assert.match(acceptance, /warmSeedSnapshotId/);
+assert.match(acceptance, /await warm\.unroute/);
 assert.match(acceptance, /350 - \(Date\.now\(\) - warmStartedAt\)/);
 assert.match(acceptance, /6_200 - \(Date\.now\(\) - warmStartedAt\)/);
 

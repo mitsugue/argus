@@ -445,47 +445,70 @@ async function run() {
   if (failureState.loader || !failureState.retry) evidence.failures.push('failure-loader-contract');
   await failure.close();
 
-  // Warm cache + two-second revalidation keeps the chart and shows only the
-  // compact loader. A 304 must preserve the same verified snapshot pointer.
+  // Warm cache + delayed revalidation keeps the chart and shows only the
+  // compact loader. Use a dedicated SW-blocked context so the test controls
+  // the network revalidation precondition instead of allowing a fresh service
+  // worker response to bypass Playwright routing. IndexedDB remains intact
+  // across the seed and reload within this context.
   await page.setViewportSize({ width: 430, height: 932 });
   await page.locator('.nav__mobile').getByRole('button', { name: 'Today', exact: true }).click();
   await waitForTodayChart(page);
   const onlineSnapshotId = await page.locator('.at-chart-status').getAttribute('data-snapshot-id');
+  const warm = await browser.newContext({
+    viewport: { width: 430, height: 932 }, serviceWorkers: 'block',
+  });
+  await isolateChartReads(warm, evidence);
+  await warm.route('**/api/argus/chart-intelligence?*',
+    (route) => fulfillCapturedSnapshot(route, evidence, 0));
+  const warmPage = await warm.newPage();
+  observe(warmPage, evidence);
+  await warmPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await waitForShell(warmPage);
+  await waitForTodayChart(warmPage);
+  const warmSeedSnapshotId = await warmPage.locator(
+    '.at-chart-status').getAttribute('data-snapshot-id');
+  await warm.unroute('**/api/argus/chart-intelligence?*');
   let resolveWarmRequestStart;
   const warmRequestStart = new Promise((resolve) => {
     resolveWarmRequestStart = resolve;
   });
-  await context.route('**/api/argus/chart-intelligence?*', (route) => {
+  await warm.route('**/api/argus/chart-intelligence?*', (route) => {
     resolveWarmRequestStart?.(Date.now());
     resolveWarmRequestStart = null;
     return fulfillCapturedSnapshot(route, evidence, 6_000);
   });
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await waitForShell(page);
-  await waitForTodayChart(page);
+  await warmPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await waitForShell(warmPage);
+  await waitForTodayChart(warmPage);
   const warmStartedAt = await Promise.race([
     warmRequestStart,
     new Promise((_, reject) => setTimeout(
       () => reject(new Error('controlled warm revalidation did not start')),
       5_000)),
   ]);
-  await page.waitForTimeout(Math.max(0, 350 - (Date.now() - warmStartedAt)));
-  const warmLoader = await page.locator(
+  await warmPage.waitForTimeout(Math.max(0, 350 - (Date.now() - warmStartedAt)));
+  const warmLoader = await warmPage.locator(
     '.at-chart-status .triangle-step-loader').count();
-  const warmSkeleton = await page.locator('.at-projection-missing').count();
-  await screenshot(page, 'today-warm-revalidation-loader.png');
-  await page.waitForTimeout(Math.max(0, 6_200 - (Date.now() - warmStartedAt)));
-  await context.unroute('**/api/argus/chart-intelligence?*');
+  const warmSkeleton = await warmPage.locator('.at-projection-missing').count();
+  await screenshot(warmPage, 'today-warm-revalidation-loader.png');
+  await warmPage.waitForTimeout(Math.max(0, 6_200 - (Date.now() - warmStartedAt)));
+  await warm.unroute('**/api/argus/chart-intelligence?*');
   if (!warmLoader || warmSkeleton) evidence.failures.push('warm-loader-contract');
 
-  const before304 = await page.locator('.at-chart-status').getAttribute('data-snapshot-id');
-  await context.route('**/api/argus/chart-intelligence?*',
+  const before304 = await warmPage.locator(
+    '.at-chart-status').getAttribute('data-snapshot-id');
+  await warm.route('**/api/argus/chart-intelligence?*',
     (route) => route.fulfill({ status: 304, body: '' }));
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await waitForShell(page); await waitForTodayChart(page);
-  const after304 = await page.locator('.at-chart-status').getAttribute('data-snapshot-id');
-  await context.unroute('**/api/argus/chart-intelligence?*');
-  if (!before304 || after304 !== before304) evidence.failures.push('not-modified-continuity');
+  await warmPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await waitForShell(warmPage); await waitForTodayChart(warmPage);
+  const after304 = await warmPage.locator(
+    '.at-chart-status').getAttribute('data-snapshot-id');
+  await warm.unroute('**/api/argus/chart-intelligence?*');
+  if (!warmSeedSnapshotId || before304 !== warmSeedSnapshotId
+      || after304 !== before304) {
+    evidence.failures.push('not-modified-continuity');
+  }
+  await warm.close();
 
   // A real 429 is an expected HTTP outcome, not a JavaScript/React exception.
   // With a verified cached snapshot the UI must remain usable, honor the
