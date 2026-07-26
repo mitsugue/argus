@@ -253,6 +253,7 @@ jobs:
           node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
           python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
       - name: Verify deployed public URL and PWA upgrade
+        id: market_acceptance
         working-directory: web
         env:
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
@@ -264,6 +265,7 @@ jobs:
           ARGUS_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance
         run: node scripts/public-market-acceptance.mjs
       - name: Verify mobile Today navigation, geometry, loaders, and 12 snapshots
+        id: mobile_acceptance
         working-directory: web
         env:
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
@@ -271,6 +273,22 @@ jobs:
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
           ARGUS_MOBILE_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance/mobile-today
         run: node scripts/mobile-today-acceptance.mjs
+      - name: Report deployment and acceptance outcomes separately
+        if: always()
+        env:
+          DEPLOY_OUTCOME: ${{ needs.deploy.result }}
+          MARKET_ACCEPTANCE_OUTCOME: ${{ steps.market_acceptance.outcome }}
+          MOBILE_ACCEPTANCE_OUTCOME: ${{ steps.mobile_acceptance.outcome }}
+        run: |
+          {
+            echo "## ARGUS Pages release result"
+            echo ""
+            echo "- Pages deployment: \`$DEPLOY_OUTCOME\`"
+            echo "- Market acceptance: \`$MARKET_ACCEPTANCE_OUTCOME\`"
+            echo "- Mobile Today acceptance: \`$MOBILE_ACCEPTANCE_OUTCOME\`"
+            echo ""
+            echo "Deployment publication and post-deploy acceptance are independent gates."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Publish reproducible public acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
