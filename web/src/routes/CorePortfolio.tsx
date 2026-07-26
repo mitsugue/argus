@@ -14,6 +14,7 @@ import { useActionLabels } from '../hooks/useActionLabels';
 import { useCatalysts } from '../hooks/useCatalysts';
 import { buildExposure } from '../lib/portfolio';
 import { PortfolioExposureCard } from '../components/dashboard/PortfolioExposureCard';
+import { PortfolioDecisionOverview } from '../components/dashboard/PortfolioDecisionOverview';
 import { WhatIfPanel } from '../components/dashboard/WhatIfPanel';
 import type { QuoteLite } from '../lib/assetStrategy';
 import type { ActionLabel } from '../types/actionLabels';
@@ -21,6 +22,7 @@ import type { CatalystItem } from '../types/catalysts';
 import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
 import { buildPositionExposure } from '../domain/positionExposure';
+import { buildPortfolioDecisionOverview } from '../domain/portfolioDecisionView';
 import { publishExposure, latestScenarios, latestPlans, latestStrategy } from '../lib/positionExposureShare';
 import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
 import { planPortfolioSummary } from '../domain/positionPlan';
@@ -140,6 +142,20 @@ export const CorePortfolio: React.FC = () => {
         reason: act.reason,
       }));
   }, [assets, posture]);
+  const portfolioOverview = useMemo(() => buildPortfolioDecisionOverview({
+    combinedJpy: exp.combinedJpy,
+    combinedPlJpy: exp.combinedPlJpy,
+    pricedCount: exp.holdings.length,
+    unpriced: pe.unpriced,
+    noHoldings: pe.noHoldings,
+    top1Symbol: pe.top1Symbol,
+    top1Pct: pe.top1Pct,
+    topThemeJa: pe.byTheme[0]?.ja ?? null,
+    topThemePct: pe.byTheme[0]?.pct ?? null,
+    jpyPct: pe.jpyPct,
+    usdPct: pe.usdPct,
+    risks: pe.risks,
+  }), [exp.combinedJpy, exp.combinedPlJpy, exp.holdings.length, pe]);
 
   return (
     <PageShell
@@ -151,6 +167,10 @@ export const CorePortfolio: React.FC = () => {
         </span>
       }
     >
+      <PortfolioDecisionOverview view={portfolioOverview} />
+      <details className="cp-workspace">
+        <summary>Allocation / Risk / Plan / History</summary>
+        <div className="cp-workspace__body">
       <section>
         <div className="section-head">
           <span className="section-head__title">{t('cp.yourAllocation')}</span>
@@ -208,7 +228,7 @@ export const CorePortfolio: React.FC = () => {
               {!ps ? (
                 <p className="cmd-alloc__note">
                   {allSets.length === 0
-                    ? 'Todayページを一度開くと、保有銘柄の支配シナリオからポートフォリオ全体の分岐を表示します(端末内計算)。'
+                    ? '銘柄別シナリオ履歴がまだないため、ポートフォリオ分岐は未算出です。次の判断更新後に端末内で合成します。'
                     : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Asset Deskで保有数量を入力すると端末内で合成されます。捏造しません)。'}
                 </p>
               ) : (
@@ -271,7 +291,8 @@ export const CorePortfolio: React.FC = () => {
             <div className="card cmd-alloc">
               {!s ? (
                 <p className="cmd-alloc__note">
-                  Todayページを一度開くと、保有構成から戦略判定(コア/サテライト/戦術枠・FIRE整合)を端末内で合成します。
+                  戦略履歴がまだないため、コア/サテライト/戦術枠・FIRE整合は未算出です。
+                  次の判断更新後に端末内で合成します。
                 </p>
               ) : (
                 <>
@@ -464,6 +485,8 @@ export const CorePortfolio: React.FC = () => {
           </div>
         </div>
       </section>
+        </div>
+      </details>
     </PageShell>
   );
 };
