@@ -232,10 +232,20 @@ def soak_heartbeat(*, soak_id: str, build_sha: Optional[str],
 def append_soak_heartbeat(soak: Dict[str, Any],
                           heartbeat: Optional[Dict[str, Any]],
                           max_len: int = 400) -> bool:
-    """同一build/window/evidenceの重複とmanual診断証拠を抑止。"""
+    """同一build/window/evidenceの重複と非権威的な診断証拠を抑止。
+
+    GitHub schedule は EC2 systemd の backup scheduler であり、その
+    expected-build pin の誤りは control-plane 設定障害であって production
+    process の中断証拠ではない。実backend SHAを持つEC2 heartbeatやruntime
+    continuityを上書きしないよう、backup由来のbuild_mismatchはSoak列へ
+    追加しない。呼び出し側はworkflow結果として別途赤表示できる。
+    """
     if not heartbeat or heartbeat.get("soakId") != soak.get("soakId") \
             or heartbeat.get("buildSha") != soak.get("buildSha") \
             or heartbeat.get("source") == "manual":
+        return False
+    if heartbeat.get("source") == "github_schedule" and \
+            heartbeat.get("healthStatus") == "build_mismatch":
         return False
     rows = soak.setdefault("heartbeats", [])
     key = (heartbeat.get("buildSha"), heartbeat.get("expectedAt"),
