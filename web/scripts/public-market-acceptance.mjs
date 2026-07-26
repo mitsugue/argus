@@ -220,14 +220,29 @@ async function ensureCurrentPwaBuild(page, expectedSha) {
   const update = await page.evaluate(async () => {
     const registrations = await navigator.serviceWorker.getRegistrations();
     let controllerChanged = false;
+    let deferredUpdateCount = 0;
     const changed = new Promise((resolve) => {
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         controllerChanged = true;
         resolve(true);
       }, { once: true });
     });
-    await Promise.all(registrations.map(
-      (registration) => registration.update()));
+    await Promise.all(registrations.map(async (registration) => {
+      try {
+        await registration.update();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Chromium can reject update() with InvalidState while a prior worker
+        // is still installing. The strict build-SHA check after reload remains
+        // authoritative, so defer only this transient lifecycle race.
+        if (error?.name === 'InvalidStateError'
+            || /InvalidState|object is in an invalid state/i.test(message)) {
+          deferredUpdateCount += 1;
+          return;
+        }
+        throw error;
+      }
+    }));
     for (const registration of registrations) {
       registration.waiting?.postMessage({ type: 'SKIP_WAITING' });
     }
@@ -235,7 +250,11 @@ async function ensureCurrentPwaBuild(page, expectedSha) {
       changed,
       new Promise((resolve) => setTimeout(() => resolve(false), 8_000)),
     ]);
-    return { registrationCount: registrations.length, controllerChanged };
+    return {
+      registrationCount: registrations.length,
+      controllerChanged,
+      deferredUpdateCount,
+    };
   });
   await page.reload({
     waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
