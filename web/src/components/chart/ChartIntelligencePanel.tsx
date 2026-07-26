@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import type { ChartBar, ChartIntelligencePayload } from '../../types/chartIntelligence';
 import { useMarketLedger } from '../../hooks/useMarketLedger';
@@ -111,24 +111,69 @@ const RelativePanel: React.FC<{ payload: ChartIntelligencePayload }> = ({ payloa
   </details>;
 };
 
-export const ChartIntelligencePanel: React.FC<{ scope: 'market' | 'asset'; symbol?: string; market?: string }> =
-({ scope, symbol, market }) => {
+export const ChartIntelligencePanel: React.FC<{
+  scope: 'market' | 'asset'; symbol?: string; market?: string; enabled?: boolean;
+}> = ({ scope, symbol, market, enabled = true }) => {
   const [range, setRange] = useState('1Y');
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly'>('daily');
   const [showBB, setShowBB] = useState(false), [showCloud, setShowCloud] = useState(false);
   const [showLongMA, setShowLongMA] = useState(false);
-  const { data, loading, error, statusText, loaderVisible, slowInitial } =
-    useChartIntelligence({ scope, symbol, market, timeframe, enabled: true });
+  const [clock, setClock] = useState(() => Date.now());
+  const {
+    data, loading, error, errorClass, retryAt, retry, snapshotState,
+    statusText, loaderVisible, slowInitial,
+  } = useChartIntelligence({ scope, symbol, market, timeframe, enabled });
+  useEffect(() => {
+    if (!retryAt || retryAt <= Date.now()) return;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      if (now >= retryAt) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [retryAt]);
+  const retrySeconds = retryAt ? Math.max(0, Math.ceil((retryAt - clock) / 1000)) : 0;
+  const limited = snapshotState === 'RATE_LIMITED_WITH_CACHE'
+    || snapshotState === 'RATE_LIMITED_WITHOUT_CACHE';
+  const failed = snapshotState === 'ERROR_WITH_CACHE'
+    || snapshotState === 'ERROR_WITHOUT_CACHE';
+  const expectedSkip = errorClass === 'expected_skip';
   return <section id={scope === 'market' ? 'chart-intelligence' : undefined} className="ci-panel">
     <div className="section-head"><span className="section-head__title">CHART INTELLIGENCE</span>
       <span className="section-head__count">{data ? statusText : 'deterministic · AI API 0'}
         {data && loading && loaderVisible && <TriangleStepLoader compact label="" />}</span></div>
-    {!data && <div className="card ci-snapshot-skeleton">
-      {loaderVisible && <TriangleStepLoader
-        label={slowInitial ? '初回データを準備中' : 'データ確認中'} />}
-      {error && <small>取得失敗 ({error})</small>}
-    </div>}
+    {!data && snapshotState === 'NO_CACHE_LOADING' && (
+      <div className="card ci-snapshot-skeleton">
+        {loaderVisible && <TriangleStepLoader
+          label={slowInitial ? '初回データを準備中' : 'データ確認中'} />}
+      </div>
+    )}
+    {!data && (limited || failed) && (
+      <div className="card ci-snapshot-skeleton ci-error-state" role="status">
+        <b>{expectedSkip ? 'チャートは次回更新待ち'
+          : limited ? 'チャート取得制限中' : 'チャートを取得できません'}</b>
+        <small>{errorClass === 'timeout' ? '応答が時間内に完了しませんでした。'
+          : errorClass === 'invalid_json' ? '応答形式を検証できませんでした。'
+          : expectedSkip ? '利用可能な価格キャッシュが生成されてから表示します。'
+          : limited ? '自動再試行を停止しています。' : `取得失敗${error ? `（${error}）` : ''}`}</small>
+        {retryAt && retrySeconds > 0 && <small>再試行可能まで {retrySeconds}秒</small>}
+        {!expectedSkip && <button type="button" onClick={retry} disabled={retrySeconds > 0}>
+          {retrySeconds > 0 ? '待機中' : '再試行'}
+        </button>}
+      </div>
+    )}
     {data && <>
+      {(limited || failed) && (
+        <div className={`ci-cache-banner ${limited ? 'ci-cache-banner--limited' : ''}`}>
+          <span>{expectedSkip ? '次回更新待ち — 前回チャートを表示'
+            : limited ? '更新制限中 — 前回チャートを表示'
+            : '更新失敗 — 前回チャートを表示'}</span>
+          {retryAt && retrySeconds > 0 && <small>再試行まで {retrySeconds}秒</small>}
+          {!expectedSkip && <button type="button" onClick={retry} disabled={retrySeconds > 0}>
+            {retrySeconds > 0 ? '待機中' : '再試行'}
+          </button>}
+        </div>
+      )}
       <div className="card ci-toolbar"><div>{Object.keys(RANGE_COUNT).map((item) => <button type="button" key={item}
         className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div>
         <div><button type="button" className={timeframe === 'daily' ? 'active' : ''} onClick={() => setTimeframe('daily')}>日足</button>

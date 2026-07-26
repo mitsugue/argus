@@ -14,7 +14,7 @@ import type { LocalScenarioSet } from '../../domain/scenario';
 import type { LocalPlan } from '../../domain/positionPlan';
 import type { ResolvedStance } from '../../domain/primaryStance';
 import type { AIJudgmentLabel } from '../../types/aiJudgment';
-import type { DeskGenre } from '../../domain/assetDesk';
+import type { DecisionFirstView, DeskGenre } from '../../domain/assetDesk';
 
 export interface DeskEventTag { code: string; countdown: string; impact: string }
 
@@ -41,6 +41,8 @@ export interface DeskCardData {
   aiAgeMin: number | null;
   aiMeta: AiMeta;
   eventTags: DeskEventTag[];
+  /** Initial/closed/overview sections share this single normalized command. */
+  decisionFirst: DecisionFirstView;
 }
 
 /** 展開セクションid(deep-linkのsection指定と対応・§7の順序)。 */
@@ -49,6 +51,22 @@ export const DESK_SECTIONS = [
   'events', 'technical', 'scenarios', 'research', 'data-quality',
 ] as const;
 export type DeskSection = (typeof DESK_SECTIONS)[number];
+
+export const DESK_TABS = [
+  'overview', 'chart', 'evidence', 'position', 'scenarios', 'research',
+] as const;
+export type DeskTab = (typeof DESK_TABS)[number];
+
+export function tabForDeskSection(section?: string | null): DeskTab {
+  if (section === 'technical' || section === 'chart') return 'chart';
+  if (section === 'why-downside' || section === 'flow-supply'
+      || section === 'events' || section === 'evidence') return 'evidence';
+  if (section === 'owner-position' || section === 'position') return 'position';
+  if (section === 'scenarios') return 'scenarios';
+  if (section === 'research' || section === 'data-quality'
+      || section === 'ai-review') return 'research';
+  return 'overview';
+}
 
 export const sectionAnchorId = (symbol: string, section?: DeskSection | string) =>
   section ? `ad-${symbol.toUpperCase()}-${section}` : `asset-${symbol.toUpperCase()}`;

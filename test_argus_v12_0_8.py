@@ -214,10 +214,10 @@ def test_fe_osint_pack_and_ui():
 
 
 def test_fe_unified_stance_chip_everywhere():
-    # v12.2.12: 銘柄カードはAsset Deskへ・構え解決はuseAssetIntel(共有正本)へ移設。
-    # ガード意図(単一の構えチップが全カード+APで同一ソース)は不変。
-    card = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
-    assert "pst" in card and "構え:" in card
+    # v13.3.2: Asset Deskは共有正本をdecision-first viewへ正規化して表示する。
+    # ガード意図(単一の構えが全カード+APで同一ソース)は不変。
+    details = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
+    assert "d.decisionFirst" in details and "view.ownerActionJa" in details
     ap = _read("components", "dashboard", "ActionPrioritySection.tsx")
     assert "stances" in ap and "統一スタンス" in ap
     intel = _read("hooks", "useAssetIntel.ts")
@@ -227,7 +227,8 @@ def test_fe_unified_stance_chip_everywhere():
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
     assert "view.finalAction" in panel
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
-    assert "stanceBySymbol.get(sym)" in desk                  # Asset Deskカード
+    assert "stanceBySymbol.get(sym)" in desk                  # Asset Desk正規化入力
+    assert "buildDecisionFirstView" in desk
 
 
 # ── 非漏洩/文言(新規面) ─────────────────────────────────────────────────────

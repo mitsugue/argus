@@ -83,6 +83,25 @@ export const AssetPositionPanel: React.FC<{
           )}
         </div>
       </div>
+      {d.ppl && (
+        <details className="ad-plan-detail">
+          <summary>Position plan・条件・やらないこと</summary>
+          <p><b>{d.ppl.currentStanceJa}</b> — {d.ppl.summaryJa}</p>
+          {d.ppl.entryConditionsJa.length > 0 && (
+            <p>入る条件：{d.ppl.entryConditionsJa.join(' / ')}</p>
+          )}
+          {d.ppl.holdConditionsJa.length > 0 && (
+            <p>保有条件：{d.ppl.holdConditionsJa.join(' / ')}</p>
+          )}
+          {d.ppl.trimReviewConditionsJa.length > 0 && (
+            <p>縮小・利確の確認：{d.ppl.trimReviewConditionsJa.join(' / ')}</p>
+          )}
+          {d.ppl.whatNotToDoJa.length > 0 && (
+            <p>やらないこと：{d.ppl.whatNotToDoJa.join(' / ')}</p>
+          )}
+          <p>無効化条件：{d.ppl.invalidationJa.join(' / ')}</p>
+        </details>
+      )}
     </>
   );
 };
