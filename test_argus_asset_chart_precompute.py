@@ -1,4 +1,5 @@
 import datetime as dt
+import time
 import types
 from unittest import mock
 
@@ -131,6 +132,50 @@ def test_target_get_requires_completed_report_not_warm_raw_cache():
         assert response.json["stateUpdate"]["reason"] == \
             "price_cache_unavailable"
         assert response.json["assetChartCache"]["status"] == "miss"
+    finally:
+        scanner._ASSET_CHART_REPORTS.clear()
+        scanner._ASSET_CHART_REPORTS.update(saved_store)
+
+
+def test_bounded_jp_provider_seed_normalizes_without_exposing_auth():
+    raw = [{
+        "Date": (dt.date(2026, 1, 1) + dt.timedelta(days=index)).isoformat(),
+        "O": 100 + index, "H": 102 + index, "L": 99 + index,
+        "C": 101 + index, "Vo": 1000 + index,
+    } for index in range(30)]
+    scanner._ASSET_CHART_SOURCE_CACHE.clear()
+    with mock.patch.object(scanner, "_JQUANTS_API_KEY", "configured"), \
+            mock.patch.object(
+                scanner, "_jquants_paginated", return_value=raw) as fetch:
+        rows, source = scanner._asset_chart_provider_history("5803", "JP")
+    assert len(rows) == 30
+    assert source == {
+        "source": "bounded_provider_seed",
+        "status": "live",
+        "errorClass": None,
+    }
+    assert rows[-1]["close"] == 130.0
+    assert fetch.call_args.kwargs["max_pages"] == 2
+    assert fetch.call_args.kwargs["request_timeout"] == 8
+    assert fetch.call_args.args[1]["code"] == "5803"
+    assert len(fetch.call_args.args[1]["from"]) == 10
+    scanner._ASSET_CHART_SOURCE_CACHE.clear()
+
+
+def test_tick_time_guard_skips_provider_seed():
+    saved_store = asset_cache.normalize_store(scanner._ASSET_CHART_REPORTS)
+    scanner._ASSET_CHART_REPORTS.clear()
+    scanner._ASSET_CHART_REPORTS.update(asset_cache.empty_store())
+    try:
+        with mock.patch.object(
+                scanner, "_chart_history_cached", return_value=[]), \
+                mock.patch.object(
+                    scanner, "_asset_chart_provider_history",
+                    side_effect=AssertionError("provider seed crossed deadline")):
+            result = scanner._precompute_asset_chart_tick(
+                deadline_monotonic=time.monotonic() + 5)
+        assert result["status"] == "expected_skip"
+        assert result["reason"] == "insufficient_tick_time"
     finally:
         scanner._ASSET_CHART_REPORTS.clear()
         scanner._ASSET_CHART_REPORTS.update(saved_store)

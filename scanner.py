@@ -18136,7 +18136,8 @@ def _api_argus_admin_missions_tick_impl():
         chart_tick = {"changed": False, "status": "degraded",
                       "reason": type(_chart_exc).__name__}
     try:
-        asset_chart_tick = _precompute_asset_chart_tick()
+        asset_chart_tick = _precompute_asset_chart_tick(
+            deadline_monotonic=batch_started + time_budget_seconds)
     except Exception as _asset_chart_exc:
         asset_chart_tick = {
             "status": "degraded", "generated": False,
@@ -20481,6 +20482,7 @@ def _chart_history_cached(symbol, market):
 _JP_DAILY_SHORT_CACHE = {"rows": None, "expires": 0.0,
                          "status": "not_loaded", "errorClass": None}
 _MARKET_PUBLIC_REPORT_CACHE = {}
+_ASSET_CHART_SOURCE_CACHE = {}
 _VERIFIED_VIEW_METHOD_VERSION = (
     f"{argus_verified_snapshot.METHOD_VERSION}:"
     f"{argus_chart_intelligence.METHOD_VERSION}:"
@@ -20613,13 +20615,137 @@ def _asset_chart_targets():
     return targets
 
 
-def _precompute_asset_chart_tick():
+def _asset_chart_provider_history(symbol, market):
+    """One-instrument bounded provider seed; never called from a public GET."""
+    now = time.time()
+    key = f"{market}:{symbol}"
+    cached = _ASSET_CHART_SOURCE_CACHE.get(key)
+    if isinstance(cached, dict) and now < float(cached.get("expires") or 0):
+        return list(cached.get("rows") or []), {
+            "source": "asset_chart_source_cache",
+            "status": cached.get("status"),
+            "errorClass": cached.get("errorClass"),
+        }
+    try:
+        if market == "JP":
+            if not _JQUANTS_API_KEY:
+                raise RuntimeError("jquants_not_configured")
+            start = (
+                datetime.now(TZ_JST) - timedelta(days=800)
+            ).strftime("%Y-%m-%d")
+            raw = _jquants_paginated(
+                "/equities/bars/daily",
+                {"code": symbol[:4], "from": start},
+                max_pages=2,
+                request_timeout=8,
+            )
+
+            def _number(row, names):
+                for name in names:
+                    value = row.get(name)
+                    if value not in (None, ""):
+                        try:
+                            return float(value)
+                        except (TypeError, ValueError):
+                            continue
+                return None
+
+            rows = []
+            for item in raw:
+                close = _number(item, ("AdjC", "C", "Close"))
+                date = str(item.get("Date") or "")[:10]
+                if close is None or not date:
+                    continue
+                rows.append({
+                    "date": date, "availableFrom": date,
+                    "open": _number(item, ("AdjO", "O", "Open")),
+                    "high": _number(item, ("AdjH", "H", "High")),
+                    "low": _number(item, ("AdjL", "L", "Low")),
+                    "close": close,
+                    "volume": int(_number(item, ("Vo", "Volume")) or 0),
+                    "adjusted": item.get("AdjC") is not None,
+                    "sourceId": f"price:{market}:{symbol}:{date}",
+                })
+        else:
+            if not _TWELVEDATA_API_KEY:
+                raise RuntimeError("twelvedata_not_configured")
+            response = requests.get(
+                _TWELVEDATA_TS,
+                params={
+                    "symbol": symbol,
+                    "interval": "1day",
+                    "outputsize": 600,
+                    "apikey": _TWELVEDATA_API_KEY,
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or \
+                    str(body.get("status") or "").lower() == "error":
+                raise RuntimeError("twelvedata_error_response")
+            raw = body.get("values")
+            if not isinstance(raw, list):
+                raise RuntimeError("twelvedata_invalid_schema")
+
+            def _number(row, name):
+                try:
+                    value = row.get(name)
+                    return float(value) if value not in (None, "") else None
+                except (TypeError, ValueError):
+                    return None
+
+            rows = []
+            for item in raw:
+                close = _number(item, "close")
+                date = str(item.get("datetime") or "")[:10]
+                if close is None or not date:
+                    continue
+                rows.append({
+                    "date": date, "availableFrom": date,
+                    "open": _number(item, "open"),
+                    "high": _number(item, "high"),
+                    "low": _number(item, "low"),
+                    "close": close,
+                    "volume": int(_number(item, "volume") or 0),
+                    "adjusted": False,
+                    "sourceId": f"price:{market}:{symbol}:{date}",
+                })
+        rows.sort(key=lambda row: str(row.get("date") or ""))
+        if len(rows) < 20:
+            raise RuntimeError("asset_chart_history_insufficient")
+        _ASSET_CHART_SOURCE_CACHE[key] = {
+            "rows": rows,
+            "expires": now + 6 * 3600,
+            "status": "live",
+            "errorClass": None,
+        }
+        return list(rows), {
+            "source": "bounded_provider_seed",
+            "status": "live",
+            "errorClass": None,
+        }
+    except Exception as exc:
+        _ASSET_CHART_SOURCE_CACHE[key] = {
+            "rows": [],
+            "expires": now + (600 if market == "JP" else 150),
+            "status": "degraded",
+            "errorClass": type(exc).__name__,
+        }
+        return [], {
+            "source": "bounded_provider_seed",
+            "status": "degraded",
+            "errorClass": type(exc).__name__,
+        }
+
+
+def _precompute_asset_chart_tick(deadline_monotonic=None):
     """Publish one changed public-watchlist instrument from warm provider data.
 
-    The provider cache is warmed by the existing admin collectors.  This
-    mission-tick phase intentionally never performs network I/O: it is bounded
-    to one symbol, single-flight, and derives daily/weekly payloads from the
-    same daily dataset.
+    Existing admin-collector cache is preferred.  If it is absent and at least
+    20 seconds remain, one tightly bounded provider seed is allowed.  Work is
+    still limited to one symbol, single-flight, and daily/weekly payloads derive
+    from the same daily dataset.
     """
     targets = _asset_chart_targets()
     if not targets:
@@ -20629,13 +20755,31 @@ def _precompute_asset_chart_tick():
     symbol, market = targets[cursor]
     _ASSET_CHART_REPORTS["cursor"] = (cursor + 1) % len(targets)
     daily_rows = _chart_history_cached(symbol, market)
+    source = {"source": "shared_provider_cache",
+              "status": "live" if daily_rows else "missing",
+              "errorClass": None}
+    provider_attempted = False
+    if not daily_rows:
+        remaining = (
+            float(deadline_monotonic) - time.monotonic()
+            if deadline_monotonic is not None else 60.0
+        )
+        if remaining >= 20:
+            provider_attempted = True
+            daily_rows, source = _asset_chart_provider_history(
+                symbol, market)
     if not daily_rows:
         return {
             "status": "expected_skip",
-            "reason": "awaiting_provider_cache",
+            "reason": (
+                "insufficient_tick_time"
+                if not provider_attempted
+                else "provider_history_unavailable"
+            ),
             "generated": False,
             "instrument": symbol,
             "market": market,
+            "source": source,
             "cursor": _ASSET_CHART_REPORTS["cursor"],
             "targetCount": len(targets),
         }
@@ -20661,6 +20805,7 @@ def _precompute_asset_chart_tick():
             "targetCount": len(targets),
             "stateHash": argus_asset_chart_cache.state_hash(
                 _ASSET_CHART_REPORTS),
+            "source": source,
         }
     flight_key = (
         f"asset-chart:{market}:{symbol}:{dataset_hash}:"
@@ -20718,6 +20863,7 @@ def _precompute_asset_chart_tick():
         "publications": publications,
         "cursor": _ASSET_CHART_REPORTS["cursor"],
         "targetCount": len(targets),
+        "source": source,
         "stateHash": argus_asset_chart_cache.state_hash(
             _ASSET_CHART_REPORTS),
     }
@@ -21240,7 +21386,8 @@ def api_argus_admin_market_ledger_import():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
-def _jquants_paginated(path, params, max_pages=40):
+def _jquants_paginated(
+        path, params, max_pages=40, request_timeout=None):
     """Fetch a bounded J-Quants v2 dataset without exposing auth or raw bodies."""
     rows, cursor = [], None
     for _ in range(max_pages):
@@ -21249,7 +21396,9 @@ def _jquants_paginated(path, params, max_pages=40):
             query["pagination_key"] = cursor
         response = requests.get(
             f"{_JQUANTS_BASE}{path}", headers={"x-api-key": _JQUANTS_API_KEY},
-            params=query, timeout=_DIAG_TIMEOUT)
+            params=query, timeout=(
+                _DIAG_TIMEOUT
+                if request_timeout is None else float(request_timeout)))
         if response.status_code != 200:
             raise RuntimeError(f"jquants_http_{response.status_code}")
         body = response.json()
