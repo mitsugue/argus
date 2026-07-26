@@ -13,6 +13,7 @@ import { AssetEntryScout, fetchScout, type ScoutState } from './AssetEntryScout'
 import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
 import { AssetDataQuality } from './AssetDataQuality';
+import { AssetEvidenceSummary } from './AssetEvidenceSummary';
 import { ChartIntelligencePanel } from '../chart/ChartIntelligencePanel';
 import '../dashboard/UnifiedAssetCard.css';
 import '../dashboard/Dashboard.css';
@@ -30,12 +31,10 @@ interface Props {
 }
 
 const TABS: Array<{ id: DeskTab; label: string }> = [
-  { id: 'overview', label: 'Overview' },
+  { id: 'decision', label: 'Decision' },
   { id: 'chart', label: 'Chart' },
   { id: 'evidence', label: 'Evidence' },
   { id: 'position', label: 'Position' },
-  { id: 'scenarios', label: 'Scenarios' },
-  { id: 'research', label: 'Research & Data' },
 ];
 
 const Section: React.FC<{
@@ -51,7 +50,8 @@ export const AssetDecisionCard: React.FC<Props> = ({
   d, open, onToggle, onRemove, onUpdateHolding, nowMs, dragHandle, focusSection,
 }) => {
   const [scout, setScout] = useState<ScoutState>(null);
-  const [tab, setTab] = useState<DeskTab>('overview');
+  const [tab, setTab] = useState<DeskTab>('decision');
+  const [supportOpen, setSupportOpen] = useState(false);
   const runScout = () => {
     setScout('loading');
     void fetchScout(d.asset.symbol, d.asset.market).then(setScout);
@@ -60,8 +60,11 @@ export const AssetDecisionCard: React.FC<Props> = ({
   const sigColor = `var(${SIGNALS[deskSignalCode(d)].token})`;
 
   useEffect(() => {
-    if (!open) { setTab('overview'); return; }
-    if (focusSection) setTab(tabForDeskSection(focusSection));
+    if (!open) { setTab('decision'); setSupportOpen(false); return; }
+    if (focusSection) {
+      setTab(tabForDeskSection(focusSection));
+      if (['research', 'data-quality', 'ai-review'].includes(focusSection)) setSupportOpen(true);
+    }
   }, [open, focusSection]);
 
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -103,9 +106,13 @@ export const AssetDecisionCard: React.FC<Props> = ({
 
           <div role="tabpanel" id={`ad-panel-${sym}-${tab}`}
                aria-labelledby={`ad-tab-${sym}-${tab}`} className="ad-tab-panel">
-            {tab === 'overview' && (
+            {tab === 'decision' && (
               <Section symbol={sym} id="decision">
                 <AssetDecisionDetails d={d} />
+                <details className="ad-plan-detail">
+                  <summary>条件と分岐を確認</summary>
+                  <AssetScenarioPanel d={d} />
+                </details>
               </Section>
             )}
             {tab === 'chart' && (
@@ -117,15 +124,21 @@ export const AssetDecisionCard: React.FC<Props> = ({
             )}
             {tab === 'evidence' && (
               <>
-                <Section symbol={sym} id="why-downside" title="CAUSE / DOWNSIDE">
-                  <AssetWhyPanel d={d} />
+                <Section symbol={sym} id="why-downside">
+                  <AssetEvidenceSummary d={d} />
                 </Section>
-                <Section symbol={sym} id="flow-supply" title="FLOW / SUPPLY">
-                  <AssetFlowPanel d={d} />
-                </Section>
-                <Section symbol={sym} id="events" title="EVENTS">
-                  <AssetEventsPanel d={d} />
-                </Section>
+                <details className="ad-evidence-details">
+                  <summary>検証詳細</summary>
+                  <Section symbol={sym} id="flow-supply" title="FLOW / SUPPLY">
+                    <AssetFlowPanel d={d} />
+                  </Section>
+                  <Section symbol={sym} id="events" title="EVENTS">
+                    <AssetEventsPanel d={d} />
+                  </Section>
+                  <Section symbol={sym} id="evidence-raw" title="CAUSE / DOWNSIDE">
+                    <AssetWhyPanel d={d} />
+                  </Section>
+                </details>
               </>
             )}
             {tab === 'position' && (
@@ -133,28 +146,22 @@ export const AssetDecisionCard: React.FC<Props> = ({
                 <AssetPositionPanel d={d} onUpdateHolding={onUpdateHolding} />
               </Section>
             )}
-            {tab === 'scenarios' && (
-              <Section symbol={sym} id="scenarios">
-                <AssetScenarioPanel d={d} />
-              </Section>
-            )}
-            {tab === 'research' && (
-              <>
-                <Section symbol={sym} id="ai-review" title="AI REVIEW / RULE CHECK">
-                  <AssetAIReview d={d} />
-                </Section>
-                <Section symbol={sym} id="research" title="RESEARCH / NOTES">
-                  <AssetResearchPanel d={d} scout={scout} onRemove={onRemove} />
-                </Section>
-                <Section symbol={sym} id="data-quality" title="DATA QUALITY">
-                  <AssetDataQuality d={d} nowMs={nowMs} />
-                </Section>
-              </>
-            )}
           </div>
-          <p className="ad-disclaimer">
-            判断支援のみ。自動売買・注文機能はありません。
-          </p>
+          <details className="ad-research-drawer" open={supportOpen}
+            onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
+            <summary>Research &amp; Data</summary>
+            <div className="ad-research-drawer__body">
+              <Section symbol={sym} id="ai-review" title="AI REVIEW / RULE CHECK">
+                <AssetAIReview d={d} />
+              </Section>
+              <Section symbol={sym} id="research" title="RESEARCH / NOTES">
+                <AssetResearchPanel d={d} scout={scout} onRemove={onRemove} />
+              </Section>
+              <Section symbol={sym} id="data-quality" title="DATA QUALITY">
+                <AssetDataQuality d={d} nowMs={nowMs} />
+              </Section>
+            </div>
+          </details>
         </div>
       )}
     </article>

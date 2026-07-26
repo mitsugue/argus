@@ -53,7 +53,7 @@ export const DESK_SECTIONS = [
 export type DeskSection = (typeof DESK_SECTIONS)[number];
 
 export const DESK_TABS = [
-  'overview', 'chart', 'evidence', 'position', 'scenarios', 'research',
+  'decision', 'chart', 'evidence', 'position',
 ] as const;
 export type DeskTab = (typeof DESK_TABS)[number];
 
@@ -62,10 +62,9 @@ export function tabForDeskSection(section?: string | null): DeskTab {
   if (section === 'why-downside' || section === 'flow-supply'
       || section === 'events' || section === 'evidence') return 'evidence';
   if (section === 'owner-position' || section === 'position') return 'position';
-  if (section === 'scenarios') return 'scenarios';
   if (section === 'research' || section === 'data-quality'
-      || section === 'ai-review') return 'research';
-  return 'overview';
+      || section === 'ai-review') return 'evidence';
+  return 'decision';
 }
 
 export const sectionAnchorId = (symbol: string, section?: DeskSection | string) =>

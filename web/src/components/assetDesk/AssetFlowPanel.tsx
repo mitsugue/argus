@@ -12,6 +12,9 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
   const flow = d.strat.bigFlowRatio;
   const ev = sdg?.evidence ?? {};
   const balanceChange = ev.marginBalanceChange as { buyPct?: number | null; sellPct?: number | null } | null;
+  const confidenceJa = sdg
+    ? sdg.confidence >= 0.7 ? '確度 高' : sdg.confidence >= 0.4 ? '確度 中' : '確度 低'
+    : '';
   const detailRows = sdg ? [
     ev.marginBuyingBalance != null ? `信用買い残 ${Number(ev.marginBuyingBalance).toLocaleString()}` : null,
     ev.marginSellingBalance != null ? `信用売り残 ${Number(ev.marginSellingBalance).toLocaleString()}` : null,
@@ -32,7 +35,7 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
             <b style={{ color: RANK_TONE[sdg.supplyDemandRank] }}>需給ランク {sdg.supplyDemandRank}</b>
             <span style={{ marginLeft: 6 }}>{sdg.conditionJa}</span>
             <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>
-              {sdg.directnessJa} · 確度{Math.round(sdg.confidence * 100)}%
+              {sdg.directnessJa} · {confidenceJa}
             </span>
           </p>
           <ExpandableReason className="uac-next" style={{ marginBottom: 2, color: 'var(--text-sub)' }} text={sdg.ownerReadableWhyJa} />

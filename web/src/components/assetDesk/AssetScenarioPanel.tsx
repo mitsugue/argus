@@ -1,6 +1,5 @@
 import React from 'react';
 import type { DeskCardData } from './types';
-import { DOM_TONE } from '../../domain/scenario';
 import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — SCENARIOS(§7-8)。旧Todayの条件付き分岐(scenario engine・帯のみ)
@@ -11,38 +10,19 @@ export const AssetScenarioPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
   return (
     <>
       {scn && (
-        <div style={{ marginBottom: 4 }}>
-          <p className="uac-next" style={{ marginBottom: 2 }}>
-            <b style={{ color: DOM_TONE[scn.dominant] }}>{scn.dominantJa}</b>
-            <span style={{ marginLeft: 6, color: 'var(--text-sub)' }}>{scn.summaryJa}</span>
-          </p>
-          <details>
-            <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)' }}>分岐と無効化条件を見る</summary>
-            {scn.cases.map((cs) => (
-              <p key={cs.label} className="uac-next" style={{ margin: '3px 0 0', fontSize: 11 }}>
-                <b>{cs.titleJa}</b>
-                <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)',
-                               border: '1px solid var(--line)', borderRadius: 999, padding: '0 5px' }}>
-                  {cs.bandJa}
-                </span>
-                <span style={{ marginLeft: 5, fontSize: 9.5, color: 'var(--text-faint)' }}>{cs.actionJa}</span>
-                <br />
-                <span style={{ color: 'var(--text-sub)' }}>{cs.narrativeJa}</span>
-              </p>
-            ))}
-            <p className="uac-next" style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-              無効化条件: {scn.invalidationJa.join(' / ')}
+        <div className="ad-scenario-conditions">
+          {scn.cases.map((cs) => (
+            <p key={cs.label} className="uac-next">
+              <b>{cs.titleJa}</b>
+              <span>{cs.bandJa}</span>
+              <small>{cs.conditionsJa.slice(0, 2).join(' / ')}</small>
             </p>
-            <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-              次の確認: {scn.nextChecksJa.join(' / ')}
-            </p>
-            <p className="uac-next" style={{ margin: '2px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-              何が変われば: {scn.whatWouldChangeJa.join(' / ')}
-            </p>
-          </details>
+          ))}
+          <p className="uac-next"><b>無効化</b><small>{scn.invalidationJa.slice(0, 2).join(' / ')}</small></p>
+          <p className="uac-next"><b>次の確認</b><small>{scn.nextChecksJa.slice(0, 2).join(' / ')}</small></p>
         </div>
       )}
-      {d.strat.scenarios.length > 0 && (
+      {!scn && d.strat.scenarios.length > 0 && (
         <div className="asset-scen">
           <div className="asset-scen__head">条件付きシナリオ · {d.strat.scenarioHorizonJa}</div>
           {d.strat.scenarios.map((s) => {

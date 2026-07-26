@@ -1,7 +1,7 @@
 import React from 'react';
 import type { DeskCardData } from './types';
 import { AiExplanationBlock } from '../dashboard/AiExplanationBlock';
-import { CauseStackCard } from '../dashboard/CauseStackCard';
+import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — WHY / DOWNSIDE(§7-4)。旧WatchlistのWHY DOWN?ブロック+旧Todayの
 // TIMELINE/CAUSE/原因スタック/即時調査を統合。表示のみ(判定は既存エンジン)。
@@ -25,7 +25,7 @@ export const AssetWhyPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
           <div className="asset-detail__downside-causes">
             {incident.causeBuckets.slice(0, 3).map((b) => (
               <span key={b.cause} className="asset-detail__downside-cause">
-                {b.cause} {Math.round(b.probability * 100)}%
+                {b.cause} {probabilityDisplay(b.probability * 100).qualitative}
               </span>
             ))}
           </div>
@@ -65,14 +65,12 @@ export const AssetWhyPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
               {c.causeSlices.map((sl) => (
                 <div className="uac-cz-row" key={sl.labelJa}>
                   <span className="uac-cz-l">{sl.labelJa}</span>
-                  <span className="uac-cz-bar"><i style={{ width: `${sl.pct}%` }} /></span>
-                  <span className="uac-cz-p">{sl.pct}%</span>
+                  <span className="uac-cz-p">{probabilityDisplay(sl.pct).qualitative}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
-        <CauseStackCard symbol={d.asset.symbol} market={d.asset.market} hideInvestigateButton />
       </details>
     </>
   );
