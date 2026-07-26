@@ -15613,33 +15613,140 @@ def _mission_tick_context_active():
             _MISSION_TICK_CONTEXT.get("ownerThread") == threading.get_ident())
 
 
+def _mission_tick_durability_snapshot(*, remote_export=False):
+    state = dict(_MISSION_BATCH_STATE)
+    if remote_export:
+        # This exact local checkpoint cursor is what the Remote Journal will
+        # contain after publication. It is not a claim about a later WAL tail.
+        state["remoteWalAppliedSequence"] = int(
+            state.get("walAppliedSequence") or 0)
+    else:
+        state["remoteWalAppliedSequence"] = int(
+            _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0)
+    state["verifiedWalSequence"] = int(
+        _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+    state["compactReceiptHash"] = _REMOTE_CYCLE.get("compactReceiptHash")
+    return state
+
+
+def _persist_remote_wal_receipt(saved_at=None):
+    saved_at = saved_at or _ai_now_iso()
+    receipt = argus_tick_durability.remote_receipt_record(
+        saved_at=saved_at,
+        remote_commit_sha=_REMOTE_CYCLE.get("remoteCommitSha"),
+        committed_at=_REMOTE_CYCLE.get("committedAt"),
+        expected_hash=_REMOTE_CYCLE.get("expectedHash"),
+        actual_hash=_REMOTE_CYCLE.get("actualHash"),
+        read_back_at=_REMOTE_CYCLE.get("readBackAt"),
+        read_back_verified=bool(_REMOTE_CYCLE.get("readBackVerified")),
+        remote_wal_applied_sequence=int(
+            _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0),
+        verified_wal_sequence=int(
+            _REMOTE_CYCLE.get("verifiedWalSequence") or 0),
+        compact_receipt_hash=_REMOTE_CYCLE.get("compactReceiptHash"),
+        error_class=_REMOTE_CYCLE.get("errorClass"),
+        wal_read_back_verified=bool(
+            _REMOTE_CYCLE.get("walReadBackVerified")),
+        wal_error_class=_REMOTE_CYCLE.get("walErrorClass"))
+    return argus_persistent_storage.atomic_write_json(
+        _MISSION_RECEIPT_FILE, receipt,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"],
+        validator=argus_tick_durability.verify_remote_receipt)
+
+
 def _persist_durability_metadata():
-    """Persist non-payload recovery cursors beside the checkpoint."""
+    """Persist receipt proof first, then non-payload recovery cursors."""
+    saved_at = _ai_now_iso()
+    receipt_write = _persist_remote_wal_receipt(saved_at)
     cursor = {
         "schemaVersion": "argus-mission-cursor-v1",
-        "savedAt": _ai_now_iso(),
+        "savedAt": saved_at,
         "buildSha": os.environ.get("RENDER_GIT_COMMIT") or _backend_sha(),
         "bootId": _RUNTIME.get("bootId") if "_RUNTIME" in globals() else None,
-        "missionTickDurability": dict(_MISSION_BATCH_STATE),
+        "missionTickDurability": _mission_tick_durability_snapshot(),
     }
-    receipt = {
-        "schemaVersion": "argus-mission-receipt-v1",
-        "savedAt": cursor["savedAt"],
-        "remoteCommitSha": _REMOTE_CYCLE.get("remoteCommitSha"),
-        "expectedHash": _REMOTE_CYCLE.get("expectedHash"),
-        "actualHash": _REMOTE_CYCLE.get("actualHash"),
-        "readBackVerified": bool(_REMOTE_CYCLE.get("readBackVerified")),
-        "verifiedWalSequence": int(
-            _REMOTE_CYCLE.get("verifiedWalSequence") or 0),
-        "errorClass": _REMOTE_CYCLE.get("errorClass"),
-    }
-    argus_persistent_storage.atomic_write_json(
+    cursor_write = argus_persistent_storage.atomic_write_json(
         _MISSION_CURSOR_FILE, cursor,
         temp_directory=_DURABILITY_PATHS["tempDirectory"])
-    argus_persistent_storage.atomic_write_json(
-        _MISSION_RECEIPT_FILE, receipt,
-        temp_directory=_DURABILITY_PATHS["tempDirectory"])
-    return {"cursor": _MISSION_CURSOR_FILE, "receipt": _MISSION_RECEIPT_FILE}
+    return {"cursor": _MISSION_CURSOR_FILE, "receipt": _MISSION_RECEIPT_FILE,
+            "cursorWrite": cursor_write, "receiptWrite": receipt_write}
+
+
+def _restore_persistent_remote_receipt():
+    """Recover a newer fsynced receipt without rolling checkpoint truth back."""
+    try:
+        with open(_MISSION_RECEIPT_FILE, encoding="utf-8") as handle:
+            receipt = json.load(handle)
+    except FileNotFoundError:
+        return {"status": "missing"}
+    except (OSError, json.JSONDecodeError):
+        _DURABLE_STATE["remoteReceiptRestore"] = "unreadable"
+        return {"status": "unreadable"}
+    if not argus_tick_durability.verify_remote_receipt(receipt):
+        _DURABLE_STATE["remoteReceiptRestore"] = "tampered"
+        return {"status": "tampered"}
+
+    current_committed = argus_remote_journal._ep(
+        _REMOTE_CYCLE.get("committedAt"))
+    incoming_committed = argus_remote_journal._ep(receipt.get("committedAt"))
+    if current_committed is not None and incoming_committed is not None and \
+            incoming_committed < current_committed:
+        _DURABLE_STATE["remoteReceiptRestore"] = "stale"
+        return {"status": "stale"}
+
+    current_sequence = int(
+        _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+    incoming_sequence = int(receipt.get("verifiedWalSequence") or 0)
+    if receipt.get("walReadBackVerified") is True and \
+            incoming_sequence < current_sequence:
+        _DURABLE_STATE["remoteReceiptRestore"] = "sequence_regression"
+        return {"status": "sequence_regression"}
+    if _REMOTE_CYCLE.get("walReadBackVerified") is True and \
+            receipt.get("walReadBackVerified") is not True and \
+            receipt.get("remoteCommitSha") == \
+            _REMOTE_CYCLE.get("remoteCommitSha"):
+        _DURABLE_STATE["remoteReceiptRestore"] = "duplicate_older_state"
+        return {"status": "duplicate_older_state"}
+
+    current_receipt_hash = _REMOTE_CYCLE.get("compactReceiptHash")
+    for key in (
+            "remoteCommitSha", "committedAt", "expectedHash", "actualHash",
+            "readBackAt", "readBackVerified", "walReadBackVerified",
+            "remoteWalAppliedSequence", "verifiedWalSequence",
+            "compactReceiptHash", "errorClass", "walErrorClass"):
+        _REMOTE_CYCLE[key] = receipt.get(key)
+    status = "duplicate" if (
+        incoming_sequence == current_sequence and
+        receipt.get("compactReceiptHash") ==
+        current_receipt_hash
+    ) else "restored"
+    _DURABLE_STATE["remoteReceiptRestore"] = status
+    return {"status": status, "verifiedWalSequence": incoming_sequence}
+
+
+def _verified_persistent_wal_sequence():
+    """Return coverage only when the fsynced receipt matches in-memory truth."""
+    try:
+        with open(_MISSION_RECEIPT_FILE, encoding="utf-8") as handle:
+            receipt = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return 0
+    if not argus_tick_durability.verify_remote_receipt(receipt) or \
+            receipt.get("readBackVerified") is not True or \
+            receipt.get("walReadBackVerified") is not True:
+        return 0
+    for key in (
+            "remoteCommitSha", "expectedHash", "actualHash",
+            "compactReceiptHash"):
+        if receipt.get(key) != _REMOTE_CYCLE.get(key):
+            return 0
+    sequence = int(receipt.get("verifiedWalSequence") or 0)
+    if sequence != int(
+            _REMOTE_CYCLE.get("verifiedWalSequence") or 0) or \
+            sequence != int(
+                receipt.get("remoteWalAppliedSequence") or 0):
+        return 0
+    return sequence
 
 
 def _osint_persist():
@@ -15691,13 +15798,13 @@ def _osint_persist_locked():
                     _ASSET_CHART_REPORTS),
                 "assetChartReportsStateHash": argus_asset_chart_cache.state_hash(
                     _ASSET_CHART_REPORTS),
-                "missionTickDurability": dict(_MISSION_BATCH_STATE),
+                "missionTickDurability":
+                    _mission_tick_durability_snapshot(),
                 "soakLastPersistAt": _ai_now_iso()}
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                      f"checkpoint-{os.getpid()}")
         sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
-        verified_wal_sequence = int(
-            _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+        verified_wal_sequence = _verified_persistent_wal_sequence()
         allow_wal_compaction = bool(
             _REMOTE_CYCLE.get("readBackVerified") is True and
             verified_wal_sequence > 0)
@@ -16197,6 +16304,8 @@ def _osint_restore_once():
             _MISSION_BATCH_STATE.update({
                 key: _mt.get(key) for key in _MISSION_BATCH_STATE
                 if key in _mt})
+        if _DURABILITY_PRODUCTION:
+            _restore_persistent_remote_receipt()
         if "opsJournal" not in blob:
             _REMOTE_ACK["legacyRemote"] = True   # v2 snapshot=journal未同乗
         for h in _OPS_JOURNAL:
@@ -17145,10 +17254,13 @@ _REMOTE_ACK = {"ackedKeys": [], "lastVerifiedRemoteAckAt": None,
                "lastVerifiedOutcomeReadBackAt": None}
 _REMOTE_CYCLE = {"remoteCommitSha": None, "committedAt": None,
                  "readBackAt": None, "readBackVerified": False,
+                 "walReadBackVerified": False,
                  "expectedHash": None, "actualHash": None,
+                 "remoteWalAppliedSequence": 0,
                  "verifiedWalSequence": 0,
+                 "compactReceiptHash": None,
                  "pendingCount": 0, "acknowledgedCount": 0,
-                 "errorClass": None}
+                 "errorClass": None, "walErrorClass": None}
 
 # Outcome再解決ポリシー。intervalは環境変数で調整可。期限は既存ポリシーが
 # 無かったため既定0=失効無効。運用合意後のみ正数へ設定する。
@@ -17496,23 +17608,64 @@ def _remote_readback_ack(now_iso=None, blob=None):
         cycle_error = "commit_receipt_missing"
     else:
         cycle_error = rec.get("verificationStatus") or "read_back_unverified"
-    verified_wal_sequence = int(
+    previous_verified_wal_sequence = int(
         _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+    verified_wal_sequence = previous_verified_wal_sequence
+    remote_wal_applied_sequence = int(
+        _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0)
+    compact_receipt_hash = _REMOTE_CYCLE.get("compactReceiptHash")
+    wal_cycle_verified = False
+    wal_cycle_error = None
     remote_tick_state = blob.get("missionTickDurability") or {}
-    if cycle_verified and isinstance(remote_tick_state, dict):
-        verified_wal_sequence = max(
-            verified_wal_sequence,
-            int(remote_tick_state.get("walAppliedSequence") or 0))
+    if cycle_verified and blob.get("receiptSchemaVersion") and \
+            isinstance(remote_tick_state, dict):
+        try:
+            exported_local_sequence = int(
+                remote_tick_state.get("walAppliedSequence") or 0)
+            candidate_remote_sequence = int(
+                remote_tick_state.get("remoteWalAppliedSequence"))
+        except (TypeError, ValueError):
+            wal_cycle_error = "remote_wal_sequence_missing"
+        else:
+            if candidate_remote_sequence < 0 or \
+                    candidate_remote_sequence != exported_local_sequence:
+                wal_cycle_error = "remote_wal_manifest_mismatch"
+            elif candidate_remote_sequence < previous_verified_wal_sequence:
+                wal_cycle_error = "remote_wal_sequence_regression"
+            else:
+                remote_wal_applied_sequence = candidate_remote_sequence
+                verified_wal_sequence = candidate_remote_sequence
+                compact_receipt_hash = blob.get("receiptHash")
+                wal_cycle_verified = True
+    elif cycle_verified:
+        wal_cycle_error = "remote_wal_sequence_missing"
     _REMOTE_CYCLE.update({
         "readBackAt": now_iso,
         "readBackVerified": cycle_verified,
+        "walReadBackVerified": wal_cycle_verified,
         "actualHash": actual_hash,
+        "remoteWalAppliedSequence": remote_wal_applied_sequence,
         "verifiedWalSequence": verified_wal_sequence,
+        "compactReceiptHash": compact_receipt_hash,
         "pendingCount": max(0, len(_OPS_JOURNAL) -
                             len(rec.get("ackedIdempotencyKeys") or [])),
         "acknowledgedCount": len(rec.get("ackedIdempotencyKeys") or []),
         "errorClass": cycle_error,
+        "walErrorClass": wal_cycle_error,
     })
+    try:
+        _persist_remote_wal_receipt(now_iso)
+    except Exception as exc:
+        if wal_cycle_verified:
+            _REMOTE_CYCLE.update({
+                "walReadBackVerified": False,
+                "remoteWalAppliedSequence": int(
+                    _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0),
+                "verifiedWalSequence": previous_verified_wal_sequence,
+                "compactReceiptHash": None,
+                "walErrorClass":
+                    f"remote_receipt_persist_failed:{type(exc).__name__}",
+            })
     remote_ledger = blob.get("marketLedger") if isinstance(blob, dict) else None
     remote_ledger_hash = (blob.get("marketLedgerStateHash")
                           if isinstance(blob, dict) else None)
@@ -20329,6 +20482,9 @@ def api_argus_osint_memory_snapshot():
                         _ASSET_CHART_REPORTS),
                     "assetChartReportsStateHash": argus_asset_chart_cache.state_hash(
                         _ASSET_CHART_REPORTS),
+                    "missionTickDurability":
+                        _mission_tick_durability_snapshot(
+                            remote_export=True),
                     "incidents": _INCIDENTS[-20:],
                     **_jsec,
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
@@ -20350,11 +20506,25 @@ def api_argus_admin_remote_journal_commit_receipt():
     _REMOTE_CYCLE.update({
         "remoteCommitSha": commit_sha, "committedAt": _ai_now_iso(),
         "readBackAt": None, "readBackVerified": False,
+        "walReadBackVerified": False,
         "expectedHash": expected_hash, "actualHash": None,
+        "remoteWalAppliedSequence": 0,
+        "compactReceiptHash": None,
         "pendingCount": len(_OPS_JOURNAL), "acknowledgedCount": 0,
-        "errorClass": None,
+        "errorClass": None, "walErrorClass": None,
     })
-    _osint_persist()
+    try:
+        # Survive status 137 between receipt acceptance and the full checkpoint.
+        _persist_remote_wal_receipt()
+    except Exception as exc:
+        _REMOTE_CYCLE["errorClass"] = \
+            f"remote_receipt_persist_failed:{type(exc).__name__}"
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "remote_receipt_persist_failed"}), 503
+    checkpoint = _osint_persist()
+    if checkpoint.get("verified") is not True:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "checkpoint_persist_failed"}), 503
     return jsonify({"ok": True, "status": "pending",
                     "readBackVerified": False,
                     "noteJa": "remote commit記録済み・read-back待ち"})

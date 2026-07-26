@@ -386,8 +386,9 @@ class RegressionContractTests(unittest.TestCase):
     def test_schema_is_additive_and_soak_history_is_not_rewritten(self):
         source = pathlib.Path("scanner.py").read_text()
         self.assertIn('"schemaVersion": "argus-durable-v3"', source)
-        self.assertIn('"missionTickDurability": dict(_MISSION_BATCH_STATE)',
+        self.assertIn('"missionTickDurability":',
                       source)
+        self.assertIn("_mission_tick_durability_snapshot(", source)
         self.assertIn("interruptions = list(_SOAK.get", source)
 
     def test_public_get_and_ai_contract_remain_unchanged(self):
