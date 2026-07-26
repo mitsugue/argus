@@ -184,6 +184,7 @@ export const AssetDeskList: React.FC<Props> = ({
           ? apx.priorityRank : rank <= 0 ? 'P0' : rank <= 2 ? 'P1'
           : rank <= 5 ? 'P2' : 'WATCH',
         dataStatus: freshnessOf(strat).text,
+        asOf: quote?.date ?? null,
         rank,
         whyCandidates: [
           incident?.moverCause?.bestLeadJa, incident?.reasonJa,
