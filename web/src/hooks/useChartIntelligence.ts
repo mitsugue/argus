@@ -9,12 +9,17 @@ import { formatSnapshotStatus, snapshotFreshness } from '../lib/snapshotFreshnes
 import {
   DEFAULT_MARKET_INSTRUMENT, isVerifiedMarketInstrument,
 } from '../domain/marketInstruments';
+import {
+  ASSET_CHART_METHOD_VERSION, assetChartRequestGate, boundedRetryAt,
+  parseRetryAfter, readAssetChart, writeAssetChart,
+  type AssetChartIdentity, type AssetChartViewState,
+} from '../lib/assetChartCache';
 
 const legacyCache = new Map<string, { at: number; data: ChartIntelligencePayload }>();
 const legacyInflight = new Map<string, Promise<ChartIntelligencePayload>>();
 const inflight = new Map<string, Promise<SnapshotNetworkResult>>();
 const failedUntil = new Map<string, number>();
-const LEGACY_STALE_MS = 30 * 60 * 1000;
+const assetFailureCount = new Map<string, number>();
 const REQUEST_TIMEOUT_MS = 15_000;
 
 export interface ChartIntelligenceOptions {
@@ -32,6 +37,24 @@ interface SnapshotView {
   snapshot: VerifiedSnapshot<ChartIntelligencePayload> | null;
   state: SnapshotViewState;
   error: string | null;
+}
+
+class AssetChartRequestError extends Error {
+  status: number | null;
+  retryAt: number | null;
+  errorClass: 'rate_limited' | 'timeout' | 'aborted' | 'http' | 'invalid_json'
+    | 'instrument_mismatch' | 'retry_wait' | 'network' | 'expected_skip';
+
+  constructor(message: string, options: {
+    status?: number | null; retryAt?: number | null;
+    errorClass: AssetChartRequestError['errorClass'];
+  }) {
+    super(message);
+    this.name = 'AssetChartRequestError';
+    this.status = options.status ?? null;
+    this.retryAt = options.retryAt ?? null;
+    this.errorClass = options.errorClass;
+  }
 }
 
 function baseUrl() {
@@ -80,30 +103,78 @@ function matchesInstrument(data: ChartIntelligencePayload, expectedSymbol?: stri
 }
 
 async function loadLegacy(url: string, expectedSymbol?: string) {
-  if ((failedUntil.get(url) ?? 0) > Date.now()) throw new Error('再試行待機中');
-  const current = legacyCache.get(url);
-  if (current && Date.now() - current.at < LEGACY_STALE_MS &&
-      matchesInstrument(current.data, expectedSymbol)) return current.data;
-  if (current && !matchesInstrument(current.data, expectedSymbol)) legacyCache.delete(url);
+  const blockedUntil = failedUntil.get(url) ?? 0;
+  if (blockedUntil > Date.now()) {
+    throw new AssetChartRequestError('再試行待機中', {
+      errorClass: 'retry_wait', retryAt: blockedUntil,
+    });
+  }
   const pending = legacyInflight.get(url);
   if (pending) return pending;
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
-  const request = fetch(url, {
-    method: 'GET', cache: 'no-store', headers: { Accept: 'application/json' },
-    signal: controller.signal,
-  }).then(async (response) => {
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json() as ChartIntelligencePayload;
-    if (!matchesInstrument(data, expectedSymbol)) throw new Error('instrument_mismatch');
-    legacyCache.set(url, { at: Date.now(), data });
-    return data;
-  }).catch((error: unknown) => {
-    failedUntil.set(url, Date.now() + 30_000);
-    throw error;
-  }).finally(() => {
-    window.clearTimeout(timer); legacyInflight.delete(url);
-  });
+  const request = assetChartRequestGate.enqueue(async () => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: 'GET', cache: 'no-store', headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const count = (assetFailureCount.get(url) ?? 0) + 1;
+        assetFailureCount.set(url, count);
+        const retryAt = response.status === 429
+          ? parseRetryAfter(response.headers.get('Retry-After')) ?? boundedRetryAt(count - 1)
+          : boundedRetryAt(0);
+        failedUntil.set(url, retryAt);
+        throw new AssetChartRequestError(`HTTP ${response.status}`, {
+          status: response.status, retryAt,
+          errorClass: response.status === 429 ? 'rate_limited' : 'http',
+        });
+      }
+      let data: ChartIntelligencePayload;
+      try {
+        data = await response.json() as ChartIntelligencePayload;
+      } catch {
+        throw new AssetChartRequestError('invalid_json', {
+          errorClass: 'invalid_json', retryAt: boundedRetryAt(0),
+        });
+      }
+      if (data.status === 'expected_skip') {
+        const skipReason = (data as ChartIntelligencePayload & {
+          stateUpdate?: { reason?: string | null };
+        }).stateUpdate?.reason;
+        throw new AssetChartRequestError(
+          skipReason === 'price_cache_unavailable'
+            ? '価格キャッシュの更新待ち' : '次回データ更新待ち',
+          { errorClass: 'expected_skip' },
+        );
+      }
+      if (!matchesInstrument(data, expectedSymbol)) {
+        throw new AssetChartRequestError('instrument_mismatch', {
+          errorClass: 'instrument_mismatch', retryAt: boundedRetryAt(0),
+        });
+      }
+      legacyCache.set(url, { at: Date.now(), data });
+      assetFailureCount.delete(url);
+      failedUntil.delete(url);
+      return data;
+    } catch (reason) {
+      if (reason instanceof AssetChartRequestError) throw reason;
+      const aborted = controller.signal.aborted
+        || (reason instanceof DOMException && reason.name === 'AbortError');
+      const timedOut = controller.signal.aborted
+        && controller.signal.reason === 'timeout';
+      const retryAt = boundedRetryAt(0);
+      failedUntil.set(url, retryAt);
+      throw new AssetChartRequestError(
+        timedOut ? 'timeout' : aborted ? 'aborted' : 'network_error', {
+        errorClass: timedOut ? 'timeout' : aborted ? 'aborted' : 'network',
+        retryAt,
+      });
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }).finally(() => legacyInflight.delete(url));
   legacyInflight.set(url, request);
   return request;
 }
@@ -179,16 +250,20 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     legacyUrl ? legacyCache.get(legacyUrl)?.data ?? null : null);
   const [legacyKey, setLegacyKey] = useState<string | null>(
     legacyData ? legacyUrl : null);
-  const [legacyError, setLegacyError] = useState<string | null>(null);
+  const [legacyState, setLegacyState] = useState<AssetChartViewState>(
+    legacyData ? 'CACHE_READY_REVALIDATING' : 'NO_CACHE_LOADING');
+  const [legacyError, setLegacyError] = useState<AssetChartRequestError | null>(null);
+  const [legacyRetryAt, setLegacyRetryAt] = useState<number | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const sequence = useRef(0);
+  const visibilityBlocked = useRef(false);
   const [loaderVisible, setLoaderVisible] = useState(false);
   const [slowInitial, setSlowInitial] = useState(false);
 
   useEffect(() => {
     const loading = expectation
       ? ['NO_CACHE_LOADING', 'CACHE_READY_REVALIDATING'].includes(view.state)
-      : !legacyData && !legacyError;
+      : ['NO_CACHE_LOADING', 'CACHE_READY_REVALIDATING'].includes(legacyState);
     if (!loading) { setLoaderVisible(false); setSlowInitial(false); return; }
     const loaderTimer = window.setTimeout(() => setLoaderVisible(true), 225);
     const slowTimer = window.setTimeout(() => setSlowInitial(true), 5_000);
@@ -196,7 +271,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
       window.clearTimeout(loaderTimer); window.clearTimeout(slowTimer);
       setLoaderVisible(false); setSlowInitial(false);
     };
-  }, [expectation, legacyData, view.state, expectedKey]);
+  }, [expectation, legacyState, view.state, expectedKey]);
 
   useEffect(() => {
     if (options.enabled === false || document.visibilityState === 'hidden') return;
@@ -281,40 +356,115 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
 
   useEffect(() => {
     if (options.enabled === false || expectation || !legacyUrl) return;
+    if (document.visibilityState === 'hidden') {
+      visibilityBlocked.current = true;
+      return;
+    }
+    const requestSequence = ++sequence.current;
     let cancelled = false;
-    const run = () => {
-      if (document.visibilityState === 'hidden') return;
-      void loadLegacy(legacyUrl, options.symbol).then((value) => {
-        if (!cancelled) {
-          setLegacyData(value); setLegacyKey(legacyUrl); setLegacyError(null);
-        }
-      }).catch((reason: unknown) => {
-        if (!cancelled) setLegacyError(
-          reason instanceof Error ? reason.message : '取得失敗');
-      });
+    const identity: AssetChartIdentity = {
+      market: options.market ?? (options.symbol?.match(/^\d/) ? 'JP' : 'US'),
+      symbol: options.symbol ?? '',
+      timeframe: options.timeframe ?? 'daily',
+      methodVersion: ASSET_CHART_METHOD_VERSION,
     };
-    run();
+    let cached = legacyCache.get(legacyUrl)?.data ?? null;
+    setLegacyKey(legacyUrl);
+    setLegacyData(cached);
+    setLegacyState(cached ? 'CACHE_READY_REVALIDATING' : 'NO_CACHE_LOADING');
+    setLegacyError(null);
+    setLegacyRetryAt(null);
+    void (async () => {
+      const restored = await readAssetChart(identity);
+      if (restored && matchesInstrument(restored.payload, options.symbol)) {
+        cached = restored.payload;
+        legacyCache.set(legacyUrl, { at: Date.parse(restored.generatedAt), data: cached });
+        if (!cancelled && requestSequence === sequence.current) {
+          setLegacyData(cached);
+          setLegacyKey(legacyUrl);
+          setLegacyState('CACHE_READY_REVALIDATING');
+        }
+      }
+      try {
+        const value = await loadLegacy(legacyUrl, options.symbol);
+        const published = await writeAssetChart(identity, value);
+        if (cancelled || requestSequence !== sequence.current) return;
+        setLegacyData(published?.payload ?? value);
+        setLegacyKey(legacyUrl);
+        setLegacyState('CURRENT_READY');
+        setLegacyError(null);
+        setLegacyRetryAt(null);
+      } catch (reason) {
+        if (cancelled || requestSequence !== sequence.current) return;
+        const error = reason instanceof AssetChartRequestError
+          ? reason : new AssetChartRequestError('取得失敗', { errorClass: 'network' });
+        const hasCache = !!cached;
+        const rateLimited = error.errorClass === 'rate_limited'
+          || error.errorClass === 'retry_wait';
+        setLegacyData(cached);
+        setLegacyKey(legacyUrl);
+        setLegacyState(rateLimited
+          ? hasCache ? 'RATE_LIMITED_WITH_CACHE' : 'RATE_LIMITED_WITHOUT_CACHE'
+          : hasCache ? 'ERROR_WITH_CACHE' : 'ERROR_WITHOUT_CACHE');
+        setLegacyError(error);
+        setLegacyRetryAt(error.retryAt);
+      }
+    })();
     return () => { cancelled = true; };
-  }, [legacyUrl, options.enabled, options.symbol, expectation, refreshToken]);
+  }, [legacyUrl, options.enabled, options.symbol, options.market,
+      options.timeframe, expectation, refreshToken]);
 
   useEffect(() => {
     const visible = () => {
-      if (document.visibilityState === 'visible') setRefreshToken((value) => value + 1);
+      if (document.visibilityState !== 'visible') return;
+      // Verified market views retain SWR-on-return. Asset charts only resume
+      // when a request was actually blocked by a hidden document; a normal
+      // visibilitychange never causes an extra legacy request.
+      if (expectation || visibilityBlocked.current) {
+        visibilityBlocked.current = false;
+        setRefreshToken((value) => value + 1);
+      }
     };
     document.addEventListener('visibilitychange', visible);
     return () => document.removeEventListener('visibilitychange', visible);
-  }, []);
+  }, [expectation]);
 
   if (!expectation) {
     const data = legacyKey === legacyUrl ? legacyData : null;
+    const effectiveLegacyState: AssetChartViewState = legacyKey === legacyUrl
+      ? legacyState : 'NO_CACHE_LOADING';
     const retry = () => {
       if (legacyUrl) failedUntil.delete(legacyUrl);
+      if (legacyUrl) assetFailureCount.delete(legacyUrl);
       setRefreshToken((value) => value + 1);
     };
+    const time = data?.asOf || data?.periodEnd;
+    const parsedTime = time ? Date.parse(time) : Number.NaN;
+    const cachedTime = Number.isFinite(parsedTime)
+      ? new Intl.DateTimeFormat('ja-JP', {
+        timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(new Date(parsedTime))
+      : null;
+    const statusText = effectiveLegacyState === 'CURRENT_READY' ? '更新済'
+      : effectiveLegacyState === 'CACHE_READY_REVALIDATING'
+        ? `前回${cachedTime ? ` ${cachedTime}` : ''} · 更新中`
+      : effectiveLegacyState === 'RATE_LIMITED_WITH_CACHE'
+        ? `前回${cachedTime ? ` ${cachedTime}` : ''} · 更新制限中`
+      : effectiveLegacyState === 'RATE_LIMITED_WITHOUT_CACHE' ? 'チャート取得制限中'
+      : effectiveLegacyState === 'ERROR_WITH_CACHE'
+        ? `前回${cachedTime ? ` ${cachedTime}` : ''} · 更新失敗`
+      : effectiveLegacyState === 'ERROR_WITHOUT_CACHE' ? 'チャート取得失敗'
+      : '初回データを準備中';
     return {
-      data, loading: !data && !legacyError, error: legacyError, snapshotState:
-        data ? 'CURRENT_READY' as const : 'NO_CACHE_LOADING' as const,
-      statusText: data ? '更新済' : legacyError ? '取得失敗' : '初回データを準備中',
+      data,
+      loading: effectiveLegacyState === 'NO_CACHE_LOADING'
+        || effectiveLegacyState === 'CACHE_READY_REVALIDATING',
+      error: legacyKey === legacyUrl ? legacyError?.message ?? null : null,
+      errorClass: legacyKey === legacyUrl ? legacyError?.errorClass ?? null : null,
+      retryAt: legacyKey === legacyUrl ? legacyRetryAt : null,
+      snapshotState: effectiveLegacyState,
+      statusText,
       loaderVisible, slowInitial, snapshotId: null,
       retry,
     };
@@ -332,6 +482,8 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     snapshotState: effectiveState,
     statusText: formatSnapshotStatus(effectiveState, matching),
     loaderVisible, slowInitial,
+    errorClass: null,
+    retryAt: null,
     snapshotId: matching?.snapshotId ?? null,
     retry: () => {
       if (verifiedUrl) failedUntil.delete(verifiedUrl);

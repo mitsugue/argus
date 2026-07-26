@@ -6,6 +6,158 @@
 
 export type DeskGenre = 'jp' | 'us' | 'funds' | 'crypto';
 
+export interface DecisionFirstInput {
+  symbol: string;
+  name: string;
+  market: string;
+  held: boolean;
+  signalCode?: string | null;
+  actionOverride?: string | null;
+  ownerLabel?: string | null;
+  priceText: string;
+  changePct?: number | null;
+  pnlPct?: number | null;
+  priority: string;
+  dataStatus: string;
+  rank: number;
+  whyCandidates: Array<string | null | undefined>;
+  nextCandidates: Array<string | null | undefined>;
+  changeCandidates: Array<string | null | undefined>;
+}
+
+export interface DecisionFirstView {
+  symbol: string;
+  name: string;
+  market: string;
+  held: boolean;
+  signalCode: string;
+  currentActionJa: string;
+  ownerActionJa: string;
+  entryActionJa: string;
+  whyJa: string;
+  nextJa: string;
+  whatChangesJa: string;
+  priceText: string;
+  changePct: number | null;
+  pnlPct: number | null;
+  priority: string;
+  dataStatus: string;
+  rank: number;
+}
+
+export interface PortfolioCommandView {
+  primaryCommandJa: string;
+  supportingSummaryJa: string;
+  counters: Array<{ key: 'new-stop' | 'exit-watch' | 'inspect' | 'hold';
+    labelJa: string; count: number }>;
+}
+
+const ACTION_JA: Record<string, { held: string; watch: string; entry: string }> = {
+  EXIT: { held: '撤退を検討', watch: '新規停止', entry: '新規停止' },
+  DEFEND: { held: '縮小・防衛を検討', watch: '新規停止', entry: '新規停止' },
+  REVIEW: { held: '保有を再点検', watch: '要点検・新規停止', entry: '新規停止' },
+  PAUSE: { held: '保有継続・状況待ち', watch: '待機・新規停止', entry: '新規停止' },
+  HOLD_ONLY: { held: '保有継続・買い増し禁止', watch: '新規停止', entry: '新規停止' },
+  PREPARE: { held: '保有継続・条件待ち', watch: '条件待ち', entry: '条件成立まで待機' },
+  ENTER: { held: '保有継続・追加可', watch: '条件内で新規可', entry: '条件内で新規可' },
+};
+
+const OVERRIDE_JA: Record<string, string> = {
+  EXIT_WATCH: '撤退検討', TRIM_WATCH: '縮小検討', REVIEW_REQUIRED: '要点検',
+  DO_NOT_ADD: '買い増し禁止', HOLD_CAUTION: '警戒して保有', WAIT: '待機',
+};
+
+export function compactDecisionText(value: string | null | undefined,
+                                    maxLength = 70): string | null {
+  const clean = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!clean) return null;
+  return clean.length <= maxLength ? clean : `${clean.slice(0, maxLength - 1)}…`;
+}
+
+/** 同義の結論を別sectionで繰り返さないための表示用semantic key。 */
+export function decisionSemanticKey(value: string | null | undefined): string {
+  const text = String(value ?? '').toUpperCase()
+    .replace(/[・／/、。\s()[\]（）]/g, '');
+  if (!text) return '';
+  const keys: string[] = [];
+  if (/EXIT|撤退/.test(text)) keys.push('exit');
+  if (/TRIM|縮小|リスク縮小/.test(text)) keys.push('trim');
+  if (/REVIEW|再点検|要点検|リスク確認/.test(text)) keys.push('review');
+  if (/WAIT|PAUSE|様子見|待機|状況待ち|条件待ち/.test(text)) keys.push('wait');
+  if (/HOLD|保有継続|維持/.test(text)) keys.push('hold');
+  if (/新規.*(禁止|停止|見送り)|新規禁止/.test(text)) keys.push('no-entry');
+  if (/(買い増し|追加).*(禁止|停止|しない)/.test(text)) keys.push('no-add');
+  return keys.length ? [...new Set(keys)].sort().join(':') : text;
+}
+
+function firstDistinct(candidates: Array<string | null | undefined>,
+                       used: Set<string>, fallback: string) {
+  for (const candidate of candidates) {
+    const line = compactDecisionText(candidate);
+    if (!line) continue;
+    const key = decisionSemanticKey(line);
+    const seenTokens = new Set([...used].flatMap((item) => item.split(':')));
+    const candidateTokens = key.split(':').filter(Boolean);
+    if (candidateTokens.length > 0
+        && candidateTokens.every((token) => seenTokens.has(token))) continue;
+    if (key) used.add(key);
+    return line;
+  }
+  return fallback;
+}
+
+export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirstView {
+  const signalCode = input.signalCode && ACTION_JA[input.signalCode]
+    ? input.signalCode : 'PAUSE';
+  const action = ACTION_JA[signalCode];
+  const override = input.actionOverride
+    ? OVERRIDE_JA[input.actionOverride] ?? compactDecisionText(input.actionOverride, 24)
+    : null;
+  const currentActionJa = override || (input.held ? action.held : action.watch);
+  const used = new Set<string>([decisionSemanticKey(currentActionJa)].filter(Boolean));
+  const ownerActionJa = input.held
+    ? compactDecisionText(input.ownerLabel, 42) || action.held
+    : '監視のみ（保有なし）';
+  const whyJa = firstDistinct(input.whyCandidates, used, '判断根拠データを確認中');
+  const nextJa = firstDistinct(input.nextCandidates, used, '次の価格・材料更新を確認');
+  const whatChangesJa = firstDistinct(
+    input.changeCandidates, used, '価格・需給・材料の条件変化で再判定');
+  return {
+    symbol: input.symbol, name: input.name, market: input.market, held: input.held,
+    signalCode, currentActionJa, ownerActionJa, entryActionJa: action.entry,
+    whyJa, nextJa, whatChangesJa, priceText: input.priceText,
+    changePct: input.changePct ?? null, pnlPct: input.pnlPct ?? null,
+    priority: input.priority, dataStatus: input.dataStatus, rank: input.rank,
+  };
+}
+
+export function buildPortfolioCommand(views: DecisionFirstView[]): PortfolioCommandView {
+  const newStop = views.filter((view) => view.entryActionJa.includes('停止')
+    || view.entryActionJa.includes('待機')).length;
+  const exitWatch = views.filter((view) =>
+    view.signalCode === 'EXIT' || view.signalCode === 'DEFEND'
+    || /撤退|縮小/.test(view.currentActionJa)).length;
+  const inspect = views.filter((view) => view.rank <= 5
+    || /点検|確認/.test(view.currentActionJa)).length;
+  const hold = views.filter((view) => view.held
+    && view.signalCode !== 'EXIT' && view.signalCode !== 'DEFEND').length;
+  const first = views[0];
+  return {
+    primaryCommandJa: first
+      ? `最優先：${first.symbol} ${first.name} — ${first.nextJa}`
+      : '最優先：保有・監視資産の判断データを確認中',
+    supportingSummaryJa: views.length
+      ? `${views.length}資産を優先度順に整理。判断変更条件は各銘柄で確認。`
+      : '登録資産はありません。',
+    counters: [
+      { key: 'new-stop', labelJa: '新規停止', count: newStop },
+      { key: 'exit-watch', labelJa: '撤退・縮小', count: exitWatch },
+      { key: 'inspect', labelJa: '要点検', count: inspect },
+      { key: 'hold', labelJa: '保有継続', count: hold },
+    ],
+  };
+}
+
 export interface DeskRankInput {
   symbol: string;
   genre: DeskGenre;

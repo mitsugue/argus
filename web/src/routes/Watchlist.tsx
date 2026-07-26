@@ -3,7 +3,6 @@ import { PageShell } from './PageShell';
 import { AIReview } from '../components/dashboard/AIReview';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { AssetDeskList, type AssetFocusIntent } from '../components/assetDesk/AssetDeskList';
-import { DownsideIncidentCard } from '../components/dashboard/DownsideIncidentCard';
 import { EntityProfileEditor } from '../components/dashboard/EntityProfileEditor';
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
@@ -48,18 +47,8 @@ export const Watchlist: React.FC<Props> = ({ assetFocus }) => {
   return (
     <PageShell
       title="ASSET DESK"
-      subtitle="保有・監視中の個別資産について、現在の判断と根拠を確認します。"
+      subtitle="今日どれを先に確認し、どう扱い、何を待つか。"
     >
-      <AIReview />
-
-      <DownsideIncidentCard />
-
-      <div className="asset-toolbar asset-toolbar--end">
-        <span className="asset-toolbar__age">{t('wl.updated')} {ageLabel(updatedAt, nowMs)}</span>
-        <button className="asset-btn" onClick={rescan} aria-label="Rescan (rule-based refresh, no AI run)">{t('wl.rescan')}</button>
-        <button className="asset-btn asset-btn--primary" onClick={() => setAddOpen(true)} aria-label="Add asset">{t('wl.addAsset')}</button>
-      </div>
-
       <AssetDeskList
         key={nonce}
         assets={assets}
@@ -67,15 +56,28 @@ export const Watchlist: React.FC<Props> = ({ assetFocus }) => {
         onRemove={remove}
         onUpdateHolding={updateHolding}
         focus={assetFocus}
+        toolbar={(
+          <div className="asset-toolbar asset-toolbar--end">
+            <span className="asset-toolbar__age">{t('wl.updated')} {ageLabel(updatedAt, nowMs)}</span>
+            <button className="asset-btn" onClick={rescan}
+              aria-label="Rescan (rule-based refresh, no AI run)">{t('wl.rescan')}</button>
+            <button className="asset-btn asset-btn--primary" onClick={() => setAddOpen(true)}
+              aria-label="Add asset">{t('wl.addAsset')}</button>
+          </div>
+        )}
       />
 
-      <EntityProfileEditor />
-
-      <TradeJournalCard assets={assets} />
-
-      <div className="watch-toolbar">
-        <ProHandoffButton />
-      </div>
+      <details className="card ad-support">
+        <summary>Supporting tools</summary>
+        <div className="ad-support__body">
+          <AIReview />
+          <EntityProfileEditor />
+          <TradeJournalCard assets={assets} />
+          <div className="watch-toolbar">
+            <ProHandoffButton />
+          </div>
+        </div>
+      </details>
 
       {addOpen && <AddAssetModal onClose={() => setAddOpen(false)} onAdd={add} />}
     </PageShell>

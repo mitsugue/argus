@@ -1,6 +1,9 @@
 import React from 'react';
 import { jpIntradayJa } from '../../lib/regimeLabels';
-import { useDownsideIncidents, type DownsideIncident, type MoverCauseCompact } from '../../hooks/useDownsideIncidents';
+import {
+  useDownsideIncidents, type DownsideIncident, type DownsideSnapshot,
+  type MoverCauseCompact,
+} from '../../hooks/useDownsideIncidents';
 import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import { AiExplanationBlock } from './AiExplanationBlock';
 import './DownsideIncidentCard.css';
@@ -59,13 +62,19 @@ function sevTone(s: string): 'red' | 'amber' | 'gray' {
   return 'gray';
 }
 
-export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
+export const IncidentRow: React.FC<{
+  inc: DownsideIncident;
+  onFocus?: (symbol: string, section: 'evidence') => void;
+}> = ({ inc, onFocus }) => {
   const [open, setOpen] = React.useState(false);
   const pct = typeof inc.changePct === 'number' ? `${inc.changePct.toFixed(1)}%` : '—';
   const top = inc.causeBuckets?.[0];
+  const cause = inc.moverCause?.causeStatusJa
+    || (top ? `${CAUSE_JA[top.cause] ?? top.cause}候補` : '原因確認中');
+  const next = inc.moverCause?.nextChecksJa?.[0] || inc.nextConditionJa;
   return (
     <div className={`dic-row dic-row--${sevTone(inc.severity)}`}>
-      <button className="dic-row__head" onClick={() => setOpen((v) => !v)}>
+      <button className="dic-row__head" onClick={() => onFocus?.(inc.symbol, 'evidence')}>
         <div className="dic-row__id">
           {inc.isHeld && <span className="dic-held">保有</span>}
           <span className="dic-sym">{inc.symbol}</span>
@@ -78,30 +87,20 @@ export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
           </span>
         </div>
       </button>
-      <div className="dic-overrideline">
-        <span className="dic-lbl">Rule: {inc.currentAction}</span>
-        <span className="dic-arrow">→</span>
-        <span className="dic-lbl dic-lbl--ovr">Override: {inc.actionOverride}</span>
-        {top && (
-          <span className="dic-why">
-            {CAUSE_JA[top.cause] ?? top.cause} {Math.round(top.probability * 100)}%
-          </span>
-        )}
-        {inc.caosLead && (
-          <span className={`dic-caos dic-caos--${inc.caosLead.corroboration}`} title={inc.caosLead.relationJa || undefined}>
-            C.A.O.S.{inc.caosLead.via === 'entity' ? '·連想' : ''}
-          </span>
-        )}
-        {inc.moverCause?.causeStatusJa && (
-          <span className="dic-why" style={{ color: LADDER_TONE[inc.moverCause.causeStatus ?? ''] || 'var(--text-sub)', fontWeight: 600 }}
-                title={inc.moverCause.whyNotConfirmedJa || undefined}>
-            {inc.moverCause.causeStatusJa}
-          </span>
-        )}
+      <div className="dic-row__decision">
+        <span style={{ color: LADDER_TONE[inc.moverCause?.causeStatus ?? ''] || 'var(--text-sub)' }}>
+          {cause}
+        </span>
+        <span>次：{next}</span>
+        <button type="button" className="dic-evidence" aria-expanded={open}
+                onClick={() => setOpen((value) => !value)}>
+          {open ? '証拠を閉じる' : '証拠'}
+        </button>
       </div>
-      <p className="dic-reason">{inc.reasonJa}</p>
       {open && (
         <div className="dic-detail">
+          <p className="dic-line"><b>判断:</b> Rule {inc.currentAction} → {inc.actionOverride}</p>
+          <p className="dic-line"><b>要約:</b> {inc.reasonJa}</p>
           <div className="dic-buckets">
             {inc.causeBuckets.slice(0, 4).map((b) => (
               <div className="dic-bucket" key={b.cause}>
@@ -167,6 +166,14 @@ export const IncidentRow: React.FC<{ inc: DownsideIncident }> = ({ inc }) => {
 
 export const DownsideIncidentCard: React.FC = () => {
   const { data } = useDownsideIncidents();
+  return <DownsideIncidentQueue data={data} />;
+};
+
+export const DownsideIncidentQueue: React.FC<{
+  data: DownsideSnapshot | null;
+  maxItems?: number;
+  onFocus?: (symbol: string, section: 'evidence') => void;
+}> = ({ data, maxItems = 4, onFocus }) => {
   if (!data) return null;
   const incidents = data.incidents ?? [];
   const overlayActive = data.jpIntradayOverlay && data.jpIntradayOverlay !== 'NORMAL';
@@ -186,7 +193,12 @@ export const DownsideIncidentCard: React.FC = () => {
       {data.holderRiskOverlay === 'REVIEW_REQUIRED' && (
         <p className="dic-holder">保有銘柄が影響を受けています。通常のHOLDとして扱わず点検してください。</p>
       )}
-      {incidents.map((inc) => <IncidentRow key={inc.incidentId} inc={inc} />)}
+      {incidents.slice(0, maxItems).map((inc) => (
+        <IncidentRow key={inc.incidentId} inc={inc} onFocus={onFocus} />
+      ))}
+      {incidents.length > maxItems && (
+        <p className="dic-more">ほか {incidents.length - maxItems}件は資産一覧で確認</p>
+      )}
       {incidents.length === 0 && (
         <p className="dic-reason">個別のインシデントはまだ無いが、日本市場の地合いが弱含み。新規追加は慎重に。</p>
       )}

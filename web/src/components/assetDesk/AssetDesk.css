@@ -1,5 +1,22 @@
-/* V12.2.12 — Asset Desk(個別銘柄の正本ページ)。カード内部はuac-/asset- prefixesの
-   既存スタイルを再利用し、ここでは閉じたカードのヘッダ行(ad-*)とリスト枠のみ。 */
+/* Decision-first Asset Desk. The default surface is a queue, not a dossier. */
+
+.asset-groups{display:flex;flex-direction:column;gap:10px;min-width:0}
+.ad-command{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;
+  padding:13px 15px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));
+  border-left:3px solid var(--accent);border-radius:12px;
+  background:linear-gradient(120deg,color-mix(in srgb,var(--accent) 7%,var(--surface)),
+    var(--surface));box-sizing:border-box;min-width:0}
+.ad-command__copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.ad-command__eyebrow{font-size:9px;letter-spacing:.11em;color:var(--accent);font-weight:800}
+.ad-command__copy strong{font-size:14px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.ad-command__copy small{font-size:10.5px;color:var(--text-faint);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ad-command__counters{display:grid;grid-template-columns:repeat(4,minmax(54px,1fr));gap:6px}
+.ad-command__counters span{display:flex;flex-direction:column;align-items:center;gap:1px;
+  padding:5px 8px;border:1px solid var(--line);border-radius:8px;color:var(--text-faint);
+  font-size:9px;white-space:nowrap}
+.ad-command__counters b{font-size:14px;color:var(--text-main);font-variant-numeric:tabular-nums}
 
 .ad-card { position: relative; }
 .ad-handle {
@@ -10,12 +27,12 @@
 
 .ad-head {
   display: block; width: 100%; text-align: left; background: transparent;
-  border: none; cursor: pointer; padding: 8px 10px 7px; color: var(--text-main);
+  border: none; cursor: pointer; padding: 9px 10px 8px; color: var(--text-main);
 }
 .ad-card .ad-head { padding-left: 18px; }
 
-.ad-l1, .ad-l2, .ad-foot { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.ad-l1 { margin-bottom: 3px; }
+.ad-l1, .ad-l2 { display: flex; align-items: center; gap: 7px; min-width:0 }
+.ad-l1 { margin-bottom: 5px; }
 .ad-held {
   font-size: 9px; color: var(--bg, #0b0e13); background: var(--accent);
   border-radius: 3px; padding: 0 4px; font-weight: 700;
@@ -26,16 +43,19 @@
 .ad-mkt { font-size: 9px; color: var(--text-faint); border: 1px solid var(--line); border-radius: 999px; padding: 0 5px; }
 .ad-price { font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
 .ad-chg { font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.ad-fresh { font-size: 9.5px; }
-.ad-asof { font-size: 9.5px; color: var(--text-faint); }
+.ad-chevron{width:18px;text-align:center;color:var(--text-faint);font-size:15px}
 
-.ad-l2 { margin-bottom: 3px; }
-.ad-cmd { font-weight: 800; font-size: 12px; letter-spacing: 0.04em; }
+.ad-l2 {font-size:10px;color:var(--text-faint)}
+.ad-cmd { font-weight: 800; font-size: 11.5px; letter-spacing: 0.01em; overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;max-width:38ch}
+.ad-owner-state{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ad-prio{font-size:9px;font-weight:800;color:var(--accent);border:1px solid currentColor;
+  border-radius:999px;padding:0 5px}
+.ad-data{font-size:9px;color:var(--text-faint);white-space:nowrap}
 .ad-src { font-size: 9px; border-radius: 3px; padding: 0 5px; font-weight: 700; letter-spacing: 0.03em; }
 .ad-src--ai { color: var(--value-positive); border: 1px solid var(--value-positive); }
 .ad-src--rule { color: var(--amber, #fbbf24); border: 1px solid var(--amber, #fbbf24); }
 .ad-meta { font-size: 10px; color: var(--text-faint); }
-.ad-prio { font-size: 10px; font-weight: 700; }
 
 .ad-reason {
   display: block; font-size: 11px; color: var(--text-sub); margin: 0 0 3px;
@@ -56,9 +76,72 @@
 #asset-anchor-none { display: none; }
 .ad-card { scroll-margin-top: 60px; }
 
+.ad-expanded{padding-top:0!important}
+.ad-tabs{display:flex;gap:3px;overflow-x:auto;padding:7px 9px;border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);scrollbar-width:thin}
+.ad-tabs button{flex:0 0 auto;min-height:36px;padding:5px 9px;border:1px solid transparent;
+  border-radius:7px;background:transparent;color:var(--text-faint);font-size:10.5px;cursor:pointer}
+.ad-tabs button.is-active{border-color:var(--accent);color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.ad-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ad-tab-panel{padding:9px;min-width:0}
+.ad-tab-section{min-width:0;scroll-margin-top:72px}
+.ad-tab-section+.ad-tab-section{margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
+.ad-tab-section h4{margin:0 0 6px;font-size:9.5px;letter-spacing:.08em;color:var(--text-faint)}
+.ad-disclaimer{margin:0 9px 8px;font-size:9px;color:var(--text-faint)}
+
+.ad-overview{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:8px}
+.ad-overview__action,.ad-overview__position,.ad-overview__facts>div{
+  border:1px solid var(--line);border-radius:9px;padding:9px;background:color-mix(in srgb,var(--surface) 96%,black)}
+.ad-overview__action>span,.ad-overview__position>span{display:block;margin-bottom:3px;
+  font-size:8.5px;letter-spacing:.09em;color:var(--text-faint);font-weight:800}
+.ad-overview__action>strong{display:block;font-size:15px;line-height:1.25}
+.ad-overview__action>div{display:grid;grid-template-columns:auto 1fr;gap:2px 7px;margin-top:7px;
+  font-size:10.5px}
+.ad-overview__action small{color:var(--text-faint)}
+.ad-overview__action b{font-weight:600}
+.ad-position-stats{display:flex;gap:5px 9px;flex-wrap:wrap;font-size:10.5px}
+.ad-position-stats b{flex-basis:100%;font-size:12px}
+.ad-position-stats small{color:var(--text-sub)}
+.ad-position-stats .is-negative{color:var(--value-negative)}
+.ad-position-stats .is-positive{color:var(--value-positive)}
+.ad-overview__facts{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;margin:0}
+.ad-overview__facts dt{font-size:8.5px;letter-spacing:.08em;color:var(--text-faint);font-weight:800}
+.ad-overview__facts dd{margin:4px 0 0;font-size:11px;line-height:1.45;color:var(--text-sub)}
+.ad-overview__warning{grid-column:1/-1;margin:0;font-size:10px;color:var(--amber,#fbbf24)}
+.ad-plan-detail{margin-top:8px;border-top:1px solid var(--line);padding-top:7px}
+.ad-plan-detail summary{cursor:pointer;font-size:10.5px;color:var(--text-faint)}
+.ad-plan-detail p{font-size:10.5px;color:var(--text-sub);line-height:1.5;margin:4px 0}
+
+.ad-support{margin-top:12px;padding:0;overflow:hidden}
+.ad-support>summary{cursor:pointer;padding:11px 13px;font-size:11px;color:var(--text-faint);
+  list-style-position:inside}
+.ad-support__body{display:flex;flex-direction:column;gap:10px;padding:0 10px 10px}
+
 @media (max-width: 640px) {
-  .ad-name { max-width: 18ch; }
+  .ad-command{grid-template-columns:1fr;padding:11px 12px;gap:9px}
+  .ad-command__copy strong,.ad-command__copy small{white-space:normal}
+  .ad-command__counters{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+  .ad-command__counters span{padding:5px 2px;font-size:8px}
+  .ad-name { max-width: 14ch; }
+  .ad-mkt{display:none}
+  .ad-price{font-size:11px}
+  .ad-cmd{max-width:20ch}
+  .ad-owner-state{font-size:9px}
+  .ad-data{display:none}
   .ad-next { max-width: 100%; }
+  .ad-tabs{padding:6px}
+  .ad-tabs button{min-height:44px;padding:6px 10px}
+  .asset-groups .asset-btn,
+  .asset-groups .asset-filter__chip{min-height:44px;padding-top:8px;padding-bottom:8px}
+  .asset-groups .ad-head{min-height:58px}
+  .ad-card .ci-toolbar button{min-width:44px;min-height:44px}
+  .ad-card .ci-toolbar label{min-height:44px;display:inline-flex;align-items:center}
+  .ad-tab-panel{padding:7px}
+  .ad-overview{grid-template-columns:1fr}
+  .ad-overview__facts{grid-column:auto;grid-template-columns:1fr}
+  .ad-overview__warning{grid-column:auto}
 }
 
 /* リサーチメモ/Holdingのラベルは縦flex内で130px基底が高さになる(旧行レイアウト用) — 打ち消し */

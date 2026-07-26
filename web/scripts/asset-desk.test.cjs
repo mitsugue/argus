@@ -208,5 +208,56 @@ check('D10d historical outcomes remain in Research & Notes', researchPanel.inclu
   check('D11 order-invariant', JSON.stringify(a) === JSON.stringify(b));
   check('D12 rank then symbol', JSON.stringify(a) === JSON.stringify(['BBBB', 'DDDD', 'AAAA', 'CCCC'])); }
 
+// ── ④ Decision-first information architecture ───────────────────────────────
+const decisionView = desk.buildDecisionFirstView({
+  symbol: '5803', name: 'フジクラ', market: 'JP', held: true,
+  signalCode: 'HOLD_ONLY', actionOverride: null, ownerLabel: '保有継続',
+  priceText: '¥4,593', changePct: -2.83, pnlPct: -35.1,
+  priority: 'P1', dataStatus: 'live', rank: 2,
+  // HOLD/保有継続 is synonymous with the command and must be skipped.
+  whyCandidates: ['HOLD', '決算前で需給の下げ止まりを未確認'],
+  nextCandidates: ['様子見', '出来高を伴う支持帯回復を確認'],
+  changeCandidates: ['25日線回復で再判定'],
+});
+check('E1 one normalized dominant command',
+  decisionView.currentActionJa === '保有継続・買い増し禁止');
+check('E2 synonymous HOLD conclusion is removed',
+  decisionView.whyJa === '決算前で需給の下げ止まりを未確認');
+check('E3 overview text fields stay bounded',
+  [decisionView.whyJa, decisionView.nextJa, decisionView.whatChangesJa]
+    .every((line) => line.length <= 70));
+check('E4 closed row retains owner P/L, priority and data',
+  decisionView.pnlPct === -35.1 && decisionView.priority === 'P1'
+  && decisionView.dataStatus === 'live');
+const command = desk.buildPortfolioCommand([decisionView]);
+check('E5 page has one portfolio command with four counters',
+  /^最優先：/.test(command.primaryCommandJa) && command.counters.length === 4);
+
+const cardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetDecisionCard.tsx'), 'utf8');
+const summarySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetDecisionSummary.tsx'), 'utf8');
+const overviewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetDecisionDetails.tsx'), 'utf8');
+const downsideSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'dashboard', 'DownsideIncidentCard.tsx'), 'utf8');
+check('E6 detail sections are tab-gated and initially overview',
+  cardSource.includes("useState<DeskTab>('overview')")
+  && cardSource.includes("tab === 'chart'")
+  && cardSource.includes("tab === 'evidence'"));
+check('E7 chart does not mount in closed or overview card',
+  cardSource.indexOf('<ChartIntelligencePanel') > cardSource.indexOf("tab === 'chart'"));
+check('E8 closed row is exactly two semantic lines',
+  summarySource.includes('className=\"ad-l1\"') && summarySource.includes('className=\"ad-l2\"')
+  && !summarySource.includes('ad-reason') && !summarySource.includes('ad-foot'));
+check('E9 expanded default contains required decision fields',
+  ['CURRENT ACTION', 'OWNER POSITION', 'WHY NOW', 'NEXT CHECK', 'WHAT CHANGES IT']
+    .every((label) => overviewSource.includes(label)));
+check('E10 downside initial queue is bounded to four rows',
+  downsideSource.includes('maxItems = 4') && downsideSource.includes('incidents.slice(0, maxItems)'));
+check('E11 tabs expose keyboard navigation and ARIA contract',
+  cardSource.includes('role=\"tablist\"') && cardSource.includes('role=\"tab\"')
+  && cardSource.includes('ArrowRight') && cardSource.includes('aria-selected'));
+
 if (failed) { console.error(`\nasset-desk behavioral tests: ${failed} FAILED`); process.exit(1); }
 console.log('\nasset-desk behavioral tests: all passed');

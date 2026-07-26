@@ -95,7 +95,8 @@ def test_deep_link_uses_app_state_not_only_event():
     assert "localStorage" not in app.split("navigateToAsset")[1].split("};")[0]
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
     assert "AssetFocusIntent" in desk
-    assert "focus.nonce" in desk                     # 同一銘柄の再クリックにも反応
+    assert "activeFocus.nonce" in desk               # 同一銘柄の再クリックにも反応
+    assert "lastNonce.current" in desk
     assert "scrollIntoView" in desk
     assert "750" in desk                             # 遅延ロード後のsettle再固定
 
@@ -123,11 +124,14 @@ def test_migration_matrix_doc_exists():
 
 def test_desk_sections_fixed_order():
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
-    order = ["DECISION", "AI REVIEW / RULE CHECK", "OWNER POSITION", "WHY / DOWNSIDE",
-             "FLOW & SUPPLY", "EVENTS & CATALYSTS", "TECHNICAL & ENTRY", "SCENARIOS",
-             "RESEARCH & NOTES", "DATA QUALITY"]
-    idx = [card.index(f'title="{t}"') for t in order]
-    assert idx == sorted(idx), "展開セクションは§7の固定順"
+    order = ["'overview'", "'chart'", "'evidence'", "'position'", "'scenarios'", "'research'"]
+    idx = [card.index(f"id: {tab}") for tab in order]
+    assert idx == sorted(idx), "決定優先タブは固定順"
+    # 移行済みの各詳細機能は削除せず、該当タブ配下で遅延表示する。
+    for panel in ("AssetDecisionDetails", "ChartIntelligencePanel", "AssetWhyPanel",
+                  "AssetFlowPanel", "AssetPositionPanel", "AssetScenarioPanel",
+                  "AssetAIReview", "AssetResearchPanel", "AssetDataQuality"):
+        assert f"<{panel}" in card
 
 
 def test_migrated_features_present():
@@ -147,14 +151,14 @@ def test_migrated_features_present():
     assert "InstitutionalView" in flow and "逆日歩 未取得" in flow
     # 免責はカード1回
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
-    assert card.count("売買指示ではありません") == 1
+    assert card.count("判断支援のみ。自動売買・注文機能はありません。") == 1
 
 
 def test_portfolio_wide_features_moved_to_core():
     wl = _read("routes", "Watchlist.tsx")
     assert "WhatIfPanel" not in wl and "ExposureCard" not in wl
     assert "ASSET DESK" in wl
-    assert "保有・監視中の個別資産について、現在の判断と根拠を確認します。" in wl
+    assert "今日どれを先に確認し、どう扱い、何を待つか。" in wl
     cp = _read("routes", "CorePortfolio.tsx")
     assert "PortfolioExposureCard" in cp and "WhatIfPanel" in cp
 

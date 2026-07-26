@@ -17,10 +17,18 @@ import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
 import type { CatalystItem } from '../../types/catalysts';
 import type { DownsideIncident } from '../../hooks/useDownsideIncidents';
-import { deskRank, DESK_RANK_JA, type DeskRankInput, type DeskGenre } from '../../domain/assetDesk';
+import {
+  buildDecisionFirstView, buildPortfolioCommand, deskRank, DESK_RANK_JA,
+  type DeskRankInput, type DeskGenre,
+} from '../../domain/assetDesk';
+import { resolveSignal, type OwnerState } from '../../domain/actionLevel';
 import type { DeskCardData, DeskEventTag, DeskSection } from './types';
 import { sectionAnchorId, DESK_SECTIONS } from './types';
 import { AssetDecisionCard } from './AssetDecisionCard';
+import { AssetPortfolioCommand } from './AssetPortfolioCommand';
+import { fmtPrice, freshnessOf } from './deskFormat';
+import { bestAssetName } from '../../lib/assetStrategy';
+import { DownsideIncidentQueue } from '../dashboard/DownsideIncidentCard';
 import { t } from '../../i18n';
 import './AssetDesk.css';
 
@@ -37,6 +45,7 @@ interface Props {
   onRemove: (id: string) => void;
   onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
   focus?: AssetFocusIntent | null;
+  toolbar?: React.ReactNode;
 }
 
 // 手動順モードの行(DnDハンドル+カード)
@@ -54,13 +63,16 @@ const SortableCardRow: React.FC<{
   );
 };
 
-export const AssetDeskList: React.FC<Props> = ({ assets, onReorder, onRemove, onUpdateHolding, focus }) => {
+export const AssetDeskList: React.FC<Props> = ({
+  assets, onReorder, onRemove, onUpdateHolding, focus, toolbar,
+}) => {
   const intel = useAssetIntel({ publish: false });
   const cat = useCatalysts();
   const { funds: navFunds } = useFundNav();
   const mountTs = useMemo(() => Date.now(), []);
   const [nowMs] = useState(() => Date.now());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [localFocus, setLocalFocus] = useState<AssetFocusIntent | null>(null);
   const [sortMode, setSortMode] = useState<'priority' | 'manual'>('priority');
   const [filter, setFilter] = useState<'all' | 'risk' | 'held'>('all');
   const sensors = useSensors(
@@ -150,8 +162,45 @@ export const AssetDeskList: React.FC<Props> = ({ assets, onReorder, onRemove, on
         aiRuleDisagree: !!decision?.rule.disagreementJa,
         eventSoon: eventTags.some((e) => e.countdown === 'D' || e.countdown === 'D-1'),
       };
+      const rank = deskRank(rankInput);
+      const signalCode = card?.signalCode ?? resolveSignal(strat.action, {
+        downsideOverride: incident?.actionOverride,
+        dataQuality: strat.status === 'live' ? 'LIVE'
+          : strat.status === 'mock' ? 'MOCK' : 'PARTIAL',
+        materialDownside: !!incident,
+        ownerState: (incident?.ownerState as OwnerState) || undefined,
+      }).code;
+      const name = bestAssetName(a, quote?.name ?? card?.name);
+      const priceShown = strat.status === 'mock' ? null : (strat.price ?? card?.price);
+      const changePct = strat.status === 'mock' ? null : (strat.changePct ?? card?.changePct);
+      const decisionFirst = buildDecisionFirstView({
+        symbol: sym, name, market: a.market, held, signalCode,
+        actionOverride: incident?.actionOverride,
+        ownerLabel: pn?.readinessJa ?? intel.stanceBySymbol.get(sym)?.stanceJa
+          ?? plBySym.get(sym)?.currentStanceJa,
+        priceText: fmtPrice(a.market, priceShown),
+        changePct, pnlPct: pn?.pnlPct ?? null,
+        priority: apx?.priorityRank && apx.priorityRank !== 'Ignore'
+          ? apx.priorityRank : rank <= 0 ? 'P0' : rank <= 2 ? 'P1'
+          : rank <= 5 ? 'P2' : 'WATCH',
+        dataStatus: freshnessOf(strat).text,
+        rank,
+        whyCandidates: [
+          incident?.moverCause?.bestLeadJa, incident?.reasonJa,
+          decision?.reasonJa, card?.causeOneLineJa, strat.reasonJa,
+        ],
+        nextCandidates: [
+          incident?.moverCause?.nextChecksJa?.[0], incident?.nextConditionJa,
+          card?.nextJa, plBySym.get(sym)?.nextChecksJa?.[0],
+          decision?.rule.nextConditionJa, strat.nextConditionJa,
+        ],
+        changeCandidates: [
+          plBySym.get(sym)?.invalidationJa?.[0], apx?.whatWouldChangeJa,
+          scBySym.get(sym)?.whatWouldChangeJa?.[0], strat.whatChangesJa,
+        ],
+      });
       const d: DeskCardData = {
-        asset: a, genre, rank: deskRank(rankInput),
+        asset: a, genre, rank,
         card, decision, strat, quote,
         liveName: quote?.name ?? null,
         incident,
@@ -166,6 +215,7 @@ export const AssetDeskList: React.FC<Props> = ({ assets, onReorder, onRemove, on
         aiAgeMin: intel.aiMeta.ageMin,
         aiMeta: intel.aiMeta,
         eventTags,
+        decisionFirst,
       };
       return { d, rankInput };
     });
@@ -183,6 +233,10 @@ export const AssetDeskList: React.FC<Props> = ({ assets, onReorder, onRemove, on
     rows.slice().sort((a, b) => a.d.rank - b.d.rank
       || (a.d.asset.symbol < b.d.asset.symbol ? -1 : a.d.asset.symbol > b.d.asset.symbol ? 1 : 0)),
     [rows]);
+  const command = useMemo(
+    () => buildPortfolioCommand(prioritized.map((row) => row.d.decisionFirst)),
+    [prioritized],
+  );
 
   // 手動順: 従来のgenreグループ+sortOrder+DnD。
   const manualGroups = useMemo(() => {
@@ -197,23 +251,26 @@ export const AssetDeskList: React.FC<Props> = ({ assets, onReorder, onRemove, on
 
   // ── Deep-link(Todayから): 展開+スクロール(即時+700ms settle再固定) ──
   const lastNonce = useRef<number>(0);
+  const activeFocus = localFocus ?? focus;
   useEffect(() => {
-    if (!focus || focus.nonce === lastNonce.current) return;
-    const row = rows.find((r) => r.d.asset.symbol.toUpperCase() === focus.symbol.toUpperCase());
+    if (!activeFocus || activeFocus.nonce === lastNonce.current) return;
+    const row = rows.find((r) =>
+      r.d.asset.symbol.toUpperCase() === activeFocus.symbol.toUpperCase());
     if (!row) return;   // 未登録銘柄: 何もしない(捏造スクロールなし)
-    lastNonce.current = focus.nonce;
+    lastNonce.current = activeFocus.nonce;
     setExpandedId(row.d.asset.id);
-    const section = focus.section && (DESK_SECTIONS as readonly string[]).includes(focus.section)
-      ? focus.section as DeskSection : undefined;
+    const section = activeFocus.section
+      && (DESK_SECTIONS as readonly string[]).includes(activeFocus.section)
+      ? activeFocus.section as DeskSection : undefined;
     const scroll = () => {
-      const el = document.getElementById(sectionAnchorId(focus.symbol, section))
-        ?? document.getElementById(sectionAnchorId(focus.symbol));
+      const el = document.getElementById(sectionAnchorId(activeFocus.symbol, section))
+        ?? document.getElementById(sectionAnchorId(activeFocus.symbol));
       el?.scrollIntoView({ block: 'start' });
     };
     // 展開レンダー後に即時スクロール→遅延ロードで高さが変わるため700msで再固定
     window.setTimeout(scroll, 50);
     window.setTimeout(scroll, 750);
-  }, [focus, rows]);
+  }, [activeFocus, rows]);
 
   function onDragEnd(groupIds: string[]) {
     return (e: DragEndEvent) => {
@@ -239,16 +296,33 @@ export const AssetDeskList: React.FC<Props> = ({ assets, onReorder, onRemove, on
       key={r.d.asset.id}
       d={r.d}
       open={expandedId === r.d.asset.id}
-      onToggle={() => setExpandedId((cur) => (cur === r.d.asset.id ? null : r.d.asset.id))}
+      onToggle={() => {
+        setLocalFocus(null);
+        setExpandedId((cur) => (cur === r.d.asset.id ? null : r.d.asset.id));
+      }}
       onRemove={(id) => { setExpandedId((cur) => (cur === id ? null : cur)); onRemove(id); }}
       onUpdateHolding={onUpdateHolding}
       nowMs={nowMs}
       dragHandle={handle}
+      focusSection={activeFocus?.symbol.toUpperCase() === r.d.asset.symbol.toUpperCase()
+        ? activeFocus.section : undefined}
     />
   );
 
   return (
     <div className="asset-groups">
+      <AssetPortfolioCommand command={command} />
+      <DownsideIncidentQueue
+        data={intel.downside}
+        maxItems={4}
+        onFocus={(symbol) => {
+          const row = rows.find((item) =>
+            item.d.asset.symbol.toUpperCase() === symbol.toUpperCase());
+          if (!row) return;
+          setLocalFocus({ symbol, section: 'why-downside', nonce: Date.now() });
+        }}
+      />
+      {toolbar}
       {cal && (
         <div className="asset-calibration" title="予測台帳の採点成績が確信度に反映されます(calibration-v1)">
           🎯 校正: {cal.basisJa}
