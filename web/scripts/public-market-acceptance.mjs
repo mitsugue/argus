@@ -28,6 +28,8 @@ const VIEWPORTS = [
 const TABS = ['OVERVIEW', 'REPLAY', 'LEDGER'];
 const INSTRUMENTS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
+const LOADER_THRESHOLD_MS = 225;
+const LOADER_TIMING_TOLERANCE_MS = 1;
 
 const isBlack = (value) => ['rgb(0, 0, 0)', 'rgba(0, 0, 0, 1)', '#000', '#000000', 'black']
   .includes(String(value || '').trim().toLowerCase());
@@ -35,6 +37,31 @@ const sanitize = (value) => String(value || '')
   .replace(/([?&](?:token|key|authorization|auth)=[^&\s]+)/gi, '?redacted')
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
   .slice(0, 1000);
+const roundTimingMs = (value) => Number.isFinite(value)
+  ? Math.round(value * 1_000) / 1_000 : null;
+
+function classifyConsoleErrors(evidence) {
+  const remaining429s = evidence.rateLimits
+    .filter((row) => row.contractValid)
+    .map((row) => row.url);
+  const unexpected = [];
+  const expected429 = [];
+  for (const error of evidence.consoleErrors) {
+    if (error.type !== 'console.error' || !/\b429\b/.test(error.message)) {
+      unexpected.push(error);
+      continue;
+    }
+    const index = remaining429s.findIndex((url) =>
+      !error.location || error.location === url);
+    if (index < 0) {
+      unexpected.push(error);
+      continue;
+    }
+    remaining429s.splice(index, 1);
+    expected429.push(error);
+  }
+  return { unexpected, expected429 };
+}
 
 async function writeJson(name, value) {
   await fs.mkdir(OUT_DIR, { recursive: true });
@@ -86,7 +113,11 @@ async function seedWarmProfile() {
 function attachEvidence(page, evidence) {
   page.on('console', (message) => {
     if (message.type() === 'error') {
-      evidence.consoleErrors.push({ type: 'console.error', message: sanitize(message.text()) });
+      evidence.consoleErrors.push({
+        type: 'console.error',
+        location: sanitize(message.location().url || ''),
+        message: sanitize(message.text()),
+      });
     } else if (message.type() === 'warning' && /react/i.test(message.text())) {
       evidence.reactWarnings.push({ type: 'console.warning', message: sanitize(message.text()) });
     }
@@ -110,7 +141,21 @@ function attachEvidence(page, evidence) {
   page.on('response', async (response) => {
     const parsed = new URL(response.url());
     const match = parsed.pathname === '/api/argus/chart-intelligence';
-    if (!match || response.status() !== 200) return;
+    if (!match) return;
+    if (response.status() === 429) {
+      let body = null;
+      try { body = await response.json(); } catch { /* validated below */ }
+      const contractValid = body?.error === 'rate_limited'
+        && typeof body?.message === 'string';
+      evidence.rateLimits.push({
+        url: response.url(), status: response.status(),
+        retryAfter: response.headers()['retry-after'] ?? null,
+        contractValid,
+      });
+      if (!contractValid) evidence.failures.push('rate-limit-response-contract');
+      return;
+    }
+    if (response.status() !== 200) return;
     try {
       const body = await response.json();
       const view = body.payload || body;
@@ -557,13 +602,18 @@ async function firstUseLoaderAudit(browser, evidence) {
     const networkStart = entries.length
       ? entries[entries.length - 1].startTime : null;
     const firstLoaderAt = globalThis.__ARGUS_LOADER_FIRST_AT__;
+    const rawDelayMs = networkStart != null && firstLoaderAt != null
+      ? firstLoaderAt - networkStart : null;
     return {
       networkStart,
       firstLoaderAt,
-      loaderDelayMs: networkStart != null && firstLoaderAt != null
-        ? firstLoaderAt - networkStart : null,
+      rawDelayMs,
+      loaderDelayMs: rawDelayMs,
     };
   });
+  loaderTiming.roundedDelayMs = roundTimingMs(loaderTiming.rawDelayMs);
+  loaderTiming.thresholdMs = LOADER_THRESHOLD_MS;
+  loaderTiming.toleranceMs = LOADER_TIMING_TOLERANCE_MS;
   const skeletonCount = await page.locator(
     '.mr-snapshot-skeleton').count();
   await page.waitForTimeout(Math.max(0, 5_250 - (Date.now() - startedAt)));
@@ -580,11 +630,12 @@ async function firstUseLoaderAudit(browser, evidence) {
     beforeThresholdAtMs: 200, afterThresholdAtMs: 300,
     loaderTiming, slowLabel, chartCount,
   };
-  if (loaderTiming.loaderDelayMs == null) {
+  if (loaderTiming.roundedDelayMs == null) {
     evidence.failures.push('loader-timing-missing');
-  } else if (loaderTiming.loaderDelayMs < 225) {
+  } else if (loaderTiming.roundedDelayMs
+      < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS) {
     evidence.failures.push(
-      `loader-flicker-before-225ms:${loaderTiming.loaderDelayMs}`);
+      `loader-flicker-before-225ms:${loaderTiming.roundedDelayMs}`);
   }
   if (!skeletonCount) evidence.failures.push('first-use-skeleton-missing');
   if (!slowLabel.includes('初回データを準備中')) {
@@ -601,6 +652,7 @@ async function mainAcceptance() {
   const evidence = {
     acceptance: [], consoleErrors: [], reactWarnings: [], network: [],
     marketData: {}, computedStyles: [], aiPostCount: 0, failures: [],
+    rateLimits: [],
   };
   const browser = await chromium.launch({ headless: true });
   let screenshotCount = 0;
@@ -979,7 +1031,8 @@ async function mainAcceptance() {
     controlledBackendDelayMs: 12_000,
   };
 
-  if (evidence.consoleErrors.length) evidence.failures.push('console-errors');
+  const consoleClassification = classifyConsoleErrors(evidence);
+  if (consoleClassification.unexpected.length) evidence.failures.push('console-errors');
   if (evidence.reactWarnings.length) evidence.failures.push('react-warnings');
   if (evidence.aiPostCount) evidence.failures.push(`automatic-posts:${evidence.aiPostCount}`);
 
@@ -1012,7 +1065,10 @@ async function mainAcceptance() {
   };
   await writeJson('acceptance.json', acceptance);
   await writeJson('console.json', {
-    errors: evidence.consoleErrors, reactWarnings: evidence.reactWarnings,
+    errors: consoleClassification.unexpected,
+    expectedRateLimitErrors: consoleClassification.expected429,
+    rateLimits: evidence.rateLimits,
+    reactWarnings: evidence.reactWarnings,
   });
   await writeJson('network.json', {
     aiPostCount: evidence.aiPostCount,

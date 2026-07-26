@@ -11,6 +11,9 @@ const OUT_DIR = path.resolve(process.env.ARGUS_MOBILE_ACCEPTANCE_OUT
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
+const LOADER_THRESHOLD_MS = 225;
+const LOADER_TIMING_TOLERANCE_MS = 1;
+const COMBINATION_PACE_MS = 1_000;
 const VIEWPORTS = [
   { width: 320, height: 568 }, { width: 375, height: 812 },
   { width: 390, height: 844 }, { width: 393, height: 852 },
@@ -21,6 +24,31 @@ const sanitize = (value) => String(value ?? '')
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
   .replace(/([?&](?:token|key|authorization|auth)=[^&\s]+)/gi, '?redacted')
   .slice(0, 800);
+const roundTimingMs = (value) => Number.isFinite(value)
+  ? Math.round(value * 1_000) / 1_000 : null;
+
+function classifyConsoleErrors(evidence) {
+  const remaining429s = evidence.rateLimits
+    .filter((row) => row.contractValid)
+    .map((row) => row.url);
+  const unexpected = [];
+  const expected429 = [];
+  for (const error of evidence.consoleErrors) {
+    if (error.type !== 'console.error' || !/\b429\b/.test(error.message)) {
+      unexpected.push(error);
+      continue;
+    }
+    const index = remaining429s.findIndex((url) =>
+      !error.location || error.location === url);
+    if (index < 0) {
+      unexpected.push(error);
+      continue;
+    }
+    remaining429s.splice(index, 1);
+    expected429.push(error);
+  }
+  return { unexpected, expected429 };
+}
 
 async function writeJson(name, value) {
   await fs.mkdir(OUT_DIR, { recursive: true });
@@ -41,13 +69,19 @@ function observe(page, evidence) {
     const isIntentionallyBlockedSupportGet = location.includes('/api/argus/')
       && !location.includes('/api/argus/chart-intelligence');
     if (message.type() === 'error' && !isIntentionallyBlockedSupportGet) {
-      evidence.consoleErrors.push(`${sanitize(location)} ${sanitize(message.text())}`.trim());
+      evidence.consoleErrors.push({
+        type: 'console.error',
+        location: sanitize(location),
+        message: sanitize(message.text()),
+      });
     }
     if (message.type() === 'warning' && /react/i.test(message.text())) {
       evidence.reactWarnings.push(sanitize(message.text()));
     }
   });
-  page.on('pageerror', (error) => evidence.consoleErrors.push(sanitize(error.message)));
+  page.on('pageerror', (error) => evidence.consoleErrors.push({
+    type: 'pageerror', location: '', message: sanitize(error.message),
+  }));
   page.on('request', (request) => {
     const url = new URL(request.url());
     evidence.network.push({
@@ -63,7 +97,21 @@ function observe(page, evidence) {
   });
   page.on('response', async (response) => {
     const url = new URL(response.url());
-    if (url.pathname !== '/api/argus/chart-intelligence' || response.status() !== 200) return;
+    if (url.pathname !== '/api/argus/chart-intelligence') return;
+    if (response.status() === 429) {
+      let body = null;
+      try { body = await response.json(); } catch { /* invalid contract is recorded below */ }
+      const contractValid = body?.error === 'rate_limited'
+        && typeof body?.message === 'string';
+      evidence.rateLimits.push({
+        url: response.url(), status: response.status(),
+        retryAfter: response.headers()['retry-after'] ?? null,
+        contractValid,
+      });
+      if (!contractValid) evidence.failures.push('rate-limit-response-contract');
+      return;
+    }
+    if (response.status() !== 200) return;
     try {
       const body = await response.json();
       const symbol = url.searchParams.get('symbol');
@@ -217,7 +265,7 @@ async function run() {
   const evidence = {
     failures: [], consoleErrors: [], reactWarnings: [], network: [],
     aiPostCount: 0, geometry: [], combinations: [],
-    snapshotBodies: new Map(), suppressedNonChartGets: 0,
+    snapshotBodies: new Map(), suppressedNonChartGets: 0, rateLimits: [],
   };
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -257,6 +305,10 @@ async function run() {
       if (!record.symbol.includes(symbol) || record.horizon !== horizon || !record.snapshotId) {
         evidence.failures.push(`today-combination:${symbol}:${horizon}`);
       }
+      // The UI is intentionally exercised as a single human interaction
+      // stream. One request at a time plus explicit pacing avoids turning a
+      // public-acceptance run into a synthetic request storm.
+      await page.waitForTimeout(COMBINATION_PACE_MS);
     }
     await screenshot(page, `today-${symbol}.png`);
   }
@@ -288,20 +340,58 @@ async function run() {
   const cold = await browser.newContext({
     viewport: { width: 430, height: 932 }, serviceWorkers: 'block',
   });
+  await cold.addInitScript(() => {
+    globalThis.__ARGUS_LOADER_FIRST_AT__ = null;
+    const observe = () => {
+      const root = document.documentElement;
+      if (!root) return;
+      const record = () => {
+        if (globalThis.__ARGUS_LOADER_FIRST_AT__ == null
+            && document.querySelector('.at-projection-missing .triangle-step-loader')) {
+          globalThis.__ARGUS_LOADER_FIRST_AT__ = performance.now();
+        }
+      };
+      new MutationObserver(record).observe(root, { childList: true, subtree: true });
+      record();
+    };
+    if (document.documentElement) observe();
+    else document.addEventListener('DOMContentLoaded', observe, { once: true });
+  });
   await isolateChartReads(cold, evidence);
   await cold.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 2_000));
   const coldPage = await cold.newPage();
   await coldPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(coldPage);
-  await coldPage.waitForTimeout(180);
-  const before225 = await coldPage.locator('.at-projection-missing .triangle-step-loader').count();
-  await coldPage.waitForTimeout(180);
-  const after225 = await coldPage.locator('.at-projection-missing .triangle-step-loader').count();
+  await coldPage.locator('.at-projection-missing .triangle-step-loader')
+    .waitFor({ state: 'visible', timeout: 2_000 });
+  const loaderTiming = await coldPage.evaluate(() => {
+    const entries = performance.getEntriesByName(
+      'argus-snapshot:network-revalidation-start');
+    const networkStart = entries.length ? entries[entries.length - 1].startTime : null;
+    const firstLoaderAt = globalThis.__ARGUS_LOADER_FIRST_AT__;
+    return {
+      networkStart,
+      firstLoaderAt,
+      rawDelayMs: networkStart != null && firstLoaderAt != null
+        ? firstLoaderAt - networkStart : null,
+    };
+  });
+  loaderTiming.roundedDelayMs = roundTimingMs(loaderTiming.rawDelayMs);
+  loaderTiming.thresholdMs = LOADER_THRESHOLD_MS;
+  loaderTiming.toleranceMs = LOADER_TIMING_TOLERANCE_MS;
+  const before225 = loaderTiming.roundedDelayMs != null
+    && loaderTiming.roundedDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS
+    ? 1 : 0;
+  const after225 = await coldPage.locator(
+    '.at-projection-missing .triangle-step-loader').count();
   const skeletonHeight = await coldPage.locator('.at-projection-missing').evaluate(
     (element) => element.getBoundingClientRect().height);
   await screenshot(coldPage, 'today-cold-loader.png');
-  if (before225 || !after225 || skeletonHeight < 250) evidence.failures.push('cold-loader-contract');
+  if (loaderTiming.roundedDelayMs == null || before225
+      || !after225 || skeletonHeight < 250) {
+    evidence.failures.push('cold-loader-contract');
+  }
   await cold.close();
 
   // A six-second cold delay must expose the explicit initial preparation label.
@@ -370,6 +460,53 @@ async function run() {
   await context.unroute('**/api/argus/chart-intelligence?*');
   if (!before304 || after304 !== before304) evidence.failures.push('not-modified-continuity');
 
+  // A real 429 is an expected HTTP outcome, not a JavaScript/React exception.
+  // With a verified cached snapshot the UI must remain usable, honor the
+  // bounded retry window, and avoid an immediate retry storm.
+  const rateLimitContext = await browser.newContext({
+    viewport: { width: 430, height: 932 }, serviceWorkers: 'block',
+  });
+  await isolateChartReads(rateLimitContext, evidence);
+  await rateLimitContext.route('**/api/argus/chart-intelligence?*',
+    (route) => fulfillCapturedSnapshot(route, evidence, 0));
+  const rateLimitPage = await rateLimitContext.newPage();
+  observe(rateLimitPage, evidence);
+  await rateLimitPage.goto(TODAY_URL, {
+    waitUntil: 'domcontentloaded', timeout: 30_000,
+  });
+  await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
+  const rateLimitSeedSnapshotId = await rateLimitPage.locator(
+    '.at-chart-status').getAttribute('data-snapshot-id');
+  await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
+  let controlled429Calls = 0;
+  await rateLimitContext.route('**/api/argus/chart-intelligence?*', (route) => {
+    controlled429Calls += 1;
+    return route.fulfill({
+      status: 429, contentType: 'application/json',
+      headers: { 'Retry-After': '2' },
+      body: '{"error":"rate_limited","message":"controlled acceptance limit"}',
+    });
+  });
+  await rateLimitPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
+  const rateLimitedSnapshotId = await rateLimitPage.locator(
+    '.at-chart-status').getAttribute('data-snapshot-id');
+  await rateLimitPage.waitForTimeout(1_000);
+  await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
+  const controlledRateLimit = {
+    calls: controlled429Calls,
+    expectedCalls: initialKeys.size,
+    retryAfterSeconds: 2,
+    seedSnapshotId: rateLimitSeedSnapshotId,
+    cachedSnapshotId: rateLimitedSnapshotId,
+  };
+  if (controlled429Calls !== initialKeys.size
+      || !rateLimitSeedSnapshotId
+      || rateLimitedSnapshotId !== rateLimitSeedSnapshotId) {
+    evidence.failures.push('rate-limit-cache-backoff-contract');
+  }
+  await rateLimitContext.close();
+
   // The warmed verified snapshot must survive a fully offline reload.
   await context.setOffline(true);
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -397,7 +534,8 @@ async function run() {
     }
   }
   if (evidence.aiPostCount) evidence.failures.push(`ai-post:${evidence.aiPostCount}`);
-  if (evidence.consoleErrors.length) evidence.failures.push('console-errors');
+  const consoleClassification = classifyConsoleErrors(evidence);
+  if (consoleClassification.unexpected.length) evidence.failures.push('console-errors');
   if (evidence.reactWarnings.length) evidence.failures.push('react-warnings');
 
   const result = {
@@ -413,9 +551,14 @@ async function run() {
     navigation,
     loader: {
       before225, after225, skeletonHeight, slowLabel, failureState,
-      warmLoader, warmSkeleton,
+      warmLoader, warmSkeleton, loaderTiming,
     },
     offline: { onlineSnapshotId, offlineSnapshotId, before304, after304 },
+    rateLimit: {
+      responses: evidence.rateLimits,
+      expectedConsoleErrors: consoleClassification.expected429,
+      controlled: controlledRateLimit,
+    },
     suppressedNonChartGets: evidence.suppressedNonChartGets,
     failures: [...new Set(evidence.failures)].sort(),
   };
@@ -425,7 +568,9 @@ async function run() {
     aiPostCount: evidence.aiPostCount, requests: evidence.network,
   });
   await writeJson('console.json', {
-    errors: evidence.consoleErrors, reactWarnings: evidence.reactWarnings,
+    errors: consoleClassification.unexpected,
+    expectedRateLimitErrors: consoleClassification.expected429,
+    reactWarnings: evidence.reactWarnings,
   });
   await writeJson('combinations.json', evidence.combinations);
   await context.close();

@@ -57,6 +57,10 @@ assert.match(script, /page\.isClosed\(\)/);
 assert.match(script, /loader-flicker-before-225ms/);
 assert.match(script, /__ARGUS_LOADER_FIRST_AT__/);
 assert.match(script, /loaderDelayMs/);
+assert.match(script, /LOADER_TIMING_TOLERANCE_MS = 1/);
+assert.match(script, /roundTimingMs/);
+assert.match(script,
+  /LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS/);
 assert.match(script, /controlled verified snapshot delay did not start/);
 assert.match(script, /name === 'argus-api'/);
 assert.match(script, /slowProfileDir/);
@@ -142,6 +146,12 @@ assert.match(vite, /__ARGUS_BUILD_SHA__/);
 assert.match(app, /HASH_ROUTES/);
 assert.match(navigation, /hash: '#market'[\s\S]+route: 'regime'|route: 'regime'[\s\S]+hash: '#market'/);
 assert.match(workflow, /mobile-today-acceptance\.mjs/);
+assert.match(workflow, /Report deployment and acceptance outcomes separately/);
+assert.match(workflow, /needs\.deploy\.result/);
+assert.match(mobileAcceptance, /COMBINATION_PACE_MS = 1_000/);
+assert.match(mobileAcceptance, /rate-limit-cache-backoff-contract/);
+assert.match(mobileAcceptance, /expectedRateLimitErrors/);
+assert.match(mobileAcceptance, /Retry-After/);
 for (const value of ['320', '375', '390', '393', '414', '430', '932']) {
   assert.match(mobileAcceptance, new RegExp(`width: ${value}`));
 }
