@@ -14,8 +14,10 @@ def test_workflow_only_release_scope_is_backend_false():
     scope = classify([
         ".github/workflows/caos-scan.yml",
         "scripts/resolve_backend_identity.py",
+        "scripts/prepare_remote_journal_publish.py",
         "test_backend_identity_resolver.py",
         "test_caos_workflow_recovery.py",
+        "test_remote_journal_publish.py",
     ])
     assert scope == {
         "frontendDeploy": False,
@@ -75,14 +77,35 @@ def test_cancelled_or_manual_workflow_performs_no_operational_write():
 
 def test_stale_writer_guard_and_verified_receipt_order_remain():
     text = _text()
-    select_pos = text.index('[ "$NEW_ASOF" \\> "$OLD_ASOF" ]')
+    select_pos = text.index("prepare_remote_journal_publish.py")
     remote_verify_pos = text.index(
         '[ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ]'
     )
     receipt_pos = text.index("remote-journal-commit-receipt")
     assert select_pos < remote_verify_pos < receipt_pos
-    assert '[ "$EXPECTED_HASH" = "$NEW_HASH" ]' in text
+    assert "verify-committed --readback ledger/osint/readback.json" in text
     assert "expected_skip_stale_snapshot" in text
+
+
+def test_oversized_full_snapshot_uses_compact_readback_without_github_blob():
+    text = _text()
+    flush = text.split("- name: Commit verified snapshot and post receipt", 1)[1]
+    copy_helper_pos = text.index(
+        'cp scripts/prepare_remote_journal_publish.py'
+    )
+    copy_module_pos = text.index(
+        'cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"'
+    )
+    checkout_pos = text.index("git checkout -B ledger")
+    assert copy_helper_pos < checkout_pos
+    assert copy_module_pos < checkout_pos
+    assert "fullSnapshotRetained" in flush
+    assert "ledger/osint/readback.json" in flush
+    assert 'cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json' not in flush
+    assert (
+        "json.load(open('ledger/osint/memory.json'))"
+        "['integrityManifest']['manifestHash']"
+    ) not in flush
 
 
 def test_no_secret_value_is_logged_or_artifacted():
