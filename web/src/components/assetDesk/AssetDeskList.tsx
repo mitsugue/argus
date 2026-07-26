@@ -153,6 +153,9 @@ export const AssetDeskList: React.FC<Props> = ({
       const decision = (genre === 'jp' || genre === 'us') ? intel.decisionBySym.get(sym) : undefined;
       const apx = apBySym.get(sym);
       const pn = intel.positionExposure.notes[sym];
+      const themeConcentrationPct = pn
+        ? intel.positionExposure.byTheme.find((theme) => theme.ja === pn.themeJa)?.pct ?? null
+        : null;
       const eventTags = eventTagsBySym.get(sym) ?? [];
       const held = !!pn?.held || (a.quantity ?? 0) > 0;
       const rankInput: DeskRankInput = {
@@ -219,6 +222,7 @@ export const AssetDeskList: React.FC<Props> = ({
         aiMeta: intel.aiMeta,
         eventTags,
         decisionFirst,
+        themeConcentrationPct,
       };
       return { d, rankInput };
     });

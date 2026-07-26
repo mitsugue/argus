@@ -17,10 +17,6 @@ export const AssetWhyPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
         <div className="asset-detail__downside">
           <div className="asset-detail__downside-head">
             WHY DOWN? <span className="asset-detail__downside-pct">{typeof incident.changePct === 'number' ? `${incident.changePct.toFixed(1)}%` : ''}</span>
-            <span className="asset-detail__downside-ovr"
-              style={{ color: ['EXIT_WATCH', 'TRIM_WATCH'].includes(incident.actionOverride) ? '#F87171' : '#FBBF24' }}>
-              Rule: {incident.currentAction} → Override: {incident.actionOverride}
-            </span>
           </div>
           <div className="asset-detail__downside-causes">
             {incident.causeBuckets.slice(0, 3).map((b) => (
@@ -29,9 +25,6 @@ export const AssetWhyPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
               </span>
             ))}
           </div>
-          <p className="asset-detail__downside-line">{incident.reasonJa}</p>
-          <p className="asset-detail__downside-line"><b>やってはいけない:</b> {incident.doNotDoJa}</p>
-          <p className="asset-detail__downside-line"><b>確認条件:</b> {incident.nextConditionJa}</p>
           {incident.missingData.length > 0 && (
             <p className="asset-detail__downside-line asset-detail__downside-missing">
               <b>欠損データ:</b> {incident.missingData.join(' / ')}
@@ -39,7 +32,6 @@ export const AssetWhyPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
           )}
         </div>
       )}
-      {c?.causeOneLineJa && <p className="uac-cause" style={{ display: 'block' }}>{c.causeOneLineJa}</p>}
       {/* v12.0.6: 「理由を詳しく調べる」即時調査(公開POSTはenqueueのみ) */}
       <div className="uac-sec">
         <div className="uac-sec-t">今の動きを調べる</div>
