@@ -6,11 +6,13 @@
 import type { AssetItem } from '../types/assetItem';
 import type { ActionLabel } from '../types/actionLabels';
 import type { CatalystItem } from '../types/catalysts';
+import type { ProbabilityProvenance } from '../domain/decisionView';
 
 export interface ScenarioProb {
   label: string;
   labelJa: string;
   probability: number;
+  probabilityProvenance?: ProbabilityProvenance | null;
   rationaleJa: string;
 }
 

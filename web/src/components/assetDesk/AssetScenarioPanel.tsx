@@ -1,6 +1,7 @@
 import React from 'react';
 import type { DeskCardData } from './types';
 import { DOM_TONE } from '../../domain/scenario';
+import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — SCENARIOS(§7-8)。旧Todayの条件付き分岐(scenario engine・帯のみ)
 // +旧Watchlistのルールシナリオ確率を併記。単一予測なし・%断定なし(不変)。
@@ -43,15 +44,20 @@ export const AssetScenarioPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
       )}
       {d.strat.scenarios.length > 0 && (
         <div className="asset-scen">
-          <div className="asset-scen__head">Scenario probabilities · {d.strat.scenarioHorizonJa}</div>
-          {d.strat.scenarios.map((s) => (
-            <div className="asset-scen__row" key={s.label}>
-              <span className="asset-scen__label">{s.labelJa}</span>
-              <span className="asset-scen__bar"><span style={{ width: `${s.probability}%` }} /></span>
-              <span className="asset-scen__pct">{s.probability}%</span>
-              <span className="asset-scen__why">{s.rationaleJa}</span>
-            </div>
-          ))}
+          <div className="asset-scen__head">条件付きシナリオ · {d.strat.scenarioHorizonJa}</div>
+          {d.strat.scenarios.map((s) => {
+            const display = probabilityDisplay(s.probability, s.probabilityProvenance);
+            return (
+              <div className="asset-scen__row" key={s.label}>
+                <span className="asset-scen__label">{s.labelJa}</span>
+                <span className="asset-scen__band">
+                  {display.qualitative}
+                  {display.showPercent && <small>{display.percentText}</small>}
+                </span>
+                <span className="asset-scen__why">{s.rationaleJa}</span>
+              </div>
+            );
+          })}
           <div className="asset-scen__disc">{d.strat.scenarioDisclaimerJa}</div>
         </div>
       )}

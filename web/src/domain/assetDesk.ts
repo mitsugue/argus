@@ -4,6 +4,14 @@
 // (シグナル/優先度/リスク/incident/AIとルールの不一致/イベント接近)の出力
 // だけで順位を決める。同順位はsymbol昇順 — 入力順に依存しない(順序不変)。
 
+import {
+  normalizeDataState,
+  semanticDecisionKey,
+  type DataState,
+  type DecisionView,
+  type EvidenceState,
+} from './decisionView';
+
 export type DeskGenre = 'jp' | 'us' | 'funds' | 'crypto';
 
 export interface DecisionFirstInput {
@@ -19,13 +27,15 @@ export interface DecisionFirstInput {
   pnlPct?: number | null;
   priority: string;
   dataStatus: string;
+  evidenceState?: EvidenceState;
+  asOf?: string | null;
   rank: number;
   whyCandidates: Array<string | null | undefined>;
   nextCandidates: Array<string | null | undefined>;
   changeCandidates: Array<string | null | undefined>;
 }
 
-export interface DecisionFirstView {
+export interface DecisionFirstView extends DecisionView {
   symbol: string;
   name: string;
   market: string;
@@ -42,7 +52,11 @@ export interface DecisionFirstView {
   pnlPct: number | null;
   priority: string;
   dataStatus: string;
+  dataState: DataState;
+  evidenceState: EvidenceState;
+  asOf: string | null;
   rank: number;
+  bucket: 'exit-watch' | 'inspect' | 'hold' | 'new-stop';
 }
 
 export interface PortfolioCommandView {
@@ -75,20 +89,7 @@ export function compactDecisionText(value: string | null | undefined,
 }
 
 /** 同義の結論を別sectionで繰り返さないための表示用semantic key。 */
-export function decisionSemanticKey(value: string | null | undefined): string {
-  const text = String(value ?? '').toUpperCase()
-    .replace(/[・／/、。\s()[\]（）]/g, '');
-  if (!text) return '';
-  const keys: string[] = [];
-  if (/EXIT|撤退/.test(text)) keys.push('exit');
-  if (/TRIM|縮小|リスク縮小/.test(text)) keys.push('trim');
-  if (/REVIEW|再点検|要点検|リスク確認/.test(text)) keys.push('review');
-  if (/WAIT|PAUSE|様子見|待機|状況待ち|条件待ち/.test(text)) keys.push('wait');
-  if (/HOLD|保有継続|維持/.test(text)) keys.push('hold');
-  if (/新規.*(禁止|停止|見送り)|新規禁止/.test(text)) keys.push('no-entry');
-  if (/(買い増し|追加).*(禁止|停止|しない)/.test(text)) keys.push('no-add');
-  return keys.length ? [...new Set(keys)].sort().join(':') : text;
-}
+export const decisionSemanticKey = semanticDecisionKey;
 
 function firstDistinct(candidates: Array<string | null | undefined>,
                        used: Set<string>, fallback: string) {
@@ -122,25 +123,39 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
   const nextJa = firstDistinct(input.nextCandidates, used, '次の価格・材料更新を確認');
   const whatChangesJa = firstDistinct(
     input.changeCandidates, used, '価格・需給・材料の条件変化で再判定');
+  const bucket: DecisionFirstView['bucket'] =
+    signalCode === 'EXIT' || signalCode === 'DEFEND' || /撤退|縮小/.test(currentActionJa)
+      ? 'exit-watch'
+      : input.rank <= 5 || /点検|確認/.test(currentActionJa)
+        ? 'inspect'
+        : input.held ? 'hold' : 'new-stop';
+  const dataState = normalizeDataState(input.dataStatus);
+  const evidenceState = input.evidenceState
+    ?? (whyJa === '判断根拠データを確認中' ? 'UNRESOLVED'
+      : dataState === 'STALE' ? 'STALE'
+        : dataState === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'SUPPORTED_HYPOTHESIS');
   return {
     symbol: input.symbol, name: input.name, market: input.market, held: input.held,
     signalCode, currentActionJa, ownerActionJa, entryActionJa: action.entry,
     whyJa, nextJa, whatChangesJa, priceText: input.priceText,
     changePct: input.changePct ?? null, pnlPct: input.pnlPct ?? null,
     priority: input.priority, dataStatus: input.dataStatus, rank: input.rank,
+    bucket,
+    primaryAction: currentActionJa,
+    ownerAction: ownerActionJa,
+    entryAction: action.entry,
+    reason: whyJa,
+    nextCheck: nextJa,
+    changeCondition: whatChangesJa,
+    evidenceState,
+    dataState,
+    asOf: input.asOf ?? null,
   };
 }
 
 export function buildPortfolioCommand(views: DecisionFirstView[]): PortfolioCommandView {
-  const newStop = views.filter((view) => view.entryActionJa.includes('停止')
-    || view.entryActionJa.includes('待機')).length;
-  const exitWatch = views.filter((view) =>
-    view.signalCode === 'EXIT' || view.signalCode === 'DEFEND'
-    || /撤退|縮小/.test(view.currentActionJa)).length;
-  const inspect = views.filter((view) => view.rank <= 5
-    || /点検|確認/.test(view.currentActionJa)).length;
-  const hold = views.filter((view) => view.held
-    && view.signalCode !== 'EXIT' && view.signalCode !== 'DEFEND').length;
+  const count = (bucket: DecisionFirstView['bucket']) =>
+    views.filter((view) => view.bucket === bucket).length;
   const first = views[0];
   return {
     primaryCommandJa: first
@@ -150,10 +165,10 @@ export function buildPortfolioCommand(views: DecisionFirstView[]): PortfolioComm
       ? `${views.length}資産を優先度順に整理。判断変更条件は各銘柄で確認。`
       : '登録資産はありません。',
     counters: [
-      { key: 'new-stop', labelJa: '新規停止', count: newStop },
-      { key: 'exit-watch', labelJa: '撤退・縮小', count: exitWatch },
-      { key: 'inspect', labelJa: '要点検', count: inspect },
-      { key: 'hold', labelJa: '保有継続', count: hold },
+      { key: 'new-stop', labelJa: '新規停止', count: count('new-stop') },
+      { key: 'exit-watch', labelJa: '撤退・縮小', count: count('exit-watch') },
+      { key: 'inspect', labelJa: '要点検', count: count('inspect') },
+      { key: 'hold', labelJa: '保有継続', count: count('hold') },
     ],
   };
 }
