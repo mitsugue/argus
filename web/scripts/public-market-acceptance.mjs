@@ -29,7 +29,10 @@ const TABS = ['OVERVIEW', 'REPLAY', 'LEDGER'];
 const INSTRUMENTS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
 const LOADER_THRESHOLD_MS = 225;
-const LOADER_TIMING_TOLERANCE_MS = 1;
+// MutationObserver delivery and the performance mark can straddle a browser
+// clock sample.  Keep a narrow explicit allowance for that measurement skew;
+// the 225 ms product delay remains unchanged.
+const LOADER_TIMING_TOLERANCE_MS = 5;
 
 const isBlack = (value) => ['rgb(0, 0, 0)', 'rgba(0, 0, 0, 1)', '#000', '#000000', 'black']
   .includes(String(value || '').trim().toLowerCase());

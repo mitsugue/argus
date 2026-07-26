@@ -61,10 +61,27 @@ assert.match(script, /page\.isClosed\(\)/);
 assert.match(script, /loader-flicker-before-225ms/);
 assert.match(script, /__ARGUS_LOADER_FIRST_AT__/);
 assert.match(script, /loaderDelayMs/);
-assert.match(script, /LOADER_TIMING_TOLERANCE_MS = 1/);
+assert.match(script, /LOADER_TIMING_TOLERANCE_MS = 5/);
 assert.match(script, /roundTimingMs/);
 assert.match(script,
   /LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS/);
+const loaderThresholdMs = Number(
+  script.match(/LOADER_THRESHOLD_MS = (\d+)/)?.[1]);
+const loaderToleranceMs = Number(
+  script.match(/LOADER_TIMING_TOLERANCE_MS = (\d+)/)?.[1]);
+const roundLoaderTiming = (delayMs) => Math.round(delayMs * 1_000) / 1_000;
+const loaderIsTooEarly = (delayMs) => roundLoaderTiming(delayMs)
+  < loaderThresholdMs - loaderToleranceMs;
+assert.equal(loaderIsTooEarly(224.9), false,
+  'floating-point timing noise must not fail the loader contract');
+assert.equal(loaderIsTooEarly(223.5), false,
+  'observed effect-to-mark clock skew within the explicit tolerance must pass');
+assert.equal(loaderIsTooEarly(220), false,
+  'the explicit lower boundary must pass');
+assert.equal(loaderIsTooEarly(219.999), true,
+  'a loader materially earlier than the allowed boundary must still fail');
+assert.equal(loaderIsTooEarly(200), true,
+  'a substantially early loader must always fail');
 assert.match(script, /controlled verified snapshot delay did not start/);
 assert.match(script, /name === 'argus-api'/);
 assert.match(script, /slowProfileDir/);
