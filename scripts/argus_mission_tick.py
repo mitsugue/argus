@@ -47,7 +47,15 @@ def _safe_response(body: object) -> dict[str, object]:
     cost = cost if isinstance(cost, dict) else {}
     return {
         "businessStatus": data.get("status"),
+        "result": data.get("result"),
         "reason": data.get("reason"),
+        "jobId": data.get("jobId"),
+        "processedCount": data.get("processedCount"),
+        "remainingCount": data.get("remainingCount"),
+        "hasMore": data.get("hasMore"),
+        "cursorBefore": data.get("cursorBefore"),
+        "cursorAfter": data.get("cursorAfter"),
+        "checkpointCreated": data.get("checkpointCreated"),
         "missionWindowId": window.get("missionWindowId"),
         "triggerSource": window.get("triggerSource"),
         "duplicateSuppressed": window.get("duplicateSuppressed"),
@@ -97,6 +105,11 @@ def main() -> int:
         "ARGUS_TICK_TIMEOUT_SECONDS", "180"))))
     attempts = min(2, max(1, int(os.environ.get(
         "ARGUS_TICK_MAX_ATTEMPTS", "2"))))
+    max_batches = min(6, max(1, int(os.environ.get(
+        "ARGUS_TICK_MAX_BATCHES", "3"))))
+    total_budget = min(270, max(30, int(os.environ.get(
+        "ARGUS_TICK_TOTAL_BUDGET_SECONDS", "240"))))
+    deadline = time.monotonic() + total_budget
     identity = _identity_decision()
     identity_status = str(identity.get("status") or "failure")
     identity_log = {
@@ -143,46 +156,78 @@ def main() -> int:
             "User-Agent": "argus-ec2-systemd/1",
         },
     )
-    for attempt in range(1, attempts + 1):
-        started = time.monotonic()
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                status_code = int(response.status)
-                body = json.loads(response.read().decode("utf-8"))
-            safe = _safe_response(body)
-            business_status = safe.get("businessStatus")
-            if status_code != 200 or business_status not in (
-                "completed", "expected_skip", "degraded"
-            ):
+    last_safe: dict[str, object] = {}
+    for batch in range(1, max_batches + 1):
+        for attempt in range(1, attempts + 1):
+            started = time.monotonic()
+            remaining_budget = int(deadline - started)
+            if remaining_budget <= 0:
+                _emit(status="degraded",
+                      errorClass="bounded_total_budget_exhausted",
+                      batch=batch, **last_safe)
+                return 2
+            try:
+                with urllib.request.urlopen(
+                        request,
+                        timeout=max(1, min(timeout, remaining_budget))) as response:
+                    status_code = int(response.status)
+                    body = json.loads(response.read().decode("utf-8"))
+                safe = _safe_response(body)
+                last_safe = safe
+                business_status = safe.get("businessStatus")
+                result = safe.get("result")
+                if status_code != 200 or business_status not in (
+                    "completed", "expected_skip", "degraded"
+                ):
+                    _emit(
+                        status="failure", errorClass="business_failure",
+                        httpStatus=status_code, attempt=attempt, batch=batch,
+                        elapsedMs=round((time.monotonic() - started) * 1000),
+                        **safe,
+                    )
+                    return 1
+                if result == "busy":
+                    _emit(
+                        status="expected_skip", httpStatus=status_code,
+                        attempt=attempt, batch=batch,
+                        elapsedMs=round((time.monotonic() - started) * 1000),
+                        invocation=("diagnostic" if diagnostic else "natural"),
+                        **identity_log, **safe)
+                    return 0
+                if result == "partial":
+                    _emit(
+                        status="partial", httpStatus=status_code,
+                        attempt=attempt, batch=batch,
+                        elapsedMs=round((time.monotonic() - started) * 1000),
+                        invocation=("diagnostic" if diagnostic else "natural"),
+                        **identity_log, **safe)
+                    break
                 _emit(
-                    status="failure", errorClass="business_failure",
-                    httpStatus=status_code, attempt=attempt,
+                    status="success", httpStatus=status_code,
+                    attempt=attempt, batch=batch,
                     elapsedMs=round((time.monotonic() - started) * 1000),
-                    **safe,
+                    invocation=("diagnostic" if diagnostic else "natural"),
+                    **identity_log, **safe,
                 )
-                return 1
-            _emit(
-                status=("success" if business_status != "degraded" else "degraded"),
-                httpStatus=status_code, attempt=attempt,
-                elapsedMs=round((time.monotonic() - started) * 1000),
-                invocation=("diagnostic" if diagnostic else "natural"),
-                **identity_log, **safe,
-            )
-            return 0 if business_status != "degraded" else 2
-        except urllib.error.HTTPError as exc:
-            retryable = int(exc.code) >= 500
-            if not retryable or attempt >= attempts:
-                _emit(status="failure", errorClass="http_error",
-                      httpStatus=int(exc.code), attempt=attempt)
-                return 1
-        except (urllib.error.URLError, TimeoutError, socket.timeout,
-                json.JSONDecodeError, UnicodeDecodeError) as exc:
-            if attempt >= attempts:
-                _emit(status="failure", errorClass=type(exc).__name__,
-                      attempt=attempt)
-                return 1
-        time.sleep(5)
-    return 1
+                return 0
+            except urllib.error.HTTPError as exc:
+                retryable = int(exc.code) >= 500
+                if not retryable or attempt >= attempts:
+                    _emit(status="failure", errorClass="http_error",
+                          httpStatus=int(exc.code), attempt=attempt, batch=batch)
+                    return 1
+            except (urllib.error.URLError, TimeoutError, socket.timeout,
+                    json.JSONDecodeError, UnicodeDecodeError) as exc:
+                if attempt >= attempts:
+                    _emit(status="failure", errorClass=type(exc).__name__,
+                          attempt=attempt, batch=batch)
+                    return 1
+            time.sleep(max(0, min(5, deadline - time.monotonic())))
+        if last_safe.get("result") != "partial":
+            return 1
+    _emit(status="degraded", errorClass="bounded_batches_exhausted",
+          batch=max_batches, **last_safe)
+    return 2
 
 
 if __name__ == "__main__":

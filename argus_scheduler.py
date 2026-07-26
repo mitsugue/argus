@@ -191,7 +191,8 @@ def begin_mission_window(records: List[Dict[str, Any]], *,
 def finish_mission_window(record: Dict[str, Any], *, completed_at: str,
                           status: str = "completed",
                           error_class: Optional[str] = None) -> Dict[str, Any]:
-    if status not in ("completed", "expected_skip", "degraded", "failed"):
+    if status not in ("completed", "expected_skip", "partial",
+                      "degraded", "failed"):
         status = "failed"
         error_class = error_class or "invalid_terminal_status"
     record["completedAt"] = completed_at
@@ -199,6 +200,14 @@ def finish_mission_window(record: Dict[str, Any], *, completed_at: str,
     record["finalStatus"] = status
     record["errorClass"] = str(error_class)[:80] if error_class else None
     return record
+
+
+def batch_limit_reached(*, processed: int, max_events: int,
+                        elapsed_seconds: float,
+                        max_seconds: float) -> bool:
+    """Pure guard used before claiming the next durable transition."""
+    return (int(processed) >= max(1, int(max_events)) or
+            float(elapsed_seconds) >= max(0.0, float(max_seconds)))
 
 
 def bounded_catchup_windows(*, last_scheduled_for: Optional[str],
@@ -424,10 +433,13 @@ def fail(m: Dict[str, Any], now_iso: str, reason: str) -> None:
 
 
 def detect_missed(missions: List[Dict[str, Any]], now_iso: str,
-                  grace_min: int = 45) -> List[Dict[str, Any]]:
+                  grace_min: int = 45,
+                  max_records: Optional[int] = None) -> List[Dict[str, Any]]:
     """予定時刻+猶予を過ぎて未完了=missed(沈黙消失させない)。"""
     out = []
     for m in missions or []:
+        if max_records is not None and len(out) >= max(0, int(max_records)):
+            break
         if m.get("status") in ("complete", "skipped", "failed_safe", "missed"):
             continue
         sf = m.get("scheduledFor")

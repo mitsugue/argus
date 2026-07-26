@@ -57,7 +57,8 @@ def test_soak_persists_across_restore(tmp_path, monkeypatch):
         scanner, "_missions_persist_blob") else None
     # persist blobにsoakが同乗し、restoreがリセットしないこと(構造検査)
     import inspect
-    src = inspect.getsource(scanner._osint_persist)
+    src = (inspect.getsource(scanner._osint_persist) +
+           inspect.getsource(scanner._osint_persist_locked))
     assert '"soak"' in src
     src2 = inspect.getsource(scanner._osint_restore_once)
     assert "redeployでsoakをリセットしない" in src2

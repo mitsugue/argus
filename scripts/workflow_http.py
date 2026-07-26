@@ -19,12 +19,14 @@ FAILURE = "failure"
 _FAIL_STATUSES = {"error", "failed", "failure", "unreachable", "unauthorized",
                   "forbidden", "blocked", "invalid"}
 _DEGRADED_STATUSES = {"degraded", "partial"}
-_SKIP_STATUSES = {"expected_skip", "skipped", "no_work", "noop",
+_SKIP_STATUSES = {"expected_skip", "busy", "skipped", "no_work", "noop",
                   "deterministic_mode"}
 _SECRET_KEYS = ("token", "secret", "password", "passphrase", "credential",
                 "authorization", "apikey", "api_key", "hmac")
 _SAFE_OUTPUT_KEYS = ("ok", "status", "count", "translated", "pending", "made",
-                     "created", "updated", "generated", "queued", "recovered")
+                     "created", "updated", "generated", "queued", "recovered",
+                     "result", "processedCount", "remainingCount", "hasMore",
+                     "cursorBefore", "cursorAfter", "checkpointCreated")
 
 
 def _redact(value: Any) -> Any:
@@ -61,6 +63,7 @@ def classify_response(http_status: int, raw_body: str, *,
         return {"outcome": FAILURE, "reason": "invalid_json_shape",
                 "httpStatus": http_status, "body": body}
     status = str(body.get("status") or "").lower() if isinstance(body, dict) else ""
+    result = str(body.get("result") or "").lower() if isinstance(body, dict) else ""
     expected = {str(s).lower() for s in expected_statuses}
     values = ({str(body.get(k)).lower() for k in ("status", "reason", "error")
                if isinstance(body, dict) and body.get(k) not in (None, "")})
@@ -81,8 +84,12 @@ def classify_response(http_status: int, raw_body: str, *,
         if body.get("ok") is False or status in _FAIL_STATUSES:
             return {"outcome": FAILURE, "reason": f"business_{status or 'not_ok'}",
                     "httpStatus": http_status, "body": body}
-        if status in _DEGRADED_STATUSES:
-            return {"outcome": DEGRADED, "reason": f"business_{status}",
+        if result == "busy":
+            return {"outcome": EXPECTED_SKIP, "reason": "business_busy",
+                    "httpStatus": http_status, "body": body}
+        if result == "partial" or status in _DEGRADED_STATUSES:
+            return {"outcome": DEGRADED,
+                    "reason": f"business_{result or status}",
                     "httpStatus": http_status, "body": body}
         if status in _SKIP_STATUSES:
             return {"outcome": EXPECTED_SKIP, "reason": f"business_{status}",

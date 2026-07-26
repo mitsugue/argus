@@ -294,6 +294,9 @@ class OutcomeAndJournalIntegrationTests(unittest.TestCase):
             with mock.patch.object(scanner, "_price_history_cached", return_value=[
                     {"date": "2026-01-01", "close": 100},
                     {"date": "2026-01-02", "close": 101}], create=True), \
+                    mock.patch.object(
+                        scanner.argus_market_clock, "market_session",
+                        return_value={"isTradingDay": True}), \
                     mock.patch.object(scanner, "_execute_ai_judgment") as ai:
                 first = client.post("/api/argus/admin/missions/tick",
                                     headers=headers, json=payload)
