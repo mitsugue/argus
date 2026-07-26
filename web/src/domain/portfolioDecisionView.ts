@@ -13,6 +13,8 @@ export interface PortfolioDecisionInput {
   jpyPct: number | null;
   usdPct: number | null;
   risks: PositionRisk[];
+  stressConditions?: string[];
+  nextPortfolioChecks?: string[];
 }
 
 export interface PortfolioDecisionOverview {
@@ -25,7 +27,7 @@ export interface PortfolioDecisionOverview {
   };
   topRisks: Array<{ label: string; value: string; severity: string }>;
   actionQueue: Array<{ symbol: string; action: string; severity: string }>;
-  stress: string;
+  stressConditions: string[];
   nextChecks: string[];
 }
 
@@ -77,19 +79,28 @@ export function buildPortfolioDecisionOverview(
     });
   }
 
-  const actionQueue = risks.slice(0, 5).map((risk) => ({
-    symbol: risk.symbol,
-    action: risk.checkNextJa,
-    severity: risk.riskLevel,
-  }));
-  const stress = risks[0]?.whyJa
-    ?? (input.noHoldings
+  // A position may raise several risk types. The portfolio queue owns one compact
+  // command per symbol; the full per-asset explanation remains in Asset Desk.
+  const actionQueue: PortfolioDecisionOverview['actionQueue'] = [];
+  const queuedSymbols = new Set<string>();
+  for (const risk of risks) {
+    const symbol = risk.symbol.toUpperCase();
+    if (queuedSymbols.has(symbol)) continue;
+    queuedSymbols.add(symbol);
+    actionQueue.push({ symbol, action: risk.checkNextJa, severity: risk.riskLevel });
+    if (actionQueue.length === 5) break;
+  }
+  const stressConditions = [...new Set(input.stressConditions ?? [])].slice(0, 2);
+  if (stressConditions.length === 0) {
+    stressConditions.push(input.noHoldings
       ? '保有データ未入力のため、条件付きdownsideは未算出'
       : input.top1Pct != null
-        ? `最大保有の下落影響を先に確認（集中 ${input.top1Pct.toFixed(0)}%）`
+        ? `最大保有が下落する局面（集中 ${input.top1Pct.toFixed(0)}%）`
         : '重大な条件付きdownsideは現在未検出');
+  }
   const nextChecks = [...new Set([
     ...risks.map((risk) => risk.checkNextJa),
+    ...(input.nextPortfolioChecks ?? []),
     input.unpriced.length ? `未評価 ${input.unpriced.slice(0, 2).join(' / ')} の価格更新` : null,
   ].filter((value): value is string => !!value))].slice(0, 2);
 
@@ -103,7 +114,7 @@ export function buildPortfolioDecisionOverview(
     },
     topRisks: topRisks.slice(0, 4),
     actionQueue,
-    stress,
+    stressConditions,
     nextChecks: nextChecks.length ? nextChecks : ['次の価格更新後に配分と集中度を再確認'],
   };
 }

@@ -3,16 +3,11 @@ import { PageShell } from './PageShell';
 import { AlertCard } from '../components/dashboard/AlertCard';
 import { useActionAlerts } from '../hooks/useActionAlerts';
 import { useAssets } from '../hooks/useAssets';
+import { useAssetIntel } from '../hooks/useAssetIntel';
 import { DecisionQualityCard } from '../components/dashboard/DecisionQualityCard';
 import { LearningDashboardCard } from '../components/dashboard/LearningDashboardCard';
-import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
-import { useUSWatchlist } from '../hooks/useUSWatchlist';
-import { useCryptoWatchlist } from '../hooks/useCryptoWatchlist';
-import { useRatesSnapshot } from '../hooks/useRatesSnapshot';
 import { useFundNav } from '../hooks/useFundNav';
-import { useActionLabels } from '../hooks/useActionLabels';
 import { useCatalysts } from '../hooks/useCatalysts';
-import { buildExposure } from '../lib/portfolio';
 import { PortfolioExposureCard } from '../components/dashboard/PortfolioExposureCard';
 import { PortfolioDecisionOverview } from '../components/dashboard/PortfolioDecisionOverview';
 import { WhatIfPanel } from '../components/dashboard/WhatIfPanel';
@@ -21,9 +16,7 @@ import type { ActionLabel } from '../types/actionLabels';
 import type { CatalystItem } from '../types/catalysts';
 import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
-import { buildPositionExposure } from '../domain/positionExposure';
 import { buildPortfolioDecisionOverview } from '../domain/portfolioDecisionView';
-import { publishExposure, latestScenarios, latestPlans, latestStrategy } from '../lib/positionExposureShare';
 import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
 import { planPortfolioSummary } from '../domain/positionPlan';
 import { FIRE_TONE, BUDGET_JA, STRATEGY_COMPLIANCE_JA } from '../domain/portfolioStrategy';
@@ -52,14 +45,15 @@ export const CorePortfolio: React.FC = () => {
   const { cards, posture, phase } = useActionAlerts();
   const assetsApi = useAssets();
   const { assets } = assetsApi;
+  // Compute and publish the canonical device-local portfolio pipeline on this
+  // route. Direct navigation must not depend on Today having mounted first.
+  const portfolioIntel = useAssetIntel({ publish: true, assets });
   const { funds: navFunds } = useFundNav();   // 投信 基準価額(NAV) follow
-  const rates = useRatesSnapshot();
+  const rates = portfolioIntel.rates;
   const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
 
-  const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
-  const usSyms = useMemo(() => assets.filter((a) => a.market === 'US').map((a) => a.symbol), [assets]);
-  const jp = useJapanWatchlist(jpSyms);
-  const us = useUSWatchlist(usSyms);
+  const jp = portfolioIntel.jpQuotes;
+  const us = portfolioIntel.usQuotes;
   const cryptoPairs = useMemo(
     () => assets
       .filter((a) => a.market === 'CRYPTO')
@@ -67,26 +61,12 @@ export const CorePortfolio: React.FC = () => {
       .filter((p) => p.id),
     [assets],
   );
-  const crypto = useCryptoWatchlist(useMemo(() => cryptoPairs.map((p) => p.id), [cryptoPairs]));
-
-  const priceOf = useMemo(() => {
-    // value at the last known price (live OR delayed close), not just live — so a closed
-    // market's holdings (e.g. JP after 15:30) still price and its currency total shows.
-    const ok = (st?: string) => st != null && st !== 'mock';
-    const m = new Map<string, number>();
-    for (const s of jp.data?.stocks ?? []) if (ok(s.status) && Number.isFinite(s.price)) m.set(s.symbol, s.price);
-    for (const s of us.data?.stocks ?? []) if (ok(s.status) && Number.isFinite(s.price)) m.set(s.symbol, s.price);
-    for (const p of cryptoPairs) {
-      const q = crypto.byId[p.id];
-      if (q && ok(q.status) && Number.isFinite(q.priceUsd)) m.set(p.symbol, q.priceUsd);
-    }
-    return (a: { symbol: string }) => m.get(a.symbol);
-  }, [jp.data, us.data, crypto.byId, cryptoPairs]);
-
-  const exp = useMemo(() => buildExposure(assets, priceOf, usdJpy), [assets, priceOf, usdJpy]);
+  const crypto = portfolioIntel.cryptoWatch;
+  const pe = portfolioIntel.positionExposure;
+  const exp = pe.base;
   // V12.2.12: What-if用のQuoteLite/ラベル/材料マップ(旧AssetStrategySectionの
   // maps相当・計算不変)。数量/単価は端末内のみ。
-  const al = useActionLabels({ jp: jpSyms, us: usSyms });
+  const al = portfolioIntel.al;
   const cat = useCatalysts();
   const mountTs = useMemo(() => Date.now(), []);
   const whatIfMaps = useMemo(() => {
@@ -119,14 +99,6 @@ export const CorePortfolio: React.FC = () => {
     }
     return { quotes, labels, cats };
   }, [jp.data, us.data, crypto.byId, cryptoPairs, al.data, cat.data, assets, navFunds]);
-  // V11.8.0 exposure dashboard — themes/currency/top positions/risk flags.
-  // Device-local math over localStorage holdings; nothing is uploaded.
-  const pe = useMemo(() => {
-    const out = buildPositionExposure(assets, priceOf, usdJpy, {});
-    publishExposure(out);
-    return out;
-  }, [assets, priceOf, usdJpy]);
-
   // 積立方針 — ユーザーの実ファンド + 姿勢連動アクション(Action Alertsと同一ロジック)。
   const funds: CorePosition[] = useMemo(() => {
     const act = coreActionFor(posture ?? undefined);
@@ -155,7 +127,10 @@ export const CorePortfolio: React.FC = () => {
     jpyPct: pe.jpyPct,
     usdPct: pe.usdPct,
     risks: pe.risks,
-  }), [exp.combinedJpy, exp.combinedPlJpy, exp.holdings.length, pe]);
+    stressConditions: portfolioIntel.portfolioStrategy.stressNotesJa,
+    nextPortfolioChecks: portfolioIntel.portfolioStrategy.nextChecksJa,
+  }), [exp.combinedJpy, exp.combinedPlJpy, exp.holdings.length, pe,
+    portfolioIntel.portfolioStrategy]);
 
   return (
     <PageShell
@@ -213,9 +188,9 @@ export const CorePortfolio: React.FC = () => {
                    cats={whatIfMaps.cats} exp={exp} usdJpy={usdJpy} mountTs={mountTs} />
 
       {/* PORTFOLIO SCENARIO (v11.17.0) — 保有全体の条件付き分岐(端末内合成)。
-          Todayを開いた後に計算済みシナリオから合成。単一予測・売買指示なし。 */}
+          このrouteの正本フックから直接合成。単一予測・売買指示なし。 */}
       {(() => {
-        const allSets = latestScenarios();
+        const allSets = portfolioIntel.scenarioSets;
         const heldSets = allSets.filter((s) => s.isHeld);
         const ps = buildPortfolioScenario(heldSets);
         return (
@@ -237,9 +212,8 @@ export const CorePortfolio: React.FC = () => {
                     <b style={{ color: DOM_TONE[ps.dominant] }}>{DOM_JA[ps.dominant]}</b>
                     <span style={{ marginLeft: 6 }}>{ps.summaryJa}</span>
                   </p>
-                  <p className="cmd-alloc__note" style={{ color: 'var(--text-faint)' }}>{ps.detailJa}</p>
                   <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はAsset Deskの各カード→SCENARIOSで。
+                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はAsset Deskの各カード→Decisionで。
                   </p>
                 </>
               )}
@@ -281,7 +255,7 @@ export const CorePortfolio: React.FC = () => {
       {/* PORTFOLIO STRATEGY / FIRE ALIGNMENT (v11.19.0) — 短期の計画とFIRE目的を
           接続する戦略層(端末内合成)。免許業の助言ではない・売買指示でもない。 */}
       {(() => {
-        const s = latestStrategy();
+        const s = portfolioIntel.portfolioStrategy;
         return (
           <section>
             <div className="section-head">
@@ -344,7 +318,7 @@ export const CorePortfolio: React.FC = () => {
       {/* PORTFOLIO PLANNING (v11.18.0) — どこで追加可/ブロック/利確検討/イベント
           待ちか(端末内合成)。計画であり売買指示ではない。 */}
       {(() => {
-        const ps = planPortfolioSummary(latestPlans());
+        const ps = planPortfolioSummary(portfolioIntel.positionPlans);
         if (!ps) return null;
         return (
           <section>
@@ -416,11 +390,6 @@ export const CorePortfolio: React.FC = () => {
                     : pe.singleNameRisk === 'medium' ? '(やや高い)' : ''}
                 </div>
               )}
-              {pe.risks.slice(0, 3).map((r, i) => (
-                <div className="cmd-alloc__note" key={i} style={{ color: r.riskLevel === 'high' || r.riskLevel === 'critical' ? 'var(--value-negative)' : undefined }}>
-                  ⚠ {r.whyJa}
-                </div>
-              ))}
               {pe.unpriced.length > 0 && (
                 <div className="cmd-alloc__note">価格未取得(暫定): {pe.unpriced.join(', ')}</div>
               )}

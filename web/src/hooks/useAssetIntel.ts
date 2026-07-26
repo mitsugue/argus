@@ -38,11 +38,12 @@ import { deriveTodayJudgment, combinePhase, type TodayPhase } from '../lib/today
 //
 // 旧CommandCenter内にあった個別銘柄系のuseMemoパイプライン(AI優先マージ→カード
 // →ポジション/優先度/シナリオ/計画/戦略/構え)をそのまま移設した唯一の正本。
-// Today(publish:true)とAsset Desk(publish:false)が同じフックを呼ぶため、
-// 同一銘柄の判断・件数・構えがページ間で構造的に一致する。
+// Today / Positions & Risk (publish:true)とAsset Desk(publish:false)が同じ
+// フックを呼ぶため、同一銘柄の判断・件数・構えがページ間で構造的に一致する。
 //
 // publish副作用(Pro Handoff / AI Review / スナップショットが読む共有ストアへの
-// 書き込み)は従来どおりTodayのみ: publish:false では一切書き込まない。
+// 書き込み)はTodayとPositions & Riskの明示した呼び出しだけ:
+// publish:false では一切書き込まない。
 // この層は新しい投資判断を生成しない — 既存レイヤーの出力の組み立てのみ。
 
 export interface AssetIntel {
@@ -85,9 +86,14 @@ export interface AssetIntel {
   decisionBySym: Map<string, AssetDecisionView>;
 }
 
-export function useAssetIntel(opts: { publish: boolean }): AssetIntel {
+export function useAssetIntel(opts: {
+  publish: boolean;
+  /** A page that owns holding edits can supply its live device-local asset state. */
+  assets?: ReturnType<typeof useAssets>['assets'];
+}): AssetIntel {
   const publish = opts.publish;
-  const { assets } = useAssets();
+  const localAssets = useAssets();
+  const assets = opts.assets ?? localAssets.assets;
   const aiJ = useAIJudgment();
   // The engine follows the USER's actual watchlist (dynamic symbols, v9.8).
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
@@ -301,7 +307,7 @@ export function useAssetIntel(opts: { publish: boolean }): AssetIntel {
   // v11.19.0: PORTFOLIO STRATEGY — 役割分類(コア/サテライト/戦術枠/ヘッジ)と
   // FIRE整合・リスク予算を端末内で合成。計画層(下)へ制約を供給する。
   // v12.2.12: FIRE Core(fc)はストア経由でなく戻り値で下流に渡す — Asset Deskが
-  // Today未訪問でも同一値になる(Todayではpublishで従来どおりストアにも書く)。
+  // Today未訪問でも同一値になる(publish=trueの正本画面は共有ストアにも書く)。
   const strategyAndFire = useMemo(() => {
     const eventSyms = new Set<string>();
     for (const ie of impEvents?.events ?? []) {
