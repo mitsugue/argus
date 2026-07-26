@@ -124,9 +124,10 @@ def test_migration_matrix_doc_exists():
 
 def test_desk_sections_fixed_order():
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
-    order = ["'overview'", "'chart'", "'evidence'", "'position'", "'scenarios'", "'research'"]
+    order = ["'decision'", "'chart'", "'evidence'", "'position'"]
     idx = [card.index(f"id: {tab}") for tab in order]
     assert idx == sorted(idx), "決定優先タブは固定順"
+    assert card.count("id: '") == 4
     # 移行済みの各詳細機能は削除せず、該当タブ配下で遅延表示する。
     for panel in ("AssetDecisionDetails", "ChartIntelligencePanel", "AssetWhyPanel",
                   "AssetFlowPanel", "AssetPositionPanel", "AssetScenarioPanel",
@@ -146,12 +147,15 @@ def test_migrated_features_present():
     assert "onUpdateHolding" in pos and "端末内のみ" in pos
     # 旧Todayカードのセクション
     why = _read("components", "assetDesk", "AssetWhyPanel.tsx")
-    assert "CauseStackCard" in why and "TIMELINE" in why
+    assert "TIMELINE" in why and why.count("<AiExplanationBlock") == 1
+    assert "CauseStackCard" not in why
     flow = _read("components", "assetDesk", "AssetFlowPanel.tsx")
     assert "InstitutionalView" in flow and "逆日歩 未取得" in flow
-    # 免責はカード1回
+    # 免責はカードごとに繰り返さず、ページのDownside Watchで一度だけ示す。
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
-    assert card.count("判断支援のみ。自動売買・注文機能はありません。") == 1
+    downside = _read("components", "dashboard", "DownsideIncidentCard.tsx")
+    assert "判断支援のみ" not in card
+    assert downside.count("決定支援のみ・自動売買は行いません。") == 1
 
 
 def test_portfolio_wide_features_moved_to_core():
