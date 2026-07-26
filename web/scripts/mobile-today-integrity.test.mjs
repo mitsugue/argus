@@ -29,6 +29,7 @@ const todayCss = read('src/components/today/ArgusToday.css');
 const hook = read('src/hooks/useChartIntelligence.ts');
 const replay = read('src/components/marketReplay/MarketContextReplay.tsx');
 const loaderCss = read('src/components/common/TriangleStepLoader.css');
+const acceptance = read('scripts/mobile-today-acceptance.mjs');
 const vite = read('vite.config.ts');
 
 assert.deepEqual(
@@ -106,6 +107,10 @@ assert.match(hook, /225/);
 assert.match(hook, /5_000/);
 assert.doesNotMatch(loaderCss, /rotate\(/);
 assert.match(loaderCss, /prefers-reduced-motion:reduce/);
+assert.match(acceptance, /controlled warm revalidation did not start/);
+assert.match(acceptance, /warmRequestStart/);
+assert.match(acceptance, /350 - \(Date\.now\(\) - warmStartedAt\)/);
+assert.match(acceptance, /6_200 - \(Date\.now\(\) - warmStartedAt\)/);
 
 assert.match(vite, /cleanupOutdatedCaches:\s*true/);
 assert.match(vite, /clientsClaim:\s*true/);
