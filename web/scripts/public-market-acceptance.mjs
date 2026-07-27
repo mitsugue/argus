@@ -709,7 +709,7 @@ async function mainAcceptance() {
       await page.getByRole('button', { name: horizon, exact: true }).click();
       const horizonLoadMs = await waitForData(page);
       for (const tab of TABS) {
-        await page.getByRole('button', { name: tab, exact: true }).click();
+        await page.getByRole('tab', { name: tab, exact: true }).click();
         const { record, audit } = await recordCombination(
           page, evidence, backend, { width: 1280, height: 800 },
           tab, instrument, horizon, Math.max(instrumentLoadMs, horizonLoadMs));
