@@ -524,7 +524,7 @@ async function recordCombination(page, evidence, backend, viewport, tab, instrum
 }
 
 async function drawingAudit(page) {
-  await page.getByRole('button', { name: 'OVERVIEW', exact: true }).click();
+  await page.getByRole('tab', { name: 'OVERVIEW', exact: true }).click();
   const chart = page.locator('.mr-chart');
   await chart.waitFor({ state: 'visible' });
   await page.getByRole('button', { name: '帯', exact: true }).click();
@@ -740,7 +740,7 @@ async function mainAcceptance() {
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
     for (const tab of TABS) {
-      await page.getByRole('button', { name: tab, exact: true }).click();
+      await page.getByRole('tab', { name: tab, exact: true }).click();
       const audit = await styleAudit(page);
       evidence.computedStyles.push({
         viewport, tab, instrument: '1321', horizon: '5D',
@@ -801,13 +801,13 @@ async function mainAcceptance() {
   await waitForData(warmSeedPage, 30_000);
   await warmSeedPage.getByRole('button', { name: 'QQQ', exact: true }).click();
   await warmSeedPage.getByRole('button', { name: '20D', exact: true }).click();
-  await warmSeedPage.getByRole('button', { name: 'OVERVIEW', exact: true }).click();
+  await warmSeedPage.getByRole('tab', { name: 'OVERVIEW', exact: true }).click();
   await warmSeedPage.getByRole('button', { name: '3M', exact: true }).click();
   const overlays = warmSeedPage.locator('details.mr-overlays');
   if (!await overlays.evaluate((element) => element.open)) {
     await overlays.locator('summary').click();
   }
-  await warmSeedPage.getByRole('button', { name: 'REPLAY', exact: true }).click();
+  await warmSeedPage.getByRole('tab', { name: 'REPLAY', exact: true }).click();
   await waitForData(warmSeedPage, 30_000);
   const warmSeedSnapshotId = await warmSeedPage.locator(
     '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
@@ -917,9 +917,9 @@ async function mainAcceptance() {
   const loaderDuringRevalidation = await slowPage.locator(
     '.mr-snapshot-status .triangle-step-loader').count();
   const restoredTab = await slowPage.getByRole(
-    'button', { name: 'REPLAY', exact: true }).getAttribute('aria-selected');
+    'tab', { name: 'REPLAY', exact: true }).getAttribute('aria-selected');
   await slowPage.getByRole(
-    'button', { name: 'OVERVIEW', exact: true }).click();
+    'tab', { name: 'OVERVIEW', exact: true }).click();
   const restoredState = {
     instrument: await slowPage.getByRole(
       'button', { name: 'QQQ', exact: true }).getAttribute('class'),
@@ -932,7 +932,7 @@ async function mainAcceptance() {
       'details.mr-overlays').evaluate((element) => element.open),
   };
   await slowPage.getByRole(
-    'button', { name: 'REPLAY', exact: true }).click();
+    'tab', { name: 'REPLAY', exact: true }).click();
   const slowSnapshotBefore = await slowPage.locator(
     '.market-replay[data-snapshot-id]').getAttribute('data-snapshot-id');
   if (await captureScreenshot(
