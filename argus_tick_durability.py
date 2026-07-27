@@ -20,6 +20,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 UTC = dt.timezone.utc
 _PROCESS_LOCK = threading.Lock()
+REMOTE_RECEIPT_SCHEMA = "argus-mission-receipt-v2"
 
 
 def _iso_now() -> str:
@@ -35,6 +36,82 @@ def _canonical(value: Any) -> bytes:
 def _record_hash(record: Dict[str, Any]) -> str:
     unsigned = {key: value for key, value in record.items() if key != "recordHash"}
     return hashlib.sha256(_canonical(unsigned)).hexdigest()
+
+
+def remote_receipt_record(*, saved_at: str,
+                          remote_commit_sha: Optional[str],
+                          committed_at: Optional[str],
+                          expected_hash: Optional[str],
+                          actual_hash: Optional[str],
+                          read_back_at: Optional[str],
+                          read_back_verified: bool,
+                          remote_wal_applied_sequence: int,
+                          verified_wal_sequence: int,
+                          compact_receipt_hash: Optional[str],
+                          error_class: Optional[str],
+                          wal_read_back_verified: Optional[bool] = None,
+                          wal_error_class: Optional[str] = None) -> Dict[str, Any]:
+    """Integrity-bound persistent proof for Remote Journal WAL coverage."""
+    record = {
+        "schemaVersion": REMOTE_RECEIPT_SCHEMA,
+        "savedAt": str(saved_at),
+        "remoteCommitSha": remote_commit_sha,
+        "committedAt": committed_at,
+        "expectedHash": expected_hash,
+        "actualHash": actual_hash,
+        "readBackAt": read_back_at,
+        "readBackVerified": bool(read_back_verified),
+        "walReadBackVerified": bool(
+            read_back_verified if wal_read_back_verified is None
+            else wal_read_back_verified),
+        "remoteWalAppliedSequence": int(remote_wal_applied_sequence or 0),
+        "verifiedWalSequence": int(verified_wal_sequence or 0),
+        "compactReceiptHash": compact_receipt_hash,
+        "errorClass": error_class,
+        "walErrorClass": wal_error_class,
+    }
+    record["recordHash"] = _record_hash(record)
+    return record
+
+
+def verify_remote_receipt(record: Any) -> bool:
+    """Fail closed on malformed, tampered, or self-contradictory receipts."""
+    if not isinstance(record, dict) or \
+            record.get("schemaVersion") != REMOTE_RECEIPT_SCHEMA or \
+            record.get("recordHash") != _record_hash(record):
+        return False
+    try:
+        remote_sequence = int(record.get("remoteWalAppliedSequence") or 0)
+        verified_sequence = int(record.get("verifiedWalSequence") or 0)
+    except (TypeError, ValueError):
+        return False
+    if remote_sequence < 0 or verified_sequence < 0:
+        return False
+    commit_sha = record.get("remoteCommitSha")
+    expected_hash = record.get("expectedHash")
+    actual_hash = record.get("actualHash")
+    if commit_sha is not None and (
+            len(str(commit_sha)) != 40 or
+            any(ch not in "0123456789abcdef" for ch in str(commit_sha))):
+        return False
+    for value in (expected_hash, actual_hash):
+        if value is not None and (
+                len(str(value)) != 16 or
+                any(ch not in "0123456789abcdef" for ch in str(value))):
+            return False
+    if record.get("readBackVerified") is True and not (
+            expected_hash and actual_hash and expected_hash == actual_hash and
+            record.get("errorClass") is None):
+        return False
+    if record.get("walReadBackVerified") is True:
+        return bool(
+            record.get("readBackVerified") is True and
+            expected_hash and actual_hash and expected_hash == actual_hash and
+            record.get("compactReceiptHash") and
+            remote_sequence == verified_sequence and
+            record.get("errorClass") is None and
+            record.get("walErrorClass") is None)
+    return True
 
 
 def _fsync_parent(path: str) -> None:
@@ -174,6 +251,21 @@ def read_valid_wal(path: str, *, after_sequence: int = 0
 def compact_verified_wal(path: str, *, included_sequence: int,
                          receipt: Dict[str, Any]) -> Dict[str, Any]:
     """Compact only records covered by a successfully verified checkpoint."""
+    complete = read_valid_wal(path)
+    already_compacted = max((
+        int((row.get("payload") or {}).get("includedWalSequence") or 0)
+        for row in complete["records"]
+        if row.get("kind") == "checkpoint_verified"
+    ), default=0)
+    if int(included_sequence) <= already_compacted:
+        return {
+            "compactedThrough": already_compacted,
+            "remainingRecords": len(complete["records"]),
+            "receiptSequence": int(complete.get("maximumSequence") or 0),
+            "bytes": complete["bytes"],
+            "duplicate": int(included_sequence) == already_compacted,
+            "regressionIgnored": int(included_sequence) < already_compacted,
+        }
     state = read_valid_wal(path, after_sequence=included_sequence)
     kept = list(state["records"])
     sequence = max(

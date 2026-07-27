@@ -45,12 +45,17 @@ def validate_simulated_disk(value, **kwargs):
         value, production=True, allow_temporary_root_for_test=True, **kwargs)
 
 
-def remote_snapshot():
+def remote_snapshot(wal_sequence=0):
     section = argus_remote_journal.snapshot_journal_section(
         events=[], meta={}, now_iso="2026-07-25T00:00:00Z")
     return {
         "schemaVersion": "argus-durable-v3",
         "generatedAt": "2026-07-25T00:00:00Z",
+        "missionTickDurability": {
+            "schemaVersion": "argus-mission-batch-v1",
+            "walAppliedSequence": int(wal_sequence),
+            "remoteWalAppliedSequence": int(wal_sequence),
+        },
         **section,
     }
 
@@ -104,6 +109,7 @@ def scanner_storage(root: str, *, production=True):
         "durable": dict(scanner._DURABLE_STATE),
         "storageStatus": dict(scanner._DURABLE_STORAGE_STATUS),
         "batch": dict(scanner._MISSION_BATCH_STATE),
+        "remoteCycle": dict(scanner._REMOTE_CYCLE),
         "shutdown": dict(scanner._SHUTDOWN),
         "startup": dict(scanner._STARTUP),
         "token": scanner._ARGUS_ADMIN_TOKEN,
@@ -126,6 +132,17 @@ def scanner_storage(root: str, *, production=True):
         "integrityStatus": "unknown", "lastKnownGoodAt": None,
         "restoreSource": None,
     })
+    scanner._REMOTE_CYCLE.clear()
+    scanner._REMOTE_CYCLE.update({
+        "remoteCommitSha": None, "committedAt": None,
+        "readBackAt": None, "readBackVerified": False,
+        "walReadBackVerified": False,
+        "expectedHash": None, "actualHash": None,
+        "remoteWalAppliedSequence": 0, "verifiedWalSequence": 0,
+        "compactReceiptHash": None, "pendingCount": 0,
+        "acknowledgedCount": 0, "errorClass": None,
+        "walErrorClass": None,
+    })
     try:
         yield configured
     finally:
@@ -144,6 +161,8 @@ def scanner_storage(root: str, *, production=True):
         scanner._DURABLE_STORAGE_STATUS.update(saved["storageStatus"])
         scanner._MISSION_BATCH_STATE.clear()
         scanner._MISSION_BATCH_STATE.update(saved["batch"])
+        scanner._REMOTE_CYCLE.clear()
+        scanner._REMOTE_CYCLE.update(saved["remoteCycle"])
         scanner._SHUTDOWN.clear()
         scanner._SHUTDOWN.update(saved["shutdown"])
         scanner._STARTUP.clear()
@@ -560,6 +579,251 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
             self.assertEqual(records[0]["kind"], "journal_transition")
             self.assertEqual(records[1]["kind"], "checkpoint_verified")
 
+    def test_compact_receipt_is_fsynced_then_compacts_exact_cursor_once(self):
+        with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
+            for sequence in range(1, 4):
+                durability.append_wal(
+                    value["wal"], sequence=sequence,
+                    kind="journal_transition", job_id="job",
+                    payload={"transitionId": f"transition-{sequence}"})
+            remote = remote_snapshot(wal_sequence=2)
+            compact = argus_remote_journal.compact_readback_snapshot(remote)
+            manifest_hash = compact["integrityManifest"]["manifestHash"]
+            scanner._REMOTE_CYCLE.update({
+                "remoteCommitSha": "a" * 40,
+                "committedAt": "2026-07-25T00:01:00Z",
+                "expectedHash": manifest_hash,
+                "verifiedWalSequence": 0,
+            })
+
+            ack = scanner._remote_readback_ack(
+                now_iso="2026-07-25T00:02:00Z", blob=compact)
+            self.assertEqual(ack["verificationStatus"], "verified")
+            self.assertTrue(scanner._REMOTE_CYCLE["readBackVerified"])
+            self.assertTrue(scanner._REMOTE_CYCLE["walReadBackVerified"])
+            self.assertEqual(
+                scanner._REMOTE_CYCLE["remoteWalAppliedSequence"], 2)
+            self.assertEqual(scanner._REMOTE_CYCLE["verifiedWalSequence"], 2)
+            persisted = json.loads(pathlib.Path(value["receipt"]).read_text())
+            self.assertTrue(durability.verify_remote_receipt(persisted))
+            self.assertEqual(scanner._verified_persistent_wal_sequence(), 2)
+
+            first = scanner._osint_persist()
+            self.assertTrue(first["verified"])
+            self.assertEqual(first["walCompaction"]["compactedThrough"], 2)
+            records = durability.read_valid_wal(value["wal"])["records"]
+            self.assertEqual(
+                len([row for row in records
+                     if row["kind"] == "checkpoint_verified"]), 1)
+
+            duplicate = scanner._osint_persist()
+            self.assertTrue(duplicate["walCompaction"]["duplicate"])
+            records = durability.read_valid_wal(value["wal"])["records"]
+            self.assertEqual(
+                len([row for row in records
+                     if row["kind"] == "checkpoint_verified"]), 1)
+
+    def test_legacy_compact_receipt_verifies_journal_but_not_wal_cursor(self):
+        with tempfile.TemporaryDirectory() as root, scanner_storage(root):
+            remote = remote_snapshot()
+            remote.pop("missionTickDurability")
+            compact = argus_remote_journal.compact_readback_snapshot(remote)
+            scanner._REMOTE_CYCLE.update({
+                "remoteCommitSha": "a" * 40,
+                "committedAt": "2026-07-25T00:01:00Z",
+                "expectedHash":
+                    compact["integrityManifest"]["manifestHash"],
+            })
+            ack = scanner._remote_readback_ack(
+                now_iso="2026-07-25T00:02:00Z", blob=compact)
+            self.assertEqual(ack["verificationStatus"], "verified")
+            self.assertTrue(scanner._REMOTE_CYCLE["readBackVerified"])
+            self.assertFalse(
+                scanner._REMOTE_CYCLE["walReadBackVerified"])
+            self.assertEqual(
+                scanner._REMOTE_CYCLE["walErrorClass"],
+                "remote_wal_sequence_missing")
+            self.assertEqual(scanner._verified_persistent_wal_sequence(), 0)
+
+    def test_commit_receipt_fsync_precedes_checkpoint_and_fails_closed(self):
+        old_token = scanner._ARGUS_ADMIN_TOKEN
+        old_cycle = dict(scanner._REMOTE_CYCLE)
+        scanner._ARGUS_ADMIN_TOKEN = "test-admin"
+        try:
+            order = []
+            with mock.patch.object(
+                    scanner, "_persist_remote_wal_receipt",
+                    side_effect=lambda *args, **kwargs:
+                    order.append("receipt") or {"verified": True}), \
+                    mock.patch.object(
+                        scanner, "_osint_persist",
+                        side_effect=lambda:
+                        order.append("checkpoint") or {"verified": True}):
+                response = scanner.app.test_client().post(
+                    "/api/argus/admin/remote-journal/commit-receipt",
+                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"},
+                    json={"remoteCommitSha": "a" * 40,
+                          "expectedHash": "b" * 16})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(order, ["receipt", "checkpoint"])
+
+            with mock.patch.object(
+                    scanner, "_persist_remote_wal_receipt",
+                    side_effect=OSError("fsync failed")), \
+                    mock.patch.object(scanner, "_osint_persist") as checkpoint:
+                response = scanner.app.test_client().post(
+                    "/api/argus/admin/remote-journal/commit-receipt",
+                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"},
+                    json={"remoteCommitSha": "c" * 40,
+                          "expectedHash": "d" * 16})
+            self.assertEqual(response.status_code, 503)
+            checkpoint.assert_not_called()
+        finally:
+            scanner._ARGUS_ADMIN_TOKEN = old_token
+            scanner._REMOTE_CYCLE.clear()
+            scanner._REMOTE_CYCLE.update(old_cycle)
+
+    def test_mismatch_tamper_and_sequence_regression_never_advance_wal(self):
+        with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
+            remote = remote_snapshot(wal_sequence=4)
+            compact = argus_remote_journal.compact_readback_snapshot(remote)
+            manifest_hash = compact["integrityManifest"]["manifestHash"]
+            scanner._REMOTE_CYCLE.update({
+                "remoteCommitSha": "b" * 40,
+                "committedAt": "2026-07-25T00:01:00Z",
+                "expectedHash": "f" * 16,
+                "verifiedWalSequence": 3,
+            })
+            scanner._remote_readback_ack(
+                now_iso="2026-07-25T00:02:00Z", blob=compact)
+            self.assertFalse(scanner._REMOTE_CYCLE["readBackVerified"])
+            self.assertEqual(
+                scanner._REMOTE_CYCLE["errorClass"], "commit_receipt_stale")
+            self.assertEqual(scanner._verified_persistent_wal_sequence(), 0)
+
+            tampered = json.loads(json.dumps(compact))
+            tampered["missionTickDurability"][
+                "remoteWalAppliedSequence"] = 999
+            self.assertIsNone(scanner._remote_readback_ack(
+                now_iso="2026-07-25T00:03:00Z", blob=tampered))
+            self.assertEqual(
+                scanner._REMOTE_CYCLE["errorClass"],
+                "compact_receipt_invalid")
+
+            scanner._REMOTE_CYCLE.update({
+                "expectedHash": manifest_hash,
+                "actualHash": manifest_hash,
+                "verifiedWalSequence": 5,
+                "remoteWalAppliedSequence": 5,
+                "readBackVerified": True,
+                "walReadBackVerified": True,
+                "compactReceiptHash": "prior-proof",
+                "errorClass": None, "walErrorClass": None,
+            })
+            scanner._remote_readback_ack(
+                now_iso="2026-07-25T00:04:00Z", blob=compact)
+            self.assertTrue(scanner._REMOTE_CYCLE["readBackVerified"])
+            self.assertFalse(
+                scanner._REMOTE_CYCLE["walReadBackVerified"])
+            self.assertEqual(
+                scanner._REMOTE_CYCLE["verifiedWalSequence"], 5)
+            self.assertEqual(
+                scanner._REMOTE_CYCLE["walErrorClass"],
+                "remote_wal_sequence_regression")
+            self.assertEqual(scanner._verified_persistent_wal_sequence(), 0)
+
+    def test_status_137_restores_newer_verified_receipt_before_wal_replay(self):
+        with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
+            checkpoint = remote_snapshot(wal_sequence=1)
+            checkpoint["remoteJournalCycle"] = {
+                "remoteCommitSha": "a" * 40,
+                "committedAt": "2026-07-25T00:01:00Z",
+                "expectedHash": "1" * 16,
+                "actualHash": None,
+                "readBackVerified": False,
+                "remoteWalAppliedSequence": 0,
+                "verifiedWalSequence": 0,
+                "compactReceiptHash": None,
+                "errorClass": None,
+            }
+            storage.write_checkpoint(
+                value["checkpoint"], checkpoint,
+                temp_directory=value["tempDirectory"])
+            receipt = durability.remote_receipt_record(
+                saved_at="2026-07-25T00:03:00Z",
+                remote_commit_sha="b" * 40,
+                committed_at="2026-07-25T00:02:00Z",
+                expected_hash="2" * 16, actual_hash="2" * 16,
+                read_back_at="2026-07-25T00:03:00Z",
+                read_back_verified=True,
+                remote_wal_applied_sequence=2,
+                verified_wal_sequence=2,
+                compact_receipt_hash="compact-proof",
+                error_class=None)
+            storage.atomic_write_json(
+                value["receipt"], receipt,
+                temp_directory=value["tempDirectory"],
+                validator=durability.verify_remote_receipt)
+            for sequence in (2, 3):
+                durability.append_wal(
+                    value["wal"], sequence=sequence,
+                    kind="journal_transition", job_id="restored",
+                    payload={"transitionId": f"restored-{sequence}"})
+
+            source = scanner._osint_restore_once()
+            self.assertEqual(source, "persistent_local")
+            self.assertTrue(scanner._REMOTE_CYCLE["readBackVerified"])
+            self.assertEqual(
+                scanner._REMOTE_CYCLE["verifiedWalSequence"], 2)
+            self.assertEqual(
+                scanner._MISSION_BATCH_STATE["walAppliedSequence"], 3)
+            self.assertIn(
+                scanner._DURABLE_STATE["remoteReceiptRestore"],
+                ("restored", "duplicate"))
+            after_restart = scanner._osint_persist()
+            self.assertEqual(
+                after_restart["walCompaction"]["compactedThrough"], 2)
+
+    def test_stale_and_tampered_persistent_receipts_are_ignored(self):
+        with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
+            scanner._REMOTE_CYCLE.update({
+                "remoteCommitSha": "c" * 40,
+                "committedAt": "2026-07-25T00:05:00Z",
+                "expectedHash": "3" * 16,
+                "actualHash": "3" * 16,
+                "readBackVerified": True,
+                "remoteWalAppliedSequence": 7,
+                "verifiedWalSequence": 7,
+                "compactReceiptHash": "current-proof",
+            })
+            stale = durability.remote_receipt_record(
+                saved_at="2026-07-25T00:03:00Z",
+                remote_commit_sha="b" * 40,
+                committed_at="2026-07-25T00:02:00Z",
+                expected_hash="2" * 16, actual_hash="2" * 16,
+                read_back_at="2026-07-25T00:03:00Z",
+                read_back_verified=True,
+                remote_wal_applied_sequence=6,
+                verified_wal_sequence=6,
+                compact_receipt_hash="stale-proof",
+                error_class=None)
+            storage.atomic_write_json(
+                value["receipt"], stale,
+                temp_directory=value["tempDirectory"],
+                validator=durability.verify_remote_receipt)
+            self.assertEqual(
+                scanner._restore_persistent_remote_receipt()["status"],
+                "stale")
+            self.assertEqual(scanner._REMOTE_CYCLE["verifiedWalSequence"], 7)
+
+            tampered = dict(stale)
+            tampered["verifiedWalSequence"] = 99
+            pathlib.Path(value["receipt"]).write_text(json.dumps(tampered))
+            self.assertEqual(
+                scanner._restore_persistent_remote_receipt()["status"],
+                "tampered")
+            self.assertEqual(scanner._REMOTE_CYCLE["verifiedWalSequence"], 7)
+
 
 class ContractRegressionTests(unittest.TestCase):
     def test_wal_record_has_dedup_and_chain_identity(self):
@@ -595,6 +859,32 @@ class ContractRegressionTests(unittest.TestCase):
         gate = pathlib.Path("test_verified_snapshot_release_gate.py").read_text()
         self.assertIn("test_matrix_requires_all_12_snapshots_and_304", gate)
         self.assertIn('"automaticAiExecutions": 0', gate)
+
+    def test_memory_snapshot_exports_remote_wal_cursor_for_compact_receipt(self):
+        saved_batch = dict(scanner._MISSION_BATCH_STATE)
+        saved_cycle = dict(scanner._REMOTE_CYCLE)
+        try:
+            scanner._MISSION_BATCH_STATE["walAppliedSequence"] = 41
+            scanner._REMOTE_CYCLE["verifiedWalSequence"] = 17
+            with scanner.app.test_client() as client:
+                snapshot = client.get(
+                    "/api/argus/osint/memory-snapshot").get_json()
+            state = snapshot["missionTickDurability"]
+            self.assertEqual(state["walAppliedSequence"], 41)
+            self.assertEqual(state["remoteWalAppliedSequence"], 41)
+            compact = argus_remote_journal.compact_readback_snapshot(
+                snapshot)
+            self.assertTrue(
+                argus_remote_journal.verify_compact_readback_snapshot(
+                    compact))
+            self.assertEqual(
+                compact["missionTickDurability"][
+                    "remoteWalAppliedSequence"], 41)
+        finally:
+            scanner._MISSION_BATCH_STATE.clear()
+            scanner._MISSION_BATCH_STATE.update(saved_batch)
+            scanner._REMOTE_CYCLE.clear()
+            scanner._REMOTE_CYCLE.update(saved_cycle)
 
     def test_render_contract_and_single_host_warning(self):
         render = pathlib.Path("render.yaml").read_text()

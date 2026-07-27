@@ -125,6 +125,45 @@ class SoakSourceIndependenceTests(unittest.TestCase):
         self.assertFalse(runtime.append_soak_heartbeat(soak, heartbeat))
         self.assertEqual(soak["heartbeats"], [])
 
+    def test_backup_build_pin_mismatch_does_not_interrupt_soak(self):
+        primary = self._heartbeat(
+            source="ec2_systemd", expected="2026-07-20T00:07:00Z",
+            observed="2026-07-20T00:07:02Z")
+        rejected_backup = {
+            **self._heartbeat(
+                source="github_schedule",
+                expected="2026-07-20T00:37:00Z",
+                observed="2026-07-20T00:37:02Z"),
+            "healthStatus": "build_mismatch",
+        }
+        soak = {"soakId": "soak-final", "buildSha": "abc1234",
+                "startedAt": "2026-07-20T00:07:02Z", "heartbeats": []}
+        self.assertTrue(runtime.append_soak_heartbeat(soak, primary))
+        self.assertFalse(runtime.append_soak_heartbeat(soak, rejected_backup))
+        state = runtime.build_soak_state(
+            soak=soak, now_iso="2026-07-20T00:38:00Z",
+            current_build_sha="abc1234")
+        self.assertNotEqual(state["state"], "interrupted")
+        self.assertNotEqual(state["failureClass"],
+                            "scheduler_configuration_mismatch")
+        self.assertEqual(state["lastHeartbeatSource"], "ec2_systemd")
+
+        authoritative_mismatch = {
+            **self._heartbeat(
+                source="ec2_systemd",
+                expected="2026-07-20T02:07:00Z",
+                observed="2026-07-20T02:07:02Z"),
+            "healthStatus": "build_mismatch",
+        }
+        self.assertTrue(
+            runtime.append_soak_heartbeat(soak, authoritative_mismatch))
+        interrupted = runtime.build_soak_state(
+            soak=soak, now_iso="2026-07-20T02:08:00Z",
+            current_build_sha="abc1234")
+        self.assertEqual(interrupted["state"], "interrupted")
+        self.assertEqual(interrupted["failureClass"],
+                         "scheduler_configuration_mismatch")
+
 
 class SystemdContractTests(unittest.TestCase):
     def test_timer_contract(self):

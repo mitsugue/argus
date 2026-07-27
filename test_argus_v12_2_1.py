@@ -69,6 +69,43 @@ def test_missed_detected_and_recovered():
     assert sc.ops_summary([m])["missed"] == 0
 
 
+def test_recovered_is_terminal_for_later_missed_detection():
+    m = sc.mission(mission_type="post_session_snapshot", market="JP",
+                   session_date="2026-07-09",
+                   scheduled_for="2026-07-09T15:40:00+09:00")
+    assert sc.detect_missed([m], NOW) == [m]
+    sc.recover(m, NOW)
+
+    assert sc.detect_missed(
+        [m], "2026-07-11T09:00:00+09:00") == []
+    assert m["status"] == "recovered"
+
+
+def test_bounded_missed_backlog_advances_past_recovered_records():
+    missions = [
+        sc.mission(
+            mission_type="daily_learning", market="ALL",
+            session_date=f"2026-06-{day:02d}",
+            scheduled_for=f"2026-06-{day:02d}T16:20:00+09:00")
+        for day in range(1, 16)
+    ]
+
+    first = sc.detect_missed(missions, NOW, max_records=12)
+    assert len(first) == 12
+    for mission in first:
+        sc.recover(mission, NOW)
+
+    second = sc.detect_missed(missions, NOW, max_records=12)
+    assert second == missions[12:]
+    for mission in second:
+        sc.recover(mission, NOW)
+
+    assert sc.detect_missed(
+        missions, "2026-07-11T09:00:00+09:00",
+        max_records=12) == []
+    assert all(mission["status"] == "recovered" for mission in missions)
+
+
 def test_retry_backoff_to_failed_safe():
     m = sc.mission(mission_type="daily_learning", market="ALL",
                    session_date="2026-07-10", scheduled_for=NOW)
@@ -89,6 +126,7 @@ def test_tick_admin_only():
 def test_tick_idempotent_no_duplicate_forecasts(monkeypatch):
     monkeypatch.setattr(scanner, "_require_admin", lambda: (True, None, 200))
     scanner._MISSIONS.clear()
+    scanner._MISSION_WINDOWS.clear()
     scanner._FORECAST_LEDGER.clear()
     scanner._OUTCOME_LEDGER.clear()
     scanner._POSTMORTEMS.clear()
@@ -97,7 +135,7 @@ def test_tick_idempotent_no_duplicate_forecasts(monkeypatch):
         assert r1.status_code == 200
         n1 = len(scanner._FORECAST_LEDGER)
         r2 = c.post("/api/argus/admin/missions/tick", json={})
-        assert r2.get_json()["created"] == 0          # ミッション冪等
+        assert r2.get_json().get("created", 0) == 0   # ミッション冪等
         assert len(scanner._FORECAST_LEDGER) == n1    # 予測重複なし
     ids = [f["id"] for f in scanner._FORECAST_LEDGER]
     assert len(ids) == len(set(ids))
