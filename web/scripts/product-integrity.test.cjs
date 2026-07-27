@@ -15,6 +15,7 @@ require.extensions['.ts'] = (m, filename) => {
 
 const semantics = require(path.join(__dirname, '..', 'src', 'domain', 'decisionView.ts'));
 const desk = require(path.join(__dirname, '..', 'src', 'domain', 'assetDesk.ts'));
+const probabilityTruth = require(path.join(__dirname, '..', 'src', 'domain', 'probabilityTruth.ts'));
 let failed = 0;
 function check(name, condition) {
   if (condition) console.log(`  ok  ${name}`);
@@ -79,6 +80,13 @@ check('S8d unknown evidence text is concise and deduplicated',
       && [...truth.confirmed, ...truth.missing, truth.nextCheck]
         .filter(Boolean).every((line) => line.length <= 64);
   })());
+check('S8e breadth probability gate fails closed when holdout/freshness proof is missing',
+  probabilityTruth.evaluateProbabilityTruth(
+    probabilityTruth.unavailableProbabilityEvidence({
+      serverEligible: true, oosEffectiveN: 150, ruleEffectiveN: 80,
+    }),
+    { UP: 45, RANGE: 35, DOWN: 20 },
+  ).exactPercentageAllowed === false);
 
 const base = {
   name: 'Example', market: 'JP', held: false, priceText: '¥100',
