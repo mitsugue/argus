@@ -12,6 +12,7 @@ require.extensions['.ts'] = (mod, filename) => {
 const { synthesizeArgusDecision, finalActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
 const { buildArgusTodayView, buildTodayProjection, buildTodayReview, selectTodayNews,
   selectAutoMarket, quoteDisplayLabel } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
+const { evaluateProbabilityTruth } = require(path.join(__dirname, '..', 'src/domain/probabilityTruth.ts'));
 let failed = 0;
 function check(name, condition) { if (condition) console.log(`  ok  ${name}`); else { failed++; console.error(`FAIL  ${name}`); } }
 
@@ -126,8 +127,11 @@ const calibratedInput = { symbol: 'SPY', instrumentId: 'US:SPY:ETF', label: 'S&P
       levelProbabilities: { upperTargetTouch: 24, baseRangeClose: 55, lowerTargetTouch: 21, invalidationTouch: 16 } },
   } } };
 const calibratedProjection = buildTodayProjection(calibratedInput, 'WAIT');
-check('calibrated probabilities use server result and sum to 100', calibratedProjection.instrumentId === 'US:SPY:ETF'
-  && Object.values(calibratedProjection.directionProbabilities).reduce((a, b) => a + b, 0) === 100
+check('legacy server eligibility alone cannot expose exact probability',
+  calibratedProjection.instrumentId === 'US:SPY:ETF'
+  && calibratedProjection.directionProbabilities === null
+  && calibratedProjection.probabilityTruth.label === 'EXPERIMENTAL'
+  && calibratedProjection.probabilityTruth.directionalLean === 'RANGE'
   && calibratedProjection.effectiveSampleCount === 38 && calibratedProjection.modelBrier === .54);
 check('level touch and close-in-band remain distinct', calibratedProjection.levelProbabilities.upperTargetTouch === 24
   && calibratedProjection.levelProbabilities.baseRangeClose === 55);
@@ -142,8 +146,22 @@ const weakSkill = buildTodayProjection({ ...calibratedInput, calibration: { ...c
     probabilityEligibility: { ...calibratedInput.calibration.horizons['5'].probabilityEligibility,
       eligible: false, reasonCodes: ['brier_skill_non_positive'], brierSkill: 0 } } } } }, 'WAIT');
 check('BSS zero hides probability', weakSkill.directionProbabilities === null);
+const strictEvidence = {
+  serverEligible: true, oosEffectiveN: 140, ruleEffectiveN: 80,
+  holdouts: [
+    { start: '2022-01-01', end: '2023-12-31', brierSkill: .07 },
+    { start: '2024-01-01', end: '2025-12-31', brierSkill: .06 },
+  ],
+  beatsUnconditional: true, beatsMomentum: true, wilsonHalfWidthPt: 8.4,
+  ece: .04, breadthLagTradingDays: 1, unresolvedPartitionCount: 0, duplicateCount: 0,
+};
+check('strict truth gate exposes exact probability only when every condition passes',
+  evaluateProbabilityTruth(strictEvidence, { UP: 49, RANGE: 29, DOWN: 22 }).exactPercentageAllowed === true
+  && evaluateProbabilityTruth({ ...strictEvidence, duplicateCount: 1 },
+    { UP: 49, RANGE: 29, DOWN: 22 }).exactPercentageAllowed === false);
 const upPluralityInput = { ...calibratedInput, calibration: { ...calibratedInput.calibration,
   horizons: { '5': { ...calibratedInput.calibration.horizons['5'],
+    effectiveSampleCount: 140, episodeCount: 80, probabilityTruthEvidence: strictEvidence,
     probabilities: { UP: 49, RANGE: 29, DOWN: 22 },
     directionProbabilities: { UP: 49, RANGE: 29, DOWN: 22 } } } } };
 const upPluralityView = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'),

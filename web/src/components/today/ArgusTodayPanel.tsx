@@ -54,15 +54,6 @@ const moveTone = (value: number, previous?: number | null) => previous == null |
   ? 'flat' : value > previous ? 'up' : 'down';
 const zoneLabel = (kind: '支持' | '抵抗', status: string) =>
   `${kind}${status === 'reclaimed' ? '（回復）' : status === 'broken' ? '（突破済み）' : ''}`;
-const probabilityReasonJa = (codes: string[]) => {
-  if (codes.includes('effective_sample_below_30')) return '実効標本が30未満';
-  if (codes.includes('brier_skill_non_positive')
-    || codes.includes('model_not_better_than_baseline')) return 'Brier Skillが基準以下';
-  if (codes.includes('calibration_integrity_failed')
-    || codes.includes('future_leakage_not_excluded')) return '校正完全性が未確認';
-  if (codes.includes('probability_sum_not_100')) return '確率合計を検証できません';
-  return 'サーバー適格性判定待ち';
-};
 
 const Sparkline: React.FC<{ values: number[] }> = ({ values }) => {
   if (values.length < 2) return null;
@@ -180,7 +171,9 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
         className={`${key.toLowerCase()} ${strongest === key ? 'is-max' : ''}`}>{key} <b>{projection.directionProbabilities![key]}%</b></span>)}
       <em>実効n={projection.effectiveSampleCount} · BSS {projection.brierSkill?.toFixed(3)}</em></div>
       : <div className="at-proj-prob is-suppressed"><b>確率は非表示</b>
-        <span>理由：{probabilityReasonJa(projection.probabilityEligibility.reasonCodes)} · 実効n={projection.effectiveSampleCount}</span></div>}
+        <span>{projection.probabilityTruth.directionalLeanJa} · 根拠{projection.probabilityTruth.evidenceStrength}
+          · 実効n={projection.probabilityTruth.effectiveN ?? projection.effectiveSampleCount}
+          · {projection.probabilityTruth.uncertaintyJa} · {projection.probabilityTruth.label}</span></div>}
     <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>タップでMarket Context</small></div>
   </div>;
 };

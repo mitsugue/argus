@@ -92,14 +92,15 @@ def test_today_contract_keeps_one_probability_language_and_price_only_levels():
     assert "an UP plurality can never create or promote a BUY" in domain
 
 
-def test_today_acceptance_uses_server_eligibility_and_honest_price_time():
+def test_today_acceptance_uses_strict_truth_gate_and_honest_price_time():
     panel = pathlib.Path(
         "web/src/components/today/ArgusTodayPanel.tsx").read_text()
     domain = pathlib.Path("web/src/domain/argusTodayView.ts").read_text()
-    assert "calibrated?.probabilityEligibility?.eligible" in domain
+    assert "evaluateProbabilityTruth" in domain
+    assert "probabilityTruthEvidence" in domain
     assert "probabilitySum === 100" not in domain
     assert "%非表示" not in panel
-    assert "理由：{probabilityReasonJa" in panel
+    assert "projection.probabilityTruth.uncertaintyJa" in panel
     assert 'aria-label="主要指数現在値"' not in panel
     assert "quoteDisplayLabel(projection.quoteState)" in panel
     assert "上昇失速パターン" in panel

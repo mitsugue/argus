@@ -12,6 +12,11 @@ import {
   type MarketHorizon as Horizon, type MarketInstrumentSymbol as Instrument,
 } from '../../domain/marketInstruments';
 import { buildMarketContextView } from '../../domain/marketContextView';
+import {
+  evaluateProbabilityTruth,
+  unavailableProbabilityEvidence,
+  type DirectionProbabilities,
+} from '../../domain/probabilityTruth';
 import './MarketContextReplay.css';
 
 type Tab = 'OVERVIEW' | 'REPLAY' | 'LEDGER';
@@ -470,11 +475,18 @@ export const MarketContextReplay: React.FC = () => {
   const action = initialDeep?.finalAction ?? mirror?.finalAction ?? null;
   const score = initialDeep?.actionScore ?? mirror?.actionScore ?? null;
   const deep = initialDeep?.symbol === instrument ? initialDeep : null;
-  const probabilities = deep?.directionProbabilities
-    ?? (data?.todayIntelligence?.calibration.horizons?.[String(horizon)]
-      ?.probabilityEligibility?.eligible
-      ? data.todayIntelligence.calibration.horizons[String(horizon)].directionProbabilities ?? null
-      : null);
+  const horizonCalibration = data?.todayIntelligence?.calibration.horizons?.[String(horizon)] ?? null;
+  const candidateProbabilities = (deep?.directionProbabilities
+    ?? horizonCalibration?.directionProbabilities ?? null) as DirectionProbabilities | null;
+  const probabilityTruth = evaluateProbabilityTruth(
+    unavailableProbabilityEvidence({
+      serverEligible: horizonCalibration?.probabilityEligibility?.eligible === true,
+      oosEffectiveN: horizonCalibration?.effectiveSampleCount ?? null,
+      ruleEffectiveN: horizonCalibration?.episodeCount ?? null,
+    }),
+    candidateProbabilities,
+  );
+  const probabilities = probabilityTruth.exactPercentageAllowed ? candidateProbabilities : null;
   const quality = replay?.probabilityQuality;
   const contextView = data ? buildMarketContextView(data, replay) : null;
   const switchTab = (next: Tab) => {
@@ -562,10 +574,13 @@ export const MarketContextReplay: React.FC = () => {
           <span className="up">UP <b>{probabilities.UP}%</b></span>
           <span>RANGE <b>{probabilities.RANGE}%</b></span>
           <span className="down">DOWN <b>{probabilities.DOWN}%</b></span></>
-          : <strong>方向性不明</strong>}</div>
+          : <><strong>{probabilityTruth.directionalLeanJa}</strong>
+            <small>根拠{probabilityTruth.evidenceStrength} · {probabilityTruth.label}</small></>}</div>
         <div className="mr-skill"><span>予測Skill</span>
-          <strong>{quality?.brierSkill != null && quality.brierSkill > 0 ? pct(quality.brierSkill * 100) : 'なし'}</strong>
-          <small>実効n {quality?.effectiveSample ?? replay?.similarEpisodes.effectiveSampleCount ?? '待機'}</small></div>
+          <strong>{probabilityTruth.exactPercentageAllowed ? '表示条件充足' : '未検証'}</strong>
+          <small>実効n {probabilityTruth.effectiveN
+            ?? quality?.effectiveSample ?? replay?.similarEpisodes.effectiveSampleCount ?? '待機'}
+            · {probabilityTruth.uncertaintyJa}</small></div>
       </section>
       <div className="card mr-chart-card">
         <div className="mr-chart-toolbar">

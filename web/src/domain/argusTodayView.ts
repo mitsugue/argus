@@ -3,6 +3,12 @@ import { synthesizeArgusDecision, type ArgusFactor, type ArgusFinalAction,
   type ArgusMarket, type ArgusMarketDecision } from './argusEngine';
 import type { MarketCalendarState } from '../types/marketLedger';
 import type { ChartBar, PriceZone } from '../types/chartIntelligence';
+import {
+  evaluateProbabilityTruth,
+  unavailableProbabilityEvidence,
+  type ProbabilityTruthEvidence,
+  type ProbabilityTruthResult,
+} from './probabilityTruth';
 
 export type MarketSelectionMode = 'AUTO' | ArgusMarket;
 
@@ -60,6 +66,7 @@ export interface TodayCalibrationInput {
   calibrationError?: number | null; calibrationIntegrity?: string;
   calibrationDatasetHash?: string; calibrationVersion?: string;
   probabilityEligibility?: ProbabilityEligibility;
+  probabilityTruthEvidence?: ProbabilityTruthEvidence;
   averageReactionDelay?: number | null;
   returnDistribution?: { q10: number | null; q25: number | null; median: number | null;
     q75: number | null; q90: number | null; meanMfe: number | null; meanMae: number | null };
@@ -102,6 +109,7 @@ export interface TodayProjection {
   brierSkillConfidenceInterval: { low: number | null; high: number | null } | null;
   calibrationError: number | null; calibrationVersion: string | null; datasetHash: string | null;
   probabilityEligibility: ProbabilityEligibility;
+  probabilityTruth: ProbabilityTruthResult;
   expectedValue: TodayCalibrationInput['expectedValue'] | null;
   levelProbabilities: TodayCalibrationInput['levelProbabilities']; reactionDelay: number | null;
   methodLabel: string; timeframeLabel: string; quoteState: string; sourceHistoryCount: number;
@@ -403,10 +411,6 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
   const activePoint = [...(input.turningPoints ?? [])].reverse()
     .find((point) => point.status === 'confirmed' || point.status === 'candidate');
   const candidateProbabilities = calibrated?.directionProbabilities ?? calibrated?.probabilities ?? null;
-  // The backend ProbabilityEligibility result is authoritative. Today must not
-  // invent a second sample/skill/integrity gate that can contradict the API.
-  const probabilities = calibrated?.probabilityEligibility?.eligible
-    ? candidateProbabilities : null;
   const probabilityEligibility: ProbabilityEligibility = calibrated?.probabilityEligibility ?? {
     eligible: false, reasonCodes: ['server_eligibility_unavailable'],
     effectiveSample: calibrated?.effectiveSampleCount ?? 0,
@@ -418,6 +422,16 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     datasetHash: calibrated?.calibrationDatasetHash ?? null,
     evaluatedAt: input.asOf, contractVersion: 'unavailable',
   };
+  const probabilityTruth = evaluateProbabilityTruth(
+    calibrated?.probabilityTruthEvidence ?? unavailableProbabilityEvidence({
+      serverEligible: probabilityEligibility.eligible,
+      oosEffectiveN: calibrated?.effectiveSampleCount ?? null,
+      ruleEffectiveN: calibrated?.episodeCount ?? null,
+    }),
+    candidateProbabilities,
+  );
+  const probabilities = probabilityTruth.exactPercentageAllowed
+    ? candidateProbabilities : null;
   const turningPointMarkers = [...(input.turningPoints ?? [])].reverse()
     .filter((point) => point.status === 'confirmed' || point.status === 'candidate')
     .slice(0, 3).map((point) => ({ id: point.id, date: point.effectiveFrom,
@@ -439,11 +453,10 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     support: below ? { low: below.lower, high: below.upper, status: below.status } : null,
     resistance: above ? { low: above.lower, high: above.upper, status: above.status } : null,
     horizon: `${horizonDays}営業日`, horizonDays,
-    directionLabel: probabilities
-      ? (probabilities.UP > probabilities.DOWN && probabilities.UP > probabilities.RANGE ? '上方向優勢'
-        : probabilities.DOWN > probabilities.UP && probabilities.DOWN > probabilities.RANGE ? '下方向警戒' : '本線内で待機')
+    directionLabel: candidateProbabilities
+      ? probabilityTruth.directionalLeanJa
       : action === 'BUY' ? '上方向優勢' : action === 'SELL' ? '下方向警戒' : '本線内で待機',
-    confidenceLabel: probabilities && (calibrated?.effectiveSampleCount ?? 0) >= 60 ? '高'
+    confidenceLabel: probabilityTruth.exactPercentageAllowed ? '高'
       : input.status === 'live' && bars.length >= 25 ? '中' : '低',
     directionProbabilities: probabilities,
     calibrationStatus: calibrated?.calibrationStatus ?? 'not_available',
@@ -456,6 +469,7 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     brierSkillConfidenceInterval: calibrated?.brierSkillConfidenceInterval ?? null,
     calibrationError: calibrated?.calibrationError ?? null,
     probabilityEligibility,
+    probabilityTruth,
     calibrationVersion: calibrated?.calibrationVersion ?? input.calibration?.calibrationVersion ?? null,
     datasetHash: calibrated?.calibrationDatasetHash ?? null,
     expectedValue: calibrated?.expectedValue ?? null,
