@@ -129,6 +129,11 @@ const incidentSource = fs.readFileSync(path.join(
 const researchSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'assetDesk', 'AssetResearchPanel.tsx',
 ), 'utf8');
+const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+const notificationSource = fs.readFileSync(path.join(
+  __dirname, '..', 'src', 'components', 'NotificationPanel.tsx',
+), 'utf8');
+const guideSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Guide.tsx'), 'utf8');
 check('S12 uncalibrated AI and cause confidence never renders percent',
   aiReviewSource.includes('confidenceJa') && !aiReviewSource.includes('confidencePct')
   && scoutSource.includes('probabilityDisplay(v * 100).qualitative')
@@ -137,6 +142,13 @@ check('S12 uncalibrated AI and cause confidence never renders percent',
   && !incidentSource.includes('Math.round(b.probability * 100)')
   && researchSource.includes('probabilityDisplay(value * 100).qualitative')
   && !researchSource.includes('Math.round(p.newLongAccumulation * 100)'));
+check('S13 shared header event navigation keeps route state and URL hash canonical',
+  appSource.includes("const commandHash = routeHash('command')")
+  && appSource.includes('history.pushState')
+  && appSource.includes("routeRef.current = 'command'"));
+check('S14 shared controls expose their selected and close semantics',
+  guideSource.includes('aria-pressed={loc === l}')
+  && notificationSource.includes('aria-label="通知を閉じる"'));
 
 if (failed) {
   console.error(`\nproduct-integrity tests: ${failed} FAILED`);

@@ -343,15 +343,20 @@ export const AssetDeskList: React.FC<Props> = ({
       {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の判断を取得中</div>}
       <div className="asset-filter">
         <button className={`asset-filter__chip${sortMode === 'priority' ? ' is-active' : ''}`}
+                aria-pressed={sortMode === 'priority'}
                 onClick={() => setSortMode('priority')} title="今日見るべき順(保有×緊急→リスク→イベント→その他)">優先順</button>
         <button className={`asset-filter__chip${sortMode === 'manual' ? ' is-active' : ''}`}
+                aria-pressed={sortMode === 'manual'}
                 onClick={() => setSortMode('manual')} title="ジャンル別・手動並べ替え(ドラッグ)">手動順</button>
         <span className="ad-filter-sep" aria-hidden>|</span>
-        <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`} onClick={() => setFilter('all')}>{t('wl.filterAll')}</button>
-        <button className={`asset-filter__chip asset-filter__chip--risk${filter === 'risk' ? ' is-active' : ''}`} onClick={() => setFilter('risk')}>
+        <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`}
+                aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>{t('wl.filterAll')}</button>
+        <button className={`asset-filter__chip asset-filter__chip--risk${filter === 'risk' ? ' is-active' : ''}`}
+                aria-pressed={filter === 'risk'} onClick={() => setFilter('risk')}>
           {t('wl.filterDanger')}{riskCount > 0 ? ` (${riskCount})` : ''}
         </button>
-        <button className={`asset-filter__chip${filter === 'held' ? ' is-active' : ''}`} onClick={() => setFilter('held')}>{t('wl.filterHeld')}</button>
+        <button className={`asset-filter__chip${filter === 'held' ? ' is-active' : ''}`}
+                aria-pressed={filter === 'held'} onClick={() => setFilter('held')}>{t('wl.filterHeld')}</button>
         {sortMode === 'manual' && filter !== 'all' && <span className="asset-filter__note">{t('wl.filterNoReorder')}</span>}
       </div>
 

@@ -245,6 +245,8 @@ const downsideSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'compon
   'dashboard', 'DownsideIncidentCard.tsx'), 'utf8');
 const commandSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
   'assetDesk', 'AssetPortfolioCommand.tsx'), 'utf8');
+const listSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'assetDesk', 'AssetDeskList.tsx'), 'utf8');
 const evidenceSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
   'assetDesk', 'AssetEvidenceSummary.tsx'), 'utf8');
 const whySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
@@ -270,6 +272,12 @@ check('E11 tabs expose keyboard navigation and ARIA contract',
 check('E12 portfolio counters are exclusive accessible filters',
   commandSource.includes('aria-pressed={activeKey === counter.key}')
   && commandSource.includes('onClick={() => onSelect?.(counter.key)}'));
+check('E12b sort and filter chips expose selected state',
+  listSource.includes("aria-pressed={sortMode === 'priority'}")
+  && listSource.includes("aria-pressed={sortMode === 'manual'}")
+  && listSource.includes("aria-pressed={filter === 'all'}")
+  && listSource.includes("aria-pressed={filter === 'risk'}")
+  && listSource.includes("aria-pressed={filter === 'held'}"));
 check('E13 evidence summary keeps explicit truth states',
   ['VERIFIED_FACT', 'SUPPORTED_HYPOTHESIS', 'UNRESOLVED', 'UNAVAILABLE', 'STALE', 'CONFLICT']
     .every((state) => evidenceSource.includes(state))
