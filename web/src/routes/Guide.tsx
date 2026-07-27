@@ -153,6 +153,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.3.3', '機能完成監査 — Positionsの投信手動評価額を合計・戦略へ即時反映し、Next eventのURL履歴、Market/Asset Deskの選択状態とキーボード操作を修正。'],
   ['v13.3.2', 'Asset Deskをdecision-first構造へ再編。個別チャートを遅延取得し、IndexedDB復元とRetry-After準拠で更新制限中も前回表示を維持。'],
   ['v13.3.1', 'Mobile Today integrity — canonical navigation、4銘柄×3期間のverified snapshot、safe-area/sticky配置、cold error retryを修復。'],
   ['v13.3.0', 'Verified Snapshot SWR — 前回検証済みMarket chartをIndexedDBから即時復元し、既存表示を保ったままETag再検証。30分自然tickがOHLCV・確率・Replay・Ledgerを原子的に事前生成し、静かなTriangle Step Loaderで更新状態を表示。'],
@@ -553,7 +554,7 @@ export const Guide: React.FC = () => {
       <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)' }}>{t('common.language')}</span>
         {(['en', 'ja'] as const).map((l) => (
-          <button key={l} onClick={() => setLocale(l)}
+          <button key={l} onClick={() => setLocale(l)} aria-pressed={loc === l}
             style={{ padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13,
                      background: loc === l ? 'var(--surface-soft)' : 'transparent',
                      color: loc === l ? 'var(--text-main)' : 'var(--text-sub)',

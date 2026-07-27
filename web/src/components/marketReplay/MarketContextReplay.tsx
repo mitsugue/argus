@@ -526,13 +526,26 @@ export const MarketContextReplay: React.FC = () => {
     <div className="mr-selectors">
       <div role="group" aria-label="Instrument">{MARKET_INSTRUMENTS.map((item) =>
         <button type="button" key={item.symbol} className={instrument === item.symbol ? 'active' : ''}
+          aria-pressed={instrument === item.symbol}
           onClick={() => switchInstrument(item.symbol)}>{item.symbol}</button>)}</div>
       <div role="group" aria-label="Forecast horizon">{MARKET_HORIZONS.map((value) =>
         <button type="button" key={value} className={horizon === value ? 'active' : ''}
+          aria-pressed={horizon === value}
           onClick={() => switchHorizon(value)}>{value}D</button>)}</div>
     </div>
-    <nav className="mr-tabs" aria-label="Market views">{TABS.map((value) =>
-      <button type="button" key={value} aria-selected={tab === value}
+    <nav className="mr-tabs" aria-label="Market views" role="tablist">{TABS.map((value) =>
+      <button type="button" role="tab" id={`market-tab-${value.toLowerCase()}`}
+        aria-controls={`market-panel-${value.toLowerCase()}`}
+        key={value} aria-selected={tab === value}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+          event.preventDefault();
+          const current = TABS.indexOf(value);
+          const next = TABS[(current + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length];
+          switchTab(next);
+          requestAnimationFrame(() =>
+            document.getElementById(`market-tab-${next.toLowerCase()}`)?.focus());
+        }}
         onClick={() => switchTab(value)}>{value}</button>)}</nav>
     {!data && <div className="card mr-snapshot-skeleton" aria-busy={loading}>
       {loaderVisible && <TriangleStepLoader
@@ -540,7 +553,8 @@ export const MarketContextReplay: React.FC = () => {
       {!loaderVisible && <span className="mr-skeleton-placeholder" aria-hidden="true" />}
       {error && <small>取得できません · {error}</small>}
     </div>}
-    {data && tab === 'OVERVIEW' && <div className="mr-overview">
+    {data && tab === 'OVERVIEW' && <div className="mr-overview" role="tabpanel"
+      id="market-panel-overview" aria-labelledby="market-tab-overview">
       <section className="mr-summary-row">
         <div className="mr-price"><span>{data.quoteState ?? 'CLOSE'}</span>
           <strong>{fmt(data.indicators.bars.at(-1)?.close)}</strong><small>{data.periodEnd}</small></div>
@@ -557,10 +571,13 @@ export const MarketContextReplay: React.FC = () => {
         <div className="mr-chart-toolbar">
           <div>{(['1M', '3M', '6M', '1Y', '5Y'] as Range[]).map((value) =>
             <button type="button" key={value} className={range === value ? 'active' : ''}
+              aria-pressed={range === value}
               onClick={() => switchRange(value)}>{value}</button>)}</div>
           <div><button type="button" className={mode === 'CANDLE' ? 'active' : ''}
+            aria-pressed={mode === 'CANDLE'}
             onClick={() => setMode('CANDLE')}>Candlestick</button>
             <button type="button" className={mode === 'LINE' ? 'active' : ''}
+              aria-pressed={mode === 'LINE'}
               onClick={() => setMode('LINE')}>Line</button></div>
         </div>
         <MarketChart data={data} replay={replay} deep={deep} range={range} mode={mode}
@@ -570,11 +587,17 @@ export const MarketContextReplay: React.FC = () => {
           focusDate={focusDate} />
         <div className="mr-drawing-tools" role="toolbar" aria-label="MY drawing tools">
           <span>MY</span>{DRAW_TOOLS.map((item) => <button type="button" key={item.id}
-            className={tool === item.id ? 'active' : ''} onClick={() => setTool(item.id)}>{item.label}</button>)}
-          <button type="button" disabled={!selectedDrawing} onClick={deleteDrawing}>削除</button>
-          <button type="button" disabled={!draw.canUndo} onClick={draw.undo}>Undo</button>
-          <button type="button" disabled={!draw.canRedo} onClick={draw.redo}>Redo</button>
-          <label><input type="checkbox" disabled /> 判断条件に使用 OFF</label>
+            className={tool === item.id ? 'active' : ''} aria-pressed={tool === item.id}
+            onClick={() => setTool(item.id)}>{item.label}</button>)}
+          <button type="button" disabled={!selectedDrawing} onClick={deleteDrawing}
+            aria-describedby="market-drawing-help">削除</button>
+          <button type="button" disabled={!draw.canUndo} onClick={draw.undo}
+            aria-describedby="market-drawing-help">Undo</button>
+          <button type="button" disabled={!draw.canRedo} onClick={draw.redo}
+            aria-describedby="market-drawing-help">Redo</button>
+          <span id="market-drawing-help" className="mr-drawing-help">
+            描画はメモ専用。削除は選択後、Undo/Redoは履歴がある時に利用できます。
+          </span>
         </div>
         <details className="mr-overlays" open={overlaysExpanded}
           onToggle={(event) => {
@@ -598,7 +621,8 @@ export const MarketContextReplay: React.FC = () => {
           {!replay?.changeConditions.length && <small>background cache更新待ち</small>}</div>
       </div>
     </div>}
-    {data && tab === 'REPLAY' && <div className="mr-replay">
+    {data && tab === 'REPLAY' && <div className="mr-replay" role="tabpanel"
+      id="market-panel-replay" aria-labelledby="market-tab-replay">
       {!replay ? <div className="card mr-empty">自然tickでReplay indexを準備中。ページ操作では再計算しません。</div> : <>
         <section className="mr-replay-kpi"><span>類似局面 <b>{replay.similarEpisodes.rawOccurrenceCount}</b></span>
           <span>実効標本 <b>{replay.similarEpisodes.effectiveSampleCount}</b></span>
@@ -643,7 +667,10 @@ export const MarketContextReplay: React.FC = () => {
           <small>パターンは検出可能 · 将来方向のSkillなし</small></div>}
       </>}
     </div>}
-    {data && tab === 'LEDGER' && <LedgerGrid market={info.market} replay={replay} data={data} />}
+    {data && tab === 'LEDGER' && <div role="tabpanel" id="market-panel-ledger"
+      aria-labelledby="market-tab-ledger">
+      <LedgerGrid market={info.market} replay={replay} data={data} />
+    </div>}
     <footer className="mr-system-line">
       <span>AI POST 0</span><span>{data?.marketReplay?.methodVersion ?? 'replay cache pending'}</span>
       <span>read-back {data?.marketReplay?.readBack.verificationStatus ?? 'pending'}</span>

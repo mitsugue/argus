@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { useAssets } from './useAssets';
 import { useAIJudgment } from './useAIJudgment';
 import { useActionLabels } from './useActionLabels';
@@ -31,7 +31,10 @@ import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan
 import { resolvePrimaryStance, type ResolvedStance } from '../domain/primaryStance';
 import { resolveCommandSummary, SIGNALS as CS_SIGNALS } from '../domain/commandSummary';
 import { classifyRole, buildStrategy, type LocalStrategy } from '../domain/portfolioStrategy';
-import { buildLocalFireCore, type LocalFireCore } from '../lib/fireCore';
+import {
+  buildLocalFireCore, fireCoreMetaSnapshot, subscribeFireCoreMeta,
+  type LocalFireCore,
+} from '../lib/fireCore';
 import { deriveTodayJudgment, combinePhase, type TodayPhase } from '../lib/todayCall';
 
 // ── V12.2.12: Asset Intelligence(TodayとAsset Deskの共有データ組み立て) ──────
@@ -94,6 +97,11 @@ export function useAssetIntel(opts: {
   const publish = opts.publish;
   const localAssets = useAssets();
   const assets = opts.assets ?? localAssets.assets;
+  const fireCoreMetaRevision = useSyncExternalStore(
+    subscribeFireCoreMeta,
+    fireCoreMetaSnapshot,
+    () => '{}',
+  );
   const aiJ = useAIJudgment();
   // The engine follows the USER's actual watchlist (dynamic symbols, v9.8).
   const jpSyms = useMemo(() => assets.filter((a) => a.market === 'JP').map((a) => a.symbol), [assets]);
@@ -338,7 +346,7 @@ export function useAssetIntel(opts: {
     });
     if (publish) publishStrategy(s);   // CorePortfolio/Handoff/AIReview read at render/copy time
     return { strategy: s, fireCore: fc };
-  }, [assets, positionExposure, impEvents, publish]);
+  }, [assets, positionExposure, impEvents, publish, fireCoreMetaRevision]);
   const portfolioStrategy = strategyAndFire.strategy;
   const fireCore = strategyAndFire.fireCore;
 

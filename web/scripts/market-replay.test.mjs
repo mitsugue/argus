@@ -41,6 +41,16 @@ assert.match(replay, /layoutReplayPriceLabels/);
 assert.match(replay, /slice\(-20\)/);
 assert.match(replay, /slice\(-10\)/);
 assert.match(replay, /AI POST 0/);
+assert.match(replay, /role="tablist"/);
+assert.match(replay, /role="tab"/);
+assert.match(replay, /role="tabpanel"/);
+assert.match(replay, /event\.key === 'ArrowRight'/);
+assert.match(replay, /event\.key !== 'ArrowLeft'/);
+assert.match(replay, /aria-pressed=\{instrument === item\.symbol\}/);
+assert.match(replay, /aria-pressed=\{horizon === value\}/);
+assert.doesNotMatch(replay, /type="checkbox" disabled/,
+  'memo-only drawings must not expose a dead disabled checkbox');
+assert.match(replay, /描画はメモ専用/);
 assert.match(replay, /label === 'MAE'/,
   'standard MAE remains explicitly labelled in the current UI');
 assert.match(types, /derivedMetricMigration/);

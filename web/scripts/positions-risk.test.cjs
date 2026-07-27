@@ -70,6 +70,12 @@ check('P9 stress conditions are explicit, deduplicated and bounded',
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'CorePortfolio.tsx'), 'utf8');
 const overviewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
   'dashboard', 'PortfolioDecisionOverview.tsx'), 'utf8');
+const fireCoreCardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
+  'dashboard', 'FireCoreCard.tsx'), 'utf8');
+const fireCoreSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib',
+  'fireCore.ts'), 'utf8');
+const assetIntelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'hooks',
+  'useAssetIntel.ts'), 'utf8');
 check('P10 first viewport starts with the portfolio overview',
   routeSource.indexOf('<PortfolioDecisionOverview') < routeSource.indexOf('<details className="cp-workspace"'));
 check('P11 detailed features remain secondary',
@@ -91,6 +97,15 @@ check('P14 asset-level scenario paragraph is not duplicated here',
 check('P15 queue is bounded in implementation',
   fs.readFileSync(path.join(__dirname, '..', 'src', 'domain',
     'portfolioDecisionView.ts'), 'utf8').includes('actionQueue.length === 5'));
+check('P16 FIRE Core renders the live hook result instead of a stale singleton',
+  routeSource.includes('fireCore={portfolioIntel.fireCore}')
+  && fireCoreCardSource.includes('fireCore: LocalFireCore')
+  && !fireCoreCardSource.includes('latestFireCore'));
+check('P17 FIRE Core edits invalidate same-tab and cross-tab derived totals',
+  fireCoreSource.includes('argus:fire-core-change')
+  && fireCoreSource.includes("window.addEventListener('storage'")
+  && assetIntelSource.includes('useSyncExternalStore')
+  && assetIntelSource.includes('fireCoreMetaRevision'));
 
 if (failed) {
   console.error(`\npositions-risk tests: ${failed} FAILED`);

@@ -23,7 +23,7 @@ export const NotificationPanel: React.FC<{ onClose: () => void }> = ({ onClose }
                   boxShadow: '0 8px 30px rgba(0,0,0,.45)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <b style={{ fontSize: 13 }}>通知</b>
-        <button type="button" onClick={onClose}
+        <button type="button" onClick={onClose} aria-label="通知を閉じる"
                 style={{ background: 'transparent', border: 'none', color: 'var(--text-faint)',
                          cursor: 'pointer', fontSize: 14 }}>✕</button>
       </div>

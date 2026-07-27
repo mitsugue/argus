@@ -127,6 +127,13 @@ const App: React.FC = () => {
         // v12.2.11: 重要イベントはDETAILS/MARKET DETAILS内(lazy)のため、
         // まずグループを開くイベントを送ってから、要素の出現をリトライで待つ。
         exitReview();
+        const commandHash = routeHash('command');
+        setPageEnterDirection(pageDirection(routeRef.current, 'command'));
+        routeRef.current = 'command';
+        if (window.location.hash !== commandHash) {
+          history.pushState(null, '',
+            `${window.location.pathname}${window.location.search}${commandHash}`);
+        }
         setRoute('command');
         // 開く指示(CustomEvent)は毎リトライで再送する — Today未マウントで
         // 最初の発火が失われても、マウント後のリトライが確実に届く(要素検索

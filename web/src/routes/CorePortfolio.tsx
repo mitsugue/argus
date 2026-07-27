@@ -224,7 +224,7 @@ export const CorePortfolio: React.FC = () => {
 
       {/* FIRE CORE / MUTUAL FUNDS (v11.19.1) — 投信=FIREの本丸資産の追跡。
           口数×日次NAV or 手動評価額・積立・口座区分。端末内のみ。 */}
-      <FireCoreCard assetsApi={assetsApi} />
+      <FireCoreCard assetsApi={assetsApi} fireCore={portfolioIntel.fireCore} />
 
       {/* v11.20.0: Portfolio / FIRE Review Pack copy(端末内合成・自動送信なし) */}
       {(() => {

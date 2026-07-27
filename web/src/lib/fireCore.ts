@@ -9,6 +9,7 @@ import type { PortfolioExposure } from '../domain/positionExposure';
 import type { LocalAssetRole } from '../domain/portfolioStrategy';
 
 export const FIRE_CORE_KEY = 'argus.fireCore.v1';
+const FIRE_CORE_CHANGE_EVENT = 'argus:fire-core-change';
 const STALE_DAYS = 10;  // v12.0.7: 週1程度(7〜9日間隔)の手動更新を過剰警告しない(Py側と同期)
 export const OWNER_RULE_JA = '投資信託の合計額をFIRE用の本丸資産として扱います。個別株の利益は、将来的にこのFIRE Coreへ移す候補として見ます。';
 
@@ -38,7 +39,29 @@ export function fundMeta(symbol: string): FundMeta { return loadMeta()[symbol.to
 export function saveFundMeta(symbol: string, patch: Partial<FundMeta>): void {
   const all = loadMeta();
   all[symbol.toUpperCase()] = { ...all[symbol.toUpperCase()], ...patch };
-  try { localStorage.setItem(FIRE_CORE_KEY, JSON.stringify(all)); } catch { /* quota */ }
+  try {
+    localStorage.setItem(FIRE_CORE_KEY, JSON.stringify(all));
+    window.dispatchEvent(new Event(FIRE_CORE_CHANGE_EVENT));
+  } catch { /* quota */ }
+}
+
+/** Subscribe to same-tab edits and cross-tab storage changes without exposing values. */
+export function subscribeFireCoreMeta(listener: () => void): () => void {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === FIRE_CORE_KEY) listener();
+  };
+  window.addEventListener(FIRE_CORE_CHANGE_EVENT, listener);
+  window.addEventListener('storage', onStorage);
+  return () => {
+    window.removeEventListener(FIRE_CORE_CHANGE_EVENT, listener);
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+/** Raw JSON is used only as a stable revision token for useSyncExternalStore. */
+export function fireCoreMetaSnapshot(): string {
+  try { return localStorage.getItem(FIRE_CORE_KEY) ?? '{}'; }
+  catch { return '{}'; }
 }
 
 export interface LocalFundPosition {

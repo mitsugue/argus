@@ -1,8 +1,7 @@
 import React from 'react';
 import type { UseAssets } from '../../hooks/useAssets';
-import { latestFireCore } from '../../lib/positionExposureShare';
 import { fundMeta, saveFundMeta, OWNER_RULE_JA, RATIO_BAND_JA,
-  type AccountType, ACCOUNT_JA } from '../../lib/fireCore';
+  type AccountType, ACCOUNT_JA, type LocalFireCore } from '../../lib/fireCore';
 import { jpDisplay } from '../../lib/displayName';
 
 // V11.19.1 — FIRE CORE / MUTUAL FUNDS (Core Portfolio)。投資信託=FIREの本丸資産。
@@ -13,9 +12,10 @@ const fmtJpy = (v: number | null) =>
   v == null ? '未入力' : `¥${Math.round(v).toLocaleString('ja-JP')}`;
 const jstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
 
-export const FireCoreCard: React.FC<{ assetsApi: UseAssets }> = ({ assetsApi }) => {
-  const [, bump] = React.useReducer((x: number) => x + 1, 0);
-  const f = latestFireCore();
+export const FireCoreCard: React.FC<{
+  assetsApi: UseAssets;
+  fireCore: LocalFireCore;
+}> = ({ assetsApi, fireCore: f }) => {
   const funds = assetsApi.assets.filter((a) => (a.assetType === 'core_fund' || a.assetType === 'manual_fund'));
 
   return (
@@ -83,7 +83,7 @@ export const FireCoreCard: React.FC<{ assetsApi: UseAssets }> = ({ assetsApi }) 
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
                     <label style={lbl}>口座
                       <select value={m.accountType ?? 'unknown'} style={inp}
-                              onChange={(e) => { saveFundMeta(p.symbol, { accountType: e.target.value as AccountType }); bump(); }}>
+                              onChange={(e) => { saveFundMeta(p.symbol, { accountType: e.target.value as AccountType }); }}>
                         {(Object.keys(ACCOUNT_JA) as AccountType[]).map((k) => (
                           <option key={k} value={k}>{ACCOUNT_JA[k]}</option>
                         ))}
@@ -93,7 +93,7 @@ export const FireCoreCard: React.FC<{ assetsApi: UseAssets }> = ({ assetsApi }) 
                       <input type="number" min={0} placeholder="未入力" style={inp}
                              defaultValue={m.monthlyContribution ?? ''}
                              onBlur={(e) => { const v = e.target.value === '' ? null : Number(e.target.value);
-                               saveFundMeta(p.symbol, { monthlyContribution: v != null && v >= 0 ? v : null }); bump(); }} />
+                               saveFundMeta(p.symbol, { monthlyContribution: v != null && v >= 0 ? v : null }); }} />
                     </label>
                     {p.valueSource !== 'units_x_nav' && (
                       <label style={lbl}>現在評価額(円・手動)
@@ -101,7 +101,7 @@ export const FireCoreCard: React.FC<{ assetsApi: UseAssets }> = ({ assetsApi }) 
                                defaultValue={m.manualValue ?? ''}
                                onBlur={(e) => { const v = e.target.value === '' ? null : Number(e.target.value);
                                  saveFundMeta(p.symbol, { manualValue: v != null && v > 0 ? v : null,
-                                   manualValueDate: v != null && v > 0 ? jstToday() : null }); bump(); }} />
+                                   manualValueDate: v != null && v > 0 ? jstToday() : null }); }} />
                       </label>
                     )}
                   </div>

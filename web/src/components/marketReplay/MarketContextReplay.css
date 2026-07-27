@@ -60,7 +60,7 @@
 .mr-my-layer marker path{fill:var(--chart-drawing)}.mr-selection-handle{fill:var(--chart-point-highlight)!important;stroke:var(--chart-drawing)!important;stroke-width:2!important;pointer-events:none}.mr-draft{fill:var(--chart-panel);stroke:var(--chart-drawing);stroke-width:2}
 .mr-drawing-tools{display:flex;flex-wrap:wrap;gap:4px;align-items:center;border-top:1px solid var(--line);padding:7px 2px 0}
 .mr-drawing-tools>span{font-size:10px;font-weight:900;color:var(--chart-drawing);margin-right:4px}.mr-drawing-tools button{padding:4px 7px}.mr-drawing-tools button:focus-visible,.mr-selectors button:focus-visible,.mr-tabs button:focus-visible,.mr-chart-toolbar button:focus-visible{outline:2px solid var(--chart-focus);outline-offset:2px}
-.mr-drawing-tools button:disabled{opacity:.35}.mr-drawing-tools label{margin-left:auto;font-size:10px;color:var(--text-faint)}
+.mr-drawing-tools button:disabled{opacity:.35}.mr-drawing-help{margin-left:auto;max-width:320px;font-size:10px;color:var(--text-faint)}
 .mr-overlays{margin-top:7px;border-top:1px solid var(--line);padding-top:6px}.mr-overlays summary{font-size:10px;color:var(--text-faint);cursor:pointer}
 .mr-overlays div{display:flex;flex-wrap:wrap;gap:5px 14px;padding:7px}.mr-overlays label{font-size:10px;color:var(--text-sub)}
 .mr-overview-grid,.mr-visual-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
