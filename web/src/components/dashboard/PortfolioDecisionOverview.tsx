@@ -18,7 +18,7 @@ export const PortfolioDecisionOverview: React.FC<{ view: Overview }> = ({ view }
         <small>
           {view.exposure.plJpy == null ? '損益未算出'
             : <>損益 <SignedValue value={view.exposure.plJpy} digits={0} />円</>}
-          {' · '}{view.exposure.pricedCount} priced / {view.exposure.unpricedCount} unpriced
+          {' · '}{view.exposure.pricedCount} verified price basis / {view.exposure.unpricedCount} unpriced
         </small>
       </article>
       <article>

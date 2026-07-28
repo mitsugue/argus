@@ -7,18 +7,24 @@ export interface MarketInstrumentDefinition {
   market: MarketInstrumentMarket;
   shortLabel: string;
   fullLabel: string;
+  instrumentType: 'ETF';
+  underlying: 'Nikkei 225' | 'TOPIX' | 'S&P 500' | 'Nasdaq-100';
   verifiedDaily: true;
 }
 
 export const MARKET_INSTRUMENTS: readonly MarketInstrumentDefinition[] = [
-  { symbol: '1321', market: 'JP', shortLabel: '日経',
-    fullLabel: '日経225 ETF（1321）', verifiedDaily: true },
-  { symbol: '1306', market: 'JP', shortLabel: 'TOPIX',
-    fullLabel: 'TOPIX ETF（1306）', verifiedDaily: true },
-  { symbol: 'SPY', market: 'US', shortLabel: 'S&P',
-    fullLabel: 'S&P 500 ETF（SPY）', verifiedDaily: true },
-  { symbol: 'QQQ', market: 'US', shortLabel: 'NASDAQ',
-    fullLabel: 'Nasdaq 100 ETF（QQQ）', verifiedDaily: true },
+  { symbol: '1321', market: 'JP', shortLabel: '1321 日経225 ETF',
+    fullLabel: '1321 日経225 ETF', instrumentType: 'ETF',
+    underlying: 'Nikkei 225', verifiedDaily: true },
+  { symbol: '1306', market: 'JP', shortLabel: '1306 TOPIX ETF',
+    fullLabel: '1306 TOPIX ETF', instrumentType: 'ETF',
+    underlying: 'TOPIX', verifiedDaily: true },
+  { symbol: 'SPY', market: 'US', shortLabel: 'SPY S&P 500 ETF',
+    fullLabel: 'SPY S&P 500 ETF', instrumentType: 'ETF',
+    underlying: 'S&P 500', verifiedDaily: true },
+  { symbol: 'QQQ', market: 'US', shortLabel: 'QQQ Nasdaq 100 ETF',
+    fullLabel: 'QQQ Nasdaq 100 ETF', instrumentType: 'ETF',
+    underlying: 'Nasdaq-100', verifiedDaily: true },
 ] as const;
 
 export const MARKET_HORIZONS: readonly MarketHorizon[] = [1, 5, 20];

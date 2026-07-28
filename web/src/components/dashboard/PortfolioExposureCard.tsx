@@ -30,7 +30,7 @@ export const PortfolioExposureCard: React.FC<{
     <div className="card exp">
       <div className="exp__head">
         <span className="exp__title">Portfolio Exposure</span>
-        <span className="exp__note">端末内のみ・未実現損益</span>
+        <span className="exp__note">端末内のみ・直近の検証済み評価価格（LIVE/遅延/EOD）</span>
       </div>
       <div className="exp__totals">
         {(['JPY', 'USD'] as const).filter((c) => exp.totals[c].value > 0).map((c) => (
@@ -68,7 +68,7 @@ export const PortfolioExposureCard: React.FC<{
         </>
       )}
       {exp.unpriced.length > 0 && (
-        <p className="exp__unpriced">ライブ価格未取得のため対象外: {exp.unpriced.join(', ')}（投信の基準価額は未対応）</p>
+        <p className="exp__unpriced">検証済み評価価格を取得できないため対象外: {exp.unpriced.join(', ')}</p>
       )}
     </div>
   );

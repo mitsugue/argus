@@ -1,6 +1,7 @@
 // V12.2.12 Asset Desk — 表示語彙ヘルパー(旧UnifiedAssetCard/AssetStrategySectionから移設)。
 import type { SignalCode } from '../../domain/actionLevel';
 import type { AssetStrategy } from '../../lib/assetStrategy';
+import type { QuoteLite } from '../../lib/assetStrategy';
 import type { DeskEventTag } from './types';
 
 // Primary human command per signal (the punchy English keyword).
@@ -50,7 +51,14 @@ function lagDays(date?: string | null): number | null {
   return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
 }
 
-export function freshnessOf(strat: AssetStrategy): { text: string; color: string } {
+export function freshnessOf(strat: AssetStrategy, quote?: QuoteLite): { text: string; color: string } {
+  if (quote?.quoteTruth) {
+    const delay = quote.quoteTruth.delayClass;
+    const color = delay === 'LIVE' ? 'var(--green)'
+      : delay === 'OFFLINE' || delay === 'UNKNOWN' ? 'var(--amber)'
+        : 'var(--text-muted)';
+    return { text: delay, color };
+  }
   if (strat.status === 'manual') return { text: 'manual', color: STATUS_COLOR.manual };
   if (strat.status === 'mock')   return { text: 'mock',   color: STATUS_COLOR.mock };
   const lag = lagDays(strat.date);

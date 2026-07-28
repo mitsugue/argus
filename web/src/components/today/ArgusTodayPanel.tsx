@@ -7,6 +7,11 @@ import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
 } from '../../domain/marketInstruments';
+import {
+  quoteAge,
+  quoteAsOf,
+  type LiveQuote,
+} from '../../domain/liveQuote';
 import './ArgusToday.css';
 
 export interface TodayInstrumentState {
@@ -14,6 +19,9 @@ export interface TodayInstrumentState {
   market: MarketInstrumentMarket;
   shortLabel: string;
   fullLabel: string;
+  instrumentType: 'ETF';
+  underlying: string;
+  quote: LiveQuote | null;
   move: ArgusTodayView['indexMoves'][number] | null;
   statusText: string;
   loading: boolean;
@@ -224,15 +232,31 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           onClick={() => onMode(mode)}>{mode}</button>)}
         <span>SELECTED {view.selectedMarket}</span>{view.globalRisk && <em>GLOBAL {view.globalRisk}</em>}
       </div>
-      <div className="at-index-strip" aria-label="主要指数データ">
+      <div className="at-index-strip" aria-label="指数連動ETFのクオートと分析">
         {instruments.map((instrument) => {
           const move = instrument.move;
+          const quote = instrument.quote;
+          const quoteLabel = quote?.delayClass === 'LIVE' ? 'LIVE QUOTE' : 'QUOTE';
           return <button type="button" key={instrument.symbol}
             aria-pressed={instrument.symbol === selectedSymbol}
             onClick={() => onInstrument(instrument.market, instrument.symbol)}
             className={`${move ? `is-${moveTone(move.value, move.previous)}` : 'is-pending'} ${instrument.symbol === selectedSymbol ? 'is-selected' : ''}`}>
-            <span title={instrument.fullLabel}>{instrument.shortLabel}</span>
-            {move ? <><b>{fmtMove(move.value, move.suffix)}</b>
+            <span className="at-index-name" title={`${instrument.fullLabel} · underlying ${instrument.underlying}`}>
+              {instrument.shortLabel}
+            </span>
+            <small className="at-index-type">{instrument.instrumentType}</small>
+            {quote?.price != null
+              ? <><i className="at-index-section">{quoteLabel}</i>
+                <b>{formatInstrumentPrice(quote.price, `${instrument.market}:${instrument.symbol}`)}</b>
+                <em className="at-index-truth">
+                  <mark data-delay={quote.delayClass}>{quote.delayClass}</mark>
+                  {quote.provider} · {quoteAsOf(quote)} · {quoteAge(quote)}
+                </em></>
+              : <><i className="at-index-section">QUOTE</i>
+                <b className="at-index-pending">未取得</b>
+                <em className="at-index-truth"><mark data-delay="OFFLINE">OFFLINE</mark> provider 未取得 · asOf 未検証</em></>}
+            {move ? <><i className="at-index-section">ANALYSIS</i>
+              <b className="at-index-analysis">{fmtMove(move.value, move.suffix)}</b>
               <Sparkline values={(move.history ?? []).map((point) => point.value)} />
               <em>{move.directionLabel ?? ''} · {move.status ?? 'close'} {shortDate(move.asOf)}</em></>
               : <><b className="at-index-pending">準備中</b>

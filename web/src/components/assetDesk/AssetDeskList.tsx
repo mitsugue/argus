@@ -30,6 +30,7 @@ import { fmtPrice, freshnessOf } from './deskFormat';
 import { bestAssetName } from '../../lib/assetStrategy';
 import { DownsideIncidentQueue } from '../dashboard/DownsideIncidentCard';
 import { t } from '../../i18n';
+import { normalizeLiveQuote } from '../../domain/liveQuote';
 import './AssetDesk.css';
 
 // V12.2.12 — Asset Deskリスト(旧AssetStrategySectionの後継)。
@@ -85,13 +86,26 @@ export const AssetDeskList: React.FC<Props> = ({
   // ── quotes/labels/cats/incidents(旧AssetStrategySection.mapsを移設) ──
   const maps = useMemo(() => {
     const quotes = new Map<string, QuoteLite>();
-    for (const s of intel.jpQuotes.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
-    for (const s of intel.usQuotes.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
+    for (const s of intel.jpQuotes.data?.stocks ?? []) quotes.set(s.symbol, {
+      price: s.price, changePct: s.changePct, volume: s.volume, date: s.date,
+      status: s.status, flow: s.flow ?? null, name: s.name, quoteTruth: s.quoteTruth,
+    });
+    for (const s of intel.usQuotes.data?.stocks ?? []) quotes.set(s.symbol, {
+      price: s.price, changePct: s.changePct, volume: s.volume, date: s.date,
+      status: s.status, flow: s.flow ?? null, name: s.name, quoteTruth: s.quoteTruth,
+    });
     for (const a of assets) {
       if (a.market !== 'CRYPTO') continue;
       const id = coingeckoIdOf(a);
       const q = id ? intel.cryptoWatch.byId[id] : undefined;
-      if (q) quotes.set(a.symbol, { price: q.priceUsd, changePct: q.changePct, volume: q.volume, date: q.date, status: q.status });
+      if (q) quotes.set(a.symbol, {
+        price: q.priceUsd, changePct: q.changePct, volume: q.volume,
+        date: q.date, status: q.status,
+        quoteTruth: normalizeLiveQuote({
+          symbol: a.symbol, price: q.priceUsd, changePct: q.changePct,
+          date: q.date, status: q.status, provider: 'CoinGecko',
+        }, { symbol: a.symbol, instrumentType: 'CRYPTO', provider: 'CoinGecko' }),
+      });
     }
     const labels = new Map<string, ActionLabel>();
     for (const l of intel.al.data?.labels ?? []) labels.set(l.symbol, l);
@@ -115,7 +129,18 @@ export const AssetDeskList: React.FC<Props> = ({
     for (const a of assets) {
       if (genreOf(a) === 'funds') {
         const f = navByName(a);
-        if (f) quotes.set(a.symbol, { price: f.navYen, changePct: f.changePct ?? 0, volume: 0, date: f.date, status: 'live' });
+        if (f) quotes.set(a.symbol, {
+          price: f.navYen, changePct: f.changePct ?? 0, volume: 0,
+          date: f.date, status: 'delayed',
+          quoteTruth: normalizeLiveQuote({
+            symbol: a.symbol, price: f.navYen, changePct: f.changePct ?? 0,
+            date: f.date, status: 'delayed', provider: '投信総合ライブラリー',
+            delayClass: 'EOD',
+          }, {
+            symbol: a.symbol, instrumentType: 'FUND',
+            provider: '投信総合ライブラリー',
+          }),
+        });
       }
     }
     return { quotes, labels, cats, downsideBySym };
@@ -188,8 +213,9 @@ export const AssetDeskList: React.FC<Props> = ({
         priority: apx?.priorityRank && apx.priorityRank !== 'Ignore'
           ? apx.priorityRank : rank <= 0 ? 'P0' : rank <= 2 ? 'P1'
           : rank <= 5 ? 'P2' : 'WATCH',
-        dataStatus: freshnessOf(strat).text,
-        asOf: quote?.date ?? null,
+        dataStatus: freshnessOf(strat, quote).text,
+        asOf: quote?.quoteTruth?.sourceTimestamp ?? quote?.date ?? null,
+        quoteTruth: quote?.quoteTruth ?? null,
         rank,
         whyCandidates: [
           incident?.moverCause?.bestLeadJa, incident?.reasonJa,
