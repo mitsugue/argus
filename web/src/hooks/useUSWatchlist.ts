@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { USWatchlistSnapshot, USStockQuote } from '../types/watch';
+import { normalizeWatchSnapshot } from '../domain/watchQuoteTruth';
 
 // connecting | live | partial | mock — same model as useJapanWatchlist.
-export type ConnPhase = 'connecting' | 'live' | 'partial' | 'mock';
+export type ConnPhase = 'connecting' | 'live' | 'delayed' | 'unknown' | 'partial' | 'mixed' | 'mock';
 
 interface State {
   data: USWatchlistSnapshot | null;
@@ -90,7 +91,7 @@ export function useUSWatchlist(symbols?: string[]): State {
           const r = await fetch(url, { signal: ctrl.signal });
           clearTimeout(timer);
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = (await r.json()) as USWatchlistSnapshot;
+          const data = normalizeWatchSnapshot((await r.json()) as USWatchlistSnapshot);
           if (cancelled) return;
           setState({ data, error: null, loading: false, phase: data.status, attempt });
           return;
@@ -119,7 +120,7 @@ export function useUSWatchlist(symbols?: string[]): State {
         const r = await fetch(url, { signal: ctrl.signal });
         clearTimeout(timer);
         if (!r.ok || cancelled) return;
-        const data = (await r.json()) as USWatchlistSnapshot;
+        const data = normalizeWatchSnapshot((await r.json()) as USWatchlistSnapshot);
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
       } catch {

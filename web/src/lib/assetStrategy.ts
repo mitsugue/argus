@@ -7,6 +7,7 @@ import type { AssetItem } from '../types/assetItem';
 import type { ActionLabel } from '../types/actionLabels';
 import type { CatalystItem } from '../types/catalysts';
 import type { ProbabilityProvenance } from '../domain/decisionView';
+import type { LiveQuote } from '../domain/liveQuote';
 
 export interface ScenarioProb {
   label: string;
@@ -47,6 +48,7 @@ export interface QuoteLite {
   status: string;
   flow?: { bigNetRatio: number } | null;
   name?: string | null;   // live snapshot name (JP/US); crypto snapshot has none
+  quoteTruth?: LiveQuote;
 }
 
 /**
@@ -161,7 +163,7 @@ export function deriveStrategy(
       dataLimitations: hasNav
         ? ['基準価額は投信総合ライブラリー(前営業日基準・日次)。約定は当日基準価額のため約定価格とは差が出ます。']
         : ['非上場投信のライブ基準価額は未取得(手動管理)。'],
-      lastUpdated: nowTs, status: hasNav ? 'live' : 'manual',
+      lastUpdated: nowTs, status: hasNav ? 'partial' : 'manual',
     };
   }
 

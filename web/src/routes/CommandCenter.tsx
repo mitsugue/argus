@@ -28,6 +28,8 @@ import {
   MARKET_INSTRUMENTS, marketInstrument, normalizeMarketInstrument,
   type MarketHorizon, type MarketInstrumentSymbol,
 } from '../domain/marketInstruments';
+import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
+import { useUSWatchlist } from '../hooks/useUSWatchlist';
 
 interface Props {
   onNavigate: (key: RouteKey) => void;
@@ -104,6 +106,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     phase, judgment, isPartial, visLimited, cappedConf, commandSummary,
     positionRisk, overlay,
   } = useAssetIntel({ publish: true });
+  // Headline ETFs have their own backend-only quote reads. They are not added
+  // to the user's watchlist and never cause a browser-side provider request.
+  const headlineJpQuotes = useJapanWatchlist(['1321', '1306']);
+  const headlineUsQuotes = useUSWatchlist(['SPY', 'QQQ']);
   const marketLedger = useMarketLedger();
   const marketNews = useMarketNews();
   const [marketMode, setMarketMode] = useState<MarketSelectionMode>(() => {
@@ -509,14 +515,21 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
       '1321': jpChart, '1306': topixChart, SPY: sp500Chart, QQQ: nasdaqChart,
     };
     const moves = new Map(argusToday.indexMoves.map((move) => [move.symbol, move]));
+    const quotes = new Map([
+      ...(headlineJpQuotes.data?.stocks ?? []),
+      ...(headlineUsQuotes.data?.stocks ?? []),
+    ].map((quote) => [quote.symbol.toUpperCase(), quote.quoteTruth ?? null]));
     return MARKET_INSTRUMENTS.map((item) => ({
       symbol: item.symbol, market: item.market, shortLabel: item.shortLabel,
-      fullLabel: item.fullLabel, move: moves.get(item.symbol) ?? null,
+      fullLabel: item.fullLabel, instrumentType: item.instrumentType,
+      underlying: item.underlying, quote: quotes.get(item.symbol) ?? null,
+      move: moves.get(item.symbol) ?? null,
       statusText: charts[item.symbol].statusText,
       loading: charts[item.symbol].loading,
       error: charts[item.symbol].error,
     }));
-  }, [argusToday.indexMoves, jpChart, topixChart, sp500Chart, nasdaqChart]);
+  }, [argusToday.indexMoves, headlineJpQuotes.data, headlineUsQuotes.data,
+    jpChart, topixChart, sp500Chart, nasdaqChart]);
 
   return (
     <PageShell

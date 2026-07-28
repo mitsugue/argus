@@ -391,7 +391,7 @@ export const CorePortfolio: React.FC = () => {
                 </div>
               )}
               {pe.unpriced.length > 0 && (
-                <div className="cmd-alloc__note">価格未取得(暫定): {pe.unpriced.join(', ')}</div>
+                <div className="cmd-alloc__note">検証済み評価価格を取得できないため暫定: {pe.unpriced.join(', ')}</div>
               )}
               <div className="cmd-alloc__note" style={{ fontSize: 10 }}>
                 リスク点検であり売買指示ではありません。数量・単価は端末内のみ。

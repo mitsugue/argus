@@ -11,6 +11,7 @@ import {
   type DecisionView,
   type EvidenceState,
 } from './decisionView';
+import type { LiveQuote } from './liveQuote';
 
 export type DeskGenre = 'jp' | 'us' | 'funds' | 'crypto';
 
@@ -29,6 +30,7 @@ export interface DecisionFirstInput {
   dataStatus: string;
   evidenceState?: EvidenceState;
   asOf?: string | null;
+  quoteTruth?: LiveQuote | null;
   rank: number;
   whyCandidates: Array<string | null | undefined>;
   nextCandidates: Array<string | null | undefined>;
@@ -55,6 +57,7 @@ export interface DecisionFirstView extends DecisionView {
   dataState: DataState;
   evidenceState: EvidenceState;
   asOf: string | null;
+  quoteTruth: LiveQuote | null;
   rank: number;
   bucket: 'exit-watch' | 'inspect' | 'hold' | 'new-stop';
 }
@@ -156,6 +159,7 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
     evidenceState,
     dataState,
     asOf: input.asOf ?? null,
+    quoteTruth: input.quoteTruth ?? null,
   };
 }
 
