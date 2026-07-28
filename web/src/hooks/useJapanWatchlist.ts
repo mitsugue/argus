@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { JapanWatchlistSnapshot, JapanStockQuote } from '../types/watch';
+import { normalizeWatchSnapshot } from '../domain/watchQuoteTruth';
 
 // Connection phase, surfaced to the UI so a cold-starting backend reads as
 // "connecting" rather than snapping straight to "mock" — same model as
 // useRatesSnapshot.
-export type ConnPhase = 'connecting' | 'live' | 'partial' | 'mock';
+export type ConnPhase = 'connecting' | 'live' | 'delayed' | 'unknown' | 'partial' | 'mixed' | 'mock';
 
 interface State {
   data: JapanWatchlistSnapshot | null;
@@ -98,7 +99,7 @@ export function useJapanWatchlist(symbols?: string[]): State {
           const r = await fetch(url, { signal: ctrl.signal });
           clearTimeout(timer);
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = (await r.json()) as JapanWatchlistSnapshot;
+          const data = normalizeWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
           if (cancelled) return;
           // Trust the payload's own status (a 200 can still be all-mock).
           setState({ data, error: null, loading: false, phase: data.status, attempt });
@@ -128,7 +129,7 @@ export function useJapanWatchlist(symbols?: string[]): State {
         const r = await fetch(url, { signal: ctrl.signal });
         clearTimeout(timer);
         if (!r.ok || cancelled) return;
-        const data = (await r.json()) as JapanWatchlistSnapshot;
+        const data = normalizeWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
       } catch {

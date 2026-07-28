@@ -214,6 +214,165 @@ def test_overlay_ignores_stale_pushes(monkeypatch):
     assert "realtimeCount" not in out
 
 
+def test_overlay_transport_age_never_proves_realtime(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    monkeypatch.setattr(scanner.argus_market_clock, "market_session",
+                        lambda *_a, **_k: {"session": "REGULAR"})
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", {
+        "SPY": {"row": {"symbol": "SPY", "price": 700.0, "changeAbs": 1.0,
+                         "changePct": 0.1, "volume": 1, "status": "live",
+                         "source": "moomoo-rt", "entitlement": "unknown",
+                         "exchangeTs": None}, "ts": now - 12},
+    })
+    out = scanner._overlay_pushed({"status": "live", "stocks": []}, "US", ["SPY"])
+    row = out["stocks"][0]
+    assert out["quoteFreshness"]["delayClass"] == "UNKNOWN"
+    assert out["status"] == "partial"
+    assert row["status"] == "delayed"
+    assert row["ageSec"] is None
+    assert row["transportAgeSec"] == 12
+    assert row["realtimeEvidence"] is False
+
+
+def test_overlay_quote_set_p95_classifies_live_then_delayed(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    monkeypatch.setattr(scanner.argus_market_clock, "market_session",
+                        lambda *_a, **_k: {"session": "REGULAR"})
+    def pushed(age):
+        return {"row": {"symbol": "SPY", "price": 700.0, "changeAbs": 1.0,
+                        "changePct": 0.1, "volume": 1, "status": "live",
+                        "source": "moomoo-rt", "entitlement": "unknown",
+                        "exchangeTs": now - age}, "ts": now - 5}
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", {"SPY": pushed(30)})
+    live = scanner._overlay_pushed({"status": "mock", "stocks": []}, "US", ["SPY"])
+    assert live["quoteFreshness"]["sourceAgeP95Sec"] == 30.0
+    assert live["quoteFreshness"]["delayClass"] == "LIVE"
+    assert live["stocks"][0]["status"] == "live"
+    assert live["status"] == "live"
+
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", {"SPY": pushed(900)})
+    delayed = scanner._overlay_pushed({"status": "mock", "stocks": []}, "US", ["SPY"])
+    assert delayed["quoteFreshness"]["sourceAgeMedianSec"] == 900.0
+    assert delayed["quoteFreshness"]["delayClass"] == "15m"
+    assert delayed["stocks"][0]["status"] == "delayed"
+    assert delayed["status"] == "delayed"
+
+
+def test_formal_jp_quote_never_uses_yahoo(monkeypatch):
+    monkeypatch.setattr(scanner, "_yahoo_jp_row",
+                        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Yahoo formal quote")))
+    expected = {"symbol": "1321", "status": "delayed", "source": "jquants"}
+    monkeypatch.setattr(scanner, "_jq_fetch_bar_row", lambda *_a, **_k: expected)
+    got = scanner._jquants_fetch_quote({"symbol": "1321", "name": "ETF", "mock": {}}, {})
+    assert got is expected
+
+
+def test_public_watchlist_gets_do_not_fetch_providers(monkeypatch):
+    monkeypatch.setattr(scanner.requests, "get",
+                        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("provider fetch")))
+    monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {"JP": {}, "US": {}})
+    monkeypatch.setattr(scanner, "_JP_DYN_CACHE", {})
+    monkeypatch.setattr(scanner, "_US_DYN_CACHE", {})
+    monkeypatch.setattr(scanner, "_JP_CACHE", {"data": None, "expires": 0.0})
+    monkeypatch.setattr(scanner, "_US_CACHE", {"data": None, "expires": 0.0})
+    with scanner.app.test_client() as client:
+        assert client.get("/api/argus/japan-watchlist?symbols=1321").status_code == 200
+        assert client.get("/api/argus/us-watchlist?symbols=SPY").status_code == 200
+
+
+def test_stale_cache_revokes_live_claim():
+    cached = scanner._cached_quote_snapshot({
+        "status": "live",
+        "stocks": [{
+            "symbol": "SPY",
+            "status": "live",
+            "delayClass": "LIVE",
+            "realtimeEvidence": True,
+        }],
+    })
+    assert cached["status"] == "delayed"
+    assert cached["stocks"][0]["status"] == "delayed"
+    assert cached["stocks"][0]["delayClass"] == "UNKNOWN"
+    assert cached["stocks"][0]["realtimeEvidence"] is False
+
+
+def test_moomoo_runtime_evidence_is_split_by_market(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda: True)
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: True)
+    monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {
+        "JP": {
+            "1321": {
+                "row": {
+                    "symbol": "1321", "exchangeTs": now - 30,
+                    "entitlement": "unknown", "quoteRight": "unknown",
+                },
+                "ts": now - 5,
+            },
+            "1306": {
+                "row": {
+                    "symbol": "1306", "exchangeTs": "bad-time",
+                    "entitlement": "unknown",
+                },
+                "ts": now - 6,
+            },
+        },
+        "US": {
+            "SPY": {
+                "row": {
+                    "symbol": "SPY", "exchangeTs": now - 900,
+                    "entitlement": "delayed", "quoteRight": "delayed",
+                },
+                "ts": now - 4,
+            },
+        },
+    })
+    monkeypatch.setattr(scanner, "_BRIDGE_HB", {
+        "data": {
+            "jpSnapshotErrors": 2,
+            "usSnapshotErrors": 3,
+            "jpLastErrorClass": "permission",
+            "usLastErrorClass": "api_unhealthy",
+        },
+        "receivedAt": now,
+    })
+
+    report = scanner._moomoo_capability_report()
+    assert report["schemaVersion"] == "moomoo-runtime-evidence-v2"
+    assert set(report["markets"]) == {"JP", "US"}
+
+    jp = report["markets"]["JP"]
+    assert jp["market"] == "JP"
+    assert jp["sourceAgeP50Sec"] == 30.0
+    assert jp["sourceAgeP95Sec"] == 30.0
+    assert jp["sourceTimestampCoverage"] == 0.5
+    assert jp["staleCount"] == 0
+    assert jp["errors"] == 2
+    assert jp["lastErrorClass"] == "permission"
+    assert jp["verdict"] == "unknown"
+    assert "source_timestamp_malformed" in jp["rows"][1]["errors"]
+
+    us = report["markets"]["US"]
+    assert us["market"] == "US"
+    assert us["sourceAgeP50Sec"] == 900.0
+    assert us["sourceAgeP95Sec"] == 900.0
+    assert us["sourceTimestampCoverage"] == 1.0
+    assert us["staleCount"] == 1
+    assert us["errors"] == 3
+    assert us["lastErrorClass"] == "api_unhealthy"
+    assert us["verdict"] == "delayed_evidence"
+
+    row = us["rows"][0]
+    for field in (
+        "market", "symbol", "quoteRight", "sourceTimestamp",
+        "receivedTimestamp", "sourceAgeSec", "entitlementVerdict",
+    ):
+        assert field in row
+
+
 # ── JP symbol-search code detection (v10.1 fix) ──────────────────────
 def test_jp_query_is_code_alphanumeric():
     # TSE codes are digit-led and may END IN A LETTER — isdigit() broke these.

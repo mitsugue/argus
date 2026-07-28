@@ -3135,10 +3135,12 @@ def _jq_fetch_bar_row(code, name, headers):
         return None
 
 def _jquants_fetch_quote(s, headers):
-    """Curated-list fetch (moomoo overlays on top later): Yahoo (fresher) → J-Quants
-    (T-1) → mock. Order matches the owner spec (v10.157)."""
-    return (_yahoo_jp_row(s["symbol"], s["name"])
-            or _jq_fetch_bar_row(s["symbol"], s["name"], headers)
+    """Formal quote fallback: licensed J-Quants EOD/T-1 → explicit mock.
+
+    Yahoo remains available to the sector/mover discovery layer, but is not a
+    formal quote source for Asset Desk or headline ETFs.
+    """
+    return (_jq_fetch_bar_row(s["symbol"], s["name"], headers)
             or _jp_mock_quote(s))
 
 def _jp_mock_snapshot():
@@ -3184,7 +3186,24 @@ def _jq_name_for(code4):
             return r["ja"] or r["en"] or ""
     return ""
 
-def _get_japan_watchlist_core(symbols=None):
+def _cached_quote_snapshot(data):
+    """Read-only public GET fallback. A provider cache may still be useful for
+    valuation, but an expired cache is never relabelled LIVE."""
+    if not isinstance(data, dict):
+        return data
+    stocks = []
+    for row in data.get("stocks", []):
+        if row.get("status") == "live" or row.get("delayClass") == "LIVE":
+            stocks.append({**row, "status": "delayed",
+                           "delayClass": "UNKNOWN",
+                           "realtimeEvidence": False})
+        else:
+            stocks.append(row)
+    return {**data, "status": "delayed" if stocks else "mock",
+            "stocks": stocks, "cacheState": "stale_read_only"}
+
+
+def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
     """Live snapshot of watched Japan names (price/change/volume/date).
 
     With `symbols=None` → the curated list with mock fallback (cached 10 min,
@@ -3200,20 +3219,16 @@ def _get_japan_watchlist_core(symbols=None):
         hit = _JP_DYN_CACHE.get(syms)
         if hit and now < hit["expires"]:
             return hit["data"]
-        # J-Quants when configured; otherwise (or per-symbol miss) a keyless Yahoo
-        # previous-close fallback so a watched name shows a REAL delayed price, never
-        # MOCK. The moomoo bridge overlay (applied after) still overrides with realtime.
+        if not allow_provider_fetch:
+            return (_cached_quote_snapshot(hit["data"]) if hit
+                    else {"status": "mock", "asOf": None, "provider": "jquants",
+                          "stocks": []})
+        # Formal quote path: licensed J-Quants when configured. Yahoo is reserved
+        # for mover discovery and never fills an Asset Desk/headline quote.
         headers = {"x-api-key": _JQUANTS_API_KEY} if _JQUANTS_API_KEY else None
         def fetch(code):
-            # Order (owner spec v10.157): moomoo realtime overlays on top later; for a
-            # non-moomoo symbol use the FRESHER source first — Yahoo (intraday ~20min /
-            # today's close) BEFORE J-Quants (free = T-1 yesterday). J-Quants is the
-            # last resort for names Yahoo lacks.
             nm = _jq_name_for(code) or code
-            row = _yahoo_jp_row(code, nm)
-            if row is None and headers:
-                row = _jq_fetch_bar_row(code, nm, headers)
-            return row
+            return _jq_fetch_bar_row(code, nm, headers) if headers else None
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(syms))) as ex:
             stocks = [q for q in ex.map(fetch, syms) if q is not None]
         # v10.191: coverage-based status instead of all-or-nothing. A few names on
@@ -3248,23 +3263,40 @@ def _get_japan_watchlist_core(symbols=None):
 
     if _JP_CACHE["data"] is not None and now < _JP_CACHE["expires"]:
         return _JP_CACHE["data"]
+    if not allow_provider_fetch:
+        return (_cached_quote_snapshot(_JP_CACHE["data"]) if _JP_CACHE["data"]
+                else _jp_mock_snapshot())
     if not _JQUANTS_API_KEY:
         return _jp_mock_snapshot()  # no API key configured
     headers = {"x-api-key": _JQUANTS_API_KEY}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(_JP_WATCHLIST)) as ex:
         stocks = list(ex.map(lambda s: _jquants_fetch_quote(s, headers), _JP_WATCHLIST))
-    overall = "live" if any(q["status"] == "live" for q in stocks) else "mock"
+    live_n = sum(1 for q in stocks if q.get("status") == "live")
+    delayed_n = sum(1 for q in stocks if q.get("status") == "delayed")
+    mock_n = sum(1 for q in stocks if q.get("status") == "mock")
+    if live_n == len(stocks):
+        overall = "live"
+    elif delayed_n and mock_n:
+        overall = "partial"
+    elif delayed_n:
+        overall = "delayed"
+    else:
+        overall = "mock"
     as_of   = max((q["date"] for q in stocks if q.get("date")), default=None)
     snapshot = {"status": overall, "asOf": as_of, "stocks": stocks}
-    if overall == "live":
+    if overall != "mock":
         _JP_CACHE["data"]    = snapshot
         _JP_CACHE["expires"] = now + _JP_CACHE_TTL
     return snapshot
 
-def get_japan_watchlist_snapshot(symbols=None):
+def get_japan_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
     """Core snapshot + real-time overlay: quotes pushed from the local moomoo
     bridge (fresh ≤ 10 min) override the J-Quants T-1 rows (v9.11)."""
-    snap = _get_japan_watchlist_core(symbols)
+    # Preserve the legacy one-argument call shape for internal callers/tests.
+    # Only the public read-only path needs to pass the explicit false gate.
+    snap = (_get_japan_watchlist_core(symbols)
+            if allow_provider_fetch
+            else _get_japan_watchlist_core(symbols, allow_provider_fetch=False))
     requested = (_sanitize_symbols(symbols, _JP_SYM_RE, _JP_DYN_MAX) if symbols
                  else [s["symbol"] for s in _JP_WATCHLIST])
     # Remember the requested symbols HERE (not just in the HTTP route) so BOTH the
@@ -3281,7 +3313,9 @@ _JP_FALLBACK_LAST = {"ts": None}   # v12.0.1 実測: JP代替価格を最後に�
 def api_argus_japan_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
-    snap = get_japan_watchlist_snapshot(symbols)
+    # Public GET is cache/bridge-only. Provider refresh belongs to scheduled or
+    # admin-controlled work, so page refreshes cannot multiply provider calls.
+    snap = get_japan_watchlist_snapshot(symbols, allow_provider_fetch=False)
     try:
         if any((st.get("status") or "") not in ("", "mock") and st.get("price") is not None
                for st in (snap.get("stocks") or [])):
@@ -3379,7 +3413,7 @@ def _td_parse_row(s, q):
     except Exception:
         return None
 
-def _get_us_watchlist_core(symbols=None):
+def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
     """Live snapshot of the watched US names (price/change/volume/date).
 
     With `symbols=None` → the curated list (one batched request, 10-min cache,
@@ -3395,6 +3429,10 @@ def _get_us_watchlist_core(symbols=None):
         hit = _US_DYN_CACHE.get(syms)
         if hit and now < hit["expires"]:
             return hit["data"]
+        if not allow_provider_fetch:
+            return (_cached_quote_snapshot(hit["data"]) if hit
+                    else {"status": "mock", "asOf": None,
+                          "provider": "twelvedata", "stocks": []})
         if not _TWELVEDATA_API_KEY:
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         try:
@@ -3426,6 +3464,9 @@ def _get_us_watchlist_core(symbols=None):
 
     if _US_CACHE["data"] is not None and now < _US_CACHE["expires"]:
         return _US_CACHE["data"]
+    if not allow_provider_fetch:
+        return (_cached_quote_snapshot(_US_CACHE["data"]) if _US_CACHE["data"]
+                else _us_mock_snapshot())
     if not _TWELVEDATA_API_KEY:
         return _us_mock_snapshot()
     try:
@@ -3485,7 +3526,7 @@ def _finnhub_quote_row(sym):
     _FINNHUB_QUOTE_CACHE[sym] = {"row": row, "ts": now}
     return row
 
-def get_us_watchlist_snapshot(symbols=None):
+def get_us_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
     """Core snapshot + real-time overlay from the local moomoo bridge (v9.11).
     Symbols Twelve Data's free plan omits are back-filled via Finnhub (v10.12.1)."""
     requested = (_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX) if symbols
@@ -3501,7 +3542,10 @@ def get_us_watchlist_snapshot(symbols=None):
     if requested and all(s in bridge for s in requested):
         base = {"status": "live", "asOf": _ai_now_iso(), "provider": "moomoo-bridge", "stocks": []}
         return _overlay_pushed(base, "US", requested)
-    snap = _get_us_watchlist_core(symbols)
+    # Preserve the legacy one-argument call shape for internal callers/tests.
+    snap = (_get_us_watchlist_core(symbols)
+            if allow_provider_fetch
+            else _get_us_watchlist_core(symbols, allow_provider_fetch=False))
     snap = _overlay_pushed(snap, "US", requested)
     try:
         have = {s.get("symbol") for s in (snap.get("stocks") or [])}
@@ -3520,7 +3564,8 @@ def get_us_watchlist_snapshot(symbols=None):
 def api_argus_us_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
-    return jsonify(get_us_watchlist_snapshot(symbols))
+    # Public GET is cache/bridge-only; never fetch a market-data provider here.
+    return jsonify(get_us_watchlist_snapshot(symbols, allow_provider_fetch=False))
 
 
 # ━━━ moomoo real-time quote push (v9.11) ━━━
@@ -3616,24 +3661,68 @@ def _overlay_pushed(snapshot, market, requested):
                  if now - p["ts"] <= _PUSH_TTL}
         if not fresh:
             return snapshot
-        # Honesty: outside the JP cash session a pushed quote is the last close,
-        # NOT a live price — label it 'delayed' so the UI never claims "live"
-        # on a Saturday (user caught this 2026-06-20). US session check is
-        # left to the provider for now.
-        jp_closed = (market == "JP" and not _jp_market_open())
-        session = "closed" if jp_closed else ("open" if market == "JP" else "unknown")
+        calendar = argus_market_clock.market_session(
+            argus_market_clock.JP_EQUITY if market == "JP"
+            else argus_market_clock.US_EQUITY,
+            datetime.now(pytz.utc))
+        raw_session = calendar.get("session")
+        session = (
+            "PRE" if raw_session == "PRE_MARKET"
+            else "REGULAR" if raw_session in ("MORNING_SESSION", "AFTERNOON_SESSION", "REGULAR")
+            else "AFTER" if raw_session in ("POST_MARKET", "AFTER_HOURS")
+            else "CLOSED"
+        )
+        active_session = session in ("PRE", "REGULAR", "AFTER")
+
+        source_ages = []
+        for p in fresh.values():
+            ex_epoch = _coerce_epoch((p.get("row") or {}).get("exchangeTs"))
+            if ex_epoch is not None:
+                source_ages.append(max(0.0, now - ex_epoch))
+        source_ages.sort()
+        coverage = len(source_ages) / len(fresh) if fresh else 0.0
+        median_age = None
+        p95_age = None
+        if source_ages:
+            mid = len(source_ages) // 2
+            median_age = (source_ages[mid] if len(source_ages) % 2
+                          else (source_ages[mid - 1] + source_ages[mid]) / 2.0)
+            p95_index = max(0, ((95 * len(source_ages) + 99) // 100) - 1)
+            p95_age = source_ages[p95_index]
+        entitlements = {
+            str((p.get("row") or {}).get("entitlement", "unknown")).lower()
+            for p in fresh.values()
+        }
+        if session == "CLOSED":
+            delay_class = "EOD"
+        elif any("delay" in item for item in entitlements):
+            delay_class = "15m"
+        elif median_age is not None and median_age >= 600:
+            delay_class = "15m"
+        elif coverage == 1.0 and p95_age is not None and p95_age <= 60:
+            delay_class = "LIVE"
+        else:
+            delay_class = "UNKNOWN"
+
         def _stamp(p):
-            # v10.36 (#3): per-quote freshness so the UI/inference can be honest.
-            # ageSec = how long since the bridge pushed; entitlement carried from
-            # the bridge (default unknown). A quote can be pushed every 15s yet
-            # still be 15-min DELAYED at source — these are different facts.
             row = p["row"]
-            age = int(now - p["ts"])
-            stamped = {**row, "ageSec": age, "session": session,
-                       "entitlement": row.get("entitlement", "unknown")}
-            if jp_closed:
-                stamped["status"] = "delayed"
-            return stamped
+            transport_age = max(0, int(now - p["ts"]))
+            source_epoch = _coerce_epoch(row.get("exchangeTs"))
+            source_age = max(0, int(now - source_epoch)) if source_epoch is not None else None
+            return {
+                **row,
+                "status": "live" if delay_class == "LIVE" else "delayed",
+                "sourceTimestamp": row.get("exchangeTs"),
+                "receivedAt": datetime.fromtimestamp(
+                    p["ts"], pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "ageSec": source_age,
+                "transportAgeSec": transport_age,
+                "delayClass": delay_class,
+                "session": session,
+                "quoteRight": row.get("quoteRight") or row.get("entitlement", "unknown"),
+                "entitlement": row.get("entitlement", "unknown"),
+                "realtimeEvidence": delay_class == "LIVE",
+            }
         stocks, seen, overlaid = [], set(), 0
         for q in snapshot.get("stocks", []):
             sym = q.get("symbol")
@@ -3650,33 +3739,32 @@ def _overlay_pushed(snapshot, market, requested):
                 overlaid += 1
         if overlaid == 0:
             return snapshot
-        ages = [now - p["ts"] for p in fresh.values()]
-        ents = {p["row"].get("entitlement", "unknown") for p in fresh.values()}
-        ent = (ents.pop() if len(ents) == 1 else "mixed")
-        note = ("moomooブリッジは約15秒毎に更新。entitlement=unknownの間は、配信が速くても"
-                "元データがリアルタイムか15分遅延か未確認のため『リアルタイム』と断定しません。")
-        # v10.114: the daily all-market cap-test PROVED realtime (traded-control
-        # set) — upgrade 'unknown' to 'realtime' for JP while that proof is fresh
-        # (<20h, i.e. today's run). Never override a bridge-reported 'delayed'.
-        if market == "JP" and ent == "unknown":
-            _proof = _MOOMOO_ALLMARKET_REPORT.get("realtimeProof") or {}
-            if _proof.get("at") and (now - _proof["at"]) < 20 * 3600:
-                ent = "realtime"
-                note = (f"全市場cap-testで売買銘柄の鮮度 p95={_proof.get('p95', '?')}s "
-                        f"(traded={_proof.get('traded', '?')}銘柄)→リアルタイムと実証(realtime_evidence)。"
-                        "約定の薄い銘柄や昼休み前後は更新が遅く出ることがあります。")
+        transport_ages = [max(0, now - p["ts"]) for p in fresh.values()]
+        ent = (next(iter(entitlements)) if len(entitlements) == 1 else "mixed")
+        note = (
+            "LIVEはexchange timestamp被覆100%かつquote-set p95≤60秒の時だけ。"
+            "push cadence/transport age/provider名だけではリアルタイムと判定しない。"
+        )
         out = {**snapshot, "stocks": stocks, "realtimeCount": overlaid,
-               "marketOpen": (None if market != "JP" else _jp_market_open()),
+               "marketOpen": active_session,
                "quoteFreshness": {
                    "session": session,
-                   "newestAgeSec": int(min(ages)) if ages else None,
-                   "oldestAgeSec": int(max(ages)) if ages else None,
+                   "delayClass": delay_class,
+                   "sourceAgeMedianSec": round(median_age, 1) if median_age is not None else None,
+                   "sourceAgeP95Sec": round(p95_age, 1) if p95_age is not None else None,
+                   "sourceTimestampCoverage": round(coverage, 3),
+                   "newestTransportAgeSec": int(min(transport_ages)) if transport_ages else None,
+                   "oldestTransportAgeSec": int(max(transport_ages)) if transport_ages else None,
                    "entitlement": ent,
                    "noteJa": note}}
-        if out.get("status") == "mock":
-            out["status"] = "partial"   # real pushed data beats an all-mock claim
-        if jp_closed and out.get("status") == "live":
-            out["status"] = "partial"   # session closed → not a fully-live snapshot
+        requested_count = len(requested or [])
+        full_coverage = requested_count > 0 and overlaid == requested_count
+        if delay_class == "LIVE" and full_coverage:
+            out["status"] = "live"
+        elif delay_class in ("15m", "EOD") and full_coverage:
+            out["status"] = "delayed"
+        else:
+            out["status"] = "partial"
         return out
     except Exception:
         return snapshot
@@ -13047,7 +13135,8 @@ _BRIDGE_HB = {"data": None, "receivedAt": 0.0}
 _HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
                     "lastQuotePushAt", "lastUSQuotePushAt", "lastJPQuotePushAt",
                     "acceptedCountLastPush", "usRealtimeStatus", "jpRealtimeStatus",
-                    "jpFallbackActive", "jpLastErrorClass", "diskUsagePct", "intervalSec",
+                    "jpFallbackActive", "jpLastErrorClass", "usLastErrorClass",
+                    "jpSnapshotErrors", "usSnapshotErrors", "diskUsagePct", "intervalSec",
                     # v12.0.3 reboot-safety自己申告(enabled/存在フラグのみ・秘密なし)
                     "opendAutostart", "bridgeAutostart", "systemRestartRequired")
 
@@ -25034,6 +25123,12 @@ def _coerce_epoch(ex):
     if isinstance(ex, (int, float)) and not isinstance(ex, bool):
         return float(ex)
     if isinstance(ex, str) and ex:
+        try:
+            parsed = datetime.fromisoformat(ex.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.timestamp()
+        except Exception:
+            pass
         for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
             try:
                 return datetime.strptime(ex, fmt).replace(tzinfo=pytz.utc).timestamp()
@@ -25042,46 +25137,130 @@ def _coerce_epoch(ex):
     return None
 
 def _moomoo_capability_report():
-    """Protected capability-test (item E): per-symbol exchangeTimestamp /
-    receivedAt / quoteAgeSeconds / entitlement / session for the bridge quotes.
-    The verdict stays 'unknown' unless a venue timestamp PROVES real-time — we
-    never upgrade on push cadence alone. '15-second push' = delivery frequency,
-    NOT data freshness; closepin/early-warning never assume confirmed_realtime."""
+    """Public-safe runtime evidence, strictly split by JP and US.
+
+    A quote right/provider name/push cadence is never a realtime proof. Each
+    market earns its own verdict from source timestamp coverage and source-age
+    distribution. The flattened ``rows`` key remains for older diagnostics
+    clients; new clients should use ``markets.JP`` and ``markets.US``.
+    """
     now = time.time()
-    rows, have_exchange_ts = [], 0
+    hb = _BRIDGE_HB.get("data") or {}
+    all_rows = []
+    markets = {}
+
+    def percentile(values, p):
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = max(0, ((p * len(ordered) + 99) // 100) - 1)
+        return round(ordered[index], 1)
+
     for mkt in ("JP", "US"):
         sess_open = _jp_market_open() if mkt == "JP" else _us_market_open()
         session = "open" if sess_open else "closed"
+        rows = []
+        source_ages = []
+        stale_count = 0
         for sym, rec in (_PUSHED_QUOTES.get(mkt) or {}).items():
             row = rec.get("row") or {}
             recv = rec.get("ts")
-            ex_epoch = _coerce_epoch(row.get("exchangeTs"))
-            if ex_epoch:
-                have_exchange_ts += 1
-            quote_age = round(now - recv, 1) if recv else None       # age of OUR copy
-            venue_age = round(now - ex_epoch, 1) if ex_epoch else None  # true age at venue
+            source_raw = row.get("exchangeTs")
+            ex_epoch = _coerce_epoch(source_raw)
+            errors = []
+            if source_raw in (None, ""):
+                errors.append("source_timestamp_missing")
+            elif ex_epoch is None:
+                errors.append("source_timestamp_malformed")
+            elif ex_epoch > now + 5:
+                errors.append("source_timestamp_future")
+                ex_epoch = None
+            received_age = round(max(0.0, now - recv), 1) if recv else None
+            source_age = round(max(0.0, now - ex_epoch), 1) if ex_epoch is not None else None
+            received_timestamp = (
+                datetime.fromtimestamp(recv, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if recv else None)
+            if source_age is not None:
+                source_ages.append(source_age)
+            stale = source_age is not None and source_age >= 600
+            if stale:
+                stale_count += 1
             if ex_epoch is None:
-                verdict = "unknown"                                   # unprovable without venue ts
-            elif sess_open and venue_age is not None and venue_age <= 60:
+                verdict = "unknown"
+            elif sess_open and source_age is not None and source_age <= 60:
                 verdict = "realtime_evidence"
-            elif sess_open and venue_age is not None and venue_age >= 600:
+            elif sess_open and source_age is not None and source_age >= 600:
                 verdict = "delayed_evidence"
             else:
                 verdict = "unknown"
-            rows.append({
+            evidence_row = {
                 "market": mkt, "symbol": sym, "session": session,
-                "exchangeTimestamp": row.get("exchangeTs"),
-                "receivedAt": (datetime.utcfromtimestamp(recv).strftime("%Y-%m-%dT%H:%M:%SZ") if recv else None),
-                "quoteAgeSeconds": quote_age, "venueAgeSeconds": venue_age,
+                "quoteRight": row.get("quoteRight") or row.get("entitlement", "unknown"),
+                "sourceTimestamp": source_raw,
+                "receivedTimestamp": received_timestamp,
+                "sourceAgeSec": source_age,
+                "receivedAgeSec": received_age,
+                "stale": stale,
+                "errors": errors,
+                "entitlementVerdict": verdict,
+                # v1 aliases retained until all diagnostics clients migrate.
+                "exchangeTimestamp": source_raw,
+                "receivedAt": received_timestamp,
+                "quoteAgeSeconds": received_age,
+                "venueAgeSeconds": source_age,
                 "entitlementReported": row.get("entitlement", "unknown"),
-                "entitlementVerdict": verdict})
-    verdicts = {r["entitlementVerdict"] for r in rows}
-    overall = ("realtime_proven" if rows and verdicts == {"realtime_evidence"}
-               else "delayed_evidence" if "delayed_evidence" in verdicts else "unknown")
-    return {"asOf": _ai_now_iso(), "symbols": len(rows), "withExchangeTs": have_exchange_ts,
-            "overallEntitlement": overall, "rows": rows,
-            "noteJa": "『15秒push』は配信頻度でありデータ鮮度ではない。venueのexchangeTsが無い限りリアルタイムは"
-                      "証明不可(entitlement=unknownを維持)。closepin・早期警戒はconfirmed_realtimeを前提にしない。"}
+            }
+            rows.append(evidence_row)
+            all_rows.append(evidence_row)
+
+        coverage = len(source_ages) / len(rows) if rows else 0.0
+        p50 = percentile(source_ages, 50)
+        p95 = percentile(source_ages, 95)
+        rights = {str(r["quoteRight"]).lower() for r in rows}
+        if rows and sess_open and coverage == 1.0 and p95 is not None and p95 <= 60:
+            market_verdict = "realtime_proven"
+        elif (p50 is not None and p50 >= 600) or any("delay" in r for r in rights):
+            market_verdict = "delayed_evidence"
+        else:
+            market_verdict = "unknown"
+        error_key = "jpSnapshotErrors" if mkt == "JP" else "usSnapshotErrors"
+        last_error_key = "jpLastErrorClass" if mkt == "JP" else "usLastErrorClass"
+        markets[mkt] = {
+            "market": mkt,
+            "symbols": len(rows),
+            "quoteRight": next(iter(rights)) if len(rights) == 1 else (
+                "mixed" if rights else "unknown"),
+            "sourceAgeP50Sec": p50,
+            "sourceAgeP95Sec": p95,
+            "sourceTimestampCoverage": round(coverage, 3),
+            "staleCount": stale_count,
+            "errors": int(hb.get(error_key) or 0),
+            "lastErrorClass": hb.get(last_error_key),
+            "verdict": market_verdict,
+            "rows": rows,
+        }
+
+    active = [m for m in markets.values() if m["symbols"]]
+    overall = (
+        "realtime_proven"
+        if active and all(m["verdict"] == "realtime_proven" for m in active)
+        else "delayed_evidence"
+        if any(m["verdict"] == "delayed_evidence" for m in active)
+        else "unknown"
+    )
+    return {
+        "schemaVersion": "moomoo-runtime-evidence-v2",
+        "asOf": _ai_now_iso(),
+        "symbols": len(all_rows),
+        "withExchangeTs": sum(1 for r in all_rows if r["sourceAgeSec"] is not None),
+        "overallEntitlement": overall,
+        "markets": markets,
+        "rows": all_rows,
+        "noteJa": (
+            "JP/USは別集計。『15秒push』は配信頻度でありデータ鮮度ではない。"
+            "source timestamp被覆100%かつmarket別p95≤60秒まではLIVEを証明しない。"
+        ),
+    }
 
 def _source_registry():
     # Self-verify EDINET once when a key is configured (cached) so the registry
@@ -25097,6 +25276,23 @@ def _source_registry():
         return (prov.get(pid) or {}).get("runtimeStatus", "missing")
     bridge_live = rt("moomoo") == "live"
     jq, td, fred, cg = rt("jquants"), rt("twelvedata"), rt("fred"), rt("coingecko")
+    moomoo_cap = _moomoo_capability_report()
+    def _moomoo_market_status(market):
+        summary = (moomoo_cap.get("markets") or {}).get(market) or {}
+        if summary.get("verdict") == "realtime_proven":
+            return "confirmed_live"
+        if summary.get("verdict") == "delayed_evidence":
+            return "confirmed_delayed"
+        # Backward-compatible fallback for a persisted v1 capability result.
+        rows = [row for row in moomoo_cap.get("rows", []) if row.get("market") == market]
+        verdicts = {row.get("entitlementVerdict") for row in rows}
+        if rows and verdicts == {"realtime_evidence"}:
+            return "confirmed_live"
+        if "delayed_evidence" in verdicts:
+            return "confirmed_delayed"
+        return "requires_test" if bridge_live else "missing"
+    moomoo_jp_status = _moomoo_market_status("JP")
+    moomoo_us_status = _moomoo_market_status("US")
     # Official J-Quants TDnet Add-on status (v11.1) — the registry must reflect the REAL
     # probe, never stay 'paid_not_enabled' once contracted. Cheap (cached in the fetch).
     try:
@@ -25137,15 +25333,17 @@ def _source_registry():
                 "entitlement": entitlement, "paid": paid, "licence": licence, "notesJa": note}
     sources = [
         S("日本株 価格", "moomoo / J-Quants", "JP",
-          "confirmed_live" if bridge_live else ("confirmed_delayed" if jq == "live" else "missing"),
-          "realtime(bridge) / T-1(J-Quants)", "free", "ok",
-          "ブリッジ稼働中はリアルタイム、途絶時はJ-Quants前日終値へ自動フォールバック。"),
+          moomoo_jp_status if moomoo_jp_status == "confirmed_live"
+          else ("confirmed_delayed" if jq in ("live", "delayed", "partial") else moomoo_jp_status),
+          "runtime-proven / EOD・T-1(J-Quants)", "free/paid", "entitlement-dependent",
+          "LIVEはexchange timestampのquote-set p95≤60秒でのみ実証。"
+          "それ以外の正式フォールバックはJ-Quants EOD/T-1。Yahooはmover discovery専用。"),
         S("米国株 価格", "moomoo / Twelve Data", "US",
-          "confirmed_live" if bridge_live else ("confirmed_live" if td == "live" else "missing"),
-          "realtime(bridge) / Twelve Data Basic=レギュラー時間RT(鮮度未計測)", "free", "ok",
-          "ブリッジ稼働中はリアルタイム、途絶時はTwelve Dataへフォールバック。Twelve Data Basicは"
-          "レギュラー時間の米国株/ETFがリアルタイム(時間外RTは上位プラン要)。無料枠の実鮮度は"
-          "ランタイム未計測のため『遅延』とも『RT』とも断定しない。アップグレード不要。"),
+          moomoo_us_status if moomoo_us_status != "missing"
+          else ("requires_test" if td == "live" else "missing"),
+          "runtime-proven / Twelve Data contract-dependent", "free/paid", "entitlement-dependent",
+          "moomooはexchange timestampのquote-set p95≤60秒でのみLIVE。"
+          "Twelve Dataは契約・市場権限・source timestampの実測が揃うまでrequires_test。"),
         S("大口フロー(資金分布)", "moomoo", "JP/US",
           "confirmed_live" if bridge_live else "requires_test",
           "口座のデータ権限依存", "free", "entitlement-dependent",

@@ -2,6 +2,7 @@ import React from 'react';
 import type { DeskCardData } from './types';
 import { SIGNALS, resolveSignal, type OwnerState, type SignalCode } from '../../domain/actionLevel';
 import { SignedValue } from '../common/SignedValue';
+import { quoteAge, quoteAsOf } from '../../domain/liveQuote';
 
 // V12.2.12 — 閉じたカード(§6): 開かなくても「何をどうするか」が分かる1枚。
 // 主判断はdomain/assetDecisionの出力のみ(AI PRIMARY / RULE TEMPORARY明示)。
@@ -50,6 +51,13 @@ export const AssetDecisionSummary: React.FC<{
         <span className="ad-prio">{view.priority}</span>
         <span className="ad-data">{view.dataStatus}</span>
       </span>
+      {view.quoteTruth && <span className="ad-quote-meta">
+        <span>{view.quoteTruth.instrumentType}</span>
+        <mark data-delay={view.quoteTruth.delayClass}>{view.quoteTruth.delayClass}</mark>
+        <span>{view.quoteTruth.provider}</span>
+        <span>{quoteAsOf(view.quoteTruth)}</span>
+        <span>{quoteAge(view.quoteTruth)}</span>
+      </span>}
     </button>
   );
 };

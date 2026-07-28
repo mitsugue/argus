@@ -1,4 +1,10 @@
 import type { ActionKey } from './action';
+import type {
+  DelayClass,
+  InstrumentType,
+  LiveQuote,
+  QuoteSession,
+} from '../domain/liveQuote';
 
 // Watched name — what the user manually tracks. Distinct from action
 // alerts (which are aggregated per asset class). Each row carries the
@@ -48,9 +54,27 @@ export type WatchEntry = WatchJP | WatchUS;
 // Mirrors the backend /api/argus/japan-watchlist shape. Kept in sync by
 // convention — if the endpoint's fields change, update this too.
 
-export type JpQuoteStatus = 'live' | 'mock';
+export type JpQuoteStatus = 'live' | 'delayed' | 'unknown' | 'mock';
+export type WatchSnapshotStatus = JpQuoteStatus | 'partial' | 'mixed';
 
-export interface JapanStockQuote {
+export interface QuoteTruthFields {
+  provider?: string | null;
+  source?: string | null;
+  sourceTimestamp?: string | number | null;
+  exchangeTs?: string | number | null;
+  updateTime?: string | number | null;
+  receivedAt?: string | null;
+  ageSec?: number | null;
+  transportAgeSec?: number | null;
+  delayClass?: DelayClass | string | null;
+  session?: QuoteSession | string | null;
+  entitlement?: string | null;
+  realtimeEvidence?: boolean | null;
+  instrumentType?: InstrumentType;
+  quoteTruth?: LiveQuote;
+}
+
+export interface JapanStockQuote extends QuoteTruthFields {
   symbol: string;
   name: string;
   price: number;
@@ -64,9 +88,17 @@ export interface JapanStockQuote {
 }
 
 export interface JapanWatchlistSnapshot {
-  // 'live' if all rows live; dynamic (user-symbol) fetches may be 'partial'.
-  status: JpQuoteStatus | 'partial';
+  // 'live' only when every row has runtime-proven source freshness.
+  status: WatchSnapshotStatus;
   asOf: string | null;         // latest data date across stocks (freshness)
+  provider?: string;
+  quoteFreshness?: {
+    delayClass?: DelayClass | string | null;
+    sourceAgeMedianSec?: number | null;
+    sourceAgeP95Sec?: number | null;
+    sourceTimestampCoverage?: number | null;
+    note?: string | null;
+  };
   stocks: JapanStockQuote[];
 }
 
@@ -74,7 +106,7 @@ export interface JapanWatchlistSnapshot {
 // Mirrors the backend /api/argus/us-watchlist shape. Same per-stock shape as
 // Japan; top-level status is 'live' only when ALL target symbols are live.
 
-export interface USStockQuote {
+export interface USStockQuote extends QuoteTruthFields {
   symbol: string;
   name: string;
   price: number;
@@ -87,8 +119,9 @@ export interface USStockQuote {
 }
 
 export interface USWatchlistSnapshot {
-  status: JpQuoteStatus | 'partial';
+  status: WatchSnapshotStatus;
   asOf: string | null;
   provider?: string;
+  quoteFreshness?: JapanWatchlistSnapshot['quoteFreshness'];
   stocks: USStockQuote[];
 }

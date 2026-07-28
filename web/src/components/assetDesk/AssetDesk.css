@@ -55,6 +55,13 @@
 .ad-prio{font-size:9px;font-weight:800;color:var(--accent);border:1px solid currentColor;
   border-radius:999px;padding:0 5px}
 .ad-data{font-size:9px;color:var(--text-faint);white-space:nowrap}
+.ad-quote-meta{display:flex;gap:5px;align-items:center;margin-top:4px;color:var(--text-faint);
+  font-size:8.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ad-quote-meta mark{border:1px solid var(--line);border-radius:3px;padding:0 3px;
+  background:transparent;color:var(--text-faint);font-size:8px}
+.ad-quote-meta mark[data-delay="LIVE"]{border-color:var(--value-positive);color:var(--value-positive)}
+.ad-quote-meta mark[data-delay="UNKNOWN"],.ad-quote-meta mark[data-delay="OFFLINE"]{
+  border-color:var(--amber,#fbbf24);color:var(--amber,#fbbf24)}
 .ad-src { font-size: 9px; border-radius: 3px; padding: 0 5px; font-weight: 700; letter-spacing: 0.03em; }
 .ad-src--ai { color: var(--value-positive); border: 1px solid var(--value-positive); }
 .ad-src--rule { color: var(--amber, #fbbf24); border: 1px solid var(--amber, #fbbf24); }
