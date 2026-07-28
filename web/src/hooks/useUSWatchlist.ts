@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { USWatchlistSnapshot, USStockQuote } from '../types/watch';
-import { normalizeWatchSnapshot } from '../domain/watchQuoteTruth';
+import {
+  normalizeUSWatchSnapshot,
+  type USTruthSnapshot,
+} from '../domain/watchQuoteTruth';
 
 // connecting | live | partial | mock — same model as useJapanWatchlist.
 export type ConnPhase = 'connecting' | 'live' | 'delayed' | 'unknown' | 'partial' | 'mixed' | 'mock';
 
 interface State {
-  data: USWatchlistSnapshot | null;
+  data: USTruthSnapshot | null;
   error: string | null;
   loading: boolean;
   phase: ConnPhase;
@@ -71,9 +74,10 @@ export function useUSWatchlist(symbols?: string[]): State {
     const fallback: USWatchlistSnapshot = dynamic
       ? { status: 'mock', asOf: null, provider: 'twelvedata', stocks: [] }
       : MOCK_SNAPSHOT;
+    const normalizedFallback = normalizeUSWatchSnapshot(fallback);
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: fallback, error: null, loading: false, phase: 'mock', attempt: 0 });
+      setState({ data: normalizedFallback, error: null, loading: false, phase: 'mock', attempt: 0 });
       return;
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/us-watchlist'
@@ -91,7 +95,7 @@ export function useUSWatchlist(symbols?: string[]): State {
           const r = await fetch(url, { signal: ctrl.signal });
           clearTimeout(timer);
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = normalizeWatchSnapshot((await r.json()) as USWatchlistSnapshot);
+          const data = normalizeUSWatchSnapshot((await r.json()) as USWatchlistSnapshot);
           if (cancelled) return;
           setState({ data, error: null, loading: false, phase: data.status, attempt });
           return;
@@ -104,7 +108,7 @@ export function useUSWatchlist(symbols?: string[]): State {
             await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
             continue;
           }
-          setState({ data: fallback, error: msg, loading: false, phase: 'mock', attempt });
+          setState({ data: normalizedFallback, error: msg, loading: false, phase: 'mock', attempt });
           return;
         }
       }
@@ -120,7 +124,7 @@ export function useUSWatchlist(symbols?: string[]): State {
         const r = await fetch(url, { signal: ctrl.signal });
         clearTimeout(timer);
         if (!r.ok || cancelled) return;
-        const data = normalizeWatchSnapshot((await r.json()) as USWatchlistSnapshot);
+        const data = normalizeUSWatchSnapshot((await r.json()) as USWatchlistSnapshot);
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
       } catch {

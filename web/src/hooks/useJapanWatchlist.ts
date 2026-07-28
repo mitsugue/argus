@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { JapanWatchlistSnapshot, JapanStockQuote } from '../types/watch';
-import { normalizeWatchSnapshot } from '../domain/watchQuoteTruth';
+import {
+  normalizeJapanWatchSnapshot,
+  type JapanTruthSnapshot,
+} from '../domain/watchQuoteTruth';
 
 // Connection phase, surfaced to the UI so a cold-starting backend reads as
 // "connecting" rather than snapping straight to "mock" — same model as
@@ -8,7 +11,7 @@ import { normalizeWatchSnapshot } from '../domain/watchQuoteTruth';
 export type ConnPhase = 'connecting' | 'live' | 'delayed' | 'unknown' | 'partial' | 'mixed' | 'mock';
 
 interface State {
-  data: JapanWatchlistSnapshot | null;
+  data: JapanTruthSnapshot | null;
   error: string | null;
   loading: boolean;
   phase: ConnPhase;
@@ -79,9 +82,10 @@ export function useJapanWatchlist(symbols?: string[]): State {
     const fallback: JapanWatchlistSnapshot = dynamic
       ? { status: 'mock', asOf: null, stocks: [] }
       : MOCK_SNAPSHOT;
+    const normalizedFallback = normalizeJapanWatchSnapshot(fallback);
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: fallback, error: null, loading: false, phase: 'mock', attempt: 0 });
+      setState({ data: normalizedFallback, error: null, loading: false, phase: 'mock', attempt: 0 });
       return;
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/japan-watchlist'
@@ -99,7 +103,7 @@ export function useJapanWatchlist(symbols?: string[]): State {
           const r = await fetch(url, { signal: ctrl.signal });
           clearTimeout(timer);
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = normalizeWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
+          const data = normalizeJapanWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
           if (cancelled) return;
           // Trust the payload's own status (a 200 can still be all-mock).
           setState({ data, error: null, loading: false, phase: data.status, attempt });
@@ -113,7 +117,7 @@ export function useJapanWatchlist(symbols?: string[]): State {
             await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
             continue;
           }
-          setState({ data: fallback, error: msg, loading: false, phase: 'mock', attempt });
+          setState({ data: normalizedFallback, error: msg, loading: false, phase: 'mock', attempt });
           return;
         }
       }
@@ -129,7 +133,7 @@ export function useJapanWatchlist(symbols?: string[]): State {
         const r = await fetch(url, { signal: ctrl.signal });
         clearTimeout(timer);
         if (!r.ok || cancelled) return;
-        const data = normalizeWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
+        const data = normalizeJapanWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
       } catch {
