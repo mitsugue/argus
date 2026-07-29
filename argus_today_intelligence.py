@@ -401,6 +401,7 @@ def _insufficient_calibration(horizon: int) -> Dict[str, Any]:
         "horizon": horizon, "calibrationStatus": "insufficient_history",
         "rawOccurrenceCount": 0, "episodeCount": 0, "effectiveSampleCount": 0,
         "probabilities": None, "directionProbabilities": None,
+        "referenceDirectionProbabilities": None,
         "modelBrier": None, "baselineBrier": None, "brierSkill": None,
         "calibrationIntegrity": "UNKNOWN", "noFutureLeakage": True,
         "calibrationVersion": CALIBRATION_VERSION,
@@ -555,6 +556,12 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
     visible = probabilities if eligibility["eligible"] else None
     result["probabilities"] = visible
     result["directionProbabilities"] = visible
+    # Preserve a useful but explicitly non-authoritative distribution when the
+    # strict publication gate is not yet met.  Consumers must label this field
+    # as reference/unverified; it never promotes to the verified contract.
+    result["referenceDirectionProbabilities"] = (
+        None if eligibility["eligible"] else probabilities
+    )
     result["probabilityEligibility"] = eligibility
     return result
 

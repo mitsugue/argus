@@ -70,6 +70,7 @@ def test_probability_calibration_uses_effective_episodes_and_sums_to_100():
         if row["calibrationStatus"] == "calibrated":
             assert sum(row["probabilities"].values()) == 100
             assert row["directionProbabilities"] == row["probabilities"]
+            assert row["referenceDirectionProbabilities"] is None
             assert row["brierSkill"] > 0
             assert row["confidenceInterval"]
             assert row["levelProbabilities"]["upperTargetTouch"] is not None
@@ -79,6 +80,7 @@ def test_probability_calibration_uses_effective_episodes_and_sums_to_100():
         else:
             assert eligibility["eligible"] is False
             assert row["probabilities"] is None
+            assert sum(row["referenceDirectionProbabilities"].values()) == 100
 
 
 def test_walk_forward_baseline_is_past_only_and_skill_is_paired():
@@ -97,6 +99,7 @@ def test_small_sample_never_displays_percentages():
     row = ti.calibrate_horizon(market_bars(70), 20)
     assert row["calibrationStatus"] in {"insufficient_history", "insufficient_sample"}
     assert row["probabilities"] is None
+    assert row["referenceDirectionProbabilities"] is None
     assert row["probabilityEligibility"]["eligible"] is False
     assert "effective_sample_below_30" in row["probabilityEligibility"]["reasonCodes"]
 

@@ -153,6 +153,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.3.5', 'Todayの方向確率を改善。厳格ゲート通過値は「検証済み」、計算可能だが未通過の値は「参考値・未検証」と分離し、欠損時は引き続き非表示。'],
   ['v13.3.4', 'Soak遅延会計を修正。過去の欠落windowは運用監視に残しつつ、新buildのheartbeatは当該windowの実測遅延だけで判定。'],
   ['v13.3.3', '機能完成監査 — Positionsの投信手動評価額を合計・戦略へ即時反映し、Next eventのURL履歴、Market/Asset Deskの選択状態とキーボード操作を修正。'],
   ['v13.3.3', 'SoakのOOM・Remote Journal公開・scheduled timeoutを修復。Todayは根拠のあるUP/RANGE/DOWN確率を検証済み/参考値に分けて表示し、market-data truthとbridge鮮度計測を追加。'],
