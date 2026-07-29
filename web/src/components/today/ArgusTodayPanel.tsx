@@ -125,8 +125,10 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
     { key: 'swing-high', label: '高値', value: swingHigh.value, priority: 6, tone: 'swing' },
     { key: 'swing-low', label: '安値', value: swingLow.value, priority: 7, tone: 'swing' },
   ], y);
-  const strongest = projection.directionProbabilities
-    ? (Object.entries(projection.directionProbabilities)
+  const displayProbabilities = projection.directionProbabilities
+    ?? projection.referenceDirectionProbabilities;
+  const strongest = displayProbabilities
+    ? (Object.entries(displayProbabilities)
       .sort((a, b) => b[1] - a[1])[0]?.[0] ?? '') : '';
   return <div className="at-projection" role="link" tabIndex={0} onClick={onActivate}
     onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onActivate(); }}>
@@ -174,10 +176,16 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
       <span>本線 <b>{formatInstrumentPrice(projection.baseLow, projection.instrumentId)}–{formatInstrumentPrice(projection.baseHigh, projection.instrumentId)}</b></span>
       <span className="down">下限 <b>{formatInstrumentPrice(projection.downside, projection.instrumentId)}</b></span>
       <span className="invalid">無効 <b>{formatInstrumentPrice(projection.invalidation, projection.instrumentId)}</b></span></div>
-    {projection.directionProbabilities ? <div className="at-proj-prob"><span>{projection.horizonDays}D 終値方向</span>
+    {displayProbabilities ? <div className={`at-proj-prob ${
+      projection.directionProbabilities ? 'is-verified' : 'is-reference'}`}>
+      <span>{projection.horizonDays}D 終値方向{
+        projection.directionProbabilities ? '（検証済み）' : '（参考値・未検証）'}</span>
       {(['UP', 'RANGE', 'DOWN'] as const).map((key) => <span key={key}
-        className={`${key.toLowerCase()} ${strongest === key ? 'is-max' : ''}`}>{key} <b>{projection.directionProbabilities![key]}%</b></span>)}
-      <em>実効n={projection.effectiveSampleCount} · BSS {projection.brierSkill?.toFixed(3)}</em></div>
+        className={`${key.toLowerCase()} ${strongest === key ? 'is-max' : ''}`}>{key} <b>{displayProbabilities[key]}%</b></span>)}
+      <em>実効n={projection.effectiveSampleCount} · BSS {
+        projection.brierSkill == null ? '—' : projection.brierSkill.toFixed(3)}
+        {!projection.directionProbabilities && ` · ${projection.probabilityTruth.uncertaintyJa}`}
+      </em></div>
       : <div className="at-proj-prob is-suppressed"><b>確率は非表示</b>
         <span>{projection.probabilityTruth.directionalLeanJa} · 根拠{projection.probabilityTruth.evidenceStrength}
           · 実効n={projection.probabilityTruth.effectiveN ?? projection.effectiveSampleCount}

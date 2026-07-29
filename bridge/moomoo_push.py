@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ARGUS moomoo bridge — runs NEXT TO OpenD (same machine, e.g. your AWS box).
 
-Reads real-time JP/US quotes from the LOCAL OpenD gateway and pushes them to
+Reads JP/US quote snapshots from the LOCAL OpenD gateway and pushes them to
 the ARGUS backend (/api/argus/quote-push, admin-token gated). While pushes are
 fresh (≤10 min) they override J-Quants(T-1)/Twelve Data in the app; when this
 bridge stops, ARGUS falls back automatically. Account credentials and OpenD
@@ -80,6 +80,9 @@ CODES = list(dict.fromkeys(CODES + _REGIME_ETF_CODES))
 STATE = {
     "jpBlockUntil": 0.0,           # epoch until which JP fetch is skipped (entitlement backoff)
     "jpLastErrorClass": None,      # "permission" | "other" | None
+    "usLastErrorClass": None,      # "api_unhealthy" | "sms_required" | None
+    "jpSnapshotErrors": 0,         # public-safe cumulative counters, split by market
+    "usSnapshotErrors": 0,
     "jpLastErrorLogAt": 0.0,       # log-dedup stamp (no 15s spam)
     "lastPushAt": None,            # iso — any accepted push
     "lastUsPushAt": None,
@@ -227,6 +230,9 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
         "jpRealtimeStatus": jp_realtime_status(state, disable_jp),
         "jpFallbackActive": not jp_push_active(state=state, disable_jp=disable_jp),
         "jpLastErrorClass": state.get("jpLastErrorClass"),
+        "usLastErrorClass": state.get("usLastErrorClass"),
+        "jpSnapshotErrors": int(state.get("jpSnapshotErrors") or 0),
+        "usSnapshotErrors": int(state.get("usSnapshotErrors") or 0),
         "diskUsagePct": disk_usage_pct(),
         "intervalSec": INTERVAL,
     }
@@ -278,13 +284,18 @@ def fetch_market_quotes(qc, codes_by_market, state=None, disable_jp=None, now=No
                 state["lastSnapshotOkAt"] = now
                 state["consecutiveSnapshotErrors"] = 0
                 state["openDErrorClass"] = None
+                state["usLastErrorClass"] = None
             else:
                 state["consecutiveSnapshotErrors"] = int(state.get("consecutiveSnapshotErrors") or 0) + 1
                 state["openDErrorClass"] = classify_opend_error(df)
+                state["usLastErrorClass"] = state["openDErrorClass"]
+                state["usSnapshotErrors"] = int(state.get("usSnapshotErrors") or 0) + 1
                 print(time.strftime("%H:%M:%S"), "US snapshot error:", str(df)[:160])
         except Exception as e:
             state["consecutiveSnapshotErrors"] = int(state.get("consecutiveSnapshotErrors") or 0) + 1
             state["openDErrorClass"] = classify_opend_error(str(e))
+            state["usLastErrorClass"] = state["openDErrorClass"]
+            state["usSnapshotErrors"] = int(state.get("usSnapshotErrors") or 0) + 1
             print(time.strftime("%H:%M:%S"), "US snapshot exception:", type(e).__name__, str(e)[:120])
 
     jp_codes = codes_by_market.get("JP") or []
@@ -299,6 +310,7 @@ def fetch_market_quotes(qc, codes_by_market, state=None, disable_jp=None, now=No
             elif is_permission_error(df):
                 state["jpBlockUntil"] = now + JP_ENTITLEMENT_BACKOFF_SEC
                 state["jpLastErrorClass"] = "permission"
+                state["jpSnapshotErrors"] = int(state.get("jpSnapshotErrors") or 0) + 1
                 if now - float(state.get("jpLastErrorLogAt") or 0.0) >= JP_ENTITLEMENT_BACKOFF_SEC - 60:
                     state["jpLastErrorLogAt"] = now
                     print(time.strftime("%H:%M:%S"),
@@ -308,12 +320,14 @@ def fetch_market_quotes(qc, codes_by_market, state=None, disable_jp=None, now=No
             else:
                 state["jpBlockUntil"] = now + 300      # transient JP error: 5-min degrade
                 state["jpLastErrorClass"] = "other"
+                state["jpSnapshotErrors"] = int(state.get("jpSnapshotErrors") or 0) + 1
                 if now - float(state.get("jpLastErrorLogAt") or 0.0) >= 240:
                     state["jpLastErrorLogAt"] = now
                     print(time.strftime("%H:%M:%S"), "JP snapshot error (5min backoff):", str(df)[:160])
         except Exception as e:
             state["jpBlockUntil"] = now + 300
             state["jpLastErrorClass"] = "other"
+            state["jpSnapshotErrors"] = int(state.get("jpSnapshotErrors") or 0) + 1
             if now - float(state.get("jpLastErrorLogAt") or 0.0) >= 240:
                 state["jpLastErrorLogAt"] = now
                 print(time.strftime("%H:%M:%S"), "JP snapshot exception:", type(e).__name__, str(e)[:120])
@@ -337,6 +351,31 @@ def record_push_result(stocks, accepted, state=None, now_iso=None):
 
 def rows_from_snapshot(df):
     """moomoo market-snapshot dataframe → quote-push payload rows."""
+    def quote_right(row):
+        raw = (row.get("quote_right") or row.get("quote_right_status")
+               or row.get("entitlement") or "unknown")
+        value = str(raw).strip().lower()
+        return value[:40] if value and all(c.isalnum() or c in "_- /" for c in value) else "unknown"
+
+    def exchange_timestamp(value, market):
+        """OpenD update_time is market-local. Normalize it before transport so
+        the backend never mistakes New York/Tokyo wall time for UTC."""
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw or raw.lower() in ("nan", "nat", "none", "n/a"):
+            return None
+        try:
+            import datetime as _dt
+            from zoneinfo import ZoneInfo
+            parsed = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                zone = ZoneInfo("Asia/Tokyo" if market == "JP" else "America/New_York")
+                parsed = parsed.replace(tzinfo=zone)
+            return parsed.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            return None
+
     stocks = []
     for _, r in df.iterrows():
         code = str(r.get("code", ""))
@@ -348,6 +387,8 @@ def rows_from_snapshot(df):
             continue
         if not sym or last <= 0:
             continue
+        exchange_ts = exchange_timestamp(r.get("update_time"), market.upper())
+        right = quote_right(r)
         stocks.append({
             "market": market.upper(),
             "symbol": sym.upper(),
@@ -355,6 +396,11 @@ def rows_from_snapshot(df):
             "changeAbs": round(last - prev, 4) if prev else 0.0,
             "changePct": round((last - prev) / prev * 100, 4) if prev else 0.0,
             "volume": int(r.get("volume") or 0),
+            "exchangeTs": exchange_ts,
+            # Snapshot success does not itself identify the contracted quote
+            # right. Runtime timestamp distribution proves freshness separately.
+            "quoteRight": right,
+            "entitlement": right,
         })
     return stocks
 
