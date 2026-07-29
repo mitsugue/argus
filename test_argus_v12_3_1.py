@@ -74,6 +74,34 @@ class MissionWindowTests(unittest.TestCase):
         self.assertEqual(effective["missedWindowCount"], 1)
         self.assertEqual(effective["delaySeconds"], 49 * 60)
         self.assertEqual(effective["delayClassification"], "severely_delayed")
+        self.assertEqual(
+            scheduler.observed_window_delay_seconds(effective), 19 * 60)
+
+    def test_new_soak_heartbeat_does_not_inherit_predeploy_window_gap(self):
+        prior = [{"missionWindowId": "mw-2026-07-20T00:07:00Z",
+                  "scheduledFor": "2026-07-20T00:07:00Z",
+                  "triggerSource": "ec2_systemd", "status": "completed"}]
+        current = scheduler.mission_window(
+            observed_at="2026-07-20T03:07:32Z",
+            trigger_source="ec2_systemd",
+            scheduled_for="2026-07-20T03:07:00Z")
+        effective = scheduler.apply_window_history(current, prior)
+        self.assertEqual(effective["delaySeconds"], 2 * 60 * 60 + 30 * 60 + 32)
+        self.assertEqual(effective["missedWindowCount"], 5)
+        self.assertEqual(
+            scheduler.observed_window_delay_seconds(effective), 32)
+        heartbeat = runtime.soak_heartbeat(
+            soak_id="soak-new", build_sha="newsha1",
+            runtime_version="13.3.4",
+            expected_at=effective["scheduledFor"],
+            observed_at=effective["triggeredAt"], source="ec2_systemd",
+            health_status="ok", ready_status="ready",
+            restore_outcome="restored", durable_integrity="ok",
+            journal_status="verified", read_back_verified=True,
+            scheduler_delay_seconds=effective["delaySeconds"],
+            evidence_type="scheduled_mission",
+            now_iso=effective["triggeredAt"])
+        self.assertEqual(heartbeat["schedulerDelaySeconds"], 32)
 
     def test_duplicate_suppressed_and_failed_window_retryable(self):
         rows = []
@@ -151,7 +179,10 @@ class SoakHeartbeatTests(unittest.TestCase):
         self.assertEqual(state["heartbeatCount"], 1)
 
     def test_scheduler_delay_is_not_interruption_with_alternative_evidence(self):
-        state = self._state(self._heartbeat(scheduler_delay_seconds=1200))
+        state = self._state(self._heartbeat(
+            observed_at="2026-07-20T00:27:00Z",
+            now_iso="2026-07-20T00:27:00Z",
+            scheduler_delay_seconds=1200))
         self.assertEqual(state["state"], "scheduler_delayed")
 
     def test_verification_gap_and_critical_failures(self):

@@ -153,6 +153,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.3.4', 'Soak遅延会計を修正。過去の欠落windowは運用監視に残しつつ、新buildのheartbeatは当該windowの実測遅延だけで判定。'],
   ['v13.3.3', '機能完成監査 — Positionsの投信手動評価額を合計・戦略へ即時反映し、Next eventのURL履歴、Market/Asset Deskの選択状態とキーボード操作を修正。'],
   ['v13.3.3', 'SoakのOOM・Remote Journal公開・scheduled timeoutを修復。Todayは根拠のあるUP/RANGE/DOWN確率を検証済み/参考値に分けて表示し、market-data truthとbridge鮮度計測を追加。'],
   ['v13.3.2', 'Asset Deskをdecision-first構造へ再編。個別チャートを遅延取得し、IndexedDB復元とRetry-After準拠で更新制限中も前回表示を維持。'],

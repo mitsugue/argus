@@ -211,6 +211,10 @@ def soak_heartbeat(*, soak_id: str, build_sha: Optional[str],
         return None
     if observed_ep > now_ep + 1 or expected_ep > observed_ep:
         return None
+    # This heartbeat is a truth record for one exact window.  An operational
+    # effective delay may include missed windows from before this build/Soak,
+    # so derive the heartbeat value from its own timeline coordinates.
+    measured_delay_seconds = max(0, int(observed_ep - expected_ep))
     body = {
         "soakId": soak_id, "buildSha": build_sha,
         "runtimeVersion": runtime_version,
@@ -220,7 +224,7 @@ def soak_heartbeat(*, soak_id: str, build_sha: Optional[str],
         "durableIntegrity": durable_integrity,
         "journalStatus": journal_status,
         "readBackVerified": bool(read_back_verified),
-        "schedulerDelaySeconds": max(0, int(scheduler_delay_seconds)),
+        "schedulerDelaySeconds": measured_delay_seconds,
         "evidenceType": evidence_type,
         "retrospectiveEvidence": bool(retrospective),
     }
