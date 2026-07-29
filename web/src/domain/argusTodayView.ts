@@ -58,6 +58,7 @@ export interface TodayCalibrationInput {
   horizon: number; rawOccurrenceCount: number; episodeCount: number; effectiveSampleCount: number;
   calibrationStatus: string; probabilities: { UP: number; RANGE: number; DOWN: number } | null;
   directionProbabilities?: { UP: number; RANGE: number; DOWN: number } | null;
+  referenceDirectionProbabilities?: { UP: number; RANGE: number; DOWN: number } | null;
   levelProbabilities?: { upperTargetTouch: number | null; baseRangeClose: number | null;
     lowerTargetTouch: number | null; invalidationTouch: number | null } | null;
   brierScore?: number | null; confidenceInterval?: Record<string, { low: number; high: number }> | null;
@@ -411,7 +412,10 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     : priceAt(distribution?.q10, below?.lower ?? Math.max(0.000001, current - 2 * horizonAtr));
   const activePoint = [...(input.turningPoints ?? [])].reverse()
     .find((point) => point.status === 'confirmed' || point.status === 'candidate');
-  const candidateProbabilities = calibrated?.directionProbabilities ?? calibrated?.probabilities ?? null;
+  const candidateProbabilities = calibrated?.directionProbabilities
+    ?? calibrated?.referenceDirectionProbabilities
+    ?? calibrated?.probabilities
+    ?? null;
   const probabilityEligibility: ProbabilityEligibility = calibrated?.probabilityEligibility ?? {
     eligible: false, reasonCodes: ['server_eligibility_unavailable'],
     effectiveSample: calibrated?.effectiveSampleCount ?? 0,

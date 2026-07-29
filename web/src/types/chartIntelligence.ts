@@ -70,6 +70,7 @@ export interface ChartIntelligencePayload {
         effectiveSampleCount: number; cooldownTradingDays?: number; calibrationStatus: string;
         probabilities: { UP: number; RANGE: number; DOWN: number } | null;
         directionProbabilities?: { UP: number; RANGE: number; DOWN: number } | null;
+        referenceDirectionProbabilities?: { UP: number; RANGE: number; DOWN: number } | null;
         levelProbabilities?: { upperTargetTouch: number | null; baseRangeClose: number | null;
           lowerTargetTouch: number | null; invalidationTouch: number | null } | null;
         baseRates?: Record<string, number>; brierScore?: number | null;

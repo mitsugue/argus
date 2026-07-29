@@ -144,6 +144,16 @@ const uncalibrated = buildTodayProjection({ ...calibratedInput, calibration: { .
 check('missing probability remains hidden', uncalibrated.directionProbabilities === null
   && uncalibrated.referenceDirectionProbabilities === null
   && uncalibrated.effectiveSampleCount === 29);
+const backendReference = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
+  horizons: { '5': { ...calibratedInput.calibration.horizons['5'],
+    probabilities: null, directionProbabilities: null,
+    referenceDirectionProbabilities: { UP: 28, RANGE: 51, DOWN: 21 },
+    probabilityEligibility: { ...calibratedInput.calibration.horizons['5'].probabilityEligibility,
+      eligible: false, reasonCodes: ['brier_skill_non_positive'], brierSkill: 0 } } } } }, 'WAIT');
+check('backend reference vector renders percentages without becoming verified',
+  backendReference.directionProbabilities === null
+  && backendReference.referenceDirectionProbabilities.RANGE === 51
+  && backendReference.probabilityTruth.exactPercentageAllowed === false);
 const weakSkill = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
   horizons: { '5': { ...calibratedInput.calibration.horizons['5'], brierSkill: 0,
     probabilityEligibility: { ...calibratedInput.calibration.horizons['5'].probabilityEligibility,
