@@ -136,6 +136,24 @@ def apply_window_history(window: Dict[str, Any],
     return rec
 
 
+def observed_window_delay_seconds(window: Dict[str, Any]) -> int:
+    """Return this window's measured delay, excluding historical missed windows.
+
+    ``apply_window_history`` deliberately promotes ``delaySeconds`` to an
+    operational effective delay when earlier 30-minute windows were missed.
+    A build-scoped Soak heartbeat must instead describe only its own
+    ``scheduledFor`` -> ``triggeredAt`` interval; otherwise a new build inherits
+    pre-deploy scheduler gaps and is marked delayed despite an on-time tick.
+    """
+    scheduled = _aware(window.get("scheduledFor"))
+    triggered = _aware(window.get("triggeredAt"))
+    if scheduled is not None and triggered is not None:
+        return max(0, int((triggered - scheduled).total_seconds()))
+    return max(0, int(window.get("rawDelaySeconds")
+                      if window.get("rawDelaySeconds") is not None
+                      else window.get("delaySeconds") or 0))
+
+
 def begin_mission_window(records: List[Dict[str, Any]], *,
                          window: Dict[str, Any], build_sha: Optional[str],
                          started_at: str,

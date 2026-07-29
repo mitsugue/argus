@@ -18727,7 +18727,8 @@ def _api_argus_admin_missions_tick_impl():
         durable_integrity=_DURABLE_STATE.get("integrityStatus") or "unknown",
         journal_status=journal_status,
         read_back_verified=bool(_REMOTE_CYCLE.get("readBackVerified")),
-        scheduler_delay_seconds=int(window.get("delaySeconds") or 0),
+        scheduler_delay_seconds=argus_scheduler.observed_window_delay_seconds(
+            window),
         evidence_type="scheduled_mission", now_iso=heartbeat_at)
           if trigger_source != "manual" else None)
     heartbeat_added = argus_runtime.append_soak_heartbeat(_SOAK, hb)
