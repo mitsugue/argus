@@ -1,0 +1,2 @@
+{"eventId": "JP:6525:MARKET_MOVER:2026-07-29:34#2026-07-29T08:02:46Z", "eventType": "MARKET_MOVER", "symbol": "6525", "market": "JP", "severity": 4, "lifecycleState": "VERIFIED", "recommendedPosture": "INVESTIGATE", "detectedAt": "2026-07-29T08:02:46Z", "reasonJa": "6525 全市場急落 -17.7%($6049.0)"}
+{"eventId": "US:HYG:FLOW_ANOMALY:2026-07-29:45#2026-07-29T13:33:35Z", "eventType": "FLOW_ANOMALY", "symbol": "HYG", "market": "US", "severity": 3, "lifecycleState": "OBSERVING", "recommendedPosture": "WATCH", "detectedAt": "2026-07-29T13:33:35Z", "reasonJa": "大口資金が純流入 40%(閾値40%)"}
