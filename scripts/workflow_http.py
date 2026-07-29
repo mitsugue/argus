@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterable, Optional, Tuple
@@ -136,7 +137,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--header", action="append", default=[])
     p.add_argument("--expected-status", action="append", default=[])
     p.add_argument("--expected-value", action="append", default=[])
+    p.add_argument("--attempts", type=int, default=1)
+    p.add_argument("--retry-delay", type=float, default=2.0)
     args = p.parse_args(argv)
+    headers = {}
+    result = {"outcome": FAILURE, "reason": "not_attempted",
+              "httpStatus": None, "body": None}
+    attempts = max(1, min(int(args.attempts), 5))
     try:
         headers = _headers_from_env(args.header_env)
         for spec in args.header:
@@ -144,16 +151,36 @@ def main(argv: Optional[list[str]] = None) -> int:
             if not sep:
                 raise ValueError("--header must be Header: value")
             headers[name.strip()] = value.strip()
-        code, raw = request_json(url=args.url, method=args.method,
-                                 timeout=args.timeout, headers=headers,
-                                 data=args.data)
-        result = classify_response(code, raw,
-                                   expected_statuses=args.expected_status,
-                                   expected_values=args.expected_value)
-    except (TimeoutError, socket.timeout):
-        result = {"outcome": FAILURE, "reason": "timeout",
-                  "httpStatus": None, "body": None}
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+        for attempt in range(1, attempts + 1):
+            try:
+                code, raw = request_json(
+                    url=args.url, method=args.method, timeout=args.timeout,
+                    headers=headers, data=args.data)
+                result = classify_response(
+                    code, raw, expected_statuses=args.expected_status,
+                    expected_values=args.expected_value)
+            except (TimeoutError, socket.timeout):
+                result = {"outcome": FAILURE, "reason": "timeout",
+                          "httpStatus": None, "body": None}
+            except (urllib.error.URLError, OSError) as exc:
+                result = {"outcome": FAILURE,
+                          "reason": f"transport:{type(exc).__name__}",
+                          "httpStatus": None, "body": None}
+            transient_http = result.get("httpStatus") in (
+                408, 425, 500, 502, 503, 504)
+            transient = result.get("reason") == "timeout" or \
+                str(result.get("reason") or "").startswith("transport:") or \
+                transient_http
+            if result["outcome"] != FAILURE or not transient or \
+                    attempt >= attempts:
+                break
+            print(
+                f"[workflow-http] name={args.name} transient_retry="
+                f"{attempt}/{attempts}",
+                file=sys.stderr,
+            )
+            time.sleep(max(0.0, min(float(args.retry_delay), 30.0)))
+    except ValueError as exc:
         result = {"outcome": FAILURE,
                   "reason": f"transport:{type(exc).__name__}",
                   "httpStatus": None, "body": None}

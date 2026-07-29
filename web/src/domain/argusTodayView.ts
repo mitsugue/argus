@@ -104,6 +104,7 @@ export interface TodayProjection {
   resistance: { low: number; high: number; status: PriceZone['status'] } | null;
   horizon: string; horizonDays: 1 | 5 | 20; directionLabel: string;
   confidenceLabel: '低' | '中' | '高'; directionProbabilities: { UP: number; RANGE: number; DOWN: number } | null;
+  referenceDirectionProbabilities: { UP: number; RANGE: number; DOWN: number } | null;
   calibrationStatus: string; rawSampleCount: number; episodeCount: number; effectiveSampleCount: number;
   modelBrier: number | null; baselineBrier: number | null; brierSkill: number | null;
   brierSkillConfidenceInterval: { low: number | null; high: number | null } | null;
@@ -432,6 +433,9 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
   );
   const probabilities = probabilityTruth.exactPercentageAllowed
     ? candidateProbabilities : null;
+  const referenceProbabilities = !probabilityTruth.exactPercentageAllowed
+    && probabilityTruth.directionalLean !== 'UNRESOLVED'
+    ? candidateProbabilities : null;
   const turningPointMarkers = [...(input.turningPoints ?? [])].reverse()
     .filter((point) => point.status === 'confirmed' || point.status === 'candidate')
     .slice(0, 3).map((point) => ({ id: point.id, date: point.effectiveFrom,
@@ -459,6 +463,7 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     confidenceLabel: probabilityTruth.exactPercentageAllowed ? '高'
       : input.status === 'live' && bars.length >= 25 ? '中' : '低',
     directionProbabilities: probabilities,
+    referenceDirectionProbabilities: referenceProbabilities,
     calibrationStatus: calibrated?.calibrationStatus ?? 'not_available',
     rawSampleCount: calibrated?.rawOccurrenceCount ?? 0,
     episodeCount: calibrated?.episodeCount ?? 0,

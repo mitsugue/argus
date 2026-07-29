@@ -57,6 +57,7 @@ jobs:
           # Official-event lifecycle (v11.3): fill pending market-reaction windows from
           # cached daily bars. No LLM, cheap; most calls update 0 records.
           OFE=$(python3 scripts/workflow_http.py --name official-events-track --method POST --timeout 120 \
+            --attempts 3 --retry-delay 8 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --url "$BE/api/argus/official-events/track")
           echo "official-events-track: ${OFE:0:160}"

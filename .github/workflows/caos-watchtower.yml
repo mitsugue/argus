@@ -113,6 +113,9 @@ jobs:
           fi
           python3 scripts/build_remote_readback_receipt.py \
             "$RUNNER_TEMP/osint-memory.json" "$RUNNER_TEMP/osint-readback.json"
+          cp scripts/prepare_remote_journal_publish.py \
+            "$RUNNER_TEMP/prepare_remote_journal_publish.py"
+          cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"
           git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
             || git fetch origin ledger 2>/dev/null || true
           if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
@@ -132,16 +135,16 @@ jobs:
           # V11.5.5: patrol soak-proof snapshot (restore source after dyno restarts)
           cp "$RUNNER_TEMP/patrol-health.json" ledger/caos-patrol/latest.json
           cp "$RUNNER_TEMP/patrol-health.json" "ledger/caos-patrol/$DAY.json"
-          # v12.1.1: OSINTメモリ(学習語/検証済み公開URL/canary)を恒久化
-          # v12.2.10 stale-writer guard: 古いsnapshotで新しいものを上書きしない
-          NEW_ASOF=$(python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || echo "")
-          OLD_ASOF=$(python3 -c "import json;d=json.load(open('ledger/osint/memory.json'));print(d.get('generatedAt') or d.get('asOf') or '')" 2>/dev/null || echo "")
-          if [ -n "$NEW_ASOF" ] && { [ -z "$OLD_ASOF" ] || [ "$NEW_ASOF" \> "$OLD_ASOF" ]; }; then
-            cp "$RUNNER_TEMP/osint-memory.json" ledger/osint/memory.json
-            cp "$RUNNER_TEMP/osint-readback.json" ledger/osint/readback.json
-          else
-            echo "skip osint/memory.json: not newer (new=$NEW_ASOF old=$OLD_ASOF)"
-          fi
+          # v13.3.3: use the same stale-writer guard and GitHub 100 MiB safety
+          # contract as caos-scan. Oversized full snapshots retain the last
+          # boot-restore blob while the exact compact read-back advances.
+          PREPARED=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            prepare \
+            --source-full "$RUNNER_TEMP/osint-memory.json" \
+            --source-readback "$RUNNER_TEMP/osint-readback.json" \
+            --ledger-full ledger/osint/memory.json \
+            --ledger-readback ledger/osint/readback.json)
+          echo "remote journal publish: $PREPARED"
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
           git add ledger/caos-watchtower/ ledger/caos-patrol/ ledger/osint/
@@ -152,4 +155,13 @@ jobs:
             # another ledger writer may have pushed meanwhile — rebase once and retry
             git push origin HEAD:ledger \
               || { git pull --rebase origin ledger && git push origin HEAD:ledger; }
+          fi
+          PREPARED_STATUS=$(printf '%s' "$PREPARED" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["status"])')
+          if [ "$PREPARED_STATUS" != "stale" ]; then
+            EXPECTED_HASH=$(printf '%s' "$PREPARED" | python3 -c \
+              'import json,sys; print(json.load(sys.stdin)["expectedHash"])')
+            python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+              verify-committed --readback ledger/osint/readback.json \
+              --expected-hash "$EXPECTED_HASH"
           fi

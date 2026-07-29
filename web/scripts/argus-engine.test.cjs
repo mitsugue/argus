@@ -130,6 +130,7 @@ const calibratedProjection = buildTodayProjection(calibratedInput, 'WAIT');
 check('legacy server eligibility alone cannot expose exact probability',
   calibratedProjection.instrumentId === 'US:SPY:ETF'
   && calibratedProjection.directionProbabilities === null
+  && calibratedProjection.referenceDirectionProbabilities.RANGE === 51
   && calibratedProjection.probabilityTruth.label === 'EXPERIMENTAL'
   && calibratedProjection.probabilityTruth.directionalLean === 'RANGE'
   && calibratedProjection.effectiveSampleCount === 38 && calibratedProjection.modelBrier === .54);
@@ -137,15 +138,20 @@ check('level touch and close-in-band remain distinct', calibratedProjection.leve
   && calibratedProjection.levelProbabilities.baseRangeClose === 55);
 const uncalibrated = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
   horizons: { '5': { ...calibratedInput.calibration.horizons['5'], calibrationStatus: 'insufficient_sample',
-    effectiveSampleCount: 29, probabilities: null,
+    effectiveSampleCount: 29, probabilities: null, directionProbabilities: null,
     probabilityEligibility: { ...calibratedInput.calibration.horizons['5'].probabilityEligibility,
       eligible: false, reasonCodes: ['effective_sample_below_30'], effectiveSample: 29 } } } } }, 'WAIT');
-check('uncalibrated probability is hidden', uncalibrated.directionProbabilities === null && uncalibrated.effectiveSampleCount === 29);
+check('missing probability remains hidden', uncalibrated.directionProbabilities === null
+  && uncalibrated.referenceDirectionProbabilities === null
+  && uncalibrated.effectiveSampleCount === 29);
 const weakSkill = buildTodayProjection({ ...calibratedInput, calibration: { ...calibratedInput.calibration,
   horizons: { '5': { ...calibratedInput.calibration.horizons['5'], brierSkill: 0,
     probabilityEligibility: { ...calibratedInput.calibration.horizons['5'].probabilityEligibility,
       eligible: false, reasonCodes: ['brier_skill_non_positive'], brierSkill: 0 } } } } }, 'WAIT');
 check('BSS zero hides probability', weakSkill.directionProbabilities === null);
+check('BSS zero is visibly reference-only and never verified',
+  weakSkill.referenceDirectionProbabilities.RANGE === 51
+  && weakSkill.probabilityTruth.exactPercentageAllowed === false);
 const strictEvidence = {
   serverEligible: true, oosEffectiveN: 140, ruleEffectiveN: 80,
   holdouts: [

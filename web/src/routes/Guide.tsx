@@ -154,6 +154,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 
 const RECENT_UPDATES: [string, string][] = [
   ['v13.3.3', '機能完成監査 — Positionsの投信手動評価額を合計・戦略へ即時反映し、Next eventのURL履歴、Market/Asset Deskの選択状態とキーボード操作を修正。'],
+  ['v13.3.3', 'SoakのOOM・Remote Journal公開・scheduled timeoutを修復。Todayは根拠のあるUP/RANGE/DOWN確率を検証済み/参考値に分けて表示し、market-data truthとbridge鮮度計測を追加。'],
   ['v13.3.2', 'Asset Deskをdecision-first構造へ再編。個別チャートを遅延取得し、IndexedDB復元とRetry-After準拠で更新制限中も前回表示を維持。'],
   ['v13.3.1', 'Mobile Today integrity — canonical navigation、4銘柄×3期間のverified snapshot、safe-area/sticky配置、cold error retryを修復。'],
   ['v13.3.0', 'Verified Snapshot SWR — 前回検証済みMarket chartをIndexedDBから即時復元し、既存表示を保ったままETag再検証。30分自然tickがOHLCV・確率・Replay・Ledgerを原子的に事前生成し、静かなTriangle Step Loaderで更新状態を表示。'],

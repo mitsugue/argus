@@ -391,7 +391,8 @@ def test_stale_writer_guard_in_workflows():
         txt = open(os.path.join(ROOT, ".github", "workflows", wf),
                    encoding="utf-8").read()
         assert "stale-writer guard" in txt, wf
-        assert "NEW_ASOF" in txt and "OLD_ASOF" in txt, wf
+        assert "prepare_remote_journal_publish.py" in txt, wf
+        assert "ledger/osint/readback.json" in txt, wf
 
 
 # ── Phase 5: FFLレシート配線 ─────────────────────────────────────────────────

@@ -44,6 +44,31 @@ def _us_ok_df():
                          "prev_close_price": 185.0, "volume": 1000}]))
 
 
+def test_snapshot_rows_transport_market_timestamp(monkeypatch):
+    m = _load_bridge(monkeypatch)
+    rows = m.rows_from_snapshot(_FakeDF([{
+        "code": "US.NVDA", "last_price": 190.0,
+        "prev_close_price": 185.0, "volume": 1000,
+        "update_time": "2026-07-27 16:00:00",
+    }]))
+    assert rows[0]["exchangeTs"] == "2026-07-27T20:00:00Z"
+    assert rows[0]["quoteRight"] == "unknown"
+    assert rows[0]["entitlement"] == "unknown"
+
+
+def test_snapshot_rows_transport_safe_quote_right(monkeypatch):
+    m = _load_bridge(monkeypatch)
+    rows = m.rows_from_snapshot(_FakeDF([{
+        "code": "JP.1321", "last_price": 65000.0,
+        "prev_close_price": 64900.0, "volume": 100,
+        "update_time": "2026-07-28 11:30:00",
+        "quote_right": "REALTIME",
+    }]))
+    assert rows[0]["market"] == "JP"
+    assert rows[0]["quoteRight"] == "realtime"
+    assert rows[0]["entitlement"] == "realtime"
+
+
 # ── entitlement isolation ────────────────────────────────────────────────────
 
 def test_jp_permission_failure_does_not_block_us(monkeypatch):
@@ -132,8 +157,34 @@ def test_heartbeat_payload_no_secrets(monkeypatch):
     assert hb["jpFallbackActive"] is True
     assert hb["bridgeMode"] == "us_only"
     for k in ("lastQuotePushAt", "lastUSQuotePushAt", "lastJPQuotePushAt",
-              "acceptedCountLastPush", "openDStatus", "diskUsagePct"):
+              "acceptedCountLastPush", "openDStatus", "diskUsagePct",
+              "jpSnapshotErrors", "usSnapshotErrors", "usLastErrorClass"):
         assert k in hb
+
+
+def test_market_error_telemetry_is_separate(monkeypatch):
+    m = _load_bridge(monkeypatch)
+    state = dict(m.STATE)
+    qc = _FakeQC({
+        "US": (-1, "RemoteClose"),
+        "JP": (0, _FakeDF([{
+            "code": "JP.1321", "last_price": 65000.0,
+            "prev_close_price": 64900.0, "volume": 100,
+        }])),
+    })
+    stocks, jp_tried = m.fetch_market_quotes(
+        qc,
+        {"US": ["US.SPY"], "JP": ["JP.1321"]},
+        state=state,
+        now=1000.0,
+        ret_ok=0,
+    )
+    assert jp_tried is True
+    assert [row["market"] for row in stocks] == ["JP"]
+    assert state["usSnapshotErrors"] == 1
+    assert state["usLastErrorClass"] == "api_unhealthy"
+    assert state["jpSnapshotErrors"] == 0
+    assert state["jpLastErrorClass"] is None
 
 
 def test_opend_error_classification(monkeypatch):
@@ -150,7 +201,9 @@ def _post_hb(c, over):
           "lastUSQuotePushAt": scanner._ai_now_iso(), "lastJPQuotePushAt": None,
           "acceptedCountLastPush": 12, "usRealtimeStatus": "ok",
           "jpRealtimeStatus": "ok", "jpFallbackActive": False,
-          "jpLastErrorClass": None, "diskUsagePct": 13.0, "intervalSec": 15}
+          "jpLastErrorClass": None, "usLastErrorClass": None,
+          "jpSnapshotErrors": 0, "usSnapshotErrors": 0,
+          "diskUsagePct": 13.0, "intervalSec": 15}
     hb.update(over)
     return c.post("/api/argus/bridge/heartbeat", json={"heartbeat": hb},
                   headers={"X-ARGUS-ADMIN-TOKEN": "tok"})
@@ -166,10 +219,13 @@ def test_heartbeat_sanitizes_and_status_segments(monkeypatch):
     with scanner.app.test_client() as c:
         r = _post_hb(c, {"jpRealtimeStatus": "entitlement_unavailable",
                          "jpFallbackActive": True, "bridgeMode": "fallback",
+                         "jpSnapshotErrors": 4, "usSnapshotErrors": 1,
                          "evil": "x", "password": "y"})
         assert r.status_code == 200
         assert "evil" not in scanner._BRIDGE_HB["data"]
         assert "password" not in scanner._BRIDGE_HB["data"]
+        assert scanner._BRIDGE_HB["data"]["jpSnapshotErrors"] == 4
+        assert scanner._BRIDGE_HB["data"]["usSnapshotErrors"] == 1
         d = c.get("/api/argus/bridge/status").get_json()
     assert d["jpRealtimeStatus"] == "entitlement_unavailable"
     assert d["jpFallbackActive"] is True

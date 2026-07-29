@@ -53,6 +53,33 @@ class WorkflowHttpTests(unittest.TestCase):
             self.assertEqual(wh.main(["--name", "denied", "--url",
                                       "https://example.invalid"]), 1)
 
+    def test_transient_timeout_retries_then_succeeds(self):
+        with mock.patch.object(
+                wh, "request_json",
+                side_effect=[
+                    socket.timeout(),
+                    (200, json.dumps({"ok": True, "updated": 0})),
+                ]) as request_mock, mock.patch.object(wh.time, "sleep") as sleep:
+            rc = wh.main([
+                "--name", "retry", "--url", "https://example.invalid",
+                "--attempts", "3", "--retry-delay", "0",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertEqual(request_mock.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+
+    def test_persistent_business_failure_is_not_retried(self):
+        with mock.patch.object(
+                wh, "request_json",
+                return_value=(200, json.dumps({"ok": False, "error": "bad"}))
+                ) as request_mock:
+            rc = wh.main([
+                "--name", "business", "--url", "https://example.invalid",
+                "--attempts", "3", "--retry-delay", "0",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertEqual(request_mock.call_count, 1)
+
     def test_response_secrets_and_arbitrary_body_are_not_logged(self):
         body = {"ok": True, "token": "secret-value", "prompt": "private-body"}
         with mock.patch.object(wh, "request_json",
