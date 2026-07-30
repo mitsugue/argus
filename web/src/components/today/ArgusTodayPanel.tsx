@@ -49,12 +49,11 @@ interface Props {
   onInstrument: (market: 'JP' | 'US', symbol: string) => void;
   onHorizon: (horizon: MarketHorizon) => void;
   onNavigate: (key: RouteKey) => void;
-  onOpenAsset?: (symbol: string) => void;
   aiButton: React.ReactNode;
 }
 
 const ACTION_TONE = { BUY: 'var(--value-positive)', WAIT: 'var(--amber, #fbbf24)', SELL: 'var(--value-negative)' };
-const mark = (yes: boolean) => yes ? '○' : '×';
+const MARKET_STANCE = { BUY: '強気', WAIT: '中立・待機', SELL: '弱気・警戒' };
 const fmt = (v: number) => v >= 1000 ? v.toLocaleString('ja-JP', { maximumFractionDigits: 1 }) : v.toFixed(2);
 const fmtMove = (v: number, suffix = '') => `${fmt(v)}${suffix}`;
 const shortDate = (value?: string | null) => value ? value.slice(5).replace('-', '/') : '';
@@ -196,11 +195,17 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
 
 export const ArgusTodayPanel: React.FC<Props> = ({
   view, instruments, selectedSymbol, horizon, chartLoad,
-  onMode, onInstrument, onHorizon, onNavigate, onOpenAsset, aiButton,
+  onMode, onInstrument, onHorizon, onNavigate, aiButton,
 }) => {
   const [detail, setDetail] = React.useState(false);
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
   const currentSignal = SIGNAL_ORDER.find((code) => SIGNALS[code].level === view.actionScore);
+  const openEventDetails = () => {
+    const events = document.getElementById('important-events');
+    if (!events) return;
+    events.querySelector('details')?.setAttribute('open', '');
+    events.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
@@ -224,7 +229,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     <section className="at-event card" aria-label="NEXT EVENT">
       <div className="at-head"><b>NEXT EVENT</b>{view.nextEvent && <span>{view.nextEvent.impact.toUpperCase()}</span>}</div>
-      {view.nextEvent ? <button type="button" onClick={() => onNavigate('regime')}>
+      {view.nextEvent ? <button type="button" onClick={openEventDetails}>
         <strong>{view.nextEvent.code}</strong><time>{formatEventTime(view.nextEvent.at)}</time>
         {view.nextEvent.descriptionJa && <small>{view.nextEvent.descriptionJa.slice(0, 32)}</small>}
       </button> : <p className="at-quiet">直近の重要イベントなし</p>}
@@ -273,7 +278,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         })}
       </div>
       <div className="at-call">
-        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{view.finalAction}</strong>
+        <small>市場評価 · {view.selectedMarket}</small>
+        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
         <b>{view.actionScore} / 7</b><span>{currentSignal ? SIGNALS[currentSignal].labelJa : ''}</span>
       </div>
       <div className="at-meter" aria-label={`7段階 ${view.actionScore}`}>
@@ -326,11 +332,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <b>上昇失速パターン　{view.failedRallyState.state === 'CONFIRMED' ? '観測済み' : '候補'}</b>
         <span>将来リターンのSkill未検証</span>
       </div>}
-      <div className="at-perms"><span>新規 <b>{mark(view.permissions.newEntry)}</b></span><span>買増 <b>{mark(view.permissions.add)}</b></span><span>保有 <b>{mark(view.permissions.hold)}</b></span></div>
-      {(view.conciseAction || view.conciseAvoid) && <div className="at-concise">
-        {view.conciseAction && <span><b>やる</b>{view.conciseAction}</span>}
-        {view.conciseAvoid && <span><b>避ける</b>{view.conciseAvoid}</span>}
-      </div>}
       <button className="at-detail-toggle" type="button" aria-expanded={detail} onClick={() => setDetail((v) => !v)}>
         {detail ? '詳細を閉じる' : '判断の根拠・システム詳細'}
       </button>
@@ -349,6 +350,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           <div><b>EXPECTED 5D</b><span>{projection.expectedValue?.expectedReturn == null ? '未算出'
             : `EV ${(projection.expectedValue.expectedReturn * 100).toFixed(2)}% · q10 ${((projection.expectedValue.q10 ?? 0) * 100).toFixed(2)}% · R/R ${projection.expectedValue.rewardRisk?.toFixed(2) ?? '—'}`}</span></div>
           <div><b>INSTRUMENT</b><span>{projection.assetType}{projection.proxyFor ? ` · ETF PROXY for ${projection.proxyFor}` : ''} · {projection.licenseStatus}</span></div></>}
+        {projection && <div><b>HISTORY</b><span>{projection.sourceHistoryCount.toLocaleString('ja-JP')}営業日
+          {projection.historyStart ? ` · ${projection.historyStart}–${projection.historyEnd ?? '現在'}` : ''}
+          {projection.sourceHistoryCount < 2_000 ? ' · 10年未達' : ' · 約10年'}</span></div>}
         {view.decisions[view.selectedMarket].evidence.map((line, index) => <p key={`${index}:${line}`}>{line}</p>)}
         <div className="at-detail-actions">{aiButton}<button type="button" onClick={() => onNavigate('quality')}>Data Quality</button><button type="button" onClick={() => onNavigate('backup')}>Backup</button></div>
       </div>}
@@ -388,12 +392,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </div> : <div className="at-news-zero"><b>{view.newsCardState.status === 'live' ? '現在なし' : 'ニュース確認要'}</b>
         <span>最終確認 {view.newsCardState.lastChecked ? new Date(view.newsCardState.lastChecked).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>}
     </Compact>
-
-    {view.holdingsReview.length > 0 && <Compact title="保有確認"><div className="at-rows">
-      {view.holdingsReview.map((row) => <button type="button" key={row.symbol} onClick={() => onOpenAsset?.(row.symbol)}>
-        <b>{row.symbol}</b><span>{row.reasonJa.slice(0, 24)}</span><em>{row.statusJa}</em>
-      </button>)}
-    </div></Compact>}
 
     {view.reviewSummary && <section className="at-review card">
       <div><b>前回 {view.reviewSummary.action}</b><span>{view.reviewSummary.marketLabel} · {view.reviewSummary.horizon}</span></div>

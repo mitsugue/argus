@@ -204,12 +204,8 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
   // v12.0.8: 日付+時刻+D-count を常時表示(「21:30 JSTだけで今日に見える」の根治)
   const when = eventWhenJa(ev.eventTimeUtc, ev.eventDate);
   const vColor = (VERDICT_JA[c.verdict || 'not_available'] || VERDICT_JA.not_available).tone;
-  const preHistorical = (c.preScenarioJa || c.summaryJa) && ds.showPreAsHistorical ? (
-    <details className="ie-hist">
-      <summary style={{ color: 'var(--text-faint)', fontSize: 12, cursor: 'pointer' }}>事前シナリオ（当時）</summary>
-      <p className="ie-line" style={{ color: 'var(--text-sub)' }}>{c.preScenarioJa || c.summaryJa}</p>
-    </details>
-  ) : null;
+  const preScenario = c.preScenarioJa || c.summaryJa || null;
+  const { chips: reactionValues, tone: reactionTone } = reactionChips(ev.marketReaction);
 
   return (
     <details className="ie-row" open={open}>
@@ -228,54 +224,46 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         )}
       </summary>
       <div className="ie-body">
-        {/* v12.0.4 (owner): どんなイベントかの一言概要を先頭に */}
         {EVENT_DESC_JA[ev.eventCode] && (
-          <p className="ie-line" style={{ color: 'var(--text-sub)' }}>
-            <span className="ie-k">これは何</span>{EVENT_DESC_JA[ev.eventCode]}
-          </p>
+          <p className="ie-summary">{EVENT_DESC_JA[ev.eventCode]}</p>
         )}
-        {ds.showActualFirst && (
-          <>
-            <p className="ie-line"><span className="ie-k">公式結果</span><b>{ev.officialResult.headlineJa || '取得済み'}</b></p>
-            {ds.showImpact && <p className="ie-line"><span className="ie-k">影響コメント</span>{c.impactCommentJa}</p>}
-            {c.marketReactionJa && <p className="ie-line"><span className="ie-k">市場反応</span>{c.marketReactionJa}</p>}
-            {(() => {
-              const { chips, tone } = reactionChips(ev.marketReaction);
-              if (chips.length > 0) {
-                return <p className="ie-data">反応: {chips.join(' · ')}{tone ? ` ・ ${tone}` : ''}</p>;
-              }
-              // released with an official result but no quantitative reaction yet
-              return <p className="ie-data" style={{ color: 'var(--text-faint)' }}>市場反応データ未取得</p>;
-            })()}
-            {ds.showAnswerCheck && (
-              <p className="ie-line"><span className="ie-k">答え合わせ</span>
-                <b style={{ color: vColor }}>{c.verdictJa}</b>{c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</p>
-            )}
-            {!ds.showAnswerCheck && <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">答え合わせ</span>答え合わせ生成待ち</p>}
-            {preHistorical}
-          </>
-        )}
-        {ds.showPendingResult && (
-          <>
-            <p className="ie-line">発表時刻は通過。公式結果の取得待ち。</p>
-            {(ev.officialResult.limitationsJa || []).length > 0 && (
-              <p className="ie-data">{(ev.officialResult.limitationsJa || []).join(' / ')}</p>
-            )}
-            {preHistorical}
-            <p className="ie-data">次回更新: 定期リフレッシュ{lastRefresh ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</p>
-          </>
-        )}
-        {ds.showPreProminently && (
-          <>
-            {(c.preScenarioJa || c.summaryJa)
-              ? <p className="ie-line"><span className="ie-k">AIシナリオ</span>{c.preScenarioJa || c.summaryJa}</p>
-              : <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">AIシナリオ</span>生成待ち…</p>}
-            {c.marketPricingJa && <p className="ie-line"><span className="ie-k">市場の織り込み</span>{c.marketPricingJa}</p>}
-            {c.whatWouldSurpriseJa && <p className="ie-line"><span className="ie-k">サプライズ時</span>{c.whatWouldSurpriseJa}</p>}
-            {(c.assetsToWatch || []).length > 0 && (
-              <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
-            )}
-          </>
+        <div className="ie-phase-grid">
+          <section className="ie-phase">
+            <b>発表前</b>
+            <p>{preScenario || (ds.released ? '事前予測未保存' : 'AIシナリオ生成待ち')}</p>
+            {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
+            {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
+          </section>
+          <section className="ie-phase">
+            <b>公式結果</b>
+            {ds.showActualFirst
+              ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
+              : ds.showPendingResult
+                ? <p>発表時刻通過・取得待ち</p>
+                : <p>発表待ち</p>}
+            {ev.officialResult.source && <small>source：{ev.officialResult.source}</small>}
+            {ds.showPendingResult && <small>定期更新待ち{lastRefresh
+              ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
+          </section>
+          <section className="ie-phase">
+            <b>発表後</b>
+            {ds.showActualFirst ? (
+              <>
+                {reactionValues.length > 0
+                  ? <p>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}</p>
+                  : <p>市場反応データ未取得</p>}
+                {(c.impactCommentJa || c.marketReactionJa) &&
+                  <small>{c.impactCommentJa || c.marketReactionJa}</small>}
+                {ds.showAnswerCheck
+                  ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
+                    {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
+                  : <small>答え合わせ生成待ち</small>}
+              </>
+            ) : <p>公式結果取得後に更新</p>}
+          </section>
+        </div>
+        {(c.assetsToWatch || []).length > 0 && (
+          <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
         )}
         {/* v11.20.0: Event Review Pack copy(端末内合成・自動送信なし) */}
         <AskAIEvent code={ev.eventCode} titleJa={ev.title}
