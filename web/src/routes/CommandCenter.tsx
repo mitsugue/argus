@@ -8,6 +8,7 @@ import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes } from '../lib/decisionQuality';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
+import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
 import { runNotificationEngine } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
 import { listSnapshots } from '../lib/portfolioSync';
@@ -18,7 +19,6 @@ import { buildArgusTodayView, buildTodayReview, selectTodayNews,
   selectAutoMarket, type MarketSelectionMode, type TodayMoveInput,
   type TodayPositioningRow } from '../domain/argusTodayView';
 import { resolveCommandSummary } from '../domain/commandSummary';
-import { SIGNALS, type SignalCode } from '../domain/actionLevel';
 import { useMarketLedger } from '../hooks/useMarketLedger';
 import { useChartIntelligence } from '../hooks/useChartIntelligence';
 import { useMarketNews } from '../hooks/useMarketNews';
@@ -72,7 +72,9 @@ function projectionInput(payload: ChartIntelligencePayload | null): TodayProject
     turningPoints: payload.turningPoints,
     calibration: payload.todayIntelligence?.calibration,
     shortSelling: payload.todayIntelligence?.shortSelling ?? null,
-    failedRally: payload.todayIntelligence?.failedRally ?? null };
+    failedRally: payload.todayIntelligence?.failedRally ?? null,
+    historyStart: payload.todayIntelligence?.historyCoverage.start ?? null,
+    historyEnd: payload.todayIntelligence?.historyCoverage.end ?? null };
 }
 
 function marketMove(payload: ChartIntelligencePayload | null, id: string): TodayMoveInput | null {
@@ -94,17 +96,17 @@ function reviewFor(payload: ChartIntelligencePayload | null, action: string, dat
 const signed = (value: number, digits = 0) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
 const oku = (value: number) => `${Math.round(value / 100_000_000).toLocaleString('ja-JP')}億`;
 
-export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }) => {
+export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
   useLocale();   // re-render Today on locale switch
   // V12.2.12: 個別銘柄系のデータ組み立ては useAssetIntel(Today/Asset Desk共有の
   // 正本)へ移設。Todayは publish:true — 共有ストアへのpublish副作用(Exposure/AP/
   // Brief/Scenarios/Plans/Strategy/FireCore)は従来どおりTodayだけが実行する。
   const {
     assets, al, regime, impEvents, rates, events247,
-    flowRecords, sdSignals, cardGroups, positionExposure,
+    flowRecords, sdSignals, positionExposure,
     apItems, sessionBrief, scenarioSets, portfolioStrategy, positionPlans,
-    phase, judgment, isPartial, visLimited, cappedConf, commandSummary,
-    positionRisk, overlay,
+    phase, judgment, isPartial, visLimited, cappedConf,
+    overlay,
   } = useAssetIntel({ publish: true });
   // Headline ETFs have their own backend-only quote reads. They are not added
   // to the user's watchlist and never cause a browser-side provider request.
@@ -318,22 +320,27 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
 
 
   const argusToday = useMemo(() => {
-    const usSummary = resolveCommandSummary({
+    // Todayの7段階は市場判断専用。端末ローカルの保有状況や
+    // holderRiskOverlayを混ぜると、同じ市場でも端末ごとに点数が変わるため
+    // 市場サマリでは明示的にownerRiskを渡さない。
+    const jpSummary = resolveCommandSummary({
       legacyAction: judgment.overall,
       globalRegime: overlay.globalRegime,
-      jpOverlay: 'NORMAL',
-      ownerRisk: overlay.holderRiskOverlay,
+      jpOverlay: overlay.jpIntradayOverlay,
       risk: judgment.risk,
       isPartial: isPartial || visLimited,
       confidence: cappedConf,
       nextConditionJa: judgment.nextCondition,
     });
-    const marketSignal = (market: 'JP' | 'US', fallback: SignalCode): SignalCode => {
-      const held = (market === 'JP' ? cardGroups.jpWatch : cardGroups.usWatch)
-        .filter((card) => card.held).map((card) => card.signalCode);
-      return held.reduce((current, signal) =>
-        SIGNALS[signal].level < SIGNALS[current].level ? signal : current, fallback);
-    };
+    const usSummary = resolveCommandSummary({
+      legacyAction: judgment.overall,
+      globalRegime: overlay.globalRegime,
+      jpOverlay: 'NORMAL',
+      risk: judgment.risk,
+      isPartial: isPartial || visLimited,
+      confidence: cappedConf,
+      nextConditionJa: judgment.nextCondition,
+    });
     const summary = marketLedger.ledger?.summary ?? {};
     const factorState = (value: string | undefined): '↑' | '→' | '↓' | '△' | '—' | 'JP' | 'US' | 'HIGH' | 'LOW' => {
       if (['INFLOW', 'RISING', 'OVERHEAT_CANDIDATE'].includes(value ?? '')) return '↑';
@@ -396,16 +403,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     addRate('usdjpy', 'USDJPY', rates.data?.usdJpy, '', (rates.data?.usdJpy?.change ?? 0) > 0 ? '円安' : '円高');
     addRate('us10y', 'US10Y', rates.data?.us10y, '%', (rates.data?.us10y?.change ?? 0) > 0 ? '↑' : '↓');
     addRate('vix', 'VIX', rates.data?.vix, '', (rates.data?.vix?.change ?? 0) > 0 ? '↑' : '↓');
-    const holdings = apItems.filter((item) => item.isHeld && ['P0', 'P1', 'P2'].includes(item.priorityRank))
-      .map((item) => ({ symbol: item.symbol, name: item.assetName,
-        rank: item.priorityRank === 'P0' ? 0 : item.priorityRank === 'P1' ? 2 : 5,
-        reasonJa: item.whyJa, statusJa: item.priorityRank === 'P0' ? '要確認' : '監視' }));
-    for (const risk of positionExposure.risks) holdings.push({ symbol: risk.symbol,
-      name: positionExposure.notes[risk.symbol]?.name ?? risk.symbol,
-      rank: risk.riskType === 'concentration' ? 1 : risk.riskType === 'event_risk' ? 3 : 4,
-      reasonJa: risk.riskType === 'concentration' && positionExposure.notes[risk.symbol]?.weightPct != null
-        ? `集中${Math.round(positionExposure.notes[risk.symbol].weightPct!)}%` : risk.whyJa,
-      statusJa: ['critical', 'high'].includes(risk.riskLevel) ? '要確認' : '監視' });
     const attention = [
       ...(impEvents?.events ?? []).filter((event) => event.daysUntil === 0 && ['critical', 'high'].includes(event.displayImpact))
         .map((event) => ({ id: event.eventId, label: event.eventCode,
@@ -469,15 +466,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
     return buildArgusTodayView({
       now: new Date(), selectionMode: marketMode,
       calendar: marketLedger.ledger?.phase3?.calendar,
-      baseSignal: commandSummary.signalCode,
-      jpSignal: marketSignal('JP', commandSummary.signalCode),
-      usSignal: marketSignal('US', usSummary.signalCode),
-      confidence: cappedConf, dataQuality: commandSummary.dataQuality,
-      ownerPolicyLimit: positionRisk.alert ? 'REVIEW' : null,
+      baseSignal: jpSummary.signalCode,
+      jpSignal: jpSummary.signalCode,
+      usSignal: usSummary.signalCode,
+      confidence: cappedConf, dataQuality: jpSummary.dataQuality,
       eventHardVeto: { JP: imminent, US: imminent },
       factors: { JP: jpFactors, US: usFactors },
       evidence: { JP: judgment.reasons, US: judgment.reasons },
-      events: eventRows, indexMoves, macroMoves, positioning, attention, holdings, news,
+      events: eventRows, indexMoves, macroMoves, positioning, attention, news,
       newsCardState: {
         status: marketNews.data?.status ?? 'unavailable',
         lastChecked: marketNews.lastChecked,
@@ -497,15 +493,12 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
         US: reviewFor(selectedUsChart, previous.overall, previous.date),
       } : undefined,
       selectedInstrument,
-      systemStatus: { data: commandSummary.dataQuality, backup: backup.protectionLevelJa,
+      systemStatus: { data: jpSummary.dataQuality, backup: backup.protectionLevelJa,
         rule: al.data?.status === 'live' ? 'DETERMINISTIC' : 'RULE TEMPORARY' },
-      conciseAction: apItems.find((item) => item.isHeld && ['P0', 'P1'].includes(item.priorityRank))?.actionLabelJa
-        ?? sessionBrief.bullets[0] ?? null,
-      conciseAvoid: sessionBrief.whatNotToDoJa[0] ?? null,
     });
-  }, [judgment, overlay, isPartial, visLimited, cappedConf, cardGroups, marketLedger.ledger,
-    regime.data, impEvents, rates.data, apItems, positionExposure, events247,
-    commandSummary, positionRisk, assets, al.data, sessionBrief, marketMode,
+  }, [judgment, overlay, isPartial, visLimited, cappedConf, marketLedger.ledger,
+    regime.data, impEvents, rates.data, events247,
+    assets, al.data, marketMode,
     jpChart.data, topixChart.data, sp500Chart.data, nasdaqChart.data, marketNews.data,
     marketNews.lastChecked, marketNews.failureClass,
     selectedInstrument, effectiveMarket, selectedChart.data]);
@@ -540,8 +533,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset }
         selectedSymbol={selectedSymbol} horizon={chartHorizon}
         chartLoad={selectedChart} onMode={changeMarketMode}
         onInstrument={changeInstrument} onHorizon={changeChartHorizon}
-        onNavigate={onNavigate} onOpenAsset={(symbol) => onNavigateToAsset?.(symbol)}
+        onNavigate={onNavigate}
         aiButton={<ProHandoffButton nextEvent={argusToday.nextEvent} />} />
+      <ImportantEventsCard onNavigate={onNavigate} />
       <MobileStickyCommand text={argusToday.footerText} />
     </PageShell>
   );

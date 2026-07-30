@@ -97,8 +97,9 @@ export function deriveDashboardEventDisplayState(
 ): DashboardEventDisplayState {
   const state = summary.state;
   const released = state === 'released_pending_result' || state === 'post_result'
-    || state === 'post_answer_checked' || state === 'stale';
-  const post = state === 'post_result' || state === 'post_answer_checked';
+    || state === 'post_answer_checked' || state === 'stale' || state === 'not_scoreable';
+  const post = state === 'post_result' || state === 'post_answer_checked'
+    || (state === 'not_scoreable' && !!summary.officialResult?.available);
   const actualAvail = !!summary.officialResult?.available;
   const stamp = STAMP[state] ?? { ja: BADGE_JA[state] ?? state, boxed: false };
   return {
@@ -113,7 +114,8 @@ export function deriveDashboardEventDisplayState(
     showPreAsHistorical: released,
     showPendingResult: state === 'released_pending_result' || state === 'stale',
     showImpact: post && actualAvail && !!(summary.caos?.impactCommentJa || '').trim(),
-    showAnswerCheck: state === 'post_answer_checked',
+    showAnswerCheck: state === 'post_answer_checked' || (post
+      && !!(summary.caos?.answerCheckJa || summary.caos?.verdict)),
   };
 }
 

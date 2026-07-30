@@ -46,6 +46,7 @@ export interface TodayProjectionInput {
   quoteState?: 'RT' | 'D20' | 'CLOSE' | 'STALE'
     | 'realtime' | 'delayed' | 'close' | 'stale';
   sourceHistoryCount?: number;
+  historyStart?: string | null; historyEnd?: string | null;
   instrumentId?: string; source?: string; availableFrom?: string | null;
   assetType?: string; proxyFor?: string | null; licenseStatus?: string;
   eventMarkers?: Array<{ id: string; date: string; labelJa: string; kind: string }>;
@@ -115,6 +116,7 @@ export interface TodayProjection {
   expectedValue: TodayCalibrationInput['expectedValue'] | null;
   levelProbabilities: TodayCalibrationInput['levelProbabilities']; reactionDelay: number | null;
   methodLabel: string; timeframeLabel: string; quoteState: string; sourceHistoryCount: number;
+  historyStart: string | null; historyEnd: string | null;
   source: string; availableFrom: string | null;
   assetType: string; proxyFor: string | null; licenseStatus: string;
   forecastId: string; signalEpisodeIds: string[]; supportResistanceIds: string[]; eventIds: string[];
@@ -490,6 +492,8 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     // fall back to CLOSE; RT/D20 are rendered only when explicitly supplied.
     quoteState: input.quoteState ?? (input.status === 'stale' ? 'STALE' : 'CLOSE'),
     sourceHistoryCount: input.sourceHistoryCount ?? input.bars.length,
+    historyStart: input.historyStart ?? null,
+    historyEnd: input.historyEnd ?? input.asOf,
     source: input.source ?? 'existing_market_data_cache',
     availableFrom: input.availableFrom ?? null,
     assetType: input.assetType ?? 'UNKNOWN',

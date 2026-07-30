@@ -258,7 +258,9 @@ def test_addendum_risk_chips_split_in_fe():
     assert "保有銘柄に要確認あり" in intel
     assert "保有数量未入力" in intel
     cc = _read("routes", "CommandCenter.tsx")
-    assert "positionRisk" in cc                               # チップはTodayに残存
+    # Market Today は端末ローカルの保有状態から独立する。保有リスクは
+    # Positions & Risk / Asset Desk に残し、市場スコアへ混ぜない。
+    assert "positionRisk" not in cc
 
 
 # ── 追補2: JP OPEN ≠ JPリアルタイム ─────────────────────────────────────────

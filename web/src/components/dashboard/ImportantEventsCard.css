@@ -41,6 +41,18 @@
 .ie-impact { grid-area: impact; justify-self: end; white-space: nowrap; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
 
 .ie-body { padding: 0 0 10px; }
+.ie-summary { margin: 0 0 8px; color: var(--text-sub); font-size: 12px; line-height: 1.55; }
+.ie-phase-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.ie-phase {
+  min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+.ie-phase > b {
+  display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 10px;
+  letter-spacing: .08em;
+}
+.ie-phase p { margin: 0; color: var(--text-main); font-size: 12px; line-height: 1.5; }
+.ie-phase small { display: block; margin-top: 5px; color: var(--text-sub); font-size: 10.5px; line-height: 1.45; }
 .ie-line { font-size: 13px; line-height: 1.6; color: var(--text-main); margin: 4px 0; }
 .ie-k {
   display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em;
@@ -52,4 +64,5 @@
 /* Mobile: at most 3 event rows above the fold (head + first 3 rows). */
 @media (max-width: 720px) {
   .ie-rows .ie-row:nth-child(n+4) { display: none; }
+  .ie-phase-grid { grid-template-columns: 1fr; }
 }

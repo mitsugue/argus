@@ -101,13 +101,14 @@ def test_deep_link_uses_app_state_not_only_event():
     assert "750" in desk                             # 遅延ロード後のsettle再固定
 
 
-def test_today_holding_deep_link_survives_product_reduction():
+def test_today_market_view_has_no_holding_deep_link():
     cc = _read("routes", "CommandCenter.tsx")
-    assert "onOpenAsset={(symbol) => onNavigateToAsset?.(symbol)}" in cc
+    assert "onOpenAsset={(symbol) => onNavigateToAsset?.(symbol)}" not in cc
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
-    # Product Intentでは無関係な新規推奨をTodayから外す。保有確認からの
-    # Asset Desk deep-linkは維持し、推奨候補の詳細はAsset Deskへ集約する。
-    assert panel.count("onOpenAsset?.(") >= 1
+    # Todayの4/7等は市場表示であり、保有カードや保有警告から独立する。
+    # 個別銘柄の確認はAsset Desk、保有全体はPositions & Riskへ集約する。
+    assert "onOpenAsset?.(" not in panel
+    assert "保有確認" not in panel
     assert "view.recommendations" not in panel
     # 未登録銘柄は捏造スクロールしない
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
@@ -172,9 +173,9 @@ def test_today_exception_summary_replaces_card_list():
     assert "AssetCategorySection" not in cc          # 旧全銘柄リストは撤去
     vm = _read("domain", "argusTodayView.ts")
     assert "dedupeHoldings" in vm and ".slice(0, 3)" in vm
-    # 集中・高優先度リスクをTodayの少数注意項目へ残す。
-    assert "risk.riskType === 'concentration'" in cc
-    assert "item.priorityRank === 'P0'" in cc
+    # 集中・高優先度リスクは市場評価へ混ぜず、保有専用画面へ分離する。
+    assert "risk.riskType === 'concentration'" not in cc
+    assert "item.priorityRank === 'P0'" not in cc
 
 
 def test_desk_default_sort_deterministic():
