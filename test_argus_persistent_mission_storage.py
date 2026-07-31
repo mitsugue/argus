@@ -698,7 +698,8 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
                 now_iso="2026-07-25T00:02:00Z", blob=compact)
             self.assertFalse(scanner._REMOTE_CYCLE["readBackVerified"])
             self.assertEqual(
-                scanner._REMOTE_CYCLE["errorClass"], "commit_receipt_stale")
+                scanner._REMOTE_CYCLE["errorClass"],
+                "receipt_hash_mismatch")
             self.assertEqual(scanner._verified_persistent_wal_sequence(), 0)
 
             tampered = json.loads(json.dumps(compact))

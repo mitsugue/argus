@@ -30,7 +30,12 @@ def _reset_soak():
     scanner._SOAK.update({"soakId": None, "buildSha": None, "appVersion": None,
                           "startedAt": None, "startReason": None,
                           "startTimeSource": None, "interruptions": [],
-                          "previousSoak": None})
+                          "previousSoak": None, "heartbeats": [],
+                          "state": "not_started", "completed72h": False})
+    scanner._SOAK_HISTORY.clear()
+    scanner._SOAK_CONTROL.update({
+        "armed": False, "armedAt": None, "armedBuildSha": None,
+        "armId": None, "reason": None})
 
 
 def _ready_startup():
@@ -62,20 +67,25 @@ def test_new_sha_cannot_inherit_old_soak():
 
 def test_started_at_never_before_boot_or_restore():
     d = rt.soak_start_decision(
-        now_iso="2026-07-13T23:23:24+09:00", build_sha="5651479",
+        now_iso="2026-07-13T23:31:00+09:00",
+        scheduled_for="2026-07-13T23:31:00+09:00",
+        trigger_source="ec2_systemd", mission_window_id="mw-natural-1",
+        build_sha="5651479",
         app_version="12.2.9", process_booted_at=BOOT,
         restore_completed_at="2026-07-13T23:31:00+09:00",
         startup_state="ready", integrity_ok=True,
         public_leak_safe=True, scheduler_ready=True)
     assert d["allowed"]
-    assert d["startedAt"] == "2026-07-13T23:31:00+09:00"   # max(now,boot,復元)
-    assert d["startTimeSource"] == "first_verified_ready_runtime"
+    assert d["startedAt"] == "2026-07-13T23:31:00+09:00"
+    assert d["startTimeSource"] == "mission_window_scheduled_at"
 
 
 def test_commit_time_cannot_become_deploy_time():
     # merge/commit時刻に相当する古い時刻をnowとして渡してもbootより前に遡らない
     d = rt.soak_start_decision(
-        now_iso="2026-07-13T14:19:00+09:00",   # PRマージ時刻(相当)
+        now_iso="2026-07-13T23:33:00+09:00",
+        scheduled_for=BOOT,
+        trigger_source="ec2_systemd", mission_window_id="mw-natural-2",
         build_sha="5651479", app_version="12.2.9",
         process_booted_at=BOOT, restore_completed_at=None,
         startup_state="ready", integrity_ok=True,
@@ -143,7 +153,10 @@ def test_soak_clock_anomaly_surfaces_as_failed():
 
 
 def test_soak_start_gate_blocks_until_ready():
-    base = dict(now_iso=NOW, build_sha="abc1234", app_version="12.2.9",
+    base = dict(now_iso=NOW, scheduled_for=BOOT,
+                trigger_source="ec2_systemd",
+                mission_window_id="mw-natural-3",
+                build_sha="abc1234", app_version="12.2.9",
                 process_booted_at=BOOT, restore_completed_at=BOOT,
                 integrity_ok=True, public_leak_safe=True, scheduler_ready=True)
     assert rt.soak_start_decision(**{**base, "startup_state": "loading_remote"}
@@ -194,6 +207,8 @@ def test_restore_legacy_soak_not_inherited(monkeypatch, tmp_path):
     assert scanner._SOAK["startedAt"] is None           # 旧時計を継承しない
     assert scanner._SOAK["previousSoak"]["startedAt"] == \
         "2026-07-13T23:23:24+09:00"
+    assert scanner._SOAK_HISTORY[-1] == {
+        "startedAt": "2026-07-13T23:23:24+09:00"}
     _reset_soak()
 
 
@@ -217,9 +232,13 @@ def test_tick_starts_build_scoped_soak(monkeypatch):
     scanner._MISSION_WINDOWS.clear()
     scanner._OPS_JOURNAL.clear()
     scanner._OPS_SEQ.clear()
+    scheduled_for = scanner._ai_now_iso()
+    scanner._RUNTIME["processBootedAt"] = scheduled_for
+    scanner._STARTUP["restoreCompletedAt"] = scheduled_for
     with scanner.app.test_client() as c:
         c.post("/api/argus/admin/missions/tick",
-               json={"triggerSource": "ec2_systemd"})
+               json={"triggerSource": "ec2_systemd",
+                     "scheduledFor": scheduled_for})
     assert scanner._SOAK["buildSha"] == "abc1234"
     assert scanner._SOAK["startedAt"] is not None
     assert rt._ep(scanner._SOAK["startedAt"]) >= \

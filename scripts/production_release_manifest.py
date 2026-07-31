@@ -118,11 +118,12 @@ def validate_manifest(
 
 
 def _sha_matches(full_sha: str, observed: object) -> bool:
+    """Require the exact two full SHAs; a prefix is not release evidence."""
     observed_sha = str(observed or "").strip().lower()
     return bool(
         SHA_RE.fullmatch(full_sha)
-        and re.fullmatch(r"[0-9a-f]{7,40}", observed_sha)
-        and full_sha.startswith(observed_sha)
+        and SHA_RE.fullmatch(observed_sha)
+        and full_sha == observed_sha
     )
 
 
