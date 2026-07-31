@@ -33,6 +33,10 @@ jobs:
       - name: Install web deps
         run: cd web && npm ci --no-audit --no-fund
       - name: Validate control-plane scripts and workflows
+        env:
+          # Keep py_compile output outside the checkout so the subsequent
+          # exact clean-tree release gate measures source changes only.
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/argus-pycache
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
