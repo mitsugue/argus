@@ -230,3 +230,22 @@ def test_owner_arm_does_not_start_soak(monkeypatch):
         scanner._SOAK_CONTROL.clear()
         scanner._SOAK_CONTROL.update(saved_control)
         scanner._SOAK_HISTORY[:] = saved_history
+
+
+def test_public_health_and_ready_expose_exact_render_sha(monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", FULL_SHA)
+    saved_state = scanner._STARTUP["state"]
+    saved_outcome = scanner._STARTUP.get("restoreOutcome")
+    try:
+        scanner._STARTUP["state"] = "ready"
+        scanner._STARTUP["restoreOutcome"] = "restored"
+        with scanner.app.test_client() as client:
+            health = client.get("/healthz")
+            ready = client.get("/readyz")
+        assert health.status_code == 200
+        assert health.get_json()["buildSha"] == FULL_SHA
+        assert ready.status_code == 200
+        assert ready.get_json()["buildSha"] == FULL_SHA
+    finally:
+        scanner._STARTUP["state"] = saved_state
+        scanner._STARTUP["restoreOutcome"] = saved_outcome

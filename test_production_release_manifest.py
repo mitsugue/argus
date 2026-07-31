@@ -34,10 +34,10 @@ def test_create_requires_matching_health_ready_and_version():
         deployment_id="deploy-1",
         health={
             "status": "ok",
-            "buildSha": SHA[:7],
+            "buildSha": SHA,
             "backendVersion": "13.3.6",
         },
-        ready={"ready": True, "buildSha": SHA[:7]},
+        ready={"ready": True, "buildSha": SHA},
     )
     assert value == manifest()
 
@@ -93,3 +93,30 @@ def test_public_manifest_contains_no_secret_material():
     rendered = str(validate_manifest(manifest())).lower()
     for word in ("token", "secret", "password", "credential"):
         assert word not in rendered
+
+
+@pytest.mark.parametrize(
+    ("health_sha", "ready_sha", "error"),
+    [
+        (SHA[:7], SHA, "health_build_sha_mismatch"),
+        (SHA, SHA[:7], "ready_build_sha_mismatch"),
+        ("d" * 40, SHA, "health_build_sha_mismatch"),
+        (SHA, "d" * 40, "ready_build_sha_mismatch"),
+    ],
+)
+def test_manifest_creation_requires_exact_full_runtime_sha(
+    health_sha, ready_sha, error
+):
+    with pytest.raises(ManifestValidationError, match=error):
+        create_manifest(
+            build_sha=SHA,
+            version="13.3.6",
+            deployed_at="2026-07-31T00:00:00Z",
+            deployment_id="deploy-1",
+            health={
+                "status": "ok",
+                "buildSha": health_sha,
+                "backendVersion": "13.3.6",
+            },
+            ready={"ready": True, "buildSha": ready_sha},
+        )

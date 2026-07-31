@@ -21,6 +21,21 @@ def test_frontend_scope_skips_manifest_publication():
     assert "if: needs.classify.outputs.publish == 'true'" in text
 
 
+def test_push_selects_exact_main_merge_commit_not_pr_or_moving_main():
+    text = WORKFLOW.read_text()
+    assert '["git", "rev-parse", "HEAD"]' in text
+    assert '["git", "diff", "--name-only", parent, target]' in text
+    assert "github.event.pull_request.head.sha" not in text
+    assert "github.event.before" not in text
+    assert (
+        '--expected-sha "${{ needs.classify.outputs.target_sha }}"'
+        in text
+    )
+    assert "TARGET_SHA: ${{ needs.classify.outputs.target_sha }}" in text
+    assert '--build-sha "$TARGET_SHA"' in text
+    assert 'test "$ACTUAL" = "$TARGET_SHA"' in text
+
+
 def test_manifest_publication_failure_does_not_mutate_backend():
     text = WORKFLOW.read_text()
     assert "git push origin HEAD:production-release" in text

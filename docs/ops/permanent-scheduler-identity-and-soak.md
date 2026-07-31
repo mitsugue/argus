@@ -15,7 +15,7 @@ deployment, Render restart, EC2 restart, manual workflow, or manual tick.
 | EC2 backend identity | `scripts/argus_build_identity.py`, `ops/systemd/argus-mission-tick.service` | `ExecStartPre` previously trusted GitHub `main`; `/healthz` was observed. A frontend-only main advance therefore produced a false transition. |
 | EC2 mission request | `scripts/argus_mission_tick.py` | Reads the preflight decision, derives the natural 30-minute window, then sends one bounded idempotent mission POST. |
 | EC2 installation | `scripts/install_argus_mission_timer.sh`, `ops/systemd/*` | Previously copied files and immediately ran daemon-reload plus enable/start, which could mutate the running scheduler during evidence collection. |
-| Backend health/ready | `scanner.py` `/healthz`, `/readyz` | Health exposes a short Render SHA and backend version; readiness exposes restored runtime state. Neither is an authoritative deployment declaration. |
+| Backend health/ready | `scanner.py` `/healthz`, `/readyz` | Before v13.3.6 health exposed a short Render SHA and readiness exposed restored runtime state. v13.3.6 exposes the exact validated 40-character Render SHA from both endpoints; neither endpoint alone is an authoritative deployment declaration. |
 | Soak start/restore | `argus_runtime.py`, `scanner.py` `_SOAK`, `_osint_restore_once`, mission tick | A new build does not inherit another build's clock, but any non-manual scheduled source could start a Soak and `startedAt` used observed runtime time. |
 | Checkpoint/WAL/cursor/receipt | `argus_persistent_storage.py`, `argus_tick_durability.py`, `scanner.py` `_osint_persist_locked` | WAL transitions are fsynced, sealed checkpoints are atomically replaced, and compaction is allowed only through a matching verified receipt sequence. |
 | Remote Journal publication | `.github/workflows/caos-scan.yml`, `.github/workflows/caos-watchtower.yml`, `scripts/prepare_remote_journal_publish.py` | A compact proof is committed to `ledger`; the workflow records the exact commit SHA and posts it to the backend. |
@@ -24,14 +24,18 @@ deployment, Render restart, EC2 restart, manual workflow, or manual tick.
 
 ## New authoritative identity flow
 
-1. A backend-sensitive commit reaches `main` and existing CI gates complete.
+1. A backend-sensitive PR is merged. The resulting `main` merge commit
+   (`git rev-parse HEAD` in the push checkout), not the pre-merge PR head and
+   not a later moving `main`, becomes this workflow run's immutable candidate.
 2. Render performs its normal deploy independently. This repository workflow
    never calls Render and never restarts a service.
-3. `.github/workflows/publish-production-release-manifest.yml` polls public
-   `GET /healthz` and `GET /readyz` for the exact full candidate SHA and version.
+3. `.github/workflows/publish-production-release-manifest.yml` keeps that
+   candidate in its `target_sha` output and polls public `GET /healthz` and
+   `GET /readyz` for exact 40-character equality with it and for version match.
 4. Only after both checks pass, `scripts/production_release_manifest.py`
    creates the validated public-safe manifest.
-5. The exact bytes are committed to the separate `production-release` branch
+5. The manifest receives that same immutable `target_sha`; its exact bytes are
+   committed to the separate `production-release` branch
    at `production/argus-backend.json`. Frontend-only commits and failed deploys
    do not change that branch.
 6. EC2 and GitHub backup workflows compare the manifest SHA (trusted) with the
@@ -56,7 +60,8 @@ The manifest requires:
 - `verifiedHealth: true`
 - `verifiedReady: true`
 
-Short SHA, malformed JSON, wrong service/environment, missing verification,
+Short SHA (including a matching prefix), malformed JSON, wrong
+service/environment, missing verification,
 future timestamps, cached timestamp regression, and secret-shaped keys fail
 closed. A rollback is valid when it has a newer `deployedAt` and its older SHA
 matches the actually restored production build.

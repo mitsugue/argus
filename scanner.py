@@ -1572,7 +1572,10 @@ def healthz():
         "status": "ok",
         "engineVersion": "argus-backend-v1",
         "backendVersion": _semantic_app_version() or None,
-        "buildSha": (os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None),
+        # The production release manifest is allowed to advance only after an
+        # exact comparison with the deployed Render commit.  A short prefix is
+        # useful for display, but is not an unambiguous release identity.
+        "buildSha": _backend_exact_sha(),
         "asOf": _ai_now_iso(),
     })
 
@@ -17684,7 +17687,7 @@ def readyz():
     payload, code = argus_runtime.readyz_view(
         startup_state=_STARTUP["state"],
         app_version=_semantic_app_version(),
-        build_sha=_backend_sha(),
+        build_sha=_backend_exact_sha(),
         restore_outcome=_STARTUP.get("restoreOutcome"),
         blocker_ja=_STARTUP.get("blockerJa"), now_iso=_ai_now_iso())
     payload["persistentStorage"] = argus_persistent_storage.public_diagnostics(

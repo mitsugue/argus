@@ -57,7 +57,9 @@ def evaluate(
     if health.get("status") != "ok":
         return False, "health_not_ok"
     observed = str(health.get("buildSha") or "").lower()
-    if not observed or not expected_sha.startswith(observed):
+    if not FULL_SHA_RE.fullmatch(observed):
+        return False, "health_full_sha_required"
+    if observed != expected_sha:
         return False, "health_sha_mismatch"
     version = str(
         health.get("backendVersion") or health.get("appVersion") or "")
@@ -68,7 +70,9 @@ def evaluate(
     if ready.get("ready") is not True:
         return False, "ready_not_true"
     ready_sha = str(ready.get("buildSha") or "").lower()
-    if ready_sha and not expected_sha.startswith(ready_sha):
+    if not FULL_SHA_RE.fullmatch(ready_sha):
+        return False, "ready_full_sha_required"
+    if ready_sha != expected_sha:
         return False, "ready_sha_mismatch"
     return True, "verified"
 
