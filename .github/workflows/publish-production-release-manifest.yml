@@ -1,0 +1,165 @@
+name: publish-production-release-manifest
+
+# This workflow never deploys. It publishes identity only after the exact
+# backend candidate is already live and both public GET probes are verified.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Full backend SHA for approved bootstrap/rollback verification
+        required: true
+        type: string
+      deployment_id:
+        description: Owner-approved deployment/rollback identifier
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-release-manifest
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.scope.outputs.publish }}
+      target_sha: ${{ steps.scope.outputs.target_sha }}
+      version: ${{ steps.scope.outputs.version }}
+      deployment_id: ${{ steps.scope.outputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_SHA: ${{ inputs.target_sha }}
+          DISPATCH_DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+        run: |
+          python3 -B - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import re
+          import subprocess
+          from scripts.deploy_scope import classify
+
+          event = os.environ["EVENT_NAME"]
+          if event == "push":
+              target = subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True).strip()
+              parent = subprocess.check_output(
+                  ["git", "rev-parse", "HEAD^"], text=True).strip()
+              paths = subprocess.check_output(
+                  ["git", "diff", "--name-only", parent, target],
+                  text=True,
+              ).splitlines()
+              publish = classify(paths)["backendDeploy"]
+              deployment_id = "github-main-" + os.environ["GITHUB_RUN_ID"]
+          else:
+              target = os.environ["DISPATCH_SHA"].strip().lower()
+              if not re.fullmatch(r"[0-9a-f]{40}", target):
+                  raise SystemExit("workflow_dispatch requires a full SHA")
+              subprocess.check_call(
+                  ["git", "merge-base", "--is-ancestor", target, "origin/main"])
+              publish = True
+              deployment_id = os.environ["DISPATCH_DEPLOYMENT_ID"].strip()
+          version = subprocess.check_output(
+              ["git", "show", f"{target}:backend-version.json"],
+              text=True,
+          )
+          import json
+          version = json.loads(version)["version"]
+          print("publish=" + str(publish).lower())
+          print("target_sha=" + target)
+          print("version=" + version)
+          print("deployment_id=" + deployment_id)
+          PY
+
+  verify-and-publish:
+    needs: classify
+    if: needs.classify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production-release-manifest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Verify exact production health and readiness using GET only
+        run: |
+          python3 -B scripts/verify_production_backend_release.py \
+            --base-url https://argus-backend-3j2m.onrender.com \
+            --expected-sha "${{ needs.classify.outputs.target_sha }}" \
+            --expected-version "${{ needs.classify.outputs.version }}" \
+            --timeout-seconds 1200 \
+            --poll-seconds 15 \
+            --output "$RUNNER_TEMP/production-verification.json"
+      - name: Build validated release manifest
+        env:
+          TARGET_SHA: ${{ needs.classify.outputs.target_sha }}
+          TARGET_VERSION: ${{ needs.classify.outputs.version }}
+          DEPLOYMENT_ID: ${{ needs.classify.outputs.deployment_id }}
+        run: |
+          CHECKED_AT=$(python3 -c \
+            'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/production-verification.json"))["checkedAt"])')
+          curl --fail --silent --show-error --max-time 30 \
+            https://argus-backend-3j2m.onrender.com/healthz \
+            --output "$RUNNER_TEMP/health.json"
+          curl --fail --silent --show-error --max-time 30 \
+            https://argus-backend-3j2m.onrender.com/readyz \
+            --output "$RUNNER_TEMP/ready.json"
+          python3 -B scripts/production_release_manifest.py create \
+            --build-sha "$TARGET_SHA" \
+            --version "$TARGET_VERSION" \
+            --deployed-at "$CHECKED_AT" \
+            --deployment-id "$DEPLOYMENT_ID" \
+            --health "$RUNNER_TEMP/health.json" \
+            --ready "$RUNNER_TEMP/ready.json" \
+            --output "$RUNNER_TEMP/argus-backend.json"
+      - name: Publish immutable verified identity to external branch
+        env:
+          TARGET_SHA: ${{ needs.classify.outputs.target_sha }}
+        run: |
+          cp scripts/production_release_manifest.py \
+            "$RUNNER_TEMP/production_release_manifest.py"
+          git fetch origin \
+            +refs/heads/production-release:refs/remotes/origin/production-release \
+            2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/production-release \
+              >/dev/null 2>&1; then
+            git switch -C production-release \
+              refs/remotes/origin/production-release
+          else
+            git switch --orphan production-release
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p production
+          cp "$RUNNER_TEMP/argus-backend.json" \
+            production/argus-backend.json
+          python3 -B "$RUNNER_TEMP/production_release_manifest.py" \
+            validate production/argus-backend.json
+          git config user.name "argus-release[bot]"
+          git config user.email "argus-release@users.noreply.github.com"
+          git add production/argus-backend.json
+          if git diff --cached --quiet; then
+            echo "manifest already matches verified deployment"
+            exit 0
+          fi
+          git commit -m "production: verify backend ${TARGET_SHA:0:12}"
+          git push origin HEAD:production-release
+      - name: Verify exact published bytes
+        env:
+          TARGET_SHA: ${{ needs.classify.outputs.target_sha }}
+        run: |
+          PUBLISHED=$(curl --fail --silent --show-error --max-time 30 \
+            "https://raw.githubusercontent.com/mitsugue/argus/production-release/production/argus-backend.json?run=${GITHUB_RUN_ID}")
+          printf '%s' "$PUBLISHED" > "$RUNNER_TEMP/published.json"
+          python3 -B "$RUNNER_TEMP/production_release_manifest.py" \
+            validate "$RUNNER_TEMP/published.json"
+          ACTUAL=$(python3 -c \
+            'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/published.json"))["buildSha"])')
+          test "$ACTUAL" = "$TARGET_SHA"

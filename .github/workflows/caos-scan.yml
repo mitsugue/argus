@@ -1,8 +1,8 @@
 # C.A.O.S. collection + backup mission + independent durability flush.
 #
-# The checked-out main SHA can be frontend-only.  Backend identity is resolved
-# from the shared Render deploy scope and repository history; GITHUB_SHA is
-# never sent directly as expectedBuildSha.
+# The checked-out main SHA can be frontend-only. Backend identity is resolved
+# exclusively from the external verified production release manifest;
+# GITHUB_SHA and repository history are never trusted deployment identity.
 name: caos-scan
 
 on:
@@ -25,10 +25,7 @@ jobs:
       expectedBackendSha: ${{ steps.resolve.outputs.expectedBackendSha }}
       actualBackendSha: ${{ steps.resolve.outputs.actualBackendSha }}
       identitySource: ${{ steps.resolve.outputs.identitySource }}
-      mainSha: ${{ steps.resolve.outputs.mainSha }}
-      latestBackendSensitiveSha: ${{ steps.resolve.outputs.latestBackendSensitiveSha }}
       status: ${{ steps.resolve.outputs.status }}
-      transitionState: ${{ steps.resolve.outputs.transitionState }}
       mismatchReason: ${{ steps.resolve.outputs.mismatchReason }}
     steps:
       - uses: actions/checkout@v5
@@ -53,8 +50,11 @@ jobs:
       - name: Resolve authoritative deployed backend
         id: resolve
         run: |
+          curl --fail --silent --show-error --max-time 30 \
+            "https://raw.githubusercontent.com/mitsugue/argus/production-release/production/argus-backend.json?run=${GITHUB_RUN_ID}" \
+            --output "$RUNNER_TEMP/production-release.json"
           python3 scripts/resolve_backend_identity.py \
-            --main-sha "$GITHUB_SHA" \
+            --manifest "$RUNNER_TEMP/production-release.json" \
             --actual-backend-sha "${{ steps.live.outputs.actualBackendSha }}" \
             --github-output "$GITHUB_OUTPUT"
       - name: Enforce identity classification
@@ -62,7 +62,7 @@ jobs:
           STATUS="${{ steps.resolve.outputs.status }}"
           echo "backend-identity status=$STATUS source=${{ steps.resolve.outputs.identitySource }}"
           case "$STATUS" in
-            verified|deploy_transition|expected_skip) exit 0 ;;
+            verified) exit 0 ;;
             genuine_mismatch|resolver_failure) exit 1 ;;
             *) echo "unknown resolver status"; exit 1 ;;
           esac
@@ -239,18 +239,19 @@ jobs:
           IS_READY=$(printf '%s' "$READY" | python3 -c \
             'import json,sys; print(str(json.load(sys.stdin).get("ready") is True).lower())')
           [ "$IS_READY" = "true" ] || { echo "backend not ready"; exit 1; }
+          curl --fail --silent --show-error --max-time 30 \
+            "https://raw.githubusercontent.com/mitsugue/argus/production-release/production/argus-backend.json?run=${GITHUB_RUN_ID}" \
+            --output "$RUNNER_TEMP/production-release.json"
           python3 scripts/resolve_backend_identity.py \
-            --main-sha "$GITHUB_SHA" \
+            --manifest "$RUNNER_TEMP/production-release.json" \
             --actual-backend-sha "$ACTUAL" \
             --github-output "$GITHUB_OUTPUT"
           STATUS=$(python3 scripts/resolve_backend_identity.py \
-            --main-sha "$GITHUB_SHA" --actual-backend-sha "$ACTUAL" |
+            --manifest "$RUNNER_TEMP/production-release.json" \
+            --actual-backend-sha "$ACTUAL" |
             python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
           if [ "$STATUS" = "verified" ]; then
             echo "durabilityAllowed=true" >> "$GITHUB_OUTPUT"
-          elif [ "$STATUS" = "deploy_transition" ] || [ "$STATUS" = "expected_skip" ]; then
-            echo "durabilityAllowed=false" >> "$GITHUB_OUTPUT"
-            echo "durability expected_skip: identity $STATUS"
           else
             echo "durability identity failure: $STATUS"
             exit 1

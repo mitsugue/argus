@@ -39,6 +39,7 @@ def test_workflow_runs_on_pull_request():
     assert "STALE MANIFEST" in wf                 # 古いmanifest=不適格
     assert "upload-artifact" in wf
     assert "After CI Checks Pass" in wf           # Renderオーナー設定の文書化
+    assert "PYTHONPYCACHEPREFIX" in wf            # py_compileでcheckoutを汚さない
 
 
 def test_gate_uses_full_sha_for_exactness():
