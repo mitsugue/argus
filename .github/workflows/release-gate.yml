@@ -32,6 +32,20 @@ jobs:
         run: pip install --quiet anthropic flask flask-cors requests pytz python-dotenv json-repair pytest
       - name: Install web deps
         run: cd web && npm ci --no-audit --no-fund
+      - name: Validate control-plane scripts and workflows
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          python3 -m py_compile \
+            scripts/production_release_manifest.py \
+            scripts/verify_production_backend_release.py \
+            scripts/argus_build_identity.py \
+            scripts/resolve_backend_identity.py \
+            scripts/argus_mission_tick.py
+          bash -n scripts/install_argus_mission_timer.sh
+          shellcheck scripts/install_argus_mission_timer.sh \
+            scripts/check_argus_mission_timer.sh
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.parse_file(f) }'
       - name: Full gate for exact SHA
         run: |
           bash scripts/release_gate.sh || true

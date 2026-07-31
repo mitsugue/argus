@@ -1,126 +1,83 @@
-import json
-import subprocess
-from pathlib import Path
-
 from scripts.resolve_backend_identity import resolve
 
 
-def _git(repo: Path, *args: str) -> str:
-    return subprocess.check_output(
-        ["git", "-C", str(repo), *args], text=True
-    ).strip()
+SHA = "a" * 40
 
 
-def _commit(repo: Path, relative: str, body: str, message: str) -> str:
-    target = repo / relative
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(body, encoding="utf-8")
-    _git(repo, "add", relative)
-    _git(
-        repo, "-c", "user.name=ARGUS Test",
-        "-c", "user.email=argus-test@example.invalid",
-        "commit", "-m", message,
-    )
-    return _git(repo, "rev-parse", "HEAD")
+def manifest(**overrides):
+    value = {
+        "schema": "argus-production-release-manifest-v1",
+        "service": "argus-backend",
+        "environment": "production",
+        "buildSha": SHA,
+        "version": "13.3.6",
+        "deployedAt": "2026-07-31T00:00:00Z",
+        "deploymentId": "deploy-123",
+        "verifiedHealth": True,
+        "verifiedReady": True,
+    }
+    value.update(overrides)
+    return value
 
 
-def _repo(tmp_path: Path) -> tuple[Path, str, str]:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    backend = _commit(repo, "scanner.py", "print('backend')\n", "backend")
-    frontend = _commit(repo, "web/src/App.tsx", "export default 1\n", "frontend")
-    return repo, backend, frontend
-
-
-def test_frontend_main_sha_does_not_replace_backend_identity(tmp_path):
-    repo, backend, frontend = _repo(tmp_path)
+def test_manifest_is_authoritative_for_workflow_identity():
     result = resolve(
-        repo=repo,
-        main_sha=frontend,
-        actual_backend_sha=backend[:7],
-        now_epoch=2_000_000_000,
+        manifest=manifest(),
+        actual_backend_sha=SHA[:7],
+        now_iso="2026-07-31T00:01:00Z",
     )
     assert result.status == "verified"
-    assert result.mainSha == frontend
-    assert result.expectedBackendSha == backend
-    assert result.latestBackendSensitiveSha == backend
-    assert result.actualBackendSha == backend[:7]
+    assert result.expectedBackendSha == SHA
+    assert result.identitySource == "production_release_manifest"
+    assert result.manifestDeploymentId == "deploy-123"
 
 
-def test_latest_backend_sensitive_sha_uses_shared_scope(tmp_path):
-    repo, _, _ = _repo(tmp_path)
-    workflow = _commit(
-        repo, ".github/workflows/caos-scan.yml", "name: workflow\n",
-        "workflow-only",
-    )
-    backend = _commit(
-        repo, "argus_runtime.py", "VALUE = 2\n", "backend-sensitive",
-    )
-    latest_frontend = _commit(
-        repo, "web/src/App.tsx", "export default 2\n", "frontend again",
-    )
+def test_frontend_main_has_no_input_to_resolver():
     result = resolve(
-        repo=repo,
-        main_sha=latest_frontend,
-        actual_backend_sha=backend,
-        now_epoch=2_000_000_000,
+        manifest=manifest(),
+        actual_backend_sha=SHA[:7],
     )
-    assert workflow != backend
     assert result.status == "verified"
-    assert result.latestBackendSensitiveSha == backend
+    assert not hasattr(result, "mainSha")
+    assert not hasattr(result, "latestBackendSensitiveSha")
 
 
-def test_genuine_backend_mismatch_remains_failure(tmp_path):
-    repo, _, frontend = _repo(tmp_path)
+def test_genuine_backend_mismatch_is_failure():
     result = resolve(
-        repo=repo,
-        main_sha=frontend,
-        actual_backend_sha="deadbee",
-        now_epoch=2_000_000_000,
+        manifest=manifest(),
+        actual_backend_sha="b" * 7,
     )
     assert result.status == "genuine_mismatch"
-    assert result.mismatchReason == "actual_not_authoritative_backend_commit"
+    assert result.mismatchReason == "actual_not_production_release_manifest"
 
 
-def test_backend_deploy_transition_is_bounded(tmp_path):
-    repo, previous, _ = _repo(tmp_path)
-    latest = _commit(repo, "scanner.py", "print('next')\n", "next backend")
-    committed_at = int(_git(repo, "show", "-s", "--format=%ct", latest))
+def test_short_manifest_sha_is_rejected():
     result = resolve(
-        repo=repo,
-        main_sha=latest,
-        actual_backend_sha=previous[:7],
-        transition_grace_sec=900,
-        now_epoch=committed_at + 120,
+        manifest=manifest(buildSha=SHA[:7]),
+        actual_backend_sha=SHA[:7],
     )
-    assert result.status == "deploy_transition"
-    assert result.transitionState == "within_grace"
-    assert result.transitionGraceRemainingSec == 780
-
-    expired = resolve(
-        repo=repo,
-        main_sha=latest,
-        actual_backend_sha=previous[:7],
-        transition_grace_sec=900,
-        now_epoch=committed_at + 901,
-    )
-    assert expired.status == "genuine_mismatch"
+    assert result.status == "resolver_failure"
+    assert result.mismatchReason == "manifest_full_sha_required"
 
 
-def test_verified_deployment_manifest_has_priority(tmp_path):
-    repo, backend, frontend = _repo(tmp_path)
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({
-        "backendDeploy": True,
-        "backendBuildSha": backend,
-    }), encoding="utf-8")
-    result = resolve(
-        repo=repo,
-        main_sha=frontend,
-        actual_backend_sha=backend[:7],
-        deployment_manifest=manifest,
-        now_epoch=2_000_000_000,
+def test_wrong_environment_and_service_are_rejected():
+    wrong_environment = resolve(
+        manifest=manifest(environment="staging"),
+        actual_backend_sha=SHA[:7],
     )
-    assert result.status == "verified"
-    assert result.identitySource == "deployment_manifest"
+    wrong_service = resolve(
+        manifest=manifest(service="other"),
+        actual_backend_sha=SHA[:7],
+    )
+    assert wrong_environment.mismatchReason == "manifest_environment_invalid"
+    assert wrong_service.mismatchReason == "manifest_service_invalid"
+
+
+def test_unverified_or_malformed_manifest_is_rejected():
+    health = resolve(
+        manifest=manifest(verifiedHealth=False),
+        actual_backend_sha=SHA[:7],
+    )
+    malformed = resolve(manifest=None, actual_backend_sha=SHA[:7])
+    assert health.status == "resolver_failure"
+    assert malformed.status == "resolver_failure"
