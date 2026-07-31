@@ -39,6 +39,40 @@ sha256() {
   fi
 }
 
+validate_systemd_unit_shape() {
+  local source="$1"
+  grep -q '^\[Unit\]$' "$source" || {
+    echo "invalid systemd unit: missing [Unit]: $source" >&2
+    return 1
+  }
+  grep -q '^\[Install\]$' "$source" || {
+    echo "invalid systemd unit: missing [Install]: $source" >&2
+    return 1
+  }
+  case "$source" in
+    *.service)
+      grep -q '^\[Service\]$' "$source" || {
+        echo "invalid systemd service: missing [Service]: $source" >&2
+        return 1
+      }
+      grep -q '^ExecStart=' "$source" || {
+        echo "invalid systemd service: missing ExecStart: $source" >&2
+        return 1
+      }
+      ;;
+    *.timer)
+      grep -q '^\[Timer\]$' "$source" || {
+        echo "invalid systemd timer: missing [Timer]: $source" >&2
+        return 1
+      }
+      grep -q '^OnCalendar=' "$source" || {
+        echo "invalid systemd timer: missing OnCalendar: $source" >&2
+        return 1
+      }
+      ;;
+  esac
+}
+
 validate_sources() {
   local row source destination mode
   for row in "${FILES[@]}"; do
@@ -49,9 +83,18 @@ validate_sources() {
     }
     echo "validated source=$(sha256 "$source") file=$source destination=$destination mode=$mode"
     case "$source" in
-      *.py) python3 -m py_compile "$source" ;;
+      *.py)
+        python3 -c \
+          'import pathlib, sys; path = pathlib.Path(sys.argv[1]); compile(path.read_bytes(), str(path), "exec")' \
+          "$source"
+        ;;
       *.service|*.timer)
-        if command -v systemd-analyze >/dev/null 2>&1; then
+        validate_systemd_unit_shape "$source"
+        # systemd-analyze also resolves User= and absolute ExecStart= paths.
+        # Those production-only dependencies do not exist on a clean CI host,
+        # so portable dry-run validates unit structure while --apply performs
+        # the target-aware verification before making any changes.
+        if [[ "$MODE" != "dry-run" ]] && command -v systemd-analyze >/dev/null 2>&1; then
           systemd-analyze verify "$source"
         fi
         ;;

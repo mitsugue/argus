@@ -21,6 +21,10 @@ def test_installer_dry_run_has_no_service_or_file_mutation(tmp_path):
 def test_installer_requires_explicit_apply_and_never_runs_service_actions():
     source = (ROOT / "scripts/install_argus_mission_timer.sh").read_text()
     assert 'MODE="dry-run"' in source
+    assert "compile(path.read_bytes()" in source
+    assert "py_compile" not in source
+    assert 'validate_systemd_unit_shape "$source"' in source
+    assert '"$MODE" != "dry-run"' in source
     assert "systemctl daemon-reload is required but was not executed" in source
     for forbidden in (
         "systemctl enable",
