@@ -26,7 +26,7 @@ def test_installer_requires_explicit_apply_and_never_runs_service_actions():
     assert "compile(path.read_bytes()" in source
     assert "py_compile" not in source
     assert 'validate_systemd_unit_shape "$source"' in source
-    assert '"$MODE" != "dry-run"' in source
+    assert '"$MODE" == "apply"' in source
     assert "systemctl daemon-reload is required but was not executed" in source
     for forbidden in (
         "systemctl enable",

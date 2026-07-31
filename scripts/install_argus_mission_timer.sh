@@ -94,7 +94,7 @@ validate_sources() {
         # Those production-only dependencies do not exist on a clean CI host,
         # so portable dry-run validates unit structure while --apply performs
         # the target-aware verification before making any changes.
-        if [[ "$MODE" != "dry-run" ]] && command -v systemd-analyze >/dev/null 2>&1; then
+        if [[ "$MODE" == "apply" ]] && command -v systemd-analyze >/dev/null 2>&1; then
           systemd-analyze verify "$source"
         fi
         ;;
