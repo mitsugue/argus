@@ -50,7 +50,15 @@ def remote_receipt_record(*, saved_at: str,
                           compact_receipt_hash: Optional[str],
                           error_class: Optional[str],
                           wal_read_back_verified: Optional[bool] = None,
-                          wal_error_class: Optional[str] = None) -> Dict[str, Any]:
+                          wal_error_class: Optional[str] = None,
+                          remote_durability_state: Optional[str] = None,
+                          receipt_commit_sha: Optional[str] = None,
+                          receipt_created_at: Optional[str] = None,
+                          receipt_verified_at: Optional[str] = None,
+                          receipt_age_seconds: Optional[int] = None,
+                          receipt_attempts: int = 0,
+                          receipt_error_class: Optional[str] = None
+                          ) -> Dict[str, Any]:
     """Integrity-bound persistent proof for Remote Journal WAL coverage."""
     record = {
         "schemaVersion": REMOTE_RECEIPT_SCHEMA,
@@ -69,6 +77,13 @@ def remote_receipt_record(*, saved_at: str,
         "compactReceiptHash": compact_receipt_hash,
         "errorClass": error_class,
         "walErrorClass": wal_error_class,
+        "remoteDurabilityState": remote_durability_state,
+        "receiptCommitSha": receipt_commit_sha,
+        "receiptCreatedAt": receipt_created_at,
+        "receiptVerifiedAt": receipt_verified_at,
+        "receiptAgeSeconds": receipt_age_seconds,
+        "receiptAttempts": int(receipt_attempts or 0),
+        "receiptErrorClass": receipt_error_class,
     }
     record["recordHash"] = _record_hash(record)
     return record
@@ -87,12 +102,33 @@ def verify_remote_receipt(record: Any) -> bool:
         return False
     if remote_sequence < 0 or verified_sequence < 0:
         return False
+    try:
+        receipt_attempts = int(record.get("receiptAttempts") or 0)
+        receipt_age = record.get("receiptAgeSeconds")
+        receipt_age = None if receipt_age is None else int(receipt_age)
+    except (TypeError, ValueError):
+        return False
+    if receipt_attempts < 0 or (receipt_age is not None and receipt_age < 0):
+        return False
     commit_sha = record.get("remoteCommitSha")
+    receipt_commit_sha = record.get("receiptCommitSha")
     expected_hash = record.get("expectedHash")
     actual_hash = record.get("actualHash")
     if commit_sha is not None and (
             len(str(commit_sha)) != 40 or
             any(ch not in "0123456789abcdef" for ch in str(commit_sha))):
+        return False
+    if receipt_commit_sha is not None and (
+            len(str(receipt_commit_sha)) != 40 or
+            any(ch not in "0123456789abcdef"
+                for ch in str(receipt_commit_sha))):
+        return False
+    if record.get("remoteDurabilityState") == "verified" and not (
+            record.get("readBackVerified") is True and
+            record.get("walReadBackVerified") is True and
+            receipt_commit_sha == commit_sha and
+            record.get("receiptVerifiedAt") and
+            record.get("receiptErrorClass") is None):
         return False
     for value in (expected_hash, actual_hash):
         if value is not None and (

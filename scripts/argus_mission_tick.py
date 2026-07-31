@@ -76,6 +76,19 @@ def _safe_response(body: object) -> dict[str, object]:
     }
 
 
+def _transport_error_class(exc: BaseException) -> str:
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "timeout"
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return "timeout"
+        return "network_error"
+    if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+        return "invalid_json"
+    return "transport_error"
+
+
 def _identity_decision() -> dict[str, object]:
     path = os.environ.get(
         "ARGUS_BUILD_IDENTITY_DECISION_FILE", IDENTITY_DECISION_FILE)
@@ -157,14 +170,17 @@ def main() -> int:
         },
     )
     last_safe: dict[str, object] = {}
+    total_attempts = 0
     for batch in range(1, max_batches + 1):
         for attempt in range(1, attempts + 1):
+            total_attempts += 1
             started = time.monotonic()
             remaining_budget = int(deadline - started)
             if remaining_budget <= 0:
                 _emit(status="degraded",
                       errorClass="bounded_total_budget_exhausted",
-                      batch=batch, **last_safe)
+                      batch=batch, attemptsUsed=total_attempts,
+                      retryCount=max(0, total_attempts - batch), **last_safe)
                 return 2
             try:
                 with urllib.request.urlopen(
@@ -182,6 +198,8 @@ def main() -> int:
                     _emit(
                         status="failure", errorClass="business_failure",
                         httpStatus=status_code, attempt=attempt, batch=batch,
+                        attemptsUsed=total_attempts,
+                        retryCount=max(0, total_attempts - batch),
                         elapsedMs=round((time.monotonic() - started) * 1000),
                         **safe,
                     )
@@ -190,6 +208,8 @@ def main() -> int:
                     _emit(
                         status="expected_skip", httpStatus=status_code,
                         attempt=attempt, batch=batch,
+                        attemptsUsed=total_attempts,
+                        retryCount=max(0, total_attempts - batch),
                         elapsedMs=round((time.monotonic() - started) * 1000),
                         invocation=("diagnostic" if diagnostic else "natural"),
                         **identity_log, **safe)
@@ -198,6 +218,8 @@ def main() -> int:
                     _emit(
                         status="partial", httpStatus=status_code,
                         attempt=attempt, batch=batch,
+                        attemptsUsed=total_attempts,
+                        retryCount=max(0, total_attempts - batch),
                         elapsedMs=round((time.monotonic() - started) * 1000),
                         invocation=("diagnostic" if diagnostic else "natural"),
                         **identity_log, **safe)
@@ -205,6 +227,8 @@ def main() -> int:
                 _emit(
                     status="success", httpStatus=status_code,
                     attempt=attempt, batch=batch,
+                    attemptsUsed=total_attempts,
+                    retryCount=max(0, total_attempts - batch),
                     elapsedMs=round((time.monotonic() - started) * 1000),
                     invocation=("diagnostic" if diagnostic else "natural"),
                     **identity_log, **safe,
@@ -213,20 +237,29 @@ def main() -> int:
             except urllib.error.HTTPError as exc:
                 retryable = int(exc.code) >= 500
                 if not retryable or attempt >= attempts:
-                    _emit(status="failure", errorClass="http_error",
-                          httpStatus=int(exc.code), attempt=attempt, batch=batch)
+                    _emit(status="failure",
+                          errorClass=(f"http_{int(exc.code)}"
+                                      if int(exc.code) >= 500
+                                      else "http_client_error"),
+                          httpStatus=int(exc.code), attempt=attempt, batch=batch,
+                          attemptsUsed=total_attempts,
+                          retryCount=max(0, total_attempts - batch))
                     return 1
             except (urllib.error.URLError, TimeoutError, socket.timeout,
                     json.JSONDecodeError, UnicodeDecodeError) as exc:
                 if attempt >= attempts:
-                    _emit(status="failure", errorClass=type(exc).__name__,
-                          attempt=attempt, batch=batch)
+                    _emit(status="failure",
+                          errorClass=_transport_error_class(exc),
+                          attempt=attempt, batch=batch,
+                          attemptsUsed=total_attempts,
+                          retryCount=max(0, total_attempts - batch))
                     return 1
             time.sleep(max(0, min(5, deadline - time.monotonic())))
         if last_safe.get("result") != "partial":
             return 1
     _emit(status="degraded", errorClass="bounded_batches_exhausted",
-          batch=max_batches, **last_safe)
+          batch=max_batches, attemptsUsed=total_attempts,
+          retryCount=max(0, total_attempts - max_batches), **last_safe)
     return 2
 
 

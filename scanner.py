@@ -15739,7 +15739,15 @@ def _persist_remote_wal_receipt(saved_at=None):
         error_class=_REMOTE_CYCLE.get("errorClass"),
         wal_read_back_verified=bool(
             _REMOTE_CYCLE.get("walReadBackVerified")),
-        wal_error_class=_REMOTE_CYCLE.get("walErrorClass"))
+        wal_error_class=_REMOTE_CYCLE.get("walErrorClass"),
+        remote_durability_state=_REMOTE_CYCLE.get(
+            "remoteDurabilityState"),
+        receipt_commit_sha=_REMOTE_CYCLE.get("receiptCommitSha"),
+        receipt_created_at=_REMOTE_CYCLE.get("receiptCreatedAt"),
+        receipt_verified_at=_REMOTE_CYCLE.get("receiptVerifiedAt"),
+        receipt_age_seconds=_REMOTE_CYCLE.get("receiptAgeSeconds"),
+        receipt_attempts=int(_REMOTE_CYCLE.get("receiptAttempts") or 0),
+        receipt_error_class=_REMOTE_CYCLE.get("receiptErrorClass"))
     return argus_persistent_storage.atomic_write_json(
         _MISSION_RECEIPT_FILE, receipt,
         temp_directory=_DURABILITY_PATHS["tempDirectory"],
@@ -15805,8 +15813,12 @@ def _restore_persistent_remote_receipt():
             "remoteCommitSha", "committedAt", "expectedHash", "actualHash",
             "readBackAt", "readBackVerified", "walReadBackVerified",
             "remoteWalAppliedSequence", "verifiedWalSequence",
-            "compactReceiptHash", "errorClass", "walErrorClass"):
-        _REMOTE_CYCLE[key] = receipt.get(key)
+            "compactReceiptHash", "errorClass", "walErrorClass",
+            "remoteDurabilityState", "receiptCommitSha",
+            "receiptCreatedAt", "receiptVerifiedAt", "receiptAgeSeconds",
+            "receiptAttempts", "receiptErrorClass"):
+        if key in receipt:
+            _REMOTE_CYCLE[key] = receipt.get(key)
     status = "duplicate" if (
         incoming_sequence == current_sequence and
         receipt.get("compactReceiptHash") ==
@@ -15863,7 +15875,10 @@ def _osint_persist_locked():
                     _FORMAL_BENCHMARK_V2),
                 "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
                 "schemaVersion": _DURABLE_STATE["schemaVersion"],
-                "soak": _SOAK, "missions": _MISSIONS[-120:],
+                "soak": _SOAK,
+                "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
+                "soakControl": dict(_SOAK_CONTROL),
+                "missions": _MISSIONS[-120:],
                 "missionWindows": _MISSION_WINDOWS[-240:],
                 "forecasts": _FORECAST_LEDGER[-200:],
                 "outcomes": _OUTCOME_LEDGER[-200:],
@@ -16274,6 +16289,17 @@ def _osint_restore_once():
             _FOUNDATION_JOBS["activeJobId"] = None
         _DURABLE_STATE["foundationJobsSidecarRestoredAt"] = \
             _foundation_jobs_restore_sidecar()
+        for archived in (blob.get("soakHistory") or [])[-8:]:
+            if isinstance(archived, dict) and archived.get("soakId") and \
+                    not any(row.get("soakId") == archived.get("soakId")
+                            for row in _SOAK_HISTORY):
+                _SOAK_HISTORY.append(copy.deepcopy(archived))
+        restored_control = blob.get("soakControl")
+        if isinstance(restored_control, dict) and \
+                restored_control.get("armed") is True:
+            _SOAK_CONTROL.update({
+                key: restored_control.get(key)
+                for key in _SOAK_CONTROL})
         sk = blob.get("soak")
         if isinstance(sk, dict) and sk.get("startedAt") and not _SOAK["startedAt"]:
             # v12.2.9 build-scoped: 同一SHAのredeployでsoakをリセットしない
@@ -16286,8 +16312,11 @@ def _osint_restore_once():
                 or _DURABLE_STATE.get("lastKnownGoodAt"))
             _STARTUP["soakRestoreAction"] = _dec.get("action")
             if _dec.get("action") == "inherit_with_interruption":
-                for _k in ("soakId", "buildSha", "appVersion", "startedAt",
+                for _k in ("soakId", "buildSha", "buildShaFull",
+                           "appVersion", "startedAt",
                            "startReason", "startTimeSource", "heartbeats",
+                           "startedBy", "firstMissionWindowId",
+                           "completed72h", "interruptionCount",
                            "state", "lastHeartbeatAt", "lastHeartbeatSource"):
                     _SOAK[_k] = sk.get(_k)
                 if not isinstance(_SOAK.get("heartbeats"), list):
@@ -16295,7 +16324,17 @@ def _osint_restore_once():
                 _SOAK["state"] = _SOAK.get("state") or "not_started"
                 _SOAK["interruptions"] = (list(sk.get("interruptions") or [])
                                           + [_dec["interruption"]])
+                _SOAK["interruptionCount"] = len(_SOAK["interruptions"])
             else:
+                # Preserve the complete prior record by value before a
+                # different build creates its own active Soak. Never mutate an
+                # archived row into a success.
+                if not any(
+                        row.get("soakId") == sk.get("soakId") and
+                        row.get("startedAt") == sk.get("startedAt")
+                        for row in _SOAK_HISTORY):
+                    _SOAK_HISTORY.append(copy.deepcopy(sk))
+                    del _SOAK_HISTORY[:-8]
                 _SOAK["previousSoak"] = _dec.get("previousSoakSummary")
         for h in (blob.get("missions") or [])[-120:]:
             if isinstance(h, dict) and not any(
@@ -17350,12 +17389,19 @@ _POSTMORTEMS = []                       # 日次ポストモーテム(有界30)
 _PERIODIC_REPORTS = []                  # 週次/月次レポート(有界12)
 _CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
 # v12.2.9: build-scoped soak — 新build SHAは旧buildのsoak時計を継承しない。
-# startedAtはboot/復元完了より前に遡らない(soak_start_decisionがmaxで保証)。
-_SOAK = {"soakId": None, "buildSha": None, "appVersion": None,
+# startedAtは自然EC2 mission windowのscheduledAtと一致し、
+# boot/復元完了より前のwindowはsoak_start_decisionが拒否する。
+_SOAK = {"soakId": None, "buildSha": None, "buildShaFull": None,
+         "appVersion": None,
          "startedAt": None, "startReason": None, "startTimeSource": None,
+         "startedBy": None, "firstMissionWindowId": None,
+         "completed72h": False, "interruptionCount": 0,
          "interruptions": [], "previousSoak": None, "heartbeats": [],
          "state": "not_started", "lastHeartbeatAt": None,
          "lastHeartbeatSource": None}
+_SOAK_HISTORY = []                     # archived copies; never edited in place
+_SOAK_CONTROL = {"armed": False, "armedAt": None, "armedBuildSha": None,
+                 "armId": None, "reason": None}
 _INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
 def _semantic_app_version():
     """Backendのセマンティック版。frontend package版から独立させる。"""
@@ -17388,6 +17434,10 @@ _REMOTE_CYCLE = {"remoteCommitSha": None, "committedAt": None,
                  "verifiedWalSequence": 0,
                  "compactReceiptHash": None,
                  "pendingCount": 0, "acknowledgedCount": 0,
+                 "remoteDurabilityState": "not_started",
+                 "receiptCommitSha": None, "receiptCreatedAt": None,
+                 "receiptVerifiedAt": None, "receiptAgeSeconds": None,
+                 "receiptAttempts": 0, "receiptErrorClass": None,
                  "errorClass": None, "walErrorClass": None}
 
 # Outcome再解決ポリシー。intervalは環境変数で調整可。期限は既存ポリシーが
@@ -17511,6 +17561,11 @@ def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
 
 def _backend_sha():
     return os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None
+
+
+def _backend_exact_sha():
+    value = os.environ.get("RENDER_GIT_COMMIT", "").strip().lower()
+    return value if re.fullmatch(r"[0-9a-f]{40}", value) else None
 
 
 _RUNTIME = {"processBootedAt": datetime.now(TZ_JST).isoformat(),
@@ -17660,28 +17715,81 @@ def _owner_controls_status():
 
 # ── v12.2.10: 検証済みread-back ack+compaction(tick=30分cron文脈から実行) ──
 
+def _remote_commit_readback_url(commit_sha):
+    """Return immutable GitHub raw URL; a moving branch is never evidence."""
+    if not re.fullmatch(r"[0-9a-f]{40}", str(commit_sha or "").lower()):
+        return None
+    repository = os.environ.get(
+        "LEDGER_RAW_REPOSITORY_BASE",
+        "https://raw.githubusercontent.com/mitsugue/argus").rstrip("/")
+    return (f"{repository}/{str(commit_sha).lower()}"
+            f"/ledger{_REMOTE_READBACK_PATH}")
+
+
 def _remote_readback_ack(now_iso=None, blob=None):
     """ledgerへ実際にコミットされたsnapshotを読み戻し、ローカルWALイベントの
     冪等キー+整合hashを照合してackを導出する。復元時刻・HTTP書込成功は
     ackにならない。冪等 — 再実行してもackは重複しない。"""
     now_iso = now_iso or _ai_now_iso()
+    commit_sha = str(_REMOTE_CYCLE.get("remoteCommitSha") or "").lower()
+    attempts_used = 0
     if blob is None:
-        try:
-            r = requests.get(f"{_LEDGER_RAW_BASE}{_REMOTE_READBACK_PATH}"
-                             f"?cb={int(time.time())}", timeout=8)
-            blob = r.json() if r.status_code == 200 else None
-        except Exception:
-            blob = None
+        url = _remote_commit_readback_url(commit_sha)
+        if url is None:
+            _REMOTE_CYCLE.update({
+                "readBackAt": now_iso, "readBackVerified": False,
+                "remoteDurabilityState": "receipt_missing",
+                "receiptAttempts": 0,
+                "receiptErrorClass": "receipt_commit_sha_missing",
+                "errorClass": "commit_receipt_missing"})
+            return None
+        for attempt in range(1, 3):
+            attempts_used = attempt
+            try:
+                r = requests.get(url, timeout=(3, 6))
+                if r.status_code == 200:
+                    blob = r.json()
+                    break
+                if r.status_code >= 500:
+                    receipt_error = f"http_{int(r.status_code)}"
+                elif r.status_code == 404:
+                    receipt_error = "exact_commit_not_available"
+                else:
+                    receipt_error = f"http_{int(r.status_code)}"
+            except requests.Timeout:
+                receipt_error = "timeout"
+            except (requests.ConnectionError, requests.RequestException):
+                receipt_error = "network_error"
+            except (ValueError, TypeError):
+                receipt_error = "invalid_json"
+            if attempt < 2:
+                time.sleep(0.25)
+        if blob is None:
+            _REMOTE_ACK["readbackFailures"] += 1
+            _REMOTE_CYCLE.update({
+                "readBackAt": now_iso, "readBackVerified": False,
+                "remoteDurabilityState": "transient_failure",
+                "receiptCommitSha": commit_sha or None,
+                "receiptAttempts": attempts_used,
+                "receiptErrorClass": receipt_error,
+                "errorClass": "remote_unreachable"})
+            return None
     if blob is None:
         _REMOTE_ACK["readbackFailures"] += 1
         _REMOTE_CYCLE.update({"readBackAt": now_iso,
                               "readBackVerified": False,
+                              "remoteDurabilityState": "transient_failure",
+                              "receiptAttempts": attempts_used,
+                              "receiptErrorClass": "remote_unreachable",
                               "errorClass": "remote_unreachable"})
         return None
     if not isinstance(blob, dict):
         _REMOTE_ACK["readbackFailures"] += 1
         _REMOTE_CYCLE.update({"readBackAt": now_iso,
                               "readBackVerified": False,
+                              "remoteDurabilityState": "integrity_failure",
+                              "receiptAttempts": attempts_used,
+                              "receiptErrorClass": "remote_invalid_json",
                               "errorClass": "remote_invalid_json"})
         return None
     if blob.get("receiptSchemaVersion") and not \
@@ -17689,6 +17797,9 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _REMOTE_ACK["readbackFailures"] += 1
         _REMOTE_CYCLE.update({"readBackAt": now_iso,
                               "readBackVerified": False,
+                              "remoteDurabilityState": "integrity_failure",
+                              "receiptAttempts": attempts_used,
+                              "receiptErrorClass": "compact_receipt_invalid",
                               "errorClass": "compact_receipt_invalid"})
         return None
     rec = argus_remote_journal.read_back_receipt(
@@ -17731,7 +17842,7 @@ def _remote_readback_ack(now_iso=None, blob=None):
     if cycle_verified:
         cycle_error = None
     elif expected_hash and actual_hash and expected_hash != actual_hash:
-        cycle_error = "commit_receipt_stale"
+        cycle_error = "receipt_hash_mismatch"
     elif not expected_hash:
         cycle_error = "commit_receipt_missing"
     else:
@@ -17780,6 +17891,25 @@ def _remote_readback_ack(now_iso=None, blob=None):
         "acknowledgedCount": len(rec.get("ackedIdempotencyKeys") or []),
         "errorClass": cycle_error,
         "walErrorClass": wal_cycle_error,
+        "remoteDurabilityState": (
+            "verified" if cycle_verified and wal_cycle_verified else
+            "integrity_failure" if cycle_error == "receipt_hash_mismatch"
+            or wal_cycle_error in ("remote_wal_manifest_mismatch",
+                                   "remote_wal_sequence_regression") else
+            "verification_pending"),
+        "receiptCommitSha": commit_sha or None,
+        "receiptCreatedAt": _REMOTE_CYCLE.get("committedAt"),
+        "receiptVerifiedAt": (
+            now_iso if cycle_verified and wal_cycle_verified else None),
+        "receiptAgeSeconds": (
+            max(0, int(argus_remote_journal._ep(now_iso) -
+                       argus_remote_journal._ep(
+                           _REMOTE_CYCLE.get("committedAt"))))
+            if argus_remote_journal._ep(now_iso) is not None and
+            argus_remote_journal._ep(
+                _REMOTE_CYCLE.get("committedAt")) is not None else None),
+        "receiptAttempts": attempts_used,
+        "receiptErrorClass": cycle_error or wal_cycle_error,
     })
     try:
         _persist_remote_wal_receipt(now_iso)
@@ -18197,6 +18327,98 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
         return {"processed": processed, "resolved": resolved,
                 "remaining": remaining}
     return resolved
+
+
+def _activate_formal_soak(start_decision, window, *, rollover_armed):
+    """Archive the old Soak by value and activate exactly one new clock."""
+    previous_summary = _SOAK.get("previousSoak")
+    archived = None
+    if rollover_armed and _SOAK.get("startedAt"):
+        archived = copy.deepcopy(_SOAK)
+        if not any(row.get("soakId") == archived.get("soakId")
+                   for row in _SOAK_HISTORY):
+            _SOAK_HISTORY.append(archived)
+            del _SOAK_HISTORY[:-8]
+        previous_summary = {
+            "soakId": archived.get("soakId"),
+            "buildSha": archived.get("buildSha"),
+            "buildShaFull": archived.get("buildShaFull"),
+            "startedAt": archived.get("startedAt"),
+            "state": archived.get("state"),
+            "inherited": False,
+            "reason": "owner_authorized_same_sha_rollover",
+            "archiveImmutable": True,
+        }
+    window_digest = hashlib.sha256(
+        window["missionWindowId"].encode("utf-8")).hexdigest()[:8]
+    _SOAK.clear()
+    _SOAK.update({
+        "soakId": (f"soak-{(_backend_sha() or 'local')[:7]}"
+                   f"-{window_digest}"),
+        "buildSha": _backend_sha(),
+        "buildShaFull": _backend_exact_sha(),
+        "appVersion": _semantic_app_version() or None,
+        "startedAt": start_decision["startedAt"],
+        "startedBy": start_decision["startedBy"],
+        "firstMissionWindowId": start_decision["firstMissionWindowId"],
+        "startReason": start_decision["startReason"],
+        "startTimeSource": start_decision["startTimeSource"],
+        "completed72h": False, "interruptionCount": 0,
+        "interruptions": [], "previousSoak": previous_summary,
+        "heartbeats": [], "state": "not_started",
+        "lastHeartbeatAt": None, "lastHeartbeatSource": None,
+    })
+    _SOAK_CONTROL.update({
+        "armed": False, "armedAt": None, "armedBuildSha": None,
+        "armId": None, "reason": None})
+    return {"archived": archived is not None,
+            "soakId": _SOAK["soakId"]}
+
+
+@app.route("/api/argus/admin/soak/arm", methods=["POST"])
+def api_argus_admin_soak_arm():
+    """Arm one same-SHA rollover; never starts or rewrites a Soak itself."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    current_sha = str(_backend_exact_sha() or "").lower()
+    requested_sha = str(body.get("buildSha") or "").lower()
+    if body.get("confirm") is not True:
+        return jsonify({"ok": False,
+                        "error": "explicit_confirmation_required"}), 400
+    if not re.fullmatch(r"[0-9a-f]{40}", requested_sha) or \
+            requested_sha != current_sha:
+        return jsonify({"ok": False,
+                        "error": "exact_current_build_sha_required"}), 409
+    active_sha = str(_SOAK.get("buildShaFull") or
+                     _SOAK.get("buildSha") or "").lower()
+    if not _SOAK.get("startedAt") or active_sha not in (
+            current_sha, current_sha[:7]):
+        return jsonify({"ok": False,
+                        "error": "same_sha_active_soak_required"}), 409
+    if _SOAK_CONTROL.get("armed") is True:
+        return jsonify({"ok": True, "status": "already_armed",
+                        "armId": _SOAK_CONTROL.get("armId"),
+                        "startsNow": False})
+    armed_at = _ai_now_iso()
+    arm_id = "soak-arm-" + hashlib.sha256(
+        f"{current_sha}|{armed_at}".encode("utf-8")).hexdigest()[:12]
+    _SOAK_CONTROL.update({
+        "armed": True, "armedAt": armed_at,
+        "armedBuildSha": current_sha, "armId": arm_id,
+        "reason": str(body.get("reason") or "formal_soak_rollover")[:80],
+    })
+    checkpoint = _osint_persist()
+    if checkpoint.get("verified") is not True:
+        _SOAK_CONTROL.update({
+            "armed": False, "armedAt": None, "armedBuildSha": None,
+            "armId": None, "reason": None})
+        return jsonify({"ok": False,
+                        "error": "checkpoint_persist_failed"}), 503
+    return jsonify({"ok": True, "status": "armed", "armId": arm_id,
+                    "startsNow": False,
+                    "startAuthority": "next_natural_ec2_mission_window"})
 
 
 @app.route("/api/argus/admin/missions/tick", methods=["POST"])
@@ -18685,11 +18907,18 @@ def _api_argus_admin_missions_tick_impl():
     while len(_MISSION_WINDOWS) > 240:
         _MISSION_WINDOWS.pop(0)
 
-    # Soakはtick時刻ではなく、このbuildの最初の有効heartbeatで開始する。
+    # Soak開始権限は自然EC2 windowだけ。owner armはここで一度だけ消費する。
     heartbeat_at = _ai_now_iso()
-    if trigger_source != "manual" and not _SOAK.get("startedAt"):
+    rollover_armed = bool(
+        _SOAK_CONTROL.get("armed") is True and
+        _SOAK_CONTROL.get("armedBuildSha") == _backend_exact_sha())
+    if trigger_source == "ec2_systemd" and (
+            not _SOAK.get("startedAt") or rollover_armed):
         _sk_dec = argus_runtime.soak_start_decision(
-            now_iso=heartbeat_at, build_sha=_backend_sha() or None,
+            now_iso=heartbeat_at, scheduled_for=window["scheduledFor"],
+            trigger_source=trigger_source,
+            mission_window_id=window["missionWindowId"],
+            build_sha=_backend_sha() or None,
             app_version=_semantic_app_version() or "",
             process_booted_at=_RUNTIME["processBootedAt"],
             restore_completed_at=_STARTUP.get("restoreCompletedAt"),
@@ -18699,18 +18928,13 @@ def _api_argus_admin_missions_tick_impl():
             in ("no_prior_state", "test_mode"),
             public_leak_safe=True, scheduler_ready=True)
         if _sk_dec["allowed"]:
-            _SOAK.update({
-                "soakId": f"soak-{_backend_sha() or 'local'}-{_RUNTIME['bootId']}",
-                "buildSha": _backend_sha(),
-                "appVersion": _semantic_app_version() or None,
-                "startedAt": _sk_dec["startedAt"],
-                "startReason": "first_valid_heartbeat",
-                "startTimeSource": "scheduled_mission_heartbeat",
-                "heartbeats": [], "state": "not_started",
-                "lastHeartbeatAt": None, "lastHeartbeatSource": None})
+            _activate_formal_soak(
+                _sk_dec, window, rollover_armed=rollover_armed)
             _journal("soak_started", "soak", _SOAK["soakId"],
                      {"buildSha": _SOAK["buildSha"] or "unknown",
-                      "startTimeSource": _SOAK["startTimeSource"]})
+                      "startTimeSource": _SOAK["startTimeSource"],
+                      "firstMissionWindowId":
+                      _SOAK["firstMissionWindowId"]})
     workflow_sha = str(body.get("expectedBuildSha") or "")[:7]
     build_matches = not workflow_sha or workflow_sha == (_backend_sha() or "")
     journal_status = (_REMOTE_ACK.get("lastReceiptStatus") or
@@ -18750,6 +18974,12 @@ def _api_argus_admin_missions_tick_impl():
     has_more = remaining_count > 0
     result = ("failed" if failed_in_tick else
               "partial" if has_more else "caught_up")
+    formal_closure = argus_runtime.formal_soak_closure(
+        soak_state=soak_state, mission_result=result,
+        remote_cycle=_REMOTE_CYCLE)
+    _SOAK["completed72h"] = formal_closure["completed72h"]
+    _SOAK["interruptionCount"] = len(
+        _SOAK.get("interruptions") or [])
     terminal = ("failed" if failed_in_tick else
                 "partial" if has_more else "completed")
     cursor_after = int(_MISSION_BATCH_STATE.get("cursor") or cursor_before)
@@ -18836,6 +19066,7 @@ def _api_argus_admin_missions_tick_impl():
                                   and row.get("forecastId")}))},
                     "soakHeartbeatAdded": heartbeat_added,
                     "soak": soak_state,
+                    "formalSoakClosure": formal_closure,
                     "remoteJournal": {
                         **dict(_REMOTE_CYCLE),
                         **_remote_journal_diagnostics(heartbeat_at)},
@@ -20590,7 +20821,10 @@ def api_argus_osint_memory_snapshot():
                     "formalResearchBenchmarkV2": argus_research_benchmark_v2.normalize_state(
                         _FORMAL_BENCHMARK_V2),
                     "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
-                    "soak": _SOAK, "soakLastPersistAt": _now,
+                    "soak": _SOAK,
+                    "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
+                    "soakControl": dict(_SOAK_CONTROL),
+                    "soakLastPersistAt": _now,
                     "missions": _MISSIONS[-120:],
                     "missionWindows": _MISSION_WINDOWS[-240:],
                     "forecasts": _FORECAST_LEDGER[-200:],
@@ -20634,14 +20868,20 @@ def api_argus_admin_remote_journal_commit_receipt():
             not re.fullmatch(r"[0-9a-f]{16}", expected_hash):
         return jsonify({"ok": False, "status": "failed",
                         "error": "invalid_public_receipt"}), 400
+    receipt_created_at = _ai_now_iso()
     _REMOTE_CYCLE.update({
-        "remoteCommitSha": commit_sha, "committedAt": _ai_now_iso(),
+        "remoteCommitSha": commit_sha, "committedAt": receipt_created_at,
         "readBackAt": None, "readBackVerified": False,
         "walReadBackVerified": False,
         "expectedHash": expected_hash, "actualHash": None,
         "remoteWalAppliedSequence": 0,
         "compactReceiptHash": None,
         "pendingCount": len(_OPS_JOURNAL), "acknowledgedCount": 0,
+        "remoteDurabilityState": "verification_pending",
+        "receiptCommitSha": commit_sha,
+        "receiptCreatedAt": receipt_created_at,
+        "receiptVerifiedAt": None, "receiptAgeSeconds": 0,
+        "receiptAttempts": 0, "receiptErrorClass": None,
         "errorClass": None, "walErrorClass": None,
     })
     try:

@@ -112,17 +112,40 @@ SOAK_HEARTBEAT_GAP_SECONDS = 90 * 60
 SOAK_INTERRUPTION_GAP_SECONDS = 3 * 60 * 60
 
 
-def soak_start_decision(*, now_iso: str, build_sha: Optional[str],
+def soak_start_decision(*, now_iso: str, scheduled_for: str,
+                        trigger_source: str, mission_window_id: str,
+                        build_sha: Optional[str],
                         app_version: str,
                         process_booted_at: Optional[str],
                         restore_completed_at: Optional[str],
                         startup_state: str, integrity_ok: bool,
                         public_leak_safe: bool,
                         scheduler_ready: bool) -> Dict[str, Any]:
-    """soak開始ゲート。前提(build識別/復元完了/整合ok/leak-safe/scheduler ready)
-    未達なら開始しない。startedAtは now/boot/復元完了 の最大 — bootや復元より
-    前の開始時刻は構造的に不可能。commit/merge時刻は入力に存在しない。"""
+    """Natural EC2 mission windowだけにSoak開始権限を与える。
+
+    ``now_iso`` は検証時刻に過ぎず、Soak時計には使わない。startedAtは
+    mission windowのscheduledAtと完全一致する。手動/GitHub実行、bootや
+    restoreより前のwindow、未来windowはfail closedにする。
+    """
     blockers = []
+    scheduled_ep = _ep(scheduled_for)
+    now_ep = _ep(now_iso)
+    boot_ep = _ep(process_booted_at)
+    restore_ep = _ep(restore_completed_at)
+    if trigger_source != "ec2_systemd":
+        blockers.append("natural_ec2_execution_required")
+    if not mission_window_id or not str(mission_window_id).startswith("mw-"):
+        blockers.append("mission_window_identity_invalid")
+    if scheduled_ep is None:
+        blockers.append("scheduled_at_invalid")
+    elif now_ep is not None and scheduled_ep > now_ep + 1:
+        blockers.append("scheduled_at_in_future")
+    if scheduled_ep is not None and boot_ep is not None and \
+            scheduled_ep < boot_ep - 1:
+        blockers.append("mission_window_before_boot")
+    if scheduled_ep is not None and restore_ep is not None and \
+            scheduled_ep < restore_ep - 1:
+        blockers.append("mission_window_before_restore")
     if not build_sha:
         blockers.append("build_identity_unknown")
     if startup_state not in ("ready", "ready_degraded"):
@@ -136,12 +159,46 @@ def soak_start_decision(*, now_iso: str, build_sha: Optional[str],
     if blockers:
         return {"allowed": False, "blockers": blockers, "startedAt": None,
                 "ownerReadableJa": "soak開始条件未達: " + ",".join(blockers)}
-    started = _iso_max(now_iso, process_booted_at, restore_completed_at)
-    return {"allowed": True, "blockers": [], "startedAt": started,
-            "startReason": "runtime_ready_first_tick",
-            "startTimeSource": "first_verified_ready_runtime",
-            "ownerReadableJa": ("build稼働・復元完了を確認した最初のtickで開始"
-                                "(デプロイ時刻の捏造なし・boot/復元前に遡らない)")}
+    return {"allowed": True, "blockers": [], "startedAt": scheduled_for,
+            "startedBy": "ec2_systemd",
+            "firstMissionWindowId": mission_window_id,
+            "startReason": "first_natural_ec2_mission_window",
+            "startTimeSource": "mission_window_scheduled_at",
+            "ownerReadableJa": ("自然EC2 mission windowで開始"
+                                "(startedAt=scheduledAt、手動時刻の流用なし)")}
+
+
+def formal_soak_closure(*, soak_state: Dict[str, Any],
+                        mission_result: Optional[str],
+                        remote_cycle: Dict[str, Any]) -> Dict[str, Any]:
+    """72h時計・scheduler・mission・Remote Journalを独立評価する。"""
+    duration_ok = float(soak_state.get("elapsedHours") or 0) >= 72
+    scheduler_ok = soak_state.get("schedulerContinuityVerified") is True
+    mission_ok = (
+        mission_result in ("caught_up", "completed", "no_new_session") and
+        soak_state.get("failureClass") not in
+        ("application_failure", "build_mismatch",
+         "durable_integrity_failure", "journal_failure"))
+    remote_ok = (
+        remote_cycle.get("remoteDurabilityState") == "verified" and
+        remote_cycle.get("readBackVerified") is True and
+        remote_cycle.get("walReadBackVerified") is True)
+    completed = bool(duration_ok and scheduler_ok and mission_ok and remote_ok)
+    return {
+        "completed72h": completed,
+        "duration": {"passed": duration_ok,
+                     "elapsedHours": soak_state.get("elapsedHours")},
+        "schedulerContinuity": {
+            "passed": scheduler_ok,
+            "failureClass": soak_state.get("failureClass")},
+        "missionExecution": {"passed": mission_ok, "result": mission_result},
+        "remoteDurability": {
+            "passed": remote_ok,
+            "state": remote_cycle.get("remoteDurabilityState"),
+            "receiptCommitSha": remote_cycle.get("receiptCommitSha"),
+            "receiptErrorClass": remote_cycle.get("receiptErrorClass")},
+        "status": "completed" if completed else "observing",
+    }
 
 
 def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
@@ -305,6 +362,17 @@ def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
         and heartbeat.get("journalStatus") not in
         ("hash_mismatch", "unreadable", "sequence_conflict")
     ]
+    latest_evidence_gap = (
+        now_ep - _ep(last.get("observedAt"))
+        if last and now_ep is not None and
+        _ep(last.get("observedAt")) is not None else None)
+    scheduler_continuity_verified = bool(
+        started and last and
+        max_evidence_gap <= SOAK_HEARTBEAT_GAP_SECONDS and
+        latest_evidence_gap is not None and
+        latest_evidence_gap <= SOAK_HEARTBEAT_GAP_SECONDS and
+        any(int(h.get("schedulerDelaySeconds") or 0) <= 5 * 60
+            for h in healthy_fresh))
     reference = healthy_fresh[-1] if healthy_fresh else last
     blocker = None
     failure_class = None
@@ -391,6 +459,8 @@ def build_soak_state(*, soak: Dict[str, Any], now_iso: str,
             "lastHeartbeatSource": last.get("source") if last else None,
             "lastHeartbeat": last, "elapsedHours": elapsed or 0,
             "maximumEvidenceGapSeconds": int(max_evidence_gap),
+            "schedulerContinuityVerified":
+                scheduler_continuity_verified,
             "blockerJa": blocker, "ownerReadableJa": owner,
             "failureClass": failure_class,
             "reason": failure_reason,
