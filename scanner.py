@@ -15878,7 +15878,7 @@ def _osint_persist_locked():
                     _FORMAL_BENCHMARK_V2),
                 "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
                 "schemaVersion": _DURABLE_STATE["schemaVersion"],
-                "soak": _SOAK,
+                "soak": copy.deepcopy(_SOAK),
                 "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
                 "soakControl": dict(_SOAK_CONTROL),
                 "missions": _MISSIONS[-120:],
@@ -16309,7 +16309,8 @@ def _osint_restore_once():
             # (中断として記録)。別SHA/不明SHAは旧soak時計を継承しない —
             # 新buildのstartedAtがDeploy liveより前に遡る欠陥の根治。
             _dec = argus_runtime.soak_restore_decision(
-                persisted=sk, current_build_sha=_backend_sha(),
+                persisted=sk,
+                current_build_sha=_backend_exact_sha() or _backend_sha(),
                 boot_iso=_RUNTIME["processBootedAt"],
                 last_persist_at=blob.get("soakLastPersistAt")
                 or _DURABLE_STATE.get("lastKnownGoodAt"))
@@ -16320,7 +16321,8 @@ def _osint_restore_once():
                            "startReason", "startTimeSource", "heartbeats",
                            "startedBy", "firstMissionWindowId",
                            "completed72h", "interruptionCount",
-                           "state", "lastHeartbeatAt", "lastHeartbeatSource"):
+                           "state", "lastHeartbeatAt", "lastHeartbeatSource",
+                           "previousSoak"):
                     _SOAK[_k] = sk.get(_k)
                 if not isinstance(_SOAK.get("heartbeats"), list):
                     _SOAK["heartbeats"] = []
@@ -16339,6 +16341,16 @@ def _osint_restore_once():
                     _SOAK_HISTORY.append(copy.deepcopy(sk))
                     del _SOAK_HISTORY[:-8]
                 _SOAK["previousSoak"] = _dec.get("previousSoakSummary")
+        if isinstance(sk, dict):
+            _previous = (_SOAK.get("previousSoak") or
+                         sk.get("previousSoak"))
+            _normalized_previous = \
+                argus_runtime.normalize_previous_soak_summary(
+                    previous=_previous, history=_SOAK_HISTORY,
+                    current_build_sha=_backend_exact_sha() or _backend_sha(),
+                    boot_iso=_RUNTIME["processBootedAt"])
+            if _normalized_previous is not None:
+                _SOAK["previousSoak"] = _normalized_previous
         for h in (blob.get("missions") or [])[-120:]:
             if isinstance(h, dict) and not any(
                     x.get("idempotencyKey") == h.get("idempotencyKey")
@@ -20824,7 +20836,7 @@ def api_argus_osint_memory_snapshot():
                     "formalResearchBenchmarkV2": argus_research_benchmark_v2.normalize_state(
                         _FORMAL_BENCHMARK_V2),
                     "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
-                    "soak": _SOAK,
+                    "soak": copy.deepcopy(_SOAK),
                     "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
                     "soakControl": dict(_SOAK_CONTROL),
                     "soakLastPersistAt": _now,
