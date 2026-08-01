@@ -9,6 +9,7 @@ Gitのcommit/merge時刻はデプロイ時刻ではない。Render Deploy live�
 取得できない場合は「そのSHAで最初に検証されたhealthy-ready実行時刻」を使い、
 時刻ソースを正直にラベルする。
 """
+import copy
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -112,6 +113,219 @@ SOAK_HEARTBEAT_GAP_SECONDS = 90 * 60
 SOAK_INTERRUPTION_GAP_SECONDS = 3 * 60 * 60
 
 
+def _same_build_identity(left: Optional[str], right: Optional[str]) -> bool:
+    """Accept exact or unambiguous seven-character/full SHA equivalents."""
+    a, b = str(left or "").strip().lower(), str(right or "").strip().lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return min(len(a), len(b)) >= 7 and (a.startswith(b) or b.startswith(a))
+
+
+def _historical_gap_evidence(soak: Dict[str, Any]) -> Dict[str, Any]:
+    points: List[Tuple[float, str]] = []
+    started = soak.get("startedAt")
+    if _ep(started) is not None:
+        points.append((_ep(started), str(started)))
+    for row in (soak.get("heartbeats") or []):
+        if not isinstance(row, dict):
+            continue
+        observed = row.get("observedAt")
+        if _ep(observed) is not None:
+            points.append((_ep(observed), str(observed)))
+    points.sort(key=lambda item: item[0])
+    gaps = [
+        (right[0] - left[0], left[1], right[1])
+        for left, right in zip(points, points[1:])
+    ]
+    if not gaps:
+        return {"maximumEvidenceGapSeconds": 0,
+                "maximumEvidenceGapStartAt": None,
+                "maximumEvidenceGapEndAt": None}
+    seconds, start_at, end_at = max(gaps, key=lambda item: item[0])
+    return {"maximumEvidenceGapSeconds": int(seconds),
+            "maximumEvidenceGapStartAt": start_at,
+            "maximumEvidenceGapEndAt": end_at}
+
+
+def historical_soak_summary(
+        *, persisted: Any, superseding_build_sha: Optional[str],
+        superseded_at: Optional[str] = None,
+        lifecycle_relation: str = "superseded_by_backend_deployment",
+        lifecycle_reason: str = "backend_build_changed") -> Dict[str, Any]:
+    """Project immutable terminal truth separately from lifecycle metadata.
+
+    The input is never mutated.  Missing historical failure evidence stays
+    explicit and null; no deployment/restart may manufacture a terminal
+    result that was not present or derivable from durable heartbeat evidence.
+    """
+    source = copy.deepcopy(persisted) if isinstance(persisted, dict) else {}
+    build_sha = source.get("buildShaFull") or source.get("buildSha")
+    rows = [row for row in (source.get("heartbeats") or [])
+            if isinstance(row, dict)]
+    last_at = source.get("lastHeartbeatAt")
+    if not last_at and rows:
+        last_at = rows[-1].get("observedAt")
+    derived: Dict[str, Any] = {}
+    if source.get("startedAt") and rows and build_sha and last_at:
+        derived = build_soak_state(
+            soak=source, now_iso=str(last_at),
+            current_build_sha=str(source.get("buildSha") or build_sha),
+            required_hours=int(source.get("requiredHours") or 72))
+
+    stored_state = source.get("terminalState") or source.get("state")
+    terminal_states = {"interrupted", "completed", "operationally_verified",
+                       "failed"}
+    stale_pin = any(row.get("healthStatus") == "build_mismatch"
+                    for row in rows)
+    if stored_state in terminal_states:
+        terminal_state = str(stored_state)
+    elif stale_pin:
+        terminal_state = "interrupted"
+    elif derived.get("state") in terminal_states:
+        terminal_state = str(derived.get("state"))
+    else:
+        terminal_state = "historical_evidence_incomplete"
+
+    failure_class = source.get("failureClass")
+    failure_source = "persisted" if failure_class else None
+    if not failure_class and terminal_state == "interrupted" and stale_pin:
+        failure_class = "scheduler_configuration_mismatch"
+        failure_source = "derived_from_persisted_build_mismatch_heartbeat"
+    if not failure_class and terminal_state == "interrupted" and \
+            derived.get("state") == "interrupted" and \
+            derived.get("failureClass"):
+        failure_class = derived.get("failureClass")
+        failure_source = "derived_from_persisted_heartbeat_evidence"
+
+    interruptions = copy.deepcopy(source.get("interruptions") or [])
+    detected = [row.get("detectedAt") for row in interruptions
+                if isinstance(row, dict) and row.get("detectedAt")]
+    interrupted_at = source.get("interruptedAt") or \
+        source.get("interruptionAt") or _iso_max(*detected)
+    gap = _historical_gap_evidence(source)
+    incomplete = terminal_state == "historical_evidence_incomplete" or (
+        terminal_state == "interrupted" and not failure_class)
+    missing = []
+    if not source.get("soakId"):
+        missing.append("soakId")
+    if not source.get("startedAt"):
+        missing.append("startedAt")
+    if terminal_state == "historical_evidence_incomplete":
+        missing.append("terminalState")
+    if terminal_state == "interrupted" and not failure_class:
+        missing.append("failureClass")
+
+    relationship_sha = str(superseding_build_sha or "") or None
+    failure_reason = (source.get("failureReason") or derived.get("reason") or
+                      ("stale_ec2_expected_build_sha" if stale_pin else None))
+    try:
+        interruption_count = int(
+            source.get("interruptionCount") or len(interruptions))
+    except (TypeError, ValueError):
+        interruption_count = len(interruptions)
+    restart_count = sum(
+        str(row.get("type") or "") in {
+            "process_restart", "process_restart_same_build"}
+        for row in interruptions if isinstance(row, dict))
+    out = {
+        "soakId": source.get("soakId"),
+        "buildSha": source.get("buildSha") or "unknown",
+        "buildShaFull": source.get("buildShaFull"),
+        "backendBuildSha": build_sha or "unknown",
+        "appVersion": source.get("appVersion"),
+        "backendVersion": source.get("backendVersion") or
+            source.get("appVersion"),
+        "startedAt": source.get("startedAt"),
+        "state": terminal_state,
+        "status": terminal_state,
+        "terminalState": terminal_state,
+        "failureClass": failure_class,
+        "failureClassSource": failure_source or "unavailable",
+        "failureReason": failure_reason,
+        "interruptedAt": interrupted_at,
+        "continuityInterruptions": interruptions,
+        "interruptionCount": interruption_count,
+        "restartCount": restart_count,
+        "lastHeartbeatAt": last_at,
+        "lastHeartbeatSource": source.get("lastHeartbeatSource"),
+        "heartbeatCount": len(rows),
+        **gap,
+        "completed72h": bool(source.get("completed72h")),
+        "formalResult": source.get("formalResult"),
+        "inherited": False,
+        "archiveImmutable": True,
+        "historicalEvidenceState": (
+            "historical_evidence_incomplete" if incomplete else
+            "preserved_from_immutable_history"),
+        "missingHistoricalFields": sorted(set(missing)),
+        "lifecycleRelation": lifecycle_relation,
+        "lifecycleReason": lifecycle_reason,
+        # Legacy alias retained for consumers; lifecycleReason is canonical.
+        "reason": failure_reason or lifecycle_reason,
+        "supersededByBuildSha": relationship_sha,
+        # Backward-compatible alias; it no longer replaces terminal state.
+        "supersededBy": relationship_sha,
+        "supersedingBuildShaExact": bool(
+            relationship_sha and len(relationship_sha) == 40),
+    }
+    if superseded_at:
+        out["supersededAt"] = superseded_at
+    return out
+
+
+def normalize_previous_soak_summary(
+        *, previous: Any, history: Any,
+        current_build_sha: Optional[str], boot_iso: str) -> Optional[Dict[str, Any]]:
+    """Idempotently rebuild a public summary from immutable history."""
+    prev = copy.deepcopy(previous) if isinstance(previous, dict) else {}
+    history_rows = [copy.deepcopy(row) for row in (history or [])
+                    if isinstance(row, dict)]
+    soak_id = prev.get("soakId")
+    started_at = prev.get("startedAt")
+    match = next((row for row in reversed(history_rows)
+                  if row.get("soakId") == soak_id and
+                  (not started_at or row.get("startedAt") == started_at)), None)
+    relationship_sha = (prev.get("supersededByBuildSha") or
+                        prev.get("supersededBy") or current_build_sha)
+    if match is not None:
+        return historical_soak_summary(
+            persisted=match,
+            superseding_build_sha=relationship_sha,
+            superseded_at=prev.get("supersededAt"),
+            lifecycle_relation=prev.get("lifecycleRelation") or
+                "superseded_by_backend_deployment",
+            lifecycle_reason=prev.get("lifecycleReason") or
+                prev.get("reason") or "backend_build_changed")
+    if not prev:
+        return None
+    # The compact legacy summary is not authoritative terminal evidence.
+    return {
+        "soakId": soak_id,
+        "buildSha": prev.get("buildSha") or "unknown",
+        "startedAt": started_at,
+        "state": "historical_evidence_incomplete",
+        "status": "historical_evidence_incomplete",
+        "terminalState": "historical_evidence_incomplete",
+        "failureClass": None,
+        "failureClassSource": "unavailable",
+        "inherited": False,
+        "archiveImmutable": False,
+        "historicalEvidenceState": "historical_evidence_incomplete",
+        "missingHistoricalFields": ["authoritativeHistoryRecord",
+                                    "terminalState", "failureClass"],
+        "lifecycleRelation": prev.get("lifecycleRelation") or
+            "superseded_by_backend_deployment",
+        "lifecycleReason": prev.get("lifecycleReason") or
+            prev.get("reason") or "backend_build_changed",
+        "supersededByBuildSha": relationship_sha,
+        "supersededBy": relationship_sha,
+        "supersedingBuildShaExact": bool(
+            relationship_sha and len(str(relationship_sha)) == 40),
+    }
+
+
 def soak_start_decision(*, now_iso: str, scheduled_for: str,
                         trigger_source: str, mission_window_id: str,
                         build_sha: Optional[str],
@@ -211,7 +425,8 @@ def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
     if not isinstance(persisted, dict) or not persisted.get("startedAt"):
         return {"action": "ignore", "ownerReadableJa": "復元soakなし"}
     p_sha = persisted.get("buildSha")
-    if p_sha and current_build_sha and p_sha == current_build_sha:
+    if p_sha and current_build_sha and _same_build_identity(
+            str(p_sha), str(current_build_sha)):
         gap_min = None
         ea, eb = _ep(last_persist_at), _ep(boot_iso)
         if ea is not None and eb is not None:
@@ -226,27 +441,13 @@ def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
                 "ownerReadableJa": ("同一SHA再起動 — soak継続+中断を記録"
                                     + ("(検証済み復旧)" if verified
                                        else "(未検証中断 — 隠さない)"))}
-    rows = [row for row in (persisted.get("heartbeats") or [])
-            if isinstance(row, dict)]
-    last_heartbeat = persisted.get("lastHeartbeat")
-    if isinstance(last_heartbeat, dict):
-        rows.append(last_heartbeat)
-    stale_pin = any(row.get("healthStatus") == "build_mismatch"
-                    for row in rows)
-    previous_status = "interrupted" if stale_pin else "superseded"
-    previous_reason = ("stale_ec2_expected_build_sha" if stale_pin
-                       else "v13_product_rebuild")
-    previous_failure = ("scheduler_configuration_mismatch" if stale_pin
-                        else None)
+    previous = historical_soak_summary(
+        persisted=persisted,
+        superseding_build_sha=current_build_sha,
+        superseded_at=boot_iso,
+        lifecycle_reason="backend_build_changed")
     return {"action": "new_soak",
-            "previousSoakSummary": {"soakId": persisted.get("soakId"),
-                                    "buildSha": p_sha or "unknown",
-                                    "startedAt": persisted.get("startedAt"),
-                                    "inherited": False,
-                                    "status": previous_status,
-                                    "failureClass": previous_failure,
-                                    "reason": previous_reason,
-                                    "supersededBy": current_build_sha},
+            "previousSoakSummary": previous,
             "ownerReadableJa": ("build SHAが異なる/不明 — 旧soak時計を継承しない"
                                 "(build-scoped soak)")}
 
@@ -551,7 +752,7 @@ def build_soak(*, soak: Dict[str, Any], now_iso: str, startup_state: str,
             "unresolvedCriticalIncidents": int(unresolved_critical_incidents),
             "durabilityIntegrity": durability_integrity,
             "clockAnomaly": bool(clock_anomaly),
-            "previousSoak": soak.get("previousSoak"),
+            "previousSoak": copy.deepcopy(soak.get("previousSoak")),
             "ownerReadableJa": ja,
             # statusは既存API互換、stateはv12.3.1 heartbeat state machine。
             **state_view}
