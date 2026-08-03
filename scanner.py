@@ -108,6 +108,7 @@ import argus_market_intelligence    # deterministic Daily Market Sheet/backfill 
 import argus_verified_snapshot      # v13.3.0: atomic precomputed public view snapshots
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
+import argus_checkpoint_v2          # bounded Stage-1 dual-write architecture
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
@@ -15642,6 +15643,16 @@ _DURABILITY_PRODUCTION = argus_persistent_storage.production_mode()
 _DURABILITY_PATHS = argus_persistent_storage.configured_paths(
     production=_DURABILITY_PRODUCTION)
 _OSINT_PERSIST_FILE = _DURABILITY_PATHS["checkpoint"]
+_CHECKPOINT_V2_ROOT = os.path.join(
+    _DURABILITY_PATHS["root"], "argus_checkpoint_v2")
+_CHECKPOINT_V2_STAGE1_ENABLED = str(os.environ.get(
+    "ARGUS_CHECKPOINT_V2_STAGE1", "0")).strip().lower() in (
+        "1", "true", "yes")
+_CHECKPOINT_V2_STATUS = {
+    "schemaVersion": argus_checkpoint_v2.SCHEMA,
+    "state": "stage1_dual_write_pending" if _CHECKPOINT_V2_STAGE1_ENABLED
+    else "disabled",
+}
 _OSINT_PERSIST_STATE = {"restored": False}
 _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
@@ -15931,6 +15942,12 @@ def _osint_persist_locked():
                 _MISSION_TICK_CONTEXT.get("missionWindowId")))
         metadata = _persist_durability_metadata()
         checkpoint["metadata"] = metadata
+        # Stage 1 is deliberately non-authoritative. The already-verified
+        # legacy checkpoint remains the sole restore source and WAL semantics
+        # are unchanged. A V2 write failure is surfaced, never promoted into a
+        # false legacy failure or an automatic restore cutover.
+        checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(
+            sealed_blob, checkpoint)
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
         _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
         _DURABLE_STATE["integrityStatus"] = "ok"
@@ -15959,6 +15976,44 @@ def _osint_persist_locked():
         _DURABLE_STATE["integrityStatus"] = "write_failed"
         _DURABLE_STATE["lastCheckpointError"] = type(exc).__name__
         return {"verified": False, "errorClass": type(exc).__name__}
+
+
+def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
+    global _CHECKPOINT_V2_STATUS
+    if not _CHECKPOINT_V2_STAGE1_ENABLED:
+        _CHECKPOINT_V2_STATUS = {
+            "schemaVersion": argus_checkpoint_v2.SCHEMA,
+            "state": "disabled",
+        }
+        return dict(_CHECKPOINT_V2_STATUS)
+    source_generation = str(
+        legacy_checkpoint.get("snapshotHash") or
+        (blob.get("localCheckpointIntegrity") or {}).get("snapshotHash") or
+        legacy_checkpoint.get("verifiedAt") or "legacy-verified")
+    try:
+        result = argus_checkpoint_v2.write_generation(
+            _CHECKPOINT_V2_ROOT, blob,
+            source_generation=source_generation)
+        _CHECKPOINT_V2_STATUS = {
+            **argus_checkpoint_v2.public_status(_CHECKPOINT_V2_ROOT),
+            "lastWriteVerified": bool(result.get("verified")),
+            "lastErrorClass": None,
+        }
+    except argus_checkpoint_v2.CheckpointV2Error as exc:
+        _CHECKPOINT_V2_STATUS = {
+            "schemaVersion": argus_checkpoint_v2.SCHEMA,
+            "state": "stage1_dual_write_failed",
+            "lastWriteVerified": False,
+            "lastErrorClass": exc.classification,
+        }
+    except Exception as exc:
+        _CHECKPOINT_V2_STATUS = {
+            "schemaVersion": argus_checkpoint_v2.SCHEMA,
+            "state": "stage1_dual_write_failed",
+            "lastWriteVerified": False,
+            "lastErrorClass": type(exc).__name__,
+        }
+    return dict(_CHECKPOINT_V2_STATUS)
 
 
 def _foundation_jobs_persist():
@@ -17721,6 +17776,7 @@ def readyz():
     payload["persistentStorage"] = argus_persistent_storage.public_diagnostics(
         _DURABLE_STORAGE_STATUS, _DURABILITY_PATHS,
         production=_DURABILITY_PRODUCTION)
+    payload["checkpointV2"] = dict(_CHECKPOINT_V2_STATUS)
     return jsonify(payload), code
 
 

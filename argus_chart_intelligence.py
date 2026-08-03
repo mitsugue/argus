@@ -20,6 +20,11 @@ SCHEMA_VERSION = "argus-chart-intelligence-v1"
 STATE_SCHEMA_VERSION = "argus-chart-intelligence-ledger-v1"
 METHOD_VERSION = "chart-intelligence-phase2-v1"
 MA_WINDOWS = (5, 25, 75, 100, 200)
+STATE_LIMITS = {
+    "snapshots": 512, "zones": 4000, "turningPoints": 20000,
+    "reactionAnomalies": 2000, "relationshipBreaks": 2000,
+    "invalidations": 4000,
+}
 
 
 def _hash(value: Any, length: int = 24) -> str:
@@ -776,7 +781,12 @@ def normalize_state(value: Any) -> Dict[str, Any]:
     state = empty_state()
     for key in ("snapshots", "zones", "turningPoints", "reactionAnomalies",
                 "relationshipBreaks", "invalidations"):
-        state[key] = [x for x in source.get(key, []) if isinstance(x, dict)]
+        rows = [x for x in source.get(key, []) if isinstance(x, dict)]
+        rows.sort(key=lambda row: str(
+            row.get("effectiveFrom") or row.get("periodEnd") or
+            row.get("calculatedAt") or row.get("invalidatedAt") or
+            row.get("id") or ""))
+        state[key] = rows[-STATE_LIMITS[key]:]
     state["lastUpdatedAt"] = source.get("lastUpdatedAt")
     return state
 

@@ -25,6 +25,8 @@ EXTREME_VERSION = "ledger-extremes-fixed-thresholds-v2-standard-excursion"
 HORIZONS = (1, 5, 20)
 COOLDOWN_TRADING_DAYS = 5
 MAX_EPISODES = 40
+MAX_CONTEXTS = 32
+MAX_CONTEXT_HISTORY = 1024
 MIN_REGIME_SAMPLE = 20
 EXTREME_THRESHOLDS = (1, 5, 10, 90, 95, 99)
 METRIC_DEFINITION = {
@@ -623,12 +625,12 @@ def normalize_state(value: Any) -> Dict[str, Any]:
                 str(by_slot[slot].get("asOf") or ""):
             by_slot[slot] = row
     out["contexts"] = sorted(by_slot.values(),
-                             key=lambda row: str(row.get("asOf") or row["contextId"]))
+                             key=lambda row: str(row.get("asOf") or row["contextId"]))[-MAX_CONTEXTS:]
     history = [row for row in source.get("contextHistory", [])
                if isinstance(row, dict) and row.get("contextId")]
     by_history = {row["contextId"]: row for row in history}
     out["contextHistory"] = sorted(
-        by_history.values(), key=lambda row: str(row.get("asOf") or row["contextId"]))
+        by_history.values(), key=lambda row: str(row.get("asOf") or row["contextId"]))[-MAX_CONTEXT_HISTORY:]
     out["lastUpdatedAt"] = source.get("lastUpdatedAt")
     return out
 

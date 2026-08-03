@@ -23,6 +23,8 @@ MIN_EFFECTIVE_SAMPLES = 30
 HORIZONS = (1, 5, 20)
 UNIFORM_MULTICLASS_BRIER = 2.0 / 3.0
 MAX_BRIER_DEGRADATION = 0.02
+STATE_LIMITS = {"snapshots": 1024, "shortSellingHistory": 3000,
+                "failedRallyOutcomes": 5000}
 
 
 def _number(value: Any) -> Optional[float]:
@@ -756,7 +758,10 @@ def normalize_state(value: Any) -> Dict[str, Any]:
     source = value if isinstance(value, dict) else {}
     out = empty_state()
     for key in ("snapshots", "shortSellingHistory", "failedRallyOutcomes"):
-        out[key] = [row for row in source.get(key, []) if isinstance(row, dict)]
+        rows = [row for row in source.get(key, []) if isinstance(row, dict)]
+        rows.sort(key=lambda row: str(
+            row.get("date") or row.get("asOf") or row.get("id") or ""))
+        out[key] = rows[-STATE_LIMITS[key]:]
     out["lastUpdatedAt"] = source.get("lastUpdatedAt")
     return out
 

@@ -17,6 +17,7 @@ import unittest
 from unittest import mock
 
 import argus_persistent_storage as storage
+import argus_checkpoint_v2
 import argus_remote_journal
 import argus_tick_durability as durability
 
@@ -261,6 +262,37 @@ class PathValidationTests(unittest.TestCase):
                 value[key] == os.path.realpath("/var/data") or
                 value[key].startswith(os.path.realpath("/var/data") + "/"),
                 (key, value))
+
+
+class CheckpointV2Stage1IntegrationTests(unittest.TestCase):
+    def test_stage1_dual_write_is_non_authoritative_and_verified(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
+                mock.patch.object(scanner, "_CHECKPOINT_V2_ROOT",
+                                  os.path.join(root, "v2")):
+            blob = storage.seal_checkpoint(remote_snapshot())
+            legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
+            result = scanner._checkpoint_v2_dual_write(blob, legacy_result)
+            self.assertEqual(result["state"], "stage1_dual_write")
+            self.assertTrue(result["lastWriteVerified"])
+            self.assertTrue(legacy_result["verified"])
+            self.assertEqual(
+                argus_checkpoint_v2.restore_generation(
+                    os.path.join(root, "v2"))["snapshot"], blob)
+
+    def test_stage1_v2_failure_does_not_turn_legacy_success_into_failure(self):
+        with mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
+                mock.patch.object(
+                    argus_checkpoint_v2, "write_generation",
+                    side_effect=argus_checkpoint_v2.CheckpointV2Error(
+                        "checkpoint_v2_total_limit_exceeded")):
+            legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
+            result = scanner._checkpoint_v2_dual_write(
+                storage.seal_checkpoint(remote_snapshot()), legacy_result)
+            self.assertEqual(result["state"], "stage1_dual_write_failed")
+            self.assertEqual(result["lastErrorClass"],
+                             "checkpoint_v2_total_limit_exceeded")
+            self.assertTrue(legacy_result["verified"])
 
     def test_runtime_rejects_persistent_root_configuration_drift(self):
         with tempfile.TemporaryDirectory() as root:
