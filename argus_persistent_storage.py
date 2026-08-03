@@ -30,6 +30,9 @@ MINIMUM_WAL_ALLOWANCE = 8 * 1024 * 1024
 MAXIMUM_LEGACY_FILE_SEAL_BYTES = 64 * 1024
 DEFAULT_MAXIMUM_CHECKPOINT_BYTES = 512 * 1024 * 1024
 JSON_STREAM_CHUNK_BYTES = 1024 * 1024
+MAXIMUM_JSON_SCALAR_CHARS = 8 * 1024 * 1024
+POST_HOTFIX_TEMP_MARKER = "v1338"
+POST_HOTFIX_TEMP_RETENTION_SECONDS = 24 * 60 * 60
 
 
 class PersistentStorageError(RuntimeError):
@@ -37,9 +40,10 @@ class PersistentStorageError(RuntimeError):
 
     error_class = "persistent_storage_unavailable"
 
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, *, details: Optional[Mapping[str, Any]] = None):
         super().__init__(reason)
         self.reason = reason
+        self.details = dict(details or {})
 
 
 def _iso_now() -> str:
@@ -54,12 +58,54 @@ def _canonical(value: Any) -> bytes:
 
 def _canonical_chunks(value: Any):
     """Yield canonical JSON without retaining the complete encoding in RAM."""
+    _validate_streamable_value(value)
     encoder = json.JSONEncoder(
         ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     for text in encoder.iterencode(value):
         encoded = text.encode("utf-8")
         for offset in range(0, len(encoded), JSON_STREAM_CHUNK_BYTES):
             yield encoded[offset:offset + JSON_STREAM_CHUNK_BYTES]
+
+
+def _validate_streamable_value(value: Any) -> None:
+    """Bound JSON scalar tokens before the encoder can allocate one whole.
+
+    ``JSONEncoder.iterencode`` streams containers but emits each string as one
+    token.  This stateless walk retains no second object graph and prevents a
+    single source scalar from bypassing the streaming memory bound.
+    """
+    active = set()
+
+    def visit(current: Any) -> None:
+        if isinstance(current, str):
+            if len(current) > MAXIMUM_JSON_SCALAR_CHARS:
+                raise PersistentStorageError(
+                    "checkpoint_json_scalar_too_large",
+                    details={"maximumCharacters": MAXIMUM_JSON_SCALAR_CHARS})
+            return
+        if isinstance(current, Mapping):
+            identity = id(current)
+            if identity in active:
+                raise PersistentStorageError("checkpoint_json_cycle_detected")
+            active.add(identity)
+            try:
+                for key, item in current.items():
+                    visit(key)
+                    visit(item)
+            finally:
+                active.discard(identity)
+        elif isinstance(current, (list, tuple)):
+            identity = id(current)
+            if identity in active:
+                raise PersistentStorageError("checkpoint_json_cycle_detected")
+            active.add(identity)
+            try:
+                for item in current:
+                    visit(item)
+            finally:
+                active.discard(identity)
+
+    visit(value)
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -247,7 +293,9 @@ def _temp_bytes(directory: str, checkpoint_name: str) -> int:
             for entry in entries:
                 if entry.name.startswith(checkpoint_name + ".") and \
                         (entry.name.endswith(".tmp") or
-                         ".bootstrap-" in entry.name):
+                         entry.name.endswith(".v1338-tmp") or
+                         ".bootstrap-" in entry.name or
+                         ".v1338-bootstrap-" in entry.name):
                     with contextlib.suppress(OSError):
                         total += entry.stat(follow_symlinks=False).st_size
     except OSError:
@@ -305,15 +353,17 @@ def reconcile_abandoned_checkpoint_temps(
         owner_probe=_writer_pid_has_open_inode) -> Dict[str, Any]:
     """Stat-only discovery and conservative recovery of writer temporaries.
 
-    A file is removable only when its PID-stamped writer has no descriptor for
-    the exact device/inode *and* an exclusive non-blocking flock succeeds.
-    Contents are never loaded.  Existing uncooperative/unknown files remain.
+    Pre-v13.3.8 temporaries are immutable incident evidence.  A post-hotfix
+    file is removable only after the documented retention period, when its
+    PID-stamped writer has no descriptor for the exact device/inode *and* an
+    exclusive non-blocking flock succeeds.  Contents are never loaded.
     """
     final = os.path.abspath(path)
     directory = os.path.realpath(temp_directory or os.path.dirname(final))
     base = os.path.basename(final)
     pattern = re.compile(
-        rf"^{re.escape(base)}\.(\d+)\.([0-9a-f]{{32}})\.(tmp|bootstrap-[A-Za-z0-9_.-]+)$")
+        rf"^{re.escape(base)}\.(\d+)\.([0-9a-f]{{32}})\."
+        rf"(?:(v1338)-)?(tmp|bootstrap-[A-Za-z0-9_.-]+)$")
     observed_at = float(time.time() if now is None else now)
     entries = []
     removed = 0
@@ -335,6 +385,7 @@ def reconcile_abandoned_checkpoint_temps(
         if not entry.is_file(follow_symlinks=False):
             continue
         writer_pid = int(match.group(1))
+        post_hotfix = match.group(3) == POST_HOTFIX_TEMP_MARKER
         owner_open = owner_probe(
             writer_pid, device=metadata.st_dev, inode=metadata.st_ino)
         lock_acquired = False
@@ -346,7 +397,15 @@ def reconcile_abandoned_checkpoint_temps(
             lock_acquired = True
         except (BlockingIOError, OSError):
             lock_acquired = False
-        safe = bool(owner_open is False and lock_acquired)
+        age_seconds = max(0, int(observed_at - metadata.st_mtime))
+        retention_satisfied = bool(
+            post_hotfix and age_seconds >= POST_HOTFIX_TEMP_RETENTION_SECONDS)
+        safe = bool(owner_open is False and lock_acquired and
+                    retention_satisfied)
+        classification = (
+            "ordinary_post_hotfix_temp_cleanup_eligible" if safe else
+            "retained_post_hotfix_temp" if post_hotfix else
+            "retained_incident_evidence")
         removed_this = False
         if cleanup and safe:
             try:
@@ -373,15 +432,23 @@ def reconcile_abandoned_checkpoint_temps(
             "inode": metadata.st_ino,
             "mtimeNs": metadata.st_mtime_ns,
             "ctimeNs": metadata.st_ctime_ns,
-            "ageSeconds": max(0, int(observed_at - metadata.st_mtime)),
+            "ageSeconds": age_seconds,
             "writerHasOpenInode": owner_open,
             "exclusiveLockAcquired": lock_acquired,
+            "postHotfix": post_hotfix,
+            "retentionSeconds": POST_HOTFIX_TEMP_RETENTION_SECONDS,
+            "retentionSatisfied": retention_satisfied,
+            "classification": classification,
             "safeToRemove": safe,
             "removed": removed_this,
         })
     return {"scanned": True, "errorClass": None,
             "detectedCount": len(entries), "removedCount": removed,
-            "retainedCount": retained, "entries": entries}
+            "retainedCount": retained,
+            "retainedIncidentEvidenceCount": sum(
+                row["classification"] == "retained_incident_evidence"
+                for row in entries),
+            "entries": entries}
 
 
 def required_free_bytes(*, checkpoint_bytes: int, wal_bytes: int) -> int:
@@ -525,8 +592,10 @@ def atomic_write_json(
         raise PersistentStorageError("checkpoint_temp_filesystem_mismatch")
     temporary = os.path.join(
         directory,
-        f"{os.path.basename(final)}.{os.getpid()}.{uuid.uuid4().hex}.{temp_label}")
+        f"{os.path.basename(final)}.{os.getpid()}.{uuid.uuid4().hex}."
+        f"{POST_HOTFIX_TEMP_MARKER}-{temp_label}")
     maximum = int(maximum_bytes or _maximum_checkpoint_bytes())
+    _validate_streamable_value(value)
     if validator is not None and not validator(value):
         raise PersistentStorageError("checkpoint_source_invalid")
     writer_lock_path = final + ".writer.lock"
@@ -549,7 +618,14 @@ def atomic_write_json(
             for chunk in _canonical_chunks(value):
                 if written + len(chunk) > maximum:
                     raise PersistentStorageError(
-                        "checkpoint_maximum_bytes_exceeded")
+                        "checkpoint_maximum_bytes_exceeded",
+                        details={"writtenBytes": written,
+                                 "nextChunkBytes": len(chunk),
+                                 "maximumBytes": maximum,
+                                 "temporaryOutcome":
+                                     "removed_current_writer_temp",
+                                 "previousCheckpointAuthoritative": True,
+                                 "walAuthoritative": True})
                 handle.write(chunk)
                 digest.update(chunk)
                 written += len(chunk)
@@ -659,7 +735,8 @@ def public_diagnostics(
         "abandonedCheckpointTemps": {
             key: (status.get("abandonedTempReconciliation") or {}).get(key)
             for key in ("scanned", "detectedCount", "removedCount",
-                        "retainedCount", "errorClass")
+                        "retainedCount", "retainedIncidentEvidenceCount",
+                        "errorClass")
         },
         "estimatedSafetyRatio": status.get("estimatedSafetyRatio"),
         "warning": status.get("warning"),

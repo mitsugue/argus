@@ -8,6 +8,7 @@ import os
 import pathlib
 import shutil
 import signal
+import subprocess
 import tempfile
 import threading
 import tracemalloc
@@ -471,7 +472,24 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
                     str(target), {"value": "x" * 2048},
                     temp_directory=root, maximum_bytes=1024)
             self.assertEqual(target.read_text(), '{"verified":"old"}')
-            self.assertEqual(list(pathlib.Path(root).glob("state.json.*.tmp")), [])
+            self.assertEqual(list(pathlib.Path(root).glob(
+                "state.json.*.v1338-tmp")), [])
+
+    def test_oversized_single_scalar_is_rejected_before_encoding(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = pathlib.Path(root, "state.json")
+            target.write_text('{"verified":"old"}', encoding="utf-8")
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "checkpoint_json_scalar_too_large"):
+                storage.atomic_write_json(
+                    str(target),
+                    {"value": "x" *
+                     (storage.MAXIMUM_JSON_SCALAR_CHARS + 1)},
+                    temp_directory=root)
+            self.assertEqual(target.read_text(), '{"verified":"old"}')
+            self.assertEqual(list(pathlib.Path(root).glob(
+                "state.json.*.v1338-tmp")), [])
 
     def test_checkpoint_writer_lock_rejects_concurrent_writer(self):
         with tempfile.TemporaryDirectory() as root:
@@ -490,21 +508,44 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
                 storage.fcntl.flock(lock.fileno(), storage.fcntl.LOCK_UN)
                 lock.close()
 
-    def test_abandoned_temp_cleanup_requires_inode_ownership_proof(self):
+    def test_pre_hotfix_temp_is_retained_as_incident_evidence(self):
         with tempfile.TemporaryDirectory() as root:
             final = pathlib.Path(root, "state.json")
             abandoned = pathlib.Path(
                 root, f"state.json.4242.{'a' * 32}.tmp")
             abandoned.write_bytes(b"do-not-load")
-            retained = storage.reconcile_abandoned_checkpoint_temps(
+            before = abandoned.stat()
+            result = storage.reconcile_abandoned_checkpoint_temps(
                 str(final), temp_directory=root, cleanup=True,
-                owner_probe=lambda *args, **kwargs: True)
-            self.assertEqual(retained["removedCount"], 0)
-            self.assertTrue(abandoned.exists())
-            removed = storage.reconcile_abandoned_checkpoint_temps(
-                str(final), temp_directory=root, cleanup=True,
+                now=before.st_mtime + 30 * 24 * 60 * 60,
                 owner_probe=lambda *args, **kwargs: False)
-            self.assertEqual(removed["removedCount"], 1)
+            after = abandoned.stat()
+            self.assertEqual(result["removedCount"], 0)
+            self.assertEqual(result["retainedIncidentEvidenceCount"], 1)
+            self.assertEqual(result["entries"][0]["classification"],
+                             "retained_incident_evidence")
+            self.assertEqual((before.st_dev, before.st_ino, before.st_mtime_ns),
+                             (after.st_dev, after.st_ino, after.st_mtime_ns))
+
+    def test_post_hotfix_temp_cleanup_requires_age_and_ownership_proof(self):
+        with tempfile.TemporaryDirectory() as root:
+            final = pathlib.Path(root, "state.json")
+            abandoned = pathlib.Path(
+                root, f"state.json.4242.{'a' * 32}.v1338-tmp")
+            abandoned.write_bytes(b"bounded-post-hotfix-temp")
+            written_at = abandoned.stat().st_mtime
+            fresh = storage.reconcile_abandoned_checkpoint_temps(
+                str(final), temp_directory=root, cleanup=True,
+                now=written_at + storage.POST_HOTFIX_TEMP_RETENTION_SECONDS - 1,
+                owner_probe=lambda *args, **kwargs: False)
+            self.assertEqual(fresh["removedCount"], 0)
+            self.assertEqual(fresh["entries"][0]["classification"],
+                             "retained_post_hotfix_temp")
+            old = storage.reconcile_abandoned_checkpoint_temps(
+                str(final), temp_directory=root, cleanup=True,
+                now=written_at + storage.POST_HOTFIX_TEMP_RETENTION_SECONDS + 1,
+                owner_probe=lambda *args, **kwargs: False)
+            self.assertEqual(old["removedCount"], 1)
             self.assertFalse(abandoned.exists())
 
     def test_absent_linux_writer_pid_proves_temp_has_no_owner(self):
@@ -524,12 +565,42 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 storage.atomic_write_json(
                     target, {"value": "partial"}, temp_directory=root)
-            leftovers = list(pathlib.Path(root).glob("state.json.*.tmp"))
+            leftovers = list(pathlib.Path(root).glob(
+                "state.json.*.v1338-tmp"))
             self.assertEqual(len(leftovers), 1)
+            written_at = leftovers[0].stat().st_mtime
             result = storage.reconcile_abandoned_checkpoint_temps(
                 target, temp_directory=root, cleanup=True,
+                now=written_at + storage.POST_HOTFIX_TEMP_RETENTION_SECONDS + 1,
                 owner_probe=lambda *args, **kwargs: False)
             self.assertEqual(result["removedCount"], 1)
+
+    def test_real_checkpoint_memory_probe_scenarios(self):
+        helper = pathlib.Path(__file__).parent / "scripts" / \
+            "checkpoint_memory_probe.py"
+        reports = {}
+        for mode in ("production", "oversized", "interrupted", "repeated"):
+            completed = subprocess.run(
+                [sys.executable, str(helper), "--mode", mode],
+                cwd=str(pathlib.Path(__file__).parent), text=True,
+                capture_output=True, check=True, timeout=180)
+            reports[mode] = json.loads(completed.stdout)
+        self.assertGreater(reports["production"]["writtenBytes"],
+                           124 * 1024 * 1024)
+        self.assertLess(reports["production"]["writtenBytes"],
+                        storage.DEFAULT_MAXIMUM_CHECKPOINT_BYTES)
+        self.assertEqual(reports["production"]["fullSizeBuffers"], 0)
+        self.assertEqual(reports["oversized"]["classification"],
+                         "checkpoint_maximum_bytes_exceeded")
+        self.assertLessEqual(reports["oversized"]["writtenBytes"],
+                             storage.DEFAULT_MAXIMUM_CHECKPOINT_BYTES)
+        self.assertTrue(reports["oversized"]["previousCheckpointPreserved"])
+        self.assertEqual(reports["oversized"]["tempCount"], 0)
+        self.assertEqual(reports["interrupted"]["classification"],
+                         "interrupted_serialization")
+        self.assertEqual(reports["interrupted"]["tempCount"], 1)
+        self.assertLess(reports["repeated"]["rssGrowthBytes"],
+                        32 * 1024 * 1024)
 
     def test_checkpoint_plus_wal_replays_after_cursor(self):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
