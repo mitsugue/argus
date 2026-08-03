@@ -17,6 +17,8 @@ import time
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
+import argus_persistent_storage
+
 
 UTC = dt.timezone.utc
 _PROCESS_LOCK = threading.Lock()
@@ -351,35 +353,28 @@ def verified_checkpoint(path: str, blob: Dict[str, Any], *,
                         compaction_sequence: Optional[int] = None,
                         build_sha: Optional[str] = None,
                         mission_window_id: Optional[str] = None) -> Dict[str, Any]:
-    """Write, fsync, parse/hash read-back, then atomically replace the snapshot."""
+    """Stream, fsync, hash read-back, then atomically replace the snapshot."""
     started = time.monotonic()
-    encoded = _canonical(blob)
+    sealed = "localCheckpointIntegrity" in blob
+    if not isinstance(blob, dict) or (sealed and not
+            argus_persistent_storage.verify_checkpoint(
+                blob, require_seal=True)):
+        raise ValueError("checkpoint_source_integrity_invalid")
     serialization_ms = round((time.monotonic() - started) * 1000)
-    expected_hash = hashlib.sha256(encoded).hexdigest()
-    temporary = f"{path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-    try:
-        with open(temporary, "wb") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        with open(temporary, "rb") as handle:
-            read_back = handle.read()
-        parsed = json.loads(read_back.decode("utf-8"))
-        read_back_hash = hashlib.sha256(_canonical(parsed)).hexdigest()
-        if read_back_hash != expected_hash:
-            raise ValueError("checkpoint_readback_hash_mismatch")
-        os.replace(temporary, path)
-        _fsync_parent(path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    write = argus_persistent_storage.atomic_write_json(
+        path, blob, temp_directory=os.path.dirname(os.path.abspath(path)),
+        validator=lambda value: isinstance(value, dict) and (
+            not sealed or argus_persistent_storage.verify_checkpoint(
+                value, require_seal=True)), temp_label="tmp")
+    expected_hash = write["snapshotHash"]
     verified_at = _iso_now()
     result = {
         "verified": True,
         "verifiedAt": verified_at,
-        "snapshotBytes": len(encoded),
+        "snapshotBytes": write["bytes"],
         "snapshotHash": expected_hash,
+        "readBackVerified": write["readBackVerified"],
+        "maximumSnapshotBytes": write["maximumBytes"],
         "serializationMs": serialization_ms,
         "checkpointMs": round((time.monotonic() - started) * 1000),
         "includedWalSequence": int(included_sequence),

@@ -10,6 +10,7 @@ import shutil
 import signal
 import tempfile
 import threading
+import tracemalloc
 import types
 import unittest
 from unittest import mock
@@ -438,6 +439,98 @@ class BootstrapAndReadinessTests(unittest.TestCase):
 
 
 class CrashLeaseAndShutdownTests(unittest.TestCase):
+    def test_124_mib_class_checkpoint_has_bounded_serialization_memory(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, "state.json")
+            shared_mebibyte = "x" * (1024 * 1024)
+            value = storage.seal_checkpoint({
+                "schemaVersion": "argus-durable-v3",
+                "blocks": [shared_mebibyte] * 124,
+            })
+            tracemalloc.start()
+            try:
+                result = storage.atomic_write_json(
+                    target, value, temp_directory=root,
+                    validator=lambda row: storage.verify_checkpoint(
+                        row, require_seal=True))
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            self.assertGreater(result["bytes"], 124 * 1024 * 1024)
+            self.assertLess(peak, 24 * 1024 * 1024)
+            self.assertTrue(result["readBackVerified"])
+
+    def test_maximum_checkpoint_guard_preserves_last_known_good(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = pathlib.Path(root, "state.json")
+            target.write_text('{"verified":"old"}', encoding="utf-8")
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "checkpoint_maximum_bytes_exceeded"):
+                storage.atomic_write_json(
+                    str(target), {"value": "x" * 2048},
+                    temp_directory=root, maximum_bytes=1024)
+            self.assertEqual(target.read_text(), '{"verified":"old"}')
+            self.assertEqual(list(pathlib.Path(root).glob("state.json.*.tmp")), [])
+
+    def test_checkpoint_writer_lock_rejects_concurrent_writer(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, "state.json")
+            lock = open(target + ".writer.lock", "a+b")
+            try:
+                storage.fcntl.flock(
+                    lock.fileno(), storage.fcntl.LOCK_EX |
+                    storage.fcntl.LOCK_NB)
+                with self.assertRaisesRegex(
+                        storage.PersistentStorageError,
+                        "checkpoint_writer_busy"):
+                    storage.atomic_write_json(
+                        target, {"value": 1}, temp_directory=root)
+            finally:
+                storage.fcntl.flock(lock.fileno(), storage.fcntl.LOCK_UN)
+                lock.close()
+
+    def test_abandoned_temp_cleanup_requires_inode_ownership_proof(self):
+        with tempfile.TemporaryDirectory() as root:
+            final = pathlib.Path(root, "state.json")
+            abandoned = pathlib.Path(
+                root, f"state.json.4242.{'a' * 32}.tmp")
+            abandoned.write_bytes(b"do-not-load")
+            retained = storage.reconcile_abandoned_checkpoint_temps(
+                str(final), temp_directory=root, cleanup=True,
+                owner_probe=lambda *args, **kwargs: True)
+            self.assertEqual(retained["removedCount"], 0)
+            self.assertTrue(abandoned.exists())
+            removed = storage.reconcile_abandoned_checkpoint_temps(
+                str(final), temp_directory=root, cleanup=True,
+                owner_probe=lambda *args, **kwargs: False)
+            self.assertEqual(removed["removedCount"], 1)
+            self.assertFalse(abandoned.exists())
+
+    def test_absent_linux_writer_pid_proves_temp_has_no_owner(self):
+        with mock.patch.object(
+                storage.os.path, "isdir",
+                side_effect=lambda path: path == "/proc"), \
+                mock.patch.object(storage.os.path, "exists",
+                                  return_value=False):
+            self.assertFalse(storage._writer_pid_has_open_inode(
+                4242, device=1, inode=2))
+
+    def test_interrupted_writer_temp_is_reconciled_without_loading(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(storage.os, "replace",
+                                  side_effect=KeyboardInterrupt):
+            target = os.path.join(root, "state.json")
+            with self.assertRaises(KeyboardInterrupt):
+                storage.atomic_write_json(
+                    target, {"value": "partial"}, temp_directory=root)
+            leftovers = list(pathlib.Path(root).glob("state.json.*.tmp"))
+            self.assertEqual(len(leftovers), 1)
+            result = storage.reconcile_abandoned_checkpoint_temps(
+                target, temp_directory=root, cleanup=True,
+                owner_probe=lambda *args, **kwargs: False)
+            self.assertEqual(result["removedCount"], 1)
+
     def test_checkpoint_plus_wal_replays_after_cursor(self):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
             durability.append_wal(

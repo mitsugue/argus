@@ -17603,6 +17603,22 @@ def _validate_durable_storage():
         _DURABLE_STORAGE_STATUS = argus_persistent_storage.validate_storage(
             _DURABILITY_PATHS, production=_DURABILITY_PRODUCTION,
             approved_root=("/var/data" if _DURABILITY_PRODUCTION else None))
+        reconciliation = _DURABLE_STORAGE_STATUS.get(
+            "abandonedTempReconciliation") or {}
+        if int(reconciliation.get("removedCount") or 0) > 0:
+            print(json.dumps({
+                "event": "abandoned_checkpoint_temp_reconciled",
+                "removedCount": reconciliation.get("removedCount"),
+                "retainedCount": reconciliation.get("retainedCount"),
+                "entries": [
+                    {key: row.get(key) for key in (
+                        "name", "writerPid", "bytes", "device", "inode",
+                        "mtimeNs", "ctimeNs", "writerHasOpenInode",
+                        "exclusiveLockAcquired", "removed")}
+                    for row in (reconciliation.get("entries") or [])
+                    if row.get("removed")
+                ],
+            }, sort_keys=True), flush=True)
         return True
     except argus_persistent_storage.PersistentStorageError as exc:
         _DURABLE_STORAGE_STATUS = {
