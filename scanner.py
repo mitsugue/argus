@@ -2262,8 +2262,8 @@ def _gh_private_headers():
             "Accept": "application/vnd.github+json", "User-Agent": "argus-layer2b",
             "X-GitHub-Api-Version": "2022-11-28"}
 
-def _gh_private_get(path):
-    """GET a file from the private repo. Returns (content_str, sha) or (None, None)."""
+def _gh_private_get_detailed(path):
+    """Read private content without collapsing missing, invalid and outage."""
     repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
     try:
@@ -2271,10 +2271,31 @@ def _gh_private_get(path):
         if r.status_code == 200:
             import base64
             j = r.json()
-            return base64.b64decode(j.get("content", "")).decode("utf-8"), j.get("sha")
-    except Exception:
-        pass
-    return None, None
+            try:
+                content = base64.b64decode(
+                    j.get("content", "")).decode("utf-8")
+            except Exception as exc:
+                return {"status": "invalid", "content": None,
+                        "revision": j.get("sha"),
+                        "errorClass": type(exc).__name__}
+            return {"status": "ok", "content": content,
+                    "revision": j.get("sha"), "errorClass": None}
+        if r.status_code == 404:
+            return {"status": "missing", "content": None,
+                    "revision": None, "errorClass": None}
+        return {"status": "unavailable", "content": None,
+                "revision": None, "httpStatus": int(r.status_code),
+                "errorClass": "private_store_http_error"}
+    except Exception as exc:
+        return {"status": "unavailable", "content": None,
+                "revision": None, "httpStatus": None,
+                "errorClass": type(exc).__name__}
+
+
+def _gh_private_get(path):
+    """Compatibility wrapper returning ``(content, revision)``."""
+    result = _gh_private_get_detailed(path)
+    return result.get("content"), result.get("revision")
 
 def _gh_private_put(path, content_str, message, overwrite=True):
     """PUT a file to the private repo. If overwrite=False and it exists, skip
@@ -2323,18 +2344,70 @@ def _layer2b_persist_private(snapshot):
             msg = rp.json().get("message", "") if rp.headers.get("content-type", "").startswith("application/json") else rp.text
             raise RuntimeError(f"GitHub PUT {rp.status_code} ({repo}/{path}): {str(msg)[:90]}")
 
-def _layer2b_read_latest():
-    """Read the latest membership snapshot from the private repo (owner-gated)."""
+def _layer2b_membership_contract():
+    """Resolve the authoritative private membership into explicit states.
+
+    No symbol is returned by workflow/public summaries. ``never_synced`` is a
+    blocking configuration state, while a verified zero-member snapshot is an
+    intentional ``empty_by_design`` expected skip.
+    """
     if not _layer2b_store_configured():
-        return None
+        return {"state": "private_store_not_configured", "snapshot": None,
+                "revision": None, "symbolCount": 0, "verified": False}
     import json as _json
-    content, _ = _gh_private_get("membership/latest.json")
-    if not content:
-        return None
+    fetched = _gh_private_get_detailed("membership/latest.json")
+    if fetched.get("status") == "missing":
+        _LAYER2B_STATE.update({"lastStatus": "never_synced",
+                               "lastHash": None, "symbolCount": 0})
+        return {"state": "never_synced", "snapshot": None,
+                "revision": None, "symbolCount": 0, "verified": False}
+    if fetched.get("status") != "ok":
+        state = ("membership_invalid" if fetched.get("status") == "invalid"
+                 else "membership_store_unavailable")
+        _LAYER2B_STATE["lastStatus"] = state
+        return {"state": state, "snapshot": None,
+                "revision": fetched.get("revision"), "symbolCount": 0,
+                "verified": False, "errorClass": fetched.get("errorClass")}
     try:
-        return _json.loads(content)
+        snapshot = _json.loads(fetched.get("content") or "")
     except Exception:
-        return None
+        _LAYER2B_STATE["lastStatus"] = "membership_invalid"
+        return {"state": "membership_invalid", "snapshot": None,
+                "revision": fetched.get("revision"), "symbolCount": 0,
+                "verified": False, "errorClass": "invalid_json"}
+    members = snapshot.get("members") if isinstance(snapshot, dict) else None
+    contract_valid = False
+    if isinstance(members, list) and snapshot.get("schemaVersion") == \
+            argus_watchlist_sync.SYNC_SCHEMA_VERSION:
+        try:
+            contract_valid = (
+                int(snapshot.get("symbolCount") or 0) == len(members) and
+                snapshot.get("contentHash") ==
+                argus_watchlist_sync.content_hash(members))
+        except (KeyError, TypeError, ValueError):
+            contract_valid = False
+    if not contract_valid:
+        _LAYER2B_STATE["lastStatus"] = "membership_invalid"
+        return {"state": "membership_invalid", "snapshot": None,
+                "revision": fetched.get("revision"), "symbolCount": 0,
+                "verified": False, "errorClass": "contract_mismatch"}
+    count = len(members)
+    state = "synced" if count else "empty_by_design"
+    _LAYER2B_STATE.update({
+        "lastSyncAt": snapshot.get("generatedAt"), "lastStatus": state,
+        "lastHash": snapshot.get("contentHash"), "symbolCount": count,
+    })
+    return {"state": state, "snapshot": snapshot,
+            "revision": fetched.get("revision"), "symbolCount": count,
+            "verified": True, "contentHash": snapshot.get("contentHash"),
+            "snapshotId": snapshot.get("watchlistSnapshotId"),
+            "effectiveFrom": snapshot.get("effectiveFrom")}
+
+
+def _layer2b_read_latest():
+    """Read only a verified latest membership snapshot."""
+    contract = _layer2b_membership_contract()
+    return contract.get("snapshot") if contract.get("verified") else None
 
 
 # ── Layer 2B daily record + score (v10.85) ──────────────────────────────────
@@ -2422,11 +2495,30 @@ def _layer2b_run():
     """Daily: record today's owner predictions + score any due horizons, in the
     PRIVATE repo. Append-only, immutable per date, swap-safe."""
     import json as _json
-    if not _layer2b_store_configured():
-        return {"ok": False, "error": "private_store_not_configured"}
-    mem = _layer2b_read_latest()
-    if not mem or not mem.get("members"):
-        return {"ok": False, "error": "no_membership_synced"}
+    contract = _layer2b_membership_contract()
+    membership_state = contract["state"]
+    if membership_state == "private_store_not_configured":
+        return {"ok": True, "status": "expected_skip",
+                "reason": membership_state, "membershipState": membership_state,
+                "membershipCount": 0, "membershipVerified": False}
+    if membership_state == "empty_by_design":
+        return {"ok": True, "status": "expected_skip",
+                "reason": "empty_by_design", "membershipState": membership_state,
+                "membershipCount": 0, "membershipVerified": True,
+                "membershipRevision": contract.get("revision")}
+    if membership_state != "synced":
+        error = {
+            "never_synced": "membership_never_synced",
+            "membership_invalid": "membership_contract_invalid",
+            "membership_store_unavailable": "membership_store_unavailable",
+        }.get(membership_state, "membership_contract_blocked")
+        return {"ok": False, "status": "blocked", "error": error,
+                "reason": membership_state, "membershipState": membership_state,
+                "membershipCount": 0, "membershipVerified": False,
+                "contractAction": "owner_watchlist_sync_required"
+                if membership_state == "never_synced"
+                else "private_membership_store_recovery_required"}
+    mem = contract["snapshot"]
     members = [{"symbol": m.get("symbol"), "market": m.get("market")} for m in mem["members"]]
     prices = _layer2b_live_prices(members)
     today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
@@ -2501,9 +2593,18 @@ def _layer2b_run():
     newcontent = "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n"
     ok_w = _gh_private_put("predictions.jsonl", newcontent, f"layer2b run {today}", overwrite=True)
     summ = _layer2b_compute_summary(rows)
-    _gh_private_put("summary.json", _json.dumps(summ, ensure_ascii=False, indent=2),
-                    f"layer2b summary {today}", overwrite=True)
-    return {"ok": bool(ok_w), "recorded": new_count, "scored": scored_count,
+    ok_s = _gh_private_put(
+        "summary.json", _json.dumps(summ, ensure_ascii=False, indent=2),
+        f"layer2b summary {today}", overwrite=True)
+    return {"ok": bool(ok_w and ok_s),
+            "status": "success" if ok_w and ok_s else "failed",
+            "error": None if ok_w and ok_s
+            else "private_prediction_persist_failed",
+            "membershipState": membership_state,
+            "membershipCount": contract.get("symbolCount"),
+            "membershipVerified": True,
+            "membershipRevision": contract.get("revision"),
+            "recorded": new_count, "scored": scored_count,
             "heldInvalidClock": held_count, "totalRows": len(rows),
             "date": today, "summary": summ}
 
