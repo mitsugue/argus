@@ -25,8 +25,12 @@ _SKIP_STATUSES = {"expected_skip", "busy", "skipped", "no_work", "noop",
 _SECRET_KEYS = ("token", "secret", "password", "passphrase", "credential",
                 "authorization", "apikey", "api_key", "hmac")
 _SAFE_OUTPUT_KEYS = ("ok", "status", "buildSha", "ready",
+                     "reason", "error", "membershipState",
+                     "membershipCount", "membershipVerified",
+                     "membershipRevision", "contractAction",
                      "count", "translated", "pending", "made",
                      "created", "updated", "generated", "queued", "recovered",
+                     "recorded", "scored", "heldInvalidClock", "totalRows",
                      "result", "processedCount", "remainingCount", "hasMore",
                      "cursorBefore", "cursorAfter", "checkpointCreated")
 

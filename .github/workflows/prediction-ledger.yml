@@ -118,20 +118,39 @@ jobs:
           echo "🔬 provider diag: \`${DIAG}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Layer 2B daily run (owner watchlist — private store)
+        id: layer2b
         if: github.event.inputs.mode != 'ai-only'
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip Layer 2B"; exit 0; }
-          # Records today's owner predictions + scores due horizons into the
-          # PRIVATE repo (no-op if the owner hasn't synced / private store unset).
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "no admin token — expected skip Layer 2B"
+            echo "contract=expected_skip" >> "$GITHUB_OUTPUT"
+            echo "🗂️ Layer 2B: admin token unavailable (expected skip)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Verify the authoritative PRIVATE membership, then record/score.
+          # A blocked membership contract is preserved for a final gate after
+          # the public ledger commit; it must not erase the public learning run.
+          set +e
           RESP=$(python3 scripts/workflow_http.py --name layer2b-run --method POST --timeout 120 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status not_configured --expected-status disabled \
             --expected-value private_store_not_configured \
             --url "$BE/api/argus/calibration/layer2b-run")
+          RC=$?
+          set -e
           echo "🗂️ Layer 2B: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RC" -eq 0 ]; then
+            echo "contract=ok" >> "$GITHUB_OUTPUT"
+          elif [ "$RC" -eq 2 ]; then
+            echo "contract=degraded" >> "$GITHUB_OUTPUT"
+            echo "::warning::Layer 2B membership contract degraded; public ledger continues"
+          else
+            echo "contract=blocked" >> "$GITHUB_OUTPUT"
+            echo "::warning::Layer 2B membership contract blocked; public ledger continues before final failure"
+          fi
 
       - name: Decision Value shadow run (Phase 1 — private store, NO orders)
         if: github.event.inputs.mode != 'ai-only'
@@ -953,6 +972,12 @@ jobs:
             git commit -m "ledger: $(date -u +%F) record + score"
             git push origin HEAD:ledger
           fi
+
+      - name: Enforce Layer 2B membership contract after public ledger
+        if: always() && github.event.inputs.mode != 'ai-only' && steps.layer2b.outputs.contract == 'blocked'
+        run: |
+          echo "::error::Layer 2B blocked: authoritative owner membership is missing, invalid, or unavailable. Public ledger work was allowed to finish; this run remains failed and must not pretend private record/score success."
+          exit 1
 
       # The ledger is ARGUS's memory — a silent failure would quietly stop the
       # learning loop. Push a phone alert if ANY step above failed (v10.3.1).
