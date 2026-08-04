@@ -110,6 +110,7 @@ import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/singl
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_checkpoint_v2          # bounded Stage-1 dual-write architecture
 import argus_checkpoint_v2_stage1   # formal-Soak suppression/one-time arm
+import argus_market_universe  # private registered-symbol sync + aggregate market truth
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
@@ -13143,8 +13144,23 @@ _HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
                     "acceptedCountLastPush", "usRealtimeStatus", "jpRealtimeStatus",
                     "jpFallbackActive", "jpLastErrorClass", "usLastErrorClass",
                     "jpSnapshotErrors", "usSnapshotErrors", "diskUsagePct", "intervalSec",
+                    "universeSyncStatus", "universeLastVerifiedAt",
                     # v12.0.3 reboot-safety自己申告(enabled/存在フラグのみ・秘密なし)
                     "opendAutostart", "bridgeAutostart", "systemRestartRequired")
+
+
+def _clean_bridge_market_contract(value):
+    """Whitelist aggregate market truth.  Raw/private symbol keys are omitted."""
+    if not isinstance(value, dict):
+        return None
+    clean = argus_market_universe.public_transport(
+        value.get("transportStatus"), value.get("markets") or {},
+        received_at=value.get("receivedAt"))
+    # The backend records when transport arrived; a bridge-supplied receivedAt
+    # remains the source-side timestamp and is length-bounded here.
+    if clean.get("receivedAt") is not None:
+        clean["receivedAt"] = str(clean["receivedAt"])[:40]
+    return clean
 
 
 @app.route("/api/argus/bridge/heartbeat", methods=["POST"])
@@ -13172,6 +13188,9 @@ def api_argus_bridge_heartbeat():
             clean[k] = v
         else:
             clean[k] = str(v)[:60]
+    market_contract = _clean_bridge_market_contract(hb.get("marketData"))
+    if market_contract:
+        clean["marketData"] = market_contract
     _BRIDGE_HB["data"] = clean
     _BRIDGE_HB["receivedAt"] = time.time()
     return jsonify({"ok": True, "receivedAt": _ai_now_iso()})
@@ -13213,6 +13232,33 @@ def _bridge_status_doc():
                                    if hb else not (jp_ages and min(jp_ages) <= 600))
     doc["bridgeMode"] = (hb or {}).get("bridgeMode") or "unknown"
     doc["diskUsagePct"] = (hb or {}).get("diskUsagePct")
+    market_data = (hb or {}).get("marketData")
+    if isinstance(market_data, dict):
+        doc["transportStatus"] = market_data.get("transportStatus") or "unknown"
+        doc["markets"] = copy.deepcopy(market_data.get("markets") or {})
+        doc["transportReceivedAt"] = (datetime.fromtimestamp(
+            _BRIDGE_HB["receivedAt"], pytz.UTC).isoformat().replace("+00:00", "Z")
+            if _BRIDGE_HB.get("receivedAt") else None)
+    else:
+        # Backward-compatible aggregate projection for pre-contract bridges.
+        doc["transportStatus"] = ("live" if bridge_seg in ("ok", "ok_legacy") else
+                                  "stale" if bridge_seg == "stale" else "unknown")
+        doc["markets"] = {
+            "us": {"status": doc["usRealtimeStatus"], "provider": "moomoo",
+                   "freshness": "UNKNOWN"},
+            "jp": {"status": doc["jpRealtimeStatus"], "provider": "moomoo",
+                   "fallbackProvider": "J-Quants" if doc["jpFallbackActive"] else None,
+                   "freshness": "EOD" if doc["jpFallbackActive"] else "UNKNOWN"},
+        }
+        doc["transportReceivedAt"] = None
+    if bridge_seg not in ("ok", "ok_legacy"):
+        doc["transportStatus"] = "stale" if bridge_seg == "stale" else "unavailable"
+        for market in ("us", "jp"):
+            segment = doc["markets"].setdefault(market, {})
+            segment["status"] = "transport_unavailable"
+            segment["freshness"] = "EOD" if market == "jp" else "UNKNOWN"
+            if market == "jp":
+                segment["fallbackProvider"] = "J-Quants"
     doc["noteJa"] = ("ブリッジは正常ですが、moomooの日本株リアルタイムは利用できません"
                      "(日本株は代替データで判定)。" if doc["jpFallbackActive"]
                      and doc["bridgeProcess"] in ("ok", "ok_legacy") else
@@ -13333,6 +13379,55 @@ def api_argus_jp_watchlist_codes():
         pass
     return jsonify({"codes": sorted("JP." + s for s in syms), "count": len(syms),
                     "asOf": _ai_now_iso()})
+
+
+@app.route("/api/argus/bridge/private-symbol-universe")
+def api_argus_bridge_private_symbol_universe():
+    """Authenticated bridge membership contract.
+
+    Only symbol membership is returned, never quantities, cost basis, P/L,
+    account identifiers, or encrypted vault content.  The public bridge status
+    exposes aggregate counts only.  When the private Layer 2B snapshot is not
+    available ``verified`` is false, so the bridge retains its last verified
+    universe instead of silently treating a baseline-only response as complete.
+    """
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    try:
+        jp_cap = max(1, min(400, int(os.environ.get("ARGUS_BRIDGE_JP_SYMBOL_CAP", "200"))))
+        us_cap = max(1, min(400, int(os.environ.get("ARGUS_BRIDGE_US_SYMBOL_CAP", "200"))))
+    except (TypeError, ValueError):
+        jp_cap = us_cap = 200
+    snapshot = _layer2b_read_latest()
+    members = snapshot.get("members") if isinstance(snapshot, dict) else None
+    verified = isinstance(members, list)
+    owner_codes = argus_market_universe.member_codes(members or [])
+    universe, meta = argus_market_universe.bounded_universe(
+        argus_market_universe.MANDATORY_CODES, owner_codes,
+        jp_cap=jp_cap, us_cap=us_cap)
+    return jsonify({
+        "schemaVersion": argus_market_universe.SCHEMA_VERSION,
+        "asOf": _ai_now_iso(),
+        "refreshAfterSec": 600,
+        "verified": verified,
+        "complete": verified,
+        "markets": {
+            "jp": {"codes": universe["JP"], "configuredCount": len(universe["JP"]),
+                   "truncatedCount": meta["truncatedCount"]["JP"], "cap": jp_cap},
+            "us": {"codes": universe["US"], "configuredCount": len(universe["US"]),
+                   "truncatedCount": meta["truncatedCount"]["US"], "cap": us_cap},
+        },
+        "sources": {
+            "mandatory": "verified",
+            "ownerWatchlist": "verified" if verified else "unavailable",
+            # The canonical portfolio is client-encrypted by design; the server
+            # cannot and must not decrypt it. held/protected Layer 2B membership
+            # is the only eligible server-side registration signal.
+            "ownerPortfolio": "client_encrypted_unavailable_to_server",
+        },
+        "privacy": "authenticated_membership_only_no_position_values",
+    })
 
 
 @app.route("/api/argus/moomoo-capability-report", methods=["POST"])
