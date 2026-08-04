@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import os
 import pathlib
 import shutil
 import signal
+import subprocess
 import tempfile
 import threading
+import tracemalloc
 import types
 import unittest
 from unittest import mock
 
 import argus_persistent_storage as storage
+import argus_checkpoint_v2
 import argus_remote_journal
 import argus_tick_durability as durability
 
@@ -260,6 +264,80 @@ class PathValidationTests(unittest.TestCase):
                 value[key].startswith(os.path.realpath("/var/data") + "/"),
                 (key, value))
 
+
+class CheckpointV2Stage1IntegrationTests(unittest.TestCase):
+    def test_stage1_dual_write_is_non_authoritative_and_verified(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
+                mock.patch.object(scanner, "_CHECKPOINT_V2_ROOT",
+                                  os.path.join(root, "v2")):
+            blob = storage.seal_checkpoint(remote_snapshot())
+            legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
+            result = scanner._checkpoint_v2_dual_write(blob, legacy_result)
+            self.assertEqual(result["state"], "stage1_dual_write")
+            self.assertTrue(result["lastWriteVerified"])
+            self.assertTrue(legacy_result["verified"])
+            self.assertEqual(
+                argus_checkpoint_v2.restore_generation(
+                    os.path.join(root, "v2"))["snapshot"], blob)
+
+    def test_stage1_v2_failure_does_not_turn_legacy_success_into_failure(self):
+        with mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
+                mock.patch.object(
+                    argus_checkpoint_v2, "write_generation",
+                    side_effect=argus_checkpoint_v2.CheckpointV2Error(
+                        "checkpoint_v2_total_limit_exceeded")):
+            legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
+            result = scanner._checkpoint_v2_dual_write(
+                storage.seal_checkpoint(remote_snapshot()), legacy_result)
+            self.assertEqual(result["state"], "validation_failed")
+            self.assertEqual(result["lastErrorClass"],
+                             "checkpoint_v2_total_limit_exceeded")
+            self.assertTrue(legacy_result["verified"])
+
+    def test_all_v2_validation_failures_are_structured_and_legacy_isolated(self):
+        classifications = (
+            "checkpoint_v2_writer_busy",
+            "checkpoint_v2_total_limit_exceeded",
+            "checkpoint_v2_database_limit_exceeded",
+            "checkpoint_v2_row_too_large",
+            "checkpoint_v2_disk_reserve_insufficient",
+            "checkpoint_v2_transaction_failed",
+            "checkpoint_v2_fsync_failed",
+            "checkpoint_v2_manifest_promotion_failed",
+            "checkpoint_v2_database_hash_mismatch",
+            "checkpoint_v2_row_hash_mismatch",
+            "checkpoint_v2_isolated_restore_failed",
+        )
+        saved = copy.deepcopy(scanner._CHECKPOINT_V2_STAGE1_CONTROL)
+        try:
+            for classification in classifications:
+                with self.subTest(classification=classification), \
+                        mock.patch.object(
+                            scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
+                        mock.patch.object(
+                            argus_checkpoint_v2, "write_generation",
+                            side_effect=argus_checkpoint_v2.CheckpointV2Error(
+                                classification, phase="injected")):
+                    legacy_result = {
+                        "verified": True, "snapshotHash": "legacy-hash",
+                        "walCompaction": {"verified": True}}
+                    result = scanner._checkpoint_v2_dual_write(
+                        storage.seal_checkpoint(remote_snapshot()),
+                        legacy_result)
+                    self.assertEqual(result["state"], "validation_failed")
+                    self.assertEqual(result["lastErrorClass"], classification)
+                    self.assertEqual(result["lastErrorDetails"],
+                                     {"phase": "injected"})
+                    self.assertFalse(result["formalSoakArmed"])
+                    self.assertTrue(result["authorityPromotionBlocked"])
+                    self.assertTrue(legacy_result["verified"])
+                    self.assertTrue(
+                        legacy_result["walCompaction"]["verified"])
+        finally:
+            scanner._CHECKPOINT_V2_STAGE1_CONTROL.clear()
+            scanner._CHECKPOINT_V2_STAGE1_CONTROL.update(saved)
+
     def test_runtime_rejects_persistent_root_configuration_drift(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaisesRegex(storage.PersistentStorageError,
@@ -438,6 +516,192 @@ class BootstrapAndReadinessTests(unittest.TestCase):
 
 
 class CrashLeaseAndShutdownTests(unittest.TestCase):
+    def test_124_mib_class_checkpoint_has_bounded_serialization_memory(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, "state.json")
+            shared_mebibyte = "x" * (1024 * 1024)
+            value = storage.seal_checkpoint({
+                "schemaVersion": "argus-durable-v3",
+                "blocks": [shared_mebibyte] * 124,
+            })
+            tracemalloc.start()
+            try:
+                result = storage.atomic_write_json(
+                    target, value, temp_directory=root,
+                    validator=lambda row: storage.verify_checkpoint(
+                        row, require_seal=True))
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            self.assertGreater(result["bytes"], 124 * 1024 * 1024)
+            self.assertLess(peak, 24 * 1024 * 1024)
+            self.assertTrue(result["readBackVerified"])
+
+    def test_maximum_checkpoint_guard_preserves_last_known_good(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = pathlib.Path(root, "state.json")
+            target.write_text('{"verified":"old"}', encoding="utf-8")
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "checkpoint_maximum_bytes_exceeded"):
+                storage.atomic_write_json(
+                    str(target), {"value": "x" * 2048},
+                    temp_directory=root, maximum_bytes=1024)
+            self.assertEqual(target.read_text(), '{"verified":"old"}')
+            self.assertEqual(list(pathlib.Path(root).glob(
+                "state.json.*.v1338-tmp")), [])
+
+    def test_oversized_single_scalar_is_rejected_before_encoding(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = pathlib.Path(root, "state.json")
+            target.write_text('{"verified":"old"}', encoding="utf-8")
+            with self.assertRaisesRegex(
+                    storage.PersistentStorageError,
+                    "checkpoint_json_scalar_too_large"):
+                storage.atomic_write_json(
+                    str(target),
+                    {"value": "x" *
+                     (storage.MAXIMUM_JSON_SCALAR_CHARS + 1)},
+                    temp_directory=root)
+            self.assertEqual(target.read_text(), '{"verified":"old"}')
+            self.assertEqual(list(pathlib.Path(root).glob(
+                "state.json.*.v1338-tmp")), [])
+
+    def test_checkpoint_writer_lock_rejects_concurrent_writer(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, "state.json")
+            lock = open(target + ".writer.lock", "a+b")
+            try:
+                storage.fcntl.flock(
+                    lock.fileno(), storage.fcntl.LOCK_EX |
+                    storage.fcntl.LOCK_NB)
+                with self.assertRaisesRegex(
+                        storage.PersistentStorageError,
+                        "checkpoint_writer_busy"):
+                    storage.atomic_write_json(
+                        target, {"value": 1}, temp_directory=root)
+            finally:
+                storage.fcntl.flock(lock.fileno(), storage.fcntl.LOCK_UN)
+                lock.close()
+
+    def test_pre_hotfix_temp_is_retained_as_incident_evidence(self):
+        with tempfile.TemporaryDirectory() as root:
+            final = pathlib.Path(root, "state.json")
+            abandoned = pathlib.Path(
+                root, f"state.json.4242.{'a' * 32}.tmp")
+            abandoned.write_bytes(b"do-not-load")
+            before = abandoned.stat()
+            result = storage.reconcile_abandoned_checkpoint_temps(
+                str(final), temp_directory=root, cleanup=True,
+                now=before.st_mtime + 30 * 24 * 60 * 60,
+                owner_probe=lambda *args, **kwargs: False)
+            after = abandoned.stat()
+            self.assertEqual(result["removedCount"], 0)
+            self.assertEqual(result["retainedIncidentEvidenceCount"], 1)
+            self.assertEqual(result["entries"][0]["classification"],
+                             "retained_incident_evidence")
+            self.assertFalse(result["entries"][0]["contentOpenAttempted"])
+            self.assertEqual((before.st_dev, before.st_ino, before.st_mtime_ns),
+                             (after.st_dev, after.st_ino, after.st_mtime_ns))
+
+    def test_incident_evidence_sparse_file_is_never_opened(self):
+        with tempfile.TemporaryDirectory() as root:
+            final = pathlib.Path(root, "state.json")
+            evidence = pathlib.Path(
+                root, f"state.json.4242.{'b' * 32}.tmp")
+            with evidence.open("wb") as handle:
+                handle.truncate(2 * 1024 * 1024 * 1024)
+            before = evidence.stat()
+            with mock.patch.object(
+                    storage.os, "open",
+                    side_effect=AssertionError("incident content opened")):
+                result = storage.reconcile_abandoned_checkpoint_temps(
+                    str(final), temp_directory=root, cleanup=True,
+                    owner_probe=lambda *args, **kwargs: False)
+            after = evidence.stat()
+            self.assertEqual(result["retainedIncidentEvidenceCount"], 1)
+            self.assertFalse(result["entries"][0]["contentOpenAttempted"])
+            self.assertEqual(
+                (before.st_dev, before.st_ino, before.st_size,
+                 before.st_mtime_ns, before.st_atime_ns),
+                (after.st_dev, after.st_ino, after.st_size,
+                 after.st_mtime_ns, after.st_atime_ns))
+
+    def test_post_hotfix_temp_cleanup_requires_age_and_ownership_proof(self):
+        with tempfile.TemporaryDirectory() as root:
+            final = pathlib.Path(root, "state.json")
+            abandoned = pathlib.Path(
+                root, f"state.json.4242.{'a' * 32}.v1338-tmp")
+            abandoned.write_bytes(b"bounded-post-hotfix-temp")
+            written_at = abandoned.stat().st_mtime
+            fresh = storage.reconcile_abandoned_checkpoint_temps(
+                str(final), temp_directory=root, cleanup=True,
+                now=written_at + storage.POST_HOTFIX_TEMP_RETENTION_SECONDS - 1,
+                owner_probe=lambda *args, **kwargs: False)
+            self.assertEqual(fresh["removedCount"], 0)
+            self.assertEqual(fresh["entries"][0]["classification"],
+                             "retained_post_hotfix_temp")
+            old = storage.reconcile_abandoned_checkpoint_temps(
+                str(final), temp_directory=root, cleanup=True,
+                now=written_at + storage.POST_HOTFIX_TEMP_RETENTION_SECONDS + 1,
+                owner_probe=lambda *args, **kwargs: False)
+            self.assertEqual(old["removedCount"], 1)
+            self.assertFalse(abandoned.exists())
+
+    def test_absent_linux_writer_pid_proves_temp_has_no_owner(self):
+        with mock.patch.object(
+                storage.os.path, "isdir",
+                side_effect=lambda path: path == "/proc"), \
+                mock.patch.object(storage.os.path, "exists",
+                                  return_value=False):
+            self.assertFalse(storage._writer_pid_has_open_inode(
+                4242, device=1, inode=2))
+
+    def test_interrupted_writer_temp_is_reconciled_without_loading(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(storage.os, "replace",
+                                  side_effect=KeyboardInterrupt):
+            target = os.path.join(root, "state.json")
+            with self.assertRaises(KeyboardInterrupt):
+                storage.atomic_write_json(
+                    target, {"value": "partial"}, temp_directory=root)
+            leftovers = list(pathlib.Path(root).glob(
+                "state.json.*.v1338-tmp"))
+            self.assertEqual(len(leftovers), 1)
+            written_at = leftovers[0].stat().st_mtime
+            result = storage.reconcile_abandoned_checkpoint_temps(
+                target, temp_directory=root, cleanup=True,
+                now=written_at + storage.POST_HOTFIX_TEMP_RETENTION_SECONDS + 1,
+                owner_probe=lambda *args, **kwargs: False)
+            self.assertEqual(result["removedCount"], 1)
+
+    def test_real_checkpoint_memory_probe_scenarios(self):
+        helper = pathlib.Path(__file__).parent / "scripts" / \
+            "checkpoint_memory_probe.py"
+        reports = {}
+        for mode in ("production", "oversized", "interrupted", "repeated"):
+            completed = subprocess.run(
+                [sys.executable, str(helper), "--mode", mode],
+                cwd=str(pathlib.Path(__file__).parent), text=True,
+                capture_output=True, check=True, timeout=180)
+            reports[mode] = json.loads(completed.stdout)
+        self.assertGreater(reports["production"]["writtenBytes"],
+                           124 * 1024 * 1024)
+        self.assertLess(reports["production"]["writtenBytes"],
+                        storage.DEFAULT_MAXIMUM_CHECKPOINT_BYTES)
+        self.assertEqual(reports["production"]["fullSizeBuffers"], 0)
+        self.assertEqual(reports["oversized"]["classification"],
+                         "checkpoint_maximum_bytes_exceeded")
+        self.assertLessEqual(reports["oversized"]["writtenBytes"],
+                             storage.DEFAULT_MAXIMUM_CHECKPOINT_BYTES)
+        self.assertTrue(reports["oversized"]["previousCheckpointPreserved"])
+        self.assertEqual(reports["oversized"]["tempCount"], 0)
+        self.assertEqual(reports["interrupted"]["classification"],
+                         "interrupted_serialization")
+        self.assertEqual(reports["interrupted"]["tempCount"], 1)
+        self.assertLess(reports["repeated"]["rssGrowthBytes"],
+                        32 * 1024 * 1024)
+
     def test_checkpoint_plus_wal_replays_after_cursor(self):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
             durability.append_wal(

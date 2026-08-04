@@ -33,6 +33,23 @@ FRONTEND_PATHS: Tuple[str, ...] = (
     "scripts/verified_snapshot_release_gate.py",
 )
 
+# Stage 1 is a deliberately narrow backend release: it deploys the immutable
+# validation writer while keeping the legacy checkpoint as restore authority
+# and suppressing the ordinary new-backend formal-Soak path.  Fail closed when
+# any other backend-sensitive path is mixed into the release.
+CHECKPOINT_STAGE1_BACKEND_PATHS: Tuple[str, ...] = (
+    "argus_chart_intelligence.py",
+    "argus_checkpoint_v2.py",
+    "argus_checkpoint_v2_stage1.py",
+    "argus_market_ledger.py",
+    "argus_market_replay.py",
+    "argus_persistent_storage.py",
+    "argus_tick_durability.py",
+    "argus_today_intelligence.py",
+    "backend-version.json",
+    "scanner.py",
+)
+
 
 def _clean(path: str) -> str:
     clean = str(path).replace("\\", "/")
@@ -46,12 +63,21 @@ def _matches(path: str, patterns: Iterable[str]) -> bool:
 
 def classify(changed_paths: Iterable[str]) -> Dict[str, bool]:
     paths = tuple(_clean(path) for path in changed_paths)
-    backend = any(_matches(path, RENDER_BACKEND_PATHS + BACKEND_EXCEPTIONS)
-                  for path in paths)
+    backend_paths = tuple(
+        path for path in paths
+        if _matches(path, RENDER_BACKEND_PATHS + BACKEND_EXCEPTIONS)
+    )
+    backend = bool(backend_paths)
     frontend = any(_matches(path, FRONTEND_PATHS) for path in paths)
+    checkpoint_stage1 = (
+        "argus_checkpoint_v2_stage1.py" in backend_paths and
+        all(path in CHECKPOINT_STAGE1_BACKEND_PATHS for path in backend_paths)
+    )
+    new_backend_soak = backend and not checkpoint_stage1
     return {
         "frontendDeploy": frontend,
         "backendDeploy": backend,
-        "newBackendSoak": backend,
-        "preserveBackendSoak": not backend,
+        "newBackendSoak": new_backend_soak,
+        "preserveBackendSoak": not new_backend_soak,
+        "checkpointStage1": checkpoint_stage1,
     }

@@ -24,6 +24,7 @@ def test_workflow_only_release_scope_is_backend_false():
         "backendDeploy": False,
         "newBackendSoak": False,
         "preserveBackendSoak": True,
+        "checkpointStage1": False,
     }
 
 

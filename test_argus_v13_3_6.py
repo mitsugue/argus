@@ -10,6 +10,7 @@ from unittest import mock
 import argus_runtime
 import argus_remote_journal
 import argus_tick_durability
+import argus_checkpoint_v2_stage1
 
 
 _moomoo = types.ModuleType("moomoo")
@@ -230,6 +231,61 @@ def test_owner_arm_does_not_start_soak(monkeypatch):
         scanner._SOAK_CONTROL.clear()
         scanner._SOAK_CONTROL.update(saved_control)
         scanner._SOAK_HISTORY[:] = saved_history
+
+
+def test_checkpoint_v2_stage1_owner_arm_does_not_create_soak_or_heartbeat(
+        monkeypatch):
+    saved_soak = copy.deepcopy(scanner._SOAK)
+    saved_control = copy.deepcopy(scanner._SOAK_CONTROL)
+    saved_stage1 = copy.deepcopy(scanner._CHECKPOINT_V2_STAGE1_CONTROL)
+    saved_status = copy.deepcopy(scanner._CHECKPOINT_V2_STATUS)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", FULL_SHA)
+    monkeypatch.setattr(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True)
+    monkeypatch.setattr(scanner, "_require_admin", lambda: (True, None, 200))
+    state = argus_checkpoint_v2_stage1.empty_state(FULL_SHA)
+    for index in range(3):
+        state = argus_checkpoint_v2_stage1.record_generation(
+            state, {"verified": True, "generationId": f"gen-{index}"},
+            trigger_source="ec2_systemd",
+            mission_window_id=f"mw-{index}")
+    state = argus_checkpoint_v2_stage1.record_acceptance(
+        state, resource_accepted=True, disk_accepted=True,
+        isolated_restore_verified=True, restore_authority_approved=True)
+
+    def persist():
+        scanner._CHECKPOINT_V2_STATUS["lastWriteVerified"] = True
+        return {"verified": True}
+
+    monkeypatch.setattr(scanner, "_osint_persist", persist)
+    try:
+        scanner._CHECKPOINT_V2_STAGE1_CONTROL.clear()
+        scanner._CHECKPOINT_V2_STAGE1_CONTROL.update(state)
+        scanner._SOAK.clear()
+        scanner._SOAK.update({"soakId": None, "startedAt": None,
+                              "heartbeats": [], "state": "not_started"})
+        with scanner.app.test_client() as client:
+            response = client.post(
+                "/api/argus/admin/soak/arm",
+                headers={"X-ARGUS-ADMIN-TOKEN": "unused"},
+                json={"confirm": True, "buildSha": FULL_SHA})
+        payload = response.get_json()
+        assert response.status_code == 200
+        assert payload["startsNow"] is False
+        assert payload["soakCreated"] is False
+        assert payload["heartbeatCreated"] is False
+        assert scanner._SOAK["soakId"] is None
+        assert scanner._SOAK["startedAt"] is None
+        assert scanner._SOAK["heartbeats"] == []
+        assert scanner._CHECKPOINT_V2_STAGE1_CONTROL["formalSoakArmed"] is True
+    finally:
+        scanner._SOAK.clear()
+        scanner._SOAK.update(saved_soak)
+        scanner._SOAK_CONTROL.clear()
+        scanner._SOAK_CONTROL.update(saved_control)
+        scanner._CHECKPOINT_V2_STAGE1_CONTROL.clear()
+        scanner._CHECKPOINT_V2_STAGE1_CONTROL.update(saved_stage1)
+        scanner._CHECKPOINT_V2_STATUS.clear()
+        scanner._CHECKPOINT_V2_STATUS.update(saved_status)
 
 
 def test_public_health_and_ready_expose_exact_render_sha(monkeypatch):

@@ -69,10 +69,12 @@ class WalCheckpointTests(unittest.TestCase):
                 payload={"journalEvent": {"idempotencyKey": "one"}},
                 job_id="job-1")
             original = pathlib.Path(wal).read_bytes()
-            with mock.patch.object(durability.json, "loads",
-                                   side_effect=json.JSONDecodeError(
-                                       "bad", "x", 0)):
-                with self.assertRaises(json.JSONDecodeError):
+            with mock.patch.object(
+                    durability.argus_persistent_storage,
+                    "_stream_sha256", return_value="corrupt"):
+                with self.assertRaisesRegex(
+                        durability.argus_persistent_storage.PersistentStorageError,
+                        "checkpoint_readback_hash_mismatch"):
                     durability.verified_checkpoint(
                         snapshot, {"verified": "new"}, job_id="job-1",
                         wal_path=wal, included_sequence=1)

@@ -13,6 +13,14 @@ CREDIT_THRESHOLD_YEN = 800_000_000_000
 BREADTH_SHARP_DROP_POINTS = 20.0
 SOURCE_KINDS = {"official", "licensed", "manual", "derived"}
 OBSERVATION_STATUSES = {"live", "delayed", "missing", "revised"}
+# Active recovery keeps roughly ten trading years per series. Older records
+# remain in immutable Remote Journal/Git generations rather than growing the
+# authoritative process checkpoint forever.
+MAX_OBSERVATIONS_PER_SERIES = 2700
+MAX_DERIVED_METRICS = 5000
+MAX_TURNING_POINTS = 25000
+MAX_BACKTESTS = 64
+MAX_IMPORT_RECEIPTS = 1000
 
 SERIES = {
     "credit.short_balance": ("JPY", "二市場合計売り残", "manual_csv", "official"),
@@ -89,6 +97,27 @@ def normalize_state(state: Any) -> Dict[str, Any]:
     for k in ("observations", "derivedMetrics", "turningPoints", "backtests", "imports",
               "rolledBackImports"):
         out[k] = [x for x in (src.get(k) or []) if isinstance(x, dict)] if k != "rolledBackImports" else list(src.get(k) or [])
+    by_series: Dict[str, List[Dict[str, Any]]] = {}
+    for row in out["observations"]:
+        by_series.setdefault(str(row.get("seriesId") or ""), []).append(row)
+    out["observations"] = []
+    for rows in by_series.values():
+        rows.sort(key=lambda row: (
+            str(row.get("periodEnd") or ""), int(row.get("revision") or 0),
+            str(row.get("availableFrom") or ""), str(row.get("id") or "")))
+        out["observations"].extend(rows[-MAX_OBSERVATIONS_PER_SERIES:])
+    out["derivedMetrics"] = sorted(
+        out["derivedMetrics"], key=lambda row: (
+            str(row.get("asOf") or ""), str(row.get("id") or ""))
+    )[-MAX_DERIVED_METRICS:]
+    out["turningPoints"] = sorted(
+        out["turningPoints"], key=lambda row: (
+            str(row.get("effectiveFrom") or row.get("detectedAt") or ""),
+            str(row.get("id") or ""))
+    )[-MAX_TURNING_POINTS:]
+    out["backtests"] = out["backtests"][-MAX_BACKTESTS:]
+    out["imports"] = out["imports"][-MAX_IMPORT_RECEIPTS:]
+    out["rolledBackImports"] = out["rolledBackImports"][-MAX_IMPORT_RECEIPTS:]
     out["lastUpdatedAt"] = src.get("lastUpdatedAt")
     # v1 remains backward-compatible: snapshots written before the dirty marker
     # were rebuilt synchronously before persistence, so they are clean on load.

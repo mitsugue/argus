@@ -108,6 +108,8 @@ import argus_market_intelligence    # deterministic Daily Market Sheet/backfill 
 import argus_verified_snapshot      # v13.3.0: atomic precomputed public view snapshots
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
+import argus_checkpoint_v2          # bounded Stage-1 dual-write architecture
+import argus_checkpoint_v2_stage1   # formal-Soak suppression/one-time arm
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
@@ -15642,6 +15644,18 @@ _DURABILITY_PRODUCTION = argus_persistent_storage.production_mode()
 _DURABILITY_PATHS = argus_persistent_storage.configured_paths(
     production=_DURABILITY_PRODUCTION)
 _OSINT_PERSIST_FILE = _DURABILITY_PATHS["checkpoint"]
+_CHECKPOINT_V2_ROOT = os.path.join(
+    _DURABILITY_PATHS["root"], "argus_checkpoint_v2")
+_CHECKPOINT_V2_STAGE1_ENABLED = str(os.environ.get(
+    "ARGUS_CHECKPOINT_V2_STAGE1", "0")).strip().lower() in (
+        "1", "true", "yes")
+_CHECKPOINT_V2_STATUS = {
+    "schemaVersion": argus_checkpoint_v2.SCHEMA,
+    "state": "stage1_dual_write_pending" if _CHECKPOINT_V2_STAGE1_ENABLED
+    else "disabled",
+}
+_CHECKPOINT_V2_STAGE1_CONTROL = argus_checkpoint_v2_stage1.empty_state(
+    str(os.environ.get("RENDER_GIT_COMMIT") or "") or None)
 _OSINT_PERSIST_STATE = {"restored": False}
 _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
@@ -15881,6 +15895,8 @@ def _osint_persist_locked():
                 "soak": copy.deepcopy(_SOAK),
                 "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
                 "soakControl": dict(_SOAK_CONTROL),
+                "checkpointV2Stage1Control": copy.deepcopy(
+                    _CHECKPOINT_V2_STAGE1_CONTROL),
                 "missions": _MISSIONS[-120:],
                 "missionWindows": _MISSION_WINDOWS[-240:],
                 "forecasts": _FORECAST_LEDGER[-200:],
@@ -15931,6 +15947,12 @@ def _osint_persist_locked():
                 _MISSION_TICK_CONTEXT.get("missionWindowId")))
         metadata = _persist_durability_metadata()
         checkpoint["metadata"] = metadata
+        # Stage 1 is deliberately non-authoritative. The already-verified
+        # legacy checkpoint remains the sole restore source and WAL semantics
+        # are unchanged. A V2 write failure is surfaced, never promoted into a
+        # false legacy failure or an automatic restore cutover.
+        checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(
+            sealed_blob, checkpoint)
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
         _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
         _DURABLE_STATE["integrityStatus"] = "ok"
@@ -15959,6 +15981,80 @@ def _osint_persist_locked():
         _DURABLE_STATE["integrityStatus"] = "write_failed"
         _DURABLE_STATE["lastCheckpointError"] = type(exc).__name__
         return {"verified": False, "errorClass": type(exc).__name__}
+
+
+def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
+    global _CHECKPOINT_V2_STATUS, _CHECKPOINT_V2_STAGE1_CONTROL
+    if not _CHECKPOINT_V2_STAGE1_ENABLED:
+        _CHECKPOINT_V2_STATUS = {
+            "schemaVersion": argus_checkpoint_v2.SCHEMA,
+            "state": "disabled",
+        }
+        return dict(_CHECKPOINT_V2_STATUS)
+    source_generation = str(
+        legacy_checkpoint.get("snapshotHash") or
+        (blob.get("localCheckpointIntegrity") or {}).get("snapshotHash") or
+        legacy_checkpoint.get("verifiedAt") or "legacy-verified")
+    try:
+        trigger_source = str(
+            _MISSION_TICK_CONTEXT.get("triggerSource") or "manual")
+        mission_window_id = _MISSION_TICK_CONTEXT.get("missionWindowId")
+        result = argus_checkpoint_v2.write_generation(
+            _CHECKPOINT_V2_ROOT, blob,
+            source_generation=source_generation,
+            validation_context={
+                "triggerSource": trigger_source,
+                "missionWindowId": mission_window_id,
+                "natural": trigger_source == "ec2_systemd",
+                "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
+                    "formalSoakState") or "not_started",
+            })
+        _CHECKPOINT_V2_STAGE1_CONTROL = \
+            argus_checkpoint_v2_stage1.record_generation(
+                _CHECKPOINT_V2_STAGE1_CONTROL, result,
+                trigger_source=trigger_source,
+                mission_window_id=mission_window_id)
+        _CHECKPOINT_V2_STATUS = {
+            **argus_checkpoint_v2.public_status(_CHECKPOINT_V2_ROOT),
+            "lastWriteVerified": bool(result.get("verified")),
+            "lastErrorClass": None,
+            "formalSoakArmed": bool(
+                _CHECKPOINT_V2_STAGE1_CONTROL.get("formalSoakArmed")),
+            "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
+                "formalSoakState"),
+            "authorityPromotionBlocked": bool(
+                _CHECKPOINT_V2_STAGE1_CONTROL.get(
+                    "authorityPromotionBlocked")),
+        }
+    except argus_checkpoint_v2.CheckpointV2Error as exc:
+        _CHECKPOINT_V2_STAGE1_CONTROL = \
+            argus_checkpoint_v2_stage1.record_failure(
+                _CHECKPOINT_V2_STAGE1_CONTROL, exc.classification,
+                exc.details)
+        _CHECKPOINT_V2_STATUS = {
+            "schemaVersion": argus_checkpoint_v2.SCHEMA,
+            "state": "validation_failed",
+            "lastWriteVerified": False,
+            "lastErrorClass": exc.classification,
+            "lastErrorDetails": dict(exc.details),
+            "formalSoakArmed": False,
+            "formalSoakState": "not_started",
+            "authorityPromotionBlocked": True,
+        }
+    except Exception as exc:
+        _CHECKPOINT_V2_STAGE1_CONTROL = \
+            argus_checkpoint_v2_stage1.record_failure(
+                _CHECKPOINT_V2_STAGE1_CONTROL, type(exc).__name__)
+        _CHECKPOINT_V2_STATUS = {
+            "schemaVersion": argus_checkpoint_v2.SCHEMA,
+            "state": "validation_failed",
+            "lastWriteVerified": False,
+            "lastErrorClass": type(exc).__name__,
+            "formalSoakArmed": False,
+            "formalSoakState": "not_started",
+            "authorityPromotionBlocked": True,
+        }
+    return dict(_CHECKPOINT_V2_STATUS)
 
 
 def _foundation_jobs_persist():
@@ -16303,6 +16399,29 @@ def _osint_restore_once():
             _SOAK_CONTROL.update({
                 key: restored_control.get(key)
                 for key in _SOAK_CONTROL})
+        restored_stage1 = blob.get("checkpointV2Stage1Control")
+        if _CHECKPOINT_V2_STAGE1_ENABLED and isinstance(
+                restored_stage1, dict):
+            globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = \
+                argus_checkpoint_v2_stage1.normalize(
+                    restored_stage1, _backend_exact_sha() or None)
+            # The V2 manifest is the authoritative provenance for the most
+            # recently promoted generation, which can be newer than the
+            # legacy blob that initiated that dual-write.
+            _v2_public = argus_checkpoint_v2.public_status(
+                _CHECKPOINT_V2_ROOT)
+            for _row in _v2_public.get("generationHistory") or []:
+                globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = \
+                    argus_checkpoint_v2_stage1.record_generation(
+                        _CHECKPOINT_V2_STAGE1_CONTROL,
+                        {"verified": True,
+                         "generationId": _row.get("generationId"),
+                         "databaseBytes": _row.get("databaseBytes"),
+                         "sourceSerializedBytes": _row.get(
+                             "sourceSerializedBytes")},
+                        trigger_source=str(
+                            _row.get("triggerSource") or "unknown"),
+                        mission_window_id=_row.get("missionWindowId"))
         sk = blob.get("soak")
         if isinstance(sk, dict) and sk.get("startedAt") and not _SOAK["startedAt"]:
             # v12.2.9 build-scoped: 同一SHAのredeployでsoakをリセットしない
@@ -17603,6 +17722,22 @@ def _validate_durable_storage():
         _DURABLE_STORAGE_STATUS = argus_persistent_storage.validate_storage(
             _DURABILITY_PATHS, production=_DURABILITY_PRODUCTION,
             approved_root=("/var/data" if _DURABILITY_PRODUCTION else None))
+        reconciliation = _DURABLE_STORAGE_STATUS.get(
+            "abandonedTempReconciliation") or {}
+        if int(reconciliation.get("removedCount") or 0) > 0:
+            print(json.dumps({
+                "event": "abandoned_checkpoint_temp_reconciled",
+                "removedCount": reconciliation.get("removedCount"),
+                "retainedCount": reconciliation.get("retainedCount"),
+                "entries": [
+                    {key: row.get(key) for key in (
+                        "name", "writerPid", "bytes", "device", "inode",
+                        "mtimeNs", "ctimeNs", "writerHasOpenInode",
+                        "exclusiveLockAcquired", "removed")}
+                    for row in (reconciliation.get("entries") or [])
+                    if row.get("removed")
+                ],
+            }, sort_keys=True), flush=True)
         return True
     except argus_persistent_storage.PersistentStorageError as exc:
         _DURABLE_STORAGE_STATUS = {
@@ -17705,6 +17840,22 @@ def readyz():
     payload["persistentStorage"] = argus_persistent_storage.public_diagnostics(
         _DURABLE_STORAGE_STATUS, _DURABILITY_PATHS,
         production=_DURABILITY_PRODUCTION)
+    payload["checkpointV2"] = dict(_CHECKPOINT_V2_STATUS)
+    payload["checkpointV2Stage1"] = {
+        "checkpointMode": _CHECKPOINT_V2_STAGE1_CONTROL.get(
+            "checkpointMode"),
+        "formalSoakArmed": bool(_CHECKPOINT_V2_STAGE1_CONTROL.get(
+            "formalSoakArmed")),
+        "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
+            "formalSoakState"),
+        "naturalGenerationCount": len(
+            _CHECKPOINT_V2_STAGE1_CONTROL.get("naturalGenerations") or []),
+        "legacyRestoreAuthority": True,
+        "v2RestoreAuthority": False,
+        "authorityPromotionBlocked": bool(
+            _CHECKPOINT_V2_STAGE1_CONTROL.get(
+                "authorityPromotionBlocked")),
+    }
     return jsonify(payload), code
 
 
@@ -18406,6 +18557,35 @@ def api_argus_admin_soak_arm():
             requested_sha != current_sha:
         return jsonify({"ok": False,
                         "error": "exact_current_build_sha_required"}), 409
+    if _CHECKPOINT_V2_STAGE1_ENABLED:
+        before = copy.deepcopy(_CHECKPOINT_V2_STAGE1_CONTROL)
+        try:
+            armed = argus_checkpoint_v2_stage1.arm(
+                before, build_sha=current_sha, armed_at=_ai_now_iso())
+        except argus_checkpoint_v2_stage1.Stage1ControlError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = armed
+        _SOAK_CONTROL.update({
+            "armed": True, "armedAt": armed.get("armedAt"),
+            "armedBuildSha": current_sha, "armId": armed.get("armId"),
+            "reason": str(body.get("reason") or
+                          "checkpoint_v2_formal_soak")[:80],
+        })
+        checkpoint = _osint_persist()
+        if checkpoint.get("verified") is not True or \
+                _CHECKPOINT_V2_STATUS.get("lastWriteVerified") is not True:
+            globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = before
+            _SOAK_CONTROL.update({
+                "armed": False, "armedAt": None, "armedBuildSha": None,
+                "armId": None, "reason": None})
+            return jsonify({"ok": False,
+                            "error": "stage1_arm_persist_failed"}), 503
+        return jsonify({
+            "ok": True, "status": "armed",
+            "armId": armed.get("armId"), "startsNow": False,
+            "heartbeatCreated": False, "soakCreated": False,
+            "startAuthority": "next_qualified_natural_ec2_mission_window",
+        })
     active_sha = str(_SOAK.get("buildShaFull") or
                      _SOAK.get("buildSha") or "").lower()
     if not _SOAK.get("startedAt") or active_sha not in (
@@ -18434,6 +18614,63 @@ def api_argus_admin_soak_arm():
     return jsonify({"ok": True, "status": "armed", "armId": arm_id,
                     "startsNow": False,
                     "startAuthority": "next_natural_ec2_mission_window"})
+
+
+@app.route("/api/argus/admin/checkpoint-v2/stage1/accept", methods=["POST"])
+def api_argus_admin_checkpoint_v2_stage1_accept():
+    """Record reviewed evidence; never promotes or starts a Soak itself."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    if not _CHECKPOINT_V2_STAGE1_ENABLED:
+        return jsonify({"ok": False, "error": "stage1_not_enabled"}), 409
+    body = request.get_json(silent=True) or {}
+    current_sha = str(_backend_exact_sha() or "").lower()
+    requested_sha = str(body.get("buildSha") or "").lower()
+    if body.get("confirm") is not True or requested_sha != current_sha or \
+            not re.fullmatch(r"[0-9a-f]{40}", requested_sha):
+        return jsonify({"ok": False,
+                        "error": "exact_confirmed_build_sha_required"}), 409
+    evidence_fields = (
+        "resourceEvidenceId", "diskEvidenceId", "isolatedRestoreGenerationId")
+    if any(not str(body.get(key) or "").strip() for key in evidence_fields):
+        return jsonify({"ok": False,
+                        "error": "stage1_evidence_ids_required"}), 400
+    generation_ids = {
+        row.get("generationId") for row in
+        _CHECKPOINT_V2_STAGE1_CONTROL.get("naturalGenerations") or []}
+    if body.get("isolatedRestoreGenerationId") not in generation_ids:
+        return jsonify({"ok": False,
+                        "error": "isolated_restore_generation_not_natural"}), 409
+    before = copy.deepcopy(_CHECKPOINT_V2_STAGE1_CONTROL)
+    try:
+        accepted = argus_checkpoint_v2_stage1.record_acceptance(
+            before,
+            resource_accepted=body.get("resourceAccepted") is True,
+            disk_accepted=body.get("diskAccepted") is True,
+            isolated_restore_verified=(
+                body.get("isolatedRestoreVerified") is True),
+            restore_authority_approved=(
+                body.get("restoreAuthorityApproved") is True))
+    except argus_checkpoint_v2_stage1.Stage1ControlError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
+    if accepted.get("authorityPromotionBlocked") is not False:
+        return jsonify({"ok": False,
+                        "error": "all_stage1_acceptance_flags_required"}), 409
+    accepted["acceptanceEvidence"] = {
+        key: str(body.get(key))[:160] for key in evidence_fields}
+    accepted["acceptedAt"] = _ai_now_iso()
+    globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = accepted
+    checkpoint = _osint_persist()
+    if checkpoint.get("verified") is not True or \
+            _CHECKPOINT_V2_STATUS.get("lastWriteVerified") is not True:
+        globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = before
+        return jsonify({"ok": False,
+                        "error": "stage1_acceptance_persist_failed"}), 503
+    return jsonify({"ok": True, "status": "accepted",
+                    "formalSoakArmed": False,
+                    "formalSoakState": "not_started",
+                    "soakCreated": False, "heartbeatCreated": False})
 
 
 @app.route("/api/argus/admin/missions/tick", methods=["POST"])
@@ -18500,6 +18737,8 @@ def api_argus_admin_missions_tick():
         _MISSION_TICK_CONTEXT["active"] = False
         _MISSION_TICK_CONTEXT["lease"] = None
         _MISSION_TICK_CONTEXT["missionWindowId"] = None
+        _MISSION_TICK_CONTEXT["triggerSource"] = None
+        _MISSION_TICK_CONTEXT["scheduledFor"] = None
         _MISSION_TICK_CONTEXT["ownerThread"] = None
         lease.release()
         _DURABLE_CHECKPOINT_LOCK.release()
@@ -18536,6 +18775,8 @@ def _api_argus_admin_missions_tick_impl():
     if window is None:
         return jsonify({"ok": False, "status": "failed",
                         "error": "invalid_mission_window"}), 400
+    _MISSION_TICK_CONTEXT["triggerSource"] = trigger_source
+    _MISSION_TICK_CONTEXT["scheduledFor"] = window["scheduledFor"]
     _MISSION_TICK_CONTEXT["missionWindowId"] = window["missionWindowId"]
     supplied_window_id = str(body.get("missionWindowId") or "")
     if supplied_window_id and supplied_window_id != window["missionWindowId"]:
@@ -18927,7 +19168,13 @@ def _api_argus_admin_missions_tick_impl():
     rollover_armed = bool(
         _SOAK_CONTROL.get("armed") is True and
         _SOAK_CONTROL.get("armedBuildSha") == _backend_exact_sha())
-    if trigger_source == "ec2_systemd" and (
+    stage1_start_authorized = (
+        not _CHECKPOINT_V2_STAGE1_ENABLED or
+        argus_checkpoint_v2_stage1.may_start_formal_soak(
+            _CHECKPOINT_V2_STAGE1_CONTROL,
+            trigger_source=trigger_source,
+            qualified_natural_tick=True))
+    if trigger_source == "ec2_systemd" and stage1_start_authorized and (
             not _SOAK.get("startedAt") or rollover_armed):
         _sk_dec = argus_runtime.soak_start_decision(
             now_iso=heartbeat_at, scheduled_for=window["scheduledFor"],
@@ -18945,6 +19192,10 @@ def _api_argus_admin_missions_tick_impl():
         if _sk_dec["allowed"]:
             _activate_formal_soak(
                 _sk_dec, window, rollover_armed=rollover_armed)
+            if _CHECKPOINT_V2_STAGE1_ENABLED:
+                globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = \
+                    argus_checkpoint_v2_stage1.consume_arm(
+                        _CHECKPOINT_V2_STAGE1_CONTROL)
             _journal("soak_started", "soak", _SOAK["soakId"],
                      {"buildSha": _SOAK["buildSha"] or "unknown",
                       "startTimeSource": _SOAK["startTimeSource"],

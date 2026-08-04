@@ -42,6 +42,12 @@ recommended defense in depth, not a prerequisite for the guarded merge path.
 - Backend-sensitive: Render deploys only after checks pass; the previous Soak
   remains history and the first valid natural heartbeat starts the new build's
   Soak.
+- Checkpoint V2 Stage 1 is the explicit narrow exception:
+  `backendDeploy=true`, `newBackendSoak=false`, and
+  `checkpointStage1=true`. Render deploys the backend, but natural ticks only
+  create validation generations while legacy remains restore authority. Any
+  additional backend-sensitive path outside the audited Stage 1 allowlist
+  fails closed to the ordinary `newBackendSoak=true` classification.
 
 ## Confirmed incident retained
 
