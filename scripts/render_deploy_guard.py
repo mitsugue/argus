@@ -73,6 +73,8 @@ def main() -> int:
         "render-deploy-guard:"
         f" accepted={str(accepted).lower()}"
         f" backendDeploy={str(scope['backendDeploy']).lower()}"
+        f" newBackendSoak={str(scope['newBackendSoak']).lower()}"
+        f" checkpointStage1={str(scope['checkpointStage1']).lower()}"
         f" changedPathCount={len(paths)}"
         f" reason={reason}"
     )

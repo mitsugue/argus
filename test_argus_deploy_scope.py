@@ -14,6 +14,7 @@ class DeployScopeTests(unittest.TestCase):
         self.assertEqual({
             "frontendDeploy": True, "backendDeploy": False,
             "newBackendSoak": False, "preserveBackendSoak": True,
+            "checkpointStage1": False,
         }, result)
 
     def test_react_only_deploys_pages_and_preserves_soak(self):
@@ -28,12 +29,36 @@ class DeployScopeTests(unittest.TestCase):
         self.assertFalse(result["frontendDeploy"])
         self.assertTrue(result["backendDeploy"])
         self.assertTrue(result["newBackendSoak"])
+        self.assertFalse(result["checkpointStage1"])
 
     def test_shared_api_type_deploys_both_planes(self):
         result = deploy_scope.classify(["web/src/types/chartIntelligence.ts"])
         self.assertTrue(result["frontendDeploy"])
         self.assertTrue(result["backendDeploy"])
         self.assertTrue(result["newBackendSoak"])
+        self.assertFalse(result["checkpointStage1"])
+
+    def test_checkpoint_v2_stage1_deploys_without_formal_soak(self):
+        result = deploy_scope.classify(
+            list(deploy_scope.CHECKPOINT_STAGE1_BACKEND_PATHS) + [
+                ".github/workflows/checkpoint-v2-gate.yml",
+                "docs/ops/checkpoint-v2-pre-merge-closure.md",
+                "test_argus_checkpoint_v2_stage1.py",
+            ])
+        self.assertTrue(result["backendDeploy"])
+        self.assertFalse(result["newBackendSoak"])
+        self.assertTrue(result["preserveBackendSoak"])
+        self.assertTrue(result["checkpointStage1"])
+
+    def test_checkpoint_stage1_mixed_backend_change_fails_closed(self):
+        result = deploy_scope.classify([
+            "argus_checkpoint_v2_stage1.py",
+            "requirements.txt",
+        ])
+        self.assertTrue(result["backendDeploy"])
+        self.assertTrue(result["newBackendSoak"])
+        self.assertFalse(result["preserveBackendSoak"])
+        self.assertFalse(result["checkpointStage1"])
 
     def test_guide_only_does_not_restart_backend(self):
         result = deploy_scope.classify(["web/src/routes/Guide.tsx"])
