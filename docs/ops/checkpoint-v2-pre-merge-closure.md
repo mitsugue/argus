@@ -34,11 +34,21 @@ The two previously reported results are not combined:
 |---|---|---|---|---|---|---|
 | local exact public snapshot | public production-shaped JSON; 129,771,010 source bytes; 127,497,217 canonical bytes; DB 156,069,888 bytes | one local Python process per measured phase | process current RSS plus `ru_maxrss` | cold parse, write, and isolated restore | not in process RSS | yes in `ru_maxrss` |
 | prior Linux gate | synthetic section-size fixture (59/26/16/9/6/3 MiB plus 120 missions, 240 windows, 400 journal, 40 compacted); not the exact public snapshot | orchestrator plus isolated write/restore children in one 4 GiB cgroup | child `ru_maxrss`; cgroup max was verified but old report did not capture `memory.current/peak` | cold children, synthetic write/restore, then warm reduced cycles | not in `ru_maxrss`; old cgroup peak not recorded | yes in child `ru_maxrss` |
+| exact Linux gate capture | later public production-shaped JSON; 129,806,517 source bytes; DB 156,098,560 bytes | isolated write, restore, WAL and repeated-cycle children in one exact 4 GiB cgroup | cgroup `memory.current/peak`, process current RSS and child `ru_maxrss` | cold exact write/restore, then WAL and 50 warm reduced cycles | included in cgroup peak | yes in child `ru_maxrss` |
 
 The local exact run measured write peak 974,635,008 bytes and write delta
 169,115,648; isolated restore peak 490,864,640 and restore delta 473,972,736.
 The earlier synthetic Linux gate measured maximum child RSS 173,039,616 and
 maximum delta 145,076,224. They are different datasets and measurement scopes.
+
+The exact Linux capture measured cgroup peak 753,143,808 bytes, write-process
+peak 626,937,856, isolated-restore peak 387,080,192, WAL replay peak
+27,623,424, and 3,608,576 bytes of retained growth after 50 reduced cycles.
+It ended with zero pending generations and four retained generations. Its
+first job result was incorrectly failed by a retired 512 MiB process-delta
+threshold even though the comparable absolute cgroup peak was safe. Process
+delta remains recorded for diagnosis but is not combined with an absolute
+cgroup peak for acceptance.
 
 The gate now performs an additional read-only public GET of the exact snapshot
 and runs exact write, read-only restore, an observed-size 631,910-byte WAL
@@ -54,8 +64,11 @@ cgroup. Its V2 evidence records:
 
 The conservative acceptance value is the maximum of exact-run cgroup
 `memory.peak` (includes children and page cache) and the exact child
-`ru_maxrss`; it must remain below 4 GiB. A delta-only or synthetic measurement
-cannot override that result.
+`ru_maxrss`. The automated ceiling is 3 GiB, retaining at least 1 GiB of
+headroom inside the exact 4 GiB cgroup. A delta-only or synthetic measurement
+cannot override that result. Across the two exact captures, the most
+conservative observed peak is 974,635,008 bytes, leaving 3,320,332,288 bytes
+to the 4 GiB limit.
 
 ## Persistent disk budget
 

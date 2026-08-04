@@ -193,6 +193,10 @@ def orchestrate(full_cycles, reduced_cycles, assert_bounds, source_json=None):
         repeated = json.loads(completed.stdout.strip().splitlines()[-1])
     maximum = max(row["processPeakRssBytes"] for row in results)
     maximum_delta = max(row["processPeakDeltaBytes"] for row in results)
+    cgroup_memory_peak = cgroup_value("memory.peak")
+    conservative_peak = max(int(cgroup_memory_peak or 0), maximum)
+    cgroup_memory_limit = 4 * 1024 ** 3
+    acceptance_ceiling = 3 * 1024 ** 3
     report = {
         "schemaVersion": "argus-checkpoint-v2-resource-proof-v2",
         "datasetKind": ("exact_public_production_snapshot" if source_json
@@ -205,17 +209,17 @@ def orchestrate(full_cycles, reduced_cycles, assert_bounds, source_json=None):
         "maximumDeltaRssBytes": maximum_delta,
         "cgroupMemoryMax": cgroup_value("memory.max"),
         "cgroupMemoryCurrentAfterBytes": cgroup_value("memory.current"),
-        "cgroupMemoryPeakBytes": cgroup_value("memory.peak"),
+        "cgroupMemoryPeakBytes": cgroup_memory_peak,
+        "conservativePeakBytes": conservative_peak,
+        "acceptanceCeilingBytes": acceptance_ceiling,
+        "headroomTo4GiBBytes": cgroup_memory_limit - conservative_peak,
         "results": results, "repeated": repeated,
     }
     print(json.dumps(report, sort_keys=True))
     if assert_bounds:
-        if str(report["cgroupMemoryMax"]) != str(4 * 1024 ** 3):
+        if str(report["cgroupMemoryMax"]) != str(cgroup_memory_limit):
             raise SystemExit("expected_exact_4gib_cgroup")
-        conservative_peak = max(
-            int(report["cgroupMemoryPeakBytes"] or 0), maximum)
-        if conservative_peak >= 4 * 1024 ** 3 or \
-                maximum_delta > 512 * 1024 ** 2:
+        if conservative_peak >= acceptance_ceiling:
             raise SystemExit("checkpoint_v2_memory_bound_exceeded")
         if repeated["retainedGrowthBytes"] >= 128 * 1024 ** 2:
             raise SystemExit("checkpoint_v2_retained_growth_exceeded")
