@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import sqlite3
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -31,6 +32,77 @@ def sample_snapshot(scale=1):
 
 
 class CheckpointV2Tests(unittest.TestCase):
+    def test_disk_reserve_refuses_before_write_and_preserves_authority(self):
+        with tempfile.TemporaryDirectory() as root:
+            first = v2.write_generation(
+                root, sample_snapshot(), source_generation="old")
+            manifest_path = pathlib.Path(root, v2.MANIFEST_NAME)
+            before = manifest_path.read_bytes()
+            usage = shutil._ntuple_diskusage(
+                5 * 1024 ** 3, 5 * 1024 ** 3 - 1024, 1024)
+            with self.assertRaisesRegex(
+                    v2.CheckpointV2Error,
+                    "checkpoint_v2_disk_reserve_insufficient"):
+                v2.write_generation(
+                    root, sample_snapshot(scale=2), source_generation="new",
+                    disk_usage_fn=lambda unused: usage)
+            self.assertEqual(manifest_path.read_bytes(), before)
+            self.assertEqual(v2.restore_generation(root)["generationId"],
+                             first["generationId"])
+            self.assertFalse(any(
+                path.name.startswith(".v2-pending-")
+                for path in pathlib.Path(root).iterdir()))
+
+    def test_disk_budget_has_hard_count_bytes_and_reserve(self):
+        with tempfile.TemporaryDirectory() as root:
+            v2.write_generation(root, sample_snapshot(),
+                                source_generation="old")
+            status = v2.disk_budget_status(root)
+            self.assertEqual(status["maximumRetainedGenerationCount"], 4)
+            self.assertEqual(status["maximumRetainedGenerationBytes"],
+                             4 * v2.MAXIMUM_TOTAL_BYTES)
+            self.assertEqual(status["maximumInProgressGenerationBytes"],
+                             v2.MAXIMUM_TOTAL_BYTES)
+            self.assertEqual(status["minimumFreeSpaceReserve"], 1024 ** 3)
+            self.assertLessEqual(status["retainedGenerationCount"], 4)
+
+    def test_abandoned_v2_pending_is_bounded_and_incident_name_ignored(self):
+        with tempfile.TemporaryDirectory() as root:
+            pending = pathlib.Path(root, ".v2-pending-" + "a" * 32)
+            pending.mkdir()
+            (pending / v2.DATABASE_NAME).write_bytes(b"incomplete")
+            incident = pathlib.Path(
+                root, "argus_osint_memory.json.4242." + "b" * 32 + ".tmp")
+            incident.write_bytes(b"immutable-incident")
+            before = incident.stat()
+            result = v2.write_generation(
+                root, sample_snapshot(), source_generation="old")
+            after = incident.stat()
+            self.assertEqual(result["pendingReconciliation"], {
+                "detectedCount": 1, "removedCount": 1,
+                "malformedCount": 0})
+            self.assertFalse(pending.exists())
+            self.assertEqual(
+                (before.st_ino, before.st_size, before.st_mtime_ns),
+                (after.st_ino, after.st_size, after.st_mtime_ns))
+
+    def test_manifest_provenance_counts_only_unique_natural_generations(self):
+        with tempfile.TemporaryDirectory() as root:
+            for index, source in enumerate(("manual", "ec2_systemd",
+                                            "ec2_systemd", "ec2_systemd")):
+                v2.write_generation(
+                    root, sample_snapshot(), source_generation=str(index),
+                    validation_context={
+                        "triggerSource": source,
+                        "missionWindowId": f"mw-{index}",
+                        "natural": source == "ec2_systemd",
+                        "formalSoakState": "not_started"})
+            status = v2.public_status(root)
+            self.assertEqual(status["naturalGenerationCount"], 3)
+            self.assertTrue(status["legacyRestoreAuthority"])
+            self.assertFalse(status["v2RestoreAuthority"])
+            self.assertEqual(status["formalSoakState"], "not_started")
+
     def test_round_trip_manifest_rows_and_read_only_restore(self):
         with tempfile.TemporaryDirectory() as root:
             source = sample_snapshot(scale=800)
@@ -68,7 +140,7 @@ class CheckpointV2Tests(unittest.TestCase):
                 old = sample_snapshot()
                 first = v2.write_generation(root, old, source_generation="old")
                 before = pathlib.Path(root, v2.MANIFEST_NAME).read_bytes()
-                with self.assertRaises(OSError):
+                with self.assertRaises(v2.CheckpointV2Error):
                     v2.write_generation(
                         root, sample_snapshot(scale=2),
                         source_generation="new", fault_after=fault)
@@ -158,7 +230,7 @@ class CheckpointV2Tests(unittest.TestCase):
                 first = v2.write_generation(
                     root, sample_snapshot(), source_generation="old")
                 manifest = pathlib.Path(root, v2.MANIFEST_NAME).read_bytes()
-                with patcher, self.assertRaises(OSError):
+                with patcher, self.assertRaises(v2.CheckpointV2Error):
                     v2.write_generation(
                         root, sample_snapshot(scale=2), source_generation="new")
                 self.assertEqual(
@@ -290,7 +362,7 @@ class CheckpointV2Tests(unittest.TestCase):
             manifest = pathlib.Path(v2_root, v2.MANIFEST_NAME).read_bytes()
             legacy_storage.write_checkpoint(
                 str(old), sample_snapshot(scale=2), temp_directory=root)
-            with self.assertRaises(OSError):
+            with self.assertRaises(v2.CheckpointV2Error):
                 v2.migrate_legacy_checkpoint(
                     str(old), str(v2_root), fault_after="database_fsync")
             self.assertEqual(

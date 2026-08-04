@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import uuid
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
@@ -30,6 +31,13 @@ DATABASE_NAME = "checkpoint.sqlite3"
 MAXIMUM_TOTAL_BYTES = 256 * 1024 * 1024
 MAXIMUM_ROW_BYTES = 8 * 1024 * 1024
 MAXIMUM_GENERATIONS = 4
+MINIMUM_FREE_SPACE_RESERVE = 1024 * 1024 * 1024
+MAXIMUM_RETAINED_GENERATION_BYTES = MAXIMUM_GENERATIONS * MAXIMUM_TOTAL_BYTES
+MAXIMUM_IN_PROGRESS_GENERATION_BYTES = MAXIMUM_TOTAL_BYTES
+MAXIMUM_METADATA_BYTES = 1024 * 1024
+MAXIMUM_V2_OWNED_BYTES = (
+    MAXIMUM_RETAINED_GENERATION_BYTES +
+    MAXIMUM_IN_PROGRESS_GENERATION_BYTES + MAXIMUM_METADATA_BYTES)
 # These are rebuildable presentation caches, retained as immutable archive
 # segments but not required to construct authoritative runtime state at boot.
 ARCHIVE_SECTIONS = frozenset({"verifiedViewSnapshots", "assetChartReports"})
@@ -206,6 +214,28 @@ def _remove_pending(path: pathlib.Path) -> None:
     path.rmdir()
 
 
+def reconcile_pending_generations(root: str) -> Dict[str, Any]:
+    """Remove only abandoned V2-owned pending dirs under the writer lock."""
+    root_path = pathlib.Path(root).resolve()
+    removed = 0
+    malformed = 0
+    if not root_path.exists():
+        return {"detectedCount": 0, "removedCount": 0,
+                "malformedCount": 0}
+    candidates = [
+        path for path in root_path.iterdir()
+        if path.is_dir() and not path.is_symlink() and
+        path.name.startswith(".v2-pending-")]
+    for path in candidates[:16]:
+        try:
+            _remove_pending(path)
+            removed += 1
+        except (OSError, CheckpointV2Error):
+            malformed += 1
+    return {"detectedCount": len(candidates), "removedCount": removed,
+            "malformedCount": malformed}
+
+
 def _prune_generations(root: pathlib.Path, retained_ids) -> None:
     """Bound V2 disk use without ever touching legacy or incident evidence."""
     retained = set(retained_ids)
@@ -228,23 +258,117 @@ def _prune_generations(root: pathlib.Path, retained_ids) -> None:
         path.rmdir()
 
 
+def disk_budget_status(root: str, *, disk_usage_fn=shutil.disk_usage,
+                       minimum_free_space_reserve: int =
+                       MINIMUM_FREE_SPACE_RESERVE) -> Dict[str, Any]:
+    """Return a V2-only capacity view; never enumerate legacy temp names."""
+    root_path = pathlib.Path(root).resolve()
+    retained_bytes = pending_bytes = 0
+    retained_count = pending_count = 0
+    if root_path.exists():
+        for path in root_path.iterdir():
+            if path.is_symlink() or not path.is_dir():
+                continue
+            if path.name.startswith("v2-generation-"):
+                retained_count += 1
+                database = path / DATABASE_NAME
+                if database.is_file() and not database.is_symlink():
+                    retained_bytes += database.stat().st_size
+            elif path.name.startswith(".v2-pending-"):
+                pending_count += 1
+                database = path / DATABASE_NAME
+                if database.is_file() and not database.is_symlink():
+                    pending_bytes += database.stat().st_size
+    usage = disk_usage_fn(str(root_path))
+    free = int(getattr(usage, "free", usage[2]))
+    return {
+        "schemaVersion": "argus-checkpoint-v2-disk-budget-v1",
+        "retainedGenerationCount": retained_count,
+        "retainedGenerationBytes": retained_bytes,
+        "pendingGenerationCount": pending_count,
+        "pendingGenerationBytes": pending_bytes,
+        "maximumRetainedGenerationCount": MAXIMUM_GENERATIONS,
+        "maximumRetainedGenerationBytes": MAXIMUM_RETAINED_GENERATION_BYTES,
+        "maximumInProgressGenerationBytes": MAXIMUM_IN_PROGRESS_GENERATION_BYTES,
+        "maximumV2OwnedBytes": MAXIMUM_V2_OWNED_BYTES,
+        "minimumFreeSpaceReserve": int(minimum_free_space_reserve),
+        "freeBytes": free,
+    }
+
+
+def _preflight_disk_budget(root: pathlib.Path, *, maximum_total_bytes: int,
+                           disk_usage_fn, minimum_free_space_reserve: int):
+    status = disk_budget_status(
+        str(root), disk_usage_fn=disk_usage_fn,
+        minimum_free_space_reserve=minimum_free_space_reserve)
+    if status["pendingGenerationCount"]:
+        raise CheckpointV2Error(
+            "checkpoint_v2_pending_generation_present",
+            pendingGenerationCount=status["pendingGenerationCount"])
+    if status["retainedGenerationCount"] > MAXIMUM_GENERATIONS or \
+            status["retainedGenerationBytes"] > \
+            MAXIMUM_RETAINED_GENERATION_BYTES:
+        raise CheckpointV2Error(
+            "checkpoint_v2_owned_budget_exceeded",
+            retainedGenerationCount=status["retainedGenerationCount"],
+            retainedGenerationBytes=status["retainedGenerationBytes"])
+    required = int(minimum_free_space_reserve) + int(maximum_total_bytes)
+    if status["freeBytes"] < required:
+        raise CheckpointV2Error(
+            "checkpoint_v2_disk_reserve_insufficient",
+            freeBytes=status["freeBytes"], requiredFreeBytes=required,
+            minimumFreeSpaceReserve=int(minimum_free_space_reserve),
+            generationBudgetBytes=int(maximum_total_bytes))
+    return status
+
+
+def _prior_generation_history(root: pathlib.Path):
+    path = root / MANIFEST_NAME
+    try:
+        with open(path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return []
+    history = manifest.get("generationHistory")
+    if not isinstance(history, list):
+        history = []
+    return [row for row in history[-(MAXIMUM_GENERATIONS - 1):]
+            if isinstance(row, dict) and row.get("generationId")]
+
+
 def write_generation(root: str, snapshot: Mapping[str, Any], *,
                      source_generation: str,
                      maximum_total_bytes: int = MAXIMUM_TOTAL_BYTES,
-                     fault_after: Optional[str] = None) -> Dict[str, Any]:
+                     fault_after: Optional[str] = None,
+                     validation_context: Optional[Mapping[str, Any]] = None,
+                     disk_usage_fn=shutil.disk_usage,
+                     minimum_free_space_reserve: int =
+                     MINIMUM_FREE_SPACE_RESERVE) -> Dict[str, Any]:
     root_path = pathlib.Path(root).resolve()
     root_path.mkdir(parents=True, exist_ok=True)
     lock_path = root_path / "checkpoint-v2.writer.lock"
     lock = open(lock_path, "a+b")
+    phase = "writer_lock"
     try:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise CheckpointV2Error("checkpoint_v2_writer_busy") from exc
+        pending_reconciliation = reconcile_pending_generations(str(root_path))
+        if pending_reconciliation["malformedCount"] or \
+                pending_reconciliation["detectedCount"] > 16:
+            raise CheckpointV2Error(
+                "checkpoint_v2_pending_generation_malformed",
+                **pending_reconciliation)
+        disk_before = _preflight_disk_budget(
+            root_path, maximum_total_bytes=maximum_total_bytes,
+            disk_usage_fn=disk_usage_fn,
+            minimum_free_space_reserve=minimum_free_space_reserve)
         generation_id = uuid.uuid4().hex
         pending = root_path / f".v2-pending-{generation_id}"
         final = root_path / f"v2-generation-{generation_id}"
         pending.mkdir(mode=0o700)
+        phase = "transaction"
         database = pending / DATABASE_NAME
         connection = _connect(str(database))
         section_manifest = {}
@@ -322,11 +446,13 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
         finally:
             connection.close()
         descriptor = os.open(database, os.O_RDONLY)
+        phase = "database_fsync"
         try:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
         _fsync_directory(str(pending))
+        phase = "database_checksum"
         database_bytes, database_hash = _file_stats(str(database))
         if database_bytes > maximum_total_bytes:
             raise CheckpointV2Error(
@@ -334,7 +460,9 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                 bytes=database_bytes, maximumBytes=maximum_total_bytes)
         if fault_after == "database_fsync":
             raise OSError("injected_after_database_fsync")
+        phase = "generation_rename"
         os.replace(pending, final)
+        phase = "root_fsync"
         _fsync_directory(str(root_path))
         if fault_after == "generation_rename":
             raise OSError("injected_after_generation_rename")
@@ -348,21 +476,62 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
             "maximumRowBytes": MAXIMUM_ROW_BYTES,
             "sections": section_manifest,
         }
+        provenance = {
+            "generationId": generation_id,
+            "createdAt": manifest["createdAt"],
+            "triggerSource": str(
+                (validation_context or {}).get("triggerSource") or "unknown"),
+            "missionWindowId": (validation_context or {}).get(
+                "missionWindowId"),
+            "natural": bool((validation_context or {}).get("natural")),
+            "legacyRestoreAuthority": True,
+            "formalSoakState": str(
+                (validation_context or {}).get("formalSoakState") or
+                "not_started"),
+            "databaseBytes": database_bytes,
+            "sourceSerializedBytes": source_total,
+            "requiredSectionsPresent": True,
+            "transactionCommitted": True,
+            "manifestPromoted": True,
+        }
+        manifest["generationHistory"] = (
+            _prior_generation_history(root_path) + [provenance])[-MAXIMUM_GENERATIONS:]
+        manifest["stage1Validation"] = provenance
+        manifest["diskBudgetBefore"] = disk_before
+        phase = "manifest_promotion"
         manifest_write = legacy.atomic_write_json(
             str(root_path / MANIFEST_NAME), manifest,
             temp_directory=str(root_path), maximum_bytes=1024 * 1024)
+        phase = "retention_prune"
         _prune_generations(root_path, (generation_id,))
         return {"verified": True, "generationId": generation_id,
                 "manifest": str(root_path / MANIFEST_NAME),
                 "databaseBytes": database_bytes,
                 "sourceSerializedBytes": source_total,
                 "sectionCount": len(section_manifest),
+                "validation": provenance,
+                "diskBudgetBefore": disk_before,
+                "pendingReconciliation": pending_reconciliation,
                 "manifestWrite": manifest_write}
-    except BaseException:
+    except BaseException as exc:
         if "pending" in locals() and pending.exists():
             with contextlib.suppress(OSError, CheckpointV2Error):
                 _remove_pending(pending)
-        raise
+        if isinstance(exc, (CheckpointV2Error, KeyboardInterrupt,
+                            SystemExit)):
+            raise
+        classification = {
+            "transaction": "checkpoint_v2_transaction_failed",
+            "database_fsync": "checkpoint_v2_fsync_failed",
+            "database_checksum": "checkpoint_v2_checksum_failed",
+            "generation_rename": "checkpoint_v2_generation_rename_failed",
+            "root_fsync": "checkpoint_v2_fsync_failed",
+            "manifest_promotion": "checkpoint_v2_manifest_promotion_failed",
+            "retention_prune": "checkpoint_v2_retention_prune_failed",
+        }.get(phase, "checkpoint_v2_write_failed")
+        raise CheckpointV2Error(
+            classification, phase=phase,
+            causeClass=type(exc).__name__) from exc
     finally:
         with contextlib.suppress(OSError):
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -532,10 +701,21 @@ def public_status(root: str) -> Dict[str, Any]:
             manifest = json.load(handle)
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {"schemaVersion": SCHEMA, "state": "not_created"}
+    history = [row for row in (manifest.get("generationHistory") or [])
+               if isinstance(row, dict)]
+    natural = [row for row in history
+               if row.get("natural") is True and
+               row.get("triggerSource") == "ec2_systemd"]
     return {"schemaVersion": SCHEMA, "state": "stage1_dual_write",
             "generationId": manifest.get("generationId"),
             "sourceGeneration": manifest.get("sourceGeneration"),
             "sourceSerializedBytes": manifest.get("sourceSerializedBytes"),
             "hardLimitBytes": manifest.get("hardLimitBytes"),
             "maximumRowBytes": manifest.get("maximumRowBytes"),
-            "sectionCount": len(manifest.get("sections") or {})}
+            "sectionCount": len(manifest.get("sections") or {}),
+            "naturalGenerationCount": len(natural),
+            "generationHistory": history,
+            "legacyRestoreAuthority": True,
+            "v2RestoreAuthority": False,
+            "formalSoakState": (manifest.get("stage1Validation") or {}).get(
+                "formalSoakState") or "not_started"}

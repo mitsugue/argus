@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -289,10 +290,53 @@ class CheckpointV2Stage1IntegrationTests(unittest.TestCase):
             legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
             result = scanner._checkpoint_v2_dual_write(
                 storage.seal_checkpoint(remote_snapshot()), legacy_result)
-            self.assertEqual(result["state"], "stage1_dual_write_failed")
+            self.assertEqual(result["state"], "validation_failed")
             self.assertEqual(result["lastErrorClass"],
                              "checkpoint_v2_total_limit_exceeded")
             self.assertTrue(legacy_result["verified"])
+
+    def test_all_v2_validation_failures_are_structured_and_legacy_isolated(self):
+        classifications = (
+            "checkpoint_v2_writer_busy",
+            "checkpoint_v2_total_limit_exceeded",
+            "checkpoint_v2_database_limit_exceeded",
+            "checkpoint_v2_row_too_large",
+            "checkpoint_v2_disk_reserve_insufficient",
+            "checkpoint_v2_transaction_failed",
+            "checkpoint_v2_fsync_failed",
+            "checkpoint_v2_manifest_promotion_failed",
+            "checkpoint_v2_database_hash_mismatch",
+            "checkpoint_v2_row_hash_mismatch",
+            "checkpoint_v2_isolated_restore_failed",
+        )
+        saved = copy.deepcopy(scanner._CHECKPOINT_V2_STAGE1_CONTROL)
+        try:
+            for classification in classifications:
+                with self.subTest(classification=classification), \
+                        mock.patch.object(
+                            scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
+                        mock.patch.object(
+                            argus_checkpoint_v2, "write_generation",
+                            side_effect=argus_checkpoint_v2.CheckpointV2Error(
+                                classification, phase="injected")):
+                    legacy_result = {
+                        "verified": True, "snapshotHash": "legacy-hash",
+                        "walCompaction": {"verified": True}}
+                    result = scanner._checkpoint_v2_dual_write(
+                        storage.seal_checkpoint(remote_snapshot()),
+                        legacy_result)
+                    self.assertEqual(result["state"], "validation_failed")
+                    self.assertEqual(result["lastErrorClass"], classification)
+                    self.assertEqual(result["lastErrorDetails"],
+                                     {"phase": "injected"})
+                    self.assertFalse(result["formalSoakArmed"])
+                    self.assertTrue(result["authorityPromotionBlocked"])
+                    self.assertTrue(legacy_result["verified"])
+                    self.assertTrue(
+                        legacy_result["walCompaction"]["verified"])
+        finally:
+            scanner._CHECKPOINT_V2_STAGE1_CONTROL.clear()
+            scanner._CHECKPOINT_V2_STAGE1_CONTROL.update(saved)
 
     def test_runtime_rejects_persistent_root_configuration_drift(self):
         with tempfile.TemporaryDirectory() as root:
@@ -556,8 +600,32 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
             self.assertEqual(result["retainedIncidentEvidenceCount"], 1)
             self.assertEqual(result["entries"][0]["classification"],
                              "retained_incident_evidence")
+            self.assertFalse(result["entries"][0]["contentOpenAttempted"])
             self.assertEqual((before.st_dev, before.st_ino, before.st_mtime_ns),
                              (after.st_dev, after.st_ino, after.st_mtime_ns))
+
+    def test_incident_evidence_sparse_file_is_never_opened(self):
+        with tempfile.TemporaryDirectory() as root:
+            final = pathlib.Path(root, "state.json")
+            evidence = pathlib.Path(
+                root, f"state.json.4242.{'b' * 32}.tmp")
+            with evidence.open("wb") as handle:
+                handle.truncate(2 * 1024 * 1024 * 1024)
+            before = evidence.stat()
+            with mock.patch.object(
+                    storage.os, "open",
+                    side_effect=AssertionError("incident content opened")):
+                result = storage.reconcile_abandoned_checkpoint_temps(
+                    str(final), temp_directory=root, cleanup=True,
+                    owner_probe=lambda *args, **kwargs: False)
+            after = evidence.stat()
+            self.assertEqual(result["retainedIncidentEvidenceCount"], 1)
+            self.assertFalse(result["entries"][0]["contentOpenAttempted"])
+            self.assertEqual(
+                (before.st_dev, before.st_ino, before.st_size,
+                 before.st_mtime_ns, before.st_atime_ns),
+                (after.st_dev, after.st_ino, after.st_size,
+                 after.st_mtime_ns, after.st_atime_ns))
 
     def test_post_hotfix_temp_cleanup_requires_age_and_ownership_proof(self):
         with tempfile.TemporaryDirectory() as root:

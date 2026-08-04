@@ -389,14 +389,21 @@ def reconcile_abandoned_checkpoint_temps(
         owner_open = owner_probe(
             writer_pid, device=metadata.st_dev, inode=metadata.st_ino)
         lock_acquired = False
+        content_open_attempted = False
         descriptor = None
-        try:
-            flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(entry.path, flags)
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            lock_acquired = True
-        except (BlockingIOError, OSError):
-            lock_acquired = False
+        # A pre-hotfix file is immutable incident evidence.  Even opening its
+        # inode would violate the evidence-retention contract and can update
+        # access metadata on some filesystems.  Only V13.3.8-owned ordinary
+        # temporaries enter the descriptor/flock cleanup path.
+        if post_hotfix:
+            content_open_attempted = True
+            try:
+                flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(entry.path, flags)
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_acquired = True
+            except (BlockingIOError, OSError):
+                lock_acquired = False
         age_seconds = max(0, int(observed_at - metadata.st_mtime))
         retention_satisfied = bool(
             post_hotfix and age_seconds >= POST_HOTFIX_TEMP_RETENTION_SECONDS)
@@ -435,6 +442,7 @@ def reconcile_abandoned_checkpoint_temps(
             "ageSeconds": age_seconds,
             "writerHasOpenInode": owner_open,
             "exclusiveLockAcquired": lock_acquired,
+            "contentOpenAttempted": content_open_attempted,
             "postHotfix": post_hotfix,
             "retentionSeconds": POST_HOTFIX_TEMP_RETENTION_SECONDS,
             "retentionSatisfied": retention_satisfied,

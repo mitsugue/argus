@@ -27,9 +27,32 @@ jobs:
             python3 -B scripts/checkpoint_v2_resource_probe.py \
               --full-cycles 3 --reduced-cycles 50 --assert-bounds \
             | tee artifacts/checkpoint-v2-resource-proof.json
+      - name: Fetch exact public production-shaped state (read-only GET)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --max-time 300 \
+            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
+            --output artifacts/checkpoint-v2-exact-source.json
+          python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
+      - name: Exact-state write, restore, WAL and cgroup proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/checkpoint_v2_resource_probe.py \
+              --source-json artifacts/checkpoint-v2-exact-source.json \
+              --full-cycles 1 --reduced-cycles 50 --assert-bounds \
+            | tee artifacts/checkpoint-v2-exact-resource-proof.json
       - name: Publish exact resource proof
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: checkpoint-v2-resource-proof-${{ github.sha }}
-          path: artifacts/checkpoint-v2-resource-proof.json
+          path: |
+            artifacts/checkpoint-v2-resource-proof.json
+            artifacts/checkpoint-v2-exact-resource-proof.json
