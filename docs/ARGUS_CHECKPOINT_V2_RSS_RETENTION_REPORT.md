@@ -113,8 +113,8 @@ historical Soak evidence, and all ten incident temp files remain unchanged.
 
 ## Deterministic reproduction and acceptance
 
-The gate constructs 41 sections, approximately 45,000 SQLite rows, and a
-140,287,565-byte serialized source (143,208,448-byte SQLite generation). It
+The gate constructs 41 sections, 43,348 SQLite rows, and a
+113,788,303-byte serialized source (144,056,320-byte SQLite generation). It
 runs eight consecutive write and read-back cycles in one long-lived process,
 under the existing exact 4 GiB Linux cgroup.
 
@@ -145,6 +145,16 @@ record without measuring the diagnostic allocator as application retention.
 With observer state removed, the integrated local authoritative window
 retained 589,824 bytes and its last three RSS samples were equal, so the
 unchanged strict gate passed.
+
+The Linux authoritative synthetic run recorded 28,672 bytes of
+cycles-3-through-8 RSS growth and
+`strictlyMonotonicSteadyState=false`. All eight cycles were verified and
+consumed, pending generations remained zero, retained generations remained
+four, and SQLite connection/cursor, mapping, descriptor, thread, and future
+counts did not grow. Conservative cgroup peak was 1,588,060,160 bytes, below
+the unchanged 3 GiB acceptance ceiling in the exact 4 GiB cgroup. The exact
+public-state pass intentionally repeats all eight cycles; its job budget is
+180 minutes so the evidence is not reduced merely to avoid a timeout.
 
 The gate still fails when any of these occurs:
 
