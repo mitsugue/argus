@@ -60,6 +60,10 @@ jobs:
   mapping-attribution:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [pre_fix, candidate_without_trim, candidate_with_trim]
     steps:
       - uses: actions/checkout@v5
       - name: Fetch exact public state using read-only GET
@@ -70,22 +74,41 @@ jobs:
             --retry 3 --retry-all-errors --max-time 300 \
             https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
             --output artifacts/checkpoint-v2-exact-source.json
-      - name: Same-shape allocator A/B/C attribution
+      - name: Same-shape allocator attribution (${{ matrix.variant }})
         run: |
           set -euo pipefail
-          for variant in pre_fix candidate_without_trim candidate_with_trim; do
-            docker run --rm \
-              --memory 4g --memory-swap 4g --pids-limit 512 \
-              --volume "$PWD:/work" --workdir /work \
-              python:3.12-slim \
-              python3 -B scripts/checkpoint_v2_mapping_probe.py \
-                --root "/tmp/$variant-root" \
-                --raw-dir "/tmp/private-mapping-evidence" \
-                --artifact-dir artifacts/mapping-attribution \
-                --source-json artifacts/checkpoint-v2-exact-source.json \
-                --variant "$variant" --cycles 4 \
-              | tee "artifacts/mapping-attribution/$variant-summary.log"
-          done
+          variant='${{ matrix.variant }}'
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/checkpoint_v2_mapping_probe.py \
+              --root "/tmp/$variant-root" \
+              --raw-dir "/tmp/private-mapping-evidence" \
+              --artifact-dir artifacts/mapping-attribution \
+              --source-json artifacts/checkpoint-v2-exact-source.json \
+              --variant "$variant" --cycles 4 --tracemalloc \
+            | tee "artifacts/mapping-attribution/$variant-summary.log"
+      - name: Publish redacted mapping attribution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v2-mapping-${{ matrix.variant }}-${{ github.sha }}
+          path: artifacts/mapping-attribution/
+
+  mapping-syscall-trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch exact public state using read-only GET
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/mapping-attribution
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --max-time 300 \
+            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
+            --output artifacts/checkpoint-v2-exact-source.json
       - name: Test-only mmap and munmap trace
         run: |
           set -euo pipefail
@@ -113,7 +136,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: checkpoint-v2-mapping-attribution-${{ github.sha }}
+          name: checkpoint-v2-mmap-trace-${{ github.sha }}
           path: artifacts/mapping-attribution/
 
   mapping-closure-32:

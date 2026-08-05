@@ -117,7 +117,7 @@ def _append(path, value):
 
 
 def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
-                quiet_seconds=QUIET_SECONDS):
+                quiet_seconds=QUIET_SECONDS, trace_allocations=False):
     run_root = pathlib.Path(root) / variant
     run_root.mkdir(parents=True, exist_ok=True)
     artifact_dir = pathlib.Path(artifact_dir) / variant
@@ -126,7 +126,8 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
     raw_dir.mkdir(parents=True, exist_ok=True)
     reports_path = artifact_dir / "cycle-reports.ndjson"
     reports_path.write_text("")
-    tracemalloc.start()
+    if trace_allocations:
+        tracemalloc.start()
     previous, baseline = _capture(raw_dir, "process-baseline", None)
     baseline_reachability = reachability_counts()
     _append(reports_path, {"phase": "baseline", "mapping": baseline,
@@ -152,10 +153,7 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
             after_records, after = _capture(
                 raw_dir, f"cycle-{index:02d}-after", before_records,
                 active_generation=active_generation)
-            restored = v2.restore_generation(str(run_root),
-                                             include_archived=False)
-            restored_verified = bool(restored.get("verified"))
-            del restored["snapshot"], restored
+            write_verified = bool(result.get("verified"))
             source_bytes = int(result.get("sourceSerializedBytes") or 0)
             result_telemetry = dict(result.get("resourceTelemetry") or {})
             del result, owner
@@ -166,12 +164,15 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
                 raw_dir, f"cycle-{index:02d}-quiet", after_records,
                 active_generation=active_generation)
             reachability = reachability_counts()
-            traced_current, traced_peak = tracemalloc.get_traced_memory()
+            if trace_allocations:
+                traced_current, traced_peak = tracemalloc.get_traced_memory()
+            else:
+                traced_current = traced_peak = None
             disk = shutil.disk_usage(run_root)
             retained = len(list(run_root.glob("v2-generation-*")))
             pending = len(list(run_root.glob(".v2-pending-*")))
             row = {"cycle": index, "variant": variant,
-                   "writeVerified": True, "restoreVerified": restored_verified,
+                   "writeVerified": write_verified,
                    "snapshotConsumed": consumed,
                    "generationContextReleased": context_released,
                    "generationBytes": result_telemetry.get("generationBytes"),
@@ -186,7 +187,24 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
                    "retainedGenerations": retained,
                    "diskFreeBytes": disk.free}
             _append(reports_path, row)
-            all_verified &= restored_verified
+            print(json.dumps({
+                "schemaVersion": "argus-checkpoint-v2-mapping-progress-v1",
+                "variant": variant, "cycle": index,
+                "writeVerified": write_verified,
+                "generationContextReleased": context_released,
+                "rssBytes": quiet["rssBytes"],
+                "pssBytes": quiet.get("PssBytes"),
+                "mappingCount": quiet["categories"]["__total__"][
+                    "mappingCount"],
+                "activeGenerationFileMappings": quiet["gate"][
+                    "activeGenerationFileMappings"],
+                "v2TempMappings": quiet["gate"]["v2TempMappings"],
+                "deletedMappings": quiet["gate"]["deletedMappings"],
+                "unknownMappings": quiet["gate"]["unknownMappings"],
+                "pendingGenerations": pending,
+                "retainedGenerations": retained,
+            }, sort_keys=True), flush=True)
+            all_verified &= write_verified
             all_consumed &= consumed
             all_contexts_released &= context_released
             previous = quiet_records
@@ -196,6 +214,13 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
     final_records, final = _capture(
         raw_dir, "extended-final", previous)
     final_reachability = reachability_counts()
+    # A full restore is deliberately performed only after the writer closure
+    # snapshot. Repeating restore in the writer process on every cycle would
+    # conflate restore allocations with the writer mappings under test.
+    restored = v2.restore_generation(str(run_root), include_archived=False)
+    final_restore_verified = bool(restored.get("verified"))
+    del restored["snapshot"], restored
+    gc.collect()
     reports = [json.loads(line) for line in reports_path.read_text().splitlines()
                if line]
     cycles_only = [row for row in reports if row.get("cycle")]
@@ -228,6 +253,9 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
         "variant": variant, "cycles": cycles,
         "warmupCycles": WARMUP_CYCLES,
         "allVerified": all_verified, "allConsumed": all_consumed,
+        "verificationMode": "write_hash_each_cycle_final_full_restore",
+        "finalRestoreVerified": final_restore_verified,
+        "tracemallocEnabled": trace_allocations,
         "allGenerationContextsReleased": all_contexts_released,
         "baselineMappingCount": baseline["categories"]["__total__"][
             "mappingCount"],
@@ -262,7 +290,8 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
 def assert_proof(report):
     if report["cycles"] < 32:
         raise SystemExit("mapping_proof_requires_32_cycles")
-    if not (report["allVerified"] and report["allConsumed"] and
+    if not (report["allVerified"] and report["finalRestoreVerified"] and
+            report["allConsumed"] and
             report["allGenerationContextsReleased"]):
         raise SystemExit("mapping_proof_lifecycle_failed")
     gate = report["finalGate"]
@@ -304,10 +333,12 @@ def main():
     parser.add_argument("--cycles", type=int, default=32)
     parser.add_argument("--quiet-seconds", type=float, default=QUIET_SECONDS)
     parser.add_argument("--assert-proof", action="store_true")
+    parser.add_argument("--tracemalloc", action="store_true",
+                        help="test-only detailed Python allocation tracing")
     args = parser.parse_args()
     report = run_variant(args.root, args.source_json, args.artifact_dir,
                          args.raw_dir, args.variant, args.cycles,
-                         args.quiet_seconds)
+                         args.quiet_seconds, args.tracemalloc)
     if args.assert_proof:
         assert_proof(report)
 
