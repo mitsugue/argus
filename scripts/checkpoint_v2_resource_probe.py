@@ -288,13 +288,10 @@ def run_allocation_trace_child(multiplier, source_json=None):
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
-def warm_resource_runtime(root):
-    """Load fixed SQLite/allocator mappings before leak baselines."""
+def warm_resource_runtime(root, multiplier, source_json=None):
+    """Run the same shape once before strict steady-state leak baselines."""
     warm_root = pathlib.Path(root) / ".resource-runtime-warmup"
-    value = {
-        "schemaVersion": "argus-durable-v3",
-        "resourceProbeWarmup": {"payload": "warmup"},
-    }
+    value = load_snapshot(source_json, multiplier)
     result = v2.write_generation(
         str(warm_root), value, source_generation="resource-runtime-warmup",
         consume_snapshot=True,
@@ -316,7 +313,7 @@ def rss_retention_worker(root, multiplier, cycles, source_json=None):
     """Measure only the long-lived production write/read-back lifecycle."""
     root_path = pathlib.Path(root)
     root_path.mkdir(parents=True, exist_ok=True)
-    warm_resource_runtime(root_path)
+    warm_resource_runtime(root_path, multiplier, source_json)
     legacy_checkpoint = root_path / "legacy-state.json"
     legacy_checkpoint.write_text("{}", encoding="utf-8")
     incident_paths = []
@@ -399,7 +396,7 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
     root_path.mkdir(parents=True, exist_ok=True)
     rss_evidence = run_rss_retention_child(
         root_path / "rss-authoritative", multiplier, cycles, source_json)
-    warm_resource_runtime(root_path)
+    warm_resource_runtime(root_path, multiplier, source_json)
     legacy_checkpoint = root_path / "legacy-state.json"
     legacy_checkpoint.write_text("{}", encoding="utf-8")
     legacy_temp_paths = []
