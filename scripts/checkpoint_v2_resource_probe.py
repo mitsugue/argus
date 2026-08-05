@@ -236,6 +236,56 @@ def worker(mode, root, multiplier, source_json=None,
     }, sort_keys=True))
 
 
+def allocation_trace_worker(multiplier, source_json=None):
+    """Trace one identical lifecycle without retaining observer state."""
+    with tempfile.TemporaryDirectory(
+            prefix="argus-checkpoint-v2-trace-") as root:
+        tracemalloc.start()
+        previous_trace = tracemalloc.take_snapshot()
+        value = load_snapshot(source_json, multiplier)
+        result = v2.write_generation(
+            root, value, source_generation="allocation-trace",
+            consume_snapshot=True)
+        consumed = value == {}
+        del value
+        restored = v2.restore_generation(root, include_archived=False)
+        restored_verified = bool(restored.get("verified"))
+        del restored["snapshot"], restored
+        gc.collect()
+        v2._release_unused_allocator_memory(
+            int(result.get("sourceSerializedBytes") or 0))
+        traced_current, traced_peak = tracemalloc.get_traced_memory()
+        current_trace = tracemalloc.take_snapshot()
+        top_deltas = []
+        for statistic in current_trace.compare_to(
+                previous_trace, "traceback")[:5]:
+            frame = statistic.traceback[0]
+            top_deltas.append({
+                "file": pathlib.Path(frame.filename).name,
+                "line": frame.lineno,
+                "sizeDeltaBytes": statistic.size_diff,
+                "countDelta": statistic.count_diff,
+            })
+        print(json.dumps({
+            "tracedCurrentBytes": traced_current,
+            "tracedPeakBytes": traced_peak,
+            "topAllocationTracebackDeltas": top_deltas,
+            "writeVerified": bool(result.get("verified")),
+            "restoreVerified": restored_verified,
+            "snapshotConsumed": consumed,
+        }, sort_keys=True))
+
+
+def run_allocation_trace_child(multiplier, source_json=None):
+    command = [sys.executable, __file__, "--worker", "allocation-trace",
+               "--multiplier", str(multiplier)]
+    if source_json:
+        command.extend(["--source-json", source_json])
+    completed = subprocess.run(
+        command, check=True, capture_output=True, text=True)
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
 def repeated_worker(root, multiplier, cycles, source_json=None):
     root_path = pathlib.Path(root)
     root_path.mkdir(parents=True, exist_ok=True)
@@ -249,15 +299,16 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
     legacy_temp_hashes = {
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in legacy_temp_paths}
-    tracemalloc.start()
     gc.collect()
     baseline_resources = gc_resource_counts()
     samples = [None] * (cycles + 1)
     samples[0] = current_rss_bytes()
+    traced_currents = []
+    traced_peaks = []
     cycle_report_path = root_path / "resource-cycle-reports.ndjson"
     cycle_report_path.write_text("", encoding="utf-8")
-    previous_trace = tracemalloc.take_snapshot()
     for index in range(cycles):
+        trace_report = run_allocation_trace_child(multiplier, source_json)
         value = load_snapshot(source_json, multiplier)
         source_counts = item_counts(value)
         result = v2.write_generation(
@@ -283,22 +334,17 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
         # measuring the production write lifecycle's steady-state RSS.
         readback_reclaim = v2._release_unused_allocator_memory(
             int(result.get("sourceSerializedBytes") or 0))
+        traced_current = trace_report["tracedCurrentBytes"]
+        traced_peak = trace_report["tracedPeakBytes"]
+        top_deltas = trace_report["topAllocationTracebackDeltas"]
+        traced_currents.append(traced_current)
+        traced_peaks.append(traced_peak)
+        gc.collect()
+        v2._release_unused_allocator_memory(
+            int(result.get("sourceSerializedBytes") or 0))
         time.sleep(0.01)
         rss = current_rss_bytes()
         samples[index + 1] = rss
-        traced_current, traced_peak = tracemalloc.get_traced_memory()
-        current_trace = tracemalloc.take_snapshot()
-        top_deltas = []
-        for statistic in current_trace.compare_to(
-                previous_trace, "traceback")[:5]:
-            frame = statistic.traceback[0]
-            top_deltas.append({
-                "file": pathlib.Path(frame.filename).name,
-                "line": frame.lineno,
-                "sizeDeltaBytes": statistic.size_diff,
-                "countDelta": statistic.count_diff,
-            })
-        previous_trace = current_trace
         resources = gc_resource_counts()
         current_paths = list(root_path.iterdir())
         retained = sum(path.name.startswith("v2-generation-")
@@ -361,7 +407,7 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
         with open(cycle_report_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(cycle_report, sort_keys=True) + "\n")
         cycle_report = source_counts = current_paths = manifest = None
-        result = resources = top_deltas = None
+        result = resources = top_deltas = trace_report = None
     paths = list(pathlib.Path(root).iterdir())
     ending_resources = gc_resource_counts()
     steady_samples = samples[3:] if len(samples) > 3 else samples[1:]
@@ -370,8 +416,8 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
     strictly_monotonic = len(steady_samples) > 1 and all(
         later > earlier
         for earlier, later in zip(steady_samples, steady_samples[1:]))
-    traced_current, traced_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    traced_current = traced_currents[-1] if traced_currents else 0
+    traced_peak = max(traced_peaks, default=0)
     legacy_temp_hashes_after = {
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in legacy_temp_paths}
@@ -506,7 +552,7 @@ def orchestrate(full_cycles, retention_cycles, assert_bounds,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--worker", choices=("write", "restore", "wal",
-                                             "repeated"))
+                                             "repeated", "allocation-trace"))
     parser.add_argument("--root")
     parser.add_argument("--source-json")
     parser.add_argument("--multiplier", type=float, default=1.0)
@@ -517,6 +563,8 @@ def main():
     if args.worker == "repeated":
         repeated_worker(args.root, args.multiplier, args.retention_cycles,
                         args.source_json)
+    elif args.worker == "allocation-trace":
+        allocation_trace_worker(args.multiplier, args.source_json)
     elif args.worker:
         worker(args.worker, args.root, args.multiplier, args.source_json)
     else:
