@@ -32,7 +32,7 @@ OBSERVED_SECTIONS_MIB = {
 }
 PRODUCTION_SHAPED_SECTION_COUNT = 41
 PRODUCTION_SHAPED_ROW_TARGET = 45_000
-PRODUCTION_SHAPED_PAYLOAD_BYTES = 9_300
+PRODUCTION_SHAPED_PAYLOAD_BYTES = 1_820
 
 
 def peak_rss_bytes():
@@ -123,11 +123,13 @@ def cgroup_value(name):
 
 
 def synthetic_snapshot(multiplier=1.0):
-    # 15,000 dict items x three scalar leaves is approximately 45,000 rows.
-    # Payload width gives a 133-140 MiB source while the named heavy sections
+    # The encoder excludes archive-only sections, so 1.35 source items yield
+    # approximately one persisted row. Payload width keeps the SQLite
+    # generation within the observed 127-160 MiB range while the named heavy
+    # sections
     # retain the proportions seen in production.  The remaining 34 bounded
     # sections make the top-level shape 41 sections including schemaVersion.
-    item_total = max(41, int((PRODUCTION_SHAPED_ROW_TARGET // 3) *
+    item_total = max(41, int(PRODUCTION_SHAPED_ROW_TARGET * 1.35 *
                              multiplier))
     heavy_total = int(item_total * 0.84)
     observed_total = sum(OBSERVED_SECTIONS_MIB.values())
