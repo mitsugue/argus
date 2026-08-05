@@ -282,14 +282,16 @@ class CheckpointV2Stage1IntegrationTests(unittest.TestCase):
                 mock.patch.object(scanner, "_CHECKPOINT_V2_ROOT",
                                   os.path.join(root, "v2")):
             blob = storage.seal_checkpoint(remote_snapshot())
+            expected = copy.deepcopy(blob)
             legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
             result = scanner._checkpoint_v2_dual_write(blob, legacy_result)
             self.assertEqual(result["state"], "stage1_dual_write")
             self.assertTrue(result["lastWriteVerified"])
             self.assertTrue(legacy_result["verified"])
+            self.assertEqual(blob, {})
             self.assertEqual(
                 argus_checkpoint_v2.restore_generation(
-                    os.path.join(root, "v2"))["snapshot"], blob)
+                    os.path.join(root, "v2"))["snapshot"], expected)
 
     def test_stage1_v2_failure_does_not_turn_legacy_success_into_failure(self):
         with mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \

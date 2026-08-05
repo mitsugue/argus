@@ -25,7 +25,7 @@ jobs:
             --volume "$PWD:/work" --workdir /work \
             python:3.12-slim \
             python3 -B scripts/checkpoint_v2_resource_probe.py \
-              --full-cycles 3 --reduced-cycles 50 --assert-bounds \
+              --full-cycles 3 --retention-cycles 8 --assert-bounds \
             | tee artifacts/checkpoint-v2-resource-proof.json
       - name: Fetch exact public production-shaped state (read-only GET)
         shell: bash
@@ -46,7 +46,7 @@ jobs:
             python:3.12-slim \
             python3 -B scripts/checkpoint_v2_resource_probe.py \
               --source-json artifacts/checkpoint-v2-exact-source.json \
-              --full-cycles 1 --reduced-cycles 50 --assert-bounds \
+              --full-cycles 1 --retention-cycles 8 --assert-bounds \
             | tee artifacts/checkpoint-v2-exact-resource-proof.json
       - name: Publish exact resource proof
         if: always()
