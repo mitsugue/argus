@@ -273,4 +273,5 @@ def test_short_and_full_same_sha_restore_does_not_create_a_new_soak():
     decision = argus_runtime.soak_restore_decision(
         persisted=_interrupted_old(), current_build_sha=OLD_SHA + "a" * 33,
         boot_iso=BOOT, last_persist_at="2026-07-31T08:20:00Z")
-    assert decision["action"] == "inherit_with_interruption"
+    assert decision["action"] == "preserve_terminal"
+    assert decision["previousSoakSummary"]["terminalState"] == "interrupted"

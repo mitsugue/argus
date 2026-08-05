@@ -15,8 +15,11 @@ import hashlib
 import json
 import os
 import pathlib
+import resource
 import shutil
 import sqlite3
+import threading
+import time
 import uuid
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
@@ -85,6 +88,158 @@ class CheckpointV2Error(RuntimeError):
         super().__init__(classification)
         self.classification = classification
         self.details = details
+
+
+def _process_rss_bytes() -> Optional[int]:
+    """Best-effort current RSS without exposing process or host identity."""
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+    except (FileNotFoundError, OSError, ValueError, IndexError):
+        pass
+    try:
+        # macOS reports bytes; Linux reports KiB.
+        raw = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        return raw if os.uname().sysname == "Darwin" else raw * 1024
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _process_peak_rss_bytes() -> Optional[int]:
+    try:
+        raw = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        return raw if os.uname().sysname == "Darwin" else raw * 1024
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _read_int(paths: Iterable[str]) -> Optional[int]:
+    for path in paths:
+        try:
+            raw = pathlib.Path(path).read_text(encoding="utf-8").strip()
+            if raw and raw != "max":
+                return int(raw)
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+    return None
+
+
+def _cgroup_current_bytes() -> Optional[int]:
+    return _read_int(("/sys/fs/cgroup/memory.current",
+                      "/sys/fs/cgroup/memory/memory.usage_in_bytes"))
+
+
+def _cgroup_peak_bytes() -> Optional[int]:
+    return _read_int(("/sys/fs/cgroup/memory.peak",
+                      "/sys/fs/cgroup/memory/memory.max_usage_in_bytes"))
+
+
+class _ResourceSampler:
+    """Sample per-generation current memory without resetting cgroup state."""
+
+    def __init__(self) -> None:
+        self._stop = threading.Event()
+        self.process_peak = _process_rss_bytes()
+        self.cgroup_peak = _cgroup_current_bytes()
+        self._thread = threading.Thread(
+            target=self._run, name="checkpoint-v2-resource-sampler",
+            daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.025):
+            rss = _process_rss_bytes()
+            cgroup = _cgroup_current_bytes()
+            if rss is not None:
+                self.process_peak = max(self.process_peak or 0, rss)
+            if cgroup is not None:
+                self.cgroup_peak = max(self.cgroup_peak or 0, cgroup)
+
+    def finish(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=0.2)
+        rss = _process_rss_bytes()
+        cgroup = _cgroup_current_bytes()
+        if rss is not None:
+            self.process_peak = max(self.process_peak or 0, rss)
+        if cgroup is not None:
+            self.cgroup_peak = max(self.cgroup_peak or 0, cgroup)
+
+
+def _legacy_temp_count(checkpoint_path: Optional[str],
+                       temp_directory: Optional[str]) -> Optional[int]:
+    """Metadata-only count; names and inode details never enter telemetry."""
+    if not checkpoint_path:
+        return None
+    final = os.path.abspath(checkpoint_path)
+    directory = os.path.realpath(
+        temp_directory or os.path.dirname(final) or ".")
+    base = os.path.basename(final)
+    count = 0
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_symlink() or not entry.is_file(
+                        follow_symlinks=False):
+                    continue
+                if entry.name.startswith(base + ".") and (
+                        entry.name.endswith(".tmp") or
+                        entry.name.endswith(".v1338-tmp") or
+                        ".bootstrap-" in entry.name or
+                        ".v1338-bootstrap-" in entry.name):
+                    count += 1
+    except OSError:
+        return None
+    return count
+
+
+def _resource_telemetry(*, started: float, rss_before: Optional[int],
+                        cgroup_before: Optional[int],
+                        cgroup_peak_before: Optional[int],
+                        sampler: _ResourceSampler,
+                        database_bytes: Optional[int], row_count: int,
+                        section_count: int, disk_free_before: Optional[int],
+                        disk_free_after: Optional[int], pending_count: int,
+                        lock_wait_ms: float, success: bool,
+                        legacy_temp_before: Optional[int],
+                        legacy_temp_after: Optional[int]) -> Dict[str, Any]:
+    sampler.finish()
+    rss_after = _process_rss_bytes()
+    return {
+        "schemaVersion": "argus-checkpoint-v2-generation-resource-v1",
+        "success": bool(success),
+        "processRssBeforeBytes": rss_before,
+        "processPeakRssBytes": sampler.process_peak,
+        "processLifetimePeakRssBytes": _process_peak_rss_bytes(),
+        "processRssAfterBytes": rss_after,
+        "processRssDeltaBytes": (
+            rss_after - rss_before
+            if rss_after is not None and rss_before is not None else None),
+        "cgroupMemoryCurrentBeforeBytes": cgroup_before,
+        "cgroupMemoryCurrentAfterBytes": _cgroup_current_bytes(),
+        "cgroupMemoryPeakBeforeBytes": cgroup_peak_before,
+        "cgroupMemoryPeakBytes": sampler.cgroup_peak,
+        "cgroupMemoryLifetimePeakBytes": _cgroup_peak_bytes(),
+        "generationBytes": database_bytes,
+        "rowCount": int(row_count),
+        "sectionCount": int(section_count),
+        "durationMs": round((time.monotonic() - started) * 1000, 3),
+        "diskFreeBeforeBytes": disk_free_before,
+        "diskFreeAfterBytes": disk_free_after,
+        "pendingGenerationCount": int(pending_count),
+        "writerLockWaitMs": round(lock_wait_ms, 3),
+        "legacyTempBaselineCount": legacy_temp_before,
+        "legacyTempAfterCount": legacy_temp_after,
+        "newLegacyTempCount": (
+            max(0, legacy_temp_after - legacy_temp_before)
+            if legacy_temp_before is not None and
+            legacy_temp_after is not None else None),
+    }
 
 
 def _iso_now() -> str:
@@ -344,16 +499,31 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                      disk_usage_fn=shutil.disk_usage,
                      minimum_free_space_reserve: int =
                      MINIMUM_FREE_SPACE_RESERVE) -> Dict[str, Any]:
+    started = time.monotonic()
+    rss_before = _process_rss_bytes()
+    cgroup_before = _cgroup_current_bytes()
+    cgroup_peak_before = _cgroup_peak_bytes()
+    sampler = _ResourceSampler()
+    sampler.start()
+    database_bytes = None
+    section_manifest: Dict[str, Any] = {}
+    disk_before: Dict[str, Any] = {}
+    lock_wait_ms = 0.0
+    legacy_temp_before = _legacy_temp_count(
+        (validation_context or {}).get("legacyCheckpointPath"),
+        (validation_context or {}).get("legacyTempDirectory"))
     root_path = pathlib.Path(root).resolve()
     root_path.mkdir(parents=True, exist_ok=True)
     lock_path = root_path / "checkpoint-v2.writer.lock"
     lock = open(lock_path, "a+b")
     phase = "writer_lock"
     try:
+        lock_started = time.monotonic()
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise CheckpointV2Error("checkpoint_v2_writer_busy") from exc
+        lock_wait_ms = (time.monotonic() - lock_started) * 1000
         pending_reconciliation = reconcile_pending_generations(str(root_path))
         if pending_reconciliation["malformedCount"] or \
                 pending_reconciliation["detectedCount"] > 16:
@@ -504,7 +674,36 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
             temp_directory=str(root_path), maximum_bytes=1024 * 1024)
         phase = "retention_prune"
         _prune_generations(root_path, (generation_id,))
+        disk_after = disk_budget_status(
+            str(root_path), disk_usage_fn=disk_usage_fn,
+            minimum_free_space_reserve=minimum_free_space_reserve)
+        telemetry = _resource_telemetry(
+            started=started, rss_before=rss_before,
+            cgroup_before=cgroup_before,
+            cgroup_peak_before=cgroup_peak_before,
+            sampler=sampler,
+            database_bytes=database_bytes,
+            row_count=sum(int(row.get("rowCount") or 0)
+                          for row in section_manifest.values()),
+            section_count=len(section_manifest),
+            disk_free_before=disk_before.get("freeBytes"),
+            disk_free_after=disk_after.get("freeBytes"),
+            pending_count=disk_after.get("pendingGenerationCount") or 0,
+            lock_wait_ms=lock_wait_ms, success=True,
+            legacy_temp_before=legacy_temp_before,
+            legacy_temp_after=_legacy_temp_count(
+                (validation_context or {}).get("legacyCheckpointPath"),
+                (validation_context or {}).get("legacyTempDirectory")))
+        provenance["resourceTelemetry"] = telemetry
+        manifest["stage1Validation"] = provenance
+        manifest["generationHistory"][-1] = provenance
+        # Persist the telemetry as part of the promoted manifest. Rewriting the
+        # small pointer is atomic and never touches the immutable generation.
+        manifest_write = legacy.atomic_write_json(
+            str(root_path / MANIFEST_NAME), manifest,
+            temp_directory=str(root_path), maximum_bytes=1024 * 1024)
         return {"verified": True, "generationId": generation_id,
+                "createdAt": manifest["createdAt"],
                 "manifest": str(root_path / MANIFEST_NAME),
                 "databaseBytes": database_bytes,
                 "sourceSerializedBytes": source_total,
@@ -512,13 +711,35 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                 "validation": provenance,
                 "diskBudgetBefore": disk_before,
                 "pendingReconciliation": pending_reconciliation,
-                "manifestWrite": manifest_write}
+                "manifestWrite": manifest_write,
+                "resourceTelemetry": telemetry}
     except BaseException as exc:
         if "pending" in locals() and pending.exists():
             with contextlib.suppress(OSError, CheckpointV2Error):
                 _remove_pending(pending)
-        if isinstance(exc, (CheckpointV2Error, KeyboardInterrupt,
-                            SystemExit)):
+        failure_telemetry = _resource_telemetry(
+            started=started, rss_before=rss_before,
+            cgroup_before=cgroup_before,
+            cgroup_peak_before=cgroup_peak_before,
+            sampler=sampler,
+            database_bytes=database_bytes,
+            row_count=sum(int(row.get("rowCount") or 0)
+                          for row in section_manifest.values()),
+            section_count=len(section_manifest),
+            disk_free_before=disk_before.get("freeBytes"),
+            disk_free_after=(disk_budget_status(
+                str(root_path), disk_usage_fn=disk_usage_fn,
+                minimum_free_space_reserve=minimum_free_space_reserve
+            ).get("freeBytes") if root_path.exists() else None),
+            pending_count=0, lock_wait_ms=lock_wait_ms, success=False,
+            legacy_temp_before=legacy_temp_before,
+            legacy_temp_after=_legacy_temp_count(
+                (validation_context or {}).get("legacyCheckpointPath"),
+                (validation_context or {}).get("legacyTempDirectory")))
+        if isinstance(exc, CheckpointV2Error):
+            exc.details.setdefault("resourceTelemetry", failure_telemetry)
+            raise
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         classification = {
             "transaction": "checkpoint_v2_transaction_failed",
@@ -531,8 +752,10 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
         }.get(phase, "checkpoint_v2_write_failed")
         raise CheckpointV2Error(
             classification, phase=phase,
-            causeClass=type(exc).__name__) from exc
+            causeClass=type(exc).__name__,
+            resourceTelemetry=failure_telemetry) from exc
     finally:
+        sampler.finish()
         with contextlib.suppress(OSError):
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         lock.close()
@@ -706,6 +929,10 @@ def public_status(root: str) -> Dict[str, Any]:
     natural = [row for row in history
                if row.get("natural") is True and
                row.get("triggerSource") == "ec2_systemd"]
+    natural_windows = {
+        str(row.get("missionWindowId")) for row in natural
+        if str(row.get("missionWindowId") or "").startswith("mw-")
+    }
     return {"schemaVersion": SCHEMA, "state": "stage1_dual_write",
             "generationId": manifest.get("generationId"),
             "sourceGeneration": manifest.get("sourceGeneration"),
@@ -713,6 +940,10 @@ def public_status(root: str) -> Dict[str, Any]:
             "hardLimitBytes": manifest.get("hardLimitBytes"),
             "maximumRowBytes": manifest.get("maximumRowBytes"),
             "sectionCount": len(manifest.get("sections") or {}),
+            "validationWindowCount": len(natural_windows),
+            "generationCount": len(natural),
+            # Compatibility alias; this is a physical-generation count, not
+            # the Stage 1 acceptance window count.
             "naturalGenerationCount": len(natural),
             "generationHistory": history,
             "legacyRestoreAuthority": True,
