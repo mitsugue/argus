@@ -29,6 +29,12 @@ _SAFE_OUTPUT_KEYS = ("ok", "status", "buildSha", "ready",
                      "created", "updated", "generated", "queued", "recovered",
                      "result", "processedCount", "remainingCount", "hasMore",
                      "cursorBefore", "cursorAfter", "checkpointCreated")
+_SAFE_OUTPUT_KEYS += (
+    "accepted", "durabilityState", "operationId", "receiptId",
+    "acceptedAt", "targetWalSequence", "verifiedWalSequence",
+    "remoteCommitSha", "verifiedByRemoteCommitSha", "readBackVerified",
+    "verifiedAt", "attempts",
+    "lastErrorClass", "ageSeconds", "idempotentReplay")
 
 
 def _redact(value: Any) -> Any:
