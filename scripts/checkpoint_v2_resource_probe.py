@@ -286,9 +286,92 @@ def run_allocation_trace_child(multiplier, source_json=None):
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
+def rss_retention_worker(root, multiplier, cycles, source_json=None):
+    """Measure only the long-lived production write/read-back lifecycle."""
+    root_path = pathlib.Path(root)
+    root_path.mkdir(parents=True, exist_ok=True)
+    legacy_checkpoint = root_path / "legacy-state.json"
+    legacy_checkpoint.write_text("{}", encoding="utf-8")
+    incident_paths = []
+    for index in range(10):
+        path = root_path / f"legacy-state.json.incident-{index}.v1338-tmp"
+        path.write_bytes(f"incident-{index}".encode("ascii"))
+        incident_paths.append(path)
+    incident_hashes = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in incident_paths}
+    gc.collect()
+    baseline_resources = gc_resource_counts()
+    samples = [None] * (cycles + 1)
+    samples[0] = current_rss_bytes()
+    all_verified = True
+    all_consumed = True
+    last_source_bytes = 0
+    for index in range(cycles):
+        value = load_snapshot(source_json, multiplier)
+        result = v2.write_generation(
+            root, value, source_generation=f"rss-retention-{index}",
+            consume_snapshot=True,
+            validation_context={
+                "triggerSource": "resource_probe",
+                "missionWindowId": f"rss-retention-{index}",
+                "natural": False,
+                "formalSoakState": "not_started",
+                "legacyCheckpointPath": str(legacy_checkpoint),
+                "legacyTempDirectory": str(root_path),
+            })
+        all_verified = all_verified and bool(result.get("verified"))
+        all_consumed = all_consumed and value == {}
+        del value
+        restored = v2.restore_generation(root, include_archived=False)
+        all_verified = all_verified and bool(restored.get("verified"))
+        del restored["snapshot"], restored
+        last_source_bytes = int(result.get("sourceSerializedBytes") or 0)
+        result = None
+        gc.collect()
+        v2._release_unused_allocator_memory(last_source_bytes)
+        time.sleep(0.01)
+        samples[index + 1] = current_rss_bytes()
+    paths = list(root_path.iterdir())
+    manifest = json.loads((root_path / v2.MANIFEST_NAME).read_text())
+    ending_resources = gc_resource_counts()
+    incident_hashes_after = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in incident_paths}
+    print(json.dumps({
+        "samples": samples,
+        "peakRssBytes": peak_rss_bytes(),
+        "baselineResources": baseline_resources,
+        "endingResources": ending_resources,
+        "allVerified": all_verified,
+        "allConsumed": all_consumed,
+        "pendingGenerationCount": sum(
+            path.name.startswith(".v2-pending-") for path in paths),
+        "retainedGenerationCount": sum(
+            path.name.startswith("v2-generation-") for path in paths),
+        "generationMetadataEntryCount": len(
+            manifest.get("generationHistory") or []),
+        "diskFreeBytes": shutil.disk_usage(root_path).free,
+        "incidentTempsImmutable": incident_hashes_after == incident_hashes,
+    }, sort_keys=True))
+
+
+def run_rss_retention_child(root, multiplier, cycles, source_json=None):
+    command = [sys.executable, __file__, "--worker", "rss-retention",
+               "--root", str(root), "--multiplier", str(multiplier),
+               "--retention-cycles", str(cycles)]
+    if source_json:
+        command.extend(["--source-json", source_json])
+    completed = subprocess.run(
+        command, check=True, capture_output=True, text=True)
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
 def repeated_worker(root, multiplier, cycles, source_json=None):
     root_path = pathlib.Path(root)
     root_path.mkdir(parents=True, exist_ok=True)
+    rss_evidence = run_rss_retention_child(
+        root_path / "rss-authoritative", multiplier, cycles, source_json)
     legacy_checkpoint = root_path / "legacy-state.json"
     legacy_checkpoint.write_text("{}", encoding="utf-8")
     legacy_temp_paths = []
@@ -301,8 +384,8 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
         for path in legacy_temp_paths}
     gc.collect()
     baseline_resources = gc_resource_counts()
-    samples = [None] * (cycles + 1)
-    samples[0] = current_rss_bytes()
+    diagnostic_samples = [None] * (cycles + 1)
+    diagnostic_samples[0] = current_rss_bytes()
     traced_currents = []
     traced_peaks = []
     cycle_report_path = root_path / "resource-cycle-reports.ndjson"
@@ -344,7 +427,7 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
             int(result.get("sourceSerializedBytes") or 0))
         time.sleep(0.01)
         rss = current_rss_bytes()
-        samples[index + 1] = rss
+        diagnostic_samples[index + 1] = rss
         resources = gc_resource_counts()
         current_paths = list(root_path.iterdir())
         retained = sum(path.name.startswith("v2-generation-")
@@ -410,6 +493,7 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
         result = resources = top_deltas = trace_report = None
     paths = list(pathlib.Path(root).iterdir())
     ending_resources = gc_resource_counts()
+    samples = rss_evidence["samples"]
     steady_samples = samples[3:] if len(samples) > 3 else samples[1:]
     steady_growth = (steady_samples[-1] - steady_samples[0]
                      if len(steady_samples) > 1 else 0)
@@ -435,19 +519,26 @@ def repeated_worker(root, multiplier, cycles, source_json=None):
         "steadyStateGrowthBytes": steady_growth,
         "strictlyMonotonicSteadyState": strictly_monotonic,
         "maximumCurrentRssBytes": max(samples),
-        "peakRssBytes": peak_rss_bytes(),
+        "peakRssBytes": rss_evidence["peakRssBytes"],
         "tracedCurrentBytes": traced_current,
         "tracedPeakBytes": traced_peak,
-        "baselineResources": baseline_resources,
-        "endingResources": ending_resources,
+        "baselineResources": rss_evidence["baselineResources"],
+        "endingResources": rss_evidence["endingResources"],
+        "diagnosticBaselineResources": baseline_resources,
+        "diagnosticEndingResources": ending_resources,
+        "diagnosticSamples": diagnostic_samples,
+        "rssEvidenceAllVerified": rss_evidence["allVerified"],
+        "rssEvidenceAllConsumed": rss_evidence["allConsumed"],
+        "rssEvidenceGenerationMetadataEntryCount": rss_evidence[
+            "generationMetadataEntryCount"],
+        "rssEvidenceDiskFreeBytes": rss_evidence["diskFreeBytes"],
         "incidentTempCount": len(legacy_temp_paths),
         "incidentTempsImmutable": legacy_temp_hashes_after ==
-        legacy_temp_hashes,
+        legacy_temp_hashes and rss_evidence["incidentTempsImmutable"],
         "cycleReports": cycle_reports,
-        "pendingGenerationCount": sum(
-            path.name.startswith(".v2-pending-") for path in paths),
-        "retainedGenerationCount": sum(
-            path.name.startswith("v2-generation-") for path in paths),
+        "pendingGenerationCount": rss_evidence["pendingGenerationCount"],
+        "retainedGenerationCount": rss_evidence[
+            "retainedGenerationCount"],
         "samples": samples,
     }, sort_keys=True))
 
@@ -519,6 +610,13 @@ def orchestrate(full_cycles, retention_cycles, assert_bounds,
         if repeated["pendingGenerationCount"] or \
                 repeated["retainedGenerationCount"] > v2.MAXIMUM_GENERATIONS:
             raise SystemExit("checkpoint_v2_generation_accumulation")
+        if not repeated["rssEvidenceAllVerified"] or not \
+                repeated["rssEvidenceAllConsumed"]:
+            raise SystemExit("checkpoint_v2_rss_evidence_unverified")
+        if repeated["rssEvidenceGenerationMetadataEntryCount"] > \
+                v2.MAXIMUM_GENERATIONS or \
+                repeated["rssEvidenceDiskFreeBytes"] < 1024 ** 3:
+            raise SystemExit("checkpoint_v2_rss_evidence_storage_invalid")
         if len(repeated["cycleReports"]) != retention_cycles or not all(
                 row["writeVerified"] and row["restoreVerified"] and
                 row["snapshotConsumed"] and
@@ -551,8 +649,9 @@ def orchestrate(full_cycles, retention_cycles, assert_bounds,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--worker", choices=("write", "restore", "wal",
-                                             "repeated", "allocation-trace"))
+    parser.add_argument("--worker", choices=(
+        "write", "restore", "wal", "repeated", "allocation-trace",
+        "rss-retention"))
     parser.add_argument("--root")
     parser.add_argument("--source-json")
     parser.add_argument("--multiplier", type=float, default=1.0)
@@ -565,6 +664,9 @@ def main():
                         args.source_json)
     elif args.worker == "allocation-trace":
         allocation_trace_worker(args.multiplier, args.source_json)
+    elif args.worker == "rss-retention":
+        rss_retention_worker(args.root, args.multiplier,
+                             args.retention_cycles, args.source_json)
     elif args.worker:
         worker(args.worker, args.root, args.multiplier, args.source_json)
     else:

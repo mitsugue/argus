@@ -137,12 +137,14 @@ The first natural Linux check exposed an observer effect in the probe itself:
 the raw cycles-3-through-8 RSS samples rose by only 708,608 bytes while a live
 cross-cycle `tracemalloc` snapshot was retained. The strict monotonic gate was
 not relaxed. Each cycle's identical allocation trace now runs in an isolated
-diagnostic child, while the authoritative eight writes and read-backs still
-run in one long-lived process. Production does not enable `tracemalloc`;
-process isolation keeps every traceback/current/peak allocation record without
-measuring the diagnostic allocator as application retention. With that
-observer state removed, the local authoritative window retained 950,272 bytes
-and included an equal RSS pair, so the unchanged strict gate passed.
+diagnostic child. A separate authoritative long-lived process performs eight
+writes and read-backs with only the production lifecycle, GC release, allocator
+pressure relief, and RSS sampling between cycles. Production does not enable
+`tracemalloc`; process isolation keeps every traceback/current/peak allocation
+record without measuring the diagnostic allocator as application retention.
+With observer state removed, the integrated local authoritative window
+retained 589,824 bytes and its last three RSS samples were equal, so the
+unchanged strict gate passed.
 
 The gate still fails when any of these occurs:
 
