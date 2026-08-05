@@ -44,6 +44,7 @@ CHECKPOINT_STAGE1_BACKEND_PATHS: Tuple[str, ...] = (
     "argus_market_ledger.py",
     "argus_market_replay.py",
     "argus_persistent_storage.py",
+    "argus_runtime.py",
     "argus_tick_durability.py",
     "argus_today_intelligence.py",
     "backend-version.json",

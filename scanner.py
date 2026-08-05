@@ -16008,6 +16008,10 @@ def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
                 "natural": trigger_source == "ec2_systemd",
                 "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
                     "formalSoakState") or "not_started",
+                "legacyCheckpointPath": _OSINT_PERSIST_FILE,
+                "legacyTempDirectory": os.environ.get(
+                    "ARGUS_CHECKPOINT_TEMP_DIR") or
+                    os.path.dirname(_OSINT_PERSIST_FILE),
             })
         _CHECKPOINT_V2_STAGE1_CONTROL = \
             argus_checkpoint_v2_stage1.record_generation(
@@ -16017,6 +16021,13 @@ def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
         _CHECKPOINT_V2_STATUS = {
             **argus_checkpoint_v2.public_status(_CHECKPOINT_V2_ROOT),
             "lastWriteVerified": bool(result.get("verified")),
+            "resourceTelemetry": copy.deepcopy(
+                result.get("resourceTelemetry") or {}),
+            "validationWindowCount": int(
+                _CHECKPOINT_V2_STAGE1_CONTROL.get(
+                    "validationWindowCount") or 0),
+            "generationCount": int(
+                _CHECKPOINT_V2_STAGE1_CONTROL.get("generationCount") or 0),
             "lastErrorClass": None,
             "formalSoakArmed": bool(
                 _CHECKPOINT_V2_STAGE1_CONTROL.get("formalSoakArmed")),
@@ -16416,9 +16427,12 @@ def _osint_restore_once():
                         _CHECKPOINT_V2_STAGE1_CONTROL,
                         {"verified": True,
                          "generationId": _row.get("generationId"),
+                         "createdAt": _row.get("createdAt"),
                          "databaseBytes": _row.get("databaseBytes"),
                          "sourceSerializedBytes": _row.get(
-                             "sourceSerializedBytes")},
+                             "sourceSerializedBytes"),
+                         "resourceTelemetry": _row.get(
+                             "resourceTelemetry")},
                         trigger_source=str(
                             _row.get("triggerSource") or "unknown"),
                         mission_window_id=_row.get("missionWindowId"))
@@ -16432,11 +16446,15 @@ def _osint_restore_once():
                 current_build_sha=_backend_exact_sha() or _backend_sha(),
                 boot_iso=_RUNTIME["processBootedAt"],
                 last_persist_at=blob.get("soakLastPersistAt")
-                or _DURABLE_STATE.get("lastKnownGoodAt"))
+                or _DURABLE_STATE.get("lastKnownGoodAt"),
+                current_boot_id=_RUNTIME.get("bootId"),
+                planned_restart_marker=(restored_control or {}).get(
+                    "plannedRestartMarker"))
             _STARTUP["soakRestoreAction"] = _dec.get("action")
             if _dec.get("action") == "inherit_with_interruption":
                 for _k in ("soakId", "buildSha", "buildShaFull",
-                           "appVersion", "startedAt",
+                           "appVersion", "processBootId",
+                           "processBootedAt", "startedAt",
                            "startReason", "startTimeSource", "heartbeats",
                            "startedBy", "firstMissionWindowId",
                            "completed72h", "interruptionCount",
@@ -16449,6 +16467,15 @@ def _osint_restore_once():
                 _SOAK["interruptions"] = (list(sk.get("interruptions") or [])
                                           + [_dec["interruption"]])
                 _SOAK["interruptionCount"] = len(_SOAK["interruptions"])
+            elif _dec.get("action") == "terminalize_interrupted":
+                terminal = copy.deepcopy(_dec.get("terminalSoak") or sk)
+                if not any(
+                        row.get("soakId") == terminal.get("soakId") and
+                        row.get("startedAt") == terminal.get("startedAt")
+                        for row in _SOAK_HISTORY):
+                    _SOAK_HISTORY.append(terminal)
+                    del _SOAK_HISTORY[:-8]
+                _SOAK["previousSoak"] = _dec.get("previousSoakSummary")
             else:
                 # Preserve the complete prior record by value before a
                 # different build creates its own active Soak. Never mutate an
@@ -17526,7 +17553,8 @@ _CHALLENGER_RUNS = []                   # shadow challenger評価(有界8)
 # startedAtは自然EC2 mission windowのscheduledAtと一致し、
 # boot/復元完了より前のwindowはsoak_start_decisionが拒否する。
 _SOAK = {"soakId": None, "buildSha": None, "buildShaFull": None,
-         "appVersion": None,
+         "appVersion": None, "processBootId": None,
+         "processBootedAt": None,
          "startedAt": None, "startReason": None, "startTimeSource": None,
          "startedBy": None, "firstMissionWindowId": None,
          "completed72h": False, "interruptionCount": 0,
@@ -17535,7 +17563,8 @@ _SOAK = {"soakId": None, "buildSha": None, "buildShaFull": None,
          "lastHeartbeatSource": None}
 _SOAK_HISTORY = []                     # archived copies; never edited in place
 _SOAK_CONTROL = {"armed": False, "armedAt": None, "armedBuildSha": None,
-                 "armId": None, "reason": None}
+                 "armId": None, "reason": None,
+                 "plannedRestartMarker": None}
 _INCIDENTS = []                         # 見逃し/回収インシデント(有界20)
 def _semantic_app_version():
     """Backendのセマンティック版。frontend package版から独立させる。"""
@@ -17812,11 +17841,16 @@ def _startup_bootstrap():
             _STARTUP["state"] = "ready"
     if not _RUNTIME["firstReadyAt"]:
         _RUNTIME["firstReadyAt"] = _STARTUP["restoreCompletedAt"]
-    if _STARTUP.get("soakRestoreAction") == "inherit_with_interruption":
+    if _STARTUP.get("soakRestoreAction") in (
+            "inherit_with_interruption", "terminalize_interrupted"):
         _journal("soak_interrupted", "soak",
-                 _SOAK.get("soakId") or "soak-unscoped",
+                 _SOAK.get("soakId") or
+                 (_SOAK.get("previousSoak") or {}).get("soakId") or
+                 "soak-unscoped",
                  {"detectedAt": _RUNTIME["processBootedAt"],
-                  "buildSha": _SOAK.get("buildSha") or "unknown"})
+                  "buildSha": _SOAK.get("buildSha") or
+                  (_SOAK.get("previousSoak") or {}).get("buildSha") or
+                  "unknown"})
 
 
 @app.before_request
@@ -17848,8 +17882,14 @@ def readyz():
             "formalSoakArmed")),
         "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
             "formalSoakState"),
+        "validationWindowCount": int(
+            _CHECKPOINT_V2_STAGE1_CONTROL.get("validationWindowCount") or 0),
+        "generationCount": int(
+            _CHECKPOINT_V2_STAGE1_CONTROL.get("generationCount") or 0),
         "naturalGenerationCount": len(
             _CHECKPOINT_V2_STAGE1_CONTROL.get("naturalGenerations") or []),
+        "resourceAcceptance": argus_checkpoint_v2_stage1.resource_acceptance(
+            _CHECKPOINT_V2_STAGE1_CONTROL),
         "legacyRestoreAuthority": True,
         "v2RestoreAuthority": False,
         "authorityPromotionBlocked": bool(
@@ -18234,6 +18274,7 @@ def _remote_journal_diagnostics(now_iso=None):
         row for row in _OPS_JOURNAL
         if str(row.get("idempotencyKey") or "") not in acked]
     oldest_seconds = None
+    ages = []
     if pending:
         try:
             current = datetime.fromisoformat(
@@ -18243,11 +18284,56 @@ def _remote_journal_diagnostics(now_iso=None):
                     "Z", "+00:00"))
                 for row in pending if row.get("occurredAt"))
             oldest_seconds = max(0, int((current - oldest).total_seconds()))
+            ages = [max(0, int((current - datetime.fromisoformat(
+                str(row.get("occurredAt")).replace("Z", "+00:00")))
+                .total_seconds())) for row in pending if row.get("occurredAt")]
         except (TypeError, ValueError):
             oldest_seconds = None
+            ages = []
+    stage1_started = _CHECKPOINT_V2_STAGE1_CONTROL.get(
+        "stage1EpochStartedAt")
+    previous_started = (_SOAK.get("previousSoak") or {}).get("startedAt")
+
+    def _epoch_max(start, end=None):
+        start_ep = argus_runtime._ep(start)
+        end_ep = argus_runtime._ep(end)
+        selected = []
+        now_ep = argus_runtime._ep(now_iso)
+        if start_ep is None or now_ep is None:
+            return None
+        for row in pending:
+            occurred_ep = argus_runtime._ep(row.get("occurredAt"))
+            if occurred_ep is None or occurred_ep < start_ep:
+                continue
+            if end_ep is not None and occurred_ep >= end_ep:
+                continue
+            selected.append(max(0, int(now_ep - occurred_ep)))
+        return max(selected) if selected else 0
+
+    sequence = int(_REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+    exact_receipt = bool(
+        _REMOTE_CYCLE.get("remoteDurabilityState") == "verified" and
+        _REMOTE_CYCLE.get("readBackVerified") is True and
+        _REMOTE_CYCLE.get("walReadBackVerified") is True and
+        sequence > 0 and sequence == int(
+            _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0) and
+        re.fullmatch(r"[0-9a-f]{40}", str(
+            _REMOTE_CYCLE.get("receiptCommitSha") or "").lower()))
+    lifetime = max(
+        [int(_REMOTE_ACK.get("maxObservedLagSec") or 0)] + ages)
     return {
         "pendingCount": len(pending),
         "oldestPendingAgeSeconds": oldest_seconds,
+        "lifetimeMaxPendingAgeSeconds": lifetime,
+        "interruptedSoakMaxPendingAgeSeconds": _epoch_max(
+            previous_started, stage1_started),
+        "checkpointV2Stage1MaxPendingAgeSeconds": _epoch_max(
+            stage1_started),
+        "currentPendingAgeSeconds": oldest_seconds,
+        "currentPendingCount": len(pending),
+        "currentRemoteDurabilityState": _REMOTE_CYCLE.get(
+            "remoteDurabilityState") or "unknown",
+        "exactReceiptVerified": exact_receipt,
         "localSequencePosition": int(
             _OPS_JOURNAL_META.get("totalObserved") or 0),
         "remoteSequencePosition": int(
@@ -18524,6 +18610,8 @@ def _activate_formal_soak(start_decision, window, *, rollover_armed):
         "buildSha": _backend_sha(),
         "buildShaFull": _backend_exact_sha(),
         "appVersion": _semantic_app_version() or None,
+        "processBootId": _RUNTIME.get("bootId"),
+        "processBootedAt": _RUNTIME.get("processBootedAt"),
         "startedAt": start_decision["startedAt"],
         "startedBy": start_decision["startedBy"],
         "firstMissionWindowId": start_decision["firstMissionWindowId"],
@@ -18536,7 +18624,8 @@ def _activate_formal_soak(start_decision, window, *, rollover_armed):
     })
     _SOAK_CONTROL.update({
         "armed": False, "armedAt": None, "armedBuildSha": None,
-        "armId": None, "reason": None})
+        "armId": None, "reason": None,
+        "plannedRestartMarker": None})
     return {"archived": archived is not None,
             "soakId": _SOAK["soakId"]}
 
@@ -18642,11 +18731,33 @@ def api_argus_admin_checkpoint_v2_stage1_accept():
     if body.get("isolatedRestoreGenerationId") not in generation_ids:
         return jsonify({"ok": False,
                         "error": "isolated_restore_generation_not_natural"}), 409
+    resource_gate = argus_checkpoint_v2_stage1.resource_acceptance(
+        _CHECKPOINT_V2_STAGE1_CONTROL)
+    journal_gate = _remote_journal_diagnostics(_ai_now_iso())
+    if resource_gate.get("passed") is not True:
+        return jsonify({"ok": False,
+                        "error": "stage1_resource_gate_failed",
+                        "blockers": resource_gate.get("blockers")}), 409
+    if journal_gate.get("currentPendingCount") != 0 or \
+            journal_gate.get("exactReceiptVerified") is not True or \
+            journal_gate.get(
+                "checkpointV2Stage1MaxPendingAgeSeconds") is None or \
+            int(journal_gate.get(
+                "checkpointV2Stage1MaxPendingAgeSeconds") or 0) > 1800:
+        return jsonify({
+            "ok": False, "error": "stage1_remote_journal_gate_failed",
+            "currentPendingCount": journal_gate.get("currentPendingCount"),
+            "exactReceiptVerified": journal_gate.get(
+                "exactReceiptVerified"),
+            "checkpointV2Stage1MaxPendingAgeSeconds": journal_gate.get(
+                "checkpointV2Stage1MaxPendingAgeSeconds"),
+        }), 409
     before = copy.deepcopy(_CHECKPOINT_V2_STAGE1_CONTROL)
     try:
         accepted = argus_checkpoint_v2_stage1.record_acceptance(
             before,
-            resource_accepted=body.get("resourceAccepted") is True,
+            resource_accepted=(body.get("resourceAccepted") is True and
+                               resource_gate.get("passed") is True),
             disk_accepted=body.get("diskAccepted") is True,
             isolated_restore_verified=(
                 body.get("isolatedRestoreVerified") is True),
@@ -18659,6 +18770,14 @@ def api_argus_admin_checkpoint_v2_stage1_accept():
                         "error": "all_stage1_acceptance_flags_required"}), 409
     accepted["acceptanceEvidence"] = {
         key: str(body.get(key))[:160] for key in evidence_fields}
+    accepted["resourceEvidence"] = resource_gate
+    accepted["remoteJournalEvidence"] = {
+        key: journal_gate.get(key) for key in (
+            "lifetimeMaxPendingAgeSeconds",
+            "interruptedSoakMaxPendingAgeSeconds",
+            "checkpointV2Stage1MaxPendingAgeSeconds",
+            "currentPendingAgeSeconds", "currentPendingCount",
+            "currentRemoteDurabilityState", "exactReceiptVerified")}
     accepted["acceptedAt"] = _ai_now_iso()
     globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = accepted
     checkpoint = _osint_persist()

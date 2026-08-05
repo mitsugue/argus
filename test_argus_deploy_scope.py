@@ -50,6 +50,19 @@ class DeployScopeTests(unittest.TestCase):
         self.assertTrue(result["preserveBackendSoak"])
         self.assertTrue(result["checkpointStage1"])
 
+    def test_stage1_closure_actual_backend_scope_suppresses_formal_soak(self):
+        result = deploy_scope.classify([
+            "argus_checkpoint_v2.py",
+            "argus_checkpoint_v2_stage1.py",
+            "argus_runtime.py",
+            "backend-version.json",
+            "scanner.py",
+        ])
+        self.assertTrue(result["backendDeploy"])
+        self.assertFalse(result["newBackendSoak"])
+        self.assertTrue(result["preserveBackendSoak"])
+        self.assertTrue(result["checkpointStage1"])
+
     def test_checkpoint_stage1_mixed_backend_change_fails_closed(self):
         result = deploy_scope.classify([
             "argus_checkpoint_v2_stage1.py",
@@ -104,7 +117,7 @@ class DeployScopeTests(unittest.TestCase):
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
         self.assertEqual("13.3.5", frontend)
-        self.assertEqual("13.4.0", backend)
+        self.assertEqual("13.4.1", backend)
 
     def test_release_gate_enforces_render_skip_contract(self):
         workflow = (ROOT / ".github/workflows/release-gate.yml").read_text()
