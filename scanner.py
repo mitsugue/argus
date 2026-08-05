@@ -2235,6 +2235,10 @@ def api_argus_calibration_posture():
 
 _LAYER2B_STATE = {"lastSyncAt": None, "lastStatus": "never_synced",
                   "lastHash": None, "symbolCount": 0}
+_PRIVATE_SYMBOL_MANIFEST_STATE = {
+    "status": "unknown", "asOf": None, "verifiedAt": None,
+    "counts": {"JP": 0, "US": 0},
+}
 
 def _layer2b_store_configured():
     """Layer 2B persists owner watchlist membership to a PRIVATE GitHub repo (the
@@ -2338,6 +2342,47 @@ def _layer2b_read_latest():
         return _json.loads(content)
     except Exception:
         return None
+
+
+def _private_symbol_manifest_read():
+    """Read and validate the last symbol-only client manifest privately."""
+    if not _layer2b_store_configured():
+        return None
+    content, _ = _gh_private_get("market-universe/client-symbol-manifest.json")
+    if not content:
+        return None
+    try:
+        value = argus_market_universe.validate_client_symbol_manifest(
+            json.loads(content))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    counts = {market: sum(
+        code.startswith(market + ".") for code in value["symbols"])
+              for market in ("JP", "US")}
+    _PRIVATE_SYMBOL_MANIFEST_STATE.update({
+        "status": "verified", "asOf": value["asOf"],
+        "verifiedAt": _ai_now_iso(), "counts": counts,
+    })
+    return value
+
+
+def _private_symbol_manifest_persist(manifest):
+    """Persist only a previously validated symbol/revision document."""
+    value = argus_market_universe.validate_client_symbol_manifest(manifest)
+    blob = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    ok = _gh_private_put(
+        "market-universe/client-symbol-manifest.json", blob,
+        f"private symbol manifest {value['revision'][:8]}", overwrite=True)
+    if not ok:
+        raise RuntimeError("private_symbol_manifest_persist_failed")
+    counts = {market: sum(
+        code.startswith(market + ".") for code in value["symbols"])
+              for market in ("JP", "US")}
+    _PRIVATE_SYMBOL_MANIFEST_STATE.update({
+        "status": "verified", "asOf": value["asOf"],
+        "verifiedAt": _ai_now_iso(), "counts": counts,
+    })
+    return value, counts
 
 
 # ── Layer 2B daily record + score (v10.85) ──────────────────────────────────
@@ -13401,8 +13446,13 @@ def api_argus_bridge_private_symbol_universe():
         jp_cap = us_cap = 200
     snapshot = _layer2b_read_latest()
     members = snapshot.get("members") if isinstance(snapshot, dict) else None
-    verified = isinstance(members, list)
-    owner_codes = argus_market_universe.member_codes(members or [])
+    layer2b_verified = isinstance(members, list) and bool(members)
+    client_manifest = _private_symbol_manifest_read()
+    client_verified = isinstance(client_manifest, dict) and bool(
+        client_manifest.get("symbols"))
+    verified = layer2b_verified and client_verified
+    owner_codes = (argus_market_universe.member_codes(members or []) +
+                   list((client_manifest or {}).get("symbols") or []))
     universe, meta = argus_market_universe.bounded_universe(
         argus_market_universe.MANDATORY_CODES, owner_codes,
         jp_cap=jp_cap, us_cap=us_cap)
@@ -13412,6 +13462,8 @@ def api_argus_bridge_private_symbol_universe():
         "refreshAfterSec": 600,
         "verified": verified,
         "complete": verified,
+        "revision": ((client_manifest or {}).get("revision")
+                     if client_verified else None),
         "markets": {
             "jp": {"codes": universe["JP"], "configuredCount": len(universe["JP"]),
                    "truncatedCount": meta["truncatedCount"]["JP"], "cap": jp_cap},
@@ -13420,13 +13472,49 @@ def api_argus_bridge_private_symbol_universe():
         },
         "sources": {
             "mandatory": "verified",
-            "ownerWatchlist": "verified" if verified else "unavailable",
-            # The canonical portfolio is client-encrypted by design; the server
-            # cannot and must not decrypt it. held/protected Layer 2B membership
-            # is the only eligible server-side registration signal.
-            "ownerPortfolio": "client_encrypted_unavailable_to_server",
+            "ownerWatchlist": ("verified" if layer2b_verified else
+                               "unavailable"),
+            "clientAssetManifest": ("verified" if client_verified else
+                                    "unavailable"),
+            "bridgePushSymbols": "merged_by_bridge_not_returned_by_backend",
         },
         "privacy": "authenticated_membership_only_no_position_values",
+    })
+
+
+@app.route("/api/argus/calibration/private-symbol-manifest", methods=["POST"])
+def api_argus_private_symbol_manifest():
+    """Owner-authenticated symbol-only ingest; position fields fail closed."""
+    body = request.get_json(silent=True) or {}
+    ok, err, code = _require_owner_sync(body.get("ownerToken"))
+    if not ok:
+        return jsonify(err), code
+    try:
+        value, counts = _private_symbol_manifest_persist(body.get("manifest"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except RuntimeError:
+        return jsonify({"ok": False,
+                        "error": "private_symbol_manifest_persist_failed"}), 503
+    return jsonify({
+        "ok": True, "status": "verified", "revision": value["revision"],
+        "asOf": value["asOf"], "configuredCount": counts,
+        "privacy": "symbol_ids_only_no_position_fields",
+    })
+
+
+@app.route("/api/argus/market-data/private-universe-status")
+def api_argus_private_universe_status():
+    """Public diagnostics are count-only and never fetch the private store."""
+    state = copy.deepcopy(_PRIVATE_SYMBOL_MANIFEST_STATE)
+    counts = state.get("counts") or {}
+    return jsonify({
+        "schemaVersion": "argus-private-symbol-count-status-v1",
+        "status": state.get("status") or "unknown",
+        "configuredCount": {
+            "JP": int(counts.get("JP") or 0),
+            "US": int(counts.get("US") or 0),
+        },
     })
 
 

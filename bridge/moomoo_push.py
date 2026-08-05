@@ -818,8 +818,9 @@ def main():
     last_flow_at = 0.0
     last_hb_at = 0.0
     # Dynamic push set = emergency/static PUSH_SYMBOLS baseline ∪ mandatory
-    # market instruments ∪ authenticated owner Layer-2B membership.  Refresh is
-    # exactly every 10 minutes; failure preserves the previous verified set.
+    # market instruments ∪ authenticated private Layer-2B membership ∪ the
+    # client-extracted symbol-only asset manifest. Refresh is exactly every 10
+    # minutes; failure preserves the previous verified set.
     # JP membership stays registered during entitlement backoff and is simply
     # not requested until the bounded recovery probe is due.
     base_codes = list(CODES)

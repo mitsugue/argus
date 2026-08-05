@@ -2,6 +2,14 @@
 import datetime as dt
 import importlib.util
 import json
+import sys
+import types
+
+_moomoo = types.ModuleType("moomoo")
+_moomoo.OpenQuoteContext = lambda *args, **kwargs: None
+_moomoo.OpenSecTradeContext = lambda *args, **kwargs: None
+_moomoo.RET_OK = 0
+sys.modules.setdefault("moomoo", _moomoo)
 
 import argus_market_universe as universe
 import scanner
@@ -152,15 +160,84 @@ def test_authenticated_private_endpoint_is_bounded_and_position_free(monkeypatch
             {"symbol": "AAPL", "market": "US", "ownerState": "held"},
             {"symbol": "7203", "market": "JP", "ownerState": "watch"},
         ]})
+    monkeypatch.setattr(scanner, "_private_symbol_manifest_read", lambda: {
+        "schemaVersion": universe.CLIENT_MANIFEST_SCHEMA,
+        "revision": "abcd1234", "asOf": "2026-08-05T00:00:00Z",
+        "symbols": ["JP.6758", "US.NVDA"],
+    })
     with scanner.app.test_client() as client:
         response = client.get("/api/argus/bridge/private-symbol-universe")
     assert response.status_code == 200
     body = response.get_json()
     assert body["verified"] is True
     assert "US.AAPL" in body["markets"]["us"]["codes"]
+    assert "US.NVDA" in body["markets"]["us"]["codes"]
     blob = json.dumps(body)
     for forbidden in ("quantity", "averageCost", "costBasis", "pnl", "positions"):
         assert forbidden not in blob
+
+
+def test_client_manifest_rejects_portfolio_fields_and_empty_unknown():
+    valid = {
+        "schemaVersion": universe.CLIENT_MANIFEST_SCHEMA,
+        "revision": "1234abcd", "asOf": "2026-08-05T00:00:00Z",
+        "symbols": ["JP.7203", "US.NVDA", "JP.7203"],
+    }
+    assert universe.validate_client_symbol_manifest(valid)["symbols"] == [
+        "JP.7203", "US.NVDA"]
+    for forbidden in ("quantity", "avgCost", "currentValue", "pnl",
+                      "allocation", "notes", "labels"):
+        bad = dict(valid)
+        bad[forbidden] = 1
+        try:
+            universe.validate_client_symbol_manifest(bad)
+            assert False, forbidden
+        except ValueError as exc:
+            assert str(exc) == "client_symbol_manifest_fields_rejected"
+    try:
+        universe.validate_client_symbol_manifest({**valid, "symbols": []})
+        assert False
+    except ValueError as exc:
+        assert str(exc) == "client_symbol_manifest_empty_or_unknown"
+
+
+def test_owner_manifest_ingest_persists_only_sanitized_document(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(scanner, "_require_owner_sync",
+                        lambda _token=None: (True, None, 200))
+    monkeypatch.setattr(scanner, "_gh_private_put",
+                        lambda path, content, message, overwrite=True:
+                        captured.update({"path": path, "content": content}) or True)
+    manifest = {
+        "schemaVersion": universe.CLIENT_MANIFEST_SCHEMA,
+        "revision": "1234abcd", "asOf": "2026-08-05T00:00:00Z",
+        "symbols": ["JP.7203", "US.NVDA"],
+    }
+    with scanner.app.test_client() as client:
+        response = client.post(
+            "/api/argus/calibration/private-symbol-manifest",
+            json={"ownerToken": "not-persisted", "manifest": manifest})
+    assert response.status_code == 200
+    persisted = json.loads(captured["content"])
+    assert persisted == manifest
+    assert captured["path"] == \
+        "market-universe/client-symbol-manifest.json"
+    assert "ownerToken" not in captured["content"]
+
+
+def test_public_private_universe_status_is_count_only(monkeypatch):
+    monkeypatch.setattr(scanner, "_PRIVATE_SYMBOL_MANIFEST_STATE", {
+        "status": "verified", "asOf": "2026-08-05T00:00:00Z",
+        "verifiedAt": "2026-08-05T00:01:00Z",
+        "counts": {"JP": 2, "US": 3},
+    })
+    with scanner.app.test_client() as client:
+        body = client.get(
+            "/api/argus/market-data/private-universe-status").get_json()
+    assert body["configuredCount"] == {"JP": 2, "US": 3}
+    blob = json.dumps(body)
+    assert "symbols" not in blob.lower()
+    assert "revision" not in blob.lower()
 
 
 def test_unknown_or_empty_remote_universe_is_not_complete():

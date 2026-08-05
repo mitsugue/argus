@@ -52,7 +52,8 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
 ## 登録銘柄の自動同期 (v11.5.8)
 
 `PUSH_SYMBOLS` は緊急時・起動時の静的baselineです。通常はbridgeが10分ごとに
-認証済み `private-symbol-universe` を取得し、Layer 2Bの登録銘柄と必須市場ETFを
+認証済み `private-symbol-universe` を取得し、private Layer 2B、owner browserが
+`argus.assets.v1`から抽出したsymbol-only manifest、必須市場ETFを
 正規化・重複排除して自動反映します。同期失敗時は最後に検証済みの集合を維持し、
 空または不明な応答を「完全なcoverage」として扱いません。銘柄一覧は公開statusや
 ログへ出さず、市場別のconfigured/requested/returned/unavailable/stale件数だけを

@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 SCHEMA_VERSION = "argus-private-symbol-universe-v1"
+CLIENT_MANIFEST_SCHEMA = "argus-private-client-symbol-manifest-v1"
 PUBLIC_SCHEMA_VERSION = "argus-market-transport-v1"
 MARKETS = ("JP", "US")
 
@@ -26,6 +27,7 @@ MANDATORY_CODES = (
 
 _JP = re.compile(r"^[0-9]{4}$|^[0-9]{3}[A-Z]$")
 _US = re.compile(r"^[A-Z]{1,5}(?:[.\-][A-Z]{1,2})?$")
+_REVISION = re.compile(r"^[0-9a-f]{8,64}$")
 
 
 def normalize_code(value: Any, market: Optional[str] = None) -> Optional[str]:
@@ -50,6 +52,42 @@ def member_codes(members: Iterable[Mapping[str, Any]]) -> List[str]:
         if code:
             out.append(code)
     return list(dict.fromkeys(out))
+
+
+def validate_client_symbol_manifest(payload: Any) -> Dict[str, Any]:
+    """Accept only normalized symbol IDs plus revision metadata."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("client_symbol_manifest_invalid")
+    if set(payload) != {"schemaVersion", "revision", "asOf", "symbols"}:
+        raise ValueError("client_symbol_manifest_fields_rejected")
+    if payload.get("schemaVersion") != CLIENT_MANIFEST_SCHEMA:
+        raise ValueError("client_symbol_manifest_schema_invalid")
+    revision = str(payload.get("revision") or "").lower()
+    if not _REVISION.fullmatch(revision):
+        raise ValueError("client_symbol_manifest_revision_invalid")
+    as_of = _parse_utc(payload.get("asOf"))
+    symbols = payload.get("symbols")
+    if as_of is None or not isinstance(symbols, list) or not symbols:
+        raise ValueError("client_symbol_manifest_empty_or_unknown")
+    if len(symbols) > 800:
+        raise ValueError("client_symbol_manifest_oversized")
+    normalized: List[str] = []
+    for value in symbols:
+        if not isinstance(value, str):
+            raise ValueError("client_symbol_manifest_symbol_invalid")
+        code = normalize_code(value)
+        if not code or code != value.strip().upper():
+            raise ValueError("client_symbol_manifest_symbol_invalid")
+        if code not in normalized:
+            normalized.append(code)
+    if not normalized:
+        raise ValueError("client_symbol_manifest_empty_or_unknown")
+    return {
+        "schemaVersion": CLIENT_MANIFEST_SCHEMA,
+        "revision": revision,
+        "asOf": as_of.isoformat().replace("+00:00", "Z"),
+        "symbols": normalized,
+    }
 
 
 def bounded_universe(
