@@ -82,7 +82,7 @@ def test_stale_writer_guard_and_verified_receipt_order_remain():
     remote_verify_pos = text.index(
         '[ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ]'
     )
-    receipt_pos = text.index("remote-journal-commit-receipt")
+    receipt_pos = text.index("remote-journal-accept-receipt")
     assert select_pos < remote_verify_pos < receipt_pos
     assert "verify-committed --readback ledger/osint/readback.json" in text
     assert "expected_skip_stale_snapshot" in text
@@ -121,6 +121,33 @@ def test_work_is_bounded():
     assert "for BATCH in 1 2 3" in text
     assert "for ROUND in 1 2 3 4" in text
     assert "while true" not in text
+
+
+def test_async_receipt_contract_is_fast_idempotent_and_exact():
+    text = _text()
+    flush = text.split("- name: Commit verified snapshot and post receipt", 1)[1]
+    assert "--name remote-journal-accept-receipt" in flush
+    assert "--timeout 15" in flush
+    assert "Idempotency-Key=RECEIPT_IDEMPOTENCY_KEY" in flush
+    assert '"backendBuildSha":os.environ["BACKEND_BUILD_SHA"]' in flush
+    assert '"targetWalSequence":int(os.environ["TARGET_WAL_SEQUENCE"])' in flush
+    assert "--timeout 60" not in flush.split(
+        "remote-journal-accept-receipt", 1)[1].split(")", 1)[0]
+
+
+def test_receipt_polling_is_bounded_and_preserves_pending_slo_truth():
+    text = _text()
+    flush = text.split("- name: Commit verified snapshot and post receipt", 1)[1]
+    assert "for DELAY in 5 10 20 40 80 120" in flush
+    assert "/api/argus/admin/remote-journal/receipts/${OPERATION_ID}" in flush
+    assert 'DURABILITY_RESULT="pending_within_slo"' in flush
+    assert '[ "$RECEIPT_AGE" -ge 0 ]' in flush
+    assert '[ "$RECEIPT_AGE" -le 1800 ]' in flush
+    assert '[ "$VERIFIED_SEQUENCE" = "$TARGET_WAL_SEQUENCE" ]' in flush
+    assert '[ "$VERIFIED_COMMIT" = "$REMOTE_COMMIT_SHA" ]' in flush
+    assert "receipt failed: operation=$OPERATION_ID" in flush
+    assert "overallResult=pending_within_slo" in text
+    assert "overallResult=verified" in text
 
 
 def test_identity_and_durability_recheck_use_safe_http_summary_contract():

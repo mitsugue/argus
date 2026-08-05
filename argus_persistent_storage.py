@@ -176,6 +176,9 @@ def configured_paths(
             "ARGUS_MISSION_CURSOR_FILE", "argus_mission_tick.cursor.json"),
         "receipt": value(
             "ARGUS_MISSION_RECEIPT_FILE", "argus_mission_tick.receipt.json"),
+        "receiptQueue": value(
+            "ARGUS_REMOTE_RECEIPT_QUEUE_FILE",
+            "argus_remote_receipt_queue.json"),
         "tempDirectory": os.path.abspath(str(
             env.get("ARGUS_CHECKPOINT_TEMP_DIR") or root)),
     }
@@ -493,7 +496,9 @@ def validate_storage(
         raise PersistentStorageError("persistent_root_unwritable")
 
     resolved: Dict[str, str] = {"root": root}
-    for key in ("wal", "checkpoint", "lease", "cursor", "receipt"):
+    for key in (
+            "wal", "checkpoint", "lease", "cursor", "receipt",
+            "receiptQueue"):
         raw = os.path.abspath(paths[key])
         candidate = _resolve_candidate(raw)
         permitted_test_path = bool(
@@ -730,6 +735,7 @@ def public_diagnostics(
         "leasePath": paths.get("lease"),
         "cursorPath": paths.get("cursor"),
         "receiptPath": paths.get("receipt"),
+        "receiptQueuePath": paths.get("receiptQueue"),
         "sameFilesystem": status.get("sameFilesystem"),
         "atomicRename": status.get("atomicRename"),
         "fsync": status.get("fsync"),

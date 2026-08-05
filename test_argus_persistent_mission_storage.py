@@ -40,6 +40,8 @@ def paths(root: str):
         "ARGUS_MISSION_LEASE_FILE": os.path.join(root, "tick.lease"),
         "ARGUS_MISSION_CURSOR_FILE": os.path.join(root, "cursor.json"),
         "ARGUS_MISSION_RECEIPT_FILE": os.path.join(root, "receipt.json"),
+        "ARGUS_REMOTE_RECEIPT_QUEUE_FILE": os.path.join(
+            root, "receipt-queue.json"),
         "ARGUS_CHECKPOINT_TEMP_DIR": root,
     }, production=True)
 
@@ -109,6 +111,8 @@ def scanner_storage(root: str, *, production=True):
         "lease": scanner._MISSION_LEASE_FILE,
         "cursor": scanner._MISSION_CURSOR_FILE,
         "receipt": scanner._MISSION_RECEIPT_FILE,
+        "receiptQueue": scanner._REMOTE_RECEIPT_QUEUE_FILE,
+        "receiptQueueState": copy.deepcopy(scanner._REMOTE_RECEIPT_QUEUE),
         "persist": dict(scanner._OSINT_PERSIST_STATE),
         "durable": dict(scanner._DURABLE_STATE),
         "storageStatus": dict(scanner._DURABLE_STORAGE_STATUS),
@@ -127,6 +131,9 @@ def scanner_storage(root: str, *, production=True):
     scanner._MISSION_LEASE_FILE = configured["lease"]
     scanner._MISSION_CURSOR_FILE = configured["cursor"]
     scanner._MISSION_RECEIPT_FILE = configured["receipt"]
+    scanner._REMOTE_RECEIPT_QUEUE_FILE = configured["receiptQueue"]
+    scanner._REMOTE_RECEIPT_QUEUE = \
+        scanner.argus_remote_receipt_queue.empty_store()
     scanner._OSINT_PERSIST_STATE.clear()
     scanner._OSINT_PERSIST_STATE.update({"restored": False})
     scanner._DURABLE_STATE.clear()
@@ -157,6 +164,8 @@ def scanner_storage(root: str, *, production=True):
         scanner._MISSION_LEASE_FILE = saved["lease"]
         scanner._MISSION_CURSOR_FILE = saved["cursor"]
         scanner._MISSION_RECEIPT_FILE = saved["receipt"]
+        scanner._REMOTE_RECEIPT_QUEUE_FILE = saved["receiptQueue"]
+        scanner._REMOTE_RECEIPT_QUEUE = saved["receiptQueueState"]
         scanner._OSINT_PERSIST_STATE.clear()
         scanner._OSINT_PERSIST_STATE.update(saved["persist"])
         scanner._DURABLE_STATE.clear()
@@ -258,6 +267,7 @@ class PathValidationTests(unittest.TestCase):
     def test_no_critical_production_path_is_under_tmp(self):
         value = storage.configured_paths({}, production=True)
         for key in ("wal", "checkpoint", "lease", "cursor", "receipt",
+                    "receiptQueue",
                     "tempDirectory"):
             self.assertTrue(
                 value[key] == os.path.realpath("/var/data") or
@@ -909,43 +919,55 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
                 "remote_wal_sequence_missing")
             self.assertEqual(scanner._verified_persistent_wal_sequence(), 0)
 
-    def test_commit_receipt_fsync_precedes_checkpoint_and_fails_closed(self):
+    def test_commit_receipt_fsyncs_intent_without_checkpoint_and_fails_closed(self):
         old_token = scanner._ARGUS_ADMIN_TOKEN
         old_cycle = dict(scanner._REMOTE_CYCLE)
+        old_queue = copy.deepcopy(scanner._REMOTE_RECEIPT_QUEUE)
         scanner._ARGUS_ADMIN_TOKEN = "test-admin"
         try:
             order = []
             with mock.patch.object(
-                    scanner, "_persist_remote_wal_receipt",
+                    scanner, "_persist_remote_receipt_queue",
                     side_effect=lambda *args, **kwargs:
-                    order.append("receipt") or {"verified": True}), \
+                    order.append("intent") or {"verified": True}), \
+                    mock.patch.object(
+                        scanner, "_backend_exact_sha", return_value="c" * 40), \
                     mock.patch.object(
                         scanner, "_osint_persist",
                         side_effect=lambda:
                         order.append("checkpoint") or {"verified": True}):
                 response = scanner.app.test_client().post(
                     "/api/argus/admin/remote-journal/commit-receipt",
-                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"},
+                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin",
+                             "Idempotency-Key": "test-receipt-0001"},
                     json={"remoteCommitSha": "a" * 40,
-                          "expectedHash": "b" * 16})
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(order, ["receipt", "checkpoint"])
+                          "expectedHash": "b" * 16,
+                          "backendBuildSha": "c" * 40,
+                          "targetWalSequence": 42})
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(order, ["intent"])
 
             with mock.patch.object(
-                    scanner, "_persist_remote_wal_receipt",
+                    scanner, "_persist_remote_receipt_queue",
                     side_effect=OSError("fsync failed")), \
+                    mock.patch.object(
+                        scanner, "_backend_exact_sha", return_value="c" * 40), \
                     mock.patch.object(scanner, "_osint_persist") as checkpoint:
                 response = scanner.app.test_client().post(
                     "/api/argus/admin/remote-journal/commit-receipt",
-                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"},
+                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin",
+                             "Idempotency-Key": "test-receipt-0002"},
                     json={"remoteCommitSha": "c" * 40,
-                          "expectedHash": "d" * 16})
+                          "expectedHash": "d" * 16,
+                          "backendBuildSha": "c" * 40,
+                          "targetWalSequence": 43})
             self.assertEqual(response.status_code, 503)
             checkpoint.assert_not_called()
         finally:
             scanner._ARGUS_ADMIN_TOKEN = old_token
             scanner._REMOTE_CYCLE.clear()
             scanner._REMOTE_CYCLE.update(old_cycle)
+            scanner._REMOTE_RECEIPT_QUEUE = old_queue
 
     def test_mismatch_tamper_and_sequence_regression_never_advance_wal(self):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:

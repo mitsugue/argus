@@ -284,6 +284,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
           NEWS_JA_COUNT: ${{ steps.fetch.outputs.newsJaCount }}
+          BACKEND_BUILD_SHA: ${{ steps.recheck.outputs.actualBackendSha }}
         run: |
           [ -z "$ARGUS_ADMIN_TOKEN" ] && {
             echo "durabilityResult=expected_skip_missing_auth" >> "$GITHUB_OUTPUT"
@@ -345,22 +346,63 @@ jobs:
             --expected-hash "$NEW_HASH")
           EXPECTED_HASH=$(printf '%s' "$VERIFIED" | python3 -c \
             'import json,sys; print(json.load(sys.stdin)["actualHash"])')
-          export REMOTE_COMMIT_SHA EXPECTED_HASH
+          TARGET_WAL_SEQUENCE=$(python3 -c \
+            'import json; d=json.load(open("ledger/osint/readback.json")); m=d.get("missionTickDurability") or {}; local=int(m.get("walAppliedSequence") or 0); remote=int(m.get("remoteWalAppliedSequence") or -1); assert local > 0 and remote == local; print(remote)')
+          RECEIPT_IDEMPOTENCY_KEY="caos-scan-${REMOTE_COMMIT_SHA}-${TARGET_WAL_SEQUENCE}"
+          export REMOTE_COMMIT_SHA EXPECTED_HASH TARGET_WAL_SEQUENCE BACKEND_BUILD_SHA
           RECEIPT_PAYLOAD=$(python3 -c \
-            'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"]},separators=(",",":")))')
+            'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"],"backendBuildSha":os.environ["BACKEND_BUILD_SHA"],"targetWalSequence":int(os.environ["TARGET_WAL_SEQUENCE"])},separators=(",",":")))')
+          export RECEIPT_IDEMPOTENCY_KEY
           RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" \
-            --name remote-journal-commit-receipt \
-            --method POST --timeout 60 \
+            --name remote-journal-accept-receipt \
+            --method POST --timeout 15 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header-env Idempotency-Key=RECEIPT_IDEMPOTENCY_KEY \
             --header 'Content-Type: application/json' --data "$RECEIPT_PAYLOAD" \
             --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/remote-journal/commit-receipt")
-          echo "remote-journal-commit-receipt: $RECEIPT"
+          echo "remote-journal-accept-receipt: $RECEIPT"
           RECEIPT_VALUES=$(printf '%s' "$RECEIPT" | python3 -c \
-            'import json,sys; d=json.load(sys.stdin); print(d.get("verifiedWalSequence",0)); print(str(d.get("readBackVerified") is True).lower())')
-          echo "durabilityResult=success" >> "$GITHUB_OUTPUT"
+            'import json,sys; d=json.load(sys.stdin); assert d.get("accepted") is True; assert d.get("durabilityState") in ("pending","verified"); assert d.get("operationId"); print(d["operationId"]); print(d["durabilityState"])')
+          OPERATION_ID=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '1p')
+          RECEIPT_STATE=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '2p')
+          STATUS="$RECEIPT"
+          if [ "$RECEIPT_STATE" != "verified" ]; then
+            for DELAY in 5 10 20 40 80 120; do
+              sleep "$DELAY"
+              STATUS=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+                --name remote-journal-receipt-status --timeout 20 \
+                --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+                --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/remote-journal/receipts/${OPERATION_ID}")
+              RECEIPT_STATE=$(printf '%s' "$STATUS" | python3 -c \
+                'import json,sys; d=json.load(sys.stdin); print(d.get("durabilityState") or "malformed")')
+              [ "$RECEIPT_STATE" = "pending" ] || break
+            done
+          fi
+          echo "remote-journal-receipt-status: $STATUS"
+          STATUS_VALUES=$(printf '%s' "$STATUS" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); state=d.get("durabilityState"); assert state in ("pending","verified","failed"); print(state); print(d.get("verifiedWalSequence") or 0); print(str(d.get("readBackVerified") is True).lower()); print(d.get("remoteCommitSha") or ""); print(d.get("ageSeconds") if d.get("ageSeconds") is not None else -1)')
+          FINAL_STATE=$(printf '%s\n' "$STATUS_VALUES" | sed -n '1p')
+          VERIFIED_SEQUENCE=$(printf '%s\n' "$STATUS_VALUES" | sed -n '2p')
+          READBACK_VERIFIED=$(printf '%s\n' "$STATUS_VALUES" | sed -n '3p')
+          VERIFIED_COMMIT=$(printf '%s\n' "$STATUS_VALUES" | sed -n '4p')
+          RECEIPT_AGE=$(printf '%s\n' "$STATUS_VALUES" | sed -n '5p')
+          if [ "$FINAL_STATE" = "verified" ]; then
+            [ "$READBACK_VERIFIED" = "true" ] || exit 1
+            [ "$VERIFIED_SEQUENCE" = "$TARGET_WAL_SEQUENCE" ] || exit 1
+            [ "$VERIFIED_COMMIT" = "$REMOTE_COMMIT_SHA" ] || exit 1
+            DURABILITY_RESULT="verified"
+          elif [ "$FINAL_STATE" = "pending" ]; then
+            [ "$RECEIPT_AGE" -ge 0 ] && [ "$RECEIPT_AGE" -le 1800 ] || exit 1
+            DURABILITY_RESULT="pending_within_slo"
+            READBACK_VERIFIED="false"
+          else
+            echo "receipt failed: operation=$OPERATION_ID"
+            exit 1
+          fi
+          echo "durabilityResult=$DURABILITY_RESULT" >> "$GITHUB_OUTPUT"
           echo "remoteCommitSha=$REMOTE_COMMIT_SHA" >> "$GITHUB_OUTPUT"
-          echo "receiptSequence=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '1p')" >> "$GITHUB_OUTPUT"
-          echo "readBackVerified=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '2p')" >> "$GITHUB_OUTPUT"
+          echo "receiptSequence=$VERIFIED_SEQUENCE" >> "$GITHUB_OUTPUT"
+          echo "readBackVerified=$READBACK_VERIFIED" >> "$GITHUB_OUTPUT"
 
   result:
     needs: [backend-identity, mission-backup, caos-collection, durability-flush]
@@ -381,4 +423,8 @@ jobs:
           [ "${{ needs.mission-backup.result }}" = "success" ] || exit 1
           [ "${{ needs.caos-collection.result }}" = "success" ] || exit 1
           [ "${{ needs.durability-flush.result }}" = "success" ] || exit 1
-          echo "overallResult=success"
+          if [ "${{ needs.durability-flush.outputs.durabilityResult }}" = "pending_within_slo" ]; then
+            echo "overallResult=pending_within_slo"
+          else
+            echo "overallResult=verified"
+          fi

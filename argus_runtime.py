@@ -149,6 +149,57 @@ def _historical_gap_evidence(soak: Dict[str, Any]) -> Dict[str, Any]:
             "maximumEvidenceGapEndAt": end_at}
 
 
+_RUNNING_SOAK_STATES = {"running", "soak_in_progress", "scheduler_delayed",
+                        "verification_gap", "active_unproven"}
+
+
+def _running_soak_interruption_evidence(
+        *, persisted: Dict[str, Any], superseding_build_sha: Optional[str],
+        successor_boot: Optional[str]) -> Dict[str, Any]:
+    """Derive only terminal facts supported by persisted build/boot evidence.
+
+    This helper deliberately does not infer ``planned_owner_restart``.  That
+    classification requires the separately verified durable owner marker used
+    by :func:`soak_restore_decision` for same-build restarts.
+    """
+    state = str(persisted.get("terminalState") or
+                persisted.get("state") or "not_started")
+    if state not in _RUNNING_SOAK_STATES:
+        return {}
+    previous_sha = (persisted.get("buildShaFull") or
+                    persisted.get("buildSha"))
+    previous_boot = (persisted.get("processBootedAt") or
+                     persisted.get("processBootId"))
+    different_build = bool(
+        previous_sha and superseding_build_sha and
+        not _same_build_identity(str(previous_sha),
+                                 str(superseding_build_sha)))
+    different_boot = bool(
+        previous_boot and successor_boot and
+        str(previous_boot) != str(successor_boot))
+    if different_build:
+        interruption_class = "backend_build_changed"
+    elif different_boot:
+        interruption_class = "boot_discontinuity"
+    else:
+        return {}
+    return {
+        "interruptionClass": interruption_class,
+        "failureClass": interruption_class,
+        "failureReason": (
+            "backend_build_changed_during_running_soak"
+            if different_build else
+            "backend_boot_changed_during_running_soak"),
+        "terminalizationProvenance":
+            "derived_from_persisted_build_and_boot_evidence",
+        "interruptionClassSource":
+            "derived_from_persisted_build_and_boot_evidence",
+        "previousBackendBuildSha": previous_sha,
+        "previousBoot": previous_boot,
+        "successorBoot": successor_boot,
+    }
+
+
 def historical_soak_summary(
         *, persisted: Any, superseding_build_sha: Optional[str],
         superseded_at: Optional[str] = None,
@@ -179,9 +230,14 @@ def historical_soak_summary(
                        "failed"}
     stale_pin = any(row.get("healthStatus") == "build_mismatch"
                     for row in rows)
+    interruption_evidence = _running_soak_interruption_evidence(
+        persisted=source, superseding_build_sha=superseding_build_sha,
+        successor_boot=superseded_at)
     if stored_state in terminal_states:
         terminal_state = str(stored_state)
     elif stale_pin:
+        terminal_state = "interrupted"
+    elif interruption_evidence:
         terminal_state = "interrupted"
     elif derived.get("state") in terminal_states:
         terminal_state = str(derived.get("state"))
@@ -194,6 +250,11 @@ def historical_soak_summary(
         failure_class = "scheduler_configuration_mismatch"
         failure_source = "derived_from_persisted_build_mismatch_heartbeat"
     if not failure_class and terminal_state == "interrupted" and \
+            interruption_evidence:
+        failure_class = interruption_evidence.get("failureClass")
+        failure_source = interruption_evidence.get(
+            "terminalizationProvenance")
+    if not failure_class and terminal_state == "interrupted" and \
             derived.get("state") == "interrupted" and \
             derived.get("failureClass"):
         failure_class = derived.get("failureClass")
@@ -204,6 +265,8 @@ def historical_soak_summary(
                 if isinstance(row, dict) and row.get("detectedAt")]
     interrupted_at = source.get("interruptedAt") or \
         source.get("interruptionAt") or _iso_max(*detected)
+    if not interrupted_at and interruption_evidence:
+        interrupted_at = superseded_at
     gap = _historical_gap_evidence(source)
     incomplete = terminal_state == "historical_evidence_incomplete" or (
         terminal_state == "interrupted" and not failure_class)
@@ -218,7 +281,9 @@ def historical_soak_summary(
         missing.append("failureClass")
 
     relationship_sha = str(superseding_build_sha or "") or None
-    failure_reason = (source.get("failureReason") or derived.get("reason") or
+    failure_reason = (source.get("failureReason") or
+                      interruption_evidence.get("failureReason") or
+                      derived.get("reason") or
                       ("stale_ec2_expected_build_sha" if stale_pin else None))
     try:
         interruption_count = int(
@@ -271,6 +336,22 @@ def historical_soak_summary(
         "supersededBy": relationship_sha,
         "supersedingBuildShaExact": bool(
             relationship_sha and len(relationship_sha) == 40),
+        "terminalizationProvenance": (
+            source.get("terminalizationProvenance") or
+            interruption_evidence.get("terminalizationProvenance") or
+            ("persisted" if stored_state in terminal_states else None)),
+        "interruptionClassSource": (
+            source.get("interruptionClassSource") or
+            interruption_evidence.get("interruptionClassSource") or
+            failure_source or "unavailable"),
+        "previousBackendBuildSha": (
+            source.get("previousBackendBuildSha") or
+            interruption_evidence.get("previousBackendBuildSha") or
+            build_sha),
+        "previousBoot": (source.get("previousBoot") or
+                         interruption_evidence.get("previousBoot")),
+        "successorBoot": (source.get("successorBoot") or
+                          interruption_evidence.get("successorBoot")),
     }
     if superseded_at:
         out["supersededAt"] = superseded_at
@@ -295,7 +376,7 @@ def normalize_previous_soak_summary(
         return historical_soak_summary(
             persisted=match,
             superseding_build_sha=relationship_sha,
-            superseded_at=prev.get("supersededAt"),
+            superseded_at=prev.get("supersededAt") or boot_iso,
             lifecycle_relation=prev.get("lifecycleRelation") or
                 "superseded_by_backend_deployment",
             lifecycle_reason=prev.get("lifecycleReason") or
@@ -433,8 +514,7 @@ def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
     persisted_boot_id = persisted.get("processBootId")
     state = str(persisted.get("terminalState") or
                 persisted.get("state") or "not_started")
-    running = state in ("running", "soak_in_progress", "scheduler_delayed",
-                        "verification_gap", "active_unproven")
+    running = state in _RUNNING_SOAK_STATES
     boot_changed = bool(
         current_boot_id and persisted_boot_id and
         str(current_boot_id) != str(persisted_boot_id))
@@ -518,6 +598,31 @@ def soak_restore_decision(*, persisted: Any, current_build_sha: Optional[str],
                 "ownerReadableJa": ("同一SHA再起動 — soak継続+中断を記録"
                                     + ("(検証済み復旧)" if verified
                                        else "(未検証中断 — 隠さない)"))}
+    interruption_evidence = _running_soak_interruption_evidence(
+        persisted=persisted, superseding_build_sha=current_build_sha,
+        successor_boot=boot_iso)
+    if running and interruption_evidence:
+        terminal = copy.deepcopy(persisted)
+        terminal.update({
+            "state": "interrupted", "status": "interrupted",
+            "terminalState": "interrupted", "completed72h": False,
+            "interruptedAt": terminal.get("interruptedAt") or boot_iso,
+            **interruption_evidence,
+        })
+        previous = historical_soak_summary(
+            persisted=terminal, superseding_build_sha=current_build_sha,
+            superseded_at=boot_iso,
+            lifecycle_relation="superseded_by_backend_deployment",
+            lifecycle_reason=interruption_evidence["failureClass"])
+        return {
+            "action": "terminalize_interrupted",
+            "terminalSoak": terminal,
+            "previousSoakSummary": previous,
+            "interruptionClass": interruption_evidence["failureClass"],
+            "ownerReadableJa": (
+                "実行中Soakのbuild/boot断絶を検出 — "
+                "旧時計をinterruptedで固定"),
+        }
     previous = historical_soak_summary(
         persisted=persisted,
         superseding_build_sha=current_build_sha,

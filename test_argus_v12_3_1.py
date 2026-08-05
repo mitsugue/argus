@@ -1,5 +1,6 @@
 """ARGUS v12.3.1 — scheduled mission / Build Soak reliability guards."""
 import os
+import copy
 import pathlib
 import json
 import sys
@@ -268,20 +269,35 @@ class OutcomeAndJournalIntegrationTests(unittest.TestCase):
     def test_commit_receipt_is_pending_until_verified_readback(self):
         old_token = scanner._ARGUS_ADMIN_TOKEN
         old_cycle = dict(scanner._REMOTE_CYCLE)
+        old_queue = copy.deepcopy(scanner._REMOTE_RECEIPT_QUEUE)
         try:
             scanner._ARGUS_ADMIN_TOKEN = "test-admin"
             client = scanner.app.test_client()
-            response = client.post(
-                "/api/argus/admin/remote-journal/commit-receipt",
-                headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"},
-                json={"remoteCommitSha": "a" * 40, "expectedHash": "b" * 16})
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["status"], "pending")
+            def persist(store):
+                scanner._REMOTE_RECEIPT_QUEUE = copy.deepcopy(store)
+                return {"verified": True}
+            with mock.patch.object(
+                    scanner, "_persist_remote_receipt_queue",
+                    side_effect=persist), mock.patch.object(
+                        scanner, "_backend_exact_sha", return_value="c" * 40):
+                response = client.post(
+                    "/api/argus/admin/remote-journal/commit-receipt",
+                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin",
+                             "Idempotency-Key": "test-receipt-pending"},
+                    json={"remoteCommitSha": "a" * 40,
+                          "expectedHash": "b" * 16,
+                          "backendBuildSha": "c" * 40,
+                          "targetWalSequence": 42})
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(response.get_json()["status"], "accepted")
+            self.assertEqual(response.get_json()["durabilityState"], "pending")
             self.assertFalse(response.get_json()["readBackVerified"])
-            self.assertEqual(scanner._REMOTE_CYCLE["expectedHash"], "b" * 16)
+            self.assertNotEqual(scanner._REMOTE_CYCLE.get("expectedHash"),
+                                "b" * 16)
         finally:
             scanner._ARGUS_ADMIN_TOKEN = old_token
             scanner._REMOTE_CYCLE.clear(); scanner._REMOTE_CYCLE.update(old_cycle)
+            scanner._REMOTE_RECEIPT_QUEUE = old_queue
 
     def test_tick_window_prevents_duplicate_outcome_retry_and_ai_calls(self):
         old_token = scanner._ARGUS_ADMIN_TOKEN
