@@ -108,6 +108,7 @@ import argus_market_intelligence    # deterministic Daily Market Sheet/backfill 
 import argus_verified_snapshot      # v13.3.0: atomic precomputed public view snapshots
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
+import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal intents
 import argus_checkpoint_v2          # bounded Stage-1 dual-write architecture
 import argus_checkpoint_v2_stage1   # formal-Soak suppression/one-time arm
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
@@ -15686,6 +15687,7 @@ _MISSION_WAL_FILE = _DURABILITY_PATHS["wal"]
 _MISSION_LEASE_FILE = _DURABILITY_PATHS["lease"]
 _MISSION_CURSOR_FILE = _DURABILITY_PATHS["cursor"]
 _MISSION_RECEIPT_FILE = _DURABILITY_PATHS["receipt"]
+_REMOTE_RECEIPT_QUEUE_FILE = _DURABILITY_PATHS["receiptQueue"]
 _DURABLE_STORAGE_STATUS = {
     "valid": not _DURABILITY_PRODUCTION,
     "errorClass": None,
@@ -15702,6 +15704,9 @@ _MISSION_BATCH_STATE = {
     "walAppliedSequence": 0,
 }
 _DURABLE_CHECKPOINT_LOCK = threading.RLock()
+_REMOTE_RECEIPT_FLUSH_LOCK = threading.Lock()
+_REMOTE_RECEIPT_QUEUE_LOCK = threading.RLock()
+_REMOTE_RECEIPT_QUEUE = argus_remote_receipt_queue.empty_store()
 _MISSION_TICK_CONTEXT = {
     "active": False,
     "jobId": None,
@@ -15769,6 +15774,68 @@ def _persist_remote_wal_receipt(saved_at=None):
         _MISSION_RECEIPT_FILE, receipt,
         temp_directory=_DURABILITY_PATHS["tempDirectory"],
         validator=argus_tick_durability.verify_remote_receipt)
+
+
+def _persist_remote_receipt_queue(store=None):
+    """Fsync the small intent queue without touching the legacy checkpoint."""
+    global _REMOTE_RECEIPT_QUEUE
+    candidate = (store if isinstance(store, dict)
+                 else _REMOTE_RECEIPT_QUEUE)
+    if not argus_remote_receipt_queue.verify_store(candidate):
+        raise ValueError("remote_receipt_queue_invalid")
+    result = argus_persistent_storage.atomic_write_json(
+        _REMOTE_RECEIPT_QUEUE_FILE, candidate,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"],
+        validator=argus_remote_receipt_queue.verify_store)
+    _REMOTE_RECEIPT_QUEUE = copy.deepcopy(candidate)
+    return result
+
+
+def _restore_remote_receipt_queue():
+    """Restore v13.4.2 intents or deterministically migrate the v13.4.1 sidecar."""
+    global _REMOTE_RECEIPT_QUEUE
+    try:
+        with open(_REMOTE_RECEIPT_QUEUE_FILE, encoding="utf-8") as handle:
+            restored = json.load(handle)
+    except FileNotFoundError:
+        restored = None
+    except (OSError, json.JSONDecodeError):
+        _DURABLE_STATE["remoteReceiptQueueRestore"] = "unreadable"
+        return {"status": "unreadable"}
+    if restored is not None:
+        if not argus_remote_receipt_queue.verify_store(restored):
+            _DURABLE_STATE["remoteReceiptQueueRestore"] = "tampered"
+            return {"status": "tampered"}
+        _REMOTE_RECEIPT_QUEUE = copy.deepcopy(restored)
+        _DURABLE_STATE["remoteReceiptQueueRestore"] = "restored"
+        return {"status": "restored", **argus_remote_receipt_queue.summary(
+            _REMOTE_RECEIPT_QUEUE, now_iso=_ai_now_iso())}
+
+    try:
+        with open(_MISSION_RECEIPT_FILE, encoding="utf-8") as handle:
+            legacy = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        legacy = None
+    build_sha = _backend_exact_sha()
+    if legacy is not None and build_sha:
+        commit = str(legacy.get("remoteCommitSha") or "")
+        migrated = argus_remote_receipt_queue.migrate_legacy_receipt(
+            legacy, backend_build_sha=build_sha,
+            idempotency_key=("migration-v1341-" +
+                             hashlib.sha256(commit.encode("utf-8"))
+                             .hexdigest()[:24]))
+    else:
+        migrated = argus_remote_receipt_queue.empty_store()
+        migrated["migration"] = {
+            "sourceSchemaVersion": (
+                legacy.get("schemaVersion") if isinstance(legacy, dict)
+                else None),
+            "status": "no_migratable_receipt",
+        }
+    _persist_remote_receipt_queue(migrated)
+    _DURABLE_STATE["remoteReceiptQueueRestore"] = "migrated"
+    return {"status": "migrated", **argus_remote_receipt_queue.summary(
+        _REMOTE_RECEIPT_QUEUE, now_iso=_ai_now_iso())}
 
 
 def _persist_durability_metadata():
@@ -16634,6 +16701,7 @@ def _osint_restore_once():
                 if key in _mt})
         if _DURABILITY_PRODUCTION:
             _restore_persistent_remote_receipt()
+        _restore_remote_receipt_queue()
         if "opsJournal" not in blob:
             _REMOTE_ACK["legacyRemote"] = True   # v2 snapshot=journal未同乗
         for h in _OPS_JOURNAL:
@@ -18248,6 +18316,198 @@ def _remote_readback_ack(now_iso=None, blob=None):
     return rec
 
 
+def _remote_receipt_failure_is_permanent(error_class):
+    return str(error_class or "") in {
+        "receipt_hash_mismatch", "compact_receipt_invalid",
+        "remote_wal_manifest_mismatch", "remote_wal_sequence_regression",
+        "remote_wal_sequence_mismatch", "remote_invalid_json",
+    }
+
+
+def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
+    """Verify one cumulative highest-WAL intent; do not write a checkpoint.
+
+    The caller must pass the returned plan to
+    ``_complete_remote_receipt_drain`` immediately after its already-required
+    mission checkpoint.  This keeps a natural tick to one full checkpoint.
+    """
+    now_iso = now_iso or _ai_now_iso()
+    started = time.monotonic()
+    if not _REMOTE_RECEIPT_FLUSH_LOCK.acquire(blocking=False):
+        return {"status": "writer_lock_contended", "lockHeld": False,
+                "checkpointCreated": False, "flushDurationMs": 0}
+    plan = {"status": "noop", "lockHeld": True,
+            "checkpointCreated": False, "startedMonotonic": started}
+    try:
+        with _REMOTE_RECEIPT_QUEUE_LOCK:
+            queue_before = argus_remote_receipt_queue.summary(
+                _REMOTE_RECEIPT_QUEUE, now_iso=now_iso)["pendingCount"]
+            selected = argus_remote_receipt_queue.highest_pending(
+                _REMOTE_RECEIPT_QUEUE, now_iso=now_iso,
+                limit=max(1, min(33, int(batch_limit))))
+            if selected is None:
+                plan.update({"queueBefore": queue_before,
+                             "queueAfter": queue_before})
+                return plan
+            attempted = argus_remote_receipt_queue.record_attempt(
+                _REMOTE_RECEIPT_QUEUE, selected["operationId"],
+                attempted_at=now_iso)
+            _persist_remote_receipt_queue(attempted)
+
+        target = int(selected.get("targetWalSequence") or 0)
+        plan.update({
+            "status": "verifying",
+            "operationId": selected.get("operationId"),
+            "queueBefore": queue_before,
+            "targetWalSequence": target,
+            "remoteCommitSha": selected.get("remoteCommitSha"),
+        })
+        # A receipt accepted during this verification remains in the sidecar.
+        # Only a sequence covered by this immutable commit is eligible below.
+        _REMOTE_CYCLE.update({
+            "remoteCommitSha": selected.get("remoteCommitSha"),
+            "committedAt": selected.get("acceptedAt"),
+            "readBackAt": None,
+            "readBackVerified": False,
+            "walReadBackVerified": False,
+            "expectedHash": selected.get("expectedHash"),
+            "actualHash": None,
+            "compactReceiptHash": None,
+            "remoteDurabilityState": "verification_pending",
+            "receiptCommitSha": selected.get("remoteCommitSha"),
+            "receiptCreatedAt": selected.get("acceptedAt"),
+            "receiptVerifiedAt": None,
+            "receiptAgeSeconds": 0,
+            "receiptErrorClass": None,
+            "errorClass": None,
+            "walErrorClass": None,
+        })
+        receipt = _remote_readback_ack(now_iso)
+        verified_sequence = int(
+            _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+        readback_ok = bool(
+            receipt and _REMOTE_CYCLE.get("readBackVerified") is True and
+            _REMOTE_CYCLE.get("walReadBackVerified") is True)
+        sequence_ok = (
+            verified_sequence == target or
+            (selected.get("migrationLowerBound") is True and
+             verified_sequence >= target))
+        if not readback_ok or not sequence_ok:
+            error_class = (
+                "remote_wal_sequence_mismatch" if readback_ok else
+                _REMOTE_CYCLE.get("receiptErrorClass") or
+                _REMOTE_CYCLE.get("walErrorClass") or
+                _REMOTE_CYCLE.get("errorClass") or
+                "remote_verification_pending")
+            with _REMOTE_RECEIPT_QUEUE_LOCK:
+                retried = argus_remote_receipt_queue.record_retry(
+                    _REMOTE_RECEIPT_QUEUE, selected["operationId"],
+                    now_iso=now_iso, error_class=error_class,
+                    permanent=_remote_receipt_failure_is_permanent(
+                        error_class))
+                _persist_remote_receipt_queue(retried)
+            plan.update({
+                "status": "failed" if _remote_receipt_failure_is_permanent(
+                    error_class) else "pending_retry",
+                "errorClass": error_class,
+                "verifiedWalSequence": verified_sequence,
+                "readBackVerified": readback_ok,
+            })
+            return plan
+        _journal_compact(now_iso)
+        plan.update({
+            "status": "verified_checkpoint_pending",
+            "verifiedWalSequence": verified_sequence,
+            "readBackVerified": True,
+        })
+        return plan
+    except Exception as exc:
+        operation_id = plan.get("operationId")
+        if operation_id:
+            try:
+                with _REMOTE_RECEIPT_QUEUE_LOCK:
+                    retried = argus_remote_receipt_queue.record_retry(
+                        _REMOTE_RECEIPT_QUEUE, operation_id,
+                        now_iso=now_iso,
+                        error_class=type(exc).__name__)
+                    _persist_remote_receipt_queue(retried)
+            except Exception:
+                pass
+        plan.update({"status": "pending_retry",
+                     "errorClass": type(exc).__name__})
+        return plan
+
+
+def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
+    """Acknowledge all cumulative intents only after the natural checkpoint."""
+    now_iso = now_iso or _ai_now_iso()
+    result = dict(plan or {})
+    try:
+        operation_id = result.get("operationId")
+        if result.get("status") != "verified_checkpoint_pending":
+            return result
+        if not isinstance(checkpoint, dict) or checkpoint.get("verified") is not True:
+            with _REMOTE_RECEIPT_QUEUE_LOCK:
+                retried = argus_remote_receipt_queue.record_retry(
+                    _REMOTE_RECEIPT_QUEUE, operation_id,
+                    now_iso=now_iso, error_class="checkpoint_persist_failed")
+                _persist_remote_receipt_queue(retried)
+            result.update({"status": "pending_retry",
+                           "errorClass": "checkpoint_persist_failed"})
+            return result
+        with _REMOTE_RECEIPT_QUEUE_LOCK:
+            verified_queue, covered = \
+                argus_remote_receipt_queue.mark_covered_verified(
+                    _REMOTE_RECEIPT_QUEUE,
+                    verified_sequence=int(result["verifiedWalSequence"]),
+                    remote_commit_sha=str(result["remoteCommitSha"]),
+                    verified_at=now_iso)
+            queue_after = argus_remote_receipt_queue.summary(
+                verified_queue, now_iso=now_iso)["pendingCount"]
+            result.update({
+                "status": "verified",
+                "coalescedReceiptCount": len(covered),
+                "coveredReceiptIds": covered,
+                "queueAfter": queue_after,
+                "checkpointCreated": True,
+                "remoteCommitSha": result.get("remoteCommitSha"),
+                "flushDurationMs": round(
+                    (time.monotonic() - float(result["startedMonotonic"]))
+                    * 1000, 3),
+            })
+            verified_queue["lastFlush"] = {
+                key: result.get(key) for key in (
+                    "status", "coalescedReceiptCount", "targetWalSequence",
+                    "verifiedWalSequence", "queueBefore", "queueAfter",
+                    "checkpointCreated", "remoteCommitSha",
+                    "readBackVerified", "flushDurationMs")
+            }
+            _persist_remote_receipt_queue(verified_queue)
+        return result
+    finally:
+        result.pop("startedMonotonic", None)
+        result.pop("coveredReceiptIds", None)
+        if result.get("lockHeld"):
+            result["lockHeld"] = False
+            _REMOTE_RECEIPT_FLUSH_LOCK.release()
+
+
+def _persist_with_remote_receipt_drain(now_iso=None):
+    """Natural lifecycle adapter: one bounded drainer plus one checkpoint."""
+    now_iso = now_iso or _ai_now_iso()
+    plan = _prepare_remote_receipt_drain(now_iso)
+    try:
+        checkpoint = _osint_persist()
+        result = _complete_remote_receipt_drain(plan, checkpoint, now_iso)
+    except Exception:
+        if plan.get("lockHeld"):
+            _REMOTE_RECEIPT_FLUSH_LOCK.release()
+            plan["lockHeld"] = False
+        raise
+    checkpoint["remoteReceiptFlush"] = result
+    return checkpoint
+
+
 def _journal_compact(now_iso=None):
     """非critical・検証済みack済みイベントの決定論compaction。criticalは
     ack前に絶対compactしない。歴代件数は_OPS_JOURNAL_METAが保持(ゼロ化なし)。"""
@@ -18269,6 +18529,8 @@ def _journal_compact(now_iso=None):
 
 def _remote_journal_diagnostics(now_iso=None):
     now_iso = now_iso or _ai_now_iso()
+    receipt_queue = argus_remote_receipt_queue.summary(
+        _REMOTE_RECEIPT_QUEUE, now_iso=now_iso)
     acked = set(_REMOTE_ACK.get("ackedKeys") or [])
     pending = [
         row for row in _OPS_JOURNAL
@@ -18318,7 +18580,9 @@ def _remote_journal_diagnostics(now_iso=None):
         sequence > 0 and sequence == int(
             _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0) and
         re.fullmatch(r"[0-9a-f]{40}", str(
-            _REMOTE_CYCLE.get("receiptCommitSha") or "").lower()))
+            _REMOTE_CYCLE.get("receiptCommitSha") or "").lower()) and
+        receipt_queue["pendingCount"] == 0 and
+        receipt_queue["failedCount"] == 0)
     lifetime = max(
         [int(_REMOTE_ACK.get("maxObservedLagSec") or 0)] + ages)
     return {
@@ -18331,14 +18595,17 @@ def _remote_journal_diagnostics(now_iso=None):
             stage1_started),
         "currentPendingAgeSeconds": oldest_seconds,
         "currentPendingCount": len(pending),
-        "currentRemoteDurabilityState": _REMOTE_CYCLE.get(
-            "remoteDurabilityState") or "unknown",
+        "currentRemoteDurabilityState": (
+            "failed" if receipt_queue["failedCount"] else
+            "pending" if receipt_queue["pendingCount"] else
+            _REMOTE_CYCLE.get("remoteDurabilityState") or "unknown"),
         "exactReceiptVerified": exact_receipt,
         "localSequencePosition": int(
             _OPS_JOURNAL_META.get("totalObserved") or 0),
         "remoteSequencePosition": int(
             _REMOTE_CYCLE.get("acknowledgedCount") or 0),
         "readBackVerified": bool(_REMOTE_CYCLE.get("readBackVerified")),
+        "receiptQueue": receipt_queue,
     }
 
 
@@ -18915,7 +19182,7 @@ def _api_argus_admin_missions_tick_impl():
         _MISSION_WINDOWS, window=window, build_sha=_backend_sha(),
         started_at=now_iso, runtime_version=_semantic_app_version())
     if not should_run:
-        checkpoint = _osint_persist()
+        checkpoint = _persist_with_remote_receipt_drain(now_iso)
         return jsonify({"ok": True, "status": "expected_skip",
                         "result": "caught_up",
                         "reason": "duplicate_suppressed",
@@ -19023,15 +19290,9 @@ def _api_argus_admin_missions_tick_impl():
             "stateHash": argus_asset_chart_cache.state_hash(
                 _ASSET_CHART_REPORTS),
         }
-    # v12.2.10: 30分cron文脈で検証済みread-back ack+非criticalのcompaction。
-    # (GETからは実行されない — ackとcompactはこの遷移文脈のみ。テストは
-    # disabledフラグでネットワークを遮断し、blob注入で直接検証する)
-    try:
-        if not _REMOTE_ACK.get("disabled"):
-            _remote_readback_ack(now_iso)
-            _journal_compact(now_iso)
-    except Exception:
-        pass
+    # v13.4.2: Remote Journal read-back runs through the fsynced receipt-intent
+    # queue immediately before the already-required natural checkpoint below.
+    # Public GETs and the receipt-acceptance POST never invoke the drainer.
     created = argus_scheduler.generate_daily_missions(
         session_date=session_date, now_iso=now_iso,
         jp_holiday=jp_holiday,
@@ -19359,9 +19620,21 @@ def _api_argus_admin_missions_tick_impl():
     has_more = remaining_count > 0
     result = ("failed" if failed_in_tick else
               "partial" if has_more else "caught_up")
+    _closure_remote_cycle = dict(_REMOTE_CYCLE)
+    _receipt_queue_gate = argus_remote_receipt_queue.summary(
+        _REMOTE_RECEIPT_QUEUE, now_iso=heartbeat_at)
+    if _receipt_queue_gate["pendingCount"] or \
+            _receipt_queue_gate["failedCount"]:
+        _closure_remote_cycle.update({
+            "remoteDurabilityState": (
+                "failed" if _receipt_queue_gate["failedCount"] else
+                "verification_pending"),
+            "readBackVerified": False,
+            "walReadBackVerified": False,
+        })
     formal_closure = argus_runtime.formal_soak_closure(
         soak_state=soak_state, mission_result=result,
-        remote_cycle=_REMOTE_CYCLE)
+        remote_cycle=_closure_remote_cycle)
     _SOAK["completed72h"] = formal_closure["completed72h"]
     _SOAK["interruptionCount"] = len(
         _SOAK.get("interruptions") or [])
@@ -19378,7 +19651,7 @@ def _api_argus_admin_missions_tick_impl():
     argus_scheduler.finish_mission_window(
         window_record, completed_at=heartbeat_at, status=terminal,
         error_class=("mission_execution_failed" if failed_in_tick else None))
-    checkpoint = _osint_persist()
+    checkpoint = _persist_with_remote_receipt_drain(heartbeat_at)
     if not checkpoint.get("verified"):
         terminal = "failed"
         result = "failed"
@@ -21242,48 +21515,90 @@ def api_argus_osint_memory_snapshot():
 
 @app.route("/api/argus/admin/remote-journal/commit-receipt", methods=["POST"])
 def api_argus_admin_remote_journal_commit_receipt():
-    """ledger push後の公開安全receipt。commit成功はread-back成功に昇格しない。"""
+    """Fsync a small intent; immutable read-back runs on a natural tick."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     body = request.get_json(silent=True) or {}
     commit_sha = str(body.get("remoteCommitSha") or "").lower()
     expected_hash = str(body.get("expectedHash") or "").lower()
+    backend_build_sha = str(body.get("backendBuildSha") or "").lower()
+    idempotency_key = str(request.headers.get("Idempotency-Key") or "")
+    try:
+        target_wal_sequence = int(body.get("targetWalSequence"))
+    except (TypeError, ValueError):
+        target_wal_sequence = -1
     if not re.fullmatch(r"[0-9a-f]{40}", commit_sha) or \
-            not re.fullmatch(r"[0-9a-f]{16}", expected_hash):
+            not re.fullmatch(r"[0-9a-f]{16}", expected_hash) or \
+            not re.fullmatch(r"[0-9a-f]{40}", backend_build_sha) or \
+            target_wal_sequence <= 0:
         return jsonify({"ok": False, "status": "failed",
                         "error": "invalid_public_receipt"}), 400
-    receipt_created_at = _ai_now_iso()
-    _REMOTE_CYCLE.update({
-        "remoteCommitSha": commit_sha, "committedAt": receipt_created_at,
-        "readBackAt": None, "readBackVerified": False,
-        "walReadBackVerified": False,
-        "expectedHash": expected_hash, "actualHash": None,
-        "remoteWalAppliedSequence": 0,
-        "compactReceiptHash": None,
-        "pendingCount": len(_OPS_JOURNAL), "acknowledgedCount": 0,
-        "remoteDurabilityState": "verification_pending",
-        "receiptCommitSha": commit_sha,
-        "receiptCreatedAt": receipt_created_at,
-        "receiptVerifiedAt": None, "receiptAgeSeconds": 0,
-        "receiptAttempts": 0, "receiptErrorClass": None,
-        "errorClass": None, "walErrorClass": None,
-    })
+    if backend_build_sha != _backend_exact_sha():
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "backend_build_sha_mismatch"}), 409
+    accepted_at = _ai_now_iso()
     try:
-        # Survive status 137 between receipt acceptance and the full checkpoint.
-        _persist_remote_wal_receipt()
+        with _REMOTE_RECEIPT_QUEUE_LOCK:
+            updated, receipt, replay = \
+                argus_remote_receipt_queue.accept_intent(
+                    _REMOTE_RECEIPT_QUEUE,
+                    idempotency_key=idempotency_key,
+                    build_sha=backend_build_sha,
+                    remote_commit_sha=commit_sha,
+                    expected_hash=expected_hash,
+                    target_wal_sequence=target_wal_sequence,
+                    accepted_at=accepted_at)
+            _persist_remote_receipt_queue(updated)
+    except argus_remote_receipt_queue.ReceiptQueueError as exc:
+        status_code = (409 if exc.error_class in (
+            "idempotency_key_conflict", "receipt_queue_capacity_exceeded")
+                       else 400)
+        return jsonify({"ok": False, "status": "failed",
+                        "error": exc.error_class}), status_code
     except Exception as exc:
-        _REMOTE_CYCLE["errorClass"] = \
-            f"remote_receipt_persist_failed:{type(exc).__name__}"
         return jsonify({"ok": False, "status": "failed",
                         "error": "remote_receipt_persist_failed"}), 503
-    checkpoint = _osint_persist()
-    if checkpoint.get("verified") is not True:
-        return jsonify({"ok": False, "status": "failed",
-                        "error": "checkpoint_persist_failed"}), 503
-    return jsonify({"ok": True, "status": "pending",
-                    "readBackVerified": False,
-                    "noteJa": "remote commit記録済み・read-back待ち"})
+    view = argus_remote_receipt_queue.status_view(
+        receipt, now_iso=accepted_at)
+    response = {
+        "ok": True,
+        "status": "accepted",
+        "accepted": True,
+        "durabilityState": view["durabilityState"],
+        "operationId": view["operationId"],
+        "receiptId": view["receiptId"],
+        "targetWalSequence": view["targetWalSequence"],
+        "acceptedAt": view["acceptedAt"],
+        "idempotentReplay": replay,
+        "verifiedWalSequence": view["verifiedWalSequence"],
+        "remoteCommitSha": view["remoteCommitSha"],
+        "readBackVerified": view["readBackVerified"],
+        "verifiedAt": view["verifiedAt"],
+        "attempts": view["attempts"],
+        "lastErrorClass": view["lastErrorClass"],
+        "ageSeconds": view["ageSeconds"],
+    }
+    return jsonify(response), (200 if replay else 202)
+
+
+@app.route(
+    "/api/argus/admin/remote-journal/receipts/<operation_id>",
+    methods=["GET"])
+def api_argus_admin_remote_journal_receipt_status(operation_id):
+    """Return public-safe exact status; payload and filesystem stay private."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    with _REMOTE_RECEIPT_QUEUE_LOCK:
+        receipt = argus_remote_receipt_queue.get_receipt(
+            _REMOTE_RECEIPT_QUEUE, str(operation_id or ""))
+    if receipt is None:
+        return jsonify({"ok": False, "status": "missing",
+                        "error": "receipt_operation_missing"}), 404
+    return jsonify({"ok": True, "status": "found", **
+                    argus_remote_receipt_queue.status_view(
+                        receipt, now_iso=_ai_now_iso())})
 
 
 @app.route("/api/argus/cost-policy")
