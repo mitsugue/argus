@@ -94,6 +94,7 @@ jobs:
       - name: Same-shape allocator attribution (${{ matrix.variant }})
         run: |
           set -euo pipefail
+          mkdir -p artifacts/mapping-attribution
           variant='${{ matrix.variant }}'
           docker run --rm \
             --memory 4g --memory-swap 4g --pids-limit 512 \

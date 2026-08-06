@@ -194,3 +194,4 @@ def test_exact_public_snapshot_is_fetched_once_then_shared_by_artifact():
     assert "exact-public-state:" in workflow
     assert workflow.count("needs: exact-public-state") == 4
     assert workflow.count("actions/download-artifact@v5") == 4
+    assert "mkdir -p artifacts/mapping-attribution" in workflow
