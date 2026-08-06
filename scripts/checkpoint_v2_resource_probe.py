@@ -578,6 +578,24 @@ def run_child(mode, root, multiplier, source_json=None):
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
+def runtime_resource_growth_failures(baseline, ending):
+    """Return growth in resources with an attributable live owner.
+
+    Raw Linux VMA count is intentionally diagnostic-only here.  CPython's
+    allocator may retain released arena/large-object mappings while every
+    Checkpoint V2 owner is gone.  The separate 32-cycle mapping-closure job
+    attributes every VMA and enforces its bounded allocator envelope.
+    """
+    failures = []
+    for field in ("sqliteConnectionCount", "sqliteCursorCount",
+                  "threadCount", "descriptorCount", "futureCount",
+                  "sqliteOrTempMappingCount"):
+        if baseline.get(field) is not None and ending.get(field) is not None \
+                and ending[field] > baseline[field]:
+            failures.append(field)
+    return failures
+
+
 def orchestrate(full_cycles, retention_cycles, assert_bounds,
                 source_json=None):
     results = []
@@ -662,14 +680,10 @@ def orchestrate(full_cycles, retention_cycles, assert_bounds,
             raise SystemExit("checkpoint_v2_production_shape_mismatch")
         if not repeated["incidentTempsImmutable"]:
             raise SystemExit("checkpoint_v2_incident_temp_mutation")
-        baseline = repeated["baselineResources"]
-        ending = repeated["endingResources"]
-        for field in ("sqliteConnectionCount", "sqliteCursorCount",
-                      "threadCount", "descriptorCount", "futureCount",
-                      "mappingCount", "sqliteOrTempMappingCount"):
-            if baseline.get(field) is not None and ending.get(field) is not None \
-                    and ending[field] > baseline[field]:
-                raise SystemExit(f"checkpoint_v2_{field}_growth")
+        failures = runtime_resource_growth_failures(
+            repeated["baselineResources"], repeated["endingResources"])
+        if failures:
+            raise SystemExit(f"checkpoint_v2_{failures[0]}_growth")
 
 
 def main():

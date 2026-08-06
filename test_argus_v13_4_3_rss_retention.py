@@ -16,6 +16,9 @@ from unittest import mock
 import pytest
 
 import argus_checkpoint_v2 as v2
+from scripts.checkpoint_v2_resource_probe import (
+    runtime_resource_growth_failures,
+)
 
 
 def snapshot(index=0, payload_bytes=32_768):
@@ -182,6 +185,22 @@ def test_allocator_reclaim_is_scoped_and_reports_only_scalar_values():
     loader.assert_not_called()
     assert all(value is None or isinstance(value, (bool, int))
                for value in report.values())
+
+
+def test_resource_gate_uses_live_owners_not_raw_allocator_mapping_count():
+    baseline = {
+        "sqliteConnectionCount": 0, "sqliteCursorCount": 0,
+        "threadCount": 1, "descriptorCount": 4, "futureCount": 0,
+        "mappingCount": 199, "sqliteOrTempMappingCount": 0,
+    }
+    allocator_retention_only = dict(baseline, mappingCount=214)
+    assert runtime_resource_growth_failures(
+        baseline, allocator_retention_only) == []
+
+    live_owner_growth = dict(
+        allocator_retention_only, sqliteOrTempMappingCount=1)
+    assert runtime_resource_growth_failures(
+        baseline, live_owner_growth) == ["sqliteOrTempMappingCount"]
 
 
 def test_eight_cycles_bound_disk_metadata_and_runtime_resources(tmp_path):
