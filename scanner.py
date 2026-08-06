@@ -16012,6 +16012,11 @@ def _osint_persist_locked():
             build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha(),
             mission_window_id=(
                 _MISSION_TICK_CONTEXT.get("missionWindowId")))
+        # The sealed top-level mapping owns checkpoint-normalized archive
+        # copies after the authoritative legacy write.  Drop the redundant
+        # unsealed owner before the V2 writer consumes each section so large
+        # transient arenas can be returned at the true lifecycle boundary.
+        del blob
         metadata = _persist_durability_metadata()
         checkpoint["metadata"] = metadata
         # Stage 1 is deliberately non-authoritative. The already-verified
@@ -16069,6 +16074,7 @@ def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
         result = argus_checkpoint_v2.write_generation(
             _CHECKPOINT_V2_ROOT, blob,
             source_generation=source_generation,
+            consume_snapshot=True,
             validation_context={
                 "triggerSource": trigger_source,
                 "missionWindowId": mission_window_id,

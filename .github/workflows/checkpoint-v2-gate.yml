@@ -10,9 +10,32 @@ permissions:
   contents: read
 
 jobs:
-  linux-4gib-cgroup:
+  exact-public-state:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    steps:
+      - name: Fetch one exact public production-shaped state (read-only GET)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          curl --fail --silent --show-error --location \
+            --retry 8 --retry-all-errors --retry-delay 10 \
+            --retry-max-time 900 --max-time 300 \
+            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
+            --output artifacts/checkpoint-v2-exact-source.json
+          python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
+      - name: Publish immutable shared exact state
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts/checkpoint-v2-exact-source.json
+          retention-days: 1
+
+  linux-4gib-cgroup:
+    needs: exact-public-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
       - name: Production-shaped write, restore and repeated-cycle proof
@@ -25,17 +48,13 @@ jobs:
             --volume "$PWD:/work" --workdir /work \
             python:3.12-slim \
             python3 -B scripts/checkpoint_v2_resource_probe.py \
-              --full-cycles 3 --reduced-cycles 50 --assert-bounds \
+              --full-cycles 3 --retention-cycles 8 --assert-bounds \
             | tee artifacts/checkpoint-v2-resource-proof.json
-      - name: Fetch exact public production-shaped state (read-only GET)
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --max-time 300 \
-            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
-            --output artifacts/checkpoint-v2-exact-source.json
-          python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
       - name: Exact-state write, restore, WAL and cgroup proof
         shell: bash
         run: |
@@ -46,7 +65,7 @@ jobs:
             python:3.12-slim \
             python3 -B scripts/checkpoint_v2_resource_probe.py \
               --source-json artifacts/checkpoint-v2-exact-source.json \
-              --full-cycles 1 --reduced-cycles 50 --assert-bounds \
+              --full-cycles 1 --retention-cycles 8 --assert-bounds \
             | tee artifacts/checkpoint-v2-exact-resource-proof.json
       - name: Publish exact resource proof
         if: always()
@@ -56,3 +75,116 @@ jobs:
           path: |
             artifacts/checkpoint-v2-resource-proof.json
             artifacts/checkpoint-v2-exact-resource-proof.json
+
+  mapping-attribution:
+    needs: exact-public-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [pre_fix, candidate_without_trim, candidate_with_trim]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
+      - name: Same-shape allocator attribution (${{ matrix.variant }})
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/mapping-attribution
+          variant='${{ matrix.variant }}'
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/checkpoint_v2_mapping_probe.py \
+              --root "/tmp/$variant-root" \
+              --raw-dir "/tmp/private-mapping-evidence" \
+              --artifact-dir artifacts/mapping-attribution \
+              --source-json artifacts/checkpoint-v2-exact-source.json \
+              --variant "$variant" --cycles 4 --tracemalloc \
+            | tee "artifacts/mapping-attribution/$variant-summary.log"
+      - name: Publish redacted mapping attribution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v2-mapping-${{ matrix.variant }}-${{ github.sha }}
+          path: artifacts/mapping-attribution/
+
+  mapping-syscall-trace:
+    needs: exact-public-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
+      - name: Test-only mmap and munmap trace
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim sh -ceu '
+              apt-get update -qq
+              apt-get install -y -qq strace >/dev/null
+              mkdir -p /tmp/private-strace /tmp/private-mapping-evidence
+              strace -ff -ttt -k -yy \
+                -e trace=mmap,mmap2,munmap,mremap,brk \
+                -o /tmp/private-strace/mmap-trace \
+                python3 -B scripts/checkpoint_v2_mapping_probe.py \
+                  --root /tmp/trace-root \
+                  --raw-dir /tmp/private-mapping-evidence \
+                  --artifact-dir artifacts/mapping-attribution/trace \
+                  --source-json artifacts/checkpoint-v2-exact-source.json \
+                  --variant candidate_with_trim --cycles 3
+              python3 -B scripts/summarize_mmap_trace.py \
+                --trace-dir /tmp/private-strace \
+                --output artifacts/mapping-attribution/mmap-trace-summary.json
+            '
+      - name: Publish redacted mapping attribution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v2-mmap-trace-${{ github.sha }}
+          path: artifacts/mapping-attribution/
+
+  mapping-closure-32:
+    needs: exact-public-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
+      - name: Exact 32-cycle single-process mapping closure
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/checkpoint_v2_mapping_probe.py \
+              --root /tmp/authoritative-root \
+              --raw-dir /tmp/private-mapping-evidence \
+              --artifact-dir artifacts/mapping-closure \
+              --source-json artifacts/checkpoint-v2-exact-source.json \
+              --variant candidate_with_trim --cycles 32 --assert-proof \
+            | tee artifacts/checkpoint-v2-32-cycle-mapping-proof.json
+      - name: Publish redacted 32-cycle proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v2-32-cycle-mapping-proof-${{ github.sha }}
+          path: |
+            artifacts/checkpoint-v2-32-cycle-mapping-proof.json
+            artifacts/mapping-closure/

@@ -8,6 +8,7 @@ serialized buffer or a second complete object graph.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import datetime as dt
 import fcntl
 import gc
@@ -21,7 +22,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 
 import argus_persistent_storage as legacy
 
@@ -38,6 +39,7 @@ MINIMUM_FREE_SPACE_RESERVE = 1024 * 1024 * 1024
 MAXIMUM_RETAINED_GENERATION_BYTES = MAXIMUM_GENERATIONS * MAXIMUM_TOTAL_BYTES
 MAXIMUM_IN_PROGRESS_GENERATION_BYTES = MAXIMUM_TOTAL_BYTES
 MAXIMUM_METADATA_BYTES = 1024 * 1024
+ALLOCATOR_RECLAIM_MINIMUM_SOURCE_BYTES = 32 * 1024 * 1024
 MAXIMUM_V2_OWNED_BYTES = (
     MAXIMUM_RETAINED_GENERATION_BYTES +
     MAXIMUM_IN_PROGRESS_GENERATION_BYTES + MAXIMUM_METADATA_BYTES)
@@ -136,6 +138,55 @@ def _cgroup_peak_bytes() -> Optional[int]:
                       "/sys/fs/cgroup/memory/memory.max_usage_in_bytes"))
 
 
+def _release_unused_allocator_memory(source_bytes: int) -> Dict[str, Any]:
+    """Return freed checkpoint arenas only after their last owner is gone.
+
+    Production-shaped JSON and SQLite row encoding temporarily allocates more
+    than 100 MiB.  CPython releases those objects by reference counting, but
+    glibc may keep the now-empty anonymous heap arenas mapped indefinitely.
+    This is deliberately scoped to a consumed, generation-sized snapshot; it
+    is not a periodic GC or a telemetry reset.
+    """
+    before = _process_rss_bytes()
+    report: Dict[str, Any] = {
+        "attempted": False,
+        "supported": False,
+        "sourceBytes": int(source_bytes or 0),
+        "rssBeforeBytes": before,
+        "rssAfterBytes": before,
+        "rssReleasedBytes": 0,
+        "reportedReleasedBytes": None,
+    }
+    if int(source_bytes or 0) < ALLOCATOR_RECLAIM_MINIMUM_SOURCE_BYTES:
+        return report
+    report["attempted"] = True
+    try:
+        allocator = ctypes.CDLL(None)
+        system = os.uname().sysname
+        if system == "Linux" and hasattr(allocator, "malloc_trim"):
+            trim = allocator.malloc_trim
+            trim.argtypes = [ctypes.c_size_t]
+            trim.restype = ctypes.c_int
+            report["supported"] = True
+            trim(0)
+        elif system == "Darwin" and hasattr(
+                allocator, "malloc_zone_pressure_relief"):
+            relief = allocator.malloc_zone_pressure_relief
+            relief.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            relief.restype = ctypes.c_size_t
+            report["supported"] = True
+            report["reportedReleasedBytes"] = int(relief(None, 0))
+    except (AttributeError, OSError, TypeError, ValueError):
+        # Unsupported allocators keep correctness; the resource gate still
+        # observes the unchanged RSS and fails closed when necessary.
+        pass
+    after = _process_rss_bytes()
+    report["rssAfterBytes"] = after
+    if before is not None and after is not None:
+        report["rssReleasedBytes"] = max(0, before - after)
+    return report
+
+
 class _ResourceSampler:
     """Sample per-generation current memory without resetting cgroup state."""
 
@@ -207,7 +258,9 @@ def _resource_telemetry(*, started: float, rss_before: Optional[int],
                         disk_free_after: Optional[int], pending_count: int,
                         lock_wait_ms: float, success: bool,
                         legacy_temp_before: Optional[int],
-                        legacy_temp_after: Optional[int]) -> Dict[str, Any]:
+                        legacy_temp_after: Optional[int],
+                        allocator_reclaim: Optional[Mapping[str, Any]] = None
+                        ) -> Dict[str, Any]:
     sampler.finish()
     rss_after = _process_rss_bytes()
     return {
@@ -239,6 +292,7 @@ def _resource_telemetry(*, started: float, rss_before: Optional[int],
             max(0, legacy_temp_after - legacy_temp_before)
             if legacy_temp_before is not None and
             legacy_temp_after is not None else None),
+        "allocatorReclaim": dict(allocator_reclaim or {}),
     }
 
 
@@ -496,9 +550,13 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                      maximum_total_bytes: int = MAXIMUM_TOTAL_BYTES,
                      fault_after: Optional[str] = None,
                      validation_context: Optional[Mapping[str, Any]] = None,
+                     consume_snapshot: bool = False,
                      disk_usage_fn=shutil.disk_usage,
                      minimum_free_space_reserve: int =
                      MINIMUM_FREE_SPACE_RESERVE) -> Dict[str, Any]:
+    if consume_snapshot and not isinstance(snapshot, MutableMapping):
+        raise CheckpointV2Error(
+            "checkpoint_v2_consumable_snapshot_required")
     started = time.monotonic()
     rss_before = _process_rss_bytes()
     cgroup_before = _cgroup_current_bytes()
@@ -509,6 +567,10 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
     section_manifest: Dict[str, Any] = {}
     disk_before: Dict[str, Any] = {}
     lock_wait_ms = 0.0
+    allocator_reclaim: Dict[str, Any] = {}
+    value: Any = None
+    source_total = 0
+    reclaim_source_bytes = 0
     legacy_temp_before = _legacy_temp_count(
         (validation_context or {}).get("legacyCheckpointPath"),
         (validation_context or {}).get("legacyTempDirectory"))
@@ -542,7 +604,6 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
         database = pending / DATABASE_NAME
         connection = _connect(str(database))
         section_manifest = {}
-        source_total = 0
         try:
             connection.execute("BEGIN IMMEDIATE")
             connection.executemany(
@@ -552,7 +613,8 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                     ("sourceGeneration", source_generation),
                     ("createdAt", _iso_now()),
                 ))
-            for section, value in snapshot.items():
+            for section in list(snapshot):
+                value = snapshot[section]
                 _validate_collection_bounds(section, value)
                 count_limit = COUNT_LIMITS.get(section)
                 if count_limit is not None and isinstance(value, (list, dict)) \
@@ -561,6 +623,8 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                         "checkpoint_v2_count_limit_exceeded",
                         section=section, count=len(value), maximum=count_limit)
                 source_bytes, source_hash = _stream_stats(value)
+                reclaim_source_bytes = max(
+                    reclaim_source_bytes, source_total + source_bytes)
                 section_limit = SECTION_LIMITS.get(
                     section, DEFAULT_SECTION_LIMIT)
                 if source_bytes > section_limit:
@@ -606,6 +670,9 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                     "hardLimitBytes": section_limit,
                     "countLimit": count_limit,
                 }
+                if consume_snapshot:
+                    del snapshot[section]
+                value = None
             connection.commit()
             if fault_after == "transaction":
                 raise OSError("injected_after_transaction")
@@ -677,6 +744,11 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
         disk_after = disk_budget_status(
             str(root_path), disk_usage_fn=disk_usage_fn,
             minimum_free_space_reserve=minimum_free_space_reserve)
+        if consume_snapshot:
+            snapshot.clear()
+            value = None
+            allocator_reclaim = _release_unused_allocator_memory(
+                source_total)
         telemetry = _resource_telemetry(
             started=started, rss_before=rss_before,
             cgroup_before=cgroup_before,
@@ -693,7 +765,8 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
             legacy_temp_before=legacy_temp_before,
             legacy_temp_after=_legacy_temp_count(
                 (validation_context or {}).get("legacyCheckpointPath"),
-                (validation_context or {}).get("legacyTempDirectory")))
+                (validation_context or {}).get("legacyTempDirectory")),
+            allocator_reclaim=allocator_reclaim)
         provenance["resourceTelemetry"] = telemetry
         manifest["stage1Validation"] = provenance
         manifest["generationHistory"][-1] = provenance
@@ -714,6 +787,11 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
                 "manifestWrite": manifest_write,
                 "resourceTelemetry": telemetry}
     except BaseException as exc:
+        if consume_snapshot:
+            snapshot.clear()
+            value = None
+            allocator_reclaim = _release_unused_allocator_memory(
+                reclaim_source_bytes)
         if "pending" in locals() and pending.exists():
             with contextlib.suppress(OSError, CheckpointV2Error):
                 _remove_pending(pending)
@@ -735,7 +813,8 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
             legacy_temp_before=legacy_temp_before,
             legacy_temp_after=_legacy_temp_count(
                 (validation_context or {}).get("legacyCheckpointPath"),
-                (validation_context or {}).get("legacyTempDirectory")))
+                (validation_context or {}).get("legacyTempDirectory")),
+            allocator_reclaim=allocator_reclaim)
         if isinstance(exc, CheckpointV2Error):
             exc.details.setdefault("resourceTelemetry", failure_telemetry)
             raise
