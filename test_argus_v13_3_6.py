@@ -190,7 +190,7 @@ def test_transport_error_classes_are_stable_and_public_safe():
         json.JSONDecodeError("x", "x", 0)) == "invalid_json"
 
 
-def test_owner_arm_does_not_start_soak(monkeypatch):
+def test_legacy_owner_arm_is_rejected_when_stage1_disabled(monkeypatch):
     saved_soak = copy.deepcopy(scanner._SOAK)
     saved_control = copy.deepcopy(scanner._SOAK_CONTROL)
     saved_history = copy.deepcopy(scanner._SOAK_HISTORY)
@@ -209,22 +209,12 @@ def test_owner_arm_does_not_start_soak(monkeypatch):
                 "/api/argus/admin/soak/arm",
                 headers={"X-ARGUS-ADMIN-TOKEN": "unused"},
                 json={"confirm": True, "buildSha": FULL_SHA})
-        assert response.status_code == 200
-        assert response.get_json()["startsNow"] is False
+        assert response.status_code == 409
+        assert response.get_json()["error"] == "stage1_not_enabled"
         assert scanner._SOAK["soakId"] == "soak-old"
         assert scanner._SOAK["startedAt"] == "2026-07-27T00:07:25Z"
-        assert scanner._SOAK_CONTROL["armed"] is True
-
-        old_snapshot = copy.deepcopy(scanner._SOAK)
-        window = {"missionWindowId": f"mw-{SCHEDULED}",
-                  "scheduledFor": SCHEDULED}
-        scanner._activate_formal_soak(
-            _decision(), window, rollover_armed=True)
-        assert scanner._SOAK["soakId"] != "soak-old"
-        assert scanner._SOAK["startedAt"] == SCHEDULED
-        assert scanner._SOAK["startedBy"] == "ec2_systemd"
         assert scanner._SOAK_CONTROL["armed"] is False
-        assert scanner._SOAK_HISTORY == [old_snapshot]
+        assert scanner._SOAK_HISTORY == saved_history
     finally:
         scanner._SOAK.clear()
         scanner._SOAK.update(saved_soak)
@@ -245,7 +235,16 @@ def test_checkpoint_v2_stage1_owner_arm_does_not_create_soak_or_heartbeat(
     state = argus_checkpoint_v2_stage1.empty_state(FULL_SHA)
     for index in range(3):
         state = argus_checkpoint_v2_stage1.record_generation(
-            state, {"verified": True, "generationId": f"gen-{index}"},
+            state, {"verified": True, "generationId": f"gen-{index}",
+                    "resourceTelemetry": {
+                        "success": True,
+                        "processRssAfterBytes": 500_000_000 + index,
+                        "processPeakRssBytes": 800_000_000,
+                        "cgroupMemoryPeakBytes": 900_000_000,
+                        "diskFreeAfterBytes": 2 * 1024 ** 3,
+                        "pendingGenerationCount": 0,
+                        "newLegacyTempCount": 0,
+                    }},
             trigger_source="ec2_systemd",
             mission_window_id=f"mw-{index}")
     state = argus_checkpoint_v2_stage1.record_acceptance(

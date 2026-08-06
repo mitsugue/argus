@@ -226,7 +226,8 @@ def test_restore_same_sha_inherits_with_interruption(monkeypatch, tmp_path):
     _reset_soak()
 
 
-def test_tick_starts_build_scoped_soak(monkeypatch):
+def test_tick_without_v2_owner_arm_does_not_start_build_scoped_soak(
+        monkeypatch):
     _admin(monkeypatch)
     monkeypatch.setenv("RENDER_GIT_COMMIT", "abc1234def")
     _reset_soak()
@@ -238,16 +239,17 @@ def test_tick_starts_build_scoped_soak(monkeypatch):
     scanner._RUNTIME["processBootedAt"] = scheduled_for
     scanner._STARTUP["restoreCompletedAt"] = scheduled_for
     with scanner.app.test_client() as c:
-        c.post("/api/argus/admin/missions/tick",
-               json={"triggerSource": "ec2_systemd",
-                     "scheduledFor": scheduled_for})
-    assert scanner._SOAK["buildSha"] == "abc1234"
-    assert scanner._SOAK["startedAt"] is not None
-    assert rt._ep(scanner._SOAK["startedAt"]) >= \
-        rt._ep(scanner._RUNTIME["processBootedAt"])     # bootより前に遡らない
+        response = c.post("/api/argus/admin/missions/tick",
+                          json={"triggerSource": "ec2_systemd",
+                                "scheduledFor": scheduled_for})
+    assert scanner._SOAK["buildSha"] is None
+    assert scanner._SOAK["startedAt"] is None
+    blockers = response.get_json()["formalSoakEligibility"]["blockers"]
+    assert "checkpoint_v2_disabled" in blockers
+    assert "formal_soak_not_armed" in blockers
     evs = [e for e in scanner._OPS_JOURNAL
            if e.get("eventType") == "soak_started"]
-    assert len(evs) == 1                                # soak開始がジャーナル化
+    assert len(evs) == 0
     _reset_soak()
 
 

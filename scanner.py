@@ -8040,6 +8040,7 @@ def _data_quality_console():
         }
     except Exception:
         pass
+    console["formalSoakControl"] = _formal_soak_public_projection()
     # 自己漏洩検査 — 自分のドキュメントに機微フィールドが乗ったら即critical化
     try:
         if argus_portfolio_sync.contains_sensitive(console):
@@ -17935,6 +17936,62 @@ def _bootstrap_hook():
         _startup_bootstrap()
 
 
+def _formal_soak_is_active(soak=None):
+    candidate = soak if isinstance(soak, dict) else _SOAK
+    state = str(candidate.get("terminalState") or
+                candidate.get("state") or "not_started")
+    return bool(candidate.get("soakId") and candidate.get("startedAt") and
+                state not in ("interrupted", "completed", "failed",
+                              "superseded", "operationally_verified"))
+
+
+def _formal_soak_public_projection():
+    """Return bounded control/runtime/history truth without changing state."""
+    active = _formal_soak_is_active()
+    decision = argus_checkpoint_v2_stage1.formal_soak_start_eligibility(
+        _CHECKPOINT_V2_STAGE1_CONTROL,
+        checkpoint_v2_enabled=_CHECKPOINT_V2_STAGE1_ENABLED,
+        trigger_source="none", qualified_natural_tick=False,
+        mission_window_id=None,
+        current_build_sha=_backend_exact_sha() or None,
+        expected_build_sha=_backend_exact_sha() or None,
+        active_soak_exists=active,
+        active_soak_id=_SOAK.get("soakId"))
+    history = []
+    for row in _SOAK_HISTORY[-8:]:
+        if not isinstance(row, dict):
+            continue
+        history.append({
+            "soakId": row.get("soakId"),
+            "startedAt": row.get("startedAt"),
+            "state": (row.get("terminalState") or row.get("state")),
+            "completed72h": bool(row.get("completed72h")),
+        })
+    arm_state = (_CHECKPOINT_V2_STAGE1_CONTROL.get("formalSoakState") or
+                 "not_started")
+    runtime_state = ((_SOAK.get("terminalState") or _SOAK.get("state"))
+                     if _SOAK.get("soakId") else "not_started")
+    return {
+        "checkpointMode": (
+            _CHECKPOINT_V2_STAGE1_CONTROL.get("checkpointMode")
+            if _CHECKPOINT_V2_STAGE1_ENABLED else "legacy_only"),
+        "armed": bool(_CHECKPOINT_V2_STAGE1_CONTROL.get(
+            "formalSoakArmed")),
+        "armState": arm_state,
+        "activeRuntime": {
+            "active": active,
+            "soakId": _SOAK.get("soakId"),
+            "state": runtime_state,
+            "startedAt": _SOAK.get("startedAt"),
+            "completed72h": bool(_SOAK.get("completed72h")),
+        },
+        "history": history,
+        "eligible": decision["eligible"],
+        "blockers": decision["blockers"],
+        "eligibilityEvidence": decision["evidence"],
+    }
+
+
 @app.route("/readyz")
 def readyz():
     """運用readiness(/healthz=livenessと分離)。ready=200・復元中/破損=503。
@@ -17949,13 +18006,13 @@ def readyz():
         _DURABLE_STORAGE_STATUS, _DURABILITY_PATHS,
         production=_DURABILITY_PRODUCTION)
     payload["checkpointV2"] = dict(_CHECKPOINT_V2_STATUS)
+    formal_soak = _formal_soak_public_projection()
     payload["checkpointV2Stage1"] = {
-        "checkpointMode": _CHECKPOINT_V2_STAGE1_CONTROL.get(
-            "checkpointMode"),
-        "formalSoakArmed": bool(_CHECKPOINT_V2_STAGE1_CONTROL.get(
-            "formalSoakArmed")),
-        "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
-            "formalSoakState"),
+        "checkpointMode": formal_soak["checkpointMode"],
+        "formalSoakArmed": formal_soak["armed"],
+        "formalSoakArmState": formal_soak["armState"],
+        "formalSoakState": formal_soak["activeRuntime"]["state"],
+        "formalSoak": formal_soak,
         "validationWindowCount": int(
             _CHECKPOINT_V2_STAGE1_CONTROL.get("validationWindowCount") or 0),
         "generationCount": int(
@@ -18876,8 +18933,7 @@ def _activate_formal_soak(start_decision, window, *, rollover_armed):
         }
     window_digest = hashlib.sha256(
         window["missionWindowId"].encode("utf-8")).hexdigest()[:8]
-    _SOAK.clear()
-    _SOAK.update({
+    activated = {
         "soakId": (f"soak-{(_backend_sha() or 'local')[:7]}"
                    f"-{window_digest}"),
         "buildSha": _backend_sha(),
@@ -18894,7 +18950,11 @@ def _activate_formal_soak(start_decision, window, *, rollover_armed):
         "interruptions": [], "previousSoak": previous_summary,
         "heartbeats": [], "state": "not_started",
         "lastHeartbeatAt": None, "lastHeartbeatSource": None,
-    })
+    }
+    # Publish the complete record in one mutation; a partial Soak is never
+    # visible if construction fails before this point.
+    _SOAK.clear()
+    _SOAK.update(activated)
     _SOAK_CONTROL.update({
         "armed": False, "armedAt": None, "armedBuildSha": None,
         "armId": None, "reason": None,
@@ -18905,7 +18965,7 @@ def _activate_formal_soak(start_decision, window, *, rollover_armed):
 
 @app.route("/api/argus/admin/soak/arm", methods=["POST"])
 def api_argus_admin_soak_arm():
-    """Arm one same-SHA rollover; never starts or rewrites a Soak itself."""
+    """Persist one explicit owner arm; never starts a Soak itself."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
@@ -18919,63 +18979,28 @@ def api_argus_admin_soak_arm():
             requested_sha != current_sha:
         return jsonify({"ok": False,
                         "error": "exact_current_build_sha_required"}), 409
-    if _CHECKPOINT_V2_STAGE1_ENABLED:
-        before = copy.deepcopy(_CHECKPOINT_V2_STAGE1_CONTROL)
-        try:
-            armed = argus_checkpoint_v2_stage1.arm(
-                before, build_sha=current_sha, armed_at=_ai_now_iso())
-        except argus_checkpoint_v2_stage1.Stage1ControlError as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 409
-        globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = armed
-        _SOAK_CONTROL.update({
-            "armed": True, "armedAt": armed.get("armedAt"),
-            "armedBuildSha": current_sha, "armId": armed.get("armId"),
-            "reason": str(body.get("reason") or
-                          "checkpoint_v2_formal_soak")[:80],
-        })
-        checkpoint = _osint_persist()
-        if checkpoint.get("verified") is not True or \
-                _CHECKPOINT_V2_STATUS.get("lastWriteVerified") is not True:
-            globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = before
-            _SOAK_CONTROL.update({
-                "armed": False, "armedAt": None, "armedBuildSha": None,
-                "armId": None, "reason": None})
-            return jsonify({"ok": False,
-                            "error": "stage1_arm_persist_failed"}), 503
-        return jsonify({
-            "ok": True, "status": "armed",
-            "armId": armed.get("armId"), "startsNow": False,
-            "heartbeatCreated": False, "soakCreated": False,
-            "startAuthority": "next_qualified_natural_ec2_mission_window",
-        })
-    active_sha = str(_SOAK.get("buildShaFull") or
-                     _SOAK.get("buildSha") or "").lower()
-    if not _SOAK.get("startedAt") or active_sha not in (
-            current_sha, current_sha[:7]):
-        return jsonify({"ok": False,
-                        "error": "same_sha_active_soak_required"}), 409
-    if _SOAK_CONTROL.get("armed") is True:
-        return jsonify({"ok": True, "status": "already_armed",
-                        "armId": _SOAK_CONTROL.get("armId"),
-                        "startsNow": False})
-    armed_at = _ai_now_iso()
-    arm_id = "soak-arm-" + hashlib.sha256(
-        f"{current_sha}|{armed_at}".encode("utf-8")).hexdigest()[:12]
-    _SOAK_CONTROL.update({
-        "armed": True, "armedAt": armed_at,
-        "armedBuildSha": current_sha, "armId": arm_id,
-        "reason": str(body.get("reason") or "formal_soak_rollover")[:80],
-    })
+    if not _CHECKPOINT_V2_STAGE1_ENABLED:
+        return jsonify({"ok": False, "error": "stage1_not_enabled"}), 409
+    before = copy.deepcopy(_CHECKPOINT_V2_STAGE1_CONTROL)
+    try:
+        armed = argus_checkpoint_v2_stage1.arm(
+            before, build_sha=current_sha, armed_at=_ai_now_iso(),
+            requested_by_class="owner_admin")
+    except argus_checkpoint_v2_stage1.Stage1ControlError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
+    globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = armed
     checkpoint = _osint_persist()
-    if checkpoint.get("verified") is not True:
-        _SOAK_CONTROL.update({
-            "armed": False, "armedAt": None, "armedBuildSha": None,
-            "armId": None, "reason": None})
+    if checkpoint.get("verified") is not True or \
+            _CHECKPOINT_V2_STATUS.get("lastWriteVerified") is not True:
+        globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = before
         return jsonify({"ok": False,
-                        "error": "checkpoint_persist_failed"}), 503
-    return jsonify({"ok": True, "status": "armed", "armId": arm_id,
-                    "startsNow": False,
-                    "startAuthority": "next_natural_ec2_mission_window"})
+                        "error": "stage1_arm_persist_failed"}), 503
+    return jsonify({
+        "ok": True, "status": "armed",
+        "armId": armed.get("armId"), "startsNow": False,
+        "heartbeatCreated": False, "soakCreated": False,
+        "startAuthority": "next_qualified_natural_ec2_mission_window",
+    })
 
 
 @app.route("/api/argus/admin/checkpoint-v2/stage1/accept", methods=["POST"])
@@ -19549,19 +19574,34 @@ def _api_argus_admin_missions_tick_impl():
     while len(_MISSION_WINDOWS) > 240:
         _MISSION_WINDOWS.pop(0)
 
-    # Soak開始権限は自然EC2 windowだけ。owner armはここで一度だけ消費する。
+    # Formal Soak is an explicit acceptance operation.  Ordinary checkpoint
+    # success, elapsed time, or a disabled Stage 1 never grants start authority.
     heartbeat_at = _ai_now_iso()
-    rollover_armed = bool(
-        _SOAK_CONTROL.get("armed") is True and
-        _SOAK_CONTROL.get("armedBuildSha") == _backend_exact_sha())
-    stage1_start_authorized = (
-        not _CHECKPOINT_V2_STAGE1_ENABLED or
-        argus_checkpoint_v2_stage1.may_start_formal_soak(
+    expected_build_sha = str(body.get("expectedBuildSha") or "").lower()
+    current_build_sha = str(_backend_exact_sha() or "").lower()
+    qualified_natural_tick = bool(
+        requested_source == "ec2_systemd" and
+        trigger_source == "ec2_systemd" and
+        re.fullmatch(r"[0-9a-f]{40}", expected_build_sha) and
+        expected_build_sha == current_build_sha and
+        str(window.get("missionWindowId") or "").startswith("mw-") and
+        not str(window.get("missionWindowId") or "").startswith(
+            "mw-manual-") and
+        body.get("diagnostic") is not True and
+        body.get("retrospective") is not True and
+        body.get("replay") is not True)
+    formal_soak_eligibility = \
+        argus_checkpoint_v2_stage1.formal_soak_start_eligibility(
             _CHECKPOINT_V2_STAGE1_CONTROL,
+            checkpoint_v2_enabled=_CHECKPOINT_V2_STAGE1_ENABLED,
             trigger_source=trigger_source,
-            qualified_natural_tick=True))
-    if trigger_source == "ec2_systemd" and stage1_start_authorized and (
-            not _SOAK.get("startedAt") or rollover_armed):
+            qualified_natural_tick=qualified_natural_tick,
+            mission_window_id=window.get("missionWindowId"),
+            current_build_sha=current_build_sha,
+            expected_build_sha=expected_build_sha,
+            active_soak_exists=_formal_soak_is_active(),
+            active_soak_id=_SOAK.get("soakId"))
+    if formal_soak_eligibility["eligible"]:
         _sk_dec = argus_runtime.soak_start_decision(
             now_iso=heartbeat_at, scheduled_for=window["scheduledFor"],
             trigger_source=trigger_source,
@@ -19576,12 +19616,14 @@ def _api_argus_admin_missions_tick_impl():
             in ("no_prior_state", "test_mode"),
             public_leak_safe=True, scheduler_ready=True)
         if _sk_dec["allowed"]:
+            consumed_control = argus_checkpoint_v2_stage1.consume_arm(
+                _CHECKPOINT_V2_STAGE1_CONTROL,
+                consumed_at=heartbeat_at,
+                mission_window_id=window["missionWindowId"],
+                arm_id=_CHECKPOINT_V2_STAGE1_CONTROL.get("armId"))
             _activate_formal_soak(
-                _sk_dec, window, rollover_armed=rollover_armed)
-            if _CHECKPOINT_V2_STAGE1_ENABLED:
-                globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = \
-                    argus_checkpoint_v2_stage1.consume_arm(
-                        _CHECKPOINT_V2_STAGE1_CONTROL)
+                _sk_dec, window, rollover_armed=False)
+            globals()["_CHECKPOINT_V2_STAGE1_CONTROL"] = consumed_control
             _journal("soak_started", "soak", _SOAK["soakId"],
                      {"buildSha": _SOAK["buildSha"] or "unknown",
                       "startTimeSource": _SOAK["startTimeSource"],
@@ -19730,6 +19772,7 @@ def _api_argus_admin_missions_tick_impl():
                                   and row.get("forecastId")}))},
                     "soakHeartbeatAdded": heartbeat_added,
                     "soak": soak_state,
+                    "formalSoakEligibility": formal_soak_eligibility,
                     "formalSoakClosure": formal_closure,
                     "remoteJournal": {
                         **dict(_REMOTE_CYCLE),

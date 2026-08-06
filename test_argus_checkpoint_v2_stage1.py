@@ -14,7 +14,18 @@ def natural(state, index):
         state,
         {"verified": True, "generationId": f"gen-{index}",
          "databaseBytes": 100 + index,
-         "sourceSerializedBytes": 50 + index},
+         "sourceSerializedBytes": 50 + index,
+         "resourceTelemetry": {
+             "success": True,
+             "processRssAfterBytes": 500_000_000 + index,
+             "processPeakRssBytes": 800_000_000,
+             "cgroupMemoryPeakBytes": 900_000_000,
+             "diskFreeAfterBytes": 2 * 1024 ** 3,
+             "pendingGenerationCount": 0,
+             "legacyTempBaselineCount": 1,
+             "legacyTempAfterCount": 1,
+             "newLegacyTempCount": 0,
+         }},
         trigger_source="ec2_systemd", mission_window_id=f"mw-{index}")
 
 
@@ -64,7 +75,9 @@ def test_owner_arm_creates_no_soak_and_next_natural_consumes_once():
         state, trigger_source="manual", qualified_natural_tick=True)
     assert stage1.may_start_formal_soak(
         state, trigger_source="ec2_systemd", qualified_natural_tick=True)
-    consumed = stage1.consume_arm(state)
+    consumed = stage1.consume_arm(
+        state, consumed_at="2026-08-04T00:07:00Z",
+        mission_window_id="mw-start", arm_id=state["armId"])
     assert consumed["formalSoakArmed"] is False
     assert consumed["formalSoakState"] == "started"
     assert not stage1.may_start_formal_soak(
