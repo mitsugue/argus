@@ -29,6 +29,28 @@ from scripts.checkpoint_v2_resource_probe import (  # noqa: E402
 
 QUIET_SECONDS = 0.25
 WARMUP_CYCLES = 2
+PLATEAU_WINDOW_CYCLES = 6
+
+# These ceilings are derived from the exact 32-cycle production-shaped proof,
+# not from total /proc/maps count.  The proof observed 71 allocator-large mmap
+# records, 197,443,584 anonymous allocator bytes, a 33-record steady mapping
+# band, and a 9,445,376-byte RSS band in its final six cycles.  Deliberate
+# evidence margins keep the gate sensitive without treating address-space
+# splitting/coalescing as an application leak.
+PRECISE_MAPPING_ENVELOPE = {
+    "allocatorAnonymousBytes": 256 * 1024 ** 2,
+    "allocatorArenaMappings": 4,
+    "allocatorLargeMmapMappings": 96,
+    "steadyMappingBand": 64,
+    "allocatorLargeMmapBand": 64,
+    "steadyRssGrowthBytes": 128 * 1024 ** 2,
+    "steadyPssGrowthBytes": 128 * 1024 ** 2,
+    "steadyAllocatorAnonymousGrowthBytes": 128 * 1024 ** 2,
+    "plateauWindowBytes": 32 * 1024 ** 2,
+    "allocatorSystemBytes": 32 * 1024 ** 2,
+    "allocatorSystemGrowthBytes": 16 * 1024 ** 2,
+    "cgroupPeakBytes": 3 * 1024 ** 3,
+}
 
 
 class GenerationContext:
@@ -114,6 +136,15 @@ def _capture(raw_dir, tag, previous, active_generation=None):
 def _append(path, value):
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(value, sort_keys=True) + "\n")
+
+
+def _band(values):
+    return {"minimum": min(values), "maximum": max(values),
+            "span": max(values) - min(values),
+            "first": values[0], "last": values[-1],
+            "growth": values[-1] - values[0],
+            "strictlyMonotonic": len(values) > 1 and all(
+                b > a for a, b in zip(values, values[1:]))}
 
 
 def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
@@ -246,10 +277,19 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
     anon = [row["quiet"]["gate"]["allocatorAnonymousBytes"] for row in steady]
     alloc_system = [int(row["quiet"]["allocator"].get("systemBytes") or 0)
                     for row in steady]
+    plateau = steady[-PLATEAU_WINDOW_CYCLES:]
+    plateau_rss = [row["quiet"]["rssBytes"] for row in plateau]
+    plateau_pss = [row["quiet"].get("PssBytes", 0) for row in plateau]
+    plateau_anon = [row["quiet"]["gate"]["allocatorAnonymousBytes"]
+                    for row in plateau]
+    plateau_maps = [row["quiet"]["categories"]["__total__"][
+        "mappingCount"] for row in plateau]
+    plateau_large_maps = [row["quiet"]["gate"][
+        "allocatorLargeMmapMappings"] for row in plateau]
     cgroup_peak = max(int(row["quiet"].get("cgroupPeakBytes") or 0)
                       for row in cycles_only)
     summary = {
-        "schemaVersion": "argus-checkpoint-v2-mapping-proof-v1",
+        "schemaVersion": "argus-checkpoint-v2-mapping-proof-v2",
         "variant": variant, "cycles": cycles,
         "warmupCycles": WARMUP_CYCLES,
         "allVerified": all_verified, "allConsumed": all_consumed,
@@ -271,6 +311,15 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
         "pssGrowthBytes": pss[-1] - pss[0],
         "anonymousGrowthBytes": anon[-1] - anon[0],
         "allocatorSystemGrowthBytes": alloc_system[-1] - alloc_system[0],
+        "plateauWindowCycles": len(plateau),
+        "plateauWindow": {
+            "rssBytes": _band(plateau_rss),
+            "pssBytes": _band(plateau_pss),
+            "allocatorAnonymousBytes": _band(plateau_anon),
+            "mappingCount": _band(plateau_maps),
+            "allocatorLargeMmapMappings": _band(plateau_large_maps),
+        },
+        "preciseMappingEnvelope": PRECISE_MAPPING_ENVELOPE,
         "cgroupPeakBytes": cgroup_peak,
         "categoryBands": category_bands,
         "baselineReachability": baseline_reachability,
@@ -287,37 +336,97 @@ def run_variant(root, source_json, artifact_dir, raw_dir, variant, cycles,
     return summary
 
 
-def assert_proof(report):
+def precise_gate_failures(report):
+    failures = []
     if report["cycles"] < 32:
-        raise SystemExit("mapping_proof_requires_32_cycles")
+        failures.append("mapping_proof_requires_32_cycles")
     if not (report["allVerified"] and report["finalRestoreVerified"] and
             report["allConsumed"] and
             report["allGenerationContextsReleased"]):
-        raise SystemExit("mapping_proof_lifecycle_failed")
+        failures.append("mapping_proof_lifecycle_failed")
     gate = report["finalGate"]
     for field in ("activeGenerationFileMappings",
                   "retainedGenerationFileMappings", "v2TempMappings",
                   "deletedMappings", "incidentTempMappings", "unknownMappings"):
         if gate[field]:
-            raise SystemExit(f"mapping_proof_{field}_nonzero")
-    if report["cgroupPeakBytes"] >= 3 * 1024 ** 3:
-        raise SystemExit("mapping_proof_cgroup_peak_exceeded")
+            failures.append(f"mapping_proof_{field}_nonzero")
+    envelope = report.get("preciseMappingEnvelope") or \
+        PRECISE_MAPPING_ENVELOPE
+    if report["cgroupPeakBytes"] >= envelope["cgroupPeakBytes"]:
+        failures.append("mapping_proof_cgroup_peak_exceeded")
     if report["diskFreeBytes"] < 1024 ** 3:
-        raise SystemExit("mapping_proof_disk_reserve_failed")
+        failures.append("mapping_proof_disk_reserve_failed")
     if report["pendingGenerations"] or report["retainedGenerations"] > 4:
-        raise SystemExit("mapping_proof_generation_retention_failed")
-    if report["rssGrowthBytes"] >= 128 * 1024 ** 2:
-        raise SystemExit("mapping_proof_rss_envelope_exceeded")
+        failures.append("mapping_proof_generation_retention_failed")
+    if report["rssGrowthBytes"] >= envelope["steadyRssGrowthBytes"]:
+        failures.append("mapping_proof_rss_envelope_exceeded")
+    if report["pssGrowthBytes"] >= envelope["steadyPssGrowthBytes"]:
+        failures.append("mapping_proof_pss_envelope_exceeded")
+    if report["anonymousGrowthBytes"] >= \
+            envelope["steadyAllocatorAnonymousGrowthBytes"]:
+        failures.append("mapping_proof_allocator_anonymous_growth_exceeded")
+    if gate["allocatorAnonymousBytes"] > \
+            envelope["allocatorAnonymousBytes"]:
+        failures.append("mapping_proof_allocator_anonymous_bytes_exceeded")
+    if gate["allocatorArenaMappings"] > \
+            envelope["allocatorArenaMappings"]:
+        failures.append("mapping_proof_allocator_arena_count_exceeded")
+    if gate["allocatorLargeMmapMappings"] > \
+            envelope["allocatorLargeMmapMappings"]:
+        failures.append("mapping_proof_allocator_large_mmap_count_exceeded")
+    if report["maximumSteadyMappingCount"] - \
+            report["minimumSteadyMappingCount"] > \
+            envelope["steadyMappingBand"]:
+        failures.append("mapping_proof_steady_mapping_band_exceeded")
+    large_band = report["categoryBands"].get(
+        "allocator large-object mmap", {}).get("mappingCount", {})
+    if int(large_band.get("maximum") or 0) - \
+            int(large_band.get("minimum") or 0) > \
+            envelope["allocatorLargeMmapBand"]:
+        failures.append("mapping_proof_allocator_large_mmap_band_exceeded")
+    allocator_system = report["allocatorSystemSamples"]
+    if allocator_system[-1] > envelope["allocatorSystemBytes"]:
+        failures.append("mapping_proof_allocator_system_bytes_exceeded")
+    if report["allocatorSystemGrowthBytes"] > \
+            envelope["allocatorSystemGrowthBytes"]:
+        failures.append("mapping_proof_allocator_system_growth_exceeded")
+    plateau = report["plateauWindow"]
+    for field in ("rssBytes", "pssBytes", "allocatorAnonymousBytes"):
+        if plateau[field]["span"] > envelope["plateauWindowBytes"]:
+            failures.append("mapping_proof_plateau_window_exceeded:" + field)
+    if plateau["mappingCount"]["span"] > envelope["steadyMappingBand"]:
+        failures.append("mapping_proof_plateau_mapping_band_exceeded")
+    if plateau["allocatorLargeMmapMappings"]["span"] > \
+            envelope["allocatorLargeMmapBand"]:
+        failures.append("mapping_proof_plateau_allocator_band_exceeded")
     for category, bands in report["categoryBands"].items():
         for field in ("mappingCount", "virtualBytes", "anonymousResidentBytes"):
             if bands[field]["strictlyMonotonic"] and bands[field]["growth"] > 0:
-                raise SystemExit("mapping_proof_unbounded_category:" + category)
+                failures.append("mapping_proof_unbounded_category:" +
+                                category)
+    for category in ("thread stack", "shared library"):
+        bands = report["categoryBands"].get(category) or {}
+        count_band = bands.get("mappingCount") or {}
+        if int(count_band.get("growth") or 0) > 0:
+            failures.append("mapping_proof_growing_category:" + category)
     baseline, final = report["baselineReachability"], report["finalReachability"]
     for field in ("sqliteConnections", "sqliteCursors", "futures",
                   "generationContexts", "telemetryRawPayloadOwners", "threads",
                   "descriptors"):
         if baseline[field] is not None and final[field] > baseline[field]:
-            raise SystemExit("mapping_proof_reachable_growth:" + field)
+            failures.append("mapping_proof_reachable_growth:" + field)
+    for field in ("largeTrackedBytes", "largeTrackedContainers",
+                  "memoryviews", "tracebacks", "manifestCandidates",
+                  "verificationObjects"):
+        if final[field]:
+            failures.append("mapping_proof_reachable_survivor:" + field)
+    return failures
+
+
+def assert_proof(report):
+    failures = precise_gate_failures(report)
+    if failures:
+        raise SystemExit(failures[0])
 
 
 def main():

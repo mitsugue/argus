@@ -6,6 +6,8 @@ from unittest import mock
 
 import argus_mapping_attribution as mapping
 from scripts.summarize_mmap_trace import summarize
+from scripts.checkpoint_v2_mapping_probe import (
+    PRECISE_MAPPING_ENVELOPE, precise_gate_failures)
 
 
 def _row(address, perms, path="", *, size=4, rss=4, anon=4,
@@ -108,3 +110,73 @@ def test_syscall_trace_summary_links_create_unmap_and_redacts_paths(tmp_path):
     assert report["mappingsUnmapped"] == 1
     assert report["persistentMappings"] == 1
     assert "/work/private" not in json.dumps(report)
+
+
+def _passing_precise_report():
+    zero_gate = {
+        "activeGenerationFileMappings": 0,
+        "retainedGenerationFileMappings": 0,
+        "v2TempMappings": 0,
+        "deletedMappings": 0,
+        "incidentTempMappings": 0,
+        "unknownMappings": 0,
+        "allocatorAnonymousBytes": 200 * 1024 ** 2,
+        "allocatorArenaMappings": 2,
+        "allocatorLargeMmapMappings": 71,
+    }
+    reachability = {
+        "sqliteConnections": 0, "sqliteCursors": 0, "futures": 0,
+        "generationContexts": 0, "telemetryRawPayloadOwners": 0,
+        "threads": 1, "descriptors": 4, "largeTrackedBytes": 0,
+        "largeTrackedContainers": 0, "memoryviews": 0, "tracebacks": 0,
+        "manifestCandidates": 0, "verificationObjects": 0,
+    }
+    band = {"minimum": 38, "maximum": 71, "first": 38, "last": 68,
+            "growth": 30, "strictlyMonotonic": False}
+    flat = {"minimum": 62, "maximum": 62, "first": 62, "last": 62,
+            "growth": 0, "strictlyMonotonic": False}
+    return {
+        "cycles": 32, "allVerified": True, "finalRestoreVerified": True,
+        "allConsumed": True, "allGenerationContextsReleased": True,
+        "finalGate": zero_gate, "preciseMappingEnvelope": dict(
+            PRECISE_MAPPING_ENVELOPE), "cgroupPeakBytes": 1400467456,
+        "diskFreeBytes": 90 * 1024 ** 3, "pendingGenerations": 0,
+        "retainedGenerations": 4, "rssGrowthBytes": 120922112,
+        "pssGrowthBytes": 120922112, "anonymousGrowthBytes": 120938496,
+        "minimumSteadyMappingCount": 275, "maximumSteadyMappingCount": 308,
+        "allocatorSystemSamples": [12746752, 14667776],
+        "allocatorSystemGrowthBytes": 1921024,
+        "categoryBands": {
+            "allocator large-object mmap": {
+                "mappingCount": band,
+                "virtualBytes": {**band, "strictlyMonotonic": False},
+                "anonymousResidentBytes": {
+                    **band, "strictlyMonotonic": False},
+            },
+            "shared library": {"mappingCount": flat,
+                               "virtualBytes": flat,
+                               "anonymousResidentBytes": flat},
+        },
+        "plateauWindow": {
+            "rssBytes": {"span": 9445376},
+            "pssBytes": {"span": 9445376},
+            "allocatorAnonymousBytes": {"span": 10448896},
+            "mappingCount": {"span": 3},
+            "allocatorLargeMmapMappings": {"span": 3},
+        },
+        "baselineReachability": dict(reachability),
+        "finalReachability": dict(reachability),
+    }
+
+
+def test_precise_gate_accepts_observed_bounded_allocator_envelope():
+    assert precise_gate_failures(_passing_precise_report()) == []
+
+
+def test_precise_gate_rejects_generation_mapping_and_allocator_escape():
+    report = _passing_precise_report()
+    report["finalGate"]["activeGenerationFileMappings"] = 1
+    report["finalGate"]["allocatorAnonymousBytes"] = 257 * 1024 ** 2
+    failures = precise_gate_failures(report)
+    assert "mapping_proof_activeGenerationFileMappings_nonzero" in failures
+    assert "mapping_proof_allocator_anonymous_bytes_exceeded" in failures

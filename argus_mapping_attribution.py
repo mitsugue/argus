@@ -296,6 +296,8 @@ def gate_projection(summary: Mapping[str, Any]) -> Dict[str, Any]:
     categories = summary.get("categories") or {}
     count = lambda name: int((categories.get(name) or {}).get(
         "mappingCount") or 0)
+    value = lambda name, field: int((categories.get(name) or {}).get(
+        field) or 0)
     return {
         "activeGenerationFileMappings": count(
             "active SQLite generation file"),
@@ -310,9 +312,16 @@ def gate_projection(summary: Mapping[str, Any]) -> Dict[str, Any]:
         "sharedLibraryMappings": count("shared library"),
         "allocatorArenaMappings": count("allocator arena"),
         "allocatorLargeMmapMappings": count("allocator large-object mmap"),
+        "allocatorArenaVirtualBytes": value(
+            "allocator arena", "virtualBytes"),
+        "allocatorLargeMmapVirtualBytes": value(
+            "allocator large-object mmap", "virtualBytes"),
+        "allocatorLargeMmapAnonymousBytes": value(
+            "allocator large-object mmap", "anonymousResidentBytes"),
         "allocatorAnonymousBytes": sum(int(
             (categories.get(name) or {}).get("anonymousResidentBytes") or 0)
             for name in ("heap", "allocator arena",
                          "allocator large-object mmap",
                          "anonymous private mapping")),
+        "totalMappingCount": value("__total__", "mappingCount"),
     }
