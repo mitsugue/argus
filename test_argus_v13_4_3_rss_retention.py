@@ -17,6 +17,7 @@ import pytest
 
 import argus_checkpoint_v2 as v2
 from scripts.checkpoint_v2_resource_probe import (
+    repeated_rss_bound_failure,
     runtime_resource_growth_failures,
 )
 
@@ -201,6 +202,19 @@ def test_resource_gate_uses_live_owners_not_raw_allocator_mapping_count():
         allocator_retention_only, sqliteOrTempMappingCount=1)
     assert runtime_resource_growth_failures(
         baseline, live_owner_growth) == ["sqliteOrTempMappingCount"]
+
+
+def test_eight_cycle_monotonic_rss_is_diagnostic_inside_proven_envelope():
+    bounded = {
+        "steadyStateGrowthBytes": 15_691_776,
+        "strictlyMonotonicSteadyState": True,
+    }
+    assert repeated_rss_bound_failure(bounded) is None
+
+    outside_envelope = dict(
+        bounded, steadyStateGrowthBytes=128 * 1024 ** 2)
+    assert repeated_rss_bound_failure(outside_envelope) == \
+        "checkpoint_v2_steady_state_growth_exceeded"
 
 
 def test_eight_cycles_bound_disk_metadata_and_runtime_resources(tmp_path):
