@@ -10,7 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  exact-public-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fetch one exact public production-shaped state (read-only GET)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          curl --fail --silent --show-error --location \
+            --retry 8 --retry-all-errors --retry-delay 10 \
+            --retry-max-time 900 --max-time 300 \
+            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
+            --output artifacts/checkpoint-v2-exact-source.json
+          python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
+      - name: Publish immutable shared exact state
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts/checkpoint-v2-exact-source.json
+          retention-days: 1
+
   linux-4gib-cgroup:
+    needs: exact-public-state
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -27,15 +50,11 @@ jobs:
             python3 -B scripts/checkpoint_v2_resource_probe.py \
               --full-cycles 3 --retention-cycles 8 --assert-bounds \
             | tee artifacts/checkpoint-v2-resource-proof.json
-      - name: Fetch exact public production-shaped state (read-only GET)
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --max-time 300 \
-            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
-            --output artifacts/checkpoint-v2-exact-source.json
-          python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
       - name: Exact-state write, restore, WAL and cgroup proof
         shell: bash
         run: |
@@ -58,6 +77,7 @@ jobs:
             artifacts/checkpoint-v2-exact-resource-proof.json
 
   mapping-attribution:
+    needs: exact-public-state
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -66,14 +86,11 @@ jobs:
         variant: [pre_fix, candidate_without_trim, candidate_with_trim]
     steps:
       - uses: actions/checkout@v5
-      - name: Fetch exact public state using read-only GET
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/mapping-attribution
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --max-time 300 \
-            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
-            --output artifacts/checkpoint-v2-exact-source.json
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
       - name: Same-shape allocator attribution (${{ matrix.variant }})
         run: |
           set -euo pipefail
@@ -97,18 +114,16 @@ jobs:
           path: artifacts/mapping-attribution/
 
   mapping-syscall-trace:
+    needs: exact-public-state
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
-      - name: Fetch exact public state using read-only GET
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/mapping-attribution
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --max-time 300 \
-            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
-            --output artifacts/checkpoint-v2-exact-source.json
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
       - name: Test-only mmap and munmap trace
         run: |
           set -euo pipefail
@@ -140,18 +155,16 @@ jobs:
           path: artifacts/mapping-attribution/
 
   mapping-closure-32:
+    needs: exact-public-state
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
-      - name: Fetch exact public state using read-only GET
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/mapping-closure
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --max-time 300 \
-            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
-            --output artifacts/checkpoint-v2-exact-source.json
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
       - name: Exact 32-cycle single-process mapping closure
         run: |
           set -euo pipefail

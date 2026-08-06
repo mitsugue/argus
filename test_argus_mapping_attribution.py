@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 from unittest import mock
 
 import argus_mapping_attribution as mapping
@@ -180,3 +181,16 @@ def test_precise_gate_rejects_generation_mapping_and_allocator_escape():
     failures = precise_gate_failures(report)
     assert "mapping_proof_activeGenerationFileMappings_nonzero" in failures
     assert "mapping_proof_allocator_anonymous_bytes_exceeded" in failures
+
+
+def test_exact_public_snapshot_is_fetched_once_then_shared_by_artifact():
+    workflow = pathlib.Path(
+        ".github/workflows/checkpoint-v2-gate.yml").read_text(
+            encoding="utf-8")
+    endpoint = (
+        "https://argus-backend-3j2m.onrender.com/"
+        "api/argus/osint/memory-snapshot")
+    assert workflow.count(endpoint) == 1
+    assert "exact-public-state:" in workflow
+    assert workflow.count("needs: exact-public-state") == 4
+    assert workflow.count("actions/download-artifact@v5") == 4
