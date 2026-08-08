@@ -188,3 +188,33 @@ jobs:
           path: |
             artifacts/checkpoint-v2-32-cycle-mapping-proof.json
             artifacts/mapping-closure/
+
+  isolated-writer-closure-32:
+    needs: exact-public-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
+      - name: Exact 32-cycle fresh-process writer closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/checkpoint_v2_isolated_probe.py \
+              --source-json artifacts/checkpoint-v2-exact-source.json \
+              --cycles 32 --assert-proof \
+            | tee artifacts/checkpoint-v2-isolated-32-cycle-proof.json
+      - name: Publish isolated writer proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v2-isolated-32-cycle-proof-${{ github.sha }}
+          path: artifacts/checkpoint-v2-isolated-32-cycle-proof.json

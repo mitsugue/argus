@@ -547,6 +547,7 @@ def _prior_generation_history(root: pathlib.Path):
 
 def write_generation(root: str, snapshot: Mapping[str, Any], *,
                      source_generation: str,
+                     generation_id: Optional[str] = None,
                      maximum_total_bytes: int = MAXIMUM_TOTAL_BYTES,
                      fault_after: Optional[str] = None,
                      validation_context: Optional[Mapping[str, Any]] = None,
@@ -596,7 +597,10 @@ def write_generation(root: str, snapshot: Mapping[str, Any], *,
             root_path, maximum_total_bytes=maximum_total_bytes,
             disk_usage_fn=disk_usage_fn,
             minimum_free_space_reserve=minimum_free_space_reserve)
-        generation_id = uuid.uuid4().hex
+        generation_id = str(generation_id or uuid.uuid4().hex)
+        if len(generation_id) != 32 or not all(
+                character in "0123456789abcdef" for character in generation_id):
+            raise CheckpointV2Error("checkpoint_v2_generation_id_invalid")
         pending = root_path / f".v2-pending-{generation_id}"
         final = root_path / f"v2-generation-{generation_id}"
         pending.mkdir(mode=0o700)
