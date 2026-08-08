@@ -110,6 +110,7 @@ import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/singl
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal intents
 import argus_checkpoint_v2          # bounded Stage-1 dual-write architecture
+import argus_checkpoint_v2_isolated # fresh-process Stage-1 writer/promotion
 import argus_checkpoint_v2_stage1   # formal-Soak suppression/one-time arm
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
@@ -15655,6 +15656,12 @@ _CHECKPOINT_V2_STATUS = {
     "schemaVersion": argus_checkpoint_v2.SCHEMA,
     "state": "stage1_dual_write_pending" if _CHECKPOINT_V2_STAGE1_ENABLED
     else "disabled",
+    "isolatedWriter": {
+        "writerMode": argus_checkpoint_v2_isolated.WRITER_MODE,
+        "jobState": "pending" if _CHECKPOINT_V2_STAGE1_ENABLED else "disabled",
+        "acceptanceBlocker": None if _CHECKPOINT_V2_STAGE1_ENABLED
+        else "checkpoint_v2_disabled",
+    },
 }
 _CHECKPOINT_V2_STAGE1_CONTROL = argus_checkpoint_v2_stage1.empty_state(
     str(os.environ.get("RENDER_GIT_COMMIT") or "") or None)
@@ -16024,8 +16031,11 @@ def _osint_persist_locked():
         # legacy checkpoint remains the sole restore source and WAL semantics
         # are unchanged. A V2 write failure is surfaced, never promoted into a
         # false legacy failure or an automatic restore cutover.
-        checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(
-            sealed_blob, checkpoint)
+        # The V2 child independently reloads this verified file.  Release the
+        # parent's final generation-sized legacy reference before spawning it;
+        # no checkpoint payload crosses the process boundary.
+        del sealed_blob
+        checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(checkpoint)
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
         _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
         _DURABLE_STATE["integrityStatus"] = "ok"
@@ -16056,37 +16066,37 @@ def _osint_persist_locked():
         return {"verified": False, "errorClass": type(exc).__name__}
 
 
-def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
+def _checkpoint_v2_dual_write(legacy_checkpoint):
     global _CHECKPOINT_V2_STATUS, _CHECKPOINT_V2_STAGE1_CONTROL
     if not _CHECKPOINT_V2_STAGE1_ENABLED:
         _CHECKPOINT_V2_STATUS = {
             "schemaVersion": argus_checkpoint_v2.SCHEMA,
             "state": "disabled",
+            "isolatedWriter": {
+                "writerMode": argus_checkpoint_v2_isolated.WRITER_MODE,
+                "jobState": "disabled",
+                "acceptanceBlocker": "checkpoint_v2_disabled",
+            },
         }
         return dict(_CHECKPOINT_V2_STATUS)
-    source_generation = str(
-        legacy_checkpoint.get("snapshotHash") or
-        (blob.get("localCheckpointIntegrity") or {}).get("snapshotHash") or
-        legacy_checkpoint.get("verifiedAt") or "legacy-verified")
     try:
         trigger_source = str(
             _MISSION_TICK_CONTEXT.get("triggerSource") or "manual")
         mission_window_id = _MISSION_TICK_CONTEXT.get("missionWindowId")
-        result = argus_checkpoint_v2.write_generation(
-            _CHECKPOINT_V2_ROOT, blob,
-            source_generation=source_generation,
-            consume_snapshot=True,
-            validation_context={
-                "triggerSource": trigger_source,
-                "missionWindowId": mission_window_id,
-                "natural": trigger_source == "ec2_systemd",
-                "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
-                    "formalSoakState") or "not_started",
-                "legacyCheckpointPath": _OSINT_PERSIST_FILE,
-                "legacyTempDirectory": os.environ.get(
-                    "ARGUS_CHECKPOINT_TEMP_DIR") or
-                    os.path.dirname(_OSINT_PERSIST_FILE),
-            })
+        result = argus_checkpoint_v2_isolated.launch_isolated_generation(
+            _CHECKPOINT_V2_ROOT,
+            source_path=_OSINT_PERSIST_FILE,
+            legacy_checkpoint=legacy_checkpoint,
+            wal_path=_MISSION_WAL_FILE,
+            wal_upper_sequence=int(
+                legacy_checkpoint.get("includedWalSequence") or 0),
+            backend_build_sha=_backend_exact_sha() or _backend_sha() or
+                "unknown",
+            backend_boot_id=str(_RUNTIME.get("bootId") or "unknown"),
+            mission_window_id=mission_window_id,
+            trigger_source=trigger_source,
+            formal_soak_state=_CHECKPOINT_V2_STAGE1_CONTROL.get(
+                "formalSoakState") or "not_started")
         _CHECKPOINT_V2_STAGE1_CONTROL = \
             argus_checkpoint_v2_stage1.record_generation(
                 _CHECKPOINT_V2_STAGE1_CONTROL, result,
@@ -16103,6 +16113,8 @@ def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
             "generationCount": int(
                 _CHECKPOINT_V2_STAGE1_CONTROL.get("generationCount") or 0),
             "lastErrorClass": None,
+            "isolatedWriter": argus_checkpoint_v2_isolated.public_telemetry(
+                result),
             "formalSoakArmed": bool(
                 _CHECKPOINT_V2_STAGE1_CONTROL.get("formalSoakArmed")),
             "formalSoakState": _CHECKPOINT_V2_STAGE1_CONTROL.get(
@@ -16111,7 +16123,8 @@ def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
                 _CHECKPOINT_V2_STAGE1_CONTROL.get(
                     "authorityPromotionBlocked")),
         }
-    except argus_checkpoint_v2.CheckpointV2Error as exc:
+    except (argus_checkpoint_v2.CheckpointV2Error,
+            argus_checkpoint_v2_isolated.IsolatedWriterError) as exc:
         _CHECKPOINT_V2_STAGE1_CONTROL = \
             argus_checkpoint_v2_stage1.record_failure(
                 _CHECKPOINT_V2_STAGE1_CONTROL, exc.classification,
@@ -16122,6 +16135,12 @@ def _checkpoint_v2_dual_write(blob, legacy_checkpoint):
             "lastWriteVerified": False,
             "lastErrorClass": exc.classification,
             "lastErrorDetails": dict(exc.details),
+            "isolatedWriter": {
+                "writerMode": argus_checkpoint_v2_isolated.WRITER_MODE,
+                "jobState": "failed",
+                "childExitClassification": exc.classification,
+                "acceptanceBlocker": exc.classification,
+            },
             "formalSoakArmed": False,
             "formalSoakState": "not_started",
             "authorityPromotionBlocked": True,
