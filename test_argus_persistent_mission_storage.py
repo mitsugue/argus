@@ -277,31 +277,42 @@ class PathValidationTests(unittest.TestCase):
 
 class CheckpointV2Stage1IntegrationTests(unittest.TestCase):
     def test_stage1_dual_write_is_non_authoritative_and_verified(self):
+        isolated_result = {
+            "verified": True, "generationId": "a" * 32,
+            "createdAt": "2026-08-08T00:00:00Z", "databaseBytes": 100,
+            "sourceSerializedBytes": 80, "sectionCount": 3,
+            "resourceTelemetry": {"success": True,
+                                  "writerMode": "isolated_process"},
+        }
         with tempfile.TemporaryDirectory() as root, \
                 mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
                 mock.patch.object(scanner, "_CHECKPOINT_V2_ROOT",
-                                  os.path.join(root, "v2")):
-            blob = storage.seal_checkpoint(remote_snapshot())
-            expected = copy.deepcopy(blob)
-            legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
-            result = scanner._checkpoint_v2_dual_write(blob, legacy_result)
+                                  os.path.join(root, "v2")), \
+                mock.patch.object(
+                    scanner.argus_checkpoint_v2_isolated,
+                    "launch_isolated_generation", return_value=isolated_result), \
+                mock.patch.object(
+                    scanner.argus_checkpoint_v2, "public_status",
+                    return_value={"schemaVersion": argus_checkpoint_v2.SCHEMA,
+                                  "state": "stage1_dual_write"}):
+            legacy_result = {"verified": True, "snapshotHash": "legacy-hash",
+                             "includedWalSequence": 9}
+            result = scanner._checkpoint_v2_dual_write(legacy_result)
             self.assertEqual(result["state"], "stage1_dual_write")
             self.assertTrue(result["lastWriteVerified"])
             self.assertTrue(legacy_result["verified"])
-            self.assertEqual(blob, {})
-            self.assertEqual(
-                argus_checkpoint_v2.restore_generation(
-                    os.path.join(root, "v2"))["snapshot"], expected)
+            self.assertEqual(result["isolatedWriter"]["writerMode"],
+                             "isolated_process")
 
     def test_stage1_v2_failure_does_not_turn_legacy_success_into_failure(self):
         with mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
                 mock.patch.object(
-                    argus_checkpoint_v2, "write_generation",
-                    side_effect=argus_checkpoint_v2.CheckpointV2Error(
+                    scanner.argus_checkpoint_v2_isolated,
+                    "launch_isolated_generation",
+                    side_effect=scanner.argus_checkpoint_v2_isolated.IsolatedWriterError(
                         "checkpoint_v2_total_limit_exceeded")):
             legacy_result = {"verified": True, "snapshotHash": "legacy-hash"}
-            result = scanner._checkpoint_v2_dual_write(
-                storage.seal_checkpoint(remote_snapshot()), legacy_result)
+            result = scanner._checkpoint_v2_dual_write(legacy_result)
             self.assertEqual(result["state"], "validation_failed")
             self.assertEqual(result["lastErrorClass"],
                              "checkpoint_v2_total_limit_exceeded")
@@ -328,15 +339,14 @@ class CheckpointV2Stage1IntegrationTests(unittest.TestCase):
                         mock.patch.object(
                             scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", True), \
                         mock.patch.object(
-                            argus_checkpoint_v2, "write_generation",
-                            side_effect=argus_checkpoint_v2.CheckpointV2Error(
+                            scanner.argus_checkpoint_v2_isolated,
+                            "launch_isolated_generation",
+                            side_effect=scanner.argus_checkpoint_v2_isolated.IsolatedWriterError(
                                 classification, phase="injected")):
                     legacy_result = {
                         "verified": True, "snapshotHash": "legacy-hash",
                         "walCompaction": {"verified": True}}
-                    result = scanner._checkpoint_v2_dual_write(
-                        storage.seal_checkpoint(remote_snapshot()),
-                        legacy_result)
+                    result = scanner._checkpoint_v2_dual_write(legacy_result)
                     self.assertEqual(result["state"], "validation_failed")
                     self.assertEqual(result["lastErrorClass"], classification)
                     self.assertEqual(result["lastErrorDetails"],
