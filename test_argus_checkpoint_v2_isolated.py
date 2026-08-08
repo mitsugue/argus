@@ -391,13 +391,39 @@ def test_parent_kill_terminates_child_and_reconciliation_is_deterministic(
             pass
         time.sleep(0.02)
     assert child_pid is not None
+    # Do not kill the launcher in the fork/exec race before the child has
+    # installed PR_SET_PDEATHSIG.  The candidate manifest is written only
+    # after child startup, descriptor/WAL validation and generation commit;
+    # post_result_pause then keeps that fully initialized child alive.
+    deadline = time.monotonic() + 20
+    candidate_manifest = None
+    while time.monotonic() < deadline and candidate_manifest is None:
+        candidates = list((tmp_path / "v2").glob(
+            f"{isolated.JOB_PREFIX}*/candidate/{v2.MANIFEST_NAME}"))
+        candidate_manifest = candidates[0] if candidates else None
+        time.sleep(0.02)
+    assert candidate_manifest is not None
     os.kill(parent.pid, signal.SIGKILL)
     parent.wait(timeout=10)
+
+    def process_state(pid):
+        try:
+            stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
+        except FileNotFoundError:
+            return None
+        return stat.rsplit(") ", 1)[1].split()[0]
+
+    # A container PID 1 is not required to reap an adopted, terminated child
+    # promptly.  State Z therefore proves the parent-death signal terminated
+    # the child just as absence from /proc does; any runnable/sleeping state is
+    # a genuine orphan-process failure.  Normal success/timeout paths retain
+    # their stricter Popen.wait() zombie-free assertions.
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and pathlib.Path(
-            f"/proc/{child_pid}").exists():
+    state = process_state(child_pid)
+    while time.monotonic() < deadline and state not in {None, "Z"}:
         time.sleep(0.05)
-    assert not pathlib.Path(f"/proc/{child_pid}").exists()
+        state = process_state(child_pid)
+    assert state in {None, "Z"}
     assert not (tmp_path / "v2" / v2.MANIFEST_NAME).exists()
     report = isolated.reconcile_stale_jobs(str(tmp_path / "v2"))
     assert report["removedCount"] == 1
