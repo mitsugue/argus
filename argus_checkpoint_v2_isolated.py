@@ -74,12 +74,143 @@ def _file_stats(path: pathlib.Path) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
+def _stable_file_identity(path: pathlib.Path, *, expected_bytes: int,
+                          expected_sha256: str) -> tuple[int, int, int, int]:
+    """Hash a regular file between two identical stat observations."""
+    if not path.is_file() or path.is_symlink():
+        raise IsolatedWriterError("source_missing")
+    before = path.stat()
+    size, digest = _file_stats(path)
+    after = path.stat()
+    identity_before = (before.st_dev, before.st_ino, before.st_size,
+                       before.st_mtime_ns)
+    identity_after = (after.st_dev, after.st_ino, after.st_size,
+                      after.st_mtime_ns)
+    if identity_before != identity_after:
+        raise IsolatedWriterError("source_changed")
+    if size != expected_bytes or digest != expected_sha256:
+        raise IsolatedWriterError("source_hash_mismatch")
+    return identity_after
+
+
 def _safe_name(value: str, label: str) -> str:
     text = str(value or "")
     if not text or len(text) > 128 or not all(
             character.isalnum() or character in "-_." for character in text):
         raise IsolatedWriterError("descriptor_invalid", field=label)
     return text
+
+
+def _exact_sequence(mapping: Mapping[str, Any], key: str) -> int:
+    """Read an explicit JSON integer sequence; zero is a value, not a default."""
+    if key not in mapping:
+        raise IsolatedWriterError("WAL_boundary_invalid", field=key,
+                                  reason="missing")
+    value = mapping[key]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise IsolatedWriterError("WAL_boundary_invalid", field=key,
+                                  reason="not_exact_nonnegative_integer")
+    return value
+
+
+def _validate_wal_contract(path: pathlib.Path, *, lower: int,
+                           upper: int) -> Dict[str, Any]:
+    """Verify the exact live-WAL interval represented by one checkpoint.
+
+    ``lower`` is inclusive checkpoint coverage (records at or below it may
+    have been compacted). ``upper`` is the inclusive generation target.  A
+    single ``checkpoint_verified`` receipt at ``upper + 1`` is the only
+    permitted post-target record because production compaction writes that
+    receipt after the checkpoint has fixed its included sequence.
+    """
+    try:
+        raw_lines = path.read_bytes().splitlines() if path.exists() else []
+    except OSError as exc:
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="read_failed") from exc
+    state = argus_tick_durability.read_valid_wal(str(path))
+    if int(state.get("corruptCount") or 0) != 0:
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="corrupt_record")
+    records = []
+    try:
+        for raw in raw_lines:
+            record = json.loads(raw.decode("utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("record_not_mapping")
+            sequence = record.get("sequence")
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or \
+                    sequence <= 0:
+                raise ValueError("sequence_not_exact_positive_integer")
+            records.append(record)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError,
+            ValueError) as exc:
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="framing_invalid") from exc
+    sequences = [record["sequence"] for record in records]
+    if len(sequences) != len(set(sequences)):
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="duplicate_sequence")
+    if sequences != sorted(sequences):
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="out_of_order_sequence")
+    if any(sequence <= lower for sequence in sequences):
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="compacted_record_retained")
+
+    target_records = [record for record in records
+                      if record["sequence"] <= upper]
+    expected = list(range(lower + 1, upper + 1))
+    if [record["sequence"] for record in target_records] != expected:
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="target_range_incomplete")
+    trailing = [record for record in records
+                if record["sequence"] > upper]
+    if trailing:
+        if len(trailing) != 1 or trailing[0]["sequence"] != upper + 1 or \
+                trailing[0].get("kind") != "checkpoint_verified":
+            raise IsolatedWriterError("WAL_boundary_invalid",
+                                      reason="durable_upper_exceeds_target")
+        receipt_payload = trailing[0].get("payload")
+        if not isinstance(receipt_payload, dict) or \
+                _exact_sequence(receipt_payload, "includedWalSequence") != lower:
+            raise IsolatedWriterError("WAL_boundary_invalid",
+                                      reason="compaction_receipt_mismatch")
+
+    previous = None
+    for record in records:
+        sequence = record["sequence"]
+        if previous is None:
+            expected_previous = lower if lower > 0 else None
+            if record.get("previousSequence") != expected_previous:
+                raise IsolatedWriterError("WAL_boundary_invalid",
+                                          reason="chain_anchor_mismatch")
+            prior_hash = record.get("previousRecordHash")
+            if lower == 0 and prior_hash is not None:
+                raise IsolatedWriterError("WAL_boundary_invalid",
+                                          reason="genesis_hash_mismatch")
+            if lower > 0 and prior_hash is not None and not (
+                    isinstance(prior_hash, str) and len(prior_hash) == 64 and
+                    all(character in "0123456789abcdef"
+                        for character in prior_hash.lower())):
+                raise IsolatedWriterError("WAL_boundary_invalid",
+                                          reason="chain_anchor_hash_invalid")
+        else:
+            if record.get("previousSequence") != previous["sequence"] or \
+                    record.get("previousRecordHash") != previous.get(
+                        "recordHash"):
+                raise IsolatedWriterError("WAL_boundary_invalid",
+                                          reason="chain_mismatch")
+        previous = record
+
+    return {
+        "lowerSequence": lower, "targetSequence": upper,
+        "reconstructedSequence": upper, "recordCount": len(records),
+        "targetRecordCount": len(target_records),
+        "postTargetReceiptCount": len(trailing),
+        "hashVerified": True, "framingVerified": True,
+        "sequenceVerified": True,
+    }
 
 
 def _confined(root: pathlib.Path, candidate: str) -> pathlib.Path:
@@ -270,8 +401,10 @@ def _validate_descriptor(payload: Mapping[str, Any], descriptor_path: pathlib.Pa
     wal = payload.get("wal") or {}
     source_path = _confined(persistent_root, str(source.get("path") or ""))
     wal_path = _confined(persistent_root, str(wal.get("path") or ""))
-    lower = int(wal.get("lowerSequence") or 0)
-    upper = int(wal.get("upperSequence") or 0)
+    if not isinstance(wal, dict):
+        raise IsolatedWriterError("WAL_boundary_invalid", field="wal")
+    lower = _exact_sequence(wal, "lowerSequence")
+    upper = _exact_sequence(wal, "upperSequence")
     if lower < 0 or upper < lower:
         raise IsolatedWriterError("WAL_boundary_invalid")
     try:
@@ -282,15 +415,15 @@ def _validate_descriptor(payload: Mapping[str, Any], descriptor_path: pathlib.Pa
     if deadline <= dt.datetime.now(UTC):
         raise IsolatedWriterError("descriptor_stale")
     if check_source:
-        if not source_path.is_file() or source_path.is_symlink():
-            raise IsolatedWriterError("source_missing")
-        size, digest = _file_stats(source_path)
-        if size != int(source.get("bytes") or -1) or \
-                digest != source.get("sha256"):
-            raise IsolatedWriterError("source_hash_mismatch")
+        source_identity = _stable_file_identity(
+            source_path, expected_bytes=int(source.get("bytes") or -1),
+            expected_sha256=str(source.get("sha256") or ""))
+    else:
+        source_identity = None
     return {"jobRoot": job_root, "v2Root": v2_root,
             "persistentRoot": persistent_root, "sourcePath": source_path,
-            "walPath": wal_path, "walLower": lower, "walUpper": upper}
+            "walPath": wal_path, "walLower": lower, "walUpper": upper,
+            "sourceIdentity": source_identity}
 
 
 def _child_result(payload: Mapping[str, Any], *, state: str,
@@ -314,7 +447,9 @@ def _child_result(payload: Mapping[str, Any], *, state: str,
     }
 
 
-def run_child(descriptor_path: str, *, fault: Optional[str] = None) -> int:
+def run_child(descriptor_path: str, *, fault: Optional[str] = None,
+              expected_build_sha: Optional[str] = None,
+              expected_boot_id: Optional[str] = None) -> int:
     """Child entry point.  It never writes the active production manifest."""
     _set_parent_death_signal()
     started = time.monotonic()
@@ -323,22 +458,33 @@ def run_child(descriptor_path: str, *, fault: Optional[str] = None) -> int:
     result_path = path.parent / "result.json"
     try:
         payload = _read_contract(path, DESCRIPTOR_SCHEMA)
+        if (expected_build_sha is not None and
+                payload.get("backendBuildSha") != expected_build_sha) or \
+                (expected_boot_id is not None and
+                 payload.get("backendBootId") != expected_boot_id):
+            raise IsolatedWriterError("descriptor_identity_mismatch")
         checked = _validate_descriptor(payload, path)
         source_path = checked["sourcePath"]
-        before = source_path.stat()
+        before_identity = checked["sourceIdentity"]
         if fault == "source_sigterm":
             os.kill(os.getpid(), signal.SIGTERM)
-        wal_state = argus_tick_durability.read_valid_wal(str(checked["walPath"]))
-        if int(wal_state.get("maximumSequence") or 0) < checked["walUpper"]:
-            raise IsolatedWriterError("WAL_boundary_invalid")
+        if fault == "source_pause":
+            (checked["jobRoot"] / "source-validated.marker").write_bytes(b"1")
+            time.sleep(2)
+        wal_validation = _validate_wal_contract(
+            checked["walPath"], lower=checked["walLower"],
+            upper=checked["walUpper"])
         snapshot = storage.load_checkpoint(
             str(source_path), require_seal=True, allow_legacy_file_seal=True)
-        snapshot_wal = int(((snapshot.get("missionTickDurability") or {}).get(
-            "walAppliedSequence")) or 0)
+        durability = snapshot.get("missionTickDurability")
+        if not isinstance(durability, dict):
+            raise IsolatedWriterError("WAL_boundary_invalid",
+                                      reason="source_cursor_missing")
+        snapshot_wal = _exact_sequence(durability, "walAppliedSequence")
         if snapshot_wal != checked["walUpper"]:
             raise IsolatedWriterError("WAL_boundary_invalid")
         after_load = source_path.stat()
-        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != \
+        if before_identity != \
                 (after_load.st_dev, after_load.st_ino, after_load.st_size,
                  after_load.st_mtime_ns):
             raise IsolatedWriterError("source_changed")
@@ -393,6 +539,14 @@ def run_child(descriptor_path: str, *, fault: Optional[str] = None) -> int:
                 "diskFreeBeforeBytes"),
             diskFreeAfterBytes=(written.get("resourceTelemetry") or {}).get(
                 "diskFreeAfterBytes"),
+            walLowerSequence=checked["walLower"],
+            walTargetSequence=checked["walUpper"],
+            walReconstructedSequence=wal_validation[
+                "reconstructedSequence"],
+            walRecordCount=wal_validation["recordCount"],
+            walHashVerified=wal_validation["hashVerified"],
+            walFramingVerified=wal_validation["framingVerified"],
+            walSequenceVerified=wal_validation["sequenceVerified"],
             validationVerified=True,
             childResourceTelemetry=written.get("resourceTelemetry") or {})
         _write_contract(result_path, RESULT_SCHEMA, result)
@@ -469,6 +623,12 @@ def _promote(root: pathlib.Path, job_root: pathlib.Path,
         "childPeakRssBytes": result.get("childPeakRssBytes"),
         "childDurationMs": result.get("durationMs"),
         "childExitClassification": result.get("classification") or "success",
+        "walLowerSequence": result.get("walLowerSequence"),
+        "walTargetSequence": result.get("walTargetSequence"),
+        "walReconstructedSequence": result.get("walReconstructedSequence"),
+        "walHashVerified": result.get("walHashVerified"),
+        "walFramingVerified": result.get("walFramingVerified"),
+        "walSequenceVerified": result.get("walSequenceVerified"),
         "resourceTelemetry": dict(parent_telemetry),
     })
     manifest["stage1Validation"] = provenance
@@ -554,9 +714,22 @@ def launch_isolated_generation(root: str, *, source_path: str,
     if source_bytes != int(legacy_checkpoint.get("snapshotBytes") or -1) or \
             source_hash != legacy_checkpoint.get("snapshotHash"):
         raise IsolatedWriterError("source_hash_mismatch")
+    included_sequence = _exact_sequence(
+        legacy_checkpoint, "includedWalSequence")
+    if isinstance(wal_upper_sequence, bool) or not isinstance(
+            wal_upper_sequence, int) or wal_upper_sequence < 0 or \
+            included_sequence != wal_upper_sequence:
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="checkpoint_target_mismatch")
     source_generation = str(legacy_checkpoint.get("snapshotHash") or "")
-    wal_compaction = legacy_checkpoint.get("walCompaction") or {}
-    wal_lower = int(wal_compaction.get("compactedThrough") or 0)
+    wal_compaction = legacy_checkpoint.get("walCompaction")
+    if not isinstance(wal_compaction, dict):
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="compaction_boundary_missing")
+    wal_lower = _exact_sequence(wal_compaction, "compactedThrough")
+    if wal_lower > included_sequence:
+        raise IsolatedWriterError("WAL_boundary_invalid",
+                                  reason="compaction_exceeds_target")
     job_id = uuid.uuid4().hex
     job_root = root_path / f"{JOB_PREFIX}{job_id}"
     descriptor_path = job_root / "descriptor.json"
@@ -591,7 +764,9 @@ def launch_isolated_generation(root: str, *, source_path: str,
             deadline=deadline)
         _write_contract(descriptor_path, DESCRIPTOR_SCHEMA, payload)
         command = [sys.executable, "-m", "argus_checkpoint_v2_isolated",
-                   "--job", str(descriptor_path)]
+                   "--job", str(descriptor_path),
+                   "--expected-build-sha", backend_build_sha,
+                   "--expected-boot-id", backend_boot_id]
         if fault:
             command.extend(["--fault", fault])
         try:
@@ -647,6 +822,12 @@ def launch_isolated_generation(root: str, *, source_path: str,
             "sourceGeneration": source_generation,
             "sourceSha256": source_hash,
             "walUpperSequence": int(wal_upper_sequence),
+            "walLowerSequence": wal_lower,
+            "walTargetSequence": included_sequence,
+            "walReconstructedSequence": included_sequence,
+            "walHashVerified": True,
+            "walFramingVerified": True,
+            "walSequenceVerified": True,
         }
         if result.get("state") != "verified_candidate" or \
                 result.get("validationVerified") is not True or any(
@@ -738,8 +919,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--job", required=True)
     parser.add_argument("--fault")
+    parser.add_argument("--expected-build-sha")
+    parser.add_argument("--expected-boot-id")
     args = parser.parse_args(argv)
-    return run_child(args.job, fault=args.fault)
+    return run_child(
+        args.job, fault=args.fault,
+        expected_build_sha=args.expected_build_sha,
+        expected_boot_id=args.expected_boot_id)
 
 
 if __name__ == "__main__":
