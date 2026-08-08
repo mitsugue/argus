@@ -26,6 +26,7 @@ import sys
 import time
 
 import requests
+import argus_market_universe
 
 # v11.5.7: LAZY import — the module must be importable without moomoo-api so the
 # repo's tests can exercise the market-split / entitlement / heartbeat logic.
@@ -36,7 +37,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "11.5.7"
+BRIDGE_VERSION = "11.5.8"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -54,6 +55,9 @@ PORT     = int(os.environ.get("OPEND_PORT", "11111"))
 DISABLE_JP = os.environ.get("ARGUS_DISABLE_JP_QUOTES", "0") not in ("0", "false", "")
 JP_ENTITLEMENT_BACKOFF_SEC = max(3600, int(os.environ.get("JP_ENTITLEMENT_BACKOFF_SEC", "604800")))
 HEARTBEAT_INTERVAL = max(30, int(os.environ.get("BRIDGE_HEARTBEAT_SEC", "60")))
+UNIVERSE_SYNC_INTERVAL = max(600, int(os.environ.get("BRIDGE_UNIVERSE_SYNC_SEC", "600")))
+JP_SYMBOL_CAP = max(1, min(400, int(os.environ.get("BRIDGE_JP_SYMBOL_CAP", "200"))))
+US_SYMBOL_CAP = max(1, min(400, int(os.environ.get("BRIDGE_US_SYMBOL_CAP", "200"))))
 # v10.10.1: 15s quote cadence (get_market_snapshot is 1 request per cycle —
 # 2/30s, far inside moomoo's ~10/30s quota). Big-money flow stays on its own
 # slower cadence below (up to 1 request per code per flow cycle).
@@ -91,6 +95,9 @@ STATE = {
     "lastSnapshotOkAt": 0.0,       # epoch — OpenD API healthy signal
     "consecutiveSnapshotErrors": 0,
     "openDErrorClass": None,       # "sms_required" | "api_unhealthy" | None
+    "universeSyncStatus": "baseline_only",
+    "universeLastVerifiedAt": None,
+    "marketData": {"us": {}, "jp": {}},
 }
 
 
@@ -216,9 +223,15 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
     state = STATE if state is None else state
     disable_jp = DISABLE_JP if disable_jp is None else disable_jp
     import datetime as _dt2
+    stamp = now_iso or _dt2.datetime.now(_dt2.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    transport = ("live" if opend_status(state) == "connected" else
+                 "unavailable" if opend_status(state) in ("sms_required", "api_unhealthy")
+                 else "unknown")
+    market_data = argus_market_universe.public_transport(
+        transport, state.get("marketData") or {}, received_at=stamp)
     return {
         **reboot_safety_facts(),   # v12.0.3: opendAutostart/bridgeAutostart/systemRestartRequired
-        "at": now_iso or _dt2.datetime.now(_dt2.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "at": stamp,
         "bridgeVersion": BRIDGE_VERSION,
         "bridgeMode": bridge_mode(state, disable_jp),
         "openDStatus": opend_status(state),
@@ -235,6 +248,9 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
         "usSnapshotErrors": int(state.get("usSnapshotErrors") or 0),
         "diskUsagePct": disk_usage_pct(),
         "intervalSec": INTERVAL,
+        "marketData": market_data,
+        "universeSyncStatus": state.get("universeSyncStatus"),
+        "universeLastVerifiedAt": state.get("universeLastVerifiedAt"),
     }
 
 
@@ -268,6 +284,7 @@ def fetch_market_quotes(qc, codes_by_market, state=None, disable_jp=None, now=No
     poison the other (Jul-3 incident). Returns (stocks, jp_attempted).
     JP permission error → weekly probe + entitlement_unavailable; other JP
     errors → shorter degraded backoff. US errors are logged but never block JP."""
+    import datetime as _dt2
     state = STATE if state is None else state
     disable_jp = DISABLE_JP if disable_jp is None else disable_jp
     now = time.time() if now is None else now
@@ -331,6 +348,19 @@ def fetch_market_quotes(qc, codes_by_market, state=None, disable_jp=None, now=No
             if now - float(state.get("jpLastErrorLogAt") or 0.0) >= 240:
                 state["jpLastErrorLogAt"] = now
                 print(time.strftime("%H:%M:%S"), "JP snapshot exception:", type(e).__name__, str(e)[:120])
+    now_dt = _dt2.datetime.fromtimestamp(now, _dt2.timezone.utc)
+    jp_availability = ("disabled" if disable_jp else
+                       "entitlement_unavailable" if state.get("jpLastErrorClass") == "permission" else
+                       "service_unavailable" if state.get("jpLastErrorClass") == "other" else None)
+    us_availability = ("service_unavailable" if state.get("usLastErrorClass") else None)
+    state["marketData"] = {
+        "us": argus_market_universe.market_telemetry(
+            "US", codes_by_market.get("US") or [], stocks,
+            now=now_dt, availability=us_availability),
+        "jp": argus_market_universe.market_telemetry(
+            "JP", codes_by_market.get("JP") or [], stocks,
+            now=now_dt, availability=jp_availability),
+    }
     return stocks, jp_attempted
 
 
@@ -527,6 +557,36 @@ def _fetch_jp_watchlist_codes():
         return r.json().get("codes", []) if r.ok else []
     except Exception:
         return []
+
+
+def _fetch_private_symbol_universe():
+    """Fetch the authenticated membership contract.  Callers never log bodies."""
+    try:
+        response = requests.get(
+            f"{BACKEND}/api/argus/bridge/private-symbol-universe",
+            headers={"X-ARGUS-ADMIN-TOKEN": TOKEN}, timeout=20)
+        return response.json() if response.ok else None
+    except Exception:
+        return None
+
+
+def sync_registered_codes(base_codes, last_verified, state=None, fetcher=None,
+                          now_iso=None):
+    """Refresh the private universe or retain the previous verified membership.
+
+    No private symbol is printed or copied into heartbeat/public diagnostics.
+    """
+    state = STATE if state is None else state
+    fetcher = _fetch_private_symbol_universe if fetcher is None else fetcher
+    payload = fetcher()
+    codes, status = argus_market_universe.choose_verified_universe(
+        payload, baseline=list(base_codes), last_verified=last_verified,
+        jp_cap=JP_SYMBOL_CAP, us_cap=US_SYMBOL_CAP)
+    state["universeSyncStatus"] = status
+    if status == "verified":
+        state["universeLastVerifiedAt"] = now_iso or _dt.datetime.now(
+            _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return codes, status
 
 
 def _post_capability_report(report):
@@ -757,24 +817,30 @@ def main():
     flow_cache = {}   # code -> last known flow dict (carried between flow cycles)
     last_flow_at = 0.0
     last_hb_at = 0.0
-    # Dynamic push set = static CODES ∪ the owner's watchlist (refreshed from the
-    # backend every ~3 min) so a newly-added JP name goes realtime automatically.
-    # v11.5.7: JP codes are dropped entirely in US-only mode.
-    base_codes = [c for c in CODES if not (DISABLE_JP and c.upper().startswith("JP."))]
+    # Dynamic push set = emergency/static PUSH_SYMBOLS baseline ∪ mandatory
+    # market instruments ∪ authenticated private Layer-2B membership ∪ the
+    # client-extracted symbol-only asset manifest. Refresh is exactly every 10
+    # minutes; failure preserves the previous verified set.
+    # JP membership stays registered during entitlement backoff and is simply
+    # not requested until the bounded recovery probe is due.
+    base_codes = list(CODES)
     push_codes = list(base_codes)
-    last_wl_at = 0.0
+    last_verified_codes = list(push_codes)
+    last_universe_at = 0.0
     try:
         while True:
             try:
-                # JP watchlist merge — skipped in US-only mode AND while JP is
-                # entitlement-blocked (it would only add codes we can't fetch).
-                if jp_push_active() and time.time() - last_wl_at >= 180:
-                    last_wl_at = time.time()
-                    wl = _fetch_jp_watchlist_codes()
-                    if wl:
-                        push_codes = list(dict.fromkeys(base_codes + wl))
-                elif not jp_push_active():
-                    push_codes = [c for c in push_codes if not c.upper().startswith("JP.")]
+                if time.time() - last_universe_at >= UNIVERSE_SYNC_INTERVAL:
+                    last_universe_at = time.time()
+                    push_codes, sync_status = sync_registered_codes(
+                        base_codes, last_verified_codes)
+                    if sync_status == "verified":
+                        last_verified_codes = list(push_codes)
+                    # Aggregate-only diagnostic; private membership never appears.
+                    counts = split_codes_by_market(push_codes)
+                    print(time.strftime("%H:%M:%S"),
+                          "universe sync", sync_status,
+                          f"jp={len(counts['JP'])} us={len(counts['US'])}")
                 # v11.5.7: US and JP fetched SEPARATELY — one market's permission
                 # failure never stops the other (Jul-3: JP lost, US fine).
                 stocks, _jp_tried = fetch_market_quotes(

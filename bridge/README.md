@@ -49,11 +49,32 @@ curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3
 
 アプリの Watchlist の価格がザラ場中に分単位で動けば完成です。
 
-## 銘柄の追加
+## 登録銘柄の自動同期 (v11.5.8)
 
-ARGUS の Watchlist に銘柄を足したら、`/etc/argus-bridge.env` の `PUSH_SYMBOLS` にも
-`JP.7203` / `US.AMD` の形式で追記して `sudo systemctl restart argus-bridge`。
-(将来のバージョンでこの手動同期は自動化予定)
+`PUSH_SYMBOLS` は緊急時・起動時の静的baselineです。通常はbridgeが10分ごとに
+認証済み `private-symbol-universe` を取得し、private Layer 2B、owner browserが
+`argus.assets.v1`から抽出したsymbol-only manifest、必須市場ETFを
+正規化・重複排除して自動反映します。同期失敗時は最後に検証済みの集合を維持し、
+空または不明な応答を「完全なcoverage」として扱いません。銘柄一覧は公開statusや
+ログへ出さず、市場別のconfigured/requested/returned/unavailable/stale件数だけを
+公開します。JP権限停止中もJP登録銘柄は保持し、既存のbounded probe/backoff後に
+成功したquote probeを確認した場合だけmoomooへ自動復帰します。
+
+上限は `BRIDGE_JP_SYMBOL_CAP` / `BRIDGE_US_SYMBOL_CAP`（既定200、最大400）で、
+OpenDへのUS/JPリクエストは市場別に分離されます。productionの `PUSH_SYMBOLS` を
+通常のwatchlist同期のために手動変更する必要はありません。
+
+公開確認（銘柄名は含まれません）:
+
+```bash
+curl -s https://argus-backend-3j2m.onrender.com/api/argus/bridge/status \
+  | python3 -m json.tool
+```
+
+`transportStatus` と `markets.us` / `markets.jp` を別々に確認してください。
+bridge heartbeatが新しいだけでUS/JP両方をliveとは判定しません。各市場はprovider、
+exchangeAsOf、source age p50/p95、quoteRight、freshness
+（REALTIME/DELAYED/EOD/UNKNOWN）、coverage件数を独立して報告します。
 
 ---
 

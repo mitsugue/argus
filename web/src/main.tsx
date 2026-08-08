@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
 import './styles/theme.css';
+import { startPrivateSymbolManifestSync } from './lib/privateSymbolManifest';
 
 // ── PWA update reliability (v10.70) ─────────────────────────────────────────
 // History: registerType is 'autoUpdate' + a 60s r.update() poll (v10.32), but
@@ -75,6 +76,7 @@ async function reconcileVersion(): Promise<void> {
 // Check shortly after first paint, then alongside the 60s SW poll.
 window.setTimeout(() => { reconcileVersion().catch(() => {}); }, 4_000);
 window.setInterval(() => { reconcileVersion().catch(() => {}); }, 60_000);
+startPrivateSymbolManifestSync();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
