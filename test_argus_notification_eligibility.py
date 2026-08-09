@@ -74,6 +74,25 @@ def test_peer_is_context_only_and_holding_remains_subject():
     assert _decision("SBG", membership)["ownerRelationship"] == "holding"
 
 
+def test_peer_context_push_keeps_owner_holding_as_subject(monkeypatch):
+    sent = []
+    monkeypatch.setenv("NTFY_TOPIC", "test-topic")
+    monkeypatch.setattr(scanner.requests, "post", lambda *a, **k: sent.append((a, k)))
+    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: _membership(SBG="held"))
+    monkeypatch.setitem(scanner._OWNER_SYMS_CACHE, "status", "fresh")
+    env = {"symbol": "SBG", "nameJa": "SOFTBANK GROUP",
+           "eventType": "PEER_CONTEXT", "market": "JP",
+           "session": "JP_REGULAR", "severity": 4,
+           "recommendedPosture": "HOLD",
+           "reasonJa": "Positive context from ARM strength."}
+    assert scanner._event_ntfy(env) is True
+    assert len(sent) == 1
+    args, kwargs = sent[0]
+    assert "SBG" in kwargs["headers"]["Title"]
+    assert "ARM" not in kwargs["headers"]["Title"]
+    assert "ARM" in kwargs["data"].decode("utf-8")
+
+
 def test_symbol_removed_from_watchlist_is_blocked():
     assert _decision("ARM", {})["pushEligible"] is False
 
@@ -129,6 +148,19 @@ def test_marked_transport_sends_once_and_legacy_unmarked_path_is_blocked(monkeyp
                                notification_scope="individual_security") is False
     assert scanner.push_notify("TOP3: NVDA", "+20%", subject_symbol="NVDA",
                                notification_scope="individual_security") is True
+    assert len(sent) == 1
+
+
+def test_marked_market_mover_reaches_event_transport_once(monkeypatch):
+    sent = []
+    monkeypatch.setenv("NTFY_TOPIC", "test-topic")
+    monkeypatch.setattr(scanner.requests, "post", lambda *a, **k: sent.append((a, k)))
+    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: _membership(NVDA="watch"))
+    monkeypatch.setitem(scanner._OWNER_SYMS_CACHE, "status", "fresh")
+    env = {"symbol": "NVDA", "eventType": "MARKET_MOVER", "market": "US",
+           "session": "US_REGULAR", "severity": 5,
+           "recommendedPosture": "AVOID_CHASING", "reasonJa": "+20%"}
+    assert scanner._event_ntfy(env) is True
     assert len(sent) == 1
 
 
