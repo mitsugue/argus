@@ -12,7 +12,7 @@ def manifest(**overrides):
         "buildSha": SHA,
         "version": "13.3.6",
         "deployedAt": "2026-07-31T00:00:00Z",
-        "deploymentId": "deploy-123",
+        "deploymentId": "dep-123abc",
         "verifiedHealth": True,
         "verifiedReady": True,
     }
@@ -29,7 +29,23 @@ def test_manifest_is_authoritative_for_workflow_identity():
     assert result.status == "verified"
     assert result.expectedBackendSha == SHA
     assert result.identitySource == "production_release_manifest"
-    assert result.manifestDeploymentId == "deploy-123"
+    assert result.manifestDeploymentId == "dep-123abc"
+    assert result.manifestRenderDeploymentId == "dep-123abc"
+
+
+def test_consumer_rejects_legacy_or_disagreeing_render_identity():
+    legacy = resolve(
+        manifest=manifest(deploymentId="github-main-123"),
+        actual_backend_sha=SHA[:7],
+    )
+    mismatch = resolve(
+        manifest=manifest(renderDeploymentId="dep-other1"),
+        actual_backend_sha=SHA[:7],
+    )
+    assert legacy.status == "resolver_failure"
+    assert legacy.mismatchReason == "manifest_deployment_id_invalid"
+    assert mismatch.status == "resolver_failure"
+    assert mismatch.mismatchReason == "manifest_deployment_identity_mismatch"
 
 
 def test_frontend_main_has_no_input_to_resolver():
@@ -49,6 +65,16 @@ def test_genuine_backend_mismatch_is_failure():
     )
     assert result.status == "genuine_mismatch"
     assert result.mismatchReason == "actual_not_production_release_manifest"
+
+
+def test_backend_version_mismatch_fails_closed():
+    result = resolve(
+        manifest=manifest(),
+        actual_backend_sha=SHA,
+        actual_backend_version="13.3.5",
+    )
+    assert result.status == "genuine_mismatch"
+    assert result.mismatchReason == "actual_backend_version_not_manifest"
 
 
 def test_short_manifest_sha_is_rejected():

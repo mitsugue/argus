@@ -42,6 +42,8 @@ jobs:
           sudo apt-get install -y -qq shellcheck
           python3 -m py_compile \
             scripts/production_release_manifest.py \
+            scripts/render_deployment_identity.py \
+            scripts/verify_manifest_publication.py \
             scripts/verify_production_backend_release.py \
             scripts/argus_build_identity.py \
             scripts/resolve_backend_identity.py \

@@ -20,7 +20,7 @@ SERVICE = "argus-backend"
 ENVIRONMENT = "production"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$")
-DEPLOYMENT_ID_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._:/+-]{0,127}$")
+RENDER_DEPLOYMENT_ID_RE = re.compile(r"^dep-[0-9a-z]+$")
 FORBIDDEN_KEY_PARTS = (
     "token", "secret", "password", "passphrase", "credential",
     "authorization", "apikey", "api_key", "hmac",
@@ -91,8 +91,16 @@ def validate_manifest(
     if not VERSION_RE.fullmatch(version):
         raise ManifestValidationError("manifest_version_invalid")
     deployment_id = str(value.get("deploymentId") or "").strip()
-    if not DEPLOYMENT_ID_RE.fullmatch(deployment_id):
+    if not RENDER_DEPLOYMENT_ID_RE.fullmatch(deployment_id):
         raise ManifestValidationError("manifest_deployment_id_invalid")
+    render_deployment_id = (
+        str(value.get("renderDeploymentId") or "").strip()
+        if "renderDeploymentId" in value else deployment_id
+    )
+    if not RENDER_DEPLOYMENT_ID_RE.fullmatch(render_deployment_id):
+        raise ManifestValidationError("manifest_render_deployment_id_invalid")
+    if render_deployment_id != deployment_id:
+        raise ManifestValidationError("manifest_deployment_identity_mismatch")
     if value.get("verifiedHealth") is not True:
         raise ManifestValidationError("manifest_health_not_verified")
     if value.get("verifiedReady") is not True:
@@ -104,7 +112,7 @@ def validate_manifest(
     if now_iso and deployed_epoch > (
             _epoch(now_iso) + max(0, int(max_future_skew_seconds))):
         raise ManifestValidationError("manifest_deployed_at_future")
-    return {
+    normalized = {
         "schema": SCHEMA,
         "service": SERVICE,
         "environment": ENVIRONMENT,
@@ -115,6 +123,9 @@ def validate_manifest(
         "verifiedHealth": True,
         "verifiedReady": True,
     }
+    if "renderDeploymentId" in value:
+        normalized["renderDeploymentId"] = render_deployment_id
+    return normalized
 
 
 def _sha_matches(full_sha: str, observed: object) -> bool:
@@ -125,6 +136,27 @@ def _sha_matches(full_sha: str, observed: object) -> bool:
         and SHA_RE.fullmatch(observed_sha)
         and full_sha == observed_sha
     )
+
+
+def select_deployed_at(
+    *,
+    existing: Any,
+    build_sha: str,
+    version: str,
+    deployment_id: str,
+    fallback: str,
+) -> str:
+    """Preserve identity time only for an already-published exact identity."""
+    try:
+        trusted = validate_manifest(existing)
+    except ManifestValidationError:
+        return fallback
+    same_identity = (
+        trusted["buildSha"] == str(build_sha).strip().lower()
+        and trusted["version"] == str(version)
+        and trusted["deploymentId"] == str(deployment_id).strip()
+    )
+    return trusted["deployedAt"] if same_identity else fallback
 
 
 def create_manifest(
@@ -159,6 +191,7 @@ def create_manifest(
         "version": str(version),
         "deployedAt": deployed_at,
         "deploymentId": deployment_id,
+        "renderDeploymentId": deployment_id,
         "verifiedHealth": True,
         "verifiedReady": True,
     })

@@ -30,7 +30,7 @@ jobs:
       publish: ${{ steps.scope.outputs.publish }}
       target_sha: ${{ steps.scope.outputs.target_sha }}
       version: ${{ steps.scope.outputs.version }}
-      deployment_id: ${{ steps.scope.outputs.deployment_id }}
+      expected_deployment_id: ${{ steps.scope.outputs.expected_deployment_id }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -58,7 +58,7 @@ jobs:
                   text=True,
               ).splitlines()
               publish = classify(paths)["backendDeploy"]
-              deployment_id = "github-main-" + os.environ["GITHUB_RUN_ID"]
+              expected_deployment_id = ""
           else:
               target = os.environ["DISPATCH_SHA"].strip().lower()
               if not re.fullmatch(r"[0-9a-f]{40}", target):
@@ -66,7 +66,11 @@ jobs:
               subprocess.check_call(
                   ["git", "merge-base", "--is-ancestor", target, "origin/main"])
               publish = True
-              deployment_id = os.environ["DISPATCH_DEPLOYMENT_ID"].strip()
+              expected_deployment_id = os.environ[
+                  "DISPATCH_DEPLOYMENT_ID"].strip()
+              if not re.fullmatch(r"dep-[0-9a-z]+", expected_deployment_id):
+                  raise SystemExit(
+                      "workflow_dispatch requires an exact Render dep-* ID")
           version = subprocess.check_output(
               ["git", "show", f"{target}:backend-version.json"],
               text=True,
@@ -76,7 +80,7 @@ jobs:
           print("publish=" + str(publish).lower())
           print("target_sha=" + target)
           print("version=" + version)
-          print("deployment_id=" + deployment_id)
+          print("expected_deployment_id=" + expected_deployment_id)
           PY
 
   verify-and-publish:
@@ -89,6 +93,29 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Resolve exact live Render deployment identity
+        id: render-identity
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          EXPECTED_DEPLOYMENT_ID: >-
+            ${{ needs.classify.outputs.expected_deployment_id }}
+        run: |
+          python3 -B scripts/render_deployment_identity.py \
+            --service-id srv-d8j2hts8aovs738s1in0 \
+            --target-sha "${{ needs.classify.outputs.target_sha }}" \
+            --expected-deployment-id "$EXPECTED_DEPLOYMENT_ID" \
+            --timeout-seconds 1200 \
+            --poll-seconds 15 \
+            --output "$RUNNER_TEMP/render-deployment.json"
+          python3 -B - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          path = os.path.join(
+              os.environ["RUNNER_TEMP"], "render-deployment.json")
+          value = json.load(open(path, encoding="utf-8"))
+          print("deployment_id=" + value["renderDeploymentId"])
+          PY
       - name: Verify exact production health and readiness using GET only
         run: |
           python3 -B scripts/verify_production_backend_release.py \
@@ -102,10 +129,41 @@ jobs:
         env:
           TARGET_SHA: ${{ needs.classify.outputs.target_sha }}
           TARGET_VERSION: ${{ needs.classify.outputs.version }}
-          DEPLOYMENT_ID: ${{ needs.classify.outputs.deployment_id }}
+          DEPLOYMENT_ID: ${{ steps.render-identity.outputs.deployment_id }}
         run: |
           CHECKED_AT=$(python3 -c \
             'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/production-verification.json"))["checkedAt"])')
+          git fetch origin \
+            +refs/heads/production-release:refs/remotes/origin/production-release \
+            2>/dev/null || true
+          DEPLOYED_AT="$CHECKED_AT"
+          if git show \
+              refs/remotes/origin/production-release:production/argus-backend.json \
+              > "$RUNNER_TEMP/current-manifest.json" 2>/dev/null; then
+            DEPLOYED_AT=$(python3 -B - \
+              "$RUNNER_TEMP/current-manifest.json" \
+              "$TARGET_SHA" "$TARGET_VERSION" "$DEPLOYMENT_ID" \
+              "$CHECKED_AT" <<'PY'
+          import json
+          import sys
+
+          from scripts.production_release_manifest import select_deployed_at
+
+          path, sha, version, deployment_id, fallback = sys.argv[1:]
+          try:
+              value = json.load(open(path, encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              value = {}
+          print(select_deployed_at(
+              existing=value,
+              build_sha=sha,
+              version=version,
+              deployment_id=deployment_id,
+              fallback=fallback,
+          ))
+          PY
+            )
+          fi
           curl --fail --silent --show-error --max-time 30 \
             https://argus-backend-3j2m.onrender.com/healthz \
             --output "$RUNNER_TEMP/health.json"
@@ -115,7 +173,7 @@ jobs:
           python3 -B scripts/production_release_manifest.py create \
             --build-sha "$TARGET_SHA" \
             --version "$TARGET_VERSION" \
-            --deployed-at "$CHECKED_AT" \
+            --deployed-at "$DEPLOYED_AT" \
             --deployment-id "$DEPLOYMENT_ID" \
             --health "$RUNNER_TEMP/health.json" \
             --ready "$RUNNER_TEMP/ready.json" \
@@ -126,9 +184,8 @@ jobs:
         run: |
           cp scripts/production_release_manifest.py \
             "$RUNNER_TEMP/production_release_manifest.py"
-          git fetch origin \
-            +refs/heads/production-release:refs/remotes/origin/production-release \
-            2>/dev/null || true
+          cp scripts/verify_manifest_publication.py \
+            "$RUNNER_TEMP/verify_manifest_publication.py"
           if git rev-parse --verify refs/remotes/origin/production-release \
               >/dev/null 2>&1; then
             git switch -C production-release \
@@ -149,17 +206,20 @@ jobs:
             echo "manifest already matches verified deployment"
             exit 0
           fi
-          git commit -m "production: verify backend ${TARGET_SHA:0:12}"
+          git commit -m \
+            "production: verify backend ${TARGET_SHA:0:12} (run ${GITHUB_RUN_ID})"
           git push origin HEAD:production-release
-      - name: Verify exact published bytes
+      - name: Verify authoritative object and bounded public convergence
         env:
-          TARGET_SHA: ${{ needs.classify.outputs.target_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          PUBLISHED=$(curl --fail --silent --show-error --max-time 30 \
-            "https://raw.githubusercontent.com/mitsugue/argus/production-release/production/argus-backend.json?run=${GITHUB_RUN_ID}")
-          printf '%s' "$PUBLISHED" > "$RUNNER_TEMP/published.json"
-          python3 -B "$RUNNER_TEMP/production_release_manifest.py" \
-            validate "$RUNNER_TEMP/published.json"
-          ACTUAL=$(python3 -c \
-            'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/published.json"))["buildSha"])')
-          test "$ACTUAL" = "$TARGET_SHA"
+          python3 -B "$RUNNER_TEMP/verify_manifest_publication.py" \
+            --expected "$RUNNER_TEMP/argus-backend.json" \
+            --repo mitsugue/argus \
+            --branch production-release \
+            --path production/argus-backend.json \
+            --raw-url \
+              https://raw.githubusercontent.com/mitsugue/argus/production-release/production/argus-backend.json \
+            --timeout-seconds 300 \
+            --poll-seconds 5 \
+            --output "$RUNNER_TEMP/publication-verification.json"

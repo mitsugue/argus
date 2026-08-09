@@ -33,10 +33,13 @@ OBSERVED_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 class IdentityResult:
     expectedBackendSha: Optional[str]
     actualBackendSha: Optional[str]
+    expectedBackendVersion: Optional[str]
+    actualBackendVersion: Optional[str]
     identitySource: str
     status: str
     mismatchReason: Optional[str]
     manifestDeploymentId: Optional[str]
+    manifestRenderDeploymentId: Optional[str]
     manifestDeployedAt: Optional[str]
 
 
@@ -44,30 +47,48 @@ def resolve(
     *,
     manifest: Any,
     actual_backend_sha: str,
+    actual_backend_version: str = "",
     now_iso: str | None = None,
 ) -> IdentityResult:
     actual = str(actual_backend_sha or "").strip().lower()
+    actual_version = str(actual_backend_version or "").strip()
     if not OBSERVED_SHA_RE.fullmatch(actual):
         return IdentityResult(
-            None, None, "production_release_manifest", "resolver_failure",
-            "actual_backend_sha_invalid", None, None,
+            None, None, None, actual_version or None,
+            "production_release_manifest", "resolver_failure",
+            "actual_backend_sha_invalid", None, None, None,
         )
     try:
         trusted = validate_manifest(manifest, now_iso=now_iso)
     except ManifestValidationError as exc:
         return IdentityResult(
-            None, actual, "production_release_manifest", "resolver_failure",
-            str(exc), None, None,
+            None, actual, None, actual_version or None,
+            "production_release_manifest", "resolver_failure",
+            str(exc), None, None, None,
         )
     expected = trusted["buildSha"]
+    expected_version = trusted["version"]
+    if actual_version and actual_version != expected_version:
+        return IdentityResult(
+            expected, actual, expected_version, actual_version,
+            "production_release_manifest", "genuine_mismatch",
+            "actual_backend_version_not_manifest", trusted["deploymentId"],
+            trusted.get("renderDeploymentId", trusted["deploymentId"]),
+            trusted["deployedAt"],
+        )
     if expected.startswith(actual):
         return IdentityResult(
-            expected, actual, "production_release_manifest", "verified",
-            None, trusted["deploymentId"], trusted["deployedAt"],
+            expected, actual, expected_version, actual_version or None,
+            "production_release_manifest", "verified",
+            None, trusted["deploymentId"],
+            trusted.get("renderDeploymentId", trusted["deploymentId"]),
+            trusted["deployedAt"],
         )
     return IdentityResult(
-        expected, actual, "production_release_manifest", "genuine_mismatch",
+        expected, actual, expected_version, actual_version or None,
+        "production_release_manifest", "genuine_mismatch",
         "actual_not_production_release_manifest", trusted["deploymentId"],
+        trusted.get("renderDeploymentId", trusted["deploymentId"]),
         trusted["deployedAt"],
     )
 
@@ -86,6 +107,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True, type=pathlib.Path)
     parser.add_argument("--actual-backend-sha", required=True)
+    parser.add_argument("--actual-backend-version", default="")
     parser.add_argument("--now")
     parser.add_argument("--github-output")
     args = parser.parse_args()
@@ -96,6 +118,7 @@ def main() -> int:
     result = resolve(
         manifest=manifest,
         actual_backend_sha=args.actual_backend_sha,
+        actual_backend_version=args.actual_backend_version,
         now_iso=args.now,
     )
     payload = asdict(result)
