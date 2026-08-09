@@ -1262,6 +1262,113 @@ class LegacyCheckpointConcurrentCanaryTests(unittest.TestCase):
                 scanner._DURABLE_STATE["lastFailureMessage"],
                 "ValueError:redacted")
 
+    def test_failure_history_survives_successes_and_checkpoint_restore(self):
+        with tempfile.TemporaryDirectory() as root, \
+                scanner_storage(root) as value, \
+                mock.patch.object(
+                    scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+            # A. A successful checkpoint has no fabricated failure history.
+            first_success = scanner._osint_persist()
+            self.assertTrue(first_success["verified"])
+            self.assertIsNone(
+                scanner._DURABLE_STATE.get("lastCheckpointError"))
+            self.assertIsNone(
+                scanner._DURABLE_STATE.get("lastFailureClass"))
+
+            # B. A genuine failure updates both current and historical state.
+            with mock.patch.object(
+                    scanner.argus_tick_durability, "verified_checkpoint",
+                    side_effect=ValueError(
+                        "checkpoint_source_integrity_invalid")):
+                failed = scanner._osint_persist()
+            self.assertFalse(failed["verified"])
+            failure_at = scanner._DURABLE_STATE["lastFailureAt"]
+            self.assertEqual(
+                scanner._DURABLE_STATE["lastCheckpointError"],
+                "ValueError")
+            self.assertEqual(
+                scanner._DURABLE_STATE["lastFailureClass"], "ValueError")
+
+            # C/D. Any number of later successes clears current state only.
+            for _ in range(2):
+                recovered = scanner._osint_persist()
+                self.assertTrue(recovered["verified"])
+                self.assertIsNone(
+                    scanner._DURABLE_STATE["lastCheckpointError"])
+                self.assertEqual(
+                    scanner._DURABLE_STATE["integrityStatus"], "ok")
+                self.assertEqual(
+                    scanner._DURABLE_STATE["lastFailureAt"], failure_at)
+                self.assertEqual(
+                    scanner._DURABLE_STATE["lastFailureClass"],
+                    "ValueError")
+
+            stored = storage.load_checkpoint(
+                value["checkpoint"], require_seal=True)
+            history = stored["checkpointFailureHistory"]
+            self.assertEqual(
+                history["schemaVersion"],
+                scanner._CHECKPOINT_FAILURE_HISTORY_SCHEMA)
+            self.assertEqual(history["lastFailure"]["at"], failure_at)
+            self.assertEqual(
+                history["lastFailure"]["message"],
+                "checkpoint_source_integrity_invalid")
+
+            # F. A fresh process projection restores historical state, while
+            # current health remains the latest successful checkpoint.
+            scanner._DURABLE_STATE.clear()
+            scanner._DURABLE_STATE.update({
+                "schemaVersion": "argus-durable-v3",
+                "lastCheckpointError": "stale_must_not_restore",
+                "integrityStatus": "write_failed",
+                "historicalGapBeforeFix": True,
+            })
+            scanner._OSINT_PERSIST_STATE.clear()
+            scanner._OSINT_PERSIST_STATE.update({"restored": False})
+            self.assertEqual(
+                scanner._osint_restore_once(), "persistent_local")
+            self.assertIsNone(
+                scanner._DURABLE_STATE["lastCheckpointError"])
+            self.assertEqual(
+                scanner._DURABLE_STATE["integrityStatus"], "ok")
+            self.assertEqual(
+                scanner._DURABLE_STATE["lastFailureAt"], failure_at)
+            self.assertEqual(
+                scanner._DURABLE_STATE["lastFailureClass"], "ValueError")
+            self.assertIsNotNone(
+                scanner._DURABLE_STATE.get("lastSuccessAt"))
+
+            # E/G. A newer different failure replaces the bounded record and
+            # unsafe payload text is never retained or persisted.
+            unsafe = "portfolio=SECRET symbol=PRIVATE_TOKEN"
+            with mock.patch.object(
+                    scanner.argus_persistent_storage, "seal_checkpoint",
+                    side_effect=RuntimeError(unsafe)):
+                newer_failure = scanner._osint_persist()
+            self.assertFalse(newer_failure["verified"])
+            self.assertEqual(
+                scanner._DURABLE_STATE["lastCheckpointError"],
+                "RuntimeError")
+            self.assertEqual(
+                scanner._DURABLE_STATE["lastFailureClass"],
+                "RuntimeError")
+            self.assertEqual(
+                scanner._DURABLE_STATE["lastFailureMessage"],
+                "RuntimeError:redacted")
+
+            final_success = scanner._osint_persist()
+            self.assertTrue(final_success["verified"])
+            self.assertNotIn(
+                unsafe, pathlib.Path(value["checkpoint"]).read_text())
+            final_stored = storage.load_checkpoint(
+                value["checkpoint"], require_seal=True)
+            self.assertEqual(
+                final_stored["checkpointFailureHistory"]["lastFailure"]
+                ["class"], "RuntimeError")
+            self.assertEqual(
+                final_stored["checkpointFailureHistory"]["lastFailure"]
+                ["message"], "RuntimeError:redacted")
+
 
 class ContractRegressionTests(unittest.TestCase):
     def test_wal_record_has_dedup_and_chain_identity(self):
