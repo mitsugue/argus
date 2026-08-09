@@ -15688,9 +15688,138 @@ _FOUNDATION_JOBS_FILE = os.path.join(
 _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
 
 
-_DURABLE_STATE = {"schemaVersion": "argus-durable-v3", "lastWriteAt": None,
-                  "lastRestoreAt": None, "integrityStatus": "unknown",
-                  "lastKnownGoodAt": None, "restoreSource": None}
+_DURABLE_STATE = {
+    "schemaVersion": "argus-durable-v3",
+    "lastAttemptAt": None,
+    "lastWriteAt": None,
+    "lastSuccessAt": None,
+    "lastFailureAt": None,
+    "lastFailureClass": None,
+    "lastFailureMessage": None,
+    "lastFailureStage": None,
+    # The pre-v13.4.7 production failure record was not checkpointed and
+    # cannot be reconstructed safely.  Keep that gap explicit while making
+    # all future most-recent-failure records durable.
+    "historicalGapBeforeFix": True,
+    "lastCheckpointError": None,
+    "writeCount": 0,
+    "successCount": 0,
+    "failureCount": 0,
+    "consecutiveFailureCount": 0,
+    "lastRestoreAt": None,
+    "integrityStatus": "unknown",
+    "lastKnownGoodAt": None,
+    "restoreSource": None,
+}
+
+_CHECKPOINT_FAILURE_HISTORY_SCHEMA = \
+    "argus-checkpoint-failure-history-v1"
+_CHECKPOINT_FAILURE_CLASS_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_.]{0,119}$")
+_CHECKPOINT_FAILURE_TOKEN_RE = re.compile(
+    r"^[a-z][a-z0-9_:-]{0,119}$")
+
+
+def _checkpoint_failure_safe_message(error_class, message):
+    value = str(message or "")
+    if _CHECKPOINT_FAILURE_TOKEN_RE.fullmatch(value):
+        return value
+    safe_class = str(error_class or "CheckpointError")
+    if not _CHECKPOINT_FAILURE_CLASS_RE.fullmatch(safe_class):
+        safe_class = "CheckpointError"
+    return f"{safe_class}:redacted"
+
+
+def _checkpoint_failure_history_projection(success_at=None):
+    """Bounded, public-safe projection of the latest genuine failure only."""
+    successful_at = str(
+        success_at or _DURABLE_STATE.get("lastSuccessAt") or "")
+    try:
+        datetime.fromisoformat(successful_at.replace("Z", "+00:00"))
+    except ValueError:
+        successful_at = ""
+    occurred_at = str(_DURABLE_STATE.get("lastFailureAt") or "")
+    error_class = str(_DURABLE_STATE.get("lastFailureClass") or "")
+    stage = str(_DURABLE_STATE.get("lastFailureStage") or "")
+    if not (occurred_at and _CHECKPOINT_FAILURE_CLASS_RE.fullmatch(
+            error_class) and _CHECKPOINT_FAILURE_TOKEN_RE.fullmatch(stage)):
+        return {
+            "schemaVersion": _CHECKPOINT_FAILURE_HISTORY_SCHEMA,
+            "lastSuccessAt": successful_at[:40] or None,
+            "lastFailure": None,
+            "historicalGapBeforeFix": bool(
+                _DURABLE_STATE.get("historicalGapBeforeFix", True)),
+        }
+    try:
+        datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+    except ValueError:
+        return {
+            "schemaVersion": _CHECKPOINT_FAILURE_HISTORY_SCHEMA,
+            "lastSuccessAt": successful_at[:40] or None,
+            "lastFailure": None,
+            "historicalGapBeforeFix": bool(
+                _DURABLE_STATE.get("historicalGapBeforeFix", True)),
+        }
+    return {
+        "schemaVersion": _CHECKPOINT_FAILURE_HISTORY_SCHEMA,
+        "lastSuccessAt": successful_at[:40] or None,
+        "lastFailure": {
+            "at": occurred_at[:40],
+            "class": error_class,
+            "message": _checkpoint_failure_safe_message(
+                error_class, _DURABLE_STATE.get("lastFailureMessage")),
+            "stage": stage,
+        },
+        "historicalGapBeforeFix": bool(
+            _DURABLE_STATE.get("historicalGapBeforeFix", True)),
+    }
+
+
+def _restore_checkpoint_failure_history(value):
+    """Restore only validated, redacted history; never restore current error."""
+    if not isinstance(value, dict) or value.get("schemaVersion") != \
+            _CHECKPOINT_FAILURE_HISTORY_SCHEMA:
+        return False
+    _DURABLE_STATE["historicalGapBeforeFix"] = bool(
+        value.get("historicalGapBeforeFix", True))
+    successful_at = str(value.get("lastSuccessAt") or "")
+    if successful_at:
+        try:
+            datetime.fromisoformat(successful_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        _DURABLE_STATE["lastSuccessAt"] = successful_at[:40]
+        _DURABLE_STATE["lastKnownGoodAt"] = successful_at[:40]
+    # A verified checkpoint/remote snapshot is a recovered current state.
+    # Historical failure data must never be projected back as current health.
+    _DURABLE_STATE["lastCheckpointError"] = None
+    _DURABLE_STATE["integrityStatus"] = "ok"
+    failure = value.get("lastFailure")
+    if failure is None:
+        return True
+    if not isinstance(failure, dict):
+        return False
+    occurred_at = str(failure.get("at") or "")
+    error_class = str(failure.get("class") or "")
+    stage = str(failure.get("stage") or "")
+    try:
+        datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if not _CHECKPOINT_FAILURE_CLASS_RE.fullmatch(error_class) or not \
+            _CHECKPOINT_FAILURE_TOKEN_RE.fullmatch(stage):
+        return False
+    current_at = str(_DURABLE_STATE.get("lastFailureAt") or "")
+    if current_at and current_at > occurred_at:
+        return True
+    _DURABLE_STATE.update({
+        "lastFailureAt": occurred_at[:40],
+        "lastFailureClass": error_class,
+        "lastFailureMessage": _checkpoint_failure_safe_message(
+            error_class, failure.get("message")),
+        "lastFailureStage": stage,
+    })
+    return True
 _MISSION_WAL_FILE = _DURABILITY_PATHS["wal"]
 _MISSION_LEASE_FILE = _DURABILITY_PATHS["lease"]
 _MISSION_CURSOR_FILE = _DURABILITY_PATHS["cursor"]
@@ -15951,13 +16080,24 @@ def _osint_persist():
 
 
 def _osint_persist_locked():
+    attempt_at = _ai_now_iso()
+    stage = "source_snapshot_construction"
+    _DURABLE_STATE["lastAttemptAt"] = attempt_at
+    _DURABLE_STATE["writeCount"] = int(
+        _DURABLE_STATE.get("writeCount") or 0) + 1
     try:
         wal_state = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
         included_wal_sequence = int(wal_state.get("maximumSequence") or 0)
         _MISSION_BATCH_STATE["walAppliedSequence"] = included_wal_sequence
         blob = {"termOverlay": _OSINT_TERM_OVERLAY, "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
                 "urlCache": dict(list(_OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
-                "canaryLast": _OSINT_CANARY_LAST,
+                # caos-scan runs the backup tick and canary job in parallel.
+                # The 127 MiB legacy seal is deliberately streamed, so retaining
+                # this live dict let canary-run mutate the already-hashed graph
+                # before verified_checkpoint recomputed the source seal.  Freeze
+                # only this small, proven concurrent section; do not duplicate the
+                # generation-sized checkpoint graph in the parent process.
+                "canaryLast": copy.deepcopy(_OSINT_CANARY_LAST),
                 "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                 "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                 "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
@@ -15967,6 +16107,8 @@ def _osint_persist_locked():
                     _FORMAL_BENCHMARK_V2),
                 "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
                 "schemaVersion": _DURABLE_STATE["schemaVersion"],
+                "checkpointFailureHistory":
+                    _checkpoint_failure_history_projection(attempt_at),
                 "soak": copy.deepcopy(_SOAK),
                 "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
                 "soakControl": dict(_SOAK_CONTROL),
@@ -16004,11 +16146,13 @@ def _osint_persist_locked():
                 "soakLastPersistAt": _ai_now_iso()}
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                      f"checkpoint-{os.getpid()}")
+        stage = "source_snapshot_seal"
         sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
         verified_wal_sequence = _verified_persistent_wal_sequence()
         allow_wal_compaction = bool(
             _REMOTE_CYCLE.get("readBackVerified") is True and
             verified_wal_sequence > 0)
+        stage = "source_integrity_and_atomic_write"
         checkpoint = argus_tick_durability.verified_checkpoint(
             _OSINT_PERSIST_FILE, sealed_blob, job_id=job_id,
             wal_path=_MISSION_WAL_FILE,
@@ -16025,6 +16169,7 @@ def _osint_persist_locked():
         # unsealed owner before the V2 writer consumes each section so large
         # transient arenas can be returned at the true lifecycle boundary.
         del blob
+        stage = "durability_metadata"
         metadata = _persist_durability_metadata()
         checkpoint["metadata"] = metadata
         # Stage 1 is deliberately non-authoritative. The already-verified
@@ -16035,10 +16180,16 @@ def _osint_persist_locked():
         # parent's final generation-sized legacy reference before spawning it;
         # no checkpoint payload crosses the process boundary.
         del sealed_blob
+        stage = "checkpoint_v2_disabled_adapter"
         checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(checkpoint)
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
         _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
+        _DURABLE_STATE["lastSuccessAt"] = _DURABLE_STATE["lastWriteAt"]
+        _DURABLE_STATE["successCount"] = int(
+            _DURABLE_STATE.get("successCount") or 0) + 1
+        _DURABLE_STATE["consecutiveFailureCount"] = 0
         _DURABLE_STATE["integrityStatus"] = "ok"
+        _DURABLE_STATE["lastCheckpointError"] = None
         _DURABLE_STATE["lastCheckpoint"] = checkpoint
         _DURABLE_STORAGE_STATUS["lastCheckpointVerification"] = \
             checkpoint.get("verifiedAt")
@@ -16061,8 +16212,23 @@ def _osint_persist_locked():
             })
         return checkpoint
     except Exception as exc:
+        failure_at = _ai_now_iso()
+        safe_message = _checkpoint_failure_safe_message(
+            type(exc).__name__, str(exc))
         _DURABLE_STATE["integrityStatus"] = "write_failed"
         _DURABLE_STATE["lastCheckpointError"] = type(exc).__name__
+        _DURABLE_STATE["lastFailureAt"] = failure_at
+        _DURABLE_STATE["lastFailureClass"] = type(exc).__name__
+        _DURABLE_STATE["lastFailureMessage"] = safe_message
+        _DURABLE_STATE["lastFailureStage"] = stage
+        _DURABLE_STATE["failureCount"] = int(
+            _DURABLE_STATE.get("failureCount") or 0) + 1
+        _DURABLE_STATE["consecutiveFailureCount"] = int(
+            _DURABLE_STATE.get("consecutiveFailureCount") or 0) + 1
+        add_log(
+            "[legacy-checkpoint] write failed "
+            f"stage={stage} errorClass={type(exc).__name__} "
+            f"error={safe_message}")
         return {"verified": False, "errorClass": type(exc).__name__}
 
 
@@ -16389,6 +16555,8 @@ def _osint_restore_once():
     _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
     _DURABLE_STATE["restoreSource"] = source
     try:
+        _restore_checkpoint_failure_history(
+            blob.get("checkpointFailureHistory"))
         for k, v in (blob.get("termOverlay") or {}).items():
             if isinstance(v, list):
                 cur = _OSINT_TERM_OVERLAY.get(k) or []
@@ -21530,6 +21698,8 @@ def api_argus_osint_memory_snapshot():
                                      _DURABLE_STATE.get("integrityStatus"),
                                      "restoreSource":
                                      _DURABLE_STATE.get("restoreSource")},
+                    "checkpointFailureHistory":
+                    _checkpoint_failure_history_projection(),
                     "missionState": {"count": len(_MISSIONS)},
                     "forecastStore": {"count": len(_FORECAST_LEDGER)},
                     "decisionLedger": {"forecastCount": len(_FORECAST_LEDGER),
