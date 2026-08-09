@@ -76,6 +76,48 @@ jobs:
             artifacts/checkpoint-v2-resource-proof.json
             artifacts/checkpoint-v2-exact-resource-proof.json
 
+  legacy-parent-memory:
+    needs: exact-public-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [pre_fix, candidate]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
+      - name: 32-cycle legacy parent and isolated V2 proof (${{ matrix.variant }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          variant='${{ matrix.variant }}'
+          expected=FAIL
+          if [[ "$variant" == candidate ]]; then expected=PASS; fi
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/legacy_checkpoint_stage1_memory_probe.py \
+              --source-json artifacts/checkpoint-v2-exact-source.json \
+              --root "/tmp/legacy-parent-$variant" \
+              --variant "$variant" --cycles 32 \
+              --output "artifacts/legacy-parent-$variant.json" \
+              --expect "$expected" \
+            | tee "artifacts/legacy-parent-$variant.log"
+      - name: Publish legacy parent resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-parent-memory-${{ matrix.variant }}-${{ github.sha }}
+          path: |
+            artifacts/legacy-parent-${{ matrix.variant }}.json
+            artifacts/legacy-parent-${{ matrix.variant }}.log
+
   mapping-attribution:
     needs: exact-public-state
     runs-on: ubuntu-latest

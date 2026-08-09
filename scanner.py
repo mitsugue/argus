@@ -16283,6 +16283,9 @@ def _osint_persist_locked():
         # parent's final generation-sized legacy reference before spawning it;
         # no checkpoint payload crosses the process boundary.
         del sealed_blob
+        checkpoint["legacyAllocatorReclaim"] = \
+            argus_checkpoint_v2.release_consumed_legacy_snapshot_memory(
+                int(checkpoint.get("snapshotBytes") or 0))
         stage = "checkpoint_v2_disabled_adapter"
         checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(checkpoint)
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
