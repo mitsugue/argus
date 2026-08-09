@@ -5,6 +5,8 @@ import { SystemHealthPopover } from './dashboard/SystemHealthPopover';
 import { NotificationPanel } from './NotificationPanel';
 import { unreadCounts } from '../lib/notifications';
 import { ArgusMark } from './ArgusMark';
+import { useProductionBackendIdentity } from '../hooks/useProductionBackendIdentity';
+import { runtimeVersionLabel } from '../domain/runtimeVersionTruth';
 import './AppShell.css';
 
 // Overscroll-to-next (v10.15.1, user request): at the page bottom, one strong
@@ -93,6 +95,8 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
   }, [notifOpen]);
   // System-health beacon on the brand: one poll shared by the dot + popover.
   const health = useSystemHealth();
+  const backendIdentity = useProductionBackendIdentity();
+  const versionLabel = runtimeVersionLabel(__APP_VERSION__, backendIdentity);
   const [healthOpen, setHealthOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   // The drag is driven DIRECTLY through the DOM (refs), NOT React state — a
@@ -239,7 +243,14 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, next
               opens the health popover. The old standalone green dot is retired. */}
           <ArgusMark size={22} className="shell__brand-mark" status={health?.overall ?? 'off'} />
           <span className="shell__brand-name">A.R.G.U.S. <span className="shell__brand-pro">Pro</span></span>
-          <span className="shell__brand-version">v{__APP_VERSION__}</span>
+          <span
+            className="shell__brand-version"
+            title={backendIdentity
+              ? `Frontend v${__APP_VERSION__} · Backend v${backendIdentity.backendVersion} · ${backendIdentity.backendSha} · ${backendIdentity.deploymentId}`
+              : `Frontend v${__APP_VERSION__} · Production backend identity unavailable`}
+          >
+            {versionLabel}
+          </span>
           <span className="shell__brand-tag">
             Autonomous Risk and Global Uncertainty Scanner
           </span>

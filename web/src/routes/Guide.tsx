@@ -153,6 +153,7 @@ const CAPABILITIES: { area: string; descJa: string }[] = [
 ];
 
 const RECENT_UPDATES: [string, string][] = [
+  ['v13.3.6', 'Runtime version truthを明確化。曖昧な単一version表示を廃止し、UI版と検証済みproduction backend版を分離表示。正式manifestが欠損・不正・未検証ならAPI UNKNOWNへfail closed。'],
   ['v13.3.5', 'Todayの方向確率を改善。厳格ゲート通過値は「検証済み」、計算可能だが未通過の値は「参考値・未検証」と分離し、欠損時は引き続き非表示。'],
   ['v13.3.4', 'Soak遅延会計を修正。過去の欠落windowは運用監視に残しつつ、新buildのheartbeatは当該windowの実測遅延だけで判定。'],
   ['v13.3.3', '機能完成監査 — Positionsの投信手動評価額を合計・戦略へ即時反映し、Next eventのURL履歴、Market/Asset Deskの選択状態とキーボード操作を修正。'],
@@ -618,7 +619,7 @@ export const Guide: React.FC = () => {
       <section>
         <div className="section-head">
           <span className="section-head__title">ARGUS でできること(機能一覧)</span>
-          <span className="section-head__count">v{__APP_VERSION__} 時点</span>
+          <span className="section-head__count">UI v{__APP_VERSION__} 時点</span>
         </div>
         <div className="card guide-card">
           <div className="guide-results">

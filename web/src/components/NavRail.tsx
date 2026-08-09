@@ -52,7 +52,7 @@ export const NavRail: React.FC<Props> = ({
 
       <div className="nav__footer">
         <span className="nav__footer-dot" />
-        <span>v{__APP_VERSION__}</span>
+        <span>UI v{__APP_VERSION__}</span>
         {onReviewLink && (
           <button
             className={`nav__review-link ${isReview ? 'is-active' : ''}`}
