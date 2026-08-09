@@ -15,6 +15,10 @@ export function useProductionBackendIdentity(): BackendRuntimeIdentity | null {
     let alive = true;
 
     async function load() {
+      if (!navigator.onLine) {
+        if (alive) setIdentity(null);
+        return;
+      }
       try {
         const url = `${PRODUCTION_BACKEND_MANIFEST_URL}?cb=${Date.now()}`;
         const response = await fetch(url, { cache: 'no-store' });
@@ -26,11 +30,17 @@ export function useProductionBackendIdentity(): BackendRuntimeIdentity | null {
       }
     }
 
+    const handleOnline = () => { void load(); };
+    const handleOffline = () => { if (alive) setIdentity(null); };
     void load();
     const timer = window.setInterval(() => { void load(); }, IDENTITY_POLL_MS);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
     return () => {
       alive = false;
       window.clearInterval(timer);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 

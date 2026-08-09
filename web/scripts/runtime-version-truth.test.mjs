@@ -6,6 +6,8 @@ import ts from 'typescript';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'src/domain/runtimeVersionTruth.ts'), 'utf8');
+const hookSource = fs.readFileSync(
+  path.join(root, 'src/hooks/useProductionBackendIdentity.ts'), 'utf8');
 const output = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: 'runtimeVersionTruth.ts',
@@ -46,5 +48,12 @@ for (const malformed of [
 }
 assert.equal(truth.runtimeVersionLabel('13.3.6', null), 'UI v13.3.6 · API UNKNOWN');
 assert.equal(truth.runtimeVersionLabel('malformed', identity), 'UI UNKNOWN · API v13.4.5');
+
+assert.match(hookSource, /if \(!navigator\.onLine\)[\s\S]*return;/);
+assert.ok(hookSource.indexOf('if (!navigator.onLine)') < hookSource.indexOf('await fetch('));
+assert.match(hookSource, /addEventListener\('online', handleOnline\)/);
+assert.match(hookSource, /addEventListener\('offline', handleOffline\)/);
+assert.match(hookSource, /removeEventListener\('online', handleOnline\)/);
+assert.match(hookSource, /removeEventListener\('offline', handleOffline\)/);
 
 console.log('runtime version truth tests passed');
