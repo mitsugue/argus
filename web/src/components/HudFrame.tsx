@@ -52,7 +52,7 @@ export const HudFrame: React.FC<Props> = ({ children, top, bottom }) => {
             <ArgusGlyph />
             A.R.G.U.S.
           </span>
-          <span className="hud-frame__ver">v{__APP_VERSION__} · PANOPTES</span>
+          <span className="hud-frame__ver">UI v{__APP_VERSION__} · PANOPTES</span>
         </div>
         <div className="hud-frame__meta">
           <span className="hud-frame__pill">
