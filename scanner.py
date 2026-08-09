@@ -15688,9 +15688,25 @@ _FOUNDATION_JOBS_FILE = os.path.join(
 _OSINT_INACCESSIBLE_TITLES = set()     # 参照不能になったタイトル(回収検知用・有界)
 
 
-_DURABLE_STATE = {"schemaVersion": "argus-durable-v3", "lastWriteAt": None,
-                  "lastRestoreAt": None, "integrityStatus": "unknown",
-                  "lastKnownGoodAt": None, "restoreSource": None}
+_DURABLE_STATE = {
+    "schemaVersion": "argus-durable-v3",
+    "lastAttemptAt": None,
+    "lastWriteAt": None,
+    "lastSuccessAt": None,
+    "lastFailureAt": None,
+    "lastFailureClass": None,
+    "lastFailureMessage": None,
+    "lastFailureStage": None,
+    "lastCheckpointError": None,
+    "writeCount": 0,
+    "successCount": 0,
+    "failureCount": 0,
+    "consecutiveFailureCount": 0,
+    "lastRestoreAt": None,
+    "integrityStatus": "unknown",
+    "lastKnownGoodAt": None,
+    "restoreSource": None,
+}
 _MISSION_WAL_FILE = _DURABILITY_PATHS["wal"]
 _MISSION_LEASE_FILE = _DURABILITY_PATHS["lease"]
 _MISSION_CURSOR_FILE = _DURABILITY_PATHS["cursor"]
@@ -15951,13 +15967,24 @@ def _osint_persist():
 
 
 def _osint_persist_locked():
+    attempt_at = _ai_now_iso()
+    stage = "source_snapshot_construction"
+    _DURABLE_STATE["lastAttemptAt"] = attempt_at
+    _DURABLE_STATE["writeCount"] = int(
+        _DURABLE_STATE.get("writeCount") or 0) + 1
     try:
         wal_state = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
         included_wal_sequence = int(wal_state.get("maximumSequence") or 0)
         _MISSION_BATCH_STATE["walAppliedSequence"] = included_wal_sequence
         blob = {"termOverlay": _OSINT_TERM_OVERLAY, "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
                 "urlCache": dict(list(_OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
-                "canaryLast": _OSINT_CANARY_LAST,
+                # caos-scan runs the backup tick and canary job in parallel.
+                # The 127 MiB legacy seal is deliberately streamed, so retaining
+                # this live dict let canary-run mutate the already-hashed graph
+                # before verified_checkpoint recomputed the source seal.  Freeze
+                # only this small, proven concurrent section; do not duplicate the
+                # generation-sized checkpoint graph in the parent process.
+                "canaryLast": copy.deepcopy(_OSINT_CANARY_LAST),
                 "rpsHistory": _OSINT_RPS_HISTORY[-40:],
                 "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
                 "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
@@ -16004,11 +16031,13 @@ def _osint_persist_locked():
                 "soakLastPersistAt": _ai_now_iso()}
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                      f"checkpoint-{os.getpid()}")
+        stage = "source_snapshot_seal"
         sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
         verified_wal_sequence = _verified_persistent_wal_sequence()
         allow_wal_compaction = bool(
             _REMOTE_CYCLE.get("readBackVerified") is True and
             verified_wal_sequence > 0)
+        stage = "source_integrity_and_atomic_write"
         checkpoint = argus_tick_durability.verified_checkpoint(
             _OSINT_PERSIST_FILE, sealed_blob, job_id=job_id,
             wal_path=_MISSION_WAL_FILE,
@@ -16025,6 +16054,7 @@ def _osint_persist_locked():
         # unsealed owner before the V2 writer consumes each section so large
         # transient arenas can be returned at the true lifecycle boundary.
         del blob
+        stage = "durability_metadata"
         metadata = _persist_durability_metadata()
         checkpoint["metadata"] = metadata
         # Stage 1 is deliberately non-authoritative. The already-verified
@@ -16035,10 +16065,16 @@ def _osint_persist_locked():
         # parent's final generation-sized legacy reference before spawning it;
         # no checkpoint payload crosses the process boundary.
         del sealed_blob
+        stage = "checkpoint_v2_disabled_adapter"
         checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(checkpoint)
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
         _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
+        _DURABLE_STATE["lastSuccessAt"] = _DURABLE_STATE["lastWriteAt"]
+        _DURABLE_STATE["successCount"] = int(
+            _DURABLE_STATE.get("successCount") or 0) + 1
+        _DURABLE_STATE["consecutiveFailureCount"] = 0
         _DURABLE_STATE["integrityStatus"] = "ok"
+        _DURABLE_STATE["lastCheckpointError"] = None
         _DURABLE_STATE["lastCheckpoint"] = checkpoint
         _DURABLE_STORAGE_STATUS["lastCheckpointVerification"] = \
             checkpoint.get("verifiedAt")
@@ -16061,8 +16097,25 @@ def _osint_persist_locked():
             })
         return checkpoint
     except Exception as exc:
+        failure_at = _ai_now_iso()
+        raw_message = str(exc)
+        safe_message = (raw_message if re.fullmatch(
+            r"[a-z][a-z0-9_:-]{0,119}", raw_message or "")
+            else f"{type(exc).__name__}:redacted")
         _DURABLE_STATE["integrityStatus"] = "write_failed"
         _DURABLE_STATE["lastCheckpointError"] = type(exc).__name__
+        _DURABLE_STATE["lastFailureAt"] = failure_at
+        _DURABLE_STATE["lastFailureClass"] = type(exc).__name__
+        _DURABLE_STATE["lastFailureMessage"] = safe_message
+        _DURABLE_STATE["lastFailureStage"] = stage
+        _DURABLE_STATE["failureCount"] = int(
+            _DURABLE_STATE.get("failureCount") or 0) + 1
+        _DURABLE_STATE["consecutiveFailureCount"] = int(
+            _DURABLE_STATE.get("consecutiveFailureCount") or 0) + 1
+        add_log(
+            "[legacy-checkpoint] write failed "
+            f"stage={stage} errorClass={type(exc).__name__} "
+            f"error={safe_message}")
         return {"verified": False, "errorClass": type(exc).__name__}
 
 
