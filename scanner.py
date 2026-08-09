@@ -66,6 +66,7 @@ import argus_decision_quality  # Decision Quality/Backtest foundation (pure, v11
 import argus_action_priority  # Action Priority engine (pure, v11.12.0 — attention routing, never trade orders)
 import argus_session_brief  # Morning/Session Brief engine (pure, v11.13.0 — 今日の作戦, never trade orders)
 import argus_notifications  # Notification engine (pure, v11.14.0 — device-local delivery; server stores none)
+import argus_notification_eligibility  # Owner-universe Push firewall (pure; private membership, fail-closed)
 import argus_learning_review  # Learning/Decision Review (pure, v11.15.0 — device-local aggregation; sample discipline)
 import argus_backup_safety  # Backup Safety/Vault Guard (pure, v11.16.0 — device-side; server knows nothing)
 import argus_scenario  # Scenario Engine (pure, v11.17.0 — 条件付き分岐; 確率は帯のみ・%断定禁止)
@@ -655,14 +656,27 @@ def add_log(msg):
         state["log"] = logs[-50:]
         save_state(state)
 
-def push_notify(title, msg, priority="default"):
-    if not SCHEDULED_RUN: return
+def push_notify(title, msg, priority="default", *, subject_symbol=None,
+                notification_scope=None):
+    """Legacy ntfy transport with the same owner-universe firewall as events.
+
+    Phase/digest/system messages remain available.  Any call whose primary
+    subject is an individual security must name ``subject_symbol`` and is denied
+    unless the private Layer-2B membership resolves it as held or marked.
+    """
+    if not SCHEDULED_RUN:
+        return False
+    decision = _push_eligibility(notification_scope, subject_symbol)
+    if not decision["pushEligible"]:
+        return False
     try:
         requests.post(f"https://ntfy.sh/{NTFY_CHANNEL}", data=msg.encode("utf-8"),
             headers={"Title": title, "Priority": priority,
                      "Tags": "chart_with_upwards_trend" if "📈" in title else "warning"}, timeout=10)
+        return True
     except Exception as e:
         add_log(f"[WARN] ntfy failed: {e}")
+        return False
 
 # ━━━ Finnhub API Functions ━━━
 def finnhub_get(endpoint, params=None):
@@ -1222,7 +1236,9 @@ def phase1_broad_scan():
     news = get_news(); sentinel = sentinel_check(news)
     state["sentinel"] = sentinel; state["news"] = [{"title": n.get("title","")} for n in news[:15]]
     if sentinel.get("action") == "SELL_ALL" and not DRY_RUN_MODE:
-        add_log("🚨 SENTINEL: SELL_ALL"); push_notify("🚨 SELL ALL", sentinel.get("reason",""), priority="urgent")
+        add_log("🚨 SENTINEL: SELL_ALL"); push_notify(
+            "🚨 SELL ALL", sentinel.get("reason", ""), priority="urgent",
+            notification_scope="portfolio")
         state["phase"] = 1; save_state(state); return
     leaks = detect_leaks(news)
     if leaks: add_log(f"  🔍 {len(leaks)} leak signals")
@@ -1269,7 +1285,9 @@ Return ONLY JSON array: [{{"symbol":"TICKER","name":"Company Name","change_pct":
     state["dry_run"] = DRY_RUN_MODE
     state["market_condition"] = f"{'🔬 DRY RUN (Closed Market)' if DRY_RUN_MODE else mode_label}: {len(movers)} stocks"
     state["macro_summary"] = macro_text; save_state(state)
-    push_notify(f"📡 Ph.1 Complete{' [DRY RUN]' if DRY_RUN_MODE else ''}", f"TOP20 from {len(movers)}\nVIX: {finnhub.get('vix','?')}")
+    push_notify(f"📡 Ph.1 Complete{' [DRY RUN]' if DRY_RUN_MODE else ''}",
+                f"TOP20 from {len(movers)}\nVIX: {finnhub.get('vix','?')}",
+                notification_scope="digest")
 
 # ━━━ Phase 2: Re-Scoring ━━━
 def phase2_rescore():
@@ -1309,7 +1327,8 @@ Return ONLY JSON array of TOP 10: [{{"symbol":"TICKER","name":"Name","score":0-1
         add_log(f"[ERROR] Claude Ph.2: {e}"); top10 = top20[:10]
     add_log(f"✅ Ph.2 complete: {len(top10)} candidates")
     state["phase"] = 2; state["top10"] = top10; save_state(state)
-    push_notify("🔬 Ph.2 Complete", f"TOP10 from {len(top20)}")
+    push_notify("🔬 Ph.2 Complete", f"TOP10 from {len(top20)}",
+                notification_scope="digest")
 
 # ━━━ Phase 3: Cross-Check ━━━
 def phase3_crosscheck():
@@ -1365,7 +1384,9 @@ Return ONLY JSON array TOP5: [{{"symbol":"TICKER","name":"Name","score":0-100,"c
     top5 = filtered[:5]
     add_log(f"✅ Ph.3 complete: {len(top5)} after Gemini filter")
     state["phase"] = 3; state["top5"] = top5; state["whale_signals"] = whale_signals; save_state(state)
-    push_notify("⚡ Ph.3 Complete", "\n".join([f"{s.get('symbol','')} ({s.get('combined_score','?')})" for s in top5]))
+    push_notify("⚡ Ph.3 Complete",
+                "\n".join([f"{s.get('symbol','')} ({s.get('combined_score','?')})" for s in top5]),
+                notification_scope="digest")
 
 # ━━━ Phase 4: Final TOP3 ━━━
 def phase4_final_top3():
@@ -1401,7 +1422,8 @@ def phase4_final_top3():
     top3 = scored[:3]
     if not top3:
         add_log("⏭️ All killed. Skip today.")
-        push_notify("⏭️ Skip", "No candidates passed.", priority="default")
+        push_notify("⏭️ Skip", "No candidates passed.", priority="default",
+                    notification_scope="system")
         state["phase"] = 4; state["top3_final"] = []; save_state(state); return
     medal = ["🥇","🥈","🥉"]
     for i, s in enumerate(top3):
@@ -1409,10 +1431,13 @@ def phase4_final_top3():
         margin_str = f"\n⚠️ Margin 20%: -${s.get('margin_drop_pct',0):.1f}% (${s.get('margin_deadline','')})" if s.get("margin_deadline") else ""
         msg = f"{medal[i]} {sym}\nScore:{s.get('final_score',0)} Grade:{grade}\n{s.get('reason','')}\nStop: {s.get('sell_trigger','')}{margin_str}"
         add_log(f"  {medal[i]} {sym} Score:{s.get('final_score',0)} Grade:{grade}")
-        push_notify(f"{medal[i]} TOP3 #{i+1}: {sym}", msg, priority="high" if i==0 else "default")
+        push_notify(f"{medal[i]} TOP3 #{i+1}: {sym}", msg,
+                    priority="high" if i==0 else "default",
+                    subject_symbol=sym, notification_scope="individual_security")
     if margin_info and margin_info.get("alert_level") in ("URGENT","HIGH"):
         push_notify("⚠️ MARGIN ALERT", f"Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}%",
-            priority="urgent" if margin_info["alert_level"]=="URGENT" else "high")
+            priority="urgent" if margin_info["alert_level"]=="URGENT" else "high",
+            notification_scope="portfolio")
     state["phase"] = 4; state["top3_final"] = top3; state["dry_run"] = DRY_RUN_MODE
     state["order_book"] = {s.get("symbol",""): ob_results.get(s.get("symbol",""),{}) for s in top3}
     if margin_info: state["margin_alert"] = f"Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}% {margin_info['alert_level']}"
@@ -1474,7 +1499,9 @@ def phase5_post_open():
             add_log(f"  {'📈' if p.get('change_pct',0)>=0 else '📉'} {sym} {'+' if p.get('change_pct',0)>=0 else ''}{p.get('change_pct',0)}% Grade:{contexts[sym]['catalyst_grade']}")
     news = get_news(); sentinel_now = sentinel_check(news)
     if sentinel_now.get("action") == "SELL_ALL":
-        push_notify("🚨 SELL ALL", sentinel_now.get("reason",""), priority="urgent"); add_log("🚨 SELL_ALL!"); return
+        push_notify("🚨 SELL ALL", sentinel_now.get("reason", ""),
+                    priority="urgent", notification_scope="portfolio")
+        add_log("🚨 SELL_ALL!"); return
     decided = {}
     for i in range(3):
         time.sleep(600); elapsed = (i+1)*10; prices_now = get_realtime_prices(codes)
@@ -1515,14 +1542,19 @@ def phase5_post_open():
             if action == "EXIT_ALL":
                 reason = "Thesis broken" if ctx.get("thesis_broken") else f"ExitScore:{exit_sc}"
                 add_log(f"  🚨 {sym} EXIT → {reason}")
-                push_notify(f"🚨 STOP: {sym}", f"{elapsed}min: {sign}{p.get('change_pct',0)}%\n{reason}", priority="urgent")
+                push_notify(f"🚨 STOP: {sym}", f"{elapsed}min: {sign}{p.get('change_pct',0)}%\n{reason}",
+                            priority="urgent", subject_symbol=sym,
+                            notification_scope="individual_security")
                 decided[sym] = {"action": action, "reason": reason, "pnl": p.get("change_pct",0)}
             elif action == "TAKE_PROFIT":
                 add_log(f"  💰 {sym} PROFIT → +{p.get('change_pct',0)}%")
-                push_notify(f"💰 PROFIT: {sym}", f"{elapsed}min: +{p.get('change_pct',0)}%", priority="high")
+                push_notify(f"💰 PROFIT: {sym}", f"{elapsed}min: +{p.get('change_pct',0)}%",
+                            priority="high", subject_symbol=sym,
+                            notification_scope="individual_security")
                 decided[sym] = {"action": action, "reason": "Parabolic", "pnl": p.get("change_pct",0)}
             elif action == "HOLD" and ctx.get("recovered_to_positive") and i > 0:
-                push_notify(f"✅ HOLD: {sym}", f"{elapsed}min: {sign}{p.get('change_pct',0)}% Grade:{ctx['catalyst_grade']}")
+                push_notify(f"✅ HOLD: {sym}", f"{elapsed}min: {sign}{p.get('change_pct',0)}% Grade:{ctx['catalyst_grade']}",
+                            subject_symbol=sym, notification_scope="individual_security")
     # Final Claude eval
     prices_final = get_realtime_prices(codes)
     top3_text = "\n".join([f"{s.get('symbol','')} Grade:{contexts.get(s.get('symbol',''),{}).get('catalyst_grade','?')} State:{contexts.get(s.get('symbol',''),{}).get('state','?')} "
@@ -1557,7 +1589,9 @@ def phase5_post_open():
                 state["margin_alert"] = f"Margin:{mi['margin_pct']:.1f}% Drop:{mi['allowed_drop_pct']:.1f}% {mi['alert_level']}"
         state["phase"] = 5; state["post_open_result"] = result; state["realtime_prices"] = prices_final
         state["exit_contexts"] = {k: {kk: vv for kk, vv in v.items() if isinstance(vv, (str,int,float,bool))} for k, v in contexts.items()}
-        save_state(state); push_notify("📈 30min Complete", msg); add_log(f"✅ Ph.5 complete: {result.get('overall','')}")
+        save_state(state)
+        push_notify("📈 30min Complete", msg, notification_scope="digest")
+        add_log(f"✅ Ph.5 complete: {result.get('overall','')}")
     except Exception as e:
         add_log(f"[ERROR] Ph.5 final: {e}")
 
@@ -2544,6 +2578,21 @@ def api_argus_watchlist_sync():
         if configured:
             try:
                 _layer2b_persist_private(snap)
+                # Successful owner intent becomes authoritative immediately;
+                # removals must not remain Push-eligible for another cache TTL.
+                _OWNER_SYMS_CACHE.update({
+                    "syms": {
+                        str(m.get("symbol") or "").upper(): {
+                            "ownerState": m.get("ownerState") or "watch",
+                            "downsideStrictness": m.get("downsideStrictness") or "normal",
+                            "priority": m.get("priority") or "normal",
+                        }
+                        for m in (snap.get("members") or [])
+                        if str(m.get("symbol") or "").strip()
+                    },
+                    "ts": time.time(),
+                    "status": "fresh",
+                })
             except Exception as pe:
                 status = "failed"
                 persist_detail = f"{type(pe).__name__}: {str(pe)[:140]}"
@@ -4004,12 +4053,15 @@ def _mover_push_allowed(market):
         return _us_market_open()
     return True
 
-def _event_ntfy(env):
+def _event_ntfy(env, *, notification_scope="individual_security", eligibility=None):
     """Push an event to the user's phone (ntfy). Topic from env only — never in
     code/logs. Title ASCII (header limit); Japanese reason in the UTF-8 body."""
     topic = os.environ.get("NTFY_TOPIC", "")
     if not topic:
-        return
+        return False
+    decision = eligibility or _push_eligibility(notification_scope, env.get("symbol"))
+    if not decision["pushEligible"]:
+        return False
     sev = env.get("severity", 1)
     # Downside incidents get the upgraded, actionable message (cause + override +
     # next condition) instead of a bare "急落しています" (v10.98).
@@ -4028,7 +4080,8 @@ def _event_ntfy(env):
                                    "Priority": "urgent" if sev >= 5 else "high"}, timeout=10)
         except Exception:
             pass
-        return
+            return False
+        return True
     title = f"ARGUS: {env.get('symbol')} {env.get('eventType')}"
     # Company name goes in the UTF-8 body (the Title header must stay ASCII).
     nm = env.get("nameJa")
@@ -4043,7 +4096,8 @@ def _event_ntfy(env):
                       headers={"Title": title, "Tags": "rotating_light" if sev >= 5 else "warning",
                                "Priority": "urgent" if sev >= 5 else "high"}, timeout=10)
     except Exception:
-        pass
+        return False
+    return True
 
 _DOWNSIDE_EVENT_TYPES = {"PRICE_CRASH", "LIMIT_DOWN_PROXIMITY", "MOMENTUM_ACCELERATION", "FLOW_REVERSAL"}
 
@@ -4119,7 +4173,13 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
             notify = False                       # caller knows the data is stale/non-actionable
         out = env
     if notify:
-        _event_ntfy(out)
+        # Every event producer (bridge anomalies, movers, breakouts, volatility,
+        # themes/news routed into the event backbone) converges here.  The event
+        # remains available for background analysis even when owner Push is
+        # suppressed.
+        eligibility = _push_eligibility("individual_security", out.get("symbol"))
+        if eligibility["pushEligible"]:
+            _event_ntfy(out, eligibility=eligibility)
     return out                                   # newly-stored env (for dossier build)
 
 def _process_events_from_push(market, rows):
@@ -4859,7 +4919,8 @@ def api_argus_event_test_notify():
     add_log(f"[event] test-notify fired ({_EVENT_TEST_STATE['count']}/{_EVENT_TEST_DAILY_CAP} today)")
     _event_ntfy({"symbol": "TEST", "eventType": "TEST_NOTIFICATION", "market": "—",
                  "session": "test", "severity": 4, "recommendedPosture": "WATCH",
-                 "reasonJa": "ARGUS 24/7監視の通知テストです。これが届けば設定完了。"})
+                 "reasonJa": "ARGUS 24/7監視の通知テストです。これが届けば設定完了。"},
+                notification_scope="system")
     return jsonify({"sent": True, "noteJa": "テスト通知を送信しました。スマホを確認してください。"})
 
 _EVENT_SNAP_META = {"data": None, "expires": 0.0}
@@ -4894,6 +4955,14 @@ def api_argus_event_backbone_status():
         "lastDetectionAt": _EVENT_STATE["lastDetectionAt"], "lastEventAt": _EVENT_STATE["lastEventAt"],
         "detectionsThisProcess": _EVENT_STATE["detections"],
         "ntfyConfigured": bool(os.environ.get("NTFY_TOPIC")), "ntfyMinSeverity": _EVENT_NTFY_MIN_SEV,
+        "pushEligibility": {
+            "allowedCount": _PUSH_GATE_STATS["allowed"],
+            "blockedCount": _PUSH_GATE_STATS["blocked"],
+            "reasonCounts": dict(_PUSH_GATE_STATS["byReason"]),
+            "membershipStatus": _OWNER_SYMS_CACHE.get("status") or "unknown",
+            "membershipCount": len(_OWNER_SYMS_CACHE.get("syms") or {}),
+            "privateUniverseExposed": False,
+        },
         "sessionJp": _jp_market_open(), "sessionUs": _us_market_open(),
         # v10.42 durable store status
         "persistenceEnabled": _EVENT_PERSISTENCE_ENABLED, "restoredOnBoot": _EVENTS_RESTORED["done"],
@@ -14273,7 +14342,7 @@ _THEME_WORDS_JA = {
     "defense_heavy": ["防衛", "地政学", "ミサイル", "軍事", "重工"],
 }
 _DOWNSIDE_HIGH_BETA = {"5803", "285A", "5801", "6920", "6857"}
-_OWNER_SYMS_CACHE = {"syms": None, "ts": 0.0}
+_OWNER_SYMS_CACHE = {"syms": None, "ts": 0.0, "status": "unknown"}
 _OWNER_SYMS_TTL = 600
 _DOWNSIDE_CACHE = {"data": None, "expires": 0.0}
 _DOWNSIDE_TTL = 60    # restored 180→60 (v10.126): Render upgraded to Standard 2GB
@@ -14288,11 +14357,19 @@ def _owner_symbols_cached():
     flags — never quantity/cost/P/L. Owner-gated read; degrades to {} if absent.
     NOTE: returns a dict, so `sym in owner` still works (checks keys)."""
     now = time.time()
-    if _OWNER_SYMS_CACHE["syms"] is not None and now - _OWNER_SYMS_CACHE["ts"] < _OWNER_SYMS_TTL:
+    age = now - float(_OWNER_SYMS_CACHE.get("ts") or 0.0)
+    if _OWNER_SYMS_CACHE["syms"] is not None and age < _OWNER_SYMS_TTL:
         return _OWNER_SYMS_CACHE["syms"]
-    flags = {}
+    if _OWNER_SYMS_CACHE.get("status") == "unavailable" and age < _OWNER_SYMS_TTL:
+        return {}
     try:
-        for mrow in (_layer2b_read_latest() or []):
+        snapshot = _layer2b_read_latest()
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("members"), list):
+            raise ValueError("owner_membership_unavailable")
+        flags = {}
+        for mrow in snapshot["members"]:
+            if not isinstance(mrow, dict):
+                continue
             s = str(mrow.get("symbol") or "").upper()
             if s:
                 flags[s] = {
@@ -14301,10 +14378,36 @@ def _owner_symbols_cached():
                     "priority": mrow.get("priority") or "normal",
                 }
     except Exception:
-        flags = _OWNER_SYMS_CACHE["syms"] or {}
+        # A stale last-known universe must not authorize Push indefinitely.
+        # Clear the expired cache and fail closed until the private store can be
+        # read again.  Never log member symbols or exception text here.
+        _OWNER_SYMS_CACHE.update({"syms": None, "ts": now, "status": "unavailable"})
+        return {}
     _OWNER_SYMS_CACHE["syms"] = flags
     _OWNER_SYMS_CACHE["ts"] = now
+    _OWNER_SYMS_CACHE["status"] = "fresh"
     return flags
+
+
+_PUSH_GATE_STATS = {"allowed": 0, "blocked": 0, "byReason": {}}
+
+
+def _push_eligibility(scope, symbol=None):
+    """Resolve one private membership decision; expose aggregate counts only."""
+    if scope == argus_notification_eligibility.INDIVIDUAL_SECURITY:
+        owner = _owner_symbols_cached()
+        status = _OWNER_SYMS_CACHE.get("status") or "unknown"
+        decision = argus_notification_eligibility.evaluate_push_eligibility(
+            scope=scope, symbol=symbol, owner_membership=owner,
+            membership_status=status)
+    else:
+        decision = argus_notification_eligibility.evaluate_push_eligibility(
+            scope=scope, symbol=symbol)
+    bucket = "allowed" if decision["pushEligible"] else "blocked"
+    _PUSH_GATE_STATS[bucket] += 1
+    reason = decision["reason"]
+    _PUSH_GATE_STATS["byReason"][reason] = _PUSH_GATE_STATS["byReason"].get(reason, 0) + 1
+    return decision
 
 
 def _theme_peers_down(sym, by_sym):
