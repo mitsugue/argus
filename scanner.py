@@ -15697,6 +15697,10 @@ _DURABLE_STATE = {
     "lastFailureClass": None,
     "lastFailureMessage": None,
     "lastFailureStage": None,
+    # The pre-v13.4.7 production failure record was not checkpointed and
+    # cannot be reconstructed safely.  Keep that gap explicit while making
+    # all future most-recent-failure records durable.
+    "historicalGapBeforeFix": True,
     "lastCheckpointError": None,
     "writeCount": 0,
     "successCount": 0,
@@ -15707,6 +15711,115 @@ _DURABLE_STATE = {
     "lastKnownGoodAt": None,
     "restoreSource": None,
 }
+
+_CHECKPOINT_FAILURE_HISTORY_SCHEMA = \
+    "argus-checkpoint-failure-history-v1"
+_CHECKPOINT_FAILURE_CLASS_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_.]{0,119}$")
+_CHECKPOINT_FAILURE_TOKEN_RE = re.compile(
+    r"^[a-z][a-z0-9_:-]{0,119}$")
+
+
+def _checkpoint_failure_safe_message(error_class, message):
+    value = str(message or "")
+    if _CHECKPOINT_FAILURE_TOKEN_RE.fullmatch(value):
+        return value
+    safe_class = str(error_class or "CheckpointError")
+    if not _CHECKPOINT_FAILURE_CLASS_RE.fullmatch(safe_class):
+        safe_class = "CheckpointError"
+    return f"{safe_class}:redacted"
+
+
+def _checkpoint_failure_history_projection(success_at=None):
+    """Bounded, public-safe projection of the latest genuine failure only."""
+    successful_at = str(
+        success_at or _DURABLE_STATE.get("lastSuccessAt") or "")
+    try:
+        datetime.fromisoformat(successful_at.replace("Z", "+00:00"))
+    except ValueError:
+        successful_at = ""
+    occurred_at = str(_DURABLE_STATE.get("lastFailureAt") or "")
+    error_class = str(_DURABLE_STATE.get("lastFailureClass") or "")
+    stage = str(_DURABLE_STATE.get("lastFailureStage") or "")
+    if not (occurred_at and _CHECKPOINT_FAILURE_CLASS_RE.fullmatch(
+            error_class) and _CHECKPOINT_FAILURE_TOKEN_RE.fullmatch(stage)):
+        return {
+            "schemaVersion": _CHECKPOINT_FAILURE_HISTORY_SCHEMA,
+            "lastSuccessAt": successful_at[:40] or None,
+            "lastFailure": None,
+            "historicalGapBeforeFix": bool(
+                _DURABLE_STATE.get("historicalGapBeforeFix", True)),
+        }
+    try:
+        datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+    except ValueError:
+        return {
+            "schemaVersion": _CHECKPOINT_FAILURE_HISTORY_SCHEMA,
+            "lastSuccessAt": successful_at[:40] or None,
+            "lastFailure": None,
+            "historicalGapBeforeFix": bool(
+                _DURABLE_STATE.get("historicalGapBeforeFix", True)),
+        }
+    return {
+        "schemaVersion": _CHECKPOINT_FAILURE_HISTORY_SCHEMA,
+        "lastSuccessAt": successful_at[:40] or None,
+        "lastFailure": {
+            "at": occurred_at[:40],
+            "class": error_class,
+            "message": _checkpoint_failure_safe_message(
+                error_class, _DURABLE_STATE.get("lastFailureMessage")),
+            "stage": stage,
+        },
+        "historicalGapBeforeFix": bool(
+            _DURABLE_STATE.get("historicalGapBeforeFix", True)),
+    }
+
+
+def _restore_checkpoint_failure_history(value):
+    """Restore only validated, redacted history; never restore current error."""
+    if not isinstance(value, dict) or value.get("schemaVersion") != \
+            _CHECKPOINT_FAILURE_HISTORY_SCHEMA:
+        return False
+    _DURABLE_STATE["historicalGapBeforeFix"] = bool(
+        value.get("historicalGapBeforeFix", True))
+    successful_at = str(value.get("lastSuccessAt") or "")
+    if successful_at:
+        try:
+            datetime.fromisoformat(successful_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        _DURABLE_STATE["lastSuccessAt"] = successful_at[:40]
+        _DURABLE_STATE["lastKnownGoodAt"] = successful_at[:40]
+    # A verified checkpoint/remote snapshot is a recovered current state.
+    # Historical failure data must never be projected back as current health.
+    _DURABLE_STATE["lastCheckpointError"] = None
+    _DURABLE_STATE["integrityStatus"] = "ok"
+    failure = value.get("lastFailure")
+    if failure is None:
+        return True
+    if not isinstance(failure, dict):
+        return False
+    occurred_at = str(failure.get("at") or "")
+    error_class = str(failure.get("class") or "")
+    stage = str(failure.get("stage") or "")
+    try:
+        datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if not _CHECKPOINT_FAILURE_CLASS_RE.fullmatch(error_class) or not \
+            _CHECKPOINT_FAILURE_TOKEN_RE.fullmatch(stage):
+        return False
+    current_at = str(_DURABLE_STATE.get("lastFailureAt") or "")
+    if current_at and current_at > occurred_at:
+        return True
+    _DURABLE_STATE.update({
+        "lastFailureAt": occurred_at[:40],
+        "lastFailureClass": error_class,
+        "lastFailureMessage": _checkpoint_failure_safe_message(
+            error_class, failure.get("message")),
+        "lastFailureStage": stage,
+    })
+    return True
 _MISSION_WAL_FILE = _DURABILITY_PATHS["wal"]
 _MISSION_LEASE_FILE = _DURABILITY_PATHS["lease"]
 _MISSION_CURSOR_FILE = _DURABILITY_PATHS["cursor"]
@@ -15994,6 +16107,8 @@ def _osint_persist_locked():
                     _FORMAL_BENCHMARK_V2),
                 "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
                 "schemaVersion": _DURABLE_STATE["schemaVersion"],
+                "checkpointFailureHistory":
+                    _checkpoint_failure_history_projection(attempt_at),
                 "soak": copy.deepcopy(_SOAK),
                 "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
                 "soakControl": dict(_SOAK_CONTROL),
@@ -16098,10 +16213,8 @@ def _osint_persist_locked():
         return checkpoint
     except Exception as exc:
         failure_at = _ai_now_iso()
-        raw_message = str(exc)
-        safe_message = (raw_message if re.fullmatch(
-            r"[a-z][a-z0-9_:-]{0,119}", raw_message or "")
-            else f"{type(exc).__name__}:redacted")
+        safe_message = _checkpoint_failure_safe_message(
+            type(exc).__name__, str(exc))
         _DURABLE_STATE["integrityStatus"] = "write_failed"
         _DURABLE_STATE["lastCheckpointError"] = type(exc).__name__
         _DURABLE_STATE["lastFailureAt"] = failure_at
@@ -16442,6 +16555,8 @@ def _osint_restore_once():
     _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
     _DURABLE_STATE["restoreSource"] = source
     try:
+        _restore_checkpoint_failure_history(
+            blob.get("checkpointFailureHistory"))
         for k, v in (blob.get("termOverlay") or {}).items():
             if isinstance(v, list):
                 cur = _OSINT_TERM_OVERLAY.get(k) or []
@@ -21583,6 +21698,8 @@ def api_argus_osint_memory_snapshot():
                                      _DURABLE_STATE.get("integrityStatus"),
                                      "restoreSource":
                                      _DURABLE_STATE.get("restoreSource")},
+                    "checkpointFailureHistory":
+                    _checkpoint_failure_history_projection(),
                     "missionState": {"count": len(_MISSIONS)},
                     "forecastStore": {"count": len(_FORECAST_LEDGER)},
                     "decisionLedger": {"forecastCount": len(_FORECAST_LEDGER),
