@@ -1,6 +1,7 @@
 # ARGUS US whole-market mover scan (v10.62). Polls /market-scan during US hours
-# so market-WIDE gainers/losers (beyond the watchlist) become 24/7 events + ntfy
-# alerts. Admin-token gated. No-op until ALPHAVANTAGE_API_KEY is set on Render
+# so market-WIDE gainers/losers become 24/7 background events. Direct ntfy is
+# owner-universe gated by the backend; unselected movers remain analysis-only.
+# Admin-token gated. No-op until ALPHAVANTAGE_API_KEY is set on Render
 # (the scan returns status=missing_key and records nothing). Alpha Vantage free
 # tier = 25 req/day, so every 30 min within the US session stays well under.
 name: market-watch
@@ -13,8 +14,8 @@ on:
     # the public endpoint never fetches (serves cache).
     - cron: '*/15 14-19 * * 1-5'
     # JP session sweep: every 30 min 00:00–06:00 UTC (09:00–15:00 JST) Mon–Fri,
-    # so JP whole-market movers are detected + pushed WHILE the TSE is open (via
-    # Yahoo ~20min-delayed all-market) — actionable, not hours after the close.
+    # so JP whole-market movers are detected WHILE the TSE is open (via Yahoo
+    # ~20min-delayed all-market); only held/marked subjects may reach Push.
     # US is closed in this window, so the US/Alpha-Vantage leg no-ops (no quota use).
     - cron: '*/30 0-6 * * 1-5'
     # Post-JP-close EOD sweep: 07:30 + 09:00 UTC (16:30 / 18:00 JST) Mon–Fri, so
