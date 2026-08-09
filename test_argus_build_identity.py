@@ -24,7 +24,7 @@ def manifest(sha=OLD, deployed_at="2026-07-30T00:00:00Z"):
         "buildSha": sha,
         "version": "13.3.6",
         "deployedAt": deployed_at,
-        "deploymentId": "deploy-1",
+        "deploymentId": "dep-123abc",
         "verifiedHealth": True,
         "verifiedReady": True,
     }
@@ -40,10 +40,12 @@ class BuildIdentityResolutionTests(unittest.TestCase):
         grace=900,
         error=None,
         static="",
+        backend_version="",
     ):
         return identity.resolve_identity(
             manifest=manifest() if trusted is None else trusted,
             backend_sha=backend,
+            backend_version=backend_version,
             state=state or {},
             now_iso=now,
             grace_seconds=grace,
@@ -60,6 +62,8 @@ class BuildIdentityResolutionTests(unittest.TestCase):
         self.assertEqual(state["lastVerifiedSha"], OLD)
         self.assertEqual(
             state["lastManifestDeployedAt"], "2026-07-30T00:00:00Z")
+        self.assertEqual(state["lastRenderDeploymentId"], "dep-123abc")
+        self.assertEqual(decision["renderDeploymentId"], "dep-123abc")
 
     def test_frontend_or_pages_main_change_is_irrelevant(self):
         first, state = self.resolve()
@@ -184,6 +188,21 @@ class BuildIdentityResolutionTests(unittest.TestCase):
         malformed, _ = self.resolve(backend="notasha")
         self.assertEqual(short["errorClass"], "backend_build_unavailable")
         self.assertEqual(malformed["status"], "failure")
+
+    def test_observed_backend_version_must_match_manifest(self):
+        decision, _ = self.resolve(backend_version="13.3.5")
+        self.assertEqual(decision["status"], "failure")
+        self.assertEqual(decision["errorClass"], "backend_version_mismatch")
+
+    def test_render_deployment_alias_mismatch_fails_closed(self):
+        bad = manifest()
+        bad["renderDeploymentId"] = "dep-other1"
+        decision, _ = self.resolve(trusted=bad)
+        self.assertEqual(decision["status"], "failure")
+        self.assertEqual(
+            decision["errorClass"],
+            "manifest_deployment_identity_mismatch",
+        )
 
 
 class BuildIdentityDeploymentContractTests(unittest.TestCase):

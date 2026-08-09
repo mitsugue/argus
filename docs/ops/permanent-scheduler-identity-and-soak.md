@@ -27,24 +27,27 @@ deployment, Render restart, EC2 restart, manual workflow, or manual tick.
 1. A backend-sensitive PR is merged. The resulting `main` merge commit
    (`git rev-parse HEAD` in the push checkout), not the pre-merge PR head and
    not a later moving `main`, becomes this workflow run's immutable candidate.
-2. Render performs its normal deploy independently. This repository workflow
-   never calls Render and never restarts a service.
+2. Render performs its normal deploy independently. The publication workflow
+   makes read-only `GET /v1/services/{serviceId}/deploys` calls; it never
+   deploys or restarts a service.
 3. `.github/workflows/publish-production-release-manifest.yml` keeps that
-   candidate in its `target_sha` output and polls public `GET /healthz` and
-   `GET /readyz` for exact 40-character equality with it and for version match.
-4. Only after both checks pass, `scripts/production_release_manifest.py`
+   candidate in its `target_sha` output and resolves exactly one live Render
+   deployment whose commit ID equals the full candidate SHA.
+4. It then polls public `GET /healthz` and `GET /readyz` for exact
+   40-character equality with the candidate and for version match.
+5. Only after all three checks pass, `scripts/production_release_manifest.py`
    creates the validated public-safe manifest.
-5. The manifest receives that same immutable `target_sha`; its exact bytes are
+6. The manifest receives that same immutable `target_sha`; its exact bytes are
    committed to the separate `production-release` branch
    at `production/argus-backend.json`. Frontend-only commits and failed deploys
    do not change that branch.
-6. EC2 and GitHub backup workflows compare the manifest SHA (trusted) with the
+7. EC2 and GitHub backup workflows compare the manifest SHA (trusted) with the
    backend health SHA (observed). The source label is
    `production_release_manifest`.
-7. A matching manifest clears transition state and advances
+8. A matching manifest clears transition state and advances
    `lastVerifiedSha`. A new manifest that is not live yet produces a bounded
    `deployment_transition` skip. Expiry fails closed.
-8. During manifest outage, only a matching `lastVerifiedSha` may continue in
+9. During manifest outage, only a matching `lastVerifiedSha` may continue in
    observable degraded mode. A static SHA is first-install/emergency bootstrap
    only and cannot override verified state.
 
@@ -56,7 +59,8 @@ The manifest requires:
 - full 40-character `buildSha`
 - semantic `version`
 - timezone-qualified `deployedAt`
-- public-safe `deploymentId`
+- `deploymentId` containing the actual Render `dep-*` identifier
+- optional explicit `renderDeploymentId`, which must equal `deploymentId`
 - `verifiedHealth: true`
 - `verifiedReady: true`
 
@@ -65,6 +69,52 @@ service/environment, missing verification,
 future timestamps, cached timestamp regression, and secret-shaped keys fail
 closed. A rollback is valid when it has a newer `deployedAt` and its older SHA
 matches the actually restored production build.
+
+`github-main-*`, a GitHub Actions run ID, a guessed ID, and a previous Render
+deployment ID are never accepted as Render deployment identity. The GitHub
+publication run ID is recorded separately in the manifest commit subject and
+Actions audit trail. The manifest Git commit is commit-aware publication
+evidence and cannot be embedded in the bytes that determine that same commit;
+the publication verifier reports it as `authoritativeCommit`.
+
+## Publisher credentials and fail-closed behavior
+
+The GitHub environment `production-release-manifest` must contain the secret
+`RENDER_API_KEY` with read access to service
+`srv-d8j2hts8aovs738s1in0`. The secret is used only as a bearer credential for
+Render's list-deployments GET endpoint and is never written to the manifest,
+logs, artifacts, or repository.
+
+Natural push publication has no fallback. It waits up to 1,200 seconds for one
+matching deployment to become `live` and fails on a failed deployment, a
+non-live terminal state, a SHA mismatch, or multiple live matches. It never
+publishes a placeholder while Render is building.
+
+After pushing the external branch, publication is verified in two stages:
+
+1. GitHub's commit-aware ref and contents APIs must return the exact expected
+   bytes from the exact `production-release` branch head.
+2. The mutable raw URL is polled for at most 300 seconds until it returns those
+   exact bytes.
+
+A stale raw response does not trigger another publication. Authoritative
+write failure and public raw convergence timeout are separate failures.
+
+## Same-SHA Render configuration deployments
+
+A Render configuration change can produce a new `dep-*` ID without a Git push
+or a new build SHA. After the new deployment is known to be live, the owner
+uses the existing `workflow_dispatch` path once with:
+
+- `target_sha`: the unchanged full production SHA;
+- `deployment_id`: the new exact Render `dep-*` ID.
+
+The workflow verifies through the Render API that this exact ID is live and
+belongs to that exact SHA, then repeats health/readiness verification and
+publishes the new identity. A stale old ID, an ID for a different SHA, or a
+non-live ID fails closed. No fake Git SHA or publication-run deployment ID is
+created. Repeating the exact same SHA/Render ID is idempotent: the existing
+`deployedAt` is preserved and no new manifest commit is made.
 
 ## Staged EC2 installation
 

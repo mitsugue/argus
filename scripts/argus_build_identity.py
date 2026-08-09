@@ -78,6 +78,7 @@ def resolve_identity(
     *,
     manifest: dict[str, Any] | None,
     backend_sha: str,
+    backend_version: str = "",
     state: dict[str, Any],
     now_iso: str,
     grace_seconds: int,
@@ -86,6 +87,12 @@ def resolve_identity(
 ) -> Tuple[dict[str, Any], dict[str, Any]]:
     """Pure production-manifest state machine used by EC2 and tests."""
     state = dict(state) if isinstance(state, dict) else {}
+    if manifest is not None and not manifest_error:
+        try:
+            manifest = validate_manifest(manifest, now_iso=now_iso)
+        except ManifestValidationError as exc:
+            manifest = None
+            manifest_error = str(exc)
     backend_sha = _valid_observed_sha(backend_sha)
     if not backend_sha:
         return ({
@@ -129,6 +136,25 @@ def resolve_identity(
         }, state)
 
     deployed_at = str((manifest or {}).get("deployedAt") or "")
+    expected_version = str((manifest or {}).get("version") or "")
+    backend_version = str(backend_version or "").strip()
+    render_deployment_id = str(
+        (manifest or {}).get("renderDeploymentId")
+        or (manifest or {}).get("deploymentId")
+        or ""
+    )
+    if backend_version and backend_version != expected_version:
+        return ({
+            "status": "failure",
+            "errorClass": "backend_version_mismatch",
+            "identitySource": "production_release_manifest",
+            "expectedBuildSha": trusted_sha,
+            "actualBuildSha": backend_sha,
+            "expectedBackendVersion": expected_version,
+            "actualBackendVersion": backend_version,
+            "renderDeploymentId": render_deployment_id,
+            "degraded": False,
+        }, state)
     if _matches(trusted_sha, backend_sha):
         state.update({
             "schemaVersion": 2,
@@ -136,6 +162,7 @@ def resolve_identity(
             "lastVerifiedAt": now_iso,
             "lastManifestDeployedAt": deployed_at,
             "lastDeploymentId": (manifest or {}).get("deploymentId"),
+            "lastRenderDeploymentId": render_deployment_id,
         })
         state.pop("transitionSha", None)
         state.pop("transitionStartedAt", None)
@@ -146,6 +173,7 @@ def resolve_identity(
             "expectedBuildSha": trusted_sha,
             "actualBuildSha": backend_sha,
             "buildMismatch": False,
+            "renderDeploymentId": render_deployment_id,
             "degraded": False,
         }, state)
 
@@ -169,6 +197,7 @@ def resolve_identity(
             "expectedBuildSha": trusted_sha,
             "actualBuildSha": backend_sha,
             "buildMismatch": True,
+            "renderDeploymentId": render_deployment_id,
             "transitionElapsedSeconds": elapsed,
             "degraded": False,
         }, state)
@@ -179,6 +208,7 @@ def resolve_identity(
         "expectedBuildSha": trusted_sha,
         "actualBuildSha": backend_sha,
         "buildMismatch": True,
+        "renderDeploymentId": render_deployment_id,
         "transitionElapsedSeconds": elapsed,
         "degraded": False,
     }, state)
@@ -313,11 +343,16 @@ def main() -> int:
             base + "/healthz", timeout=timeout, attempts=attempts)
         backend_sha = _valid_observed_sha(
             health.get("buildSha") if isinstance(health, dict) else "")
+        backend_version = str(
+            health.get("backendVersion") or health.get("appVersion") or ""
+        ) if isinstance(health, dict) else ""
     except RuntimeError:
         backend_sha = ""
+        backend_version = ""
     decision, next_state = resolve_identity(
         manifest=manifest,
         backend_sha=backend_sha,
+        backend_version=backend_version,
         state=state,
         now_iso=now_iso,
         grace_seconds=grace,

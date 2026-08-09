@@ -41,11 +41,14 @@ jobs:
             --timeout 60 --url "$BE/readyz")
           ACTUAL=$(printf '%s' "$HEALTH" | python3 -c \
             'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          ACTUAL_VERSION=$(printf '%s' "$HEALTH" | python3 -c \
+            'import json,sys; h=json.load(sys.stdin); print(h.get("backendVersion") or h.get("appVersion") or "")')
           IS_READY=$(printf '%s' "$READY" | python3 -c \
             'import json,sys; print(str(json.load(sys.stdin).get("ready") is True).lower())')
           [ -n "$ACTUAL" ] || { echo "backend build SHA missing"; exit 1; }
           [ "$IS_READY" = "true" ] || { echo "backend not ready"; exit 1; }
           echo "actualBackendSha=$ACTUAL" >> "$GITHUB_OUTPUT"
+          echo "actualBackendVersion=$ACTUAL_VERSION" >> "$GITHUB_OUTPUT"
           echo "backend health=ok ready=true build=$ACTUAL"
       - name: Resolve authoritative deployed backend
         id: resolve
@@ -56,6 +59,7 @@ jobs:
           python3 scripts/resolve_backend_identity.py \
             --manifest "$RUNNER_TEMP/production-release.json" \
             --actual-backend-sha "${{ steps.live.outputs.actualBackendSha }}" \
+            --actual-backend-version "${{ steps.live.outputs.actualBackendVersion }}" \
             --github-output "$GITHUB_OUTPUT"
       - name: Enforce identity classification
         run: |
@@ -236,6 +240,8 @@ jobs:
             --timeout 60 --url "$BE/readyz")
           ACTUAL=$(printf '%s' "$HEALTH" | python3 -c \
             'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          ACTUAL_VERSION=$(printf '%s' "$HEALTH" | python3 -c \
+            'import json,sys; h=json.load(sys.stdin); print(h.get("backendVersion") or h.get("appVersion") or "")')
           IS_READY=$(printf '%s' "$READY" | python3 -c \
             'import json,sys; print(str(json.load(sys.stdin).get("ready") is True).lower())')
           [ "$IS_READY" = "true" ] || { echo "backend not ready"; exit 1; }
@@ -245,10 +251,12 @@ jobs:
           python3 scripts/resolve_backend_identity.py \
             --manifest "$RUNNER_TEMP/production-release.json" \
             --actual-backend-sha "$ACTUAL" \
+            --actual-backend-version "$ACTUAL_VERSION" \
             --github-output "$GITHUB_OUTPUT"
           STATUS=$(python3 scripts/resolve_backend_identity.py \
             --manifest "$RUNNER_TEMP/production-release.json" \
-            --actual-backend-sha "$ACTUAL" |
+            --actual-backend-sha "$ACTUAL" \
+            --actual-backend-version "$ACTUAL_VERSION" |
             python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
           if [ "$STATUS" = "verified" ]; then
             echo "durabilityAllowed=true" >> "$GITHUB_OUTPUT"

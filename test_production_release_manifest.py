@@ -3,6 +3,7 @@ import pytest
 from scripts.production_release_manifest import (
     ManifestValidationError,
     create_manifest,
+    select_deployed_at,
     validate_manifest,
 )
 
@@ -18,7 +19,7 @@ def manifest(**overrides):
         "buildSha": SHA,
         "version": "13.3.6",
         "deployedAt": "2026-07-31T00:00:00Z",
-        "deploymentId": "deploy-1",
+        "deploymentId": "dep-abc123",
         "verifiedHealth": True,
         "verifiedReady": True,
     }
@@ -31,7 +32,7 @@ def test_create_requires_matching_health_ready_and_version():
         build_sha=SHA,
         version="13.3.6",
         deployed_at="2026-07-31T00:00:00Z",
-        deployment_id="deploy-1",
+        deployment_id="dep-abc123",
         health={
             "status": "ok",
             "buildSha": SHA,
@@ -39,7 +40,7 @@ def test_create_requires_matching_health_ready_and_version():
         },
         ready={"ready": True, "buildSha": SHA},
     )
-    assert value == manifest()
+    assert value == manifest(renderDeploymentId="dep-abc123")
 
 
 @pytest.mark.parametrize(
@@ -52,6 +53,12 @@ def test_create_requires_matching_health_ready_and_version():
         ({"verifiedHealth": False}, "manifest_health_not_verified"),
         ({"verifiedReady": False}, "manifest_ready_not_verified"),
         ({"deployedAt": "bad"}, "deployed_at_invalid"),
+        ({"deploymentId": "github-main-31283850019"},
+         "manifest_deployment_id_invalid"),
+        ({"renderDeploymentId": "dep-other1"},
+         "manifest_deployment_identity_mismatch"),
+        ({"renderDeploymentId": ""},
+         "manifest_render_deployment_id_invalid"),
     ],
 )
 def test_invalid_manifest_fails_closed(patch, error):
@@ -95,6 +102,24 @@ def test_public_manifest_contains_no_secret_material():
         assert word not in rendered
 
 
+def test_repeated_exact_identity_is_idempotent_but_new_dep_is_not():
+    existing = manifest()
+    assert select_deployed_at(
+        existing=existing,
+        build_sha=SHA,
+        version="13.3.6",
+        deployment_id="dep-abc123",
+        fallback="2026-07-31T01:00:00Z",
+    ) == "2026-07-31T00:00:00Z"
+    assert select_deployed_at(
+        existing=existing,
+        build_sha=SHA,
+        version="13.3.6",
+        deployment_id="dep-new123",
+        fallback="2026-07-31T01:00:00Z",
+    ) == "2026-07-31T01:00:00Z"
+
+
 @pytest.mark.parametrize(
     ("health_sha", "ready_sha", "error"),
     [
@@ -112,7 +137,7 @@ def test_manifest_creation_requires_exact_full_runtime_sha(
             build_sha=SHA,
             version="13.3.6",
             deployed_at="2026-07-31T00:00:00Z",
-            deployment_id="deploy-1",
+            deployment_id="dep-abc123",
             health={
                 "status": "ok",
                 "buildSha": health_sha,
