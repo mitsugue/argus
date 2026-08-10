@@ -117,7 +117,7 @@ import argus_memory_attribution     # bounded parent-process phase telemetry
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
-from flask import Flask, jsonify, request, make_response
+from flask import Flask, jsonify, request, make_response, g
 from collections import deque
 import hashlib
 import hmac
@@ -543,6 +543,47 @@ def add_no_cache(response):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    return response
+
+
+_MEMORY_HTTP_KNOWN_ROUTES = {
+    "/healthz", "/readyz", "/api/state",
+    "/api/argus/system-health", "/api/argus/ledger-health",
+    "/api/argus/research-missions",
+    "/api/argus/admin/memory-attribution",
+    "/api/argus/admin/missions/tick",
+}
+_MEMORY_HTTP_KNOWN_PREFIXES = (
+    "/api/argus/admin/checkpoint", "/api/argus/market",
+    "/api/argus/prediction", "/api/argus/osint",
+)
+
+
+@app.before_request
+def _memory_attribution_request_begin():
+    """Start a light scalar-only request sample; never retain request data."""
+    try:
+        rule = request.url_rule.rule if request.url_rule is not None else \
+            "unmatched"
+        known = (rule in _MEMORY_HTTP_KNOWN_ROUTES or
+                 any(rule.startswith(prefix)
+                     for prefix in _MEMORY_HTTP_KNOWN_PREFIXES))
+        g.argus_memory_operation = _MEMORY_OPERATIONS.begin(
+            kind="HTTP", name=f"{request.method} {rule}", known=known,
+            metadata={"missionActive": _mission_tick_context_active()})
+    except Exception:
+        g.argus_memory_operation = None
+
+
+@app.after_request
+def _memory_attribution_request_complete(response):
+    try:
+        _MEMORY_OPERATIONS.complete(
+            getattr(g, "argus_memory_operation", None),
+            metadata={"statusCode": int(response.status_code),
+                      "missionActive": _mission_tick_context_active()})
+    except Exception:
+        pass
     return response
 
 # ── Per-IP rate limit (v9.10) ────────────────────────────────────────
@@ -1658,7 +1699,10 @@ def api_run():
             elif phase == 4: phase4_final_top3()
             elif phase == 5: phase5_post_open()
         finally: BACKGROUND_TASK_RUNNING = False
-    threading.Thread(target=run_bg, daemon=True).start()
+    threading.Thread(
+        target=_memory_operation_run,
+        args=("background", "legacy_scan_phase", run_bg),
+        daemon=True).start()
     return jsonify({"status": "started", "phase": phase})
 
 @app.route("/api/reset", methods=["POST"])
@@ -15964,6 +16008,8 @@ _MISSION_TICK_CONTEXT = {
 
 _MEMORY_ATTRIBUTION = argus_memory_attribution.MemoryAttributionRecorder(
     maximum_records=16)
+_MEMORY_OPERATIONS = argus_memory_attribution.OperationAttributionRecorder(
+    maximum_records=32, threshold_bytes=1024 * 1024)
 
 _REMOTE_READBACK_PATH = "/osint/readback.json"
 
@@ -16053,6 +16099,55 @@ def _memory_attribution_capture(phase, metadata=None):
             metadata=metadata)
     except Exception:
         return
+
+
+def _memory_attribution_source_capture(phase, operation, metadata=None):
+    try:
+        record_id = _memory_attribution_record_id()
+        if not record_id:
+            return
+        values = {"operation": operation}
+        if isinstance(metadata, dict):
+            values.update(metadata)
+        _MEMORY_ATTRIBUTION.capture_source_phase(
+            record_id, phase, logical=_memory_attribution_logical_counts(),
+            metadata=values)
+    except Exception:
+        return
+
+
+def _memory_operation_begin(kind, name, *, known=True, metadata=None):
+    try:
+        values = {"missionActive": _mission_tick_context_active()}
+        if isinstance(metadata, dict):
+            values.update(metadata)
+        return _MEMORY_OPERATIONS.begin(
+            kind=kind, name=name, known=known, metadata=values)
+    except Exception:
+        return None
+
+
+def _memory_operation_complete(token, metadata=None):
+    try:
+        values = {"missionActive": _mission_tick_context_active()}
+        if isinstance(metadata, dict):
+            values.update(metadata)
+        return _MEMORY_OPERATIONS.complete(token, metadata=values)
+    except Exception:
+        return None
+
+
+def _memory_operation_run(kind, name, callback, *args, **kwargs):
+    """Run an existing task unchanged while measuring only scalar boundaries."""
+    token = _memory_operation_begin(kind, name, known=True)
+    try:
+        result = callback(*args, **kwargs)
+    except Exception as exc:
+        _memory_operation_complete(
+            token, {"result": "error", "errorClass": type(exc).__name__})
+        raise
+    _memory_operation_complete(token, {"result": "ok"})
+    return result
 
 
 def _memory_attribution_not_applicable(phases, reason):
@@ -16310,8 +16405,19 @@ def _verified_persistent_wal_sequence():
 
 
 def _osint_persist():
-    with _DURABLE_CHECKPOINT_LOCK:
-        return _osint_persist_locked()
+    token = _memory_operation_begin(
+        "internal", "checkpoint_persist", known=True)
+    try:
+        with _DURABLE_CHECKPOINT_LOCK:
+            result = _osint_persist_locked()
+    except Exception as exc:
+        _memory_operation_complete(
+            token, {"result": "error", "errorClass": type(exc).__name__})
+        raise
+    _memory_operation_complete(
+        token, {"result": "verified" if result.get("verified") else "error",
+                "errorClass": result.get("errorClass")})
+    return result
 
 
 def _osint_persist_locked():
@@ -16324,63 +16430,158 @@ def _osint_persist_locked():
         wal_state = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
         included_wal_sequence = int(wal_state.get("maximumSequence") or 0)
         _MISSION_BATCH_STATE["walAppliedSequence"] = included_wal_sequence
-        blob = {"termOverlay": _OSINT_TERM_OVERLAY, "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
-                "urlCache": dict(list(_OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
-                # caos-scan runs the backup tick and canary job in parallel.
-                # The 127 MiB legacy seal is deliberately streamed, so retaining
-                # this live dict let canary-run mutate the already-hashed graph
-                # before verified_checkpoint recomputed the source seal.  Freeze
-                # only this small, proven concurrent section; do not duplicate the
-                # generation-sized checkpoint graph in the parent process.
-                "canaryLast": copy.deepcopy(_OSINT_CANARY_LAST),
-                "rpsHistory": _OSINT_RPS_HISTORY[-40:],
-                "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
-                "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
-                "formalResearchBenchmark": argus_research_benchmark.normalize_state(
-                    _FORMAL_BENCHMARK),
-                "formalResearchBenchmarkV2": argus_research_benchmark_v2.normalize_state(
-                    _FORMAL_BENCHMARK_V2),
-                "foundationJobs": argus_foundation_jobs.normalize_state(_FOUNDATION_JOBS),
-                "schemaVersion": _DURABLE_STATE["schemaVersion"],
-                "checkpointFailureHistory":
-                    _checkpoint_failure_history_projection(attempt_at),
-                "soak": copy.deepcopy(_SOAK),
-                "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
-                "soakControl": dict(_SOAK_CONTROL),
-                "checkpointV2Stage1Control": copy.deepcopy(
-                    _CHECKPOINT_V2_STAGE1_CONTROL),
-                "missions": _MISSIONS[-120:],
-                "missionWindows": _MISSION_WINDOWS[-240:],
-                "forecasts": _FORECAST_LEDGER[-200:],
-                "outcomes": _OUTCOME_LEDGER[-200:],
-                "incidents": _INCIDENTS[-20:],
-                "opsJournal": _OPS_JOURNAL[-400:],
-                "opsJournalMeta": dict(_OPS_JOURNAL_META),
-                "opsJournalCompacted": _OPS_JOURNAL_COMPACT[-40:],
-                "remoteAck": dict(_REMOTE_ACK),   # レシートは再起動を生存(v12.2.10)
-                "remoteJournalCycle": dict(_REMOTE_CYCLE),
-                "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
-                "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
-                "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
-                "chartIntelligence": argus_chart_intelligence.normalize_state(_CHART_INTELLIGENCE),
-                "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
-                "todayIntelligence": argus_today_intelligence.normalize_state(_TODAY_INTELLIGENCE),
-                "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
-                "marketReplay": argus_market_replay.normalize_state(_MARKET_REPLAY),
-                "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
-                "verifiedViewSnapshots": argus_verified_snapshot.normalize_store(
-                    _VERIFIED_VIEW_SNAPSHOTS),
-                "verifiedViewSnapshotsStateHash": argus_verified_snapshot.state_hash(
-                    _VERIFIED_VIEW_SNAPSHOTS),
-                "assetChartReports": argus_asset_chart_cache.normalize_store(
-                    _ASSET_CHART_REPORTS),
-                "assetChartReportsStateHash": argus_asset_chart_cache.state_hash(
-                    _ASSET_CHART_REPORTS),
-                "missionTickDurability":
-                    _mission_tick_durability_snapshot(),
-                "soakLastPersistAt": _ai_now_iso()}
+        _memory_attribution_source_capture("S1", "wal_cursor_read", {
+            "walRecordCount": len(wal_state.get("records") or []),
+            "walBytes": wal_state.get("bytes"),
+            "includedWalSequence": included_wal_sequence,
+            "wholeStateRepresentations": 0,
+        })
+
+        # S2 preserves the exact pre-diagnostic reference/slice/copy semantics.
+        # List slices and shallow dictionaries coexist with their authoritative
+        # stores; only the canary/Soak controls are deliberately deep-copied.
+        blob = {
+            "termOverlay": _OSINT_TERM_OVERLAY,
+            "memory": _OSINT_MEMORY[-_OSINT_MEMORY_MAX:],
+            "urlCache": dict(list(
+                _OSINT_URL_CACHE.items())[-_OSINT_URL_CACHE_MAX:]),
+            # caos-scan runs the backup tick and canary job in parallel.
+            # Freeze only this small, proven concurrent section.
+            "canaryLast": copy.deepcopy(_OSINT_CANARY_LAST),
+            "rpsHistory": _OSINT_RPS_HISTORY[-40:],
+            "baselineRuns": _OSINT_BASELINE_RUNS[-24:],
+            "benchmarkRuns": _OSINT_BENCHMARK_RUNS[-20:],
+            "schemaVersion": _DURABLE_STATE["schemaVersion"],
+            "checkpointFailureHistory":
+                _checkpoint_failure_history_projection(attempt_at),
+            "soak": copy.deepcopy(_SOAK),
+            "soakHistory": copy.deepcopy(_SOAK_HISTORY[-8:]),
+            "soakControl": dict(_SOAK_CONTROL),
+            "checkpointV2Stage1Control": copy.deepcopy(
+                _CHECKPOINT_V2_STAGE1_CONTROL),
+            "missions": _MISSIONS[-120:],
+            "missionWindows": _MISSION_WINDOWS[-240:],
+            "forecasts": _FORECAST_LEDGER[-200:],
+            "outcomes": _OUTCOME_LEDGER[-200:],
+            "incidents": _INCIDENTS[-20:],
+            "opsJournal": _OPS_JOURNAL[-400:],
+            "opsJournalMeta": dict(_OPS_JOURNAL_META),
+            "opsJournalCompacted": _OPS_JOURNAL_COMPACT[-40:],
+            "remoteAck": dict(_REMOTE_ACK),
+            "remoteJournalCycle": dict(_REMOTE_CYCLE),
+        }
+        _memory_attribution_source_capture("S2", "reference_sections_assembled", {
+            "topLevelKeys": len(blob),
+            "directReferenceSectionCount": 1,
+            "shallowSliceSectionCount": 11,
+            "shallowDictionaryCopySectionCount": 5,
+            "deepCopySectionCount": 4,
+            "newProjectionOrScalarSectionCount": 2,
+            "wholeStateRepresentations": 1,
+        })
+
+        blob.update({
+            "formalResearchBenchmark": _memory_operation_run(
+                "internal", "source.formal_benchmark.normalize",
+                argus_research_benchmark.normalize_state, _FORMAL_BENCHMARK),
+            "formalResearchBenchmarkV2": _memory_operation_run(
+                "internal", "source.formal_benchmark_v2.normalize",
+                argus_research_benchmark_v2.normalize_state,
+                _FORMAL_BENCHMARK_V2),
+            "foundationJobs": _memory_operation_run(
+                "internal", "source.foundation_jobs.normalize",
+                argus_foundation_jobs.normalize_state, _FOUNDATION_JOBS),
+            "costPolicy": _memory_operation_run(
+                "internal", "source.cost_policy.normalize",
+                argus_cost_policy.normalize_state, _COST_POLICY),
+        })
+        _memory_attribution_source_capture("S3", "control_states_normalized", {
+            "topLevelKeys": len(blob),
+            "retainedNormalizedStateCount": 4,
+            "wholeStateRepresentations": 5,
+        })
+
+        blob["marketLedger"] = _memory_operation_run(
+            "internal", "source.market_ledger.normalize",
+            argus_market_ledger.normalize_state, _MARKET_LEDGER)
+        blob["marketLedgerStateHash"] = _memory_operation_run(
+            "internal", "source.market_ledger.hash_with_transient_normalize",
+            argus_market_ledger.state_hash, _MARKET_LEDGER)
+        _memory_attribution_source_capture("S4", "market_ledger_normalize_hash", {
+            "topLevelKeys": len(blob),
+            "retainedNormalizedStateCount": 5,
+            "transientHashNormalizationCount": 1,
+            "peakSimultaneousRepresentations": 3,
+        })
+
+        blob["chartIntelligence"] = _memory_operation_run(
+            "internal", "source.chart_intelligence.normalize",
+            argus_chart_intelligence.normalize_state, _CHART_INTELLIGENCE)
+        blob["chartIntelligenceStateHash"] = _memory_operation_run(
+            "internal", "source.chart_intelligence.hash_with_transient_normalize",
+            argus_chart_intelligence.state_hash, _CHART_INTELLIGENCE)
+        _memory_attribution_source_capture("S5", "chart_state_normalize_hash", {
+            "topLevelKeys": len(blob),
+            "retainedNormalizedStateCount": 6,
+            "transientHashNormalizationCount": 1,
+            "peakSimultaneousRepresentations": 3,
+        })
+
+        blob["todayIntelligence"] = _memory_operation_run(
+            "internal", "source.today_intelligence.normalize",
+            argus_today_intelligence.normalize_state, _TODAY_INTELLIGENCE)
+        blob["todayIntelligenceStateHash"] = _memory_operation_run(
+            "internal", "source.today_intelligence.hash_with_transient_normalize",
+            argus_today_intelligence.state_hash, _TODAY_INTELLIGENCE)
+        blob["marketReplay"] = _memory_operation_run(
+            "internal", "source.market_replay.normalize",
+            argus_market_replay.normalize_state, _MARKET_REPLAY)
+        blob["marketReplayStateHash"] = _memory_operation_run(
+            "internal", "source.market_replay.hash_with_transient_normalize",
+            argus_market_replay.state_hash, _MARKET_REPLAY)
+        _memory_attribution_source_capture("S6", "decision_states_normalize_hash", {
+            "topLevelKeys": len(blob),
+            "retainedNormalizedStateCount": 8,
+            "transientHashNormalizationCount": 2,
+            "peakSimultaneousRepresentations": 3,
+        })
+
+        blob["verifiedViewSnapshots"] = _memory_operation_run(
+            "internal", "source.verified_snapshots.normalize",
+            argus_verified_snapshot.normalize_store, _VERIFIED_VIEW_SNAPSHOTS)
+        blob["verifiedViewSnapshotsStateHash"] = _memory_operation_run(
+            "internal", "source.verified_snapshots.hash_with_transient_normalize",
+            argus_verified_snapshot.state_hash, _VERIFIED_VIEW_SNAPSHOTS)
+        blob["assetChartReports"] = _memory_operation_run(
+            "internal", "source.asset_chart_reports.normalize",
+            argus_asset_chart_cache.normalize_store, _ASSET_CHART_REPORTS)
+        blob["assetChartReportsStateHash"] = _memory_operation_run(
+            "internal", "source.asset_chart_reports.hash_with_transient_normalize",
+            argus_asset_chart_cache.state_hash, _ASSET_CHART_REPORTS)
+        _memory_attribution_source_capture("S7", "public_stores_normalize_hash", {
+            "topLevelKeys": len(blob),
+            "retainedNormalizedStateCount": 10,
+            "transientHashNormalizationCount": 2,
+            "peakSimultaneousRepresentations": 3,
+            "verifiedSnapshotCurrentCount": len(
+                _VERIFIED_VIEW_SNAPSHOTS.get("current") or {}),
+            "verifiedSnapshotHistoryCount": len(
+                _VERIFIED_VIEW_SNAPSHOTS.get("history") or []),
+            "assetChartRecordCount": len(
+                _ASSET_CHART_REPORTS.get("records") or {}),
+        })
+
+        blob["missionTickDurability"] = _mission_tick_durability_snapshot()
+        blob["soakLastPersistAt"] = _ai_now_iso()
+        _memory_attribution_source_capture("S8", "persistent_source_ready", {
+            "topLevelKeys": len(blob),
+            "retainedNormalizedStateCount": 10,
+            "transientHashNormalizationCount": 6,
+            "wholeStateRepresentations": 11,
+        })
         _memory_attribution_capture(
-            "T1", {"sourceStateConstructed": True})
+            "T1", {"sourceStateConstructed": True,
+                   "sourceTopLevelKeys": len(blob)})
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                      f"checkpoint-{os.getpid()}")
         stage = "source_snapshot_seal"
@@ -18029,7 +18230,10 @@ def api_argus_admin_osint_agents_run():
                             "noteJa": "キューは空(外部AIは呼ばれていません)。"})
         _OSINT_LAST["agentsStatus"] = "running"
         import threading
-        threading.Thread(target=_osint_agents_worker, args=(syms,), daemon=True).start()
+        threading.Thread(
+            target=_memory_operation_run,
+            args=("background", "osint_agents_worker",
+                  _osint_agents_worker, syms), daemon=True).start()
         return jsonify({"ok": True, "started": syms,
                         "queuedRemaining": max(0, len(_OSINT_AGENT_QUEUE) - len(syms)),
                         "noteJa": "バックグラウンドで実行中(結果は/osint/investigationに反映)。"}), 202
@@ -19000,10 +19204,14 @@ def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
 def _persist_with_remote_receipt_drain(now_iso=None):
     """Natural lifecycle adapter: one bounded drainer plus one checkpoint."""
     now_iso = now_iso or _ai_now_iso()
-    plan = _prepare_remote_receipt_drain(now_iso)
+    plan = _memory_operation_run(
+        "journal", "remote_receipt_prepare",
+        _prepare_remote_receipt_drain, now_iso)
     try:
         checkpoint = _osint_persist()
-        result = _complete_remote_receipt_drain(plan, checkpoint, now_iso)
+        result = _memory_operation_run(
+            "journal", "remote_receipt_complete",
+            _complete_remote_receipt_drain, plan, checkpoint, now_iso)
     except Exception:
         if plan.get("lockHeld"):
             _REMOTE_RECEIPT_FLUSH_LOCK.release()
@@ -19538,7 +19746,9 @@ def api_argus_admin_memory_attribution():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(_MEMORY_ATTRIBUTION.view())
+    payload = _MEMORY_ATTRIBUTION.view()
+    payload["operationAttribution"] = _MEMORY_OPERATIONS.view()
+    return jsonify(payload)
 
 
 @app.route("/api/argus/admin/missions/tick", methods=["POST"])
@@ -21487,8 +21697,11 @@ def api_argus_admin_research_benchmark_execute():
         _COST_POLICY, mode="RESEARCH_BENCHMARK", event_opt_in=False)
     _COST_POLICY.clear()
     _COST_POLICY.update(enabled)
-    threading.Thread(target=_formal_benchmark_worker,
-                     args=(benchmark_id, dry), daemon=True).start()
+    threading.Thread(
+        target=_memory_operation_run,
+        args=("background", "formal_benchmark_worker",
+              _formal_benchmark_worker, benchmark_id, dry),
+        daemon=True).start()
     return jsonify({"ok": True, "status": "running",
                     "benchmarkId": benchmark_id,
                     "datasetHash": argus_research_benchmark.DATASET_HASH}), 202
@@ -21818,8 +22031,10 @@ def api_argus_admin_foundation_jobs_start():
     _foundation_jobs_persist()
     job = started["job"]
     if started["created"]:
-        threading.Thread(target=_foundation_job_dispatch,
-                         args=(job["jobId"],), daemon=True).start()
+        threading.Thread(
+            target=_memory_operation_run,
+            args=("background", "foundation_job_dispatch",
+                  _foundation_job_dispatch, job["jobId"]), daemon=True).start()
     return jsonify({"ok": True, "created": started["created"],
                     "job": argus_foundation_jobs.public_status(
                         _FOUNDATION_JOBS, job["jobId"])["jobs"][0]}), 202
@@ -21874,8 +22089,10 @@ def api_argus_admin_osint_benchmark_run():
                         for c in ordered[:_OSINT_BENCH_BUDGET["maxCasesPerInvocation"]]]
         _OSINT_BENCH_STATE["running"] = True
         import threading
-        threading.Thread(target=_osint_benchmark_worker, args=(case_ids,),
-                         daemon=True).start()
+        threading.Thread(
+            target=_memory_operation_run,
+            args=("background", "osint_benchmark_worker",
+                  _osint_benchmark_worker, case_ids), daemon=True).start()
         return jsonify({"ok": True, "started": case_ids,
                         "budget": _OSINT_BENCH_BUDGET,
                         "noteJa": "バックグラウンド実行(結果はDQのベンチ欄へ)。"}), 202
@@ -29743,18 +29960,30 @@ def run_scheduler():
         key = f"{today_str}_{hhmm}"
         if hhmm == sched["ph1"] and key not in ran_today:
             ran_today.add(key); add_log(f"🚀 Scheduled Ph.1-4 ({hhmm} JST)")
-            threading.Thread(target=scheduled_run_all, daemon=True).start()
+            threading.Thread(
+                target=_memory_operation_run,
+                args=("scheduler", "scheduled_run_all", scheduled_run_all),
+                daemon=True).start()
         elif hhmm == sched["ph5_1"] and key not in ran_today:
             ran_today.add(key); add_log(f"🚀 Scheduled Ph.5 ({hhmm} JST)")
-            threading.Thread(target=scheduled_ph5, daemon=True).start()
+            threading.Thread(
+                target=_memory_operation_run,
+                args=("scheduler", "scheduled_phase5", scheduled_ph5),
+                daemon=True).start()
         elif hhmm == sched["ph5_2"] and key not in ran_today:
             ran_today.add(key); add_log(f"🚀 Scheduled Ph.5 re-run ({hhmm} JST)")
-            threading.Thread(target=scheduled_ph5, daemon=True).start()
+            threading.Thread(
+                target=_memory_operation_run,
+                args=("scheduler", "scheduled_phase5_rerun", scheduled_ph5),
+                daemon=True).start()
         # Resident AI + intel tick (v10.191) — replaces the unreliable GitHub */15
         # cron. Spawn on 5-min boundaries; the tick self-throttles (intel ≤10min,
         # AI via the run gate's 14-min interval), so a double spawn is harmless.
         if now.minute % 5 == 0:
-            threading.Thread(target=_residency_ai_tick, daemon=True).start()
+            threading.Thread(
+                target=_memory_operation_run,
+                args=("scheduler", "residency_ai_tick", _residency_ai_tick),
+                daemon=True).start()
         time.sleep(30)
 
 if __name__ == "__main__":
@@ -29763,7 +29992,10 @@ if __name__ == "__main__":
     add_log(f"  Ph.1:{sched['ph1']} Ph.5:{sched['ph5_1']} JST")
     if MOOMOO_AVAILABLE: add_log(f"  moomoo: {MOOMOO_HOST}:{MOOMOO_PORT}")
     else: add_log("  ⚠️ moomoo-api not installed")
-    threading.Thread(target=run_scheduler, daemon=True).start()
+    threading.Thread(
+        target=_memory_operation_run,
+        args=("scheduler", "scheduler_loop", run_scheduler),
+        daemon=True).start()
     # v12.2.9: 起動復元をboot時に確定(最初のリクエスト/30分cronを待たない)
     _SERVER_RUNTIME.update({"serverType": "flask_dev",
                             "startupMode": "boot_before_serve"})
