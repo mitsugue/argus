@@ -24,7 +24,7 @@ import sys
 import threading
 import time
 import uuid
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 import argus_checkpoint_v2 as v2
 import argus_persistent_storage as storage
@@ -53,6 +53,23 @@ class IsolatedWriterError(RuntimeError):
 
 def _now() -> str:
     return dt.datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _diagnostic_phase(callback: Optional[Callable[[str, Mapping[str, Any]],
+                                                  None]],
+                      phase: str, **metadata: Any) -> None:
+    """Invoke optional scalar telemetry without affecting writer behavior."""
+    if callback is None:
+        return
+    safe = {
+        str(key)[:80]: (value if value is None or isinstance(
+            value, (bool, int, float)) else str(value)[:160])
+        for key, value in metadata.items()
+    }
+    try:
+        callback(phase, safe)
+    except Exception:
+        return
 
 
 def _canonical(value: Any) -> bytes:
@@ -702,7 +719,10 @@ def launch_isolated_generation(root: str, *, source_path: str,
                                trigger_source: str,
                                formal_soak_state: str = "not_started",
                                timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-                               fault: Optional[str] = None) -> Dict[str, Any]:
+                               fault: Optional[str] = None,
+                               diagnostic_callback: Optional[
+                                   Callable[[str, Mapping[str, Any]], None]] =
+                               None) -> Dict[str, Any]:
     """Run exactly one fresh child and promote only its verified candidate."""
     started = time.monotonic()
     root_path = pathlib.Path(root).resolve()
@@ -763,6 +783,9 @@ def launch_isolated_generation(root: str, *, source_path: str,
             trigger_source=trigger_source, formal_soak_state=formal_soak_state,
             deadline=deadline)
         _write_contract(descriptor_path, DESCRIPTOR_SCHEMA, payload)
+        _diagnostic_phase(
+            diagnostic_callback, "T6", generationAttempted=True,
+            missionWindowId=mission_window_id, triggerSource=trigger_source)
         command = [sys.executable, "-m", "argus_checkpoint_v2_isolated",
                    "--job", str(descriptor_path),
                    "--expected-build-sha", backend_build_sha,
@@ -777,6 +800,9 @@ def launch_isolated_generation(root: str, *, source_path: str,
         except OSError as exc:
             raise IsolatedWriterError("child_spawn_failed") from exc
         sampler.start()
+        _diagnostic_phase(
+            diagnostic_callback, "T7", childActive=True,
+            childProcessId=process.pid)
         classification = None
         try:
             stdout, stderr = process.communicate(timeout=max(1, timeout_seconds))
@@ -793,6 +819,13 @@ def launch_isolated_generation(root: str, *, source_path: str,
                 stdout, stderr = process.communicate()
         finally:
             sampler.finish()
+        _diagnostic_phase(
+            diagnostic_callback, "T7", childActive=False,
+            sampledParentPeakRssBytes=sampler.maximum_rss,
+            sampledCgroupPeakBytes=sampler.maximum_cgroup)
+        _diagnostic_phase(
+            diagnostic_callback, "T8", childExitCode=process.returncode,
+            childReaped=process.poll() is not None)
         stdout = (stdout or b"")[-MAXIMUM_STDIO_BYTES:]
         stderr = (stderr or b"")[-MAXIMUM_STDIO_BYTES:]
         if classification:
@@ -837,6 +870,11 @@ def launch_isolated_generation(root: str, *, source_path: str,
         current_bytes, current_hash = _file_stats(source)
         if current_bytes != source_bytes or current_hash != source_hash:
             raise IsolatedWriterError("source_changed")
+        _diagnostic_phase(
+            diagnostic_callback, "T9", parentValidationVerified=True,
+            generationId=result.get("generationId"),
+            childPeakRssBytes=result.get("childPeakRssBytes"),
+            childDurationMs=result.get("durationMs"))
         # A short bounded quiet point makes the post-child reading explicit;
         # it is not an unbounded allocator-reclaim wait.
         time.sleep(0.05)
@@ -881,6 +919,14 @@ def launch_isolated_generation(root: str, *, source_path: str,
         }
         promoted = _promote(root_path, job_root, payload, result, telemetry)
         _remove_job(job_root)
+        _diagnostic_phase(
+            diagnostic_callback, "T10", promotionVerified=True,
+            pruningComplete=True,
+            generationId=promoted.get("generationId"),
+            retainedGenerationCount=(promoted.get("resourceTelemetry") or {})
+            .get("retainedGenerationCount"),
+            pendingGenerationCount=(promoted.get("resourceTelemetry") or {})
+            .get("pendingGenerationCount"))
         return promoted
     except IsolatedWriterError as exc:
         exc.details.setdefault("writerMode", WRITER_MODE)

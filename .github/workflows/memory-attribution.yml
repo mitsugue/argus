@@ -1,0 +1,51 @@
+name: memory-attribution
+
+on:
+  pull_request:
+    paths:
+      - "argus_memory_attribution.py"
+      - "argus_checkpoint_v2_isolated.py"
+      - "scanner.py"
+      - "scripts/memory_attribution_probe.py"
+      - "test_argus_memory_attribution.py"
+      - ".github/workflows/memory-attribution.yml"
+  push:
+    branches:
+      - "codex/memory-attribution-telemetry"
+    paths:
+      - "argus_memory_attribution.py"
+      - "argus_checkpoint_v2_isolated.py"
+      - "scanner.py"
+      - "scripts/memory_attribution_probe.py"
+      - "test_argus_memory_attribution.py"
+      - ".github/workflows/memory-attribution.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-telemetry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: >-
+          pip install --quiet anthropic flask flask-cors requests pytz
+          python-dotenv json-repair pytest
+      - name: Diagnostic unit and privacy tests
+        run: pytest -q test_argus_memory_attribution.py
+      - name: 32-cycle modes and 100-record bound
+        run: |
+          python scripts/memory_attribution_probe.py \
+            --cycles 32 --bounded-cycles 100 \
+            --output memory-attribution-proof.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memory-attribution-proof-${{ github.sha }}
+          path: memory-attribution-proof.json
+          if-no-files-found: error
+          retention-days: 14

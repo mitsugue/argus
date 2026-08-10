@@ -113,6 +113,7 @@ import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal inte
 import argus_checkpoint_v2          # bounded Stage-1 dual-write architecture
 import argus_checkpoint_v2_isolated # fresh-process Stage-1 writer/promotion
 import argus_checkpoint_v2_stage1   # formal-Soak suppression/one-time arm
+import argus_memory_attribution     # bounded parent-process phase telemetry
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
@@ -15957,7 +15958,12 @@ _MISSION_TICK_CONTEXT = {
     "startedMonotonic": None,
     "walAppendMs": 0,
     "ownerThread": None,
+    "memoryAttributionRecordId": None,
+    "memoryAttributionT0": None,
 }
+
+_MEMORY_ATTRIBUTION = argus_memory_attribution.MemoryAttributionRecorder(
+    maximum_records=16)
 
 _REMOTE_READBACK_PATH = "/osint/readback.json"
 
@@ -15965,6 +15971,132 @@ _REMOTE_READBACK_PATH = "/osint/readback.json"
 def _mission_tick_context_active():
     return (bool(_MISSION_TICK_CONTEXT.get("active")) and
             _MISSION_TICK_CONTEXT.get("ownerThread") == threading.get_ident())
+
+
+def _memory_attribution_logical_counts():
+    """Return bounded internal counts only; payload contents are never read."""
+    try:
+        remote_queue = argus_remote_receipt_queue.summary(
+            _REMOTE_RECEIPT_QUEUE, now_iso=_ai_now_iso()).get(
+                "pendingCount")
+    except Exception:
+        remote_queue = argus_memory_attribution.UNKNOWN
+    cache_count = 0
+    for value in (_OSINT_URL_CACHE, _OSINT_AGENT_QUEUE,
+                  _VERIFIED_VIEW_SNAPSHOTS, _ASSET_CHART_REPORTS):
+        try:
+            cache_count += len(value)
+        except (TypeError, AttributeError):
+            pass
+    return {
+        # The synchronous Flask backend has no authoritative registries for
+        # these object types.  UNKNOWN is more truthful than a GC-wide scan
+        # whose overhead would distort the measurement.
+        "asyncioTasks": argus_memory_attribution.UNKNOWN,
+        "pendingFutures": argus_memory_attribution.UNKNOWN,
+        "subprocessHandles": argus_memory_attribution.UNKNOWN,
+        "httpSessionObjects": argus_memory_attribution.UNKNOWN,
+        "httpResponseObjects": argus_memory_attribution.UNKNOWN,
+        "sqliteConnections": argus_memory_attribution.UNKNOWN,
+        "sqliteCursors": argus_memory_attribution.UNKNOWN,
+        "generationContexts": 1 if _MISSION_TICK_CONTEXT.get("active") else 0,
+        "missionBookkeepingEntries": len(_MISSIONS) + len(_MISSION_WINDOWS),
+        "telemetryHistoryLength": _MEMORY_ATTRIBUTION.history_count,
+        "schedulerHistoryLength": len(_MISSION_WINDOWS),
+        "cacheEntryCount": cache_count,
+        "remoteJournalQueueCount": remote_queue,
+        "retainedV2MetadataCount": len(
+            _CHECKPOINT_V2_STAGE1_CONTROL.get("naturalGenerations") or []),
+        "largeBytesCount": argus_memory_attribution.UNKNOWN,
+        "largeBytearrayCount": argus_memory_attribution.UNKNOWN,
+        "largeMemoryviewCount": argus_memory_attribution.UNKNOWN,
+    }
+
+
+def _memory_attribution_record_id():
+    return _MISSION_TICK_CONTEXT.get("memoryAttributionRecordId")
+
+
+def _memory_attribution_begin(window, actual_at):
+    try:
+        record_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
+                        window.get("missionWindowId") or
+                        f"mission-{time.time_ns()}")
+        _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = record_id
+        _MEMORY_ATTRIBUTION.begin(record_id, {
+            "missionWindowId": window.get("missionWindowId"),
+            "triggerSource": window.get("triggerSource") or
+            _MISSION_TICK_CONTEXT.get("triggerSource") or "other",
+            "schedulerClass": window.get("triggerSource") or "other",
+            "scheduledAt": window.get("scheduledFor"),
+            "actualAt": actual_at,
+            "checkpointWriteNumber": int(
+                _DURABLE_STATE.get("writeCount") or 0) + 1,
+            "stage1EffectiveState": (
+                "enabled" if _CHECKPOINT_V2_STAGE1_ENABLED else "disabled"),
+            "v2GenerationAttempted": False,
+            "v2GenerationId": None,
+            "legacyCheckpointAttempted": False,
+        }, initial_sample=_MISSION_TICK_CONTEXT.get("memoryAttributionT0"),
+            logical=_memory_attribution_logical_counts())
+    except Exception:
+        _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = None
+
+
+def _memory_attribution_capture(phase, metadata=None):
+    try:
+        record_id = _memory_attribution_record_id()
+        if not record_id:
+            return
+        _MEMORY_ATTRIBUTION.capture(
+            record_id, phase, logical=_memory_attribution_logical_counts(),
+            metadata=metadata)
+    except Exception:
+        return
+
+
+def _memory_attribution_not_applicable(phases, reason):
+    try:
+        record_id = _memory_attribution_record_id()
+        if record_id:
+            _MEMORY_ATTRIBUTION.mark_not_applicable(
+                record_id, phases, reason=reason)
+    except Exception:
+        return
+
+
+def _memory_attribution_initial_snapshot():
+    try:
+        return argus_memory_attribution.memory_snapshot(
+            _memory_attribution_logical_counts())
+    except Exception:
+        return None
+
+
+def _memory_attribution_complete(record_id):
+    try:
+        return _MEMORY_ATTRIBUTION.complete(record_id)
+    except Exception:
+        return None
+
+
+def _memory_attribution_isolated_hook(phase, metadata=None):
+    """Fail-open callback used at exact isolated-writer parent boundaries."""
+    try:
+        _memory_attribution_capture(phase, metadata=metadata)
+        if phase == "T6":
+            record_id = _memory_attribution_record_id()
+            if record_id:
+                _MEMORY_ATTRIBUTION.update_metadata(
+                    record_id, {"v2GenerationAttempted": True})
+        if phase == "T10" and isinstance(metadata, dict):
+            record_id = _memory_attribution_record_id()
+            if record_id:
+                _MEMORY_ATTRIBUTION.update_metadata(
+                    record_id, {"v2GenerationId": metadata.get(
+                        "generationId")})
+    except Exception:
+        return
 
 
 def _mission_tick_durability_snapshot(*, remote_export=False):
@@ -16247,9 +16379,16 @@ def _osint_persist_locked():
                 "missionTickDurability":
                     _mission_tick_durability_snapshot(),
                 "soakLastPersistAt": _ai_now_iso()}
+        _memory_attribution_capture(
+            "T1", {"sourceStateConstructed": True})
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                      f"checkpoint-{os.getpid()}")
         stage = "source_snapshot_seal"
+        record_id = _memory_attribution_record_id()
+        if record_id:
+            _MEMORY_ATTRIBUTION.update_metadata(
+                record_id, {"legacyCheckpointAttempted": True})
+        _memory_attribution_capture("T2")
         sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
         verified_wal_sequence = _verified_persistent_wal_sequence()
         allow_wal_compaction = bool(
@@ -16267,6 +16406,12 @@ def _osint_persist_locked():
             build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha(),
             mission_window_id=(
                 _MISSION_TICK_CONTEXT.get("missionWindowId")))
+        _memory_attribution_capture(
+            "T3", {"legacyCheckpointVerified": bool(
+                checkpoint.get("verified"))})
+        _memory_attribution_capture(
+            "T4", {"legacyReadBackVerified": bool(
+                checkpoint.get("verified"))})
         # The sealed top-level mapping owns checkpoint-normalized archive
         # copies after the authoritative legacy write.  Drop the redundant
         # unsealed owner before the V2 writer consumes each section so large
@@ -16284,6 +16429,9 @@ def _osint_persist_locked():
         # no checkpoint payload crosses the process boundary.
         del sealed_blob
         stage = "checkpoint_v2_disabled_adapter"
+        _memory_attribution_capture("T5", {
+            "stage1EffectiveState": (
+                "enabled" if _CHECKPOINT_V2_STAGE1_ENABLED else "disabled")})
         checkpoint["checkpointV2"] = _checkpoint_v2_dual_write(checkpoint)
         _DURABLE_STATE["lastWriteAt"] = _ai_now_iso()
         _DURABLE_STATE["lastKnownGoodAt"] = _DURABLE_STATE["lastWriteAt"]
@@ -16338,6 +16486,9 @@ def _osint_persist_locked():
 def _checkpoint_v2_dual_write(legacy_checkpoint):
     global _CHECKPOINT_V2_STATUS, _CHECKPOINT_V2_STAGE1_CONTROL
     if not _CHECKPOINT_V2_STAGE1_ENABLED:
+        _memory_attribution_not_applicable(
+            ("T6", "T7", "T8", "T9", "T10"),
+            "checkpoint_v2_disabled")
         _CHECKPOINT_V2_STATUS = {
             "schemaVersion": argus_checkpoint_v2.SCHEMA,
             "state": "disabled",
@@ -16365,7 +16516,8 @@ def _checkpoint_v2_dual_write(legacy_checkpoint):
             mission_window_id=mission_window_id,
             trigger_source=trigger_source,
             formal_soak_state=_CHECKPOINT_V2_STAGE1_CONTROL.get(
-                "formalSoakState") or "not_started")
+                "formalSoakState") or "not_started",
+            diagnostic_callback=_memory_attribution_isolated_hook)
         _CHECKPOINT_V2_STAGE1_CONTROL = \
             argus_checkpoint_v2_stage1.record_generation(
                 _CHECKPOINT_V2_STAGE1_CONTROL, result,
@@ -19380,6 +19532,15 @@ def api_argus_admin_checkpoint_v2_stage1_accept():
                     "soakCreated": False, "heartbeatCreated": False})
 
 
+@app.route("/api/argus/admin/memory-attribution", methods=["GET"])
+def api_argus_admin_memory_attribution():
+    """Owner-only scalar phase history; never exposes checkpoint payloads."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    return jsonify(_MEMORY_ATTRIBUTION.view())
+
+
 @app.route("/api/argus/admin/missions/tick", methods=["POST"])
 def api_argus_admin_missions_tick():
     ok, err, code = _require_admin()
@@ -19436,17 +19597,28 @@ def api_argus_admin_missions_tick():
             "startedMonotonic": time.monotonic(),
             "startedCpu": time.process_time(),
             "rssBeforeBytes": argus_tick_durability.current_rss_bytes(),
+            "memoryAttributionT0": _memory_attribution_initial_snapshot(),
+            "memoryAttributionRecordId": None,
             "walAppendMs": 0,
             "ownerThread": threading.get_ident(),
         })
-        return _api_argus_admin_missions_tick_impl()
+        result = _api_argus_admin_missions_tick_impl()
+        _memory_attribution_capture("T11", {"missionComplete": True})
+        return result
     finally:
+        record_id = _memory_attribution_record_id()
         _MISSION_TICK_CONTEXT["active"] = False
         _MISSION_TICK_CONTEXT["lease"] = None
+        _memory_attribution_capture(
+            "T12", {"sampleClass": "bounded_post_mission_no_wait"})
+        if record_id:
+            _memory_attribution_complete(record_id)
         _MISSION_TICK_CONTEXT["missionWindowId"] = None
         _MISSION_TICK_CONTEXT["triggerSource"] = None
         _MISSION_TICK_CONTEXT["scheduledFor"] = None
         _MISSION_TICK_CONTEXT["ownerThread"] = None
+        _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = None
+        _MISSION_TICK_CONTEXT["memoryAttributionT0"] = None
         lease.release()
         _DURABLE_CHECKPOINT_LOCK.release()
 
@@ -19495,6 +19667,7 @@ def _api_argus_admin_missions_tick_impl():
         run_id = str(body.get("runId") or f"local-{time.time_ns()}")[:80]
         window.update({"missionWindowId": f"mw-manual-{run_id}",
                        "delaySeconds": 0, "delayClassification": "on_time"})
+    _memory_attribution_begin(window, now_iso)
     window = argus_scheduler.apply_window_history(window, _MISSION_WINDOWS)
     prior_windows = [r for r in _MISSION_WINDOWS
                      if r.get("triggerSource") != "manual" and
