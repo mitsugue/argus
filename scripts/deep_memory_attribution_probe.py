@@ -32,6 +32,25 @@ import scanner
 
 MIB = 1024 * 1024
 
+EXPECTED_SOURCE_OPERATIONS = {
+    "internal:source.formal_benchmark.normalize",
+    "internal:source.formal_benchmark_v2.normalize",
+    "internal:source.foundation_jobs.normalize",
+    "internal:source.cost_policy.normalize",
+    "internal:source.market_ledger.normalize",
+    "internal:source.market_ledger.hash_with_transient_normalize",
+    "internal:source.chart_intelligence.normalize",
+    "internal:source.chart_intelligence.hash_with_transient_normalize",
+    "internal:source.today_intelligence.normalize",
+    "internal:source.today_intelligence.hash_with_transient_normalize",
+    "internal:source.market_replay.normalize",
+    "internal:source.market_replay.hash_with_transient_normalize",
+    "internal:source.verified_snapshots.normalize",
+    "internal:source.verified_snapshots.hash_with_transient_normalize",
+    "internal:source.asset_chart_reports.normalize",
+    "internal:source.asset_chart_reports.hash_with_transient_normalize",
+}
+
 
 def _integer(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) \
@@ -131,6 +150,23 @@ def _phase_scalar(record: Dict[str, Any], phase: str) -> Dict[str, Any]:
     }
 
 
+def _source_operation_scalars() -> list[Dict[str, Any]]:
+    """Copy only the bounded scalar source rows before later tasks rotate them."""
+    latest: Dict[str, Dict[str, Any]] = {}
+    for row in scanner._MEMORY_OPERATIONS.view().get("records") or []:
+        name = str(row.get("operationName") or "")
+        if name not in EXPECTED_SOURCE_OPERATIONS:
+            continue
+        latest[name] = {
+            "operationName": name,
+            "durationMs": row.get("durationMs"),
+            "start": dict(row.get("start") or {}),
+            "end": dict(row.get("end") or {}),
+            "deltas": dict(row.get("deltas") or {}),
+        }
+    return [latest[name] for name in sorted(latest)]
+
+
 def _legacy_cycle(index: int) -> Dict[str, Any]:
     job_id = f"deep-memory-probe-{index:02d}"
     window = {
@@ -151,6 +187,7 @@ def _legacy_cycle(index: int) -> Dict[str, Any]:
     scanner._memory_attribution_begin(window, "2026-08-10T00:00:01Z")
     started = time.monotonic()
     checkpoint = scanner._osint_persist()
+    source_operations = _source_operation_scalars()
     scanner._memory_attribution_capture("T11", {
         "checkpointVerified": bool(checkpoint.get("verified")),
     })
@@ -179,6 +216,7 @@ def _legacy_cycle(index: int) -> Dict[str, Any]:
             phase: _phase_scalar(record, phase)
             for phase in memory.SOURCE_PHASES
         },
+        "sourceOperations": source_operations,
         "v2Statuses": {
             phase: (phases.get(phase) or {}).get("status")
             for phase in ("T6", "T7", "T8", "T9", "T10")
@@ -271,6 +309,11 @@ def run(cycles: int = 32) -> Dict[str, Any]:
             row["checkpointVerified"] for row in lifecycle),
         "sourceS0ThroughS8Exact": all(
             row["sourcePhaseOrder"] == list(memory.SOURCE_PHASES)
+            for row in lifecycle),
+        "sourceOperationBoundariesExact": all(
+            len(row["sourceOperations"]) == len(EXPECTED_SOURCE_OPERATIONS)
+            and {item["operationName"] for item in row["sourceOperations"]}
+                == EXPECTED_SOURCE_OPERATIONS
             for row in lifecycle),
         "phaseT0ThroughT12Exact": all(
             row["phaseOrder"] == list(memory.PHASES)
