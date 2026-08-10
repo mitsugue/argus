@@ -187,6 +187,20 @@ def _release_unused_allocator_memory(source_bytes: int) -> Dict[str, Any]:
     return report
 
 
+def release_consumed_legacy_snapshot_memory(
+        source_bytes: int) -> Dict[str, Any]:
+    """Release only unused arenas after the legacy snapshot is consumed.
+
+    The Stage-1 writer already applies the same allocator boundary inside its
+    short-lived child. Production's authoritative legacy checkpoint is built
+    in the long-lived Flask parent, so its generation-sized temporary arenas
+    need the identical lifecycle-scoped release after both ``blob`` owners
+    have been deleted. This does not run GC, discard live objects, alter the
+    checkpoint, or reset telemetry.
+    """
+    return _release_unused_allocator_memory(source_bytes)
+
+
 class _ResourceSampler:
     """Sample per-generation current memory without resetting cgroup state."""
 

@@ -192,6 +192,6 @@ def test_exact_public_snapshot_is_fetched_once_then_shared_by_artifact():
         "api/argus/osint/memory-snapshot")
     assert workflow.count(endpoint) == 1
     assert "exact-public-state:" in workflow
-    assert workflow.count("needs: exact-public-state") == 5
-    assert workflow.count("actions/download-artifact@v5") == 5
+    assert workflow.count("needs: exact-public-state") == 6
+    assert workflow.count("actions/download-artifact@v5") == 6
     assert "mkdir -p artifacts/mapping-attribution" in workflow

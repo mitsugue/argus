@@ -76,6 +76,57 @@ jobs:
             artifacts/checkpoint-v2-resource-proof.json
             artifacts/checkpoint-v2-exact-resource-proof.json
 
+  production-lifecycle-memory:
+    needs: exact-public-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [pre_fix, candidate]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore shared exact public state
+        uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts
+      - name: 32-cycle production mission/checkpoint lifecycle proof (${{ matrix.variant }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          variant='${{ matrix.variant }}'
+          expected=FAIL
+          if [[ "$variant" == candidate ]]; then expected=PASS; fi
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -euc '
+              variant="$1"
+              expected="$2"
+              pip install --quiet \
+                anthropic flask flask-cors requests pytz python-dotenv \
+                json-repair
+              exec python3 -B \
+                scripts/stage1_production_lifecycle_probe.py \
+                --source-json artifacts/checkpoint-v2-exact-source.json \
+                --root "/tmp/production-lifecycle-$variant" \
+                --variant "$variant" --cycles 32 \
+                --output \
+                  "artifacts/production-lifecycle-$variant.json" \
+                --expect "$expected"
+            ' sh "$variant" "$expected" \
+            | tee "artifacts/production-lifecycle-$variant.log"
+      - name: Publish production lifecycle resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-lifecycle-memory-${{ matrix.variant }}-${{ github.sha }}
+          path: |
+            artifacts/production-lifecycle-${{ matrix.variant }}.json
+            artifacts/production-lifecycle-${{ matrix.variant }}.log
+
   mapping-attribution:
     needs: exact-public-state
     runs-on: ubuntu-latest
