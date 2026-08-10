@@ -64,3 +64,31 @@ def test_reclaim_report_remains_scalar_and_privacy_safe():
     assert report["rssReleasedBytes"] == 600_000_000
     assert all(value is None or isinstance(value, (bool, int))
                for value in report.values())
+
+
+def test_production_lifecycle_probe_uses_real_route_and_persistence_path():
+    source = pathlib.Path(
+        "scripts/stage1_production_lifecycle_probe.py").read_text(
+            encoding="utf-8")
+    assert '"/api/argus/admin/missions/tick"' in source
+    assert "_osint_persist" not in source
+    assert "launch_isolated_generation" not in source
+    assert "actualFlaskMissionTickRoute" in source
+    assert "actualStateNormalizationAndHashes" in source
+    assert "providerNetworkCalls" in source
+
+
+def test_production_lifecycle_gate_preserves_resource_limits_and_variants():
+    source = pathlib.Path(
+        "scripts/stage1_production_lifecycle_probe.py").read_text(
+            encoding="utf-8")
+    ast.parse(source)
+    assert "MINIMUM_CYCLES = 32" in source
+    assert "RSS_GROWTH_LIMIT = 128 * 1024 ** 2" in source
+    assert "CGROUP_PEAK_LIMIT = 3 * 1024 ** 3" in source
+    workflow = pathlib.Path(
+        ".github/workflows/checkpoint-v2-gate.yml").read_text(
+            encoding="utf-8")
+    assert "variant: [pre_fix, candidate]" in workflow
+    assert "--memory 4g --memory-swap 4g" in workflow
+    assert "stage1_production_lifecycle_probe.py" in workflow
