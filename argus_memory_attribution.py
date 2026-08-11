@@ -14,23 +14,53 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import resource
 import sys
 import threading
+import time
 from collections import deque
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 
-SCHEMA_VERSION = "argus-memory-attribution-v1"
+SCHEMA_VERSION = "argus-memory-attribution-v2"
 UNKNOWN = "UNKNOWN"
 NOT_APPLICABLE = "NOT_APPLICABLE"
 DEFAULT_HISTORY_LIMIT = 16
 MAXIMUM_HISTORY_LIMIT = 32
+DEFAULT_OPERATION_LIMIT = 32
+MAXIMUM_OPERATION_LIMIT = 64
+DEFAULT_OPERATION_THRESHOLD_BYTES = 1024 * 1024
 
 PHASES = (
     "T0", "T1", "T2", "T3", "T4", "T5", "T6",
     "T7", "T8", "T9", "T10", "T11", "T12",
 )
+
+SOURCE_PHASES = (
+    "S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
+)
+
+_SOURCE_DELTA_PATHS = {
+    "rssBytes": ("process", "vmRssBytes"),
+    "rssAnonBytes": ("process", "rssAnonBytes"),
+    "rssFileBytes": ("process", "rssFileBytes"),
+    "pssBytes": ("smapsRollup", "pssBytes"),
+    "arenaBytes": ("allocatorMetrics", "arenaBytes"),
+    "allocatedBytes": ("allocatorMetrics", "allocatedBytes"),
+    "freeBytes": ("allocatorMetrics", "freeBytes"),
+    "topReleasableBytes": ("allocatorMetrics", "topReleasableBytes"),
+    "cgroupCurrentBytes": ("cgroup", "memoryCurrentBytes"),
+    "cgroupAnonBytes": ("cgroup", "stat", "anon"),
+}
+
+_OPERATION_KINDS = {
+    "HTTP", "scheduler", "background", "journal", "provider", "internal",
+}
+_OPERATION_METADATA_FIELDS = {
+    "missionActive", "statusCode", "result", "errorClass", "taskClass",
+    "triggerSource", "natural",
+}
 
 _STATUS_FIELDS = {
     "VmRSS": "vmRssBytes",
@@ -252,6 +282,76 @@ def memory_snapshot(logical: Optional[Mapping[str, Any]] = None) -> Dict[str, An
     }
 
 
+def operation_snapshot() -> Dict[str, Any]:
+    """Collect the smaller request/task sample without reading smaps.
+
+    Request boundaries can be frequent, so this intentionally omits PSS and
+    logical-object collection.  It is still sufficient to attribute RSS,
+    anonymous RSS, allocator and cgroup movement.
+    """
+    try:
+        process = process_metrics()
+    except Exception:
+        process = {**_unknown_map(_STATUS_FIELDS.values()),
+                   "fdCount": UNKNOWN, "rssPeakBytes": UNKNOWN}
+    try:
+        cgroup = cgroup_metrics()
+    except Exception:
+        cgroup = {"memoryCurrentBytes": UNKNOWN,
+                  "memoryPeakBytes": UNKNOWN,
+                  "memoryMaxBytes": UNKNOWN,
+                  "stat": _unknown_map(_CGROUP_STAT_FIELDS)}
+    try:
+        allocator = allocator_metrics()
+    except Exception:
+        allocator = "UNAVAILABLE"
+    return {"capturedAt": _now(), "process": process,
+            "cgroup": cgroup, "allocatorMetrics": allocator}
+
+
+def _nested(value: Any, path: Iterable[str]) -> Any:
+    current = value
+    for key in path:
+        if not isinstance(current, Mapping):
+            return UNKNOWN
+        current = current.get(key, UNKNOWN)
+    return current
+
+
+def _metric_projection(sample: Mapping[str, Any]) -> Dict[str, Any]:
+    return {name: _nested(sample, path)
+            for name, path in _SOURCE_DELTA_PATHS.items()}
+
+
+def _metric_deltas(before: Mapping[str, Any], after: Mapping[str, Any]
+                   ) -> Dict[str, Any]:
+    left, right = _metric_projection(before), _metric_projection(after)
+    return {name: _safe_delta(left.get(name), right.get(name))
+            for name in _SOURCE_DELTA_PATHS}
+
+
+def normalize_operation_name(kind: str, name: str) -> str:
+    """Return a bounded operation label with no query or dynamic identifier."""
+    operation_kind = kind if kind in _OPERATION_KINDS else "internal"
+    raw = str(name or "unknown").split("?", 1)[0].split("#", 1)[0]
+    raw = re.sub(r"<[^>]+>", "<id>", raw)
+    raw = re.sub(
+        r"(?i)(?<![a-z0-9])[0-9a-f]{8}-[0-9a-f-]{27,36}(?![a-z0-9])",
+        "<id>", raw)
+    raw = re.sub(r"(?i)(?<![a-z0-9])[0-9a-f]{12,}(?![a-z0-9])",
+                 "<id>", raw)
+    raw = re.sub(r"(?<![a-z0-9])\d{3,}(?![a-z0-9])", "<id>", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return f"{operation_kind}:{raw}"[:160]
+
+
+def _operation_metadata(values: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(values, Mapping):
+        return {}
+    return {key: _sanitize_scalar(values.get(key))
+            for key in _OPERATION_METADATA_FIELDS if key in values}
+
+
 def _safe_delta(before: Any, after: Any) -> Any:
     if before == NOT_APPLICABLE or after == NOT_APPLICABLE:
         return NOT_APPLICABLE
@@ -312,6 +412,11 @@ class MemoryAttributionRecorder:
                     "metadata": {}}
             for phase in PHASES
         }
+        source_phases = {
+            phase: {"status": UNKNOWN, "capturedAt": None, "sample": None,
+                    "metadata": {}, "deltaFromPrevious": {}}
+            for phase in SOURCE_PHASES
+        }
         with self._lock:
             record = {
                 "schemaVersion": SCHEMA_VERSION,
@@ -319,6 +424,11 @@ class MemoryAttributionRecorder:
                 "metadata": clean_metadata,
                 "phases": phases,
                 "phaseOrder": [],
+                "sourceConstruction": {
+                    "phaseLimit": len(SOURCE_PHASES),
+                    "phases": source_phases,
+                    "phaseOrder": [],
+                },
                 "previousMissionEndRSS": self._last_end_rss,
                 "differentials": {},
                 "startedAt": _now(),
@@ -326,6 +436,9 @@ class MemoryAttributionRecorder:
             }
             self._active[key] = record
         self.capture(key, "T0", sample=initial_sample, logical=logical)
+        self.capture_source_phase(
+            key, "S0", sample=initial_sample, logical=logical,
+            metadata={"operation": "mission_start"})
         return key
 
     def update_metadata(self, record_id: str, values: Mapping[str, Any]) -> None:
@@ -364,6 +477,52 @@ class MemoryAttributionRecorder:
                                 "capturedAt") or _now(),
                             "sample": collected, "metadata": {}})
                 record["phaseOrder"].append(phase)
+            if isinstance(metadata, Mapping):
+                for name, value in metadata.items():
+                    row["metadata"][str(name)[:80]] = _sanitize_scalar(value)
+
+    def capture_source_phase(self, record_id: str, phase: str, *,
+                             sample: Optional[Mapping[str, Any]] = None,
+                             logical: Optional[Mapping[str, Any]] = None,
+                             metadata: Optional[Mapping[str, Any]] = None
+                             ) -> None:
+        """Capture one real source-construction boundary, once, scalar-only."""
+        if phase not in SOURCE_PHASES:
+            return
+        key = str(record_id)
+        with self._lock:
+            record = self._active.get(key)
+            if not record:
+                return
+            source = record["sourceConstruction"]
+            row = source["phases"][phase]
+            already_captured = row.get("status") == "CAPTURED"
+        collected = None
+        if not already_captured:
+            collected = copy.deepcopy(sample) if isinstance(sample, Mapping) \
+                else memory_snapshot(logical)
+        with self._lock:
+            record = self._active.get(key)
+            if not record:
+                return
+            source = record["sourceConstruction"]
+            row = source["phases"][phase]
+            if row.get("status") != "CAPTURED":
+                prior_sample: Mapping[str, Any] = {}
+                if source["phaseOrder"]:
+                    prior = source["phases"][source["phaseOrder"][-1]]
+                    prior_sample = prior.get("sample") or {}
+                row.update({
+                    "status": "CAPTURED",
+                    "capturedAt": (collected or {}).get("capturedAt") or _now(),
+                    "sample": collected,
+                    "metadata": {},
+                    "deltaFromPrevious": (
+                        _metric_deltas(prior_sample, collected or {})
+                        if prior_sample else
+                        {name: NOT_APPLICABLE for name in _SOURCE_DELTA_PATHS}),
+                })
+                source["phaseOrder"].append(phase)
             if isinstance(metadata, Mapping):
                 for name, value in metadata.items():
                     row["metadata"][str(name)[:80]] = _sanitize_scalar(value)
@@ -427,7 +586,10 @@ class MemoryAttributionRecorder:
                 {"recordId": key,
                  "missionWindowId": value.get("metadata", {}).get(
                      "missionWindowId"),
-                 "phaseOrder": list(value.get("phaseOrder") or [])}
+                 "phaseOrder": list(value.get("phaseOrder") or []),
+                 "sourcePhaseOrder": list(
+                     (value.get("sourceConstruction") or {}).get(
+                         "phaseOrder") or [])}
                 for key, value in self._active.items()
             ]
             encoded_bytes = len(json.dumps(
@@ -441,5 +603,111 @@ class MemoryAttributionRecorder:
                 "activeCount": len(active),
                 "active": active,
                 "historySerializedBytes": encoded_bytes,
+                "records": history,
+            }
+
+
+class OperationAttributionRecorder:
+    """Bounded request/background recorder retaining scalar metrics only."""
+
+    def __init__(self, maximum_records: int = DEFAULT_OPERATION_LIMIT, *,
+                 threshold_bytes: int = DEFAULT_OPERATION_THRESHOLD_BYTES):
+        limit = max(1, min(int(maximum_records), MAXIMUM_OPERATION_LIMIT))
+        self._maximum_records = limit
+        self._threshold_bytes = max(0, int(threshold_bytes))
+        self._history = deque(maxlen=limit)
+        self._lock = threading.RLock()
+        self._observed_count = 0
+        self._qualified_count = 0
+        self._dropped_count = 0
+
+    @property
+    def history_count(self) -> int:
+        with self._lock:
+            return len(self._history)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._history.clear()
+            self._observed_count = 0
+            self._qualified_count = 0
+            self._dropped_count = 0
+
+    def begin(self, *, kind: str, name: str, known: bool = False,
+              metadata: Optional[Mapping[str, Any]] = None,
+              sample: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        clean = _operation_metadata(metadata)
+        return {
+            "schemaVersion": "argus-operation-memory-v1",
+            "operationType": kind if kind in _OPERATION_KINDS else "internal",
+            "operationName": normalize_operation_name(kind, name),
+            "knownOperation": bool(known),
+            "startedAt": _now(),
+            "startedMonotonic": time.monotonic(),
+            "metadata": clean,
+            "start": _metric_projection(
+                copy.deepcopy(sample) if isinstance(sample, Mapping)
+                else operation_snapshot()),
+        }
+
+    def complete(self, token: Optional[Mapping[str, Any]], *,
+                 metadata: Optional[Mapping[str, Any]] = None,
+                 sample: Optional[Mapping[str, Any]] = None
+                 ) -> Optional[Dict[str, Any]]:
+        if not isinstance(token, Mapping):
+            return None
+        end_snapshot = (copy.deepcopy(sample) if isinstance(sample, Mapping)
+                        else operation_snapshot())
+        start = dict(token.get("start") or {})
+        end = _metric_projection(end_snapshot)
+        deltas = {name: _safe_delta(start.get(name), end.get(name))
+                  for name in _SOURCE_DELTA_PATHS}
+        duration_ms = round(max(0.0, (time.monotonic() -
+                                      float(token.get("startedMonotonic") or 0)))
+                            * 1000, 3)
+        clean = dict(token.get("metadata") or {})
+        clean.update(_operation_metadata(metadata))
+        magnitude = max((abs(value) for value in deltas.values()
+                         if isinstance(value, int) and not isinstance(value, bool)),
+                        default=0)
+        qualified = bool(token.get("knownOperation")) or \
+            magnitude >= self._threshold_bytes
+        with self._lock:
+            self._observed_count += 1
+            if not qualified:
+                return None
+            row = {
+                "schemaVersion": "argus-operation-memory-v1",
+                "operationType": token.get("operationType"),
+                "operationName": token.get("operationName"),
+                "knownOperation": bool(token.get("knownOperation")),
+                "startedAt": token.get("startedAt"),
+                "completedAt": _now(),
+                "durationMs": duration_ms,
+                "start": start,
+                "end": end,
+                "deltas": deltas,
+                "metadata": clean,
+            }
+            if len(self._history) == self._maximum_records:
+                self._dropped_count += 1
+            self._history.append(row)
+            self._qualified_count += 1
+            return copy.deepcopy(row)
+
+    def view(self) -> Dict[str, Any]:
+        with self._lock:
+            history = copy.deepcopy(list(self._history))
+            encoded = len(json.dumps(
+                history, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+            return {
+                "schemaVersion": "argus-operation-memory-v1",
+                "historyLimit": self._maximum_records,
+                "thresholdBytes": self._threshold_bytes,
+                "historyCount": len(history),
+                "observedCount": self._observed_count,
+                "qualifiedCount": self._qualified_count,
+                "droppedCount": self._dropped_count,
+                "historySerializedBytes": encoded,
                 "records": history,
             }

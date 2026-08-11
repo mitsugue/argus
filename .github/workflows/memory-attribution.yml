@@ -5,17 +5,21 @@ on:
     paths:
       - "argus_memory_attribution.py"
       - "argus_checkpoint_v2_isolated.py"
+      - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
+      - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
       - "test_argus_memory_attribution.py"
       - ".github/workflows/memory-attribution.yml"
   push:
     branches:
-      - "codex/memory-attribution-telemetry"
+      - "codex/deep-memory-attribution"
     paths:
       - "argus_memory_attribution.py"
       - "argus_checkpoint_v2_isolated.py"
+      - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
+      - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
       - "test_argus_memory_attribution.py"
       - ".github/workflows/memory-attribution.yml"
@@ -47,5 +51,34 @@ jobs:
         with:
           name: memory-attribution-proof-${{ github.sha }}
           path: memory-attribution-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-deep-attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Actual legacy lifecycle and inter-mission proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'pip install --quiet -r requirements.txt pytest && \
+              python3 -B -m pytest -q test_argus_memory_attribution.py && \
+              python3 -B scripts/deep_memory_attribution_probe.py \
+                --cycles 32 \
+                --output artifacts/deep-memory-attribution-proof.json \
+                --quiet'
+      - name: Publish bounded deep-attribution proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-memory-attribution-proof-${{ github.sha }}
+          path: artifacts/deep-memory-attribution-proof.json
           if-no-files-found: error
           retention-days: 14
