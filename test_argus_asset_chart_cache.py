@@ -151,6 +151,73 @@ def test_state_hash_observer_exceptions_and_mutation_are_fail_open():
     assert store == original
 
 
+def test_state_hash_normalized_reuses_provenance_and_keeps_pinned_truth(
+        monkeypatch):
+    normalized = cache.normalize_store(boundary_store())
+    original = copy.deepcopy(normalized)
+    events = []
+
+    def forbidden_normalize(_value):
+        raise AssertionError("trusted normalized hash must not normalize again")
+
+    monkeypatch.setattr(cache, "normalize_store", forbidden_normalize)
+    digest = cache.state_hash_normalized(
+        normalized, diagnostic_observer=lambda phase, metadata: events.append(
+            (phase, metadata)))
+    assert digest == ASSET_BOUNDARY_STATE_HASH
+    assert [phase for phase, _ in events] == [
+        "hash_enter", "normalized_input_reused", "hash_projection_ready",
+        "canonical_string_ready", "utf8_bytes_ready", "hash_complete"]
+    assert all(isinstance(value, (type(None), bool, int, float, str))
+               for _, metadata in events for value in metadata.values())
+    assert normalized == original
+
+
+def test_state_hash_normalized_hostile_observer_is_fail_open():
+    normalized = cache.normalize_store(boundary_store())
+    original = copy.deepcopy(normalized)
+    events = []
+
+    def hostile_observer(phase, metadata):
+        events.append(phase)
+        metadata.clear()
+        metadata["payload"] = {"mustNotEscape": normalized}
+        raise RuntimeError("diagnostic failure")
+
+    assert cache.state_hash_normalized(
+        normalized,
+        diagnostic_observer=hostile_observer) == ASSET_BOUNDARY_STATE_HASH
+    assert events == [
+        "hash_enter", "normalized_input_reused", "hash_projection_ready",
+        "canonical_string_ready", "utf8_bytes_ready", "hash_complete"]
+    assert normalized == original
+
+
+def test_state_hash_normalized_untrusted_copy_falls_back_to_raw_contract(
+        monkeypatch):
+    untrusted = copy.deepcopy(cache.normalize_store(boundary_store()))
+    original = copy.deepcopy(untrusted)
+    normalize_calls = []
+    events = []
+    original_normalize = cache.normalize_store
+
+    def counted_normalize(value):
+        normalize_calls.append(value)
+        return original_normalize(value)
+
+    monkeypatch.setattr(cache, "normalize_store", counted_normalize)
+    assert cache.state_hash_normalized(
+        untrusted, diagnostic_observer=lambda phase, metadata: events.append(
+            (phase, metadata))) == ASSET_BOUNDARY_STATE_HASH
+    assert normalize_calls == [untrusted]
+    assert [phase for phase, _ in events] == [
+        "normalized_input_fallback", "hash_enter",
+        "internal_normalize_complete", "hash_projection_ready",
+        "canonical_string_ready", "utf8_bytes_ready", "hash_complete"]
+    assert events[0][1] == {"reason": "untrusted_provenance"}
+    assert untrusted == original
+
+
 def test_state_hash_releases_serialization_temporaries_without_observer(
         monkeypatch):
     store = boundary_store()

@@ -14,6 +14,72 @@ MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 MAX_STORE_BYTES = 32 * 1024 * 1024
 
 
+_NORMALIZED_STORE_MARKER = object()
+
+
+class _NormalizedStore(dict):
+    """A short-lived result produced by this module's normalizer."""
+
+    __slots__ = ("_normalized_store_marker",)
+
+    def __init__(self, value: Dict[str, Any]) -> None:
+        super().__init__(value)
+        self._normalized_store_marker = _NORMALIZED_STORE_MARKER
+
+    def _invalidate(self) -> None:
+        self._normalized_store_marker = None
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._invalidate()
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key: Any) -> None:
+        self._invalidate()
+        super().__delitem__(key)
+
+    def clear(self) -> None:
+        self._invalidate()
+        super().clear()
+
+    def pop(self, key: Any, *args: Any) -> Any:
+        self._invalidate()
+        return super().pop(key, *args)
+
+    def popitem(self) -> Tuple[Any, Any]:
+        self._invalidate()
+        return super().popitem()
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        self._invalidate()
+        return super().setdefault(key, default)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        self._invalidate()
+        super().update(*args, **kwargs)
+
+    def __ior__(self, other: Any) -> "_NormalizedStore":
+        self._invalidate()
+        super().__ior__(other)
+        return self
+
+    def __copy__(self) -> Dict[str, Any]:
+        return dict(self)
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        memo[id(self)] = result
+        for key, value in self.items():
+            result[copy.deepcopy(key, memo)] = copy.deepcopy(value, memo)
+        return result
+
+
+def _has_normalized_store_provenance(value: Any) -> bool:
+    return (
+        type(value) is _NormalizedStore
+        and value._normalized_store_marker is _NORMALIZED_STORE_MARKER
+    )
+
+
 def _canonical(value: Any) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
@@ -91,7 +157,7 @@ def normalize_store(value: Any) -> Dict[str, Any]:
         store["cursor"] = 0
     store["lastUpdatedAt"] = source.get("lastUpdatedAt")
     _prune(store)
-    return store
+    return _NormalizedStore(store)
 
 
 def _prune(store: Dict[str, Any]) -> None:
@@ -257,6 +323,62 @@ def state_hash(
         "schemaVersion": normalized["schemaVersion"],
         "records": normalized["records"],
         "current": normalized["current"],
+    }
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_projection_ready", {
+            "recordCount": len(material["records"]),
+            "currentCount": len(material["current"]),
+        })
+    canonical = _canonical(material)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
+            "canonicalCharacterCount": len(canonical),
+        })
+    encoded = canonical.encode("utf-8")
+    del canonical
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
+            "canonicalByteCount": len(encoded),
+        })
+    hasher = hashlib.sha256(encoded)
+    del encoded
+    digest = hasher.hexdigest()[:24]
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_complete", {
+            "digestCharacterCount": len(digest),
+        })
+    return digest
+
+
+def state_hash_normalized(
+        store: Any, *,
+        diagnostic_observer: Optional[
+            Callable[[str, Dict[str, Any]], None]] = None) -> str:
+    """Hash this module's direct, unmodified ``normalize_store`` result.
+
+    Inputs without this module's live provenance marker fail safely through
+    the established raw ``state_hash`` path.
+    """
+    observing = diagnostic_observer is not None
+    if not _has_normalized_store_provenance(store):
+        if observing:
+            _diagnostic_notify(
+                diagnostic_observer, "normalized_input_fallback",
+                {"reason": "untrusted_provenance"})
+        return state_hash(store, diagnostic_observer=diagnostic_observer)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_enter", {})
+        _diagnostic_notify(diagnostic_observer, "normalized_input_reused", {
+            "recordCount": len(store["records"]),
+            "currentCount": len(store["current"]),
+            "hashNormalizedAlive": True,
+        })
+    # Keep the exact raw state_hash projection: cursor and lastUpdatedAt are
+    # scheduling metadata and are intentionally excluded from integrity truth.
+    material = {
+        "schemaVersion": store["schemaVersion"],
+        "records": store["records"],
+        "current": store["current"],
     }
     if observing:
         _diagnostic_notify(diagnostic_observer, "hash_projection_ready", {

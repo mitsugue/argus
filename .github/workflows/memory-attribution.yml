@@ -11,13 +11,15 @@ on:
       - "scanner.py"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
+      - "scripts/normalized_hash_resource_probe.py"
       - "test_argus_memory_attribution.py"
+      - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
       - ".github/workflows/memory-attribution.yml"
   push:
     branches:
-      - "codex/memory-attribution-closure"
+      - "codex/normalized-hash-memory-hotfix"
     paths:
       - "argus_memory_attribution.py"
       - "argus_asset_chart_cache.py"
@@ -27,7 +29,9 @@ on:
       - "scanner.py"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
+      - "scripts/normalized_hash_resource_probe.py"
       - "test_argus_memory_attribution.py"
+      - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
       - ".github/workflows/memory-attribution.yml"
@@ -51,7 +55,8 @@ jobs:
       - name: Diagnostic unit and privacy tests
         run: >-
           pytest -q test_argus_memory_attribution.py
-          test_argus_asset_chart_cache.py test_argus_verified_snapshot.py
+          test_argus_normalized_hash.py test_argus_asset_chart_cache.py
+          test_argus_verified_snapshot.py
       - name: 32-cycle modes and 100-record bound
         run: |
           python scripts/memory_attribution_probe.py \
@@ -80,6 +85,7 @@ jobs:
             python:3.12-slim \
             sh -c 'pip install --quiet -r requirements.txt pytest && \
               python3 -B -m pytest -q test_argus_memory_attribution.py \
+                test_argus_normalized_hash.py \
                 test_argus_asset_chart_cache.py test_argus_verified_snapshot.py && \
               python3 -B scripts/deep_memory_attribution_probe.py \
                 --cycles 32 \
@@ -91,5 +97,73 @@ jobs:
         with:
           name: deep-memory-attribution-proof-${{ github.sha }}
           path: artifacts/deep-memory-attribution-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-normalized-hash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Source and syntax safety gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          event_name='${{ github.event_name }}'
+          pr_base='${{ github.event.pull_request.base.sha }}'
+          before='${{ github.event.before }}'
+          if [[ "$event_name" == "pull_request" ]]; then
+            base_sha="$pr_base"
+          elif [[ "$before" =~ ^0+$ ]]; then
+            base_sha="$(git merge-base "$GITHUB_SHA" origin/main)"
+          else
+            base_sha="$before"
+          fi
+          git cat-file -e "${base_sha}^{commit}"
+          git diff --check "$base_sha" "$GITHUB_SHA"
+          python3 -B -m py_compile \
+            scripts/normalized_hash_resource_probe.py \
+            scripts/deep_memory_attribution_probe.py
+          if grep -nE \
+            'malloc_trim[[:space:]]*\(|gc\.collect[[:space:]]*\(|os\.(exec|kill)[a-z_]*[[:space:]]*\(' \
+            scripts/normalized_hash_resource_probe.py
+          then
+            echo "forbidden runtime-control call in normalized-hash scope" >&2
+            exit 1
+          fi
+          if git diff --unified=0 "$base_sha" "$GITHUB_SHA" -- \
+            argus_asset_chart_cache.py argus_verified_snapshot.py scanner.py | \
+            grep -E '^\+.*(malloc_trim[[:space:]]*\(|gc\.collect[[:space:]]*\(|os\.(exec|kill)[a-z_]*[[:space:]]*\()'
+          then
+            echo "forbidden runtime-control addition in hotfix diff" >&2
+            exit 1
+          fi
+      - name: Fresh-process normalized-hash proof in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 128 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/normalized_hash_resource_probe.py \
+              --cycles 32 --bars-per-record 750 \
+              --require-cgroup-max-bytes 4294967296 \
+              --output artifacts/normalized-hash-resource-proof.json \
+              --quiet
+      - name: Artifact privacy and terminal gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -c 'import json, pathlib; p = pathlib.Path("artifacts/normalized-hash-resource-proof.json"); r = json.loads(p.read_text()); assert r["passed"] is True; assert r["digestMatchPercent"] == 100.0; assert r["abnormalExitCount"] == 0; assert r["oomCount"] == 0; text = p.read_text(); assert not any(value in text for value in ("LOCAL", "local-report", "dataset-", "symbol", "payload", "token="))'
+      - name: Publish normalized-hash resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: normalized-hash-resource-proof-${{ github.sha }}
+          path: artifacts/normalized-hash-resource-proof.json
           if-no-files-found: error
           retention-days: 14

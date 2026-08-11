@@ -46,9 +46,9 @@ EXPECTED_SOURCE_OPERATIONS = {
     "internal:source.market_replay.normalize",
     "internal:source.market_replay.hash_with_transient_normalize",
     "internal:source.verified_snapshots.normalize",
-    "internal:source.verified_snapshots.hash_with_transient_normalize",
+    "internal:source.verified_snapshots.hash_normalized",
     "internal:source.asset_chart_reports.normalize",
-    "internal:source.asset_chart_reports.hash_with_transient_normalize",
+    "internal:source.asset_chart_reports.hash_normalized",
 }
 
 
@@ -305,8 +305,13 @@ def run(cycles: int = 32) -> Dict[str, Any]:
     operations = scanner._MEMORY_OPERATIONS.view()
     checks = {
         "legacyCyclesComplete": len(lifecycle) == cycles,
+        "legacyActualCheckpointCyclesAtLeast32": (
+            cycles >= 32 and len(lifecycle) >= 32),
         "allLegacyCheckpointsVerified": all(
             row["checkpointVerified"] for row in lifecycle),
+        "allLegacyCheckpointBytesPositive": all(
+            isinstance(row.get("checkpointBytes"), int) and
+            row["checkpointBytes"] > 0 for row in lifecycle),
         "sourceS0ThroughS8Exact": all(
             row["sourcePhaseOrder"] == list(memory.SOURCE_PHASES)
             for row in lifecycle),
