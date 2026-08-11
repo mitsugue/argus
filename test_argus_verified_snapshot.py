@@ -7,6 +7,10 @@ import types
 import argus_verified_snapshot as snapshots
 
 
+VERIFIED_BOUNDARY_STATE_HASH = \
+    "bed35eda35d476b28112eece7186cf058191ce43da1b279f3cda95df9ab0f5e1"
+
+
 def payload(symbol="1321", dataset_hash="data-a", *, status="complete"):
     bars = [
         {"date": "2026-07-22", "open": 100.0, "high": 102.0,
@@ -48,6 +52,32 @@ def candidate(symbol="1321", horizon="5D", dataset_hash="data-a",
         quality=quality,
         source_status={"chart": "complete", "replay": "updated"},
     )
+
+
+def boundary_store():
+    store = snapshots.empty_store()
+    for index in range(snapshots.MAX_CURRENT):
+        symbol = f"S{index:02d}"
+        body = payload(symbol, f"data-{index:02d}")
+        body["instrumentMetadata"]["nameJa"] = f"日経連動ETF {index} 🌐"
+        item = candidate(
+            symbol=symbol, dataset_hash=f"data-{index:02d}", body=body,
+            generated_at=f"2026-07-23T06:{index:02d}:00Z")
+        key = snapshots.snapshot_key("market-chart", symbol, "5D")
+        store["current"][key] = item
+    store["history"] = [{
+        "key": f"market-chart:S{index % snapshots.MAX_CURRENT:02d}:5D",
+        "snapshotId": f"vs-history-{index:02d}",
+        "replacedAt": f"2026-07-{21 + index // 24:02d}T05:{index % 24:02d}:00Z",
+    } for index in range(snapshots.MAX_HISTORY)]
+    store["lastPublishedAt"] = "2026-07-23T06:23:00Z"
+    assert len(store["current"]) == snapshots.MAX_CURRENT
+    assert len(store["history"]) == snapshots.MAX_HISTORY
+    return store
+
+
+def legacy_state_hash(store):
+    return snapshots._sha(snapshots.normalize_store(store))
 
 
 def test_valid_readback_publishes_and_unchanged_dataset_skips():
@@ -171,6 +201,130 @@ def test_normalization_gc_never_removes_current_pointer():
     assert newest in store["current"]
     restored = snapshots.normalize_store(store)
     assert snapshots.read_back_verified(store, restored)
+
+
+def test_state_hash_diagnostic_observer_is_scalar_and_bit_identical():
+    store = boundary_store()
+    original = copy.deepcopy(store)
+    baseline = legacy_state_hash(store)
+    assert baseline == VERIFIED_BOUNDARY_STATE_HASH
+    events = []
+    observed = snapshots.state_hash(
+        store, diagnostic_observer=lambda phase, metadata: events.append(
+            (phase, metadata)))
+    assert observed == baseline
+    assert [phase for phase, _ in events] == [
+        "hash_enter", "internal_normalize_complete", "stable_tree_ready",
+        "canonical_string_ready", "utf8_bytes_ready", "hash_complete"]
+    assert all(isinstance(value, (type(None), bool, int, float, str))
+               for _, metadata in events for value in metadata.values())
+    by_phase = dict(events)
+    assert by_phase["canonical_string_ready"][
+        "canonicalCharacterCount"] < by_phase["utf8_bytes_ready"][
+            "canonicalByteCount"]
+    assert store == original
+
+
+def test_state_hash_integral_floats_match_integer_json_truth():
+    floating = boundary_store()
+    integral = copy.deepcopy(floating)
+    for item in integral["current"].values():
+        for bar in item["payload"]["indicators"]["bars"]:
+            for field in ("open", "high", "low", "close"):
+                bar[field] = int(bar[field])
+    assert snapshots.state_hash(floating) == VERIFIED_BOUNDARY_STATE_HASH
+    assert snapshots.state_hash(integral) == VERIFIED_BOUNDARY_STATE_HASH
+    assert snapshots.read_back_verified(floating, integral)
+
+
+def test_state_hash_observer_exceptions_and_mutation_are_fail_open():
+    store = boundary_store()
+    original = copy.deepcopy(store)
+    expected = legacy_state_hash(store)
+    events = []
+
+    def hostile_observer(phase, metadata):
+        events.append(phase)
+        metadata.clear()
+        metadata["payload"] = {"mustNotEscape": store}
+        raise RuntimeError("diagnostic failure")
+
+    assert snapshots.state_hash(
+        store, diagnostic_observer=hostile_observer) == expected
+    assert events == [
+        "hash_enter", "internal_normalize_complete", "stable_tree_ready",
+        "canonical_string_ready", "utf8_bytes_ready", "hash_complete"]
+    assert store == original
+
+
+def test_state_hash_releases_serialization_temporaries_without_observer(
+        monkeypatch):
+    store = boundary_store()
+    released = []
+    original_dumps = snapshots.json.dumps
+    original_sha256 = snapshots.hashlib.sha256
+
+    class TrackedStable(dict):
+        def __del__(self):
+            released.append("stable")
+
+    class TrackedBytes(bytes):
+        def __del__(self):
+            released.append("bytes")
+
+    class TrackedCanonical(str):
+        def encode(self, *args, **kwargs):
+            return TrackedBytes(super().encode(*args, **kwargs))
+
+        def __del__(self):
+            released.append("canonical")
+
+    class TrackedHasher:
+        def __init__(self, delegate):
+            self.delegate = delegate
+
+        def hexdigest(self):
+            assert "stable" in released
+            assert "canonical" in released
+            assert "bytes" in released
+            return self.delegate.hexdigest()
+
+    def stable_clone(value):
+        if isinstance(value, float) and snapshots.math.isfinite(value) and \
+                value.is_integer():
+            return int(value)
+        if isinstance(value, list):
+            return [stable_clone(item) for item in value]
+        if isinstance(value, dict):
+            return {key: stable_clone(item) for key, item in value.items()}
+        return value
+
+    def tracked_stable(value):
+        cloned = stable_clone(value)
+        if isinstance(value, dict) and \
+                value.get("schemaVersion") == snapshots.STORE_SCHEMA_VERSION:
+            return TrackedStable(cloned)
+        return cloned
+
+    def tracked_dumps(*args, **kwargs):
+        encoded = original_dumps(*args, **kwargs)
+        return (TrackedCanonical(encoded)
+                if args and isinstance(args[0], TrackedStable) else encoded)
+
+    def tracked_sha256(value):
+        delegate = original_sha256(value)
+        if not isinstance(value, TrackedBytes):
+            return delegate
+        assert "stable" in released
+        assert "canonical" in released
+        assert "bytes" not in released
+        return TrackedHasher(delegate)
+
+    monkeypatch.setattr(snapshots, "_stable_json_value", tracked_stable)
+    monkeypatch.setattr(snapshots.json, "dumps", tracked_dumps)
+    monkeypatch.setattr(snapshots.hashlib, "sha256", tracked_sha256)
+    assert snapshots.state_hash(store) == VERIFIED_BOUNDARY_STATE_HASH
+    assert released == ["stable", "canonical", "bytes"]
 
 
 def _scanner():

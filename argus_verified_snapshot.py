@@ -47,6 +47,18 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _diagnostic_notify(
+        observer: Optional[Callable[[str, Dict[str, Any]], None]],
+        phase: str, metadata: Dict[str, Any]) -> None:
+    if observer is None:
+        return
+    try:
+        observer(phase, dict(metadata))
+    except Exception:
+        # Diagnostic callbacks must never alter public snapshot truth.
+        return
+
+
 def _parse_time(value: Any) -> Optional[datetime]:
     text = str(value or "").strip()
     if not text:
@@ -336,8 +348,49 @@ def normalize_store(value: Any) -> Dict[str, Any]:
     return result
 
 
-def state_hash(store: Dict[str, Any]) -> str:
-    return _sha(normalize_store(store))
+def state_hash(
+        store: Dict[str, Any], *,
+        diagnostic_observer: Optional[
+            Callable[[str, Dict[str, Any]], None]] = None) -> str:
+    observing = diagnostic_observer is not None
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_enter", {})
+    normalized = normalize_store(store)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "internal_normalize_complete", {
+            "currentCount": len(normalized["current"]),
+            "historyCount": len(normalized["history"]),
+            "hashNormalizedAlive": True,
+        })
+    stable = _stable_json_value(normalized)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "stable_tree_ready", {
+            "currentCount": len(normalized["current"]),
+            "historyCount": len(normalized["history"]),
+            "stableTreeAlive": True,
+        })
+    canonical = json.dumps(
+        stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False)
+    del stable
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
+            "canonicalCharacterCount": len(canonical),
+        })
+    encoded = canonical.encode("utf-8")
+    del canonical
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
+            "canonicalByteCount": len(encoded),
+        })
+    hasher = hashlib.sha256(encoded)
+    del encoded
+    digest = hasher.hexdigest()
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_complete", {
+            "digestCharacterCount": len(digest),
+        })
+    return digest
 
 
 def read_back_verified(local: Dict[str, Any], remote: Dict[str, Any]) -> bool:

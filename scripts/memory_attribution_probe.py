@@ -34,6 +34,100 @@ def _difference(before, after):
     return memory.UNKNOWN
 
 
+def _operation_sample(rss: int, arena: int):
+    return {
+        "capturedAt": "2026-08-10T00:00:00Z",
+        "process": {"vmRssBytes": rss, "rssAnonBytes": rss,
+                    "rssFileBytes": 0},
+        "smapsRollup": {"pssBytes": rss},
+        "cgroup": {"memoryCurrentBytes": rss,
+                   "stat": {"anon": rss}},
+        "allocatorMetrics": {
+            "arenaBytes": arena, "allocatedBytes": arena // 2,
+            "freeBytes": arena // 2, "topReleasableBytes": 0},
+    }
+
+
+def _operation_bound_probe(events: int = 10_000):
+    rss_before = _rss()
+    fd_before = memory.process_metrics().get("fdCount", memory.UNKNOWN)
+    threads_before = threading.active_count()
+    recorder = memory.OperationAttributionRecorder(
+        32, threshold_bytes=64 * 1024 * 1024,
+        active_operation_limit=8)
+    heavy = recorder.begin(
+        kind="internal", name="asset_chart_reports.normalize", known=False,
+        sample=_operation_sample(1_000_000, 1_000_000))
+    recorder.complete(
+        heavy, sample=_operation_sample(9_000_000, 9_000_000))
+    anchors = [
+        recorder.begin(
+            kind="background", name=f"active-bound-anchor-{index}",
+            known=False, sample=_operation_sample(1_000_000, 1_000_000))
+        for index in range(17)
+    ]
+    pressure_view = recorder.view()
+    for index in range(events):
+        token = recorder.begin(
+            kind="HTTP", name=f"GET /bounded/noise-{index % 97}",
+            known=False, sample=_operation_sample(1_000_000, 1_000_000))
+        recorder.complete(
+            token, sample=_operation_sample(1_001_024, 1_001_024))
+    for token in anchors:
+        recorder.complete(
+            token, sample=_operation_sample(1_000_000, 1_000_000))
+    view = recorder.view()
+    rss_after = _rss()
+    fd_after = memory.process_metrics().get("fdCount", memory.UNKNOWN)
+    threads_after = threading.active_count()
+    heavy_names = {
+        row["operationName"] for rows in view["heavyHitters"].values()
+        for row in rows
+    }
+    growth = _difference(rss_before, rss_after)
+    return {
+        "events": events + 18,
+        "activePressureOperations": len(anchors),
+        "activeTrackingLimit": pressure_view["activeTrackingLimit"],
+        "activeTrackedAtPressure": pressure_view["activeTrackedCount"],
+        "activeOverflowAtPressure": pressure_view[
+            "activeTrackingOverflowActiveCount"],
+        "activeAfterCompletion": view["activeCount"],
+        "activeTrackingOverflowCount": view["activeTrackingOverflowCount"],
+        "maximumActiveCount": view["maximumActiveCount"],
+        "rssBeforeBytes": rss_before,
+        "rssAfterBytes": rss_after,
+        "rssGrowthBytes": growth,
+        "fdBefore": fd_before,
+        "fdAfter": fd_after,
+        "threadsBefore": threads_before,
+        "threadsAfter": threads_after,
+        "historyCount": view["historyCount"],
+        "serializedBytes": view["serializedBytes"],
+        "heavyHitterLengths": {
+            name: len(rows) for name, rows in view["heavyHitters"].items()},
+        "heavyContributorRetained": (
+            "internal:asset_chart_reports.normalize" in heavy_names),
+        "passed": (
+            view["observedCount"] == events + 18 and
+            view["historyCount"] == 0 and
+            pressure_view["activeCount"] == len(anchors) and
+            pressure_view["activeTrackedCount"] == 8 and
+            pressure_view["activeTrackingOverflowActiveCount"] == 9 and
+            view["activeCount"] == 0 and
+            view["activeTrackedCount"] == 0 and
+            view["activeTrackingOverflowActiveCount"] == 0 and
+            view["activeTrackingOverflowCount"] == events + 9 and
+            view["maximumActiveCount"] == len(anchors) + 1 and
+            all(len(rows) <= 16 for rows in view["heavyHitters"].values()) and
+            "internal:asset_chart_reports.normalize" in heavy_names and
+            view["serializedBytes"] < 2 * 1024 * 1024 and
+            (growth == memory.UNKNOWN or growth <= 4 * 1024 * 1024) and
+            (fd_before == memory.UNKNOWN or fd_after == fd_before) and
+            threads_after == threads_before),
+    }
+
+
 def _run_cycle(recorder, index: int, *, stage1: bool):
     mode = "stage1" if stage1 else "legacy"
     key = f"{mode}-{index}"
@@ -81,6 +175,7 @@ def run(cycles: int = 32, bounded_cycles: int = 100):
     legacy_view = legacy.view()
     stage1_view = stage1.view()
     bounded_view = bounded.view()
+    operation_bound = _operation_bound_probe()
     legacy_last = legacy_view["records"][-1]
     stage1_last = stage1_view["records"][-1]
     rss_growth = _difference(rss_before, rss_after)
@@ -108,6 +203,7 @@ def run(cycles: int = 32, bounded_cycles: int = 100):
             rss_growth == memory.UNKNOWN or rss_growth < 128 * 1024 * 1024),
         "fdStable": fd_growth == memory.UNKNOWN or fd_growth == 0,
         "threadsStable": threads_after == threads_before,
+        "operation10000Bounded": operation_bound["passed"],
     }
     return {
         "schemaVersion": "argus-memory-attribution-probe-v1",
@@ -125,6 +221,7 @@ def run(cycles: int = 32, bounded_cycles: int = 100):
         "fdGrowth": fd_growth,
         "threadsBefore": threads_before,
         "threadsAfter": threads_after,
+        "operationBoundProof": operation_bound,
         "maximumHistorySerializedBytes": max(
             legacy_view["historySerializedBytes"],
             stage1_view["historySerializedBytes"],

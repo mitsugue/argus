@@ -4,24 +4,32 @@ on:
   pull_request:
     paths:
       - "argus_memory_attribution.py"
+      - "argus_asset_chart_cache.py"
+      - "argus_verified_snapshot.py"
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
       - "test_argus_memory_attribution.py"
+      - "test_argus_asset_chart_cache.py"
+      - "test_argus_verified_snapshot.py"
       - ".github/workflows/memory-attribution.yml"
   push:
     branches:
-      - "codex/deep-memory-attribution"
+      - "codex/memory-attribution-closure"
     paths:
       - "argus_memory_attribution.py"
+      - "argus_asset_chart_cache.py"
+      - "argus_verified_snapshot.py"
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
       - "test_argus_memory_attribution.py"
+      - "test_argus_asset_chart_cache.py"
+      - "test_argus_verified_snapshot.py"
       - ".github/workflows/memory-attribution.yml"
 
 permissions:
@@ -41,7 +49,9 @@ jobs:
           pip install --quiet anthropic flask flask-cors requests pytz
           python-dotenv json-repair pytest
       - name: Diagnostic unit and privacy tests
-        run: pytest -q test_argus_memory_attribution.py
+        run: >-
+          pytest -q test_argus_memory_attribution.py
+          test_argus_asset_chart_cache.py test_argus_verified_snapshot.py
       - name: 32-cycle modes and 100-record bound
         run: |
           python scripts/memory_attribution_probe.py \
@@ -69,7 +79,8 @@ jobs:
             --volume "$PWD:/work" --workdir /work \
             python:3.12-slim \
             sh -c 'pip install --quiet -r requirements.txt pytest && \
-              python3 -B -m pytest -q test_argus_memory_attribution.py && \
+              python3 -B -m pytest -q test_argus_memory_attribution.py \
+                test_argus_asset_chart_cache.py test_argus_verified_snapshot.py && \
               python3 -B scripts/deep_memory_attribution_probe.py \
                 --cycles 32 \
                 --output artifacts/deep-memory-attribution-proof.json \
