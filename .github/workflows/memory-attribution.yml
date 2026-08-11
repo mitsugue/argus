@@ -5,14 +5,19 @@ on:
     paths:
       - "argus_memory_attribution.py"
       - "argus_asset_chart_cache.py"
+      - "argus_remote_journal.py"
       - "argus_verified_snapshot.py"
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
+      - "docs/argus-memory-contributor-2.md"
+      - ".github/workflows/caos-watchtower.yml"
       - "scanner.py"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
+      - "scripts/memory_snapshot_resource_probe.py"
       - "scripts/normalized_hash_resource_probe.py"
       - "test_argus_memory_attribution.py"
+      - "test_argus_memory_snapshot_compact.py"
       - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
@@ -23,14 +28,19 @@ on:
     paths:
       - "argus_memory_attribution.py"
       - "argus_asset_chart_cache.py"
+      - "argus_remote_journal.py"
       - "argus_verified_snapshot.py"
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
+      - "docs/argus-memory-contributor-2.md"
+      - ".github/workflows/caos-watchtower.yml"
       - "scanner.py"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
+      - "scripts/memory_snapshot_resource_probe.py"
       - "scripts/normalized_hash_resource_probe.py"
       - "test_argus_memory_attribution.py"
+      - "test_argus_memory_snapshot_compact.py"
       - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
@@ -167,5 +177,169 @@ jobs:
         with:
           name: normalized-hash-resource-proof-${{ github.sha }}
           path: artifacts/normalized-hash-resource-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-memory-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Compact-vs-full source and syntax safety gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          event_name='${{ github.event_name }}'
+          pr_base='${{ github.event.pull_request.base.sha }}'
+          before='${{ github.event.before }}'
+          if [[ "$event_name" == "pull_request" ]]; then
+            base_sha="$pr_base"
+          elif [[ "$before" =~ ^0+$ ]]; then
+            base_sha="$(git merge-base "$GITHUB_SHA" origin/main)"
+          else
+            base_sha="$before"
+          fi
+          git cat-file -e "${base_sha}^{commit}"
+          git diff --check "$base_sha" "$GITHUB_SHA"
+          python3 -B -m py_compile \
+            scanner.py argus_remote_journal.py \
+            scripts/memory_snapshot_resource_probe.py \
+            test_argus_memory_snapshot_compact.py
+          if grep -nE \
+            'malloc_trim[[:space:]]*\(|gc\.collect[[:space:]]*\(|os\.(exec|kill)[a-z_]*[[:space:]]*\(' \
+            scripts/memory_snapshot_resource_probe.py
+          then
+            echo "forbidden runtime-control call in memory-snapshot probe" >&2
+            exit 1
+          fi
+          if git diff --unified=0 "$base_sha" "$GITHUB_SHA" -- \
+            scanner.py argus_remote_journal.py | \
+            grep -E '^\+.*(malloc_trim[[:space:]]*\(|gc\.collect[[:space:]]*\(|os\.(exec|kill)[a-z_]*[[:space:]]*\()'
+          then
+            echo "forbidden runtime-control addition in contributor diff" >&2
+            exit 1
+          fi
+      - name: 32-cycle exact compact-vs-full proof in 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 256 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -ceu 'pip install --quiet -r requirements.txt pytest
+              python3 -B -m pytest -q test_argus_memory_snapshot_compact.py
+              python3 -B scripts/memory_snapshot_resource_probe.py \
+                --cycles 32 \
+                --verified-bars-per-record 9140 \
+                --asset-bars-per-record 5024 \
+                --require-cgroup-max-bytes 4294967296 \
+                --output artifacts/memory-snapshot-resource-proof.json \
+                --quiet'
+      - name: Exact parity, resource, and artifact privacy gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json
+          import pathlib
+
+          path = pathlib.Path(
+              "artifacts/memory-snapshot-resource-proof.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          assert report["schemaVersion"] == \
+              "argus-memory-snapshot-resource-proof-v2"
+          assert report["passed"] is True
+          assert report["cyclesPerMode"] == 32
+          assert report["processTopology"] == \
+              "two-fresh-long-lived-workers-one-mode-each"
+          assert all(report["checks"].values())
+          fixture = report["fixtureShape"]
+          assert fixture["verifiedAssetCalibrationBasis"] == \
+              "accepted-normalized-hash-production-byte-calibrated-stores"
+          sections = fixture["sections"]
+          expected_section_bytes = {
+              "marketLedger": 62_168_679,
+              "verifiedViewSnapshots": 27_393_104,
+              "assetChartReports": 15_209_906,
+              "chartIntelligence": 10_996_745,
+              "marketReplay": 6_696_436,
+              "todayIntelligence": 4_971_964,
+              "opsJournal": 240_333,
+              "outcomes": 394_997,
+          }
+          for key, target in expected_section_bytes.items():
+              actual = sections[key]["encodedBytes"]
+              assert target * 0.95 <= actual <= target * 1.05
+          assert sections["marketLedger"]["counts"] == {
+              "observations": 45_148, "derivedMetrics": 815,
+              "turningPoints": 4_622, "backtests": 34,
+              "imports": 219, "rolledBackImports": 0,
+          }
+          assert sections["chartIntelligence"]["counts"] == {
+              "snapshots": 295, "zones": 1_916,
+              "turningPoints": 12_021, "reactionAnomalies": 0,
+              "relationshipBreaks": 1, "invalidations": 1_183,
+          }
+          assert sections["todayIntelligence"]["counts"] == {
+              "snapshots": 332, "shortSellingHistory": 1_234,
+              "failedRallyOutcomes": 652,
+          }
+          assert sections["marketReplay"]["counts"] == {
+              "contexts": 24, "contextHistory": 369,
+          }
+          assert sections["opsJournal"]["counts"]["events"] == 400
+          assert sections["outcomes"]["counts"]["outcomes"] == 10
+          assert report["comparison"]["exactReceiptParityCount"] == 32
+          assert report["comparison"]["compactReceiptVerifiedCount"] == 32
+          assert report["comparison"][
+              "fullProjectionReceiptVerifiedCount"] == 32
+          assert report["compact"]["http200Count"] == 32
+          assert report["full"]["http200Count"] == 32
+          assert 650 * 1024 <= \
+              report["compact"]["responseBytes"]["minimum"] <= \
+              report["compact"]["responseBytes"]["maximum"] <= \
+              750 * 1024
+          assert report["compact"]["responseBytes"]["maximum"] < \
+              report["full"]["responseBytes"]["minimum"]
+          assert 120 * 1024 ** 2 <= \
+              report["full"]["responseBytes"]["minimum"] <= \
+              140 * 1024 ** 2
+          assert report["comparison"]["responseByteReductionBytes"] >= \
+              100 * 1024 ** 2
+          assert report["comparison"]["processPeakRssReductionBytes"] >= \
+              1024 ** 2
+          assert report["comparison"]["arenaMaximumReductionBytes"] >= \
+              1024 ** 2
+          assert report["comparison"]["durationP50ReductionMs"] > 0
+          assert report["compact"]["plateauBelow128MiB"] is True
+          assert report["full"]["plateauBelow128MiB"] is True
+          assert report["compact"]["requiredLinuxTelemetryComplete"] is True
+          assert report["full"]["requiredLinuxTelemetryComplete"] is True
+          assert report["comparison"]["conservativePeakBytes"] < \
+              3 * 1024 * 1024 * 1024
+          assert report["cgroup"]["observedMaxBytesPerWorker"] == \
+              [4 * 1024 ** 3, 4 * 1024 ** 3]
+          assert report["abnormalExitCount"] == 0
+          assert report["stderrPresent"] is False
+          assert report["oomCount"] == 0
+          assert report["cgroup"]["oomKillDelta"] == 0
+          assert len({row["processId"] for row in report["workers"]}) == 2
+          assert not any(report["runtimeActions"].values())
+          text = path.read_text(encoding="utf-8")
+          assert not any(value in text for value in (
+              "LOCAL", "local-report", "dataset-", '"symbol"',
+              '"payload"', '"body"', "token=", "credential",
+              "passphrase"))
+          PY
+      - name: Publish compact-vs-full resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-snapshot-resource-proof-${{ github.sha }}
+          path: artifacts/memory-snapshot-resource-proof.json
           if-no-files-found: error
           retention-days: 14

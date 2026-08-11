@@ -22645,6 +22645,44 @@ def api_argus_osint_memory_snapshot():
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 
+def _osint_compact_readback_snapshot(now_iso: str) -> dict:
+    """Direct Remote Journal proof without building the boot-restore blob."""
+    journal = argus_remote_journal.snapshot_journal_section(
+        events=_OPS_JOURNAL, meta=_OPS_JOURNAL_META,
+        compacted=_OPS_JOURNAL_COMPACT, now_iso=now_iso)
+    return argus_remote_journal.build_compact_readback_snapshot(
+        schema_version=argus_remote_journal.SCHEMA_V3,
+        generated_at=now_iso, as_of=now_iso,
+        build_identity={"appVersion": _semantic_app_version(),
+                        "buildSha": _backend_sha()},
+        ops_journal=journal["opsJournal"],
+        integrity_manifest=journal["integrityManifest"],
+        outcomes=_OUTCOME_LEDGER[-200:],
+        mission_tick_durability=_mission_tick_durability_snapshot(
+            remote_export=True),
+        market_ledger_state_hash=argus_market_ledger.state_hash(
+            _MARKET_LEDGER),
+        chart_intelligence_state_hash=argus_chart_intelligence.state_hash(
+            _CHART_INTELLIGENCE),
+        today_intelligence_state_hash=argus_today_intelligence.state_hash(
+            _TODAY_INTELLIGENCE),
+        market_replay_state_hash=argus_market_replay.state_hash(
+            _MARKET_REPLAY),
+    )
+
+
+@app.route("/api/argus/osint/remote-readback")
+def api_argus_osint_remote_readback():
+    """Public-safe v1 proof for bounded Remote Journal liveness checks.
+
+    The full memory snapshot remains the boot-restore contract.  This route
+    exposes only its already-versioned compact verification projection and
+    never materializes verified views, asset reports, or other restore stores.
+    """
+    _osint_restore_once()
+    return jsonify(_osint_compact_readback_snapshot(_ai_now_iso()))
+
+
 @app.route("/api/argus/admin/remote-journal/commit-receipt", methods=["POST"])
 def api_argus_admin_remote_journal_commit_receipt():
     """Fsync a small intent; immutable read-back runs on a natural tick."""
