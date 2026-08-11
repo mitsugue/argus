@@ -37,7 +37,19 @@ MINIMUM_CYCLES = 32
 PLATEAU_LIMIT_BYTES = 128 * MIB
 LOGICAL_ACCEPTANCE_CEILING_BYTES = 3 * GIB
 MINIMUM_MATERIAL_RSS_REDUCTION_BYTES = 1 * MIB
-DEFAULT_BARS_PER_RECORD = 750
+# Calibrated against the single authorized v13.4.11 production baseline:
+# verified canonical/UTF-8 ~= 27.0/27.4 MiB and asset ~= 14.9/15.2 MiB.
+# A shared 750-row fixture serialized to only ~2.2 MiB for either store and
+# therefore was not production-shaped.  Keep the module-specific sizes
+# explicit because the two durable stores have intentionally asymmetric
+# schemas and hash material.
+DEFAULT_VERIFIED_BARS_PER_RECORD = 9140
+DEFAULT_ASSET_BARS_PER_RECORD = 5024
+MINIMUM_PRODUCTION_CANONICAL_BYTES = {
+    "verified": 27_000_000,
+    "asset": 14_850_000,
+}
+MAXIMUM_CALIBRATION_OVERSHOOT_PERCENT = 1.0
 STORE_KINDS = ("verified", "asset")
 PATH_MODES = ("fallback", "normalized")
 
@@ -157,7 +169,8 @@ def _bar_rows(count: int, seed: int) -> list[Dict[str, Any]]:
 
 
 def _verified_store(
-        bars_per_record: int = DEFAULT_BARS_PER_RECORD) -> Dict[str, Any]:
+        bars_per_record: int =
+        DEFAULT_VERIFIED_BARS_PER_RECORD) -> Dict[str, Any]:
     store = verified_snapshot.empty_store()
     for index in range(verified_snapshot.MAX_CURRENT):
         label = f"LOCAL{index:02d}"
@@ -196,7 +209,8 @@ def _verified_store(
 
 
 def _asset_store(
-        bars_per_record: int = DEFAULT_BARS_PER_RECORD) -> Dict[str, Any]:
+        bars_per_record: int =
+        DEFAULT_ASSET_BARS_PER_RECORD) -> Dict[str, Any]:
     store = asset_cache.empty_store()
     for index in range(asset_cache.MAX_RECORDS):
         market = "JP" if index % 2 == 0 else "US"
@@ -282,6 +296,19 @@ def _worker(
         return original_normalize(value)
 
     module.normalize_store = counted_normalize
+    canonical_byte_counts: set[int] = set()
+    canonical_character_counts: set[int] = set()
+
+    def hash_observer(phase: str, metadata: Dict[str, Any]) -> None:
+        if phase == "canonical_string_ready":
+            value = _integer(metadata.get("canonicalCharacterCount"))
+            if value is not None:
+                canonical_character_counts.add(value)
+        elif phase == "utf8_bytes_ready":
+            value = _integer(metadata.get("canonicalByteCount"))
+            if value is not None:
+                canonical_byte_counts.add(value)
+
     events_before = _memory_events()
     baseline = _snapshot()
     rows = []
@@ -290,7 +317,8 @@ def _worker(
         for index in range(cycles):
             before = _snapshot()
             started = time.perf_counter_ns()
-            digest = hash_callback(normalized)
+            digest = hash_callback(
+                normalized, diagnostic_observer=hash_observer)
             duration_ms = (time.perf_counter_ns() - started) / 1_000_000.0
             after = _snapshot()
             digests.append(str(digest))
@@ -337,12 +365,32 @@ def _worker(
     logical_peak_ok = (
         conservative_peak == memory.UNKNOWN or
         conservative_peak < LOGICAL_ACCEPTANCE_CEILING_BYTES)
+    canonical_bytes = (
+        next(iter(canonical_byte_counts))
+        if len(canonical_byte_counts) == 1 else memory.UNKNOWN)
+    canonical_characters = (
+        next(iter(canonical_character_counts))
+        if len(canonical_character_counts) == 1 else memory.UNKNOWN)
+    minimum_canonical_bytes = MINIMUM_PRODUCTION_CANONICAL_BYTES[store_kind]
+    maximum_canonical_bytes = math.floor(
+        minimum_canonical_bytes *
+        (1.0 + MAXIMUM_CALIBRATION_OVERSHOOT_PERCENT / 100.0))
+    calibrated_input = (
+        _integer(canonical_bytes) is not None and
+        minimum_canonical_bytes <= canonical_bytes <= maximum_canonical_bytes)
+    shape.update({
+        "canonicalCharacterCount": canonical_characters,
+        "canonicalHashInputBytes": canonical_bytes,
+        "minimumProductionCanonicalBytes": minimum_canonical_bytes,
+        "maximumCalibratedCanonicalBytes": maximum_canonical_bytes,
+    })
     checks = {
         "cyclesAtLeast32": len(rows) >= MINIMUM_CYCLES,
         "digestStable100Percent": len(set(digests)) == 1,
         "expectedPathObserved": normalized_fast or fallback_observed,
         "plateauBelow128MiB": plateau_ok,
         "logicalPeakBelow3GiB": logical_peak_ok,
+        "productionCalibratedCanonicalInput": calibrated_input,
         "oomDeltaZero": (
             oom_delta == 0 if cgroup_observed
             else oom_delta in (0, memory.UNKNOWN)),
@@ -448,12 +496,19 @@ def _run_worker(
 
 def run(
         cycles: int = MINIMUM_CYCLES, *,
-        bars_per_record: int = DEFAULT_BARS_PER_RECORD,
+        verified_bars_per_record: int =
+        DEFAULT_VERIFIED_BARS_PER_RECORD,
+        asset_bars_per_record: int = DEFAULT_ASSET_BARS_PER_RECORD,
         require_cgroup_max_bytes: int = 0) -> Dict[str, Any]:
     cycles = max(MINIMUM_CYCLES, int(cycles))
     started = time.monotonic()
+    bars_by_store = {
+        "verified": max(1, int(verified_bars_per_record)),
+        "asset": max(1, int(asset_bars_per_record)),
+    }
     workers = [
-        _run_worker(store_kind, mode, cycles, bars_per_record)
+        _run_worker(
+            store_kind, mode, cycles, bars_by_store[store_kind])
         for store_kind in STORE_KINDS for mode in PATH_MODES
     ]
     by_key = {
@@ -573,6 +628,10 @@ def run(
         "digestParity100Percent": digest_matches == expected_comparisons,
         "sameProductionShapedStores": all(
             row.get("sameStoreShape") is True for row in comparisons),
+        "productionCalibratedCanonicalInput": all(
+            (row.get("checks") or {}).get(
+                "productionCalibratedCanonicalInput") is True
+            for row in workers),
         "normalizedFastPathUsed": all(
             row.get("candidateNormalizeCalls") == 0
             for row in comparisons),
@@ -621,6 +680,7 @@ def run(
             "requiredCgroupMaxBytes": (
                 require_cgroup_max_bytes or memory.NOT_APPLICABLE),
             "observedCgroupMaxBytes": cgroup_max_values,
+            "productionCalibratedBarsPerRecord": bars_by_store,
         },
         "comparisons": comparisons,
         "workers": workers,
@@ -641,8 +701,13 @@ def run(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cycles", type=int, default=MINIMUM_CYCLES)
+    parser.add_argument("--bars-per-record", type=int)
     parser.add_argument(
-        "--bars-per-record", type=int, default=DEFAULT_BARS_PER_RECORD)
+        "--verified-bars-per-record", type=int,
+        default=DEFAULT_VERIFIED_BARS_PER_RECORD)
+    parser.add_argument(
+        "--asset-bars-per-record", type=int,
+        default=DEFAULT_ASSET_BARS_PER_RECORD)
     parser.add_argument("--require-cgroup-max-bytes", type=int, default=0)
     parser.add_argument("--output")
     parser.add_argument("--quiet", action="store_true")
@@ -652,10 +717,16 @@ def main() -> int:
     if args.worker_store or args.worker_mode:
         if not (args.worker_store and args.worker_mode):
             return 2
+        worker_bars = args.bars_per_record
+        if worker_bars is None:
+            worker_bars = (
+                args.verified_bars_per_record
+                if args.worker_store == "verified"
+                else args.asset_bars_per_record)
         try:
             report = _worker(
                 args.worker_store, args.worker_mode, args.cycles,
-                max(1, int(args.bars_per_record)))
+                max(1, int(worker_bars)))
         except Exception as exc:
             report = {
                 "schemaVersion": "argus-normalized-hash-worker-v1",
@@ -668,8 +739,15 @@ def main() -> int:
             }
         print(json.dumps(report, separators=(",", ":"), sort_keys=True))
         return 0 if report.get("passed") else 1
+    verified_bars = args.verified_bars_per_record
+    asset_bars = args.asset_bars_per_record
+    if args.bars_per_record is not None:
+        verified_bars = args.bars_per_record
+        asset_bars = args.bars_per_record
     report = run(
-        args.cycles, bars_per_record=max(1, int(args.bars_per_record)),
+        args.cycles,
+        verified_bars_per_record=max(1, int(verified_bars)),
+        asset_bars_per_record=max(1, int(asset_bars)),
         require_cgroup_max_bytes=max(0, int(args.require_cgroup_max_bytes)))
     encoded = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
     if not args.quiet:

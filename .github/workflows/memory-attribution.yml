@@ -150,7 +150,9 @@ jobs:
             --volume "$PWD:/work" --workdir /work \
             python:3.12-slim \
             python3 -B scripts/normalized_hash_resource_probe.py \
-              --cycles 32 --bars-per-record 750 \
+              --cycles 32 \
+              --verified-bars-per-record 9140 \
+              --asset-bars-per-record 5024 \
               --require-cgroup-max-bytes 4294967296 \
               --output artifacts/normalized-hash-resource-proof.json \
               --quiet
