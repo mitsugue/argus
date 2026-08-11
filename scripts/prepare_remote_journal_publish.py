@@ -37,6 +37,10 @@ def _manifest_hash(value: Dict[str, Any]) -> str:
     return str((value.get("integrityManifest") or {}).get("manifestHash") or "")
 
 
+def _receipt_hash(value: Dict[str, Any]) -> str:
+    return str(value.get("receiptHash") or "")
+
+
 def _existing_proof(
     full_path: pathlib.Path, readback_path: pathlib.Path
 ) -> Optional[Dict[str, Any]]:
@@ -53,7 +57,7 @@ def _existing_proof(
             if argus_remote_journal.parse_remote_snapshot(snapshot).get(
                 "status"
             ) == "ok":
-                return snapshot
+                return argus_remote_journal.compact_readback_snapshot(snapshot)
         except (OSError, ValueError, json.JSONDecodeError):
             pass
     return None
@@ -82,15 +86,24 @@ def prepare(
         raise ValueError("full_and_readback_manifest_mismatch")
     if _as_of(full) != _as_of(readback):
         raise ValueError("full_and_readback_timestamp_mismatch")
+    exact_readback = argus_remote_journal.compact_readback_snapshot(full)
+    if _receipt_hash(exact_readback) != _receipt_hash(readback):
+        raise ValueError("full_and_readback_receipt_mismatch")
 
     existing = _existing_proof(ledger_full, ledger_readback)
     old_as_of = _as_of(existing or {})
-    old_hash = _manifest_hash(existing or {})
+    old_receipt_hash = _receipt_hash(existing or {})
     new_as_of = _as_of(readback)
+    new_receipt_hash = _receipt_hash(readback)
     if not new_as_of:
         raise ValueError("missing_snapshot_timestamp")
+    if not new_receipt_hash:
+        raise ValueError("missing_receipt_hash")
 
-    if old_hash == full_hash:
+    # Manifest identity covers the signed journal, but not outcomes, state
+    # hashes, or missionTickDurability.  Exact receipt identity is required so
+    # a WAL-only advance is never suppressed as ``already_committed``.
+    if old_receipt_hash and old_receipt_hash == new_receipt_hash:
         status = "already_committed"
     elif not old_as_of or new_as_of > old_as_of:
         status = "prepared"
@@ -108,6 +121,7 @@ def prepare(
     return {
         "status": status,
         "expectedHash": full_hash,
+        "expectedReceiptHash": new_receipt_hash,
         "generatedAt": new_as_of,
         "previousGeneratedAt": old_as_of or None,
         "fullSnapshotBytes": full_bytes,
@@ -119,7 +133,8 @@ def prepare(
 
 
 def verify_committed(
-    *, readback_path: pathlib.Path, expected_hash: str
+    *, readback_path: pathlib.Path, expected_hash: str,
+    expected_receipt_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     readback = _read_json(readback_path)
     if not argus_remote_journal.verify_compact_readback_snapshot(readback):
@@ -127,12 +142,16 @@ def verify_committed(
     actual_hash = _manifest_hash(readback)
     if actual_hash != str(expected_hash):
         raise ValueError("committed_compact_readback_hash_mismatch")
+    actual_receipt_hash = _receipt_hash(readback)
+    if expected_receipt_hash is not None and \
+            actual_receipt_hash != str(expected_receipt_hash):
+        raise ValueError("committed_compact_readback_receipt_mismatch")
     return {
         "status": "verified",
         "expectedHash": str(expected_hash),
         "actualHash": actual_hash,
         "generatedAt": _as_of(readback),
-        "receiptHash": readback.get("receiptHash"),
+        "receiptHash": actual_receipt_hash,
     }
 
 
@@ -156,6 +175,7 @@ def _parser() -> argparse.ArgumentParser:
     verify_parser = sub.add_parser("verify-committed")
     verify_parser.add_argument("--readback", required=True, type=pathlib.Path)
     verify_parser.add_argument("--expected-hash", required=True)
+    verify_parser.add_argument("--expected-receipt-hash")
     return parser
 
 
@@ -171,7 +191,8 @@ def main(argv=None) -> int:
         )
     else:
         result = verify_committed(
-            readback_path=args.readback, expected_hash=args.expected_hash
+            readback_path=args.readback, expected_hash=args.expected_hash,
+            expected_receipt_hash=args.expected_receipt_hash,
         )
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     return 0
