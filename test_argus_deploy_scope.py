@@ -117,7 +117,7 @@ class DeployScopeTests(unittest.TestCase):
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
         self.assertEqual("13.3.6", frontend)
-        self.assertEqual("13.4.10", backend)
+        self.assertEqual("13.4.11", backend)
 
     def test_release_gate_enforces_render_skip_contract(self):
         workflow = (ROOT / ".github/workflows/release-gate.yml").read_text()

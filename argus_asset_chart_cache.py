@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 
 SCHEMA_VERSION = "argus-asset-chart-report-cache-v1"
@@ -22,6 +22,18 @@ def _canonical(value: Any) -> str:
 
 def _hash(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()[:24]
+
+
+def _diagnostic_notify(
+        observer: Optional[Callable[[str, Dict[str, Any]], None]],
+        phase: str, metadata: Dict[str, Any]) -> None:
+    if observer is None:
+        return
+    try:
+        observer(phase, dict(metadata))
+    except Exception:
+        # Observability is deliberately fail-open and cannot alter cache truth.
+        return
 
 
 def identity_key(market: str, symbol: str, timeframe: str) -> str:
@@ -224,16 +236,52 @@ def merge_restored(local: Any, restored: Any) -> Dict[str, Any]:
     return out
 
 
-def state_hash(store: Any) -> str:
+def state_hash(
+        store: Any, *,
+        diagnostic_observer: Optional[
+            Callable[[str, Dict[str, Any]], None]] = None) -> str:
+    observing = diagnostic_observer is not None
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_enter", {})
     normalized = normalize_store(store)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "internal_normalize_complete", {
+            "recordCount": len(normalized["records"]),
+            "currentCount": len(normalized["current"]),
+            "hashNormalizedAlive": True,
+        })
     # The round-robin cursor is an operational scheduling detail and advances
     # even when no chart payload changes.  Remote read-back integrity is bound
     # to published reports/pointers, not to that transient cursor.
-    return _hash({
+    material = {
         "schemaVersion": normalized["schemaVersion"],
         "records": normalized["records"],
         "current": normalized["current"],
-    })
+    }
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_projection_ready", {
+            "recordCount": len(material["records"]),
+            "currentCount": len(material["current"]),
+        })
+    canonical = _canonical(material)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
+            "canonicalCharacterCount": len(canonical),
+        })
+    encoded = canonical.encode("utf-8")
+    del canonical
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
+            "canonicalByteCount": len(encoded),
+        })
+    hasher = hashlib.sha256(encoded)
+    del encoded
+    digest = hasher.hexdigest()[:24]
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_complete", {
+            "digestCharacterCount": len(digest),
+        })
+    return digest
 
 
 def read_back_verified(local: Any, remote: Any) -> bool:

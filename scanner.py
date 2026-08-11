@@ -16004,6 +16004,7 @@ _MISSION_TICK_CONTEXT = {
     "ownerThread": None,
     "memoryAttributionRecordId": None,
     "memoryAttributionT0": None,
+    "memoryAttributionPrelude": None,
 }
 
 _MEMORY_ATTRIBUTION = argus_memory_attribution.MemoryAttributionRecorder(
@@ -16021,12 +16022,13 @@ def _mission_tick_context_active():
 
 def _memory_attribution_logical_counts():
     """Return bounded internal counts only; payload contents are never read."""
-    try:
-        remote_queue = argus_remote_receipt_queue.summary(
-            _REMOTE_RECEIPT_QUEUE, now_iso=_ai_now_iso()).get(
-                "pendingCount")
-    except Exception:
-        remote_queue = argus_memory_attribution.UNKNOWN
+    # Do not call receipt_queue.summary() here.  That API verifies, hashes and
+    # deep-copies up to 512 receipts, which would turn a scalar diagnostic
+    # boundary into the very whole-state materialization being measured.
+    receipt_rows = (_REMOTE_RECEIPT_QUEUE.get("receipts")
+                    if isinstance(_REMOTE_RECEIPT_QUEUE, dict) else None)
+    remote_queue = (len(receipt_rows) if isinstance(receipt_rows, list)
+                    else argus_memory_attribution.UNKNOWN)
     cache_count = 0
     for value in (_OSINT_URL_CACHE, _OSINT_AGENT_QUEUE,
                   _VERIFIED_VIEW_SNAPSHOTS, _ASSET_CHART_REPORTS):
@@ -16069,6 +16071,18 @@ def _memory_attribution_begin(window, actual_at):
                         window.get("missionWindowId") or
                         f"mission-{time.time_ns()}")
         _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = record_id
+        initial_sample = _MISSION_TICK_CONTEXT.get("memoryAttributionT0")
+        try:
+            intermission_sample = (initial_sample or
+                                   _memory_attribution_initial_snapshot())
+            if isinstance(intermission_sample, dict):
+                _MEMORY_OPERATIONS.close_intermission(
+                    next_record_id=record_id,
+                    next_mission_window_id=window.get("missionWindowId"),
+                    sample=intermission_sample)
+        except Exception:
+            pass
+        mission_path_initial_sample = _memory_attribution_scalar_snapshot()
         _MEMORY_ATTRIBUTION.begin(record_id, {
             "missionWindowId": window.get("missionWindowId"),
             "triggerSource": window.get("triggerSource") or
@@ -16083,25 +16097,47 @@ def _memory_attribution_begin(window, actual_at):
             "v2GenerationAttempted": False,
             "v2GenerationId": None,
             "legacyCheckpointAttempted": False,
-        }, initial_sample=_MISSION_TICK_CONTEXT.get("memoryAttributionT0"),
-            logical=_memory_attribution_logical_counts())
+        }, initial_sample=initial_sample,
+            logical=_memory_attribution_logical_counts(),
+            prelude_samples=(
+                _MISSION_TICK_CONTEXT.get("memoryAttributionPrelude") or {}),
+            mission_path_initial_sample=mission_path_initial_sample)
     except Exception:
         _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = None
 
 
-def _memory_attribution_capture(phase, metadata=None):
+def _memory_attribution_capture(phase, metadata=None, sample=None):
     try:
         record_id = _memory_attribution_record_id()
         if not record_id:
             return
         _MEMORY_ATTRIBUTION.capture(
-            record_id, phase, logical=_memory_attribution_logical_counts(),
+            record_id, phase, sample=sample,
+            logical=(None if sample is not None else
+                     _memory_attribution_logical_counts()),
             metadata=metadata)
     except Exception:
         return
 
 
-def _memory_attribution_source_capture(phase, operation, metadata=None):
+def _memory_attribution_path_capture(
+        phase, operation, metadata=None, sample=None):
+    try:
+        record_id = _memory_attribution_record_id()
+        if not record_id:
+            return
+        values = {"operation": operation}
+        if isinstance(metadata, dict):
+            values.update(metadata)
+        _MEMORY_ATTRIBUTION.capture_mission_path_phase(
+            record_id, phase, sample=sample, logical=None,
+            metadata=values)
+    except Exception:
+        return
+
+
+def _memory_attribution_source_capture(
+        phase, operation, metadata=None, sample=None):
     try:
         record_id = _memory_attribution_record_id()
         if not record_id:
@@ -16110,10 +16146,36 @@ def _memory_attribution_source_capture(phase, operation, metadata=None):
         if isinstance(metadata, dict):
             values.update(metadata)
         _MEMORY_ATTRIBUTION.capture_source_phase(
-            record_id, phase, logical=_memory_attribution_logical_counts(),
+            record_id, phase, sample=sample, logical=None,
             metadata=values)
     except Exception:
         return
+
+
+def _memory_state_hash_observer(store_kind):
+    """Map finite, scalar-only hash callbacks to exact S7 boundaries."""
+    prefix = "S7V" if store_kind == "verified" else "S7A"
+    phase_numbers = {
+        "hash_enter": 2,
+        "internal_normalize_complete": 3,
+        "stable_tree_ready": 4,
+        "hash_projection_ready": 4,
+        "canonical_string_ready": 5,
+        "utf8_bytes_ready": 6,
+        # The final boundary is captured by the caller only after temporaries
+        # have left the hash function frame.
+        "hash_complete": None,
+    }
+
+    def observe(event, metadata):
+        number = phase_numbers.get(str(event))
+        if number is None:
+            return
+        _memory_attribution_source_capture(
+            f"{prefix}{number}", f"{store_kind}_{event}",
+            metadata if isinstance(metadata, dict) else None)
+
+    return observe
 
 
 def _memory_operation_begin(kind, name, *, known=True, metadata=None):
@@ -16137,7 +16199,9 @@ def _memory_operation_complete(token, metadata=None):
         return None
 
 
-def _memory_operation_run(kind, name, callback, *args, **kwargs):
+def _memory_operation_run(
+        kind, name, callback, *args, _attribution_after_callback=None,
+        **kwargs):
     """Run an existing task unchanged while measuring only scalar boundaries."""
     token = _memory_operation_begin(kind, name, known=True)
     try:
@@ -16146,6 +16210,11 @@ def _memory_operation_run(kind, name, callback, *args, **kwargs):
         _memory_operation_complete(
             token, {"result": "error", "errorClass": type(exc).__name__})
         raise
+    if callable(_attribution_after_callback):
+        try:
+            _attribution_after_callback(result)
+        except Exception:
+            pass
     _memory_operation_complete(token, {"result": "ok"})
     return result
 
@@ -16160,10 +16229,44 @@ def _memory_attribution_not_applicable(phases, reason):
         return
 
 
+def _memory_attribution_finish_mission(*, mission_complete, error_class=None):
+    """Close only a real mission record and never affect request semantics."""
+    try:
+        record_id = _memory_attribution_record_id()
+        if not record_id:
+            return
+        sample = (_memory_attribution_scalar_snapshot()
+                  or _memory_attribution_initial_snapshot())
+        if not isinstance(sample, dict):
+            return
+        metadata = {"missionComplete": bool(mission_complete)}
+        if error_class:
+            metadata["errorClass"] = str(error_class)[:120]
+        _memory_attribution_capture("T11", metadata, sample=sample)
+        try:
+            _MEMORY_OPERATIONS.open_intermission(
+                record_id=record_id,
+                mission_window_id=_MISSION_TICK_CONTEXT.get(
+                    "missionWindowId"),
+                sample=sample)
+        except Exception:
+            pass
+    except Exception:
+        return
+
+
 def _memory_attribution_initial_snapshot():
     try:
         return argus_memory_attribution.memory_snapshot(
             _memory_attribution_logical_counts())
+    except Exception:
+        return None
+
+
+def _memory_attribution_scalar_snapshot():
+    """Full process/allocator scalar sample without logical-store traversal."""
+    try:
+        return argus_memory_attribution.memory_snapshot(None)
     except Exception:
         return None
 
@@ -16409,6 +16512,8 @@ def _osint_persist():
         "internal", "checkpoint_persist", known=True)
     try:
         with _DURABLE_CHECKPOINT_LOCK:
+            _memory_attribution_path_capture(
+                "M21", "checkpoint_lock_acquired")
             result = _osint_persist_locked()
     except Exception as exc:
         _memory_operation_complete(
@@ -16427,15 +16532,29 @@ def _osint_persist_locked():
     _DURABLE_STATE["writeCount"] = int(
         _DURABLE_STATE.get("writeCount") or 0) + 1
     try:
+        pre_wal_sample = _memory_attribution_scalar_snapshot()
+        _memory_attribution_path_capture(
+            "M22", "final_wal_read_start", sample=pre_wal_sample)
+        _memory_attribution_source_capture(
+            "S0", "checkpoint_source_entry", {
+                "wholeStateRepresentations": 0,
+                "outerWalRepresentationAlive": True,
+            }, sample=pre_wal_sample)
         wal_state = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
         included_wal_sequence = int(wal_state.get("maximumSequence") or 0)
         _MISSION_BATCH_STATE["walAppliedSequence"] = included_wal_sequence
+        post_wal_sample = _memory_attribution_scalar_snapshot()
         _memory_attribution_source_capture("S1", "wal_cursor_read", {
             "walRecordCount": len(wal_state.get("records") or []),
             "walBytes": wal_state.get("bytes"),
             "includedWalSequence": included_wal_sequence,
             "wholeStateRepresentations": 0,
-        })
+        }, sample=post_wal_sample)
+        _memory_attribution_path_capture(
+            "M23", "final_wal_read_complete", {
+                "walRecordCount": len(wal_state.get("records") or []),
+                "walBytes": wal_state.get("bytes"),
+            }, sample=post_wal_sample)
 
         # S2 preserves the exact pre-diagnostic reference/slice/copy semantics.
         # List slices and shallow dictionaries coexist with their authoritative
@@ -16546,23 +16665,87 @@ def _osint_persist_locked():
             "peakSimultaneousRepresentations": 3,
         })
 
+        _memory_attribution_source_capture(
+            "S7V0", "verified_snapshots_normalize_start", {
+                "authoritativeAlive": True,
+                "blobNormalizedAlive": False,
+            })
+
+        def _verified_normalize_complete(normalized):
+            _memory_attribution_source_capture(
+                "S7V1", "verified_snapshots_normalize_complete", {
+                    "authoritativeAlive": True,
+                    "blobNormalizedAlive": False,
+                    "normalizedResultAlive": True,
+                    "blobAssignmentPending": True,
+                    "currentCount": len(normalized.get("current") or {}),
+                    "historyCount": len(normalized.get("history") or []),
+                })
+
         blob["verifiedViewSnapshots"] = _memory_operation_run(
             "internal", "source.verified_snapshots.normalize",
-            argus_verified_snapshot.normalize_store, _VERIFIED_VIEW_SNAPSHOTS)
+            argus_verified_snapshot.normalize_store, _VERIFIED_VIEW_SNAPSHOTS,
+            _attribution_after_callback=_verified_normalize_complete)
+
+        def _verified_hash_complete(_state_hash):
+            _memory_attribution_source_capture(
+                "S7V7", "verified_snapshots_hash_returned", {
+                    "authoritativeAlive": True,
+                    "blobNormalizedAlive": True,
+                    "hashTemporariesReleased": True,
+                    "peakWholeStateRepresentations": 4,
+                })
+
         blob["verifiedViewSnapshotsStateHash"] = _memory_operation_run(
             "internal", "source.verified_snapshots.hash_with_transient_normalize",
-            argus_verified_snapshot.state_hash, _VERIFIED_VIEW_SNAPSHOTS)
+            argus_verified_snapshot.state_hash, _VERIFIED_VIEW_SNAPSHOTS,
+            diagnostic_observer=_memory_state_hash_observer("verified"),
+            _attribution_after_callback=_verified_hash_complete)
+        _memory_attribution_source_capture(
+            "S7A0", "asset_chart_reports_normalize_start", {
+                "authoritativeAlive": True,
+                "blobNormalizedAlive": False,
+            })
+
+        def _asset_normalize_complete(normalized):
+            _memory_attribution_source_capture(
+                "S7A1", "asset_chart_reports_normalize_complete", {
+                    "authoritativeAlive": True,
+                    "blobNormalizedAlive": False,
+                    "normalizedResultAlive": True,
+                    "blobAssignmentPending": True,
+                    "recordCount": len(normalized.get("records") or {}),
+                    "currentCount": len(normalized.get("current") or {}),
+                })
+
         blob["assetChartReports"] = _memory_operation_run(
             "internal", "source.asset_chart_reports.normalize",
-            argus_asset_chart_cache.normalize_store, _ASSET_CHART_REPORTS)
+            argus_asset_chart_cache.normalize_store, _ASSET_CHART_REPORTS,
+            _attribution_after_callback=_asset_normalize_complete)
+
+        def _asset_hash_complete(_state_hash):
+            _memory_attribution_source_capture(
+                "S7A7", "asset_chart_reports_hash_returned", {
+                    "authoritativeAlive": True,
+                    "blobNormalizedAlive": True,
+                    "hashTemporariesReleased": True,
+                    "peakWholeStateRepresentations": 3,
+                })
+
         blob["assetChartReportsStateHash"] = _memory_operation_run(
             "internal", "source.asset_chart_reports.hash_with_transient_normalize",
-            argus_asset_chart_cache.state_hash, _ASSET_CHART_REPORTS)
+            argus_asset_chart_cache.state_hash, _ASSET_CHART_REPORTS,
+            diagnostic_observer=_memory_state_hash_observer("asset"),
+            _attribution_after_callback=_asset_hash_complete)
         _memory_attribution_source_capture("S7", "public_stores_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 10,
             "transientHashNormalizationCount": 2,
-            "peakSimultaneousRepresentations": 3,
+            "peakWholeStateRepresentations": 4,
+            "verifiedPeakWholeStateRepresentations": 4,
+            "assetPeakWholeStateRepresentations": 3,
+            "canonicalStringMaterializations": 2,
+            "utf8ByteMaterializations": 2,
             "verifiedSnapshotCurrentCount": len(
                 _VERIFIED_VIEW_SNAPSHOTS.get("current") or {}),
             "verifiedSnapshotHistoryCount": len(
@@ -18403,18 +18586,22 @@ def _append_tick_wal(kind, payload):
 
 def _persist_mission_transition(mission, cursor=None):
     """Fsync a small replayable transition before the request acknowledges it."""
-    if cursor is not None:
-        _MISSION_BATCH_STATE["cursor"] = max(
-            int(_MISSION_BATCH_STATE.get("cursor") or 0), int(cursor))
-    _append_tick_wal("mission_transition", {
-        "transitionState": {
-            "mission": copy.deepcopy(mission),
-            "postmortems": copy.deepcopy(_POSTMORTEMS[-30:]),
-            "periodicReports": copy.deepcopy(_PERIODIC_REPORTS[-12:]),
-            "challengerRuns": copy.deepcopy(_CHALLENGER_RUNS[-8:]),
-            "agentQueue": copy.deepcopy(_OSINT_AGENT_QUEUE),
-            "batch": dict(_MISSION_BATCH_STATE),
-        }})
+    def _persist_transition():
+        if cursor is not None:
+            _MISSION_BATCH_STATE["cursor"] = max(
+                int(_MISSION_BATCH_STATE.get("cursor") or 0), int(cursor))
+        _append_tick_wal("mission_transition", {
+            "transitionState": {
+                "mission": copy.deepcopy(mission),
+                "postmortems": copy.deepcopy(_POSTMORTEMS[-30:]),
+                "periodicReports": copy.deepcopy(_PERIODIC_REPORTS[-12:]),
+                "challengerRuns": copy.deepcopy(_CHALLENGER_RUNS[-8:]),
+                "agentQueue": copy.deepcopy(_OSINT_AGENT_QUEUE),
+                "batch": dict(_MISSION_BATCH_STATE),
+            }})
+
+    return _memory_operation_run(
+        "internal", "mission.persist_transition", _persist_transition)
 
 
 def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
@@ -19204,10 +19391,18 @@ def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
 def _persist_with_remote_receipt_drain(now_iso=None):
     """Natural lifecycle adapter: one bounded drainer plus one checkpoint."""
     now_iso = now_iso or _ai_now_iso()
+    _memory_attribution_path_capture(
+        "M18", "remote_receipt_prepare_start")
     plan = _memory_operation_run(
         "journal", "remote_receipt_prepare",
         _prepare_remote_receipt_drain, now_iso)
+    _memory_attribution_path_capture(
+        "M19", "remote_receipt_prepare_complete", {
+            "queueBefore": plan.get("queueBefore"),
+        })
     try:
+        _memory_attribution_path_capture(
+            "M20", "checkpoint_adapter_entry")
         checkpoint = _osint_persist()
         result = _memory_operation_run(
             "journal", "remote_receipt_complete",
@@ -19753,6 +19948,7 @@ def api_argus_admin_memory_attribution():
 
 @app.route("/api/argus/admin/missions/tick", methods=["POST"])
 def api_argus_admin_missions_tick():
+    _prelude_samples = {"P0": _memory_attribution_scalar_snapshot()}
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
@@ -19777,6 +19973,7 @@ def api_argus_admin_missions_tick():
         boot_id=_RUNTIME.get("bootId"),
         ttl_seconds=_outcome_policy_seconds(
             "ARGUS_MISSION_LEASE_SECONDS", 240, 30))
+    _prelude_samples["P1"] = _memory_attribution_scalar_snapshot()
     if not lease.acquire():
         active = lease.metadata or {}
         return jsonify({
@@ -19794,9 +19991,13 @@ def api_argus_admin_missions_tick():
                 "buildSha": active.get("buildSha"),
             },
         })
+    _prelude_samples["P2"] = _memory_attribution_scalar_snapshot()
     _DURABLE_CHECKPOINT_LOCK.acquire()
+    _prelude_samples["P3"] = _memory_attribution_scalar_snapshot()
     try:
         wal = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
+        _prelude_samples["P4"] = _memory_attribution_scalar_snapshot()
+        _t0_sample = _prelude_samples["P4"]
         _MISSION_TICK_CONTEXT.update({
             "active": True,
             "jobId": lease.job_id,
@@ -19807,13 +20008,22 @@ def api_argus_admin_missions_tick():
             "startedMonotonic": time.monotonic(),
             "startedCpu": time.process_time(),
             "rssBeforeBytes": argus_tick_durability.current_rss_bytes(),
-            "memoryAttributionT0": _memory_attribution_initial_snapshot(),
+            "memoryAttributionT0": _t0_sample,
+            "memoryAttributionPrelude": _prelude_samples,
             "memoryAttributionRecordId": None,
             "walAppendMs": 0,
             "ownerThread": threading.get_ident(),
         })
-        result = _api_argus_admin_missions_tick_impl()
-        _memory_attribution_capture("T11", {"missionComplete": True})
+        try:
+            result = _api_argus_admin_missions_tick_impl()
+        except Exception as exc:
+            _memory_attribution_not_applicable(
+                tuple(f"M{number}" for number in range(24)),
+                f"mission_exception:{type(exc).__name__}")
+            _memory_attribution_finish_mission(
+                mission_complete=False, error_class=type(exc).__name__)
+            raise
+        _memory_attribution_finish_mission(mission_complete=True)
         return result
     finally:
         record_id = _memory_attribution_record_id()
@@ -19829,6 +20039,7 @@ def api_argus_admin_missions_tick():
         _MISSION_TICK_CONTEXT["ownerThread"] = None
         _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = None
         _MISSION_TICK_CONTEXT["memoryAttributionT0"] = None
+        _MISSION_TICK_CONTEXT["memoryAttributionPrelude"] = None
         lease.release()
         _DURABLE_CHECKPOINT_LOCK.release()
 
@@ -19885,7 +20096,13 @@ def _api_argus_admin_missions_tick_impl():
     window_record, should_run = argus_scheduler.begin_mission_window(
         _MISSION_WINDOWS, window=window, build_sha=_backend_sha(),
         started_at=now_iso, runtime_version=_semantic_app_version())
+    _memory_attribution_path_capture(
+        "M1", "window_history_and_begin_complete",
+        {"duplicateSuppressed": not should_run})
     if not should_run:
+        _memory_attribution_not_applicable(
+            tuple(f"M{number}" for number in range(2, 18)),
+            "duplicate_suppressed")
         checkpoint = _persist_with_remote_receipt_drain(now_iso)
         return jsonify({"ok": True, "status": "expected_skip",
                         "result": "caught_up",
@@ -19910,7 +20127,9 @@ def _api_argus_admin_missions_tick_impl():
     jp_session = calendar_states["JP"]
     us_session = calendar_states["US"]
     jp_holiday = not jp_session["isTradingDay"]
+    _memory_attribution_path_capture("M2", "calendar_complete")
     ledger_tick = _market_ledger_tick(now_iso)
+    _memory_attribution_path_capture("M3", "market_ledger_complete")
     daily_short_tick = {"status": "expected_skip", "reason": "outside_publication_window",
                         "rowCount": len(_TODAY_INTELLIGENCE.get("shortSellingHistory") or [])}
     # J-Quants publishes this close-based aggregate after the JP session.  The
@@ -19936,15 +20155,27 @@ def _api_argus_admin_missions_tick_impl():
                                 "reason": type(_short_exc).__name__,
                                 "rowCount": len(_TODAY_INTELLIGENCE.get(
                                     "shortSellingHistory") or [])}
+    _memory_attribution_path_capture(
+        "M4", "daily_short_complete",
+        {"dailyShortRowCount": daily_short_tick.get("rowCount")})
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
     _replay_before_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
     _view_before_hash = argus_verified_snapshot.state_hash(
         _VERIFIED_VIEW_SNAPSHOTS)
+    _memory_attribution_path_capture("M5", "pre_view_hashes_complete")
+    _chart_reports = []
+    _view_publications = []
+    _view_phase_specs = (
+        ("M6", "jp_primary", "1321", "JP"),
+        ("M7", "jp_secondary", "1306", "JP"),
+        ("M8", "us_primary", "SPY", "US"),
+        ("M9", "us_secondary", "QQQ", "US"),
+    )
+    _view_phase_index = 0
     try:
-        _chart_reports = []
-        _view_publications = []
-        for _market_symbol, _market_code in (
-                ("1321", "JP"), ("1306", "JP"), ("SPY", "US"), ("QQQ", "US")):
+        for _view_phase_index, (
+                _view_phase, _view_slot, _market_symbol,
+                _market_code) in enumerate(_view_phase_specs):
             _chart_report, _view_publication = \
                 _precompute_verified_market_view(
                     _market_symbol, _market_code,
@@ -19952,6 +20183,13 @@ def _api_argus_admin_missions_tick_impl():
             _chart_reports.append(_chart_report)
             _view_publications.append({
                 "instrument": _market_symbol, **_view_publication})
+            _memory_attribution_path_capture(
+                _view_phase,
+                f"verified_market_view_{_view_slot}_complete", {
+                    "market": _market_code,
+                    "viewSlot": _view_slot,
+                })
+        _view_phase_index = len(_view_phase_specs)
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
         _view_after_hash = argus_verified_snapshot.state_hash(
@@ -19981,9 +20219,34 @@ def _api_argus_admin_missions_tick_impl():
                       "verifiedViewsStateHash": _view_after_hash,
                       "methodVersion": argus_market_replay.METHOD_VERSION,
                       "instrumentCount": 4})
+        _memory_attribution_path_capture(
+            "M10", "post_view_hashes_and_journal_complete", {
+                "viewCount": len(_view_publications),
+                "journalUpdated": bool(
+                    _chart_changed or _replay_changed or _view_changed),
+            })
     except Exception as _chart_exc:
+        if _view_phase_index < len(_view_phase_specs):
+            _failed_phase, _failed_slot, _failed_symbol, _failed_market = \
+                _view_phase_specs[_view_phase_index]
+            _memory_attribution_path_capture(
+                _failed_phase,
+                f"verified_market_view_{_failed_slot}_exception", {
+                    "market": _failed_market,
+                    "viewSlot": _failed_slot,
+                    "errorClass": type(_chart_exc).__name__,
+                })
+            _memory_attribution_not_applicable(
+                tuple(row[0] for row in _view_phase_specs[
+                    _view_phase_index + 1:]),
+                f"prior_view_exception:{type(_chart_exc).__name__}")
         chart_tick = {"changed": False, "status": "degraded",
                       "reason": type(_chart_exc).__name__}
+        _memory_attribution_path_capture(
+            "M10", "post_view_hashes_or_journal_exception", {
+                "viewCount": len(_view_publications),
+                "errorClass": type(_chart_exc).__name__,
+            })
     try:
         asset_chart_tick = _precompute_asset_chart_tick(
             deadline_monotonic=batch_started + time_budget_seconds)
@@ -19994,6 +20257,9 @@ def _api_argus_admin_missions_tick_impl():
             "stateHash": argus_asset_chart_cache.state_hash(
                 _ASSET_CHART_REPORTS),
         }
+    _memory_attribution_path_capture(
+        "M11", "asset_chart_complete",
+        {"generated": asset_chart_tick.get("generated")})
     # v13.4.2: Remote Journal read-back runs through the fsynced receipt-intent
     # queue immediately before the already-required natural checkpoint below.
     # Public GETs and the receipt-acceptance POST never invoke the drainer.
@@ -20045,6 +20311,9 @@ def _api_argus_admin_missions_tick_impl():
                    r.get("origin") == "validation_run"
                    for r in _PERIODIC_REPORTS):
             _PERIODIC_REPORTS.append(rep)
+    _memory_attribution_path_capture(
+        "M12", "mission_generation_complete",
+        {"createdMissionCount": len(created)})
     # 見逃し検知→回収対象へ
     missed = argus_scheduler.detect_missed(
         _MISSIONS, now_iso, max_records=max_missions)
@@ -20064,13 +20333,18 @@ def _api_argus_admin_missions_tick_impl():
                   "missionType": _mm.get("missionType") or "unknown"})
     while len(_INCIDENTS) > 20:
         _INCIDENTS.pop(0)
+    _memory_attribution_path_capture(
+        "M13", "missed_incidents_complete",
+        {"missedCount": len(missed)})
     # unresolved Outcomeは日次missionだけに閉じ込めず、各有効windowで再評価。
     # 同一window重複は上のleaseでここへ到達せず、Outcome ID/intervalも二重防御。
     outcome_retry_candidates = sum(
         1 for o in _OUTCOME_LEDGER
         if argus_decision_ledger.outcome_retry_due(o, now_iso=now_iso))
-    outcome_stats = _dl_resolve_matured(
-        now_iso, max_records=max_outcomes, return_stats=True,
+    outcome_stats = _memory_operation_run(
+        "internal", "mission.outcome_resolution",
+        _dl_resolve_matured, now_iso, max_records=max_outcomes,
+        return_stats=True,
         deadline_monotonic=batch_started + time_budget_seconds)
     outcome_resolved_this_tick = outcome_stats["resolved"]
     if outcome_stats["processed"]:
@@ -20079,8 +20353,22 @@ def _api_argus_admin_missions_tick_impl():
         _append_tick_wal("batch_cursor", {
             "transitionState": {
                 "batch": dict(_MISSION_BATCH_STATE)}})
+    _memory_attribution_path_capture(
+        "M14", "outcome_resolution_complete",
+        {"processedOutcomeCount": int(outcome_stats["processed"])})
     failed_in_tick = 0
     processed_missions = 0
+    mission_operation_names = {
+        "pre_session_forecast": "mission.execute.pre_session_forecast",
+        "post_session_snapshot": "mission.execute.post_session_snapshot",
+        "missed_mission_recovery": "mission.execute.missed_mission_recovery",
+        "forecast_outcome_resolution":
+            "mission.execute.forecast_outcome_resolution",
+        "daily_postmortem": "mission.execute.daily_postmortem",
+        "weekly_learning_review": "mission.execute.weekly_learning_review",
+        "monthly_model_review": "mission.execute.monthly_model_review",
+        "benchmark_calibration": "mission.execute.benchmark_calibration",
+    }
     for m in _MISSIONS:
         if _SHUTDOWN.get("requested"):
             break
@@ -20096,8 +20384,13 @@ def _api_argus_admin_missions_tick_impl():
         _was_missed = m.get("status") == "missed"
         if not argus_scheduler.claim(m, now_iso):
             continue
+        mission_operation_token = None
         try:
             mt = m["missionType"]
+            mission_operation_token = _memory_operation_begin(
+                "internal", mission_operation_names.get(
+                    mt, "mission.execute.other"), known=True,
+                metadata={"missionType": str(mt)[:80]})
             if mt in ("pre_session_forecast", "post_session_snapshot",
                       "missed_mission_recovery"):
                 # v12.2.2 Phase 2: プリフライト — コールド/調査ゼロなら発行せず
@@ -20116,6 +20409,8 @@ def _api_argus_admin_missions_tick_impl():
                             "cursor") or 0) + 1)
                     executed.append(m["missionId"])
                     processed_missions += 1
+                    _memory_operation_complete(
+                        mission_operation_token, {"result": "ok"})
                     continue
                 # 不変予測発行(成果を知る前・冪等はミッションキーで保証)
                 for sym, inv in list(_OSINT_STORE.items())[:8]:
@@ -20236,7 +20531,12 @@ def _api_argus_admin_missions_tick_impl():
                 m, cursor=int(_MISSION_BATCH_STATE.get("cursor") or 0) + 1)
             executed.append(m["missionId"])
             processed_missions += 1
+            _memory_operation_complete(
+                mission_operation_token, {"result": "ok"})
         except Exception as e:
+            _memory_operation_complete(
+                mission_operation_token,
+                {"result": "error", "errorClass": type(e).__name__})
             argus_scheduler.fail(m, now_iso, type(e).__name__)
             _persist_mission_transition(
                 m, cursor=int(_MISSION_BATCH_STATE.get("cursor") or 0) + 1)
@@ -20246,6 +20546,10 @@ def _api_argus_admin_missions_tick_impl():
         _MISSIONS.pop(0)
     while len(_MISSION_WINDOWS) > 240:
         _MISSION_WINDOWS.pop(0)
+    _memory_attribution_path_capture(
+        "M15", "mission_execution_complete",
+        {"processedMissionCount": processed_missions,
+         "failedMissionCount": failed_in_tick})
 
     # Formal Soak is an explicit acceptance operation.  Ordinary checkpoint
     # success, elapsed time, or a disabled Stage 1 never grants start authority.
@@ -20369,9 +20673,16 @@ def _api_argus_admin_missions_tick_impl():
         "lastResult": result,
         "lastCompletedAt": heartbeat_at,
     })
+    _memory_attribution_path_capture(
+        "M16", "soak_and_batch_bookkeeping_complete",
+        {"formalSoakState": _SOAK.get("state"),
+         "remainingCount": remaining_count})
     argus_scheduler.finish_mission_window(
         window_record, completed_at=heartbeat_at, status=terminal,
         error_class=("mission_execution_failed" if failed_in_tick else None))
+    _memory_attribution_path_capture(
+        "M17", "mission_window_finalized",
+        {"windowStatus": terminal})
     checkpoint = _persist_with_remote_receipt_drain(heartbeat_at)
     if not checkpoint.get("verified"):
         terminal = "failed"
@@ -22726,7 +23037,9 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
     cursor = int(_ASSET_CHART_REPORTS.get("cursor") or 0) % len(targets)
     symbol, market = targets[cursor]
     _ASSET_CHART_REPORTS["cursor"] = (cursor + 1) % len(targets)
-    daily_rows = _chart_history_cached(symbol, market)
+    daily_rows = _memory_operation_run(
+        "provider", "asset_chart.provider_cache_history",
+        _chart_history_cached, symbol, market)
     source = {"source": "shared_provider_cache",
               "status": "live" if daily_rows else "missing",
               "errorClass": None}
@@ -22738,8 +23051,9 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
         )
         if remaining >= 20:
             provider_attempted = True
-            daily_rows, source = _asset_chart_provider_history(
-                symbol, market)
+            daily_rows, source = _memory_operation_run(
+                "provider", "asset_chart.provider_history",
+                _asset_chart_provider_history, symbol, market)
     if not daily_rows:
         return {
             "status": "expected_skip",
@@ -22755,7 +23069,9 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
             "cursor": _ASSET_CHART_REPORTS["cursor"],
             "targetCount": len(targets),
         }
-    dataset_hash = argus_market_replay.dataset_hash(daily_rows)
+    dataset_hash = _memory_operation_run(
+        "internal", "asset_chart.dataset_hash",
+        argus_market_replay.dataset_hash, daily_rows)
     existing = [
         argus_asset_chart_cache.current(
             _ASSET_CHART_REPORTS, market, symbol, timeframe)
@@ -22775,7 +23091,9 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
             "methodVersion": _ASSET_CHART_METHOD_VERSION,
             "cursor": _ASSET_CHART_REPORTS["cursor"],
             "targetCount": len(targets),
-            "stateHash": argus_asset_chart_cache.state_hash(
+            "stateHash": _memory_operation_run(
+                "internal", "asset_chart.final_state_hash",
+                argus_asset_chart_cache.state_hash,
                 _ASSET_CHART_REPORTS),
             "source": source,
         }
@@ -22787,15 +23105,20 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
     def _produce():
         publications = []
         reports = []
-        candidate_store = argus_asset_chart_cache.normalize_store(
+        candidate_store = _memory_operation_run(
+            "internal", "asset_chart.normalize",
+            argus_asset_chart_cache.normalize_store,
             _ASSET_CHART_REPORTS)
         for timeframe in ("daily", "weekly"):
-            report = _chart_public_report(
+            report = _memory_operation_run(
+                "internal", f"asset_chart.report.{timeframe}",
+                _chart_public_report,
                 symbol, market, timeframe, market_scope=False,
                 cached_only=False, precompute_replay=False,
                 daily_rows_override=daily_rows)
-            next_store, publication = argus_asset_chart_cache.publish(
-                candidate_store,
+            next_store, publication = _memory_operation_run(
+                "internal", f"asset_chart.publish.{timeframe}",
+                argus_asset_chart_cache.publish, candidate_store,
                 market=market, symbol=symbol, timeframe=timeframe,
                 dataset_hash=dataset_hash,
                 method_version=_ASSET_CHART_METHOD_VERSION,
@@ -22813,11 +23136,15 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
         _ASSET_CHART_REPORTS.update(candidate_store)
         return reports, publications
 
-    _, publications = _ASSET_CHART_SINGLEFLIGHT.run(flight_key, _produce)
+    _, publications = _memory_operation_run(
+        "internal", "asset_chart.singleflight_produce",
+        _ASSET_CHART_SINGLEFLIGHT.run, flight_key, _produce)
     generated = any(
         item["status"] == "published" for item in publications)
     if generated:
-        state_hash = argus_asset_chart_cache.state_hash(_ASSET_CHART_REPORTS)
+        state_hash = _memory_operation_run(
+            "internal", "asset_chart.updated_state_hash",
+            argus_asset_chart_cache.state_hash, _ASSET_CHART_REPORTS)
         _journal(
             "asset_chart_cache_updated", "asset_chart_cache",
             f"{market}:{symbol}",
@@ -22836,8 +23163,9 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
         "cursor": _ASSET_CHART_REPORTS["cursor"],
         "targetCount": len(targets),
         "source": source,
-        "stateHash": argus_asset_chart_cache.state_hash(
-            _ASSET_CHART_REPORTS),
+        "stateHash": _memory_operation_run(
+            "internal", "asset_chart.final_state_hash",
+            argus_asset_chart_cache.state_hash, _ASSET_CHART_REPORTS),
     }
 
 
