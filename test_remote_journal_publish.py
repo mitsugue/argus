@@ -149,6 +149,42 @@ def test_exact_manifest_is_idempotent(tmp_path):
     assert result["readbackPublished"] is False
 
 
+def test_same_manifest_with_wal_only_progress_is_published(tmp_path):
+    old = _snapshot()
+    old["missionTickDurability"] = {
+        "walAppliedSequence": 4492,
+        "remoteWalAppliedSequence": 4492,
+    }
+    new = _snapshot()
+    new["missionTickDurability"] = {
+        "walAppliedSequence": 4512,
+        "remoteWalAppliedSequence": 4512,
+    }
+    # The journal manifest remains identical while the full receipt has a
+    # strictly newer publication time and exact WAL target.
+    new["generatedAt"] = "2026-07-27T00:00:01Z"
+    assert (old["integrityManifest"]["manifestHash"] ==
+            new["integrityManifest"]["manifestHash"])
+    source_full, source_readback, ledger_full, ledger_readback = _paths(
+        tmp_path, new
+    )
+    _write(ledger_full, old)
+    _write(ledger_readback, journal.compact_readback_snapshot(old))
+
+    result = prepare(
+        source_full=source_full,
+        source_readback=source_readback,
+        ledger_full=ledger_full,
+        ledger_readback=ledger_readback,
+    )
+
+    assert result["status"] == "prepared"
+    assert result["readbackPublished"] is True
+    committed = json.loads(ledger_readback.read_text())
+    assert committed["missionTickDurability"]["walAppliedSequence"] == 4512
+    assert committed["receiptHash"] == result["expectedReceiptHash"]
+
+
 def test_tampered_compact_receipt_is_rejected(tmp_path):
     snapshot = _snapshot()
     source_full, source_readback, ledger_full, ledger_readback = _paths(
@@ -167,6 +203,31 @@ def test_tampered_compact_receipt_is_rejected(tmp_path):
         )
 
 
+def test_valid_receipt_from_different_full_snapshot_is_rejected(tmp_path):
+    full = _snapshot()
+    full["missionTickDurability"] = {
+        "walAppliedSequence": 4492,
+        "remoteWalAppliedSequence": 4492,
+    }
+    other = _snapshot()
+    other["missionTickDurability"] = {
+        "walAppliedSequence": 4512,
+        "remoteWalAppliedSequence": 4512,
+    }
+    source_full, source_readback, ledger_full, ledger_readback = _paths(
+        tmp_path, full
+    )
+    _write(source_readback, journal.compact_readback_snapshot(other))
+
+    with pytest.raises(ValueError, match="full_and_readback_receipt_mismatch"):
+        prepare(
+            source_full=source_full,
+            source_readback=source_readback,
+            ledger_full=ledger_full,
+            ledger_readback=ledger_readback,
+        )
+
+
 def test_committed_hash_mismatch_is_rejected(tmp_path):
     snapshot = _snapshot()
     _, source_readback, _, _ = _paths(tmp_path, snapshot)
@@ -175,6 +236,19 @@ def test_committed_hash_mismatch_is_rejected(tmp_path):
     ):
         verify_committed(
             readback_path=source_readback, expected_hash="0" * 16
+        )
+
+
+def test_committed_receipt_hash_mismatch_is_rejected(tmp_path):
+    snapshot = _snapshot()
+    _, source_readback, _, _ = _paths(tmp_path, snapshot)
+    with pytest.raises(
+        ValueError, match="committed_compact_readback_receipt_mismatch"
+    ):
+        verify_committed(
+            readback_path=source_readback,
+            expected_hash=snapshot["integrityManifest"]["manifestHash"],
+            expected_receipt_hash="0" * 16,
         )
 
 

@@ -90,6 +90,15 @@ jobs:
           done
           test -s "$RUNNER_TEMP/osint-memory.json"
           python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));assert d.get('schemaVersion')=='argus-durable-v3'"
+          # Public scalar truth closes the separate lost-receipt edge where
+          # the ledger is current but the backend ACK has not advanced.
+          for i in 1 2 3; do
+            curl -sf --max-time 60 "$BE/api/argus/data-quality" \
+              -o "$RUNNER_TEMP/data-quality.json" && break
+            echo "retry data-quality $i"; sleep 10
+          done
+          test -s "$RUNNER_TEMP/data-quality.json"
+          python3 -c "import json;d=json.load(open('$RUNNER_TEMP/data-quality.json'));assert d.get('schemaVersion')=='data-quality-v1'"
           python3 - "$RUNNER_TEMP/patrol-health.json" <<'PY'
           import json, sys
           d = json.load(open(sys.argv[1]))
@@ -104,18 +113,54 @@ jobs:
         with:
           ref: main
 
-      - name: Commit snapshot to ledger branch (hourly slot only, to bound churn)
+      - name: Commit snapshot and enqueue bounded Remote Journal receipt
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          # 96 commits/day would bloat the branch — persist at most once an hour.
-          MIN=$(date -u +%M)
-          if [ "$MIN" -ge 15 ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            echo "skip persist (only :00-:14 slot or manual runs persist)"; exit 0
-          fi
+          BE="https://argus-backend-3j2m.onrender.com"
+          # Copy exact control-plane helpers before switching to the
+          # payload-only ledger branch.
           python3 scripts/build_remote_readback_receipt.py \
             "$RUNNER_TEMP/osint-memory.json" "$RUNNER_TEMP/osint-readback.json"
           cp scripts/prepare_remote_journal_publish.py \
             "$RUNNER_TEMP/prepare_remote_journal_publish.py"
+          cp scripts/remote_journal_publish_policy.py \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py"
+          cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
           cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"
+
+          # The snapshot intentionally contains a seven-character identity
+          # projection. Resolve the exact identity independently and fail
+          # closed if health, ready, and the fetched snapshot disagree.
+          HEALTH=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name watchtower-durability-health --timeout 60 \
+            --url "$BE/healthz")
+          READY=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name watchtower-durability-ready --timeout 60 \
+            --url "$BE/readyz")
+          BACKEND_BUILD_SHA=$(printf '%s' "$HEALTH" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          READY_BUILD_SHA=$(printf '%s' "$READY" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          IS_READY=$(printf '%s' "$READY" | python3 -c \
+            'import json,sys; print(str(json.load(sys.stdin).get("ready") is True).lower())')
+          SNAPSHOT_BUILD_SHA=$(python3 -c \
+            "import json; print((json.load(open('$RUNNER_TEMP/osint-memory.json')).get('buildIdentity') or {}).get('buildSha') or '')")
+          python3 - "$BACKEND_BUILD_SHA" "$READY_BUILD_SHA" \
+            "$SNAPSHOT_BUILD_SHA" "$IS_READY" <<'PY'
+          import re
+          import sys
+
+          exact, ready, snapshot, is_ready = [value.lower() for value in sys.argv[1:]]
+          assert re.fullmatch(r"[0-9a-f]{40}", exact), "health_exact_sha_missing"
+          assert ready == exact, "health_ready_sha_mismatch"
+          assert is_ready == "true", "backend_not_ready"
+          assert re.fullmatch(r"(?:[0-9a-f]{7}|[0-9a-f]{40})", snapshot), \
+              "snapshot_build_sha_invalid"
+          assert exact.startswith(snapshot), "snapshot_build_sha_mismatch"
+          PY
+
+          MIN=$(date -u +%M)
           git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
             || git fetch origin ledger 2>/dev/null || true
           if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
@@ -128,6 +173,38 @@ jobs:
             git rm -rq --cached . 2>/dev/null || true
             find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
           fi
+
+          # Preserve the ordinary hourly churn bound. A delayed natural run
+          # bypasses it only when the newly-built signed compact proof contains
+          # event or exact-WAL progress absent from the ledger proof.
+          DECISION=$(python3 "$RUNNER_TEMP/remote_journal_publish_policy.py" \
+            decision \
+            --source-readback "$RUNNER_TEMP/osint-readback.json" \
+            --ledger-readback ledger/osint/readback.json \
+            --runtime-data-quality "$RUNNER_TEMP/data-quality.json" \
+            --event-name "${{ github.event_name }}" \
+            --utc-minute "$MIN")
+          DECISION_VALUES=$(printf '%s' "$DECISION" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print(d["action"]); print(d["reason"]); print(d["sourceEventCount"]); print(d["remoteEventCount"]); print(d["sourceWalTarget"]); print(d["remoteWalTarget"]); print(d.get("runtimeRemotePendingCount") or 0); print(d.get("runtimeRemoteFailureCount") or 0)')
+          DECISION_ACTION=$(printf '%s\n' "$DECISION_VALUES" | sed -n '1p')
+          DECISION_REASON=$(printf '%s\n' "$DECISION_VALUES" | sed -n '2p')
+          SOURCE_EVENTS=$(printf '%s\n' "$DECISION_VALUES" | sed -n '3p')
+          REMOTE_EVENTS=$(printf '%s\n' "$DECISION_VALUES" | sed -n '4p')
+          SOURCE_WAL=$(printf '%s\n' "$DECISION_VALUES" | sed -n '5p')
+          REMOTE_WAL=$(printf '%s\n' "$DECISION_VALUES" | sed -n '6p')
+          RUNTIME_PENDING=$(printf '%s\n' "$DECISION_VALUES" | sed -n '7p')
+          RUNTIME_FAILURES=$(printf '%s\n' "$DECISION_VALUES" | sed -n '8p')
+          echo "watchtower durability decision: action=$DECISION_ACTION reason=$DECISION_REASON events=$REMOTE_EVENTS->$SOURCE_EVENTS wal=$REMOTE_WAL->$SOURCE_WAL runtimePending=$RUNTIME_PENDING historicalFailures=$RUNTIME_FAILURES"
+          if [ "$DECISION_ACTION" = "skip" ]; then
+            echo "skip persist (hourly churn bound; no Remote Journal progress)"
+            exit 0
+          fi
+          [ -n "$ARGUS_ADMIN_TOKEN" ] || {
+            echo "Remote Journal receipt auth is unavailable"
+            exit 1
+          }
+
+          if [ "$DECISION_ACTION" = "publish" ]; then
           mkdir -p ledger/caos-watchtower ledger/caos-patrol ledger/osint
           DAY=$(TZ=Asia/Tokyo date +%F)
           cp "$RUNNER_TEMP/watchtower-status.json" ledger/caos-watchtower/latest.json
@@ -144,7 +221,21 @@ jobs:
             --source-readback "$RUNNER_TEMP/osint-readback.json" \
             --ledger-full ledger/osint/memory.json \
             --ledger-readback ledger/osint/readback.json)
-          echo "remote journal publish: $PREPARED"
+          PREPARED_VALUES=$(printf '%s' "$PREPARED" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print(d["status"]); print(d["expectedHash"]); print(d["expectedReceiptHash"]); print(d["generatedAt"]); print(d.get("previousGeneratedAt") or ""); print(d["fullSnapshotBytes"]); print(str(d["fullSnapshotPublished"]).lower()); print(str(d["fullSnapshotRetained"]).lower())')
+          PREPARED_STATUS=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '1p')
+          NEW_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '2p')
+          NEW_RECEIPT_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '3p')
+          NEW_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '4p')
+          OLD_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '5p')
+          FULL_BYTES=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '6p')
+          FULL_PUBLISHED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '7p')
+          FULL_RETAINED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '8p')
+          echo "remote journal publish: status=$PREPARED_STATUS old=$OLD_ASOF new=$NEW_ASOF fullBytes=$FULL_BYTES fullPublished=$FULL_PUBLISHED fullRetained=$FULL_RETAINED"
+          if [ "$PREPARED_STATUS" = "stale" ]; then
+            echo "skip stale snapshot (new=$NEW_ASOF)"
+            exit 0
+          fi
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
           git add ledger/caos-watchtower/ ledger/caos-patrol/ ledger/osint/
@@ -156,12 +247,57 @@ jobs:
             git push origin HEAD:ledger \
               || { git pull --rebase origin ledger && git push origin HEAD:ledger; }
           fi
-          PREPARED_STATUS=$(printf '%s' "$PREPARED" | python3 -c \
-            'import json,sys; print(json.load(sys.stdin)["status"])')
-          if [ "$PREPARED_STATUS" != "stale" ]; then
-            EXPECTED_HASH=$(printf '%s' "$PREPARED" | python3 -c \
-              'import json,sys; print(json.load(sys.stdin)["expectedHash"])')
-            python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
-              verify-committed --readback ledger/osint/readback.json \
-              --expected-hash "$EXPECTED_HASH"
+          elif [ "$DECISION_ACTION" = "receipt_only" ]; then
+            # The exact ledger proof already contains the current data; only
+            # the asynchronous backend intent was lost. Re-arm it without a
+            # second ledger commit or snapshot rewrite.
+            test -s ledger/osint/readback.json
+            NEW_HASH=$(python3 -c \
+              'import json; d=json.load(open("ledger/osint/readback.json")); print((d.get("integrityManifest") or {}).get("manifestHash") or "")')
+            NEW_RECEIPT_HASH=$(python3 -c \
+              'import json; print(json.load(open("ledger/osint/readback.json")).get("receiptHash") or "")')
+            echo "remote journal receipt-only recovery: reuse verified ledger proof"
+          else
+            echo "invalid durability decision action: $DECISION_ACTION"
+            exit 1
           fi
+          REMOTE_COMMIT_SHA=$(git rev-parse HEAD)
+          REMOTE_HEAD=$(git ls-remote origin refs/heads/ledger | awk '{print $1}')
+          [ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ] || {
+            echo "remote ledger verification failed"
+            exit 1
+          }
+          VERIFIED=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-committed --readback ledger/osint/readback.json \
+            --expected-hash "$NEW_HASH" \
+            --expected-receipt-hash "$NEW_RECEIPT_HASH")
+          EXPECTED_HASH=$(printf '%s' "$VERIFIED" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["actualHash"])')
+
+          # Enqueue only the fsynced asynchronous intent. The next ordinary
+          # natural mission owns immutable read-back, checkpoint, coalescing,
+          # and acknowledgement; this workflow never synchronously flushes.
+          RECEIPT_REQUEST=$(python3 \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py" receipt \
+            --readback ledger/osint/readback.json \
+            --remote-commit-sha "$REMOTE_COMMIT_SHA" \
+            --backend-build-sha "$BACKEND_BUILD_SHA" \
+            --expected-hash "$EXPECTED_HASH")
+          RECEIPT_IDEMPOTENCY_KEY=$(printf '%s' "$RECEIPT_REQUEST" | \
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["idempotencyKey"])')
+          RECEIPT_TARGET_WAL=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["payload"]["targetWalSequence"])')
+          RECEIPT_PAYLOAD=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.dumps(json.load(sys.stdin)["payload"],separators=(",",":")))')
+          export RECEIPT_IDEMPOTENCY_KEY REMOTE_COMMIT_SHA RECEIPT_TARGET_WAL
+          RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name watchtower-remote-journal-accept-receipt \
+            --method POST --timeout 15 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header-env Idempotency-Key=RECEIPT_IDEMPOTENCY_KEY \
+            --header 'Content-Type: application/json' \
+            --data "$RECEIPT_PAYLOAD" \
+            --url "$BE/api/argus/admin/remote-journal/commit-receipt")
+          RECEIPT_STATE=$(printf '%s' "$RECEIPT" | python3 -c \
+            'import json,os,sys; d=json.load(sys.stdin); assert d.get("accepted") is True; assert d.get("operationId"); assert d.get("remoteCommitSha")==os.environ["REMOTE_COMMIT_SHA"]; assert int(d.get("targetWalSequence") or 0)==int(os.environ["RECEIPT_TARGET_WAL"]); state=d.get("durabilityState"); assert state in ("pending","verified"); print(state)')
+          echo "watchtower Remote Journal receipt accepted: state=$RECEIPT_STATE"
