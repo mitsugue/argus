@@ -38,7 +38,8 @@ PLATEAU_LIMIT_BYTES = 128 * MIB
 LOGICAL_ACCEPTANCE_CEILING_BYTES = 3 * GIB
 MINIMUM_MATERIAL_RSS_REDUCTION_BYTES = 1 * MIB
 # Calibrated against the single authorized v13.4.11 production baseline:
-# verified canonical/UTF-8 ~= 27.0/27.4 MiB and asset ~= 14.9/15.2 MiB.
+# verified canonical/UTF-8 ~= 27.0/27.4 million bytes and asset ~=
+# 14.9/15.2 million bytes.
 # A shared 750-row fixture serialized to only ~2.2 MiB for either store and
 # therefore was not production-shaped.  Keep the module-specific sizes
 # explicit because the two durable stores have intentionally asymmetric
