@@ -105,8 +105,10 @@ def test_watchtower_is_compact_first_and_full_only_on_publish():
         'if [ "$DECISION_ACTION" = "publish" ]; then')
     full_fetch = commit_step.index("/api/argus/osint/memory-snapshot")
     rebuild = commit_step.index("osint-publish-readback.json")
+    transition_validation = commit_step.index("C1_VALIDATION=")
     prepare = commit_step.index("prepare \\")
-    assert decision < publish < full_fetch < rebuild < prepare
+    assert decision < publish < full_fetch < rebuild < \
+        transition_validation < prepare
     assert '--source-readback "$RUNNER_TEMP/osint-source-readback.json"' \
         in commit_step[:publish]
     assert '--source-readback "$RUNNER_TEMP/osint-publish-readback.json"' \
@@ -114,6 +116,15 @@ def test_watchtower_is_compact_first_and_full_only_on_publish():
     assert "compact_process_boot_changed" in commit_step
     assert "publish_process_boot_changed" in commit_step
     assert "publish_identity_changed" in commit_step
+    validation = commit_step[transition_validation:prepare]
+    assert '--source-readback "$RUNNER_TEMP/osint-publish-readback.json"' \
+        in validation
+    assert '--ledger-readback "$RUNNER_TEMP/osint-source-readback.json"' \
+        in validation
+    assert '--runtime-data-quality "$RUNNER_TEMP/data-quality-after.json"' \
+        in validation
+    assert "remoteWalTarget" in validation
+    assert "sourceWalTarget" in validation
     assert "watchtower-remote-journal-accept-receipt" in commit_step
 
 

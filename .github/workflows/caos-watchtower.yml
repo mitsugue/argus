@@ -280,6 +280,25 @@ jobs:
               "publish_process_boot_changed"
           PY
 
+          # C0 authorized the full fetch, but F1/C1 is the proof that will be
+          # committed. Re-run the fail-closed proof comparison against C0 so a
+          # same-process WAL regression or post-fetch durability corruption
+          # can never pass solely on timestamp/receipt identity.
+          C1_VALIDATION=$(python3 \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py" decision \
+            --source-readback "$RUNNER_TEMP/osint-publish-readback.json" \
+            --ledger-readback "$RUNNER_TEMP/osint-source-readback.json" \
+            --runtime-data-quality "$RUNNER_TEMP/data-quality-after.json" \
+            --event-name "${{ github.event_name }}" \
+            --utc-minute "$MIN")
+          C1_VALUES=$(printf '%s' "$C1_VALIDATION" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print(d["remoteWalTarget"]); print(d["sourceWalTarget"]); print(d["remoteEventCount"]); print(d["sourceEventCount"])')
+          C0_WAL=$(printf '%s\n' "$C1_VALUES" | sed -n '1p')
+          C1_WAL=$(printf '%s\n' "$C1_VALUES" | sed -n '2p')
+          C0_EVENTS=$(printf '%s\n' "$C1_VALUES" | sed -n '3p')
+          C1_EVENTS=$(printf '%s\n' "$C1_VALUES" | sed -n '4p')
+          echo "watchtower publish transition validated: events=$C0_EVENTS->$C1_EVENTS wal=$C0_WAL->$C1_WAL"
+
           mkdir -p ledger/caos-watchtower ledger/caos-patrol ledger/osint
           DAY=$(TZ=Asia/Tokyo date +%F)
           cp "$RUNNER_TEMP/watchtower-status.json" ledger/caos-watchtower/latest.json

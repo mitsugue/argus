@@ -185,6 +185,37 @@ def test_same_manifest_with_wal_only_progress_is_published(tmp_path):
     assert committed["receiptHash"] == result["expectedReceiptHash"]
 
 
+def test_newer_timestamp_with_wal_regression_is_rejected(tmp_path):
+    old = _snapshot()
+    old["missionTickDurability"] = {
+        "walAppliedSequence": 4512,
+        "remoteWalAppliedSequence": 4512,
+    }
+    regressed = _snapshot(generated_at="2026-07-27T00:00:01Z")
+    regressed["missionTickDurability"] = {
+        "walAppliedSequence": 4492,
+        "remoteWalAppliedSequence": 4492,
+    }
+    source_full, source_readback, ledger_full, ledger_readback = _paths(
+        tmp_path, regressed
+    )
+    _write(ledger_full, old)
+    _write(ledger_readback, journal.compact_readback_snapshot(old))
+    before_full = ledger_full.read_bytes()
+    before_readback = ledger_readback.read_bytes()
+
+    with pytest.raises(ValueError, match="source_wal_regressed"):
+        prepare(
+            source_full=source_full,
+            source_readback=source_readback,
+            ledger_full=ledger_full,
+            ledger_readback=ledger_readback,
+        )
+
+    assert ledger_full.read_bytes() == before_full
+    assert ledger_readback.read_bytes() == before_readback
+
+
 def test_tampered_compact_receipt_is_rejected(tmp_path):
     snapshot = _snapshot()
     source_full, source_readback, ledger_full, ledger_readback = _paths(

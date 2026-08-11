@@ -41,6 +41,22 @@ def _receipt_hash(value: Dict[str, Any]) -> str:
     return str(value.get("receiptHash") or "")
 
 
+def _wal_applied_sequence(value: Dict[str, Any], *, label: str) -> int:
+    durability = value.get("missionTickDurability")
+    if not isinstance(durability, dict):
+        raise ValueError(f"{label}_mission_tick_durability_missing")
+    sequence = durability.get("walAppliedSequence")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or \
+            sequence <= 0:
+        raise ValueError(f"{label}_wal_sequence_invalid")
+    remote = durability.get("remoteWalAppliedSequence")
+    if remote is not None and (
+            isinstance(remote, bool) or not isinstance(remote, int) or
+            remote != sequence):
+        raise ValueError(f"{label}_wal_sequence_mismatch")
+    return sequence
+
+
 def _existing_proof(
     full_path: pathlib.Path, readback_path: pathlib.Path
 ) -> Optional[Dict[str, Any]]:
@@ -95,10 +111,15 @@ def prepare(
     old_receipt_hash = _receipt_hash(existing or {})
     new_as_of = _as_of(readback)
     new_receipt_hash = _receipt_hash(readback)
+    new_wal_sequence = _wal_applied_sequence(readback, label="source")
     if not new_as_of:
         raise ValueError("missing_snapshot_timestamp")
     if not new_receipt_hash:
         raise ValueError("missing_receipt_hash")
+    if existing is not None:
+        old_wal_sequence = _wal_applied_sequence(existing, label="ledger")
+        if new_wal_sequence < old_wal_sequence:
+            raise ValueError("source_wal_regressed")
 
     # Manifest identity covers the signed journal, but not outcomes, state
     # hashes, or missionTickDurability.  Exact receipt identity is required so
@@ -124,6 +145,7 @@ def prepare(
         "expectedReceiptHash": new_receipt_hash,
         "generatedAt": new_as_of,
         "previousGeneratedAt": old_as_of or None,
+        "walAppliedSequence": new_wal_sequence,
         "fullSnapshotBytes": full_bytes,
         "fullSnapshotSoftLimit": int(full_snapshot_soft_limit),
         "fullSnapshotPublished": bool(status == "prepared" and publish_full),
