@@ -1,3 +1,4 @@
+import ast
 import inspect
 import json
 import pathlib
@@ -671,13 +672,198 @@ def test_scanner_source_hooks_match_actual_construction_order():
             "chart_state_normalize_hash", "decision_states_normalize_hash",
             "public_stores_normalize_hash", "persistent_source_ready"):
         assert operation in source
-    assert "hash_with_transient_normalize" in source
+    assert "source.verified_snapshots.hash_normalized" in source
+    assert "source.asset_chart_reports.hash_normalized" in source
+    s7_source = source[source.index('"S7V0"'):source.index('"S8"')]
+    assert "verified_snapshots.hash_with_transient_normalize" not in s7_source
+    assert "asset_chart_reports.hash_with_transient_normalize" not in s7_source
+    assert '"transientHashNormalizationCount": _normalized_hash_fallback_count' \
+        in s7_source
+    assert '"normalizedHashFastPathCount"' in s7_source
+    assert '"normalizedHashFallbackCount"' in s7_source
     observer = inspect.getsource(scanner._memory_state_hash_observer)
     for event in (
-            "hash_enter", "internal_normalize_complete", "stable_tree_ready",
-            "hash_projection_ready", "canonical_string_ready",
+            "hash_enter", "internal_normalize_complete",
+            "normalized_input_reused", "normalized_input_fallback",
+            "stable_tree_ready", "hash_projection_ready", "canonical_string_ready",
             "utf8_bytes_ready", "hash_complete"):
         assert event in observer
+
+
+def _scanner_hash_calls(method_name):
+    tree = ast.parse(pathlib.Path(scanner.__file__).read_text(encoding="utf-8"))
+    calls = []
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.functions = []
+
+        def visit_FunctionDef(self, node):
+            self.functions.append(node.name)
+            self.generic_visit(node)
+            self.functions.pop()
+
+        def visit_Call(self, node):
+            hash_function = None
+            hash_argument = node.args[0] if node.args else None
+            if isinstance(node.func, ast.Attribute):
+                hash_function = node.func
+            elif isinstance(node.func, ast.Name) and \
+                    node.func.id == "_memory_operation_run" and \
+                    len(node.args) >= 4 and \
+                    isinstance(node.args[2], ast.Attribute):
+                hash_function = node.args[2]
+                hash_argument = node.args[3]
+            if hash_function is not None and \
+                    hash_function.attr == method_name and \
+                    isinstance(hash_function.value, ast.Name) and \
+                    hash_function.value.id in {
+                        "argus_verified_snapshot", "argus_asset_chart_cache"}:
+                calls.append({
+                    "function": self.functions[-1] if self.functions else None,
+                    "module": hash_function.value.id,
+                    "argument": (hash_argument.id if
+                                 isinstance(hash_argument, ast.Name) else None),
+                })
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return calls
+
+
+def test_normalized_hash_producer_sites_are_exact_ast_whitelist():
+    calls = _scanner_hash_calls("state_hash_normalized")
+    assert calls == [
+        {"function": "_osint_persist_locked",
+         "module": "argus_verified_snapshot",
+         "argument": "_verified_normalized"},
+        {"function": "_osint_persist_locked",
+         "module": "argus_asset_chart_cache",
+         "argument": "_asset_normalized"},
+        {"function": "api_argus_osint_memory_snapshot",
+         "module": "argus_verified_snapshot",
+         "argument": "_verified_snapshot_normalized"},
+        {"function": "api_argus_osint_memory_snapshot",
+         "module": "argus_asset_chart_cache",
+         "argument": "_asset_chart_reports_normalized"},
+    ]
+
+    persist = inspect.getsource(scanner._osint_persist_locked)
+    assert 'blob["verifiedViewSnapshots"] = _verified_normalized' in persist
+    assert 'blob["assetChartReports"] = _asset_normalized' in persist
+    public = inspect.getsource(scanner.api_argus_osint_memory_snapshot)
+    assert "_verified_snapshot_normalized :=" in public
+    assert "_asset_chart_reports_normalized :=" in public
+
+
+def test_raw_hash_deny_list_callers_remain_unchanged():
+    assert _scanner_hash_calls("state_hash") == [
+        {"function": "_remote_readback_ack",
+         "module": "argus_verified_snapshot",
+         "argument": "_VERIFIED_VIEW_SNAPSHOTS"},
+        {"function": "_remote_readback_ack",
+         "module": "argus_asset_chart_cache",
+         "argument": "_ASSET_CHART_REPORTS"},
+        {"function": "_api_argus_admin_missions_tick_impl",
+         "module": "argus_verified_snapshot",
+         "argument": "_VERIFIED_VIEW_SNAPSHOTS"},
+        {"function": "_api_argus_admin_missions_tick_impl",
+         "module": "argus_verified_snapshot",
+         "argument": "_VERIFIED_VIEW_SNAPSHOTS"},
+        {"function": "_api_argus_admin_missions_tick_impl",
+         "module": "argus_asset_chart_cache",
+         "argument": "_ASSET_CHART_REPORTS"},
+        {"function": "_precompute_asset_chart_tick",
+         "module": "argus_asset_chart_cache",
+         "argument": "_ASSET_CHART_REPORTS"},
+        {"function": "_precompute_asset_chart_tick",
+         "module": "argus_asset_chart_cache",
+         "argument": "_ASSET_CHART_REPORTS"},
+        {"function": "_precompute_asset_chart_tick",
+         "module": "argus_asset_chart_cache",
+         "argument": "_ASSET_CHART_REPORTS"},
+    ]
+
+
+def test_public_memory_snapshot_reuses_normalized_objects_and_reports_scalar_counts(
+        monkeypatch):
+    verified_normalized = {"kind": "verified-normalized"}
+    asset_normalized = {"kind": "asset-normalized"}
+    observer_secret = "must-not-escape-normalized-hash-observer"
+
+    monkeypatch.setattr(scanner, "_osint_restore_once", lambda: None)
+    monkeypatch.setattr(
+        scanner.argus_verified_snapshot, "normalize_store",
+        lambda _store: verified_normalized)
+    monkeypatch.setattr(
+        scanner.argus_asset_chart_cache, "normalize_store",
+        lambda _store: asset_normalized)
+
+    def verified_hash(normalized, *, diagnostic_observer=None):
+        assert normalized is verified_normalized
+        diagnostic_observer(
+            "normalized_input_reused", {"privateValue": observer_secret})
+        return "verified-fast-path"
+
+    def asset_hash(normalized, *, diagnostic_observer=None):
+        assert normalized is asset_normalized
+        diagnostic_observer(
+            "normalized_input_reused", {"privateValue": observer_secret})
+        return "asset-fast-path"
+
+    monkeypatch.setattr(
+        scanner.argus_verified_snapshot, "state_hash_normalized", verified_hash)
+    monkeypatch.setattr(
+        scanner.argus_asset_chart_cache, "state_hash_normalized", asset_hash)
+
+    def source_capture_forbidden(*_args, **_kwargs):
+        raise AssertionError("public hash observer must not write S7 phases")
+
+    monkeypatch.setattr(
+        scanner, "_memory_attribution_source_capture",
+        source_capture_forbidden)
+    response = scanner.app.test_client().get(
+        "/api/argus/osint/memory-snapshot")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["verifiedViewSnapshots"] is not verified_normalized
+    assert body["verifiedViewSnapshots"] == verified_normalized
+    assert body["assetChartReports"] == asset_normalized
+    assert body["verifiedViewSnapshotsStateHash"] == "verified-fast-path"
+    assert body["assetChartReportsStateHash"] == "asset-fast-path"
+    assert body["normalizedHashFastPathCount"] == 2
+    assert body["normalizedHashFallbackCount"] == 0
+    assert observer_secret not in response.get_data(as_text=True)
+
+
+def test_normalized_hash_observers_count_fallback_without_duplicate_phase():
+    old_recorder = scanner._MEMORY_ATTRIBUTION
+    old_record_id = scanner._MISSION_TICK_CONTEXT.get(
+        "memoryAttributionRecordId")
+    try:
+        scanner._MEMORY_ATTRIBUTION = memory.MemoryAttributionRecorder(4)
+        scanner._MEMORY_ATTRIBUTION.begin(
+            "fallback", {"missionWindowId": "mw-fallback"},
+            initial_sample=_rich_sample(1000, 800, 300, 500))
+        scanner._MISSION_TICK_CONTEXT[
+            "memoryAttributionRecordId"] = "fallback"
+        counts = {"normalizedHashFastPathCount": 0,
+                  "normalizedHashFallbackCount": 0}
+        observer = scanner._memory_state_hash_observer("verified", counts)
+        observer("normalized_input_fallback", {"reason": "untrusted_provenance"})
+        observer("hash_enter", {})
+        observer("internal_normalize_complete", {"currentCount": 0})
+        record = scanner._MEMORY_ATTRIBUTION.complete("fallback")
+        assert record["sourceConstruction"]["phaseOrder"] == ["S7V2", "S7V3"]
+        assert counts == {"normalizedHashFastPathCount": 0,
+                          "normalizedHashFallbackCount": 1}
+        serialized = json.dumps(record)
+        assert "untrusted_provenance" in serialized
+        assert "privateValue" not in serialized
+    finally:
+        scanner._MEMORY_ATTRIBUTION = old_recorder
+        scanner._MISSION_TICK_CONTEXT[
+            "memoryAttributionRecordId"] = old_record_id
 
 
 def test_scanner_mission_path_hooks_cover_the_previous_s0_s1_interval():
@@ -738,11 +924,18 @@ def test_scalar_logical_counts_and_s7_observer_never_summarize_receipts(
         scanner._MISSION_TICK_CONTEXT[
             "memoryAttributionRecordId"] = "scalar-only"
         logical = scanner._memory_attribution_logical_counts()
-        scanner._memory_state_hash_observer("asset")(
-            "hash_enter", {"entryCount": 3})
+        counts = {"normalizedHashFastPathCount": 0,
+                  "normalizedHashFallbackCount": 0}
+        observer = scanner._memory_state_hash_observer("asset", counts)
+        observer("hash_enter", {"entryCount": 3})
+        observer("normalized_input_reused", {
+            "recordCount": 3, "currentCount": 2,
+            "hashNormalizedAlive": True})
         record = scanner._MEMORY_ATTRIBUTION.complete("scalar-only")
         assert logical["remoteJournalQueueCount"] == 3
-        assert record["sourceConstruction"]["phaseOrder"] == ["S7A2"]
+        assert record["sourceConstruction"]["phaseOrder"] == ["S7A2", "S7A3"]
+        assert counts == {"normalizedHashFastPathCount": 1,
+                          "normalizedHashFallbackCount": 0}
         assert calls["summary"] == 0
     finally:
         scanner._MEMORY_ATTRIBUTION = old_recorder

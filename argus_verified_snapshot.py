@@ -23,6 +23,79 @@ MAX_CURRENT = 24
 MAX_HISTORY = 48
 
 
+_NORMALIZED_STORE_MARKER = object()
+
+
+class _NormalizedStore(dict):
+    """A short-lived result produced by this module's normalizer.
+
+    The marker is deliberately an attribute rather than a JSON field, so it
+    never changes durable state or hash truth.  Top-level mutation and copying
+    invalidate provenance.  Trusted callers must hash the direct result before
+    exposing it to any other code; nested mutation remains outside this narrow
+    contract and is prevented by the exact producer-pair caller whitelist.
+    """
+
+    __slots__ = ("_normalized_store_marker",)
+
+    def __init__(self, value: Dict[str, Any]) -> None:
+        super().__init__(value)
+        self._normalized_store_marker = _NORMALIZED_STORE_MARKER
+
+    def _invalidate(self) -> None:
+        self._normalized_store_marker = None
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._invalidate()
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key: Any) -> None:
+        self._invalidate()
+        super().__delitem__(key)
+
+    def clear(self) -> None:
+        self._invalidate()
+        super().clear()
+
+    def pop(self, key: Any, *args: Any) -> Any:
+        self._invalidate()
+        return super().pop(key, *args)
+
+    def popitem(self) -> Tuple[Any, Any]:
+        self._invalidate()
+        return super().popitem()
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        self._invalidate()
+        return super().setdefault(key, default)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        self._invalidate()
+        super().update(*args, **kwargs)
+
+    def __ior__(self, other: Any) -> "_NormalizedStore":
+        self._invalidate()
+        super().__ior__(other)
+        return self
+
+    def __copy__(self) -> Dict[str, Any]:
+        return dict(self)
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        memo[id(self)] = result
+        for key, value in self.items():
+            result[copy.deepcopy(key, memo)] = copy.deepcopy(value, memo)
+        return result
+
+
+def _has_normalized_store_provenance(value: Any) -> bool:
+    return (
+        type(value) is _NormalizedStore
+        and value._normalized_store_marker is _NORMALIZED_STORE_MARKER
+    )
+
+
 def _stable_json_value(value: Any) -> Any:
     # JSON.parse/stringify in browsers represents 100.0 as 100.  Normalize
     # integral finite floats so Python and TypeScript compute the same ID.
@@ -331,7 +404,7 @@ def publish_atomic(
 def normalize_store(value: Any) -> Dict[str, Any]:
     result = empty_store()
     if not isinstance(value, dict):
-        return result
+        return _NormalizedStore(result)
     for key, snapshot in (value.get("current") or {}).items():
         ok, _ = verify_snapshot(snapshot)
         expected = snapshot_key(
@@ -345,7 +418,7 @@ def normalize_store(value: Any) -> Dict[str, Any]:
             copy.deepcopy(item) for item in history[-MAX_HISTORY:]
             if isinstance(item, dict)]
     result["lastPublishedAt"] = value.get("lastPublishedAt")
-    return result
+    return _NormalizedStore(result)
 
 
 def state_hash(
@@ -367,6 +440,62 @@ def state_hash(
         _diagnostic_notify(diagnostic_observer, "stable_tree_ready", {
             "currentCount": len(normalized["current"]),
             "historyCount": len(normalized["history"]),
+            "stableTreeAlive": True,
+        })
+    canonical = json.dumps(
+        stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False)
+    del stable
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
+            "canonicalCharacterCount": len(canonical),
+        })
+    encoded = canonical.encode("utf-8")
+    del canonical
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
+            "canonicalByteCount": len(encoded),
+        })
+    hasher = hashlib.sha256(encoded)
+    del encoded
+    digest = hasher.hexdigest()
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_complete", {
+            "digestCharacterCount": len(digest),
+        })
+    return digest
+
+
+def state_hash_normalized(
+        store: Dict[str, Any], *,
+        diagnostic_observer: Optional[
+            Callable[[str, Dict[str, Any]], None]] = None) -> str:
+    """Hash this module's direct, unmodified ``normalize_store`` result.
+
+    Any ordinary dict, cross-module normalized store, copied store, or
+    top-level-mutated store takes the existing raw path.  The fallback is
+    intentionally delegated to ``state_hash`` so normalization, observer
+    order, exceptions, and digest semantics remain the established contract.
+    """
+    observing = diagnostic_observer is not None
+    if not _has_normalized_store_provenance(store):
+        if observing:
+            _diagnostic_notify(
+                diagnostic_observer, "normalized_input_fallback",
+                {"reason": "untrusted_provenance"})
+        return state_hash(store, diagnostic_observer=diagnostic_observer)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_enter", {})
+        _diagnostic_notify(diagnostic_observer, "normalized_input_reused", {
+            "currentCount": len(store["current"]),
+            "historyCount": len(store["history"]),
+            "hashNormalizedAlive": True,
+        })
+    stable = _stable_json_value(store)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "stable_tree_ready", {
+            "currentCount": len(store["current"]),
+            "historyCount": len(store["history"]),
             "stableTreeAlive": True,
         })
     canonical = json.dumps(

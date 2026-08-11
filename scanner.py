@@ -16152,12 +16152,29 @@ def _memory_attribution_source_capture(
         return
 
 
-def _memory_state_hash_observer(store_kind):
+def _normalized_hash_counter_observer(counters):
+    """Count normalized-hash outcomes without retaining callback metadata."""
+    def observe(event, _metadata):
+        try:
+            if event == "normalized_input_reused":
+                counters["normalizedHashFastPathCount"] = int(
+                    counters.get("normalizedHashFastPathCount") or 0) + 1
+            elif event == "normalized_input_fallback":
+                counters["normalizedHashFallbackCount"] = int(
+                    counters.get("normalizedHashFallbackCount") or 0) + 1
+        except Exception:
+            return
+
+    return observe
+
+
+def _memory_state_hash_observer(store_kind, counters=None):
     """Map finite, scalar-only hash callbacks to exact S7 boundaries."""
     prefix = "S7V" if store_kind == "verified" else "S7A"
     phase_numbers = {
         "hash_enter": 2,
         "internal_normalize_complete": 3,
+        "normalized_input_reused": 3,
         "stable_tree_ready": 4,
         "hash_projection_ready": 4,
         "canonical_string_ready": 5,
@@ -16166,8 +16183,24 @@ def _memory_state_hash_observer(store_kind):
         # have left the hash function frame.
         "hash_complete": None,
     }
+    counter_observer = _normalized_hash_counter_observer(
+        counters if isinstance(counters, dict) else {})
+    state = {"fallbackPrelude": False}
 
     def observe(event, metadata):
+        counter_observer(event, metadata)
+        if event == "normalized_input_fallback":
+            # The fail-safe normalized API announces fallback before delegating
+            # to the unchanged raw state_hash.  Capture that boundary as V/A2,
+            # then suppress the delegated hash_enter duplicate so the remaining
+            # raw phases retain their chronological V/A3..V/A6 ordering.
+            state["fallbackPrelude"] = True
+            _memory_attribution_source_capture(
+                f"{prefix}2", f"{store_kind}_{event}",
+                metadata if isinstance(metadata, dict) else None)
+            return
+        if event == "hash_enter" and state["fallbackPrelude"]:
+            return
         number = phase_numbers.get(str(event))
         if number is None:
             return
@@ -16682,24 +16715,35 @@ def _osint_persist_locked():
                     "historyCount": len(normalized.get("history") or []),
                 })
 
-        blob["verifiedViewSnapshots"] = _memory_operation_run(
+        _verified_normalized = _memory_operation_run(
             "internal", "source.verified_snapshots.normalize",
             argus_verified_snapshot.normalize_store, _VERIFIED_VIEW_SNAPSHOTS,
             _attribution_after_callback=_verified_normalize_complete)
+        blob["verifiedViewSnapshots"] = _verified_normalized
+        _verified_normalized_hash_counts = {
+            "normalizedHashFastPathCount": 0,
+            "normalizedHashFallbackCount": 0,
+        }
 
         def _verified_hash_complete(_state_hash):
+            _fallback_count = _verified_normalized_hash_counts[
+                "normalizedHashFallbackCount"]
             _memory_attribution_source_capture(
                 "S7V7", "verified_snapshots_hash_returned", {
                     "authoritativeAlive": True,
                     "blobNormalizedAlive": True,
                     "hashTemporariesReleased": True,
-                    "peakWholeStateRepresentations": 4,
+                    "peakWholeStateRepresentations": (
+                        4 if _fallback_count else 3),
+                    **_verified_normalized_hash_counts,
                 })
 
         blob["verifiedViewSnapshotsStateHash"] = _memory_operation_run(
-            "internal", "source.verified_snapshots.hash_with_transient_normalize",
-            argus_verified_snapshot.state_hash, _VERIFIED_VIEW_SNAPSHOTS,
-            diagnostic_observer=_memory_state_hash_observer("verified"),
+            "internal", "source.verified_snapshots.hash_normalized",
+            argus_verified_snapshot.state_hash_normalized,
+            _verified_normalized,
+            diagnostic_observer=_memory_state_hash_observer(
+                "verified", _verified_normalized_hash_counts),
             _attribution_after_callback=_verified_hash_complete)
         _memory_attribution_source_capture(
             "S7A0", "asset_chart_reports_normalize_start", {
@@ -16718,32 +16762,60 @@ def _osint_persist_locked():
                     "currentCount": len(normalized.get("current") or {}),
                 })
 
-        blob["assetChartReports"] = _memory_operation_run(
+        _asset_normalized = _memory_operation_run(
             "internal", "source.asset_chart_reports.normalize",
             argus_asset_chart_cache.normalize_store, _ASSET_CHART_REPORTS,
             _attribution_after_callback=_asset_normalize_complete)
+        blob["assetChartReports"] = _asset_normalized
+        _asset_normalized_hash_counts = {
+            "normalizedHashFastPathCount": 0,
+            "normalizedHashFallbackCount": 0,
+        }
 
         def _asset_hash_complete(_state_hash):
+            _fallback_count = _asset_normalized_hash_counts[
+                "normalizedHashFallbackCount"]
             _memory_attribution_source_capture(
                 "S7A7", "asset_chart_reports_hash_returned", {
                     "authoritativeAlive": True,
                     "blobNormalizedAlive": True,
                     "hashTemporariesReleased": True,
-                    "peakWholeStateRepresentations": 3,
+                    "peakWholeStateRepresentations": (
+                        3 if _fallback_count else 2),
+                    **_asset_normalized_hash_counts,
                 })
 
         blob["assetChartReportsStateHash"] = _memory_operation_run(
-            "internal", "source.asset_chart_reports.hash_with_transient_normalize",
-            argus_asset_chart_cache.state_hash, _ASSET_CHART_REPORTS,
-            diagnostic_observer=_memory_state_hash_observer("asset"),
+            "internal", "source.asset_chart_reports.hash_normalized",
+            argus_asset_chart_cache.state_hash_normalized,
+            _asset_normalized,
+            diagnostic_observer=_memory_state_hash_observer(
+                "asset", _asset_normalized_hash_counts),
             _attribution_after_callback=_asset_hash_complete)
+        _normalized_hash_fast_path_count = (
+            _verified_normalized_hash_counts["normalizedHashFastPathCount"]
+            + _asset_normalized_hash_counts["normalizedHashFastPathCount"])
+        _normalized_hash_fallback_count = (
+            _verified_normalized_hash_counts["normalizedHashFallbackCount"]
+            + _asset_normalized_hash_counts["normalizedHashFallbackCount"])
+        _verified_peak_representations = (
+            4 if _verified_normalized_hash_counts[
+                "normalizedHashFallbackCount"] else 3)
+        _asset_peak_representations = (
+            3 if _asset_normalized_hash_counts[
+                "normalizedHashFallbackCount"] else 2)
         _memory_attribution_source_capture("S7", "public_stores_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 10,
-            "transientHashNormalizationCount": 2,
-            "peakWholeStateRepresentations": 4,
-            "verifiedPeakWholeStateRepresentations": 4,
-            "assetPeakWholeStateRepresentations": 3,
+            "transientHashNormalizationCount": _normalized_hash_fallback_count,
+            "normalizedHashFastPathCount": _normalized_hash_fast_path_count,
+            "normalizedHashFallbackCount": _normalized_hash_fallback_count,
+            "peakWholeStateRepresentations": max(
+                _verified_peak_representations,
+                _asset_peak_representations),
+            "verifiedPeakWholeStateRepresentations": (
+                _verified_peak_representations),
+            "assetPeakWholeStateRepresentations": _asset_peak_representations,
             "canonicalStringMaterializations": 2,
             "utf8ByteMaterializations": 2,
             "verifiedSnapshotCurrentCount": len(
@@ -16759,7 +16831,10 @@ def _osint_persist_locked():
         _memory_attribution_source_capture("S8", "persistent_source_ready", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 10,
-            "transientHashNormalizationCount": 6,
+            "transientHashNormalizationCount": (
+                4 + _normalized_hash_fallback_count),
+            "normalizedHashFastPathCount": _normalized_hash_fast_path_count,
+            "normalizedHashFallbackCount": _normalized_hash_fallback_count,
             "wholeStateRepresentations": 11,
         })
         _memory_attribution_capture(
@@ -22494,6 +22569,12 @@ def api_argus_osint_memory_snapshot():
     _jsec = argus_remote_journal.snapshot_journal_section(
         events=_OPS_JOURNAL, meta=_OPS_JOURNAL_META,
         compacted=_OPS_JOURNAL_COMPACT, now_iso=_now)
+    _normalized_hash_counts = {
+        "normalizedHashFastPathCount": 0,
+        "normalizedHashFallbackCount": 0,
+    }
+    _normalized_hash_observer = _normalized_hash_counter_observer(
+        _normalized_hash_counts)
     return jsonify({"schemaVersion": argus_remote_journal.SCHEMA_V3,
                     "generatedAt": _now, "asOf": _now,
                     "buildIdentity": {"appVersion": _semantic_app_version(),
@@ -22539,14 +22620,23 @@ def api_argus_osint_memory_snapshot():
                     "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
                     "marketReplay": argus_market_replay.normalize_state(_MARKET_REPLAY),
                     "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
-                    "verifiedViewSnapshots": argus_verified_snapshot.normalize_store(
-                        _VERIFIED_VIEW_SNAPSHOTS),
-                    "verifiedViewSnapshotsStateHash": argus_verified_snapshot.state_hash(
-                        _VERIFIED_VIEW_SNAPSHOTS),
-                    "assetChartReports": argus_asset_chart_cache.normalize_store(
-                        _ASSET_CHART_REPORTS),
-                    "assetChartReportsStateHash": argus_asset_chart_cache.state_hash(
-                        _ASSET_CHART_REPORTS),
+                    "verifiedViewSnapshots": (
+                        _verified_snapshot_normalized :=
+                        argus_verified_snapshot.normalize_store(
+                            _VERIFIED_VIEW_SNAPSHOTS)),
+                    "verifiedViewSnapshotsStateHash":
+                    argus_verified_snapshot.state_hash_normalized(
+                        _verified_snapshot_normalized,
+                        diagnostic_observer=_normalized_hash_observer),
+                    "assetChartReports": (
+                        _asset_chart_reports_normalized :=
+                        argus_asset_chart_cache.normalize_store(
+                            _ASSET_CHART_REPORTS)),
+                    "assetChartReportsStateHash":
+                    argus_asset_chart_cache.state_hash_normalized(
+                        _asset_chart_reports_normalized,
+                        diagnostic_observer=_normalized_hash_observer),
+                    **_normalized_hash_counts,
                     "missionTickDurability":
                         _mission_tick_durability_snapshot(
                             remote_export=True),
