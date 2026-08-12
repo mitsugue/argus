@@ -176,6 +176,42 @@ def parse_remote_snapshot(blob: Any) -> Dict[str, Any]:
             "ownerReadableJa": "v3 snapshot読み取り成功"}
 
 
+def build_compact_readback_snapshot(
+        *, schema_version: Any, generated_at: Any, as_of: Any,
+        build_identity: Any, ops_journal: Any, integrity_manifest: Any,
+        outcomes: Any, mission_tick_durability: Any,
+        market_ledger_state_hash: Any,
+        chart_intelligence_state_hash: Any,
+        today_intelligence_state_hash: Any,
+        market_replay_state_hash: Any) -> Dict[str, Any]:
+    """Build the bounded read-back proof from explicit projections.
+
+    Callers supply an already-built public journal projection and scalar state
+    hashes.  This keeps high-frequency liveness checks independent from the
+    much larger boot-restore representation while preserving the exact v1
+    receipt contract.
+    """
+    receipt = {
+        "receiptSchemaVersion": READBACK_RECEIPT_SCHEMA,
+        "schemaVersion": schema_version,
+        "generatedAt": generated_at or as_of,
+        "asOf": as_of or generated_at,
+        "buildIdentity": dict(build_identity or {}),
+        "opsJournal": list(ops_journal or []),
+        "integrityManifest": dict(integrity_manifest or {}),
+        "outcomes": list(outcomes or []),
+        "missionTickDurability": dict(mission_tick_durability or {}),
+        "marketLedgerStateHash": market_ledger_state_hash,
+        "chartIntelligenceStateHash": chart_intelligence_state_hash,
+        "todayIntelligenceStateHash": today_intelligence_state_hash,
+        "marketReplayStateHash": market_replay_state_hash,
+    }
+    if parse_remote_snapshot(receipt).get("status") != "ok":
+        raise ValueError("remote_snapshot_not_verifiable")
+    receipt["receiptHash"] = _h(receipt)
+    return receipt
+
+
 def compact_readback_snapshot(blob: Any) -> Dict[str, Any]:
     """Build the bounded proof used by scheduler read-back.
 
@@ -187,24 +223,20 @@ def compact_readback_snapshot(blob: Any) -> Dict[str, Any]:
     parsed = parse_remote_snapshot(blob)
     if parsed.get("status") != "ok":
         raise ValueError("remote_snapshot_not_verifiable")
-    receipt = {
-        "receiptSchemaVersion": READBACK_RECEIPT_SCHEMA,
-        "schemaVersion": blob.get("schemaVersion"),
-        "generatedAt": blob.get("generatedAt") or blob.get("asOf"),
-        "asOf": blob.get("asOf") or blob.get("generatedAt"),
-        "buildIdentity": dict(blob.get("buildIdentity") or {}),
-        "opsJournal": list(blob.get("opsJournal") or []),
-        "integrityManifest": dict(blob.get("integrityManifest") or {}),
-        "outcomes": list(blob.get("outcomes") or []),
-        "missionTickDurability": dict(
-            blob.get("missionTickDurability") or {}),
-        "marketLedgerStateHash": blob.get("marketLedgerStateHash"),
-        "chartIntelligenceStateHash": blob.get("chartIntelligenceStateHash"),
-        "todayIntelligenceStateHash": blob.get("todayIntelligenceStateHash"),
-        "marketReplayStateHash": blob.get("marketReplayStateHash"),
-    }
-    receipt["receiptHash"] = _h(receipt)
-    return receipt
+    return build_compact_readback_snapshot(
+        schema_version=blob.get("schemaVersion"),
+        generated_at=blob.get("generatedAt"), as_of=blob.get("asOf"),
+        build_identity=blob.get("buildIdentity"),
+        ops_journal=blob.get("opsJournal"),
+        integrity_manifest=blob.get("integrityManifest"),
+        outcomes=blob.get("outcomes"),
+        mission_tick_durability=blob.get("missionTickDurability"),
+        market_ledger_state_hash=blob.get("marketLedgerStateHash"),
+        chart_intelligence_state_hash=blob.get(
+            "chartIntelligenceStateHash"),
+        today_intelligence_state_hash=blob.get("todayIntelligenceStateHash"),
+        market_replay_state_hash=blob.get("marketReplayStateHash"),
+    )
 
 
 def verify_compact_readback_snapshot(blob: Any) -> bool:
