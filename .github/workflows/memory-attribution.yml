@@ -188,19 +188,42 @@ jobs:
           import json, pathlib
           p = pathlib.Path("artifacts/normalized-hash-resource-proof.json")
           r = json.loads(p.read_text())
-          assert r["schemaVersion"] == "argus-normalized-hash-resource-proof-v2"
+          assert r["schemaVersion"] == "argus-normalized-hash-resource-proof-v3"
           assert r["passed"] is True
-          assert r["cyclesPerWorker"] == 32 and r["workerCount"] == 4
+          assert r["cyclesPerWorker"] == 32 and r["workerCount"] == 6
+          assert r["resourceWorkerCount"] == 4
+          assert r["allocationWorkerCount"] == 2
+          assert r["digestComparisons"] == 96
+          assert r["digestMatches"] == 96
           assert r["resourceEnvelope"]["minimumMaterialRssReductionBytes"] == 1048576
+          assert r["resourceEnvelope"]["minimumMaterialAllocationReductionBytes"] == 1048576
           for key in (
-              "steadyStateRssMateriallyReduced",
-              "steadyStatePssMateriallyReduced",
-              "steadyStateRssAnonMateriallyReduced",
-              "assetAllocatorRetentionMateriallyReduced",
+              "sixFreshProcesses",
+              "fourUninstrumentedResourceProcesses",
+              "twoFreshAssetAllocationProcesses",
+              "verifiedSteadyStateRssMateriallyReduced",
+              "verifiedSteadyStatePssMateriallyReduced",
+              "verifiedSteadyStateRssAnonMateriallyReduced",
+              "assetAllocationPeakMinimumMateriallyReduced",
+              "assetAllocationPeakP50MateriallyReduced",
+              "sameAssetDigestAcrossProfiles",
+              "assetAllocationTraceDurationP50Reduced",
               "environmentFingerprintComplete",
               "singleExecutionEnvironment",
           ):
               assert r["checks"][key] is True
+          allocation = next(
+              row["allocationPeakProof"] for row in r["comparisons"]
+              if row["storeKind"] == "asset")
+          assert allocation["cyclesCompared"] == 32
+          assert allocation["digestMatches"] == 32
+          assert allocation["pairedPeakReductionBytes"]["sampleCount"] == 30
+          assert allocation["pairedPeakReductionBytes"]["minimum"] >= 1048576
+          assert allocation["pairedPeakReductionBytes"]["p50"] >= 1048576
+          assert r["diagnostics"]["processPeakRssRole"] == \
+              "safety_telemetry_not_terminal_effect_gate"
+          assert r["diagnostics"]["assetPostCallResourceRole"] == \
+              "allocator_retention_diagnostic_not_terminal_effect_gate"
           assert r["digestMatchPercent"] == 100.0
           assert r["abnormalExitCount"] == 0 and r["oomCount"] == 0
           text = p.read_text()

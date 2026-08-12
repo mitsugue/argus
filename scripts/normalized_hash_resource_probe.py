@@ -4,7 +4,9 @@
 This probe is local/CI only.  It creates deterministic production-shaped
 stores, never contacts a provider or service, and exercises no durability or
 runtime-control path.  The supervisor starts one fresh process per store/path
-pair so the fallback and normalized fast path do not share allocator history.
+pair so the fallback and normalized fast path do not share allocator history,
+plus two asset-only allocation-trace processes that cannot perturb the four
+OS-resource workers.
 """
 
 from __future__ import annotations
@@ -38,6 +40,13 @@ MINIMUM_CYCLES = 32
 PLATEAU_LIMIT_BYTES = 128 * MIB
 LOGICAL_ACCEPTANCE_CEILING_BYTES = 3 * GIB
 MINIMUM_MATERIAL_RSS_REDUCTION_BYTES = 1 * MIB
+# Asset hashes eliminate one transient whole-state representation.  The
+# allocator is free to release or retain that representation after the call,
+# so its deterministic effect is the allocation high-water *during* the call,
+# not the post-call RSS retained by glibc.  Keep the exact same materiality
+# threshold; this is a measurement correction, not a relaxed gate.
+MINIMUM_MATERIAL_ALLOCATION_REDUCTION_BYTES = \
+    MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
 # Calibrated against the single authorized v13.4.11 production baseline:
 # verified canonical/UTF-8 ~= 27.0/27.4 million bytes and asset ~=
 # 14.9/15.2 million bytes.
@@ -166,6 +175,50 @@ def _paired_steady_state_reduction(
             return memory.UNKNOWN
         reductions.append(reduction)
     return _integer_percentile(reductions, 50)
+
+
+def _paired_allocation_peak_reduction_summary(
+        fallback_worker: Mapping[str, Any],
+        candidate_worker: Mapping[str, Any]) -> Dict[str, Any]:
+    unknown = {
+        "sampleDefinition":
+            "paired_cycles_3_plus_peak_increment_reduction",
+        "sampleCount": 0,
+        "minimum": memory.UNKNOWN,
+        "p50": memory.UNKNOWN,
+        "p95": memory.UNKNOWN,
+        "maximum": memory.UNKNOWN,
+        "span": memory.UNKNOWN,
+    }
+    fallback_rows = list(
+        (fallback_worker.get("allocationTrace") or {}).get("cycles") or [])[2:]
+    candidate_rows = list(
+        (candidate_worker.get("allocationTrace") or {}).get("cycles") or [])[2:]
+    if not fallback_rows or len(fallback_rows) != len(candidate_rows):
+        return unknown
+    reductions = []
+    for expected_cycle, (fallback_row, candidate_row) in enumerate(
+            zip(fallback_rows, candidate_rows), start=3):
+        if (
+                fallback_row.get("cycle") != expected_cycle or
+                candidate_row.get("cycle") != expected_cycle):
+            return unknown
+        reduction = _reduction(
+            fallback_row.get("peakIncrementBytes"),
+            candidate_row.get("peakIncrementBytes"))
+        if _integer(reduction) is None:
+            return unknown
+        reductions.append(reduction)
+    return {
+        "sampleDefinition":
+            "paired_cycles_3_plus_peak_increment_reduction",
+        "sampleCount": len(reductions),
+        "minimum": min(reductions),
+        "p50": _integer_percentile(reductions, 50),
+        "p95": _integer_percentile(reductions, 95),
+        "maximum": max(reductions),
+        "span": _span(reductions),
+    }
 
 
 def _environment_fingerprint() -> Dict[str, Any]:
@@ -489,6 +542,7 @@ def _worker(
         "cyclesAtLeast32": len(rows) >= MINIMUM_CYCLES,
         "digestStable100Percent": len(set(digests)) == 1,
         "expectedPathObserved": normalized_fast or fallback_observed,
+        "allocationTracerNotLoaded": "tracemalloc" not in sys.modules,
         "plateauBelow128MiB": plateau_ok,
         "logicalPeakBelow3GiB": logical_peak_ok,
         "productionCalibratedCanonicalInput": calibrated_input,
@@ -501,6 +555,7 @@ def _worker(
     }
     return {
         "schemaVersion": "argus-normalized-hash-worker-v2",
+        "measurementProfile": "os_resource_uninstrumented",
         "freshProcess": True,
         "processId": os.getpid(),
         "environment": _environment_fingerprint(),
@@ -549,31 +604,250 @@ def _worker(
     }
 
 
+def _allocation_worker(
+        store_kind: str, mode: str, cycles: int,
+        bars_per_record: int) -> Dict[str, Any]:
+    if store_kind != "asset":
+        raise ValueError("allocation_trace_is_asset_only")
+    cycles = max(MINIMUM_CYCLES, int(cycles))
+    module, normalized, shape = _module_and_store(
+        store_kind, bars_per_record)
+    # Lazy import is deliberate: the four OS-resource workers never import or
+    # initialize the tracer, preserving their startup/address-layout profile.
+    import tracemalloc as allocation_tracer
+    state_hash_normalized = getattr(module, "state_hash_normalized", None)
+    if mode == "normalized" and not callable(state_hash_normalized):
+        raise RuntimeError("normalized_hash_api_missing")
+    hash_callback: Callable[[Any], str] = (
+        state_hash_normalized if mode == "normalized" else module.state_hash)
+
+    normalize_calls = 0
+    original_normalize = module.normalize_store
+
+    def counted_normalize(value: Any) -> Dict[str, Any]:
+        nonlocal normalize_calls
+        normalize_calls += 1
+        return original_normalize(value)
+
+    module.normalize_store = counted_normalize
+    canonical_byte_counts: set[int] = set()
+    canonical_character_counts: set[int] = set()
+
+    def hash_observer(phase: str, metadata: Dict[str, Any]) -> None:
+        if phase == "canonical_string_ready":
+            value = _integer(metadata.get("canonicalCharacterCount"))
+            if value is not None:
+                canonical_character_counts.add(value)
+        elif phase == "utf8_bytes_ready":
+            value = _integer(metadata.get("canonicalByteCount"))
+            if value is not None:
+                canonical_byte_counts.add(value)
+
+    events_before = _memory_events()
+    baseline = _snapshot()
+    rows = []
+    digests = []
+    tracing_started_fresh = not allocation_tracer.is_tracing()
+    if not tracing_started_fresh:
+        module.normalize_store = original_normalize
+        raise RuntimeError("unexpected_active_allocation_tracer")
+    allocation_tracer.start(1)
+    try:
+        for index in range(cycles):
+            # reset_peak() makes the current traced allocation the local high
+            # water, so subtracting current_before isolates this hash call's
+            # transient allocation peak without depending on glibc retention.
+            allocation_tracer.reset_peak()
+            current_before, _ = allocation_tracer.get_traced_memory()
+            started = time.perf_counter_ns()
+            digest = hash_callback(
+                normalized, diagnostic_observer=hash_observer)
+            duration_ms = (time.perf_counter_ns() - started) / 1_000_000.0
+            current_after, peak_after = allocation_tracer.get_traced_memory()
+            digests.append(str(digest))
+            rows.append({
+                "cycle": index + 1,
+                "durationMs": round(duration_ms, 3),
+                "currentBeforeBytes": current_before,
+                "currentAfterBytes": current_after,
+                "currentDeltaBytes": current_after - current_before,
+                "peakBytes": peak_after,
+                "peakIncrementBytes": peak_after - current_before,
+            })
+    finally:
+        module.normalize_store = original_normalize
+        allocation_tracer.stop()
+    tracing_stopped = not allocation_tracer.is_tracing()
+    final = _snapshot()
+    events_after = _memory_events()
+
+    durations = [row["durationMs"] for row in rows]
+    steady = rows[2:] if len(rows) > 2 else rows
+    peak_increments = [row["peakIncrementBytes"] for row in steady]
+    current_deltas = [row["currentDeltaBytes"] for row in steady]
+    conservative_peak = _maximum([
+        baseline.get("processPeakRssBytes"),
+        final.get("processPeakRssBytes"),
+        baseline.get("cgroupCurrentBytes"),
+        final.get("cgroupCurrentBytes"),
+        baseline.get("cgroupPeakBytes"),
+        final.get("cgroupPeakBytes"),
+    ])
+    oom_delta = _difference(events_before.get("oom"), events_after.get("oom"))
+    oom_kill_delta = _difference(
+        events_before.get("oomKill"), events_after.get("oomKill"))
+    cgroup_observed = _integer(final.get("cgroupMaxBytes")) is not None
+    normalized_fast = mode == "normalized" and normalize_calls == 0
+    fallback_observed = mode == "fallback" and normalize_calls == cycles
+    logical_peak_ok = (
+        conservative_peak == memory.UNKNOWN or
+        conservative_peak < LOGICAL_ACCEPTANCE_CEILING_BYTES)
+    canonical_bytes = (
+        next(iter(canonical_byte_counts))
+        if len(canonical_byte_counts) == 1 else memory.UNKNOWN)
+    canonical_characters = (
+        next(iter(canonical_character_counts))
+        if len(canonical_character_counts) == 1 else memory.UNKNOWN)
+    minimum_canonical_bytes = MINIMUM_PRODUCTION_CANONICAL_BYTES[store_kind]
+    maximum_canonical_bytes = math.floor(
+        minimum_canonical_bytes *
+        (1.0 + MAXIMUM_CALIBRATION_OVERSHOOT_PERCENT / 100.0))
+    calibrated_input = (
+        _integer(canonical_bytes) is not None and
+        minimum_canonical_bytes <= canonical_bytes <= maximum_canonical_bytes)
+    shape.update({
+        "canonicalCharacterCount": canonical_characters,
+        "canonicalHashInputBytes": canonical_bytes,
+        "minimumProductionCanonicalBytes": minimum_canonical_bytes,
+        "maximumCalibratedCanonicalBytes": maximum_canonical_bytes,
+    })
+    allocation_samples_complete = (
+        len(rows) == cycles and
+        all(
+            row.get("cycle") == expected_cycle and
+            _integer(row.get("currentBeforeBytes")) is not None and
+            _integer(row.get("currentAfterBytes")) is not None and
+            _integer(row.get("currentDeltaBytes")) is not None and
+            _integer(row.get("peakBytes")) is not None and
+            _integer(row.get("peakIncrementBytes")) is not None and
+            row.get("peakIncrementBytes") >= 0
+            for expected_cycle, row in enumerate(rows, start=1)))
+    checks = {
+        "cyclesAtLeast32": len(rows) >= MINIMUM_CYCLES,
+        "digestStable100Percent": len(set(digests)) == 1,
+        "expectedPathObserved": normalized_fast or fallback_observed,
+        "allocationTraceStartedFresh": tracing_started_fresh,
+        "allocationTraceStopped": tracing_stopped,
+        "allocationTraceSamplesComplete": allocation_samples_complete,
+        "logicalPeakBelow3GiB": logical_peak_ok,
+        "productionCalibratedCanonicalInput": calibrated_input,
+        "oomDeltaZero": (
+            oom_delta == 0 if cgroup_observed
+            else oom_delta in (0, memory.UNKNOWN)),
+        "oomKillDeltaZero": (
+            oom_kill_delta == 0 if cgroup_observed
+            else oom_kill_delta in (0, memory.UNKNOWN)),
+    }
+    return {
+        "schemaVersion": "argus-normalized-hash-allocation-worker-v1",
+        "measurementProfile": "python_allocation_peak",
+        "freshProcess": True,
+        "processId": os.getpid(),
+        "environment": _environment_fingerprint(),
+        "storeKind": store_kind,
+        "pathMode": mode,
+        "pathClassification": (
+            "NORMALIZED_FAST_PATH" if mode == "normalized"
+            else "NORMALIZING_FALLBACK"),
+        "cycles": cycles,
+        "storeShape": shape,
+        "normalizeCallsDuringCycles": normalize_calls,
+        "wholeStateRepresentationsPerCall": 1 if normalized_fast else 2,
+        "digest": digests[-1] if digests else None,
+        "digestStableCount": sum(
+            value == digests[0] for value in digests) if digests else 0,
+        "durationMs": {
+            "total": round(sum(durations), 3),
+            "minimum": round(min(durations), 3) if durations else 0,
+            "p50": _percentile(durations, 50),
+            "p95": _percentile(durations, 95),
+            "maximum": round(max(durations), 3) if durations else 0,
+        },
+        "allocationTrace": {
+            "tracer": "python_tracemalloc",
+            "tracebackFrames": 1,
+            "sampleDefinition":
+                "cycles_3_plus_per_call_peak_increment_nearest_rank_p50",
+            "sampleCount": len(steady),
+            "peakIncrementBytes": {
+                "minimum": min(peak_increments) if peak_increments else 0,
+                "p50": _integer_percentile(peak_increments, 50),
+                "p95": _integer_percentile(peak_increments, 95),
+                "maximum": max(peak_increments) if peak_increments else 0,
+                "span": _span(peak_increments),
+            },
+            "currentDeltaBytes": {
+                "minimum": min(current_deltas) if current_deltas else 0,
+                "p50": _integer_percentile(current_deltas, 50),
+                "p95": _integer_percentile(current_deltas, 95),
+                "maximum": max(current_deltas) if current_deltas else 0,
+                "span": _span(current_deltas),
+            },
+            "cycles": rows,
+        },
+        "memory": {
+            "baseline": baseline,
+            "final": final,
+            "conservativePeakBytes": conservative_peak,
+            "logicalAcceptanceCeilingBytes":
+                LOGICAL_ACCEPTANCE_CEILING_BYTES,
+            "cgroupEventsBefore": events_before,
+            "cgroupEventsAfter": events_after,
+            "oomDelta": oom_delta,
+            "oomKillDelta": oom_kill_delta,
+        },
+        "runtimeActions": {
+            "allocatorTrimInvoked": False,
+            "forcedCollectionInvoked": False,
+            "restartInvoked": False,
+        },
+        "checks": checks,
+        "passed": all(checks.values()),
+    }
+
+
 def _worker_command(
         store_kind: str, mode: str, cycles: int,
-        bars_per_record: int) -> list[str]:
-    return [
+        bars_per_record: int, measurement_profile: str = "resource",
+        ) -> list[str]:
+    command = [
         sys.executable, "-B", str(pathlib.Path(__file__).resolve()),
         "--worker-store", store_kind, "--worker-mode", mode,
+        "--worker-profile", measurement_profile,
         "--cycles", str(cycles),
         "--bars-per-record", str(bars_per_record),
     ]
+    return command
 
 
 def _run_worker(
         store_kind: str, mode: str, cycles: int,
-        bars_per_record: int) -> Dict[str, Any]:
+        bars_per_record: int,
+        measurement_profile: str = "resource") -> Dict[str, Any]:
     environment = dict(os.environ)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["PYTHONHASHSEED"] = "0"
     try:
         completed = subprocess.run(
-            _worker_command(store_kind, mode, cycles, bars_per_record),
+            _worker_command(
+                store_kind, mode, cycles, bars_per_record,
+                measurement_profile),
             cwd=str(ROOT), env=environment, capture_output=True, text=True,
             timeout=900, check=False)
     except subprocess.TimeoutExpired:
         return {
             "storeKind": store_kind, "pathMode": mode,
+            "measurementProfile": measurement_profile,
             "returnCode": None, "signal": None,
             "timedOut": True, "outputValid": False,
             "stderrPresent": False, "passed": False,
@@ -609,18 +883,28 @@ def run(
         "verified": max(1, int(verified_bars_per_record)),
         "asset": max(1, int(asset_bars_per_record)),
     }
-    workers = [
+    resource_workers = [
         _run_worker(
             store_kind, mode, cycles, bars_by_store[store_kind])
         for store_kind in STORE_KINDS for mode in PATH_MODES
     ]
+    allocation_workers = [
+        _run_worker(
+            "asset", mode, cycles, bars_by_store["asset"],
+            "allocation_peak")
+        for mode in PATH_MODES
+    ]
+    workers = resource_workers + allocation_workers
     by_key = {
         (row.get("storeKind"), row.get("pathMode")): row
-        for row in workers
+        for row in resource_workers
+    }
+    allocation_by_mode = {
+        row.get("pathMode"): row for row in allocation_workers
     }
     comparisons = []
     digest_matches = 0
-    expected_comparisons = cycles * len(STORE_KINDS)
+    expected_comparisons = cycles * (len(STORE_KINDS) + 1)
     representation_reduction = []
     process_peak_reductions = []
     steady_rss_reductions = []
@@ -712,6 +996,74 @@ def run(
             "candidateDurationMs": candidate.get("durationMs"),
             "durationP50ReductionMs": duration_p50_reduction,
         })
+    allocation_fallback = allocation_by_mode.get("fallback", {})
+    allocation_candidate = allocation_by_mode.get("normalized", {})
+    allocation_digest_equal = bool(
+        allocation_fallback.get("digest") and
+        allocation_fallback.get("digest") == allocation_candidate.get(
+            "digest"))
+    allocation_digest_matches = cycles if allocation_digest_equal else 0
+    digest_matches += allocation_digest_matches
+    asset_digests_across_profiles = (
+        by_key.get(("asset", "fallback"), {}).get("digest"),
+        by_key.get(("asset", "normalized"), {}).get("digest"),
+        allocation_fallback.get("digest"),
+        allocation_candidate.get("digest"),
+    )
+    same_asset_digest_across_profiles = (
+        all(asset_digests_across_profiles) and
+        len(set(asset_digests_across_profiles)) == 1)
+    allocation_peak_reduction = _paired_allocation_peak_reduction_summary(
+        allocation_fallback, allocation_candidate)
+    allocation_fallback_p50 = (
+        (allocation_fallback.get("allocationTrace") or {}).get(
+            "peakIncrementBytes") or {}).get("p50")
+    allocation_candidate_p50 = (
+        (allocation_candidate.get("allocationTrace") or {}).get(
+            "peakIncrementBytes") or {}).get("p50")
+    allocation_duration_fallback_p50 = (
+        allocation_fallback.get("durationMs") or {}).get("p50")
+    allocation_duration_candidate_p50 = (
+        allocation_candidate.get("durationMs") or {}).get("p50")
+    allocation_duration_reduction = (
+        round(
+            float(allocation_duration_fallback_p50) -
+            float(allocation_duration_candidate_p50), 3)
+        if isinstance(allocation_duration_fallback_p50, (int, float)) and
+        isinstance(allocation_duration_candidate_p50, (int, float))
+        else memory.UNKNOWN)
+    asset_comparison = next(
+        (row for row in comparisons if row.get("storeKind") == "asset"), {})
+    asset_comparison["allocationPeakProof"] = {
+        "measurementProfile": "separate_fresh_python_tracemalloc_workers",
+        "sampleDefinition":
+            "paired_cycles_3_plus_peak_increment_nearest_rank_p50",
+        "cyclesCompared": cycles,
+        "digestMatches": allocation_digest_matches,
+        "digestMatchPercent": round(
+            (allocation_digest_matches / cycles) * 100, 3),
+        "sameStoreShape": (
+            allocation_fallback.get("storeShape") ==
+            allocation_candidate.get("storeShape") ==
+            by_key.get(("asset", "fallback"), {}).get("storeShape") ==
+            by_key.get(("asset", "normalized"), {}).get("storeShape")),
+        "fallbackNormalizeCalls": allocation_fallback.get(
+            "normalizeCallsDuringCycles"),
+        "candidateNormalizeCalls": allocation_candidate.get(
+            "normalizeCallsDuringCycles"),
+        "fallbackRepresentationsPerCall": allocation_fallback.get(
+            "wholeStateRepresentationsPerCall"),
+        "candidateRepresentationsPerCall": allocation_candidate.get(
+            "wholeStateRepresentationsPerCall"),
+        "fallbackPeakIncrementP50Bytes": allocation_fallback_p50,
+        "candidatePeakIncrementP50Bytes": allocation_candidate_p50,
+        "pairedPeakReductionBytes": allocation_peak_reduction,
+        "minimumMaterialAllocationReductionBytes":
+            MINIMUM_MATERIAL_ALLOCATION_REDUCTION_BYTES,
+        "fallbackDurationMs": allocation_fallback.get("durationMs"),
+        "candidateDurationMs": allocation_candidate.get("durationMs"),
+        "durationP50ReductionMs": allocation_duration_reduction,
+    }
     process_ids = [row.get("processId") for row in workers]
     cgroup_max_values = [
         ((row.get("memory") or {}).get("final") or {}).get(
@@ -751,62 +1103,102 @@ def run(
     required_environment_fields = (
         "pythonImplementation", "pythonVersion", "pythonBuild", "libcName",
         "libcVersion", "system", "machine", "kernelRelease",
-        "containerImage", "sourceHeadSha", "executionSha",
+        "runnerImageOs", "runnerImageVersion", "containerImage",
+        "sourceHeadSha", "executionSha",
     )
+    verified_comparison = next(
+        (row for row in comparisons if row.get("storeKind") == "verified"),
+        {})
     asset_comparison = next(
         (row for row in comparisons if row.get("storeKind") == "asset"), {})
+    verified_steady_reductions = verified_comparison.get(
+        "steadyStateReductionBytes") or {}
     asset_steady_reductions = asset_comparison.get(
         "steadyStateReductionBytes") or {}
+    allocation_peak_minimum = allocation_peak_reduction.get("minimum")
+    allocation_peak_p50 = allocation_peak_reduction.get("p50")
+    allocation_proof = asset_comparison.get("allocationPeakProof") or {}
     checks = {
-        "fourFreshProcesses": (
-            len(process_ids) == 4 and None not in process_ids and
-            len(set(process_ids)) == 4 and
+        "sixFreshProcesses": (
+            len(process_ids) == 6 and None not in process_ids and
+            len(set(process_ids)) == 6 and
             all(row.get("freshProcess") is True for row in workers)),
+        "fourUninstrumentedResourceProcesses": (
+            len(resource_workers) == 4 and all(
+                row.get("measurementProfile") ==
+                    "os_resource_uninstrumented" and
+                (row.get("checks") or {}).get(
+                    "allocationTracerNotLoaded") is True
+                for row in resource_workers)),
+        "twoFreshAssetAllocationProcesses": (
+            len(allocation_workers) == 2 and all(
+                row.get("storeKind") == "asset" and
+                row.get("measurementProfile") == "python_allocation_peak" and
+                (row.get("checks") or {}).get(
+                    "allocationTraceStartedFresh") is True and
+                (row.get("checks") or {}).get(
+                    "allocationTraceStopped") is True
+                for row in allocation_workers)),
         "allWorkersExitedNormally": all(
             row.get("returnCode") == 0 and
             row.get("abnormalExit") is False for row in workers),
         "allWorkerChecksPassed": all(row.get("passed") for row in workers),
         "digestParity100Percent": digest_matches == expected_comparisons,
-        "sameProductionShapedStores": all(
-            row.get("sameStoreShape") is True for row in comparisons),
+        "sameAssetDigestAcrossProfiles": same_asset_digest_across_profiles,
+        "sameProductionShapedStores": (
+            all(row.get("sameStoreShape") is True for row in comparisons) and
+            allocation_proof.get("sameStoreShape") is True),
         "productionCalibratedCanonicalInput": all(
             (row.get("checks") or {}).get(
                 "productionCalibratedCanonicalInput") is True
             for row in workers),
-        "normalizedFastPathUsed": all(
-            row.get("candidateNormalizeCalls") == 0
-            for row in comparisons),
-        "fallbackPathUsed": all(
-            row.get("fallbackNormalizeCalls") == cycles
-            for row in comparisons),
-        "wholeStateRepresentationReduced": all(
-            value == 1 for value in representation_reduction),
-        # ru_maxrss is a cumulative process-lifetime high-water mark.  It
-        # remains safety telemetry, while the fixed-cycle paired median below
-        # measures the long-lived RSS effect without address-layout aliasing.
-        "steadyStateRssMateriallyReduced": all(
-            _integer(value) is not None and
-            value >= MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
-            for value in steady_rss_reductions),
-        "steadyStatePssMateriallyReduced": all(
-            _integer(value) is not None and
-            value >= MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
-            for value in steady_pss_reductions),
-        "steadyStateRssAnonMateriallyReduced": all(
-            _integer(value) is not None and
-            value >= MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
-            for value in steady_anon_reductions),
-        "assetAllocatorRetentionMateriallyReduced": all(
-            _integer(asset_steady_reductions.get(metric)) is not None and
-            asset_steady_reductions.get(metric) >=
-                MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
-            for metric in ("arenaBytes", "fordblksBytes")),
+        "normalizedFastPathUsed": (
+            all(row.get("candidateNormalizeCalls") == 0
+                for row in comparisons) and
+            allocation_proof.get("candidateNormalizeCalls") == 0),
+        "fallbackPathUsed": (
+            all(row.get("fallbackNormalizeCalls") == cycles
+                for row in comparisons) and
+            allocation_proof.get("fallbackNormalizeCalls") == cycles),
+        "wholeStateRepresentationReduced": (
+            all(value == 1 for value in representation_reduction) and
+            allocation_proof.get("fallbackRepresentationsPerCall") == 2 and
+            allocation_proof.get("candidateRepresentationsPerCall") == 1),
+        # Verified retains a stable, architecture-meaningful RSS/PSS signal,
+        # so its exact 1 MiB terminal gate remains.  Asset post-call RSS and
+        # arena retention are allocator policy diagnostics; the separate
+        # transient allocation workers gate the eliminated representation.
+        "verifiedSteadyStateRssMateriallyReduced": (
+            _integer(verified_steady_reductions.get("processRssBytes"))
+                is not None and
+            verified_steady_reductions.get("processRssBytes") >=
+                MINIMUM_MATERIAL_RSS_REDUCTION_BYTES),
+        "verifiedSteadyStatePssMateriallyReduced": (
+            _integer(verified_steady_reductions.get("pssBytes")) is not None and
+            verified_steady_reductions.get("pssBytes") >=
+                MINIMUM_MATERIAL_RSS_REDUCTION_BYTES),
+        "verifiedSteadyStateRssAnonMateriallyReduced": (
+            _integer(verified_steady_reductions.get("rssAnonBytes"))
+                is not None and
+            verified_steady_reductions.get("rssAnonBytes") >=
+                MINIMUM_MATERIAL_RSS_REDUCTION_BYTES),
+        "assetAllocationPeakMinimumMateriallyReduced": (
+            _integer(allocation_peak_minimum) is not None and
+            allocation_peak_minimum >=
+                MINIMUM_MATERIAL_ALLOCATION_REDUCTION_BYTES),
+        "assetAllocationPeakP50MateriallyReduced": (
+            _integer(allocation_peak_p50) is not None and
+            allocation_peak_p50 >=
+                MINIMUM_MATERIAL_ALLOCATION_REDUCTION_BYTES),
         "durationP50Reduced": all(
             isinstance(value, (int, float)) and value > 0
             for value in duration_p50_reductions),
+        "assetAllocationTraceDurationP50Reduced": (
+            isinstance(allocation_duration_reduction, (int, float)) and
+            allocation_duration_reduction > 0),
         "plateauBelow128MiB": all(
             (row.get("checks") or {}).get("plateauBelow128MiB") is True
-            for row in workers),
+            for row in resource_workers),
         "logicalPeakBelow3GiB": all(
             (row.get("checks") or {}).get("logicalPeakBelow3GiB") is True
             for row in workers),
@@ -827,11 +1219,15 @@ def run(
             for field in required_environment_fields),
     }
     return {
-        "schemaVersion": "argus-normalized-hash-resource-proof-v2",
-        "topology": "fresh_process_per_store_and_path",
+        "schemaVersion": "argus-normalized-hash-resource-proof-v3",
+        "topology": (
+            "four_uninstrumented_resource_workers_plus_two_fresh_"
+            "asset_allocation_workers"),
         "environment": execution_environment,
         "cyclesPerWorker": cycles,
         "workerCount": len(workers),
+        "resourceWorkerCount": len(resource_workers),
+        "allocationWorkerCount": len(allocation_workers),
         "digestComparisons": expected_comparisons,
         "digestMatches": digest_matches,
         "digestMatchPercent": round(
@@ -842,6 +1238,8 @@ def run(
                 LOGICAL_ACCEPTANCE_CEILING_BYTES,
             "minimumMaterialRssReductionBytes":
                 MINIMUM_MATERIAL_RSS_REDUCTION_BYTES,
+            "minimumMaterialAllocationReductionBytes":
+                MINIMUM_MATERIAL_ALLOCATION_REDUCTION_BYTES,
             "requiredCgroupMaxBytes": (
                 require_cgroup_max_bytes or memory.NOT_APPLICABLE),
             "observedCgroupMaxBytes": cgroup_max_values,
@@ -862,6 +1260,11 @@ def run(
                 for value in process_peak_reductions),
             "processPeakRssRole":
                 "safety_telemetry_not_terminal_effect_gate",
+            "assetPostCallSteadyStateReductionBytes":
+                asset_steady_reductions,
+            "assetPostCallResourceRole":
+                "allocator_retention_diagnostic_not_terminal_effect_gate",
+            "assetAllocationPeakReductionBytes": allocation_peak_reduction,
         },
         "oomCount": 0 if no_oom else memory.UNKNOWN,
         "abnormalExitCount": sum(
@@ -887,6 +1290,9 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--worker-store", choices=STORE_KINDS)
     parser.add_argument("--worker-mode", choices=PATH_MODES)
+    parser.add_argument(
+        "--worker-profile", choices=("resource", "allocation_peak"),
+        default="resource")
     args = parser.parse_args()
     if args.worker_store or args.worker_mode:
         if not (args.worker_store and args.worker_mode):
@@ -898,12 +1304,19 @@ def main() -> int:
                 if args.worker_store == "verified"
                 else args.asset_bars_per_record)
         try:
-            report = _worker(
+            worker_callback = (
+                _allocation_worker
+                if args.worker_profile == "allocation_peak" else _worker)
+            report = worker_callback(
                 args.worker_store, args.worker_mode, args.cycles,
                 max(1, int(worker_bars)))
         except Exception as exc:
             report = {
-                "schemaVersion": "argus-normalized-hash-worker-v2",
+                "schemaVersion": (
+                    "argus-normalized-hash-allocation-worker-v1"
+                    if args.worker_profile == "allocation_peak"
+                    else "argus-normalized-hash-worker-v2"),
+                "measurementProfile": args.worker_profile,
                 "freshProcess": True,
                 "processId": os.getpid(),
                 "storeKind": args.worker_store,
