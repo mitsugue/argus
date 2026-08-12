@@ -14,6 +14,7 @@ import json
 import math
 import os
 import pathlib
+import platform
 import resource
 import subprocess
 import sys
@@ -53,6 +54,10 @@ MINIMUM_PRODUCTION_CANONICAL_BYTES = {
 MAXIMUM_CALIBRATION_OVERSHOOT_PERCENT = 1.0
 STORE_KINDS = ("verified", "asset")
 PATH_MODES = ("fallback", "normalized")
+STEADY_STATE_METRICS = (
+    "processRssBytes", "rssAnonBytes", "pssBytes", "arenaBytes",
+    "uordblksBytes", "fordblksBytes",
+)
 
 
 def _integer(value: Any) -> int | None:
@@ -91,6 +96,100 @@ def _percentile(values: Iterable[float], percentile: float) -> float:
         int(math.ceil((percentile / 100.0) * len(ordered))) - 1,
     ))
     return round(ordered[index], 3)
+
+
+def _integer_percentile(
+        values: Iterable[Any], percentile: float) -> int | str:
+    ordered = sorted(
+        value for value in values if _integer(value) is not None)
+    if not ordered:
+        return memory.UNKNOWN
+    index = max(0, min(
+        len(ordered) - 1,
+        int(math.ceil((percentile / 100.0) * len(ordered))) - 1,
+    ))
+    return ordered[index]
+
+
+def _reduction(fallback: Any, candidate: Any) -> int | str:
+    left = _integer(fallback)
+    right = _integer(candidate)
+    return left - right if left is not None and right is not None \
+        else memory.UNKNOWN
+
+
+def _steady_state_summary(
+        baseline: Mapping[str, Any], rows: Iterable[Mapping[str, Any]],
+        ) -> Dict[str, Any]:
+    samples = list(rows)
+    after_p50 = {
+        metric: _integer_percentile(
+            ((row.get("after") or {}).get(metric) for row in samples), 50)
+        for metric in STEADY_STATE_METRICS
+    }
+    growth = {
+        metric: _difference(baseline.get(metric), after_p50.get(metric))
+        for metric in STEADY_STATE_METRICS
+    }
+    return {
+        "sampleDefinition": "cycles_3_plus_after_nearest_rank_p50",
+        "sampleCount": len(samples),
+        "afterP50Bytes": after_p50,
+        "growthFromBaselineBytes": growth,
+    }
+
+
+def _paired_steady_state_reduction(
+        fallback_memory: Mapping[str, Any],
+        candidate_memory: Mapping[str, Any], metric: str) -> int | str:
+    fallback_baseline = fallback_memory.get("baseline") or {}
+    candidate_baseline = candidate_memory.get("baseline") or {}
+    fallback_rows = list(fallback_memory.get("cycles") or [])[2:]
+    candidate_rows = list(candidate_memory.get("cycles") or [])[2:]
+    if not fallback_rows or len(fallback_rows) != len(candidate_rows):
+        return memory.UNKNOWN
+    reductions = []
+    for expected_cycle, (fallback_row, candidate_row) in enumerate(
+            zip(fallback_rows, candidate_rows), start=3):
+        if (
+                fallback_row.get("cycle") != expected_cycle or
+                candidate_row.get("cycle") != expected_cycle):
+            return memory.UNKNOWN
+        fallback_growth = _difference(
+            fallback_baseline.get(metric),
+            (fallback_row.get("after") or {}).get(metric))
+        candidate_growth = _difference(
+            candidate_baseline.get(metric),
+            (candidate_row.get("after") or {}).get(metric))
+        reduction = _reduction(fallback_growth, candidate_growth)
+        if _integer(reduction) is None:
+            return memory.UNKNOWN
+        reductions.append(reduction)
+    return _integer_percentile(reductions, 50)
+
+
+def _environment_fingerprint() -> Dict[str, Any]:
+    libc_name, libc_version = platform.libc_ver()
+    return {
+        "pythonImplementation": platform.python_implementation(),
+        "pythonVersion": platform.python_version(),
+        "pythonBuild": sys.version.replace("\n", " "),
+        "libcName": libc_name or memory.UNKNOWN,
+        "libcVersion": libc_version or memory.UNKNOWN,
+        "system": platform.system(),
+        "machine": platform.machine(),
+        "kernelRelease": platform.release(),
+        "runnerImageOs": os.environ.get(
+            "ARGUS_PROBE_RUNNER_IMAGE_OS", memory.UNKNOWN),
+        "runnerImageVersion": os.environ.get(
+            "ARGUS_PROBE_RUNNER_IMAGE_VERSION", memory.UNKNOWN),
+        "containerImage": os.environ.get(
+            "ARGUS_PROBE_CONTAINER_IMAGE", memory.UNKNOWN),
+        "sourceHeadSha": os.environ.get(
+            "ARGUS_PROBE_HEAD_SHA", memory.UNKNOWN),
+        "executionSha": os.environ.get(
+            "ARGUS_PROBE_EXECUTION_SHA", memory.UNKNOWN),
+    }
 
 
 def _peak_rss_bytes() -> int | str:
@@ -344,6 +443,7 @@ def _worker(
     steady = rows[2:] if len(rows) > 2 else rows
     rss_values = [row["after"]["processRssBytes"] for row in steady]
     pss_values = [row["after"]["pssBytes"] for row in steady]
+    steady_state = _steady_state_summary(baseline, steady)
     conservative_peak = _maximum([
         baseline.get("processPeakRssBytes"),
         final.get("processPeakRssBytes"),
@@ -400,9 +500,10 @@ def _worker(
             else oom_kill_delta in (0, memory.UNKNOWN)),
     }
     return {
-        "schemaVersion": "argus-normalized-hash-worker-v1",
+        "schemaVersion": "argus-normalized-hash-worker-v2",
         "freshProcess": True,
         "processId": os.getpid(),
+        "environment": _environment_fingerprint(),
         "storeKind": store_kind,
         "pathMode": mode,
         "pathClassification": (
@@ -427,6 +528,7 @@ def _worker(
             "final": final,
             "rssPlateauSpanBytesCycles3Plus": rss_plateau,
             "pssPlateauSpanBytesCycles3Plus": pss_plateau,
+            "steadyState": steady_state,
             "conservativePeakBytes": conservative_peak,
             "plateauLimitBytes": PLATEAU_LIMIT_BYTES,
             "logicalAcceptanceCeilingBytes":
@@ -521,6 +623,9 @@ def run(
     expected_comparisons = cycles * len(STORE_KINDS)
     representation_reduction = []
     process_peak_reductions = []
+    steady_rss_reductions = []
+    steady_pss_reductions = []
+    steady_anon_reductions = []
     duration_p50_reductions = []
     for store_kind in STORE_KINDS:
         fallback = by_key.get((store_kind, "fallback"), {})
@@ -552,6 +657,21 @@ def run(
             _integer(candidate_process_peak) is not None else
             memory.UNKNOWN)
         process_peak_reductions.append(process_peak_reduction)
+        fallback_growth = (
+            fallback_memory.get("steadyState") or {}).get(
+                "growthFromBaselineBytes") or {}
+        candidate_growth = (
+            candidate_memory.get("steadyState") or {}).get(
+                "growthFromBaselineBytes") or {}
+        steady_reductions = {
+            metric: _paired_steady_state_reduction(
+                fallback_memory, candidate_memory, metric)
+            for metric in STEADY_STATE_METRICS
+        }
+        steady_rss_reductions.append(
+            steady_reductions["processRssBytes"])
+        steady_pss_reductions.append(steady_reductions["pssBytes"])
+        steady_anon_reductions.append(steady_reductions["rssAnonBytes"])
         fallback_p50 = (fallback.get("durationMs") or {}).get("p50")
         candidate_p50 = (candidate.get("durationMs") or {}).get("p50")
         duration_p50_reduction = (
@@ -576,6 +696,16 @@ def run(
             "fallbackProcessPeakRssBytes": fallback_process_peak,
             "candidateProcessPeakRssBytes": candidate_process_peak,
             "processPeakRssReductionBytes": process_peak_reduction,
+            "steadyStateSampleDefinition":
+                "paired_cycles_3_plus_growth_nearest_rank_p50",
+            "fallbackSteadyStateGrowthBytes": fallback_growth,
+            "candidateSteadyStateGrowthBytes": candidate_growth,
+            "steadyStateReductionBytes": steady_reductions,
+            "steadyStateRssReductionBytes":
+                steady_reductions["processRssBytes"],
+            "steadyStatePssReductionBytes": steady_reductions["pssBytes"],
+            "steadyStateRssAnonReductionBytes":
+                steady_reductions["rssAnonBytes"],
             "minimumMaterialRssReductionBytes":
                 MINIMUM_MATERIAL_RSS_REDUCTION_BYTES,
             "fallbackDurationMs": fallback.get("durationMs"),
@@ -617,6 +747,16 @@ def run(
         ((row.get("memory") or {}).get("oomDelta") in (0, memory.UNKNOWN) and
          (row.get("memory") or {}).get("oomKillDelta") in (0, memory.UNKNOWN))
         for row in workers)
+    execution_environment = _environment_fingerprint()
+    required_environment_fields = (
+        "pythonImplementation", "pythonVersion", "pythonBuild", "libcName",
+        "libcVersion", "system", "machine", "kernelRelease",
+        "containerImage", "sourceHeadSha", "executionSha",
+    )
+    asset_comparison = next(
+        (row for row in comparisons if row.get("storeKind") == "asset"), {})
+    asset_steady_reductions = asset_comparison.get(
+        "steadyStateReductionBytes") or {}
     checks = {
         "fourFreshProcesses": (
             len(process_ids) == 4 and None not in process_ids and
@@ -641,10 +781,26 @@ def run(
             for row in comparisons),
         "wholeStateRepresentationReduced": all(
             value == 1 for value in representation_reduction),
-        "processPeakRssMateriallyReduced": all(
+        # ru_maxrss is a cumulative process-lifetime high-water mark.  It
+        # remains safety telemetry, while the fixed-cycle paired median below
+        # measures the long-lived RSS effect without address-layout aliasing.
+        "steadyStateRssMateriallyReduced": all(
             _integer(value) is not None and
             value >= MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
-            for value in process_peak_reductions),
+            for value in steady_rss_reductions),
+        "steadyStatePssMateriallyReduced": all(
+            _integer(value) is not None and
+            value >= MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
+            for value in steady_pss_reductions),
+        "steadyStateRssAnonMateriallyReduced": all(
+            _integer(value) is not None and
+            value >= MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
+            for value in steady_anon_reductions),
+        "assetAllocatorRetentionMateriallyReduced": all(
+            _integer(asset_steady_reductions.get(metric)) is not None and
+            asset_steady_reductions.get(metric) >=
+                MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
+            for metric in ("arenaBytes", "fordblksBytes")),
         "durationP50Reduced": all(
             isinstance(value, (int, float)) and value > 0
             for value in duration_p50_reductions),
@@ -662,10 +818,18 @@ def run(
         "noRuntimeControlActions": all(
             not any((row.get("runtimeActions") or {}).values())
             for row in workers),
+        "singleExecutionEnvironment": all(
+            row.get("environment") == execution_environment
+            for row in workers),
+        "environmentFingerprintComplete": all(
+            execution_environment.get(field) not in (
+                None, "", memory.UNKNOWN)
+            for field in required_environment_fields),
     }
     return {
-        "schemaVersion": "argus-normalized-hash-resource-proof-v1",
+        "schemaVersion": "argus-normalized-hash-resource-proof-v2",
         "topology": "fresh_process_per_store_and_path",
+        "environment": execution_environment,
         "cyclesPerWorker": cycles,
         "workerCount": len(workers),
         "digestComparisons": expected_comparisons,
@@ -689,6 +853,15 @@ def run(
             "allocatorTrimInvoked": False,
             "forcedCollectionInvoked": False,
             "restartInvoked": False,
+        },
+        "diagnostics": {
+            "processPeakRssReductionBytes": process_peak_reductions,
+            "processPeakRssMateriallyReduced": all(
+                _integer(value) is not None and
+                value >= MINIMUM_MATERIAL_RSS_REDUCTION_BYTES
+                for value in process_peak_reductions),
+            "processPeakRssRole":
+                "safety_telemetry_not_terminal_effect_gate",
         },
         "oomCount": 0 if no_oom else memory.UNKNOWN,
         "abnormalExitCount": sum(
@@ -730,7 +903,7 @@ def main() -> int:
                 max(1, int(worker_bars)))
         except Exception as exc:
             report = {
-                "schemaVersion": "argus-normalized-hash-worker-v1",
+                "schemaVersion": "argus-normalized-hash-worker-v2",
                 "freshProcess": True,
                 "processId": os.getpid(),
                 "storeKind": args.worker_store,

@@ -19,6 +19,7 @@ on:
       - "test_argus_memory_attribution.py"
       - "test_argus_memory_snapshot_compact.py"
       - "test_argus_normalized_hash.py"
+      - "test_argus_normalized_hash_resource_probe.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
       - ".github/workflows/memory-attribution.yml"
@@ -42,6 +43,7 @@ on:
       - "test_argus_memory_attribution.py"
       - "test_argus_memory_snapshot_compact.py"
       - "test_argus_normalized_hash.py"
+      - "test_argus_normalized_hash_resource_probe.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
       - ".github/workflows/memory-attribution.yml"
@@ -67,6 +69,7 @@ jobs:
           pytest -q test_argus_memory_attribution.py
           test_argus_normalized_hash.py test_argus_asset_chart_cache.py
           test_argus_verified_snapshot.py
+          test_argus_normalized_hash_resource_probe.py
       - name: 32-cycle modes and 100-record bound
         run: |
           python scripts/memory_attribution_probe.py \
@@ -113,6 +116,11 @@ jobs:
   linux-4gib-normalized-hash:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      NORMALIZED_HASH_PROBE_IMAGE: >-
+        python:3.12-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
+      NORMALIZED_HASH_PROBE_HEAD_SHA: >-
+        ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -155,10 +163,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
+          docker pull "$NORMALIZED_HASH_PROBE_IMAGE"
           docker run --rm \
             --memory 4g --memory-swap 4g --pids-limit 128 \
             --volume "$PWD:/work" --workdir /work \
-            python:3.12-slim \
+            --env ARGUS_PROBE_CONTAINER_IMAGE="$NORMALIZED_HASH_PROBE_IMAGE" \
+            --env ARGUS_PROBE_RUNNER_IMAGE_OS="${ImageOS:-UNKNOWN}" \
+            --env ARGUS_PROBE_RUNNER_IMAGE_VERSION="${ImageVersion:-UNKNOWN}" \
+            --env ARGUS_PROBE_HEAD_SHA="$NORMALIZED_HASH_PROBE_HEAD_SHA" \
+            --env ARGUS_PROBE_EXECUTION_SHA="$GITHUB_SHA" \
+            "$NORMALIZED_HASH_PROBE_IMAGE" \
             python3 -B scripts/normalized_hash_resource_probe.py \
               --cycles 32 \
               --verified-bars-per-record 9140 \
@@ -170,7 +184,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -B -c 'import json, pathlib; p = pathlib.Path("artifacts/normalized-hash-resource-proof.json"); r = json.loads(p.read_text()); assert r["passed"] is True; assert r["digestMatchPercent"] == 100.0; assert r["abnormalExitCount"] == 0; assert r["oomCount"] == 0; text = p.read_text(); assert not any(value in text for value in ("LOCAL", "local-report", "dataset-", "symbol", "payload", "token="))'
+          python3 -B -c '
+          import json, pathlib
+          p = pathlib.Path("artifacts/normalized-hash-resource-proof.json")
+          r = json.loads(p.read_text())
+          assert r["schemaVersion"] == "argus-normalized-hash-resource-proof-v2"
+          assert r["passed"] is True
+          assert r["cyclesPerWorker"] == 32 and r["workerCount"] == 4
+          assert r["resourceEnvelope"]["minimumMaterialRssReductionBytes"] == 1048576
+          for key in (
+              "steadyStateRssMateriallyReduced",
+              "steadyStatePssMateriallyReduced",
+              "steadyStateRssAnonMateriallyReduced",
+              "assetAllocatorRetentionMateriallyReduced",
+              "environmentFingerprintComplete",
+              "singleExecutionEnvironment",
+          ):
+              assert r["checks"][key] is True
+          assert r["digestMatchPercent"] == 100.0
+          assert r["abnormalExitCount"] == 0 and r["oomCount"] == 0
+          text = p.read_text()
+          assert not any(value in text for value in (
+              "LOCAL", "local-report", "dataset-", "symbol", "payload",
+              "token="))'
       - name: Publish normalized-hash resource proof
         if: always()
         uses: actions/upload-artifact@v4
