@@ -16,6 +16,9 @@ Do not convert the existing service to a Blueprint to apply this document.
 - Lease: `/var/data/argus_mission_tick.lease`
 - Cursor: `/var/data/argus_mission_tick.cursor.json`
 - Receipt metadata: `/var/data/argus_mission_tick.receipt.json`
+- Encrypted recovery sidecar: `/var/data/argus_remote_recovery.json`
+- Recovery nonce authority: private `argus_remote_recovery_nonce_*` files
+  under `/var/data`
 - Checkpoint temporary directory: `/var/data`
 
 `flock` protects concurrent requests only on one host. It is not a distributed
@@ -71,6 +74,96 @@ cursor are replayed idempotently. WAL compaction is deferred until a Remote
 Journal receipt explicitly covers the checkpoint sequence; a stale receipt is
 never treated as verified.
 
+## Encrypted Remote Journal recovery (v13.4.13)
+
+The compact read-back remains public-safe. State that can contain owner context
+or `full_private` values is never written to the public ledger in plaintext.
+When recovery encryption is configured, every verified checkpoint produces a
+fixed-size AES-256-GCM encrypted sidecar before WAL compaction. The configured
+32-byte value is a root key, never the direct AES key. Every envelope receives
+a fresh 256-bit CSPRNG salt and uses HKDF-SHA-256 to derive its own 256-bit AES
+data key. HKDF `info` is domain-separated and binds the complete semantic
+public header, including the schema, key ID, opaque checkpoint identity,
+ledger base, and WAL boundary. The same fields and salt are also authenticated
+as AES-GCM AAD. Cold restore and Remote Journal ACK both require the exact
+read-back/sidecar pair at one immutable ledger commit and fail closed on a
+missing sidecar, KDF/header/tag failure, stale checkpoint, wrong key ID, or
+ancestry mismatch. There is no plaintext fallback.
+
+The runtime contract uses four secret-manager values. Key IDs are non-secret
+identifiers; key values are URL-safe base64 encodings of exactly 32 random
+root-key bytes and must never be stored in this repository, GitHub Actions,
+artifacts, logs, or the public ledger. The public sidecar contains only the key
+ID, KDF algorithm, 256-bit salt, nonce, authenticated metadata, and fixed-size
+ciphertext; neither root keys nor derived data keys are persisted or emitted.
+
+```text
+ARGUS_REMOTE_RECOVERY_CURRENT_KEY_ID=<opaque-id>
+ARGUS_REMOTE_RECOVERY_CURRENT_KEY=<redacted-32-byte-key>
+ARGUS_REMOTE_RECOVERY_PREVIOUS_KEY_ID=<opaque-id>       # rotation only
+ARGUS_REMOTE_RECOVERY_PREVIOUS_KEY=<redacted-32-byte-key>
+```
+
+Key configuration, generation, and rotation are separate owner-approved
+production changes; this code release does not perform them. With no current
+key configured, sidecar creation reports `not_configured` and preserves the
+legacy checkpoint path. After an encrypted generation has been marked,
+removing the required key or sidecar intentionally stops recovery rather than
+downgrading to plaintext or accepting a stale full snapshot.
+
+The first key activation requires a maintenance fence. Under a separate,
+explicit owner approval, disable the `caos-watchtower` and `caos-scan`
+workflow schedules and the EC2 re-arm timer, cancel or drain every queued and
+in-progress run, and verify that no ledger writer remains active *before*
+changing the Render key configuration or restarting the backend. Do not
+re-enable a writer until the restarted backend reports encrypted recovery
+mode and has produced a current-key sidecar. This fence is required because a
+workflow that selected legacy mode before activation could otherwise finish a
+legacy ledger push after the security boundary changed.
+
+For rotation, install a new current key while retaining the old current key as
+the single previous key. New encryption always uses only the current key;
+previous is decrypt-only. Keep both until a new-current-key pair has been
+published, ACKed at its immutable ledger commit, and cold-restore tested. Only
+then may a separately approved change retire the previous key. A rollback must
+restore the matching key IDs and values together. An ID-only rename is allowed
+only for one transition window with the old ID in the previous (decrypt-only)
+slot; both IDs share the same private material-domain counter and therefore
+cannot restart its nonce sequence. Removing nonce-authority files is invalid.
+The v1 authority has a lifetime ceiling of 16 distinct 32-byte key materials
+(the initial key plus at most 15 material-changing rotations). An ID-only
+rename does not consume another slot. Before every material-changing rotation,
+verify capacity under a separately approved preflight; attempting a 17th
+material fails checkpoints closed and must not be used as a production
+rotation procedure. Expanding or migrating this bound requires a new
+versioned, rollback-safe authority design—never delete an old floor to make
+space.
+
+Per-envelope key separation is a computational guarantee, not a mathematical
+claim that random values can never collide. A whole-volume rollback may repeat
+a local nonce counter, but a newly generated 256-bit salt derives a different
+AES data key except with cryptographically negligible salt-collision
+probability. The implementation therefore never intentionally reuses one
+derived-data-key/nonce pair, and the private monotonic nonce authority remains
+an independent defense for normal crashes, partial loss, published rollback,
+and operator error. This is the approved availability/security boundary; a
+literal external monotonic guarantee would require a separately authorized
+pre-encryption reservation service.
+
+Nonce reservations are serialized and persisted as private mode-0600 history,
+head, cache, and anchor records. On keyed boot, local floors are reconciled
+with the latest authenticated immutable Remote Journal pair before local state
+becomes authoritative; missing, ambiguous, undecryptable, or regressing proof
+fails closed. The encrypted payload carries forward the bounded per-key-
+material floor map so a permitted current/previous-key rollback cannot forget
+an older key's published high-water mark. The anchor rolls atomically to a
+versioned successor epoch before its 64 MiB per-epoch limit; each successor
+retains the absolute generation, all key-material-domain counters, and the
+prior epoch's terminal digest. A crash before replacement leaves the old
+epoch authoritative, while a crash after replacement leaves the fully fsynced
+successor authoritative. Key rotation neither resets nor compacts these
+counters. Do not delete, replace, roll back, or compact these files manually.
+
 ## Capacity and backup limits
 
 The startup check reserves capacity dynamically for the current checkpoint,
@@ -80,16 +173,14 @@ Render Disks cannot be scaled down. Daily Render disk snapshots are useful
 infrastructure protection but do not replace Remote Journal read-back
 verification.
 
-## Release after runtime proof
+## Future production activation (separate approval required)
 
-Only after the owner confirms the attached disk and `/readyz` proves the
-runtime contract:
-
-1. Merge PR #94.
-2. Deploy the exact merge SHA and verify backend version `13.3.1`.
-3. Verify checkpoint/WAL restore and all 12 market snapshots.
-4. Wait for the first valid scheduled mission heartbeat to start the new Soak.
-5. Verify two consecutive scheduled `caos-scan` runs, `ai-rejudge`, zero
-   Render restarts, bounded checkpoints, and Remote Journal pending trend.
-
-Manual acceptance ticks do not start the Soak.
+This code/Draft-PR/CI scope does **not** authorize merge, deploy, restart,
+Render environment changes, production-key generation or registration,
+Stage1, V2 authority changes, or Soak. Before any future production key
+activation, obtain a new explicit owner approval and apply the maintenance
+fence above. Then verify the exact deployed SHA and backend version `13.4.13`,
+the current-key checkpoint/sidecar pair, immutable ledger publication and ACK,
+and a cold restore before retiring a previous key. Re-enable scheduled writers
+only after their keyed-mode probes pass. A Soak may begin only under its own
+separate approval and from a valid natural scheduled heartbeat.

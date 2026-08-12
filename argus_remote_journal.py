@@ -11,12 +11,19 @@ C. 損失窓の主張はスケジュール存在ではなく実測ラグ(SLO)か
 """
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 SCHEMA_V3 = "argus-durable-v3"
 READBACK_RECEIPT_SCHEMA = "argus-remote-readback-v1"
 JST = timezone(timedelta(hours=9))
+_BUILD_SHA_RE = re.compile(r"(?:[0-9a-f]{7}|[0-9a-f]{40})")
+_APP_VERSION_RE = re.compile(
+    r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?")
+_MAX_COMPACT_OUTCOMES = 200
+OPS_SEQUENCE_BY_AGGREGATE_LIMIT = 4096
+OPS_SEQUENCE_HIGH_WATER_FIELD = "sequenceAllocatorHighWater"
 
 # v12.2.10: criticalイベント分類(Phase 3 — soak_interruptedをcriticalへ)
 CRITICAL_EVENT_TYPES = ("forecast_issued", "forecast_superseded",
@@ -71,6 +78,100 @@ def _event_public_safe(ev: Dict[str, Any]) -> Optional[str]:
 def _verify_event(ev: Dict[str, Any]) -> bool:
     body = {k: v for k, v in ev.items() if k != "integrityHash"}
     return ev.get("integrityHash") == _h(body)
+
+
+def bounded_sequence_allocator_state(*, sequences: Any, events: Any,
+                                     meta: Any
+                                     ) -> Tuple[Dict[str, int], Dict[str, Any]]:
+    """Return the complete bounded allocator state for encrypted recovery.
+
+    Historic per-aggregate counters can grow without bound even though the
+    public journal retains at most 400 events.  The high-water scalar records
+    the greatest sequence ever allocated, so an aggregate evicted from this
+    bounded map can safely reappear at ``highWater + 1`` without reusing an
+    idempotency key.  Every aggregate still present in the live journal is
+    retained; the remainder are selected deterministically.
+
+    This helper is deliberately pure.  Legacy deployments do not call it, so
+    the keys-unset checkpoint contract remains unchanged.
+    """
+    if not isinstance(sequences, dict) or not isinstance(events, list) or \
+            not isinstance(meta, dict):
+        raise ValueError("ops_sequence_allocator_invalid")
+
+    normalized: Dict[str, int] = {}
+    for key, value in sequences.items():
+        if not isinstance(key, str) or not key or len(key) > 256 or \
+                isinstance(value, bool) or not isinstance(value, int) or \
+                value <= 0:
+            raise ValueError("ops_sequence_allocator_invalid")
+        normalized[key] = value
+
+    stored_high_water = meta.get(OPS_SEQUENCE_HIGH_WATER_FIELD, 0)
+    if isinstance(stored_high_water, bool) or not isinstance(
+            stored_high_water, int) or stored_high_water < 0:
+        raise ValueError("ops_sequence_allocator_invalid")
+
+    live: Dict[str, int] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("ops_sequence_allocator_invalid")
+        aggregate_type = event.get("aggregateType")
+        aggregate_id = event.get("aggregateId")
+        sequence = event.get("sequence")
+        if not isinstance(aggregate_type, str) or not aggregate_type or \
+                not isinstance(aggregate_id, str) or not aggregate_id or \
+                isinstance(sequence, bool) or not isinstance(sequence, int) or \
+                sequence <= 0:
+            raise ValueError("ops_sequence_allocator_invalid")
+        key = f"{aggregate_type}:{aggregate_id}"
+        if len(key) > 256:
+            raise ValueError("ops_sequence_allocator_invalid")
+        live[key] = max(live.get(key, 0), sequence)
+
+    high_water = max(
+        [stored_high_water] + list(normalized.values()) + list(live.values()))
+    for key, value in live.items():
+        normalized[key] = max(normalized.get(key, 0), value)
+
+    if len(live) > OPS_SEQUENCE_BY_AGGREGATE_LIMIT:
+        raise ValueError("ops_sequence_allocator_live_set_oversized")
+    retained = set(live)
+    remaining = OPS_SEQUENCE_BY_AGGREGATE_LIMIT - len(retained)
+    candidates = sorted(
+        ((key, value) for key, value in normalized.items()
+         if key not in retained),
+        key=lambda item: (-item[1], item[0]))
+    retained.update(key for key, _value in candidates[:remaining])
+    bounded = {key: normalized[key] for key in sorted(retained)}
+    bounded_meta = dict(meta)
+    bounded_meta[OPS_SEQUENCE_HIGH_WATER_FIELD] = high_water
+    return bounded, bounded_meta
+
+
+def next_bounded_ops_sequence(*, aggregate_key: Any, sequences: Any,
+                              meta: Any) -> int:
+    """Return the next sequence without mutating bounded allocator state.
+
+    A retained aggregate continues its own sequence.  An aggregate absent
+    from the bounded map (including an identifier reused after eviction and
+    restart) advances from the authenticated global high-water value instead.
+    """
+    if not isinstance(aggregate_key, str) or not aggregate_key or \
+            len(aggregate_key) > 256 or not isinstance(sequences, dict) or \
+            not isinstance(meta, dict):
+        raise ValueError("ops_sequence_allocator_invalid")
+    high_water = meta.get(OPS_SEQUENCE_HIGH_WATER_FIELD)
+    if isinstance(high_water, bool) or not isinstance(high_water, int) or \
+            high_water < 0:
+        raise ValueError("ops_sequence_allocator_invalid")
+    previous = sequences.get(aggregate_key)
+    if previous is None:
+        return high_water + 1
+    if isinstance(previous, bool) or not isinstance(previous, int) or \
+            previous <= 0:
+        raise ValueError("ops_sequence_allocator_invalid")
+    return previous + 1
 
 
 def outcome_read_back_receipt(*, remote_blob: Any,
@@ -176,6 +277,135 @@ def parse_remote_snapshot(blob: Any) -> Dict[str, Any]:
             "ownerReadableJa": "v3 snapshot読み取り成功"}
 
 
+def verify_exact_journal_manifest(
+        blob: Any, *, require_no_rejections: bool = False) -> bool:
+    """Verify that ``opsJournal`` and its signed manifest are exactly paired.
+
+    ``parse_remote_snapshot`` deliberately preserves the historical full
+    snapshot compatibility contract: old snapshots can contain a valid
+    manifest that reports rejected source rows.  New direct read-back and
+    recovery projections have a stronger contract.  Every exported event must
+    be public-safe and individually valid, identifiers must be unique, and all
+    manifest projections must exactly equal the ordered journal projection.
+    """
+    if not isinstance(blob, dict) or blob.get("schemaVersion") != SCHEMA_V3:
+        return False
+    events = blob.get("opsJournal")
+    manifest = blob.get("integrityManifest")
+    if not isinstance(events, list) or not isinstance(manifest, dict):
+        return False
+    if manifest.get("schemaVersion") != SCHEMA_V3:
+        return False
+    generated_at = str(blob.get("generatedAt") or blob.get("asOf") or "")
+    if not generated_at or manifest.get("generatedAt") != generated_at:
+        return False
+    if manifest.get("manifestHash") != _h({
+            key: value for key, value in manifest.items()
+            if key != "manifestHash"}):
+        return False
+
+    event_ids: List[str] = []
+    idempotency_keys: List[str] = []
+    event_hashes: Dict[str, str] = {}
+    highest: Dict[str, int] = {}
+    criticality: Dict[str, str] = {}
+    for event in events:
+        if _event_public_safe(event) is not None or not _verify_event(event):
+            return False
+        event_id = event.get("eventId")
+        idempotency_key = event.get("idempotencyKey")
+        sequence = event.get("sequence")
+        if not isinstance(event_id, str) or not event_id or \
+                not isinstance(idempotency_key, str) or not idempotency_key or \
+                isinstance(sequence, bool) or not isinstance(sequence, int) or \
+                sequence <= 0:
+            return False
+        if event_id in event_hashes or idempotency_key in idempotency_keys:
+            return False
+        aggregate = f"{event.get('aggregateType')}:{event.get('aggregateId')}"
+        event_ids.append(event_id)
+        idempotency_keys.append(idempotency_key)
+        event_hashes[event_id] = str(event.get("integrityHash") or "")
+        highest[aggregate] = max(highest.get(aggregate, 0), sequence)
+        criticality[event_id] = event_criticality(
+            str(event.get("eventType") or ""))
+
+    expected = {
+        "eventCount": len(events),
+        "eventIds": event_ids,
+        "idempotencyKeys": idempotency_keys,
+        "eventHashes": event_hashes,
+        "highestSequenceByAggregate": highest,
+        "criticalityByEventId": criticality,
+    }
+    if any(manifest.get(key) != value for key, value in expected.items()):
+        return False
+    compacted_count = manifest.get("compactedBatchCount")
+    rejected_count = manifest.get("rejectedCount")
+    if isinstance(compacted_count, bool) or not isinstance(
+            compacted_count, int) or compacted_count < 0:
+        return False
+    if isinstance(rejected_count, bool) or not isinstance(
+            rejected_count, int) or rejected_count < 0:
+        return False
+    if require_no_rejections and (rejected_count != 0 or
+                                  manifest.get("rejectedReasonsRedacted") not in
+                                  ([], None)):
+        return False
+    return True
+
+
+def verify_compact_wal_projection(blob: Any) -> bool:
+    """Validate exact, positive WAL scalars carried by a compact source proof."""
+    if not isinstance(blob, dict):
+        return False
+    durability = blob.get("missionTickDurability")
+    if not isinstance(durability, dict):
+        return False
+    local = durability.get("walAppliedSequence")
+    exported = durability.get("remoteWalAppliedSequence")
+    verified = durability.get("verifiedWalSequence")
+    if any(isinstance(value, bool) or not isinstance(value, int)
+           for value in (local, exported, verified)):
+        return False
+    return bool(local > 0 and exported == local and
+                0 <= verified <= exported)
+
+
+def verify_compact_public_projection(blob: Any) -> bool:
+    """Validate bounded build/outcome fields outside the journal manifest."""
+    if not isinstance(blob, dict):
+        return False
+    build = blob.get("buildIdentity")
+    if not isinstance(build, dict) or not _APP_VERSION_RE.fullmatch(
+            str(build.get("appVersion") or "")) or not \
+            _BUILD_SHA_RE.fullmatch(str(build.get("buildSha") or "").lower()):
+        return False
+    outcomes = blob.get("outcomes")
+    if not isinstance(outcomes, list) or len(outcomes) > _MAX_COMPACT_OUTCOMES:
+        return False
+    for outcome in outcomes:
+        if not isinstance(outcome, dict) or _event_public_safe(outcome) is not None:
+            return False
+        integrity_hash = outcome.get("integrityHash")
+        if not isinstance(integrity_hash, str) or integrity_hash != _h({
+                key: value for key, value in outcome.items()
+                if key != "integrityHash"}):
+            return False
+    for key in (
+            "marketLedgerStateHash", "chartIntelligenceStateHash",
+            "todayIntelligenceStateHash", "marketReplayStateHash"):
+        if not isinstance(blob.get(key), str) or not re_full_hash(
+                str(blob.get(key))):
+            return False
+    return True
+
+
+def re_full_hash(value: str) -> bool:
+    """Accept the existing bounded state-hash width without exporting content."""
+    return bool(re.fullmatch(r"[0-9a-f]{16,64}", value.lower()))
+
+
 def compact_readback_snapshot(blob: Any) -> Dict[str, Any]:
     """Build the bounded proof used by scheduler read-back.
 
@@ -187,22 +417,52 @@ def compact_readback_snapshot(blob: Any) -> Dict[str, Any]:
     parsed = parse_remote_snapshot(blob)
     if parsed.get("status") != "ok":
         raise ValueError("remote_snapshot_not_verifiable")
+    return build_compact_readback_snapshot(
+        schema_version=blob.get("schemaVersion"),
+        generated_at=blob.get("generatedAt"), as_of=blob.get("asOf"),
+        build_identity=blob.get("buildIdentity"),
+        ops_journal=blob.get("opsJournal"),
+        integrity_manifest=blob.get("integrityManifest"),
+        outcomes=blob.get("outcomes"),
+        mission_tick_durability=blob.get("missionTickDurability"),
+        market_ledger_state_hash=blob.get("marketLedgerStateHash"),
+        chart_intelligence_state_hash=blob.get(
+            "chartIntelligenceStateHash"),
+        today_intelligence_state_hash=blob.get("todayIntelligenceStateHash"),
+        market_replay_state_hash=blob.get("marketReplayStateHash"),
+    )
+
+
+def build_compact_readback_snapshot(
+        *, schema_version: Any, generated_at: Any, as_of: Any,
+        build_identity: Any, ops_journal: Any, integrity_manifest: Any,
+        outcomes: Any, mission_tick_durability: Any,
+        market_ledger_state_hash: Any,
+        chart_intelligence_state_hash: Any,
+        today_intelligence_state_hash: Any,
+        market_replay_state_hash: Any) -> Dict[str, Any]:
+    """Build the bounded proof directly from explicit public projections."""
     receipt = {
         "receiptSchemaVersion": READBACK_RECEIPT_SCHEMA,
-        "schemaVersion": blob.get("schemaVersion"),
-        "generatedAt": blob.get("generatedAt") or blob.get("asOf"),
-        "asOf": blob.get("asOf") or blob.get("generatedAt"),
-        "buildIdentity": dict(blob.get("buildIdentity") or {}),
-        "opsJournal": list(blob.get("opsJournal") or []),
-        "integrityManifest": dict(blob.get("integrityManifest") or {}),
-        "outcomes": list(blob.get("outcomes") or []),
-        "missionTickDurability": dict(
-            blob.get("missionTickDurability") or {}),
-        "marketLedgerStateHash": blob.get("marketLedgerStateHash"),
-        "chartIntelligenceStateHash": blob.get("chartIntelligenceStateHash"),
-        "todayIntelligenceStateHash": blob.get("todayIntelligenceStateHash"),
-        "marketReplayStateHash": blob.get("marketReplayStateHash"),
+        "schemaVersion": schema_version,
+        "generatedAt": generated_at or as_of,
+        "asOf": as_of or generated_at,
+        "buildIdentity": dict(build_identity or {}),
+        "opsJournal": list(ops_journal or []),
+        "integrityManifest": dict(integrity_manifest or {}),
+        "outcomes": list(outcomes or []),
+        "missionTickDurability": dict(mission_tick_durability or {}),
+        "marketLedgerStateHash": market_ledger_state_hash,
+        "chartIntelligenceStateHash": chart_intelligence_state_hash,
+        "todayIntelligenceStateHash": today_intelligence_state_hash,
+        "marketReplayStateHash": market_replay_state_hash,
     }
+    if parse_remote_snapshot(receipt).get("status") != "ok" or not \
+            verify_exact_journal_manifest(
+                receipt, require_no_rejections=True) or not \
+            verify_compact_wal_projection(receipt) or not \
+            verify_compact_public_projection(receipt):
+        raise ValueError("remote_snapshot_not_verifiable")
     receipt["receiptHash"] = _h(receipt)
     return receipt
 
@@ -214,7 +474,21 @@ def verify_compact_readback_snapshot(blob: Any) -> bool:
     expected = blob.get("receiptHash")
     body = {key: value for key, value in blob.items() if key != "receiptHash"}
     return bool(expected and expected == _h(body) and
-                parse_remote_snapshot(blob).get("status") == "ok")
+                parse_remote_snapshot(blob).get("status") == "ok" and
+                verify_exact_journal_manifest(
+                    blob, require_no_rejections=True) and
+                verify_compact_wal_projection(blob) and
+                verify_compact_public_projection(blob))
+
+
+def verify_strict_compact_readback_snapshot(blob: Any) -> bool:
+    """Named recovery-v1 verifier; currently identical to the strict gate.
+
+    Recovery callers use this explicit entry point so the historical compact
+    receipt API can retain its separate compatibility contract without ever
+    weakening encrypted recovery validation.
+    """
+    return verify_compact_readback_snapshot(blob)
 
 
 # ── Phase 2: Verified Read-Back Ack ─────────────────────────────────────────

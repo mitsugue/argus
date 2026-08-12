@@ -26,6 +26,10 @@ MAX_RETRY_SECONDS = 30 * 60
 IDEMPOTENCY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 HASH_RE = re.compile(r"[0-9a-f]{16}")
+LONG_HASH_RE = re.compile(r"[0-9a-f]{64}")
+GENERATION_RE = re.compile(r"rrg-[0-9a-f]{32}")
+KEY_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
+ARTIFACT_MODES = {"legacy_full", "encrypted_recovery_v1"}
 
 
 class ReceiptQueueError(ValueError):
@@ -73,6 +77,28 @@ def _record_hash(receipt: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical(_unsigned(receipt))).hexdigest()
 
 
+def _artifact_contract(receipt: Mapping[str, Any]) -> bool:
+    mode = str(receipt.get("artifactMode") or "legacy_full")
+    exact_receipt = receipt.get("expectedReceiptHash")
+    recovery_hash = receipt.get("recoveryBundleHash")
+    generation = receipt.get("recoveryGenerationId")
+    key_id = receipt.get("recoveryKeyId")
+    base_commit = receipt.get("ledgerBaseCommitSha")
+    if mode not in ARTIFACT_MODES:
+        return False
+    if exact_receipt is not None and not HASH_RE.fullmatch(str(exact_receipt)):
+        return False
+    if mode == "legacy_full":
+        return all(value is None for value in (
+            recovery_hash, generation, key_id, base_commit))
+    return bool(
+        HASH_RE.fullmatch(str(exact_receipt or "")) and
+        LONG_HASH_RE.fullmatch(str(recovery_hash or "")) and
+        GENERATION_RE.fullmatch(str(generation or "")) and
+        KEY_ID_RE.fullmatch(str(key_id or "")) and
+        SHA_RE.fullmatch(str(base_commit or "")))
+
+
 def verify_receipt(receipt: Any) -> bool:
     if not isinstance(receipt, dict):
         return False
@@ -91,6 +117,7 @@ def verify_receipt(receipt: Any) -> bool:
         SHA_RE.fullmatch(str(receipt.get("backendBuildSha") or "")) and
         SHA_RE.fullmatch(str(receipt.get("remoteCommitSha") or "")) and
         HASH_RE.fullmatch(str(receipt.get("expectedHash") or "")) and
+        _artifact_contract(receipt) and
         target >= 0 and attempts >= 0 and state in VALID_STATES and
         _epoch(receipt.get("acceptedAt")) is not None and
         receipt.get("recordHash") == _record_hash(receipt))
@@ -128,23 +155,51 @@ def _seal(receipt: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _same_intent(existing: Mapping[str, Any], *, build_sha: str,
                  remote_commit_sha: str, expected_hash: str,
-                 target_wal_sequence: int) -> bool:
+                 target_wal_sequence: int,
+                 expected_receipt_hash: Optional[str], artifact_mode: str,
+                 recovery_bundle_hash: Optional[str],
+                 recovery_generation_id: Optional[str],
+                 recovery_key_id: Optional[str],
+                 ledger_base_commit_sha: Optional[str]) -> bool:
     return bool(
         existing.get("backendBuildSha") == build_sha and
         existing.get("remoteCommitSha") == remote_commit_sha and
         existing.get("expectedHash") == expected_hash and
-        int(existing.get("targetWalSequence") or 0) == target_wal_sequence)
+        int(existing.get("targetWalSequence") or 0) == target_wal_sequence and
+        existing.get("expectedReceiptHash") == expected_receipt_hash and
+        str(existing.get("artifactMode") or "legacy_full") == artifact_mode and
+        existing.get("recoveryBundleHash") == recovery_bundle_hash and
+        existing.get("recoveryGenerationId") == recovery_generation_id and
+        existing.get("recoveryKeyId") == recovery_key_id and
+        existing.get("ledgerBaseCommitSha") == ledger_base_commit_sha)
 
 
 def accept_intent(store: Mapping[str, Any], *, idempotency_key: str,
                   build_sha: str, remote_commit_sha: str,
                   expected_hash: str, target_wal_sequence: int,
-                  accepted_at: str) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
+                  accepted_at: str,
+                  expected_receipt_hash: Optional[str] = None,
+                  artifact_mode: str = "legacy_full",
+                  recovery_bundle_hash: Optional[str] = None,
+                  recovery_generation_id: Optional[str] = None,
+                  recovery_key_id: Optional[str] = None,
+                  ledger_base_commit_sha: Optional[str] = None,
+                  ) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
     state = normalize_store(store)
     key = str(idempotency_key or "")
     build = str(build_sha or "").lower()
     commit = str(remote_commit_sha or "").lower()
     manifest_hash = str(expected_hash or "").lower()
+    compact_hash = (str(expected_receipt_hash).lower()
+                    if expected_receipt_hash is not None else None)
+    mode = str(artifact_mode or "")
+    recovery_hash = (str(recovery_bundle_hash).lower()
+                     if recovery_bundle_hash is not None else None)
+    generation = (str(recovery_generation_id)
+                  if recovery_generation_id is not None else None)
+    key_id = str(recovery_key_id) if recovery_key_id is not None else None
+    base_commit = (str(ledger_base_commit_sha).lower()
+                   if ledger_base_commit_sha is not None else None)
     if not IDEMPOTENCY_RE.fullmatch(key):
         raise ReceiptQueueError("idempotency_key_invalid")
     if not SHA_RE.fullmatch(build):
@@ -153,6 +208,16 @@ def accept_intent(store: Mapping[str, Any], *, idempotency_key: str,
         raise ReceiptQueueError("remote_commit_sha_invalid")
     if not HASH_RE.fullmatch(manifest_hash):
         raise ReceiptQueueError("expected_hash_invalid")
+    artifact = {
+        "artifactMode": mode,
+        "expectedReceiptHash": compact_hash,
+        "recoveryBundleHash": recovery_hash,
+        "recoveryGenerationId": generation,
+        "recoveryKeyId": key_id,
+        "ledgerBaseCommitSha": base_commit,
+    }
+    if not _artifact_contract(artifact):
+        raise ReceiptQueueError("receipt_artifact_contract_invalid")
     try:
         target = int(target_wal_sequence)
     except (TypeError, ValueError) as exc:
@@ -168,7 +233,12 @@ def accept_intent(store: Mapping[str, Any], *, idempotency_key: str,
         if not _same_intent(
                 existing, build_sha=build, remote_commit_sha=commit,
                 expected_hash=manifest_hash,
-                target_wal_sequence=target):
+                target_wal_sequence=target,
+                expected_receipt_hash=compact_hash, artifact_mode=mode,
+                recovery_bundle_hash=recovery_hash,
+                recovery_generation_id=generation,
+                recovery_key_id=key_id,
+                ledger_base_commit_sha=base_commit):
             raise ReceiptQueueError("idempotency_key_conflict")
         return state, copy.deepcopy(existing), True
 
@@ -181,6 +251,7 @@ def accept_intent(store: Mapping[str, Any], *, idempotency_key: str,
         "backendBuildSha": build,
         "remoteCommitSha": commit,
         "expectedHash": manifest_hash,
+        **artifact,
         "targetWalSequence": target,
         "acceptedAt": accepted_at,
         "durabilityState": "pending",
@@ -205,6 +276,52 @@ def accept_intent(store: Mapping[str, Any], *, idempotency_key: str,
     if len(state["receipts"]) > MAX_RECEIPTS:
         raise ReceiptQueueError("receipt_queue_capacity_exceeded")
     return state, copy.deepcopy(receipt), False
+
+
+def mark_intent_verified(
+        store: Mapping[str, Any], *, operation_id: str,
+        verified_sequence: int, remote_commit_sha: str,
+        verified_at: str, allow_sequence_floor: bool = False,
+        ) -> tuple[Dict[str, Any], list[str]]:
+    """Verify only the immutable intent whose exact commit/pair was read back."""
+    state = normalize_store(store)
+    commit = str(remote_commit_sha or "").lower()
+    if not SHA_RE.fullmatch(commit) or _epoch(verified_at) is None:
+        raise ReceiptQueueError("receipt_verification_invalid")
+    updated = []
+    covered = []
+    found = False
+    for receipt in state["receipts"]:
+        if receipt.get("operationId") != operation_id:
+            updated.append(receipt)
+            continue
+        found = True
+        if receipt.get("durabilityState") != "pending" or receipt.get("poison"):
+            raise ReceiptQueueError("receipt_operation_not_pending")
+        target = int(receipt.get("targetWalSequence") or 0)
+        sequence_matches = (
+            target == int(verified_sequence) or
+            (allow_sequence_floor and receipt.get("migrationLowerBound") is True
+             and target <= int(verified_sequence)))
+        if not sequence_matches or receipt.get(
+                "remoteCommitSha") != commit:
+            raise ReceiptQueueError("receipt_verification_identity_mismatch")
+        row = dict(receipt)
+        row.update({
+            "durabilityState": "verified",
+            "remoteVerifiedWalSequence": int(verified_sequence),
+            "remoteCommitVerifiedSha": commit,
+            "readBackVerified": True,
+            "verifiedAt": verified_at,
+            "nextAttemptAt": None,
+            "lastErrorClass": None,
+        })
+        updated.append(_seal(row))
+        covered.append(str(operation_id))
+    if not found:
+        raise ReceiptQueueError("receipt_operation_missing")
+    state["receipts"] = updated
+    return state, covered
 
 
 def get_receipt(store: Mapping[str, Any], operation_id: str) -> Optional[Dict[str, Any]]:
@@ -238,6 +355,13 @@ def highest_pending(store: Mapping[str, Any], *, now_iso: str,
                     limit: int = MAX_RECEIPTS) -> Optional[Dict[str, Any]]:
     rows = pending_receipts(store, now_iso=now_iso, limit=limit)
     return rows[-1] if rows else None
+
+
+def next_pending(store: Mapping[str, Any], *, now_iso: str,
+                 limit: int = MAX_RECEIPTS) -> Optional[Dict[str, Any]]:
+    """Select the oldest exact intent so immutable WAL proofs never regress."""
+    rows = pending_receipts(store, now_iso=now_iso, limit=limit)
+    return rows[0] if rows else None
 
 
 def _replace(store: Mapping[str, Any], operation_id: str,
@@ -343,6 +467,12 @@ def status_view(receipt: Mapping[str, Any], *, now_iso: str) -> Dict[str, Any]:
         # the newer cumulative commit that may have covered it during a
         # coalesced drain.
         "remoteCommitSha": receipt.get("remoteCommitSha"),
+        "expectedReceiptHash": receipt.get("expectedReceiptHash"),
+        "artifactMode": str(receipt.get("artifactMode") or "legacy_full"),
+        "recoveryBundleHash": receipt.get("recoveryBundleHash"),
+        "recoveryGenerationId": receipt.get("recoveryGenerationId"),
+        "recoveryKeyId": receipt.get("recoveryKeyId"),
+        "ledgerBaseCommitSha": receipt.get("ledgerBaseCommitSha"),
         "verifiedByRemoteCommitSha": receipt.get(
             "remoteCommitVerifiedSha"),
         "readBackVerified": bool(receipt.get("readBackVerified")),

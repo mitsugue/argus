@@ -105,6 +105,8 @@ def test_post_accepts_and_returns_before_full_checkpoint():
             headers={"X-ARGUS-ADMIN-TOKEN": "admin",
                      "Idempotency-Key": "caos-receipt-fast-0001"},
             json={"remoteCommitSha": COMMIT, "expectedHash": HASH,
+                  "expectedReceiptHash": "e" * 16,
+                  "artifactMode": "legacy_full",
                   "backendBuildSha": BUILD, "targetWalSequence": 3296})
     elapsed = time.monotonic() - started
     assert response.status_code == 202
@@ -132,6 +134,8 @@ def test_post_auth_schema_sha_sequence_and_idempotency_are_fail_closed():
             headers={"X-ARGUS-ADMIN-TOKEN": "admin",
                      "Idempotency-Key": "caos-receipt-build-0001"},
             json={"remoteCommitSha": COMMIT, "expectedHash": HASH,
+                  "expectedReceiptHash": "e" * 16,
+                  "artifactMode": "legacy_full",
                   "backendBuildSha": "a" * 40, "targetWalSequence": 1})
     assert invalid.status_code == 400
     assert mismatch.status_code == 409
@@ -174,31 +178,34 @@ def test_accepted_intent_survives_restart_and_status_is_public_safe():
     assert status["remoteCommitSha"] == receipt["remoteCommitSha"]
 
 
-def test_33_pending_receipts_coalesce_to_one_checkpoint_and_all_ack():
+def test_33_distinct_commits_ack_oldest_exact_intent_without_regression():
     scanner._REMOTE_RECEIPT_QUEUE, rows = _store(33)
     with mock.patch.object(scanner, "_persist_remote_receipt_queue",
                            side_effect=_persist_in_memory), \
             mock.patch.object(scanner, "_remote_readback_ack",
-                              side_effect=_verify_selected(33)), \
+                              side_effect=_verify_selected(1)), \
             mock.patch.object(scanner, "_journal_compact", return_value=0), \
             mock.patch.object(scanner, "_osint_persist",
                               return_value={"verified": True}) as checkpoint:
         result = scanner._persist_with_remote_receipt_drain(NOW)
     checkpoint.assert_called_once_with()
     flush = result["remoteReceiptFlush"]
-    assert flush["coalescedReceiptCount"] == 33
-    assert flush["targetWalSequence"] == 33
+    assert flush["coalescedReceiptCount"] == 1
+    assert flush["targetWalSequence"] == 1
     assert flush["queueBefore"] == 33
-    assert flush["queueAfter"] == 0
+    assert flush["queueAfter"] == 32
     assert flush["checkpointCreated"] is True
-    assert all(row["durabilityState"] == "verified"
-               for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"])
+    assert sum(row["durabilityState"] == "verified"
+               for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]) == 1
     assert {row["receiptId"] for row in rows} == {
         row["receiptId"] for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]}
     first_status = queue.status_view(
         scanner._REMOTE_RECEIPT_QUEUE["receipts"][0], now_iso=NOW)
     assert first_status["remoteCommitSha"] == f"{1:040x}"
-    assert first_status["verifiedByRemoteCommitSha"] == f"{33:040x}"
+    assert first_status["verifiedByRemoteCommitSha"] == f"{1:040x}"
+    last_status = queue.status_view(
+        scanner._REMOTE_RECEIPT_QUEUE["receipts"][-1], now_iso=NOW)
+    assert last_status["verifiedByRemoteCommitSha"] is None
 
 
 def test_newer_receipt_arriving_during_flush_remains_pending():
@@ -207,7 +214,7 @@ def test_newer_receipt_arriving_during_flush_remains_pending():
     def verify_with_arrival(now_iso=None, blob=None):
         updated, _, _ = _accept(scanner._REMOTE_RECEIPT_QUEUE, 3, 3)
         _persist_in_memory(updated)
-        return _verify_selected(2)(now_iso, blob)
+        return _verify_selected(1)(now_iso, blob)
 
     with mock.patch.object(scanner, "_persist_remote_receipt_queue",
                            side_effect=_persist_in_memory), \
@@ -217,10 +224,10 @@ def test_newer_receipt_arriving_during_flush_remains_pending():
             mock.patch.object(scanner, "_osint_persist",
                               side_effect=lambda: {"verified": True}):
         result = scanner._persist_with_remote_receipt_drain(NOW)
-    assert result["remoteReceiptFlush"]["coalescedReceiptCount"] == 2
+    assert result["remoteReceiptFlush"]["coalescedReceiptCount"] == 1
     pending = [row for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]
                if row["durabilityState"] == "pending"]
-    assert [row["targetWalSequence"] for row in pending] == [3]
+    assert [row["targetWalSequence"] for row in pending] == [2, 3]
 
 
 @pytest.mark.parametrize("error_class", ["timeout", "http_500", "http_403",

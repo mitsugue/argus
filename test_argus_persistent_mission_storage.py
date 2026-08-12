@@ -42,6 +42,8 @@ def paths(root: str):
         "ARGUS_MISSION_RECEIPT_FILE": os.path.join(root, "receipt.json"),
         "ARGUS_REMOTE_RECEIPT_QUEUE_FILE": os.path.join(
             root, "receipt-queue.json"),
+        "ARGUS_REMOTE_RECOVERY_FILE": os.path.join(
+            root, "remote-recovery.json"),
         "ARGUS_CHECKPOINT_TEMP_DIR": root,
     }, production=True)
 
@@ -52,15 +54,24 @@ def validate_simulated_disk(value, **kwargs):
 
 
 def remote_snapshot(wal_sequence=0):
+    wal = int(wal_sequence)
     section = argus_remote_journal.snapshot_journal_section(
         events=[], meta={}, now_iso="2026-07-25T00:00:00Z")
     return {
         "schemaVersion": "argus-durable-v3",
         "generatedAt": "2026-07-25T00:00:00Z",
+        "buildIdentity": {
+            "appVersion": "13.4.13", "buildSha": "a" * 40},
+        "outcomes": [],
+        "marketLedgerStateHash": "1" * 16,
+        "chartIntelligenceStateHash": "2" * 16,
+        "todayIntelligenceStateHash": "3" * 16,
+        "marketReplayStateHash": "4" * 16,
         "missionTickDurability": {
             "schemaVersion": "argus-mission-batch-v1",
-            "walAppliedSequence": int(wal_sequence),
-            "remoteWalAppliedSequence": int(wal_sequence),
+            "walAppliedSequence": wal,
+            "remoteWalAppliedSequence": wal,
+            "verifiedWalSequence": wal,
         },
         **section,
     }
@@ -112,6 +123,7 @@ def scanner_storage(root: str, *, production=True):
         "cursor": scanner._MISSION_CURSOR_FILE,
         "receipt": scanner._MISSION_RECEIPT_FILE,
         "receiptQueue": scanner._REMOTE_RECEIPT_QUEUE_FILE,
+        "recovery": scanner._REMOTE_RECOVERY_FILE,
         "receiptQueueState": copy.deepcopy(scanner._REMOTE_RECEIPT_QUEUE),
         "persist": dict(scanner._OSINT_PERSIST_STATE),
         "durable": dict(scanner._DURABLE_STATE),
@@ -122,6 +134,18 @@ def scanner_storage(root: str, *, production=True):
         "startup": dict(scanner._STARTUP),
         "token": scanner._ARGUS_ADMIN_TOKEN,
         "context": dict(scanner._MISSION_TICK_CONTEXT),
+        "recoveryLists": {
+            name: copy.deepcopy(getattr(scanner, name)) for name in (
+                "_OPS_JOURNAL", "_OPS_JOURNAL_COMPACT", "_MISSIONS",
+                "_MISSION_WINDOWS", "_FORECAST_LEDGER", "_OUTCOME_LEDGER",
+                "_INCIDENTS", "_POSTMORTEMS", "_PERIODIC_REPORTS",
+                "_CHALLENGER_RUNS")
+        },
+        "journalMeta": copy.deepcopy(scanner._OPS_JOURNAL_META),
+        "opsSequence": copy.deepcopy(scanner._OPS_SEQ),
+        "remoteAck": copy.deepcopy(scanner._REMOTE_ACK),
+        "agentQueue": copy.deepcopy(scanner._OSINT_AGENT_QUEUE),
+        "soak": copy.deepcopy(scanner._SOAK),
     }
     configured = paths(root)
     scanner._DURABILITY_PRODUCTION = production
@@ -132,6 +156,7 @@ def scanner_storage(root: str, *, production=True):
     scanner._MISSION_CURSOR_FILE = configured["cursor"]
     scanner._MISSION_RECEIPT_FILE = configured["receipt"]
     scanner._REMOTE_RECEIPT_QUEUE_FILE = configured["receiptQueue"]
+    scanner._REMOTE_RECOVERY_FILE = configured["recovery"]
     scanner._REMOTE_RECEIPT_QUEUE = \
         scanner.argus_remote_receipt_queue.empty_store()
     scanner._OSINT_PERSIST_STATE.clear()
@@ -154,6 +179,15 @@ def scanner_storage(root: str, *, production=True):
         "acknowledgedCount": 0, "errorClass": None,
         "walErrorClass": None,
     })
+    scanner._OPS_SEQ.clear()
+    scanner._REMOTE_ACK.clear()
+    scanner._REMOTE_ACK.update({
+        "ackedKeys": [], "lastVerifiedRemoteAckAt": None,
+        "lastReceiptStatus": None, "remoteGeneratedAt": None,
+        "legacyRemote": False, "maxObservedLagSec": 0,
+        "readbackFailures": 0, "outcomeAckedIds": [],
+        "lastVerifiedOutcomeReadBackAt": None,
+    })
     try:
         yield configured
     finally:
@@ -165,6 +199,7 @@ def scanner_storage(root: str, *, production=True):
         scanner._MISSION_CURSOR_FILE = saved["cursor"]
         scanner._MISSION_RECEIPT_FILE = saved["receipt"]
         scanner._REMOTE_RECEIPT_QUEUE_FILE = saved["receiptQueue"]
+        scanner._REMOTE_RECOVERY_FILE = saved["recovery"]
         scanner._REMOTE_RECEIPT_QUEUE = saved["receiptQueueState"]
         scanner._OSINT_PERSIST_STATE.clear()
         scanner._OSINT_PERSIST_STATE.update(saved["persist"])
@@ -183,6 +218,18 @@ def scanner_storage(root: str, *, production=True):
         scanner._ARGUS_ADMIN_TOKEN = saved["token"]
         scanner._MISSION_TICK_CONTEXT.clear()
         scanner._MISSION_TICK_CONTEXT.update(saved["context"])
+        for name, value in saved["recoveryLists"].items():
+            getattr(scanner, name)[:] = value
+        scanner._OPS_JOURNAL_META.clear()
+        scanner._OPS_JOURNAL_META.update(saved["journalMeta"])
+        scanner._OPS_SEQ.clear()
+        scanner._OPS_SEQ.update(saved["opsSequence"])
+        scanner._REMOTE_ACK.clear()
+        scanner._REMOTE_ACK.update(saved["remoteAck"])
+        scanner._OSINT_AGENT_QUEUE.clear()
+        scanner._OSINT_AGENT_QUEUE.update(saved["agentQueue"])
+        scanner._SOAK.clear()
+        scanner._SOAK.update(saved["soak"])
 
 
 class PathValidationTests(unittest.TestCase):
@@ -267,7 +314,7 @@ class PathValidationTests(unittest.TestCase):
     def test_no_critical_production_path_is_under_tmp(self):
         value = storage.configured_paths({}, production=True)
         for key in ("wal", "checkpoint", "lease", "cursor", "receipt",
-                    "receiptQueue",
+                    "receiptQueue", "recovery",
                     "tempDirectory"):
             self.assertTrue(
                 value[key] == os.path.realpath("/var/data") or
@@ -401,7 +448,9 @@ class BootstrapAndReadinessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
             with mock.patch.object(
                     scanner.requests, "get",
-                    return_value=FakeResponse(200, remote_snapshot())):
+                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                                 FakeResponse(200, remote_snapshot()),
+                                 FakeResponse(404), FakeResponse(404)]):
                 source = scanner._osint_restore_once()
             self.assertEqual(source, "remote_journal_verified")
             self.assertTrue(storage.verify_checkpoint(
@@ -413,7 +462,8 @@ class BootstrapAndReadinessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
             with mock.patch.object(
                     scanner.requests, "get",
-                    return_value=FakeResponse(404)):
+                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                                 FakeResponse(404)]):
                 source = scanner._osint_restore_once()
             self.assertIsNone(source)
             self.assertFalse(pathlib.Path(value["checkpoint"]).exists())
@@ -426,7 +476,8 @@ class BootstrapAndReadinessTests(unittest.TestCase):
             malformed["integrityManifest"]["manifestHash"] = "bad"
             with mock.patch.object(
                     scanner.requests, "get",
-                    return_value=FakeResponse(200, malformed)):
+                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                                 FakeResponse(200, malformed)]):
                 source = scanner._osint_restore_once()
             self.assertIsNone(source)
             self.assertFalse(pathlib.Path(value["checkpoint"]).exists())
@@ -529,7 +580,8 @@ class BootstrapAndReadinessTests(unittest.TestCase):
             pathlib.Path(value["checkpoint"]).write_text("{bad")
             with mock.patch.object(
                     scanner.requests, "get",
-                    return_value=FakeResponse(404)):
+                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                                 FakeResponse(404)]):
                 scanner._osint_restore_once()
             quarantined = list(pathlib.Path(root).glob(
                 "state.json.quarantine-*"))
@@ -909,19 +961,18 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
                 len([row for row in records
                      if row["kind"] == "checkpoint_verified"]), 1)
 
-    def test_legacy_compact_receipt_verifies_journal_but_not_wal_cursor(self):
+    def test_legacy_full_receipt_verifies_journal_but_not_wal_cursor(self):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root):
             remote = remote_snapshot()
             remote.pop("missionTickDurability")
-            compact = argus_remote_journal.compact_readback_snapshot(remote)
             scanner._REMOTE_CYCLE.update({
                 "remoteCommitSha": "a" * 40,
                 "committedAt": "2026-07-25T00:01:00Z",
                 "expectedHash":
-                    compact["integrityManifest"]["manifestHash"],
+                    remote["integrityManifest"]["manifestHash"],
             })
             ack = scanner._remote_readback_ack(
-                now_iso="2026-07-25T00:02:00Z", blob=compact)
+                now_iso="2026-07-25T00:02:00Z", blob=remote)
             self.assertEqual(ack["verificationStatus"], "verified")
             self.assertTrue(scanner._REMOTE_CYCLE["readBackVerified"])
             self.assertFalse(
@@ -954,6 +1005,8 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
                              "Idempotency-Key": "test-receipt-0001"},
                     json={"remoteCommitSha": "a" * 40,
                           "expectedHash": "b" * 16,
+                          "expectedReceiptHash": "d" * 16,
+                          "artifactMode": "legacy_full",
                           "backendBuildSha": "c" * 40,
                           "targetWalSequence": 42})
             self.assertEqual(response.status_code, 202)
@@ -971,6 +1024,8 @@ class CrashLeaseAndShutdownTests(unittest.TestCase):
                              "Idempotency-Key": "test-receipt-0002"},
                     json={"remoteCommitSha": "c" * 40,
                           "expectedHash": "d" * 16,
+                          "expectedReceiptHash": "e" * 16,
+                          "artifactMode": "legacy_full",
                           "backendBuildSha": "c" * 40,
                           "targetWalSequence": 43})
             self.assertEqual(response.status_code, 503)
@@ -1411,9 +1466,14 @@ class ContractRegressionTests(unittest.TestCase):
         try:
             scanner._MISSION_BATCH_STATE["walAppliedSequence"] = 41
             scanner._REMOTE_CYCLE["verifiedWalSequence"] = 17
-            with scanner.app.test_client() as client:
-                snapshot = client.get(
-                    "/api/argus/osint/memory-snapshot").get_json()
+            with mock.patch.object(
+                    scanner, "_osint_restore_once",
+                    return_value="test_already_restored"), \
+                    mock.patch.object(
+                        scanner, "_backend_sha", return_value="a" * 40):
+                with scanner.app.test_client() as client:
+                    snapshot = client.get(
+                        "/api/argus/osint/memory-snapshot").get_json()
             state = snapshot["missionTickDurability"]
             self.assertEqual(state["walAppliedSequence"], 41)
             self.assertEqual(state["remoteWalAppliedSequence"], 41)

@@ -16,7 +16,8 @@ EC2上のrepository rootで実行します。既存`/etc/argus-bridge.env`の
 `ARGUS_ADMIN_TOKEN`を再利用し、値を引数やjournalへ出しません。
 
 ```bash
-sudo bash scripts/install_argus_mission_timer.sh
+bash scripts/install_argus_mission_timer.sh --dry-run
+sudo bash scripts/install_argus_mission_timer.sh --apply
 sudo systemctl list-timers argus-mission-tick.timer --no-pager
 sudo bash /opt/argus/scripts/check_argus_mission_timer.sh
 ```
@@ -24,6 +25,41 @@ sudo bash /opt/argus/scripts/check_argus_mission_timer.sh
 timerはUTCの毎時07分・37分に自然起動します。`Persistent=true`ですが、
 backendのcatch-up候補は最大2 windowで、古いwindowを現在扱いで無制限実行
 しません。
+
+Remote Journal re-armは別のoneshot timerとしてUTC毎時13分・43分に動き、
+直前のmissionをブロックしません。installerはファイルを配置するだけで、
+`daemon-reload`、enable、start、restartを実行しません。新timerの初回有効化は
+実行直前の別途明示owner承認が必要なEC2変更です。今回のコード/Draft PR/CI
+承認には含まれません。
+
+re-arm専用credentialは、installer実行前にsecret managerなどのout-of-band
+手段で`/etc/argus-remote-journal-rearm.env`へ配置します。owner/group/modeは
+`root:argus-rearm 0640`（書込みを禁止する場合は`0440`も可）とし、空行・commentを
+除く内容は次の1 assignmentだけにします。値をshell history、引数、journal、
+installer出力へ記録しません。installerはこのfileを作成、上書き、backup
+しません。専用system user/group `argus-rearm`もout-of-bandで作成し、installerは
+存在とfile可読性を検証するだけで作成・変更しません。
+
+```text
+ARGUS_REMOTE_JOURNAL_REARM_PAT=<redacted>
+```
+
+fine-grained PATはrepositoryを`mitsugue/argus`だけに限定し、repository
+permissionはActionsのwrite（workflow dispatch）だけを付与します。Metadataの
+readはGitHubが自動付与する範囲だけとし、Contents、Administration、Secrets等の
+追加権限は付与しません。期限と失効手順もsecret manager側で管理します。
+
+配置内容、credential preflight、dry-run、applyのread-backを確認した後、
+次の2 commandはre-arm timerだけを対象とし、実行直前にownerが別途明示承認
+した後にのみ実行します。
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now argus-remote-journal-rearm.timer
+```
+
+この初回操作は新しいre-arm timerだけが対象です。既存mission serviceや
+backendをrestartしません。
 
 ## 監視
 

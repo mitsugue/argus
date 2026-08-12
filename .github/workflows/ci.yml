@@ -21,9 +21,14 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install minimal deps (only what `import scanner` needs)
-        run: pip install --quiet anthropic flask flask-cors requests pytz python-dotenv json-repair pytest
+        run: >-
+          pip install --quiet anthropic flask flask-cors requests pytz
+          python-dotenv json-repair pytest cryptography==49.0.0
       - name: Syntax check
-        run: python -m py_compile scanner.py argus_rules.py argus_events.py
+        run: |
+          python -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'
+          python -m py_compile scanner.py argus_remote_nonce_anchor.py \
+            argus_remote_recovery.py argus_rules.py argus_events.py
       - name: Unit tests (rules + events — whole suite auto-discovered)
         run: python -m pytest -q
 

@@ -1,0 +1,31 @@
+[Unit]
+Description=A.R.G.U.S. bounded Remote Journal natural re-arm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=argus-rearm
+Group=argus-rearm
+# Dedicated least-privilege workflow-dispatch credential.  This file is
+# provisioned out of band as root:argus-rearm 0640 and is never managed here.
+EnvironmentFile=/etc/argus-remote-journal-rearm.env
+Environment=ARGUS_BACKEND_URL=https://argus-backend-3j2m.onrender.com
+ExecStart=/usr/bin/python3 /opt/argus/scripts/argus_remote_journal_rearm.py
+TimeoutStartSec=60
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

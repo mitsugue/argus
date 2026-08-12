@@ -30,6 +30,19 @@ def _ev(i=1, etype="incident_opened", agg="incident", agg_id=None,
 
 def _snapshot(events, meta=None, compacted=None):
     return {"schemaVersion": rj.SCHEMA_V3, "generatedAt": NOW,
+            "asOf": NOW,
+            "buildIdentity": {
+                "appVersion": "12.2.10", "buildSha": "a" * 40},
+            "outcomes": [],
+            "missionTickDurability": {
+                "walAppliedSequence": 1,
+                "remoteWalAppliedSequence": 1,
+                "verifiedWalSequence": 0,
+            },
+            "marketLedgerStateHash": "1" * 16,
+            "chartIntelligenceStateHash": "2" * 16,
+            "todayIntelligenceStateHash": "3" * 16,
+            "marketReplayStateHash": "4" * 16,
             **rj.snapshot_journal_section(events=events, meta=meta or {},
                                           compacted=compacted, now_iso=NOW)}
 
@@ -104,13 +117,13 @@ def test_compact_readback_preserves_proof_without_large_ledger():
             "outcomes": [],
             "marketLedger": {"observations": [{"id": f"o{i}"}
                                                  for i in range(1000)]},
-            "marketLedgerStateHash": "market-hash",
+            "marketLedgerStateHash": "a" * 16,
             "chartIntelligence": {"snapshots": [{"id": "chart"}]},
-            "chartIntelligenceStateHash": "chart-hash",
+            "chartIntelligenceStateHash": "b" * 16,
             "todayIntelligence": {"analyses": [{"id": "today"}]},
-            "todayIntelligenceStateHash": "today-hash",
+            "todayIntelligenceStateHash": "c" * 16,
             "marketReplay": {"contexts": [{"id": "replay"}]},
-            "marketReplayStateHash": "replay-hash"}
+            "marketReplayStateHash": "d" * 16}
     receipt = rj.compact_readback_snapshot(full)
     assert rj.verify_compact_readback_snapshot(receipt) is True
     assert receipt["receiptSchemaVersion"] == rj.READBACK_RECEIPT_SCHEMA
@@ -118,9 +131,9 @@ def test_compact_readback_preserves_proof_without_large_ledger():
     assert "chartIntelligence" not in receipt
     assert "todayIntelligence" not in receipt
     assert "marketReplay" not in receipt
-    assert receipt["marketLedgerStateHash"] == "market-hash"
-    assert receipt["todayIntelligenceStateHash"] == "today-hash"
-    assert receipt["marketReplayStateHash"] == "replay-hash"
+    assert receipt["marketLedgerStateHash"] == "a" * 16
+    assert receipt["todayIntelligenceStateHash"] == "c" * 16
+    assert receipt["marketReplayStateHash"] == "d" * 16
     rec = rj.read_back_receipt(remote_blob=receipt, local_events=evs,
                                read_back_at=NOW)
     assert rec["verificationStatus"] == "verified"

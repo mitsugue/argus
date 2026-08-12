@@ -1,7 +1,7 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
 import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy
-import gc, multiprocessing, resource, signal, sys, tempfile
+import fcntl, gc, multiprocessing, resource, signal, stat, struct, sys, tempfile
 try:
     from google import genai as google_genai
     from google.genai import types as genai_types
@@ -33,6 +33,8 @@ import argus_remote_durability  # v12.2.8: ローカル/リモート耐久の明
 import argus_runtime  # v12.2.9: Runtime Truth(build-scoped soak/起動復元/鮮度カレンダー)
 import argus_release_identity
 import argus_remote_journal  # v12.2.10: journalリモート同乗+検証済みread-back ack+SLO
+import argus_remote_recovery  # bounded cold-restore delta for compact journal publication
+import argus_remote_nonce_anchor  # bounded private nonce-authority epochs
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
@@ -15816,6 +15818,11 @@ _CHECKPOINT_V2_STAGE1_CONTROL = argus_checkpoint_v2_stage1.empty_state(
 _OSINT_PERSIST_STATE = {"restored": False}
 _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
+_DURABLE_READBACK_MAX_BYTES = argus_remote_recovery.MAX_READBACK_BYTES
+_DURABLE_RECOVERY_MAX_BYTES = argus_remote_recovery.MAX_SIDECAR_BYTES
+_LEDGER_REF_RESPONSE_MAX_BYTES = 64 * 1024
+_LEDGER_COMMIT_METADATA_MAX_BYTES = 32 * 1024
+_LEDGER_ANCESTRY_MAX_COMMITS = 8
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
 _OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
@@ -15973,6 +15980,7 @@ _MISSION_LEASE_FILE = _DURABILITY_PATHS["lease"]
 _MISSION_CURSOR_FILE = _DURABILITY_PATHS["cursor"]
 _MISSION_RECEIPT_FILE = _DURABILITY_PATHS["receipt"]
 _REMOTE_RECEIPT_QUEUE_FILE = _DURABILITY_PATHS["receiptQueue"]
+_REMOTE_RECOVERY_FILE = _DURABILITY_PATHS["recovery"]
 _DURABLE_STORAGE_STATUS = {
     "valid": not _DURABILITY_PRODUCTION,
     "errorClass": None,
@@ -16013,6 +16021,7 @@ _MEMORY_OPERATIONS = argus_memory_attribution.OperationAttributionRecorder(
     maximum_records=32, threshold_bytes=1024 * 1024)
 
 _REMOTE_READBACK_PATH = "/osint/readback.json"
+_REMOTE_RECOVERY_PATH = "/osint/recovery.json"
 
 
 def _mission_tick_context_active():
@@ -16540,6 +16549,1768 @@ def _verified_persistent_wal_sequence():
     return sequence
 
 
+def _checkpoint_recovery_targets(checkpoint_blob, durability):
+    """Extract every WAL-mutated target from one checkpoint read-back."""
+    if not isinstance(checkpoint_blob, dict) or not isinstance(durability, dict):
+        raise ValueError("recovery_checkpoint_projection_invalid")
+    required = set(argus_remote_recovery.TARGET_KEYS) - {
+        "missionTickDurability"}
+    if not required.issubset(checkpoint_blob):
+        raise ValueError("recovery_checkpoint_projection_incomplete")
+    result = {
+        key: copy.deepcopy(checkpoint_blob[key]) for key in required}
+    result["missionTickDurability"] = copy.deepcopy(durability)
+    return result
+
+
+def _recovery_ledger_base(checkpoint_blob):
+    cycle = checkpoint_blob.get("remoteJournalCycle")
+    if not isinstance(cycle, dict) or cycle.get("readBackVerified") is not True or \
+            cycle.get("walReadBackVerified") is not True or \
+            cycle.get("remoteDurabilityState") != "verified" or \
+            any(cycle.get(key) not in (None, "") for key in (
+                "errorClass", "walErrorClass", "receiptErrorClass")):
+        raise ValueError("recovery_ledger_base_unverified")
+    commit = str(cycle.get("remoteCommitSha") or "").lower()
+    expected = str(cycle.get("expectedHash") or "").lower()
+    actual = str(cycle.get("actualHash") or "").lower()
+    receipt_hash = str(cycle.get("compactReceiptHash") or "").lower()
+    remote_wal = cycle.get("remoteWalAppliedSequence")
+    verified_wal = cycle.get("verifiedWalSequence")
+    receipt_commit = str(cycle.get("receiptCommitSha") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit) or \
+            receipt_commit != commit or \
+            not re.fullmatch(r"[0-9a-f]{16}", expected) or \
+            expected != actual or not re.fullmatch(
+                r"[0-9a-f]{16}", receipt_hash) or \
+            isinstance(remote_wal, bool) or not isinstance(remote_wal, int) or \
+            isinstance(verified_wal, bool) or not isinstance(verified_wal, int) or \
+            remote_wal <= 0 or remote_wal != verified_wal:
+        raise ValueError("recovery_ledger_base_invalid")
+    return commit
+
+
+_REMOTE_RECOVERY_NONCE_STATE_LEGACY_SCHEMA = \
+    "argus-remote-recovery-nonce-v2"
+_REMOTE_RECOVERY_NONCE_STATE_SCHEMA = "argus-remote-recovery-nonce-v3"
+_REMOTE_RECOVERY_NONCE_HISTORY_SCHEMA = \
+    "argus-remote-recovery-nonce-history-v1"
+_REMOTE_RECOVERY_NONCE_HISTORY_HEAD_SCHEMA = \
+    "argus-remote-recovery-nonce-history-head-v1"
+_REMOTE_RECOVERY_NONCE_STATE_MAX_BYTES = 4096
+_REMOTE_RECOVERY_NONCE_MAX_DOMAINS = 16
+_REMOTE_RECOVERY_NONCE_MAX = (1 << 96) - 1
+_REMOTE_RECOVERY_NONCE_LOCK_HEADER = \
+    b"argus-remote-recovery-nonce-anchor-v1\n"
+_REMOTE_RECOVERY_NONCE_ANCHOR_HEADER = \
+    b"argus-remote-recovery-nonce-anchor-v2\n"
+_REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES = 4172
+_REMOTE_RECOVERY_NONCE_LOCK_PAYLOAD_BYTES = 4096
+_REMOTE_RECOVERY_NONCE_LOCK_MAX_BYTES = 64 * 1024 * 1024
+_REMOTE_RECOVERY_NONCE_ANCHOR_HEADER_BYTES = \
+    len(_REMOTE_RECOVERY_NONCE_ANCHOR_HEADER) + 8 + 8 + 32 + 32
+
+
+def _remote_recovery_nonce_anchor_path(handle):
+    return handle._argus_nonce_anchor_path
+
+
+class _AuthenticatedRemoteRecoveryNonceFloor:
+    """Process-private handoff for one authenticated remote nonce floor.
+
+    Key material must never be copied into a checkpoint, provenance, durable
+    status, or log.  A slotted, non-serializable-by-our-JSON-writer object keeps
+    the authenticated material and counter confined to the cold-restore call
+    stack until the local current-key reservation has consumed the handoff.
+    """
+
+    __slots__ = ("_key", "_remote_counter", "_seeded_counter")
+
+    def __init__(self, key, remote_counter):
+        self._key = key
+        self._remote_counter = remote_counter
+        self._seeded_counter = None
+
+
+class _RemoteRecoveryNonceReservation:
+    """Process-private nonce plus the exact committed carry-forward floors."""
+
+    __slots__ = ("_nonce", "_key_material_counters")
+
+    def __init__(self, nonce, key_material_counters):
+        self._nonce = nonce
+        self._key_material_counters = dict(key_material_counters)
+
+
+_REMOTE_RECOVERY_AUTHORITY_PROCESS_TOKEN = object()
+
+
+class _AuthenticatedRemoteRecoveryNonceAuthority:
+    """Process-private capability for one AES-authenticated authority map."""
+
+    __slots__ = ("_token", "_key_material_counters", "_seeded_counters")
+
+    def __init__(self, key_material_counters):
+        self._token = _REMOTE_RECOVERY_AUTHORITY_PROCESS_TOKEN
+        self._key_material_counters = dict(key_material_counters)
+        self._seeded_counters = None
+
+
+_PINNED_REMOTE_RECOVERY_PROCESS_TOKEN = object()
+
+
+class _AuthenticatedPinnedRemoteRecoveryEvidence(
+        _AuthenticatedRemoteRecoveryNonceAuthority):
+    """One private, immutable-ref recovery pair authenticated during boot.
+
+    The decrypted payload can contain private mission state.  It therefore
+    stays in a slotted process object and is never placed in durable status,
+    checkpoint provenance, logging, or an exception.  Inheriting the nonce
+    authority capability lets the same authenticated object seed every
+    carried material floor before either local or remote state is selected.
+    """
+
+    __slots__ = (
+        "_pinned_token", "_base", "_commit_sha", "_owner", "_repository",
+        "_readback", "_envelope", "_payload", "_selected", "_ancestry",
+    )
+
+    def __init__(
+            self, pinned_ledger, readback, envelope, payload, selected,
+            ancestry, key_material_counters):
+        super().__init__(key_material_counters)
+        self._pinned_token = _PINNED_REMOTE_RECOVERY_PROCESS_TOKEN
+        self._base = pinned_ledger["base"]
+        self._commit_sha = pinned_ledger["commitSha"]
+        self._owner = pinned_ledger["owner"]
+        self._repository = pinned_ledger["repository"]
+        self._readback = copy.deepcopy(readback)
+        self._envelope = copy.deepcopy(envelope)
+        self._payload = copy.deepcopy(payload)
+        self._selected = {
+            "keyId": selected["keyId"], "key": selected["key"]}
+        self._ancestry = copy.deepcopy(ancestry)
+
+
+_PINNED_LEGACY_READBACK_PROCESS_TOKEN = object()
+
+
+class _AuthenticatedPinnedLegacyReadbackEvidence:
+    """Process-private exact readback from a proved pre-sidecar ledger.
+
+    During the one activation window the immutable ledger head can still be a
+    legacy compact-only generation while the local disk already contains a
+    keyed checkpoint/sidecar pair.  The exact readback and its pinned ref stay
+    in this capability so boot can compare public WAL/receipt authority before
+    accepting local private state.  The capability is minted only after the
+    recovery path-history query proves that no sidecar existed at or before
+    the same immutable head.
+    """
+
+    __slots__ = (
+        "_token", "_base", "_commit_sha", "_owner", "_repository",
+        "_path_prefix", "_readback", "_readback_hash",
+    )
+
+    def __init__(self, pinned_ledger, readback):
+        self._token = _PINNED_LEGACY_READBACK_PROCESS_TOKEN
+        self._base = pinned_ledger["base"]
+        self._commit_sha = pinned_ledger["commitSha"]
+        self._owner = pinned_ledger["owner"]
+        self._repository = pinned_ledger["repository"]
+        self._path_prefix = pinned_ledger["pathPrefix"]
+        self._readback = copy.deepcopy(readback)
+        self._readback_hash = \
+            argus_persistent_storage._canonical_sha256(readback)
+
+
+_LOCAL_RECOVERY_PAIR_PROCESS_TOKEN = object()
+
+
+class _AuthenticatedLocalRecoveryPair:
+    """Process-private exact local checkpoint/sidecar authentication result."""
+
+    __slots__ = (
+        "_token", "_readback", "_payload", "_envelope", "_selected",
+        "_ledger_commit",
+    )
+
+    def __init__(
+            self, readback, payload, envelope, selected, ledger_commit):
+        self._token = _LOCAL_RECOVERY_PAIR_PROCESS_TOKEN
+        self._readback = copy.deepcopy(readback)
+        self._payload = copy.deepcopy(payload)
+        self._envelope = copy.deepcopy(envelope)
+        self._selected = {
+            "keyId": selected["keyId"], "key": selected["key"]}
+        self._ledger_commit = ledger_commit
+
+
+_REMOTE_RECOVERY_GENESIS_PROCESS_TOKEN = object()
+
+
+class _RemoteRecoveryNonceGenesisCapability:
+    """Single-use, process-private proof for the one legacy activation.
+
+    The capability is deliberately neither serializable nor reconstructible
+    from durable state.  It binds the exact canonical sealed checkpoint inode
+    observed after an authoritative Git path-history absence proof.  Normal
+    nonce reservation never accepts this object and therefore cannot silently
+    reinterpret deleted or rolled-back authority as a new installation.
+    """
+
+    __slots__ = (
+        "_token", "_checkpoint_path", "_checkpoint_hash",
+        "_checkpoint_identity", "_key_domain", "_pinned_commit",
+        "_consumed",
+    )
+
+    def __init__(
+            self, checkpoint_path, checkpoint_hash, checkpoint_identity,
+            key_domain, pinned_commit):
+        self._token = _REMOTE_RECOVERY_GENESIS_PROCESS_TOKEN
+        self._checkpoint_path = checkpoint_path
+        self._checkpoint_hash = checkpoint_hash
+        self._checkpoint_identity = checkpoint_identity
+        self._key_domain = key_domain
+        self._pinned_commit = pinned_commit
+        self._consumed = False
+
+
+def _remote_recovery_file_identity(metadata):
+    return (
+        metadata.st_dev, metadata.st_ino, metadata.st_mode, metadata.st_size,
+        metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+
+def _remote_recovery_nonce_domain(key):
+    """Return a private state index bound to AES key material, not its ID."""
+    # This pseudonymous value is confined to the private nonce-state file.  It
+    # is never included in the public envelope, telemetry, logs, or errors.
+    return argus_remote_recovery.nonce_material_domain(key)
+
+
+def _validated_remote_recovery_nonce_counters(value, *, allow_empty=False):
+    if not isinstance(value, dict) or len(value) > \
+            _REMOTE_RECOVERY_NONCE_MAX_DOMAINS or (
+                not value and not allow_empty):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_state_invalid")
+    counters = {}
+    for domain, counter in value.items():
+        if not isinstance(domain, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", domain) or isinstance(counter, bool) or \
+                not isinstance(counter, int) or counter < 1 or \
+                counter > _REMOTE_RECOVERY_NONCE_MAX:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_state_invalid")
+        counters[domain] = counter
+    return counters
+
+
+def _validated_remote_recovery_nonce_state(value):
+    if not isinstance(value, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_state_invalid")
+    schema = value.get("schemaVersion")
+    if schema == _REMOTE_RECOVERY_NONCE_STATE_LEGACY_SCHEMA:
+        if set(value) != {"schemaVersion", "keyMaterialCounters"}:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_state_invalid")
+        return {
+            "schemaVersion": schema,
+            "keyMaterialCounters":
+                _validated_remote_recovery_nonce_counters(
+                    value.get("keyMaterialCounters")),
+        }
+    if schema != _REMOTE_RECOVERY_NONCE_STATE_SCHEMA or set(value) != {
+            "schemaVersion", "historyGeneration", "historyRecordHash",
+            "keyMaterialCounters"}:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_state_invalid")
+    generation = value.get("historyGeneration")
+    record_hash = str(value.get("historyRecordHash") or "")
+    if isinstance(generation, bool) or not isinstance(generation, int) or \
+            generation < 0 or not re.fullmatch(r"[0-9a-f]{64}", record_hash):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_state_invalid")
+    return {
+        "schemaVersion": _REMOTE_RECOVERY_NONCE_STATE_SCHEMA,
+        "historyGeneration": generation,
+        "historyRecordHash": record_hash,
+        "keyMaterialCounters":
+            _validated_remote_recovery_nonce_counters(
+                value.get("keyMaterialCounters"),
+                allow_empty=(generation == 0)),
+    }
+
+
+def _remote_recovery_nonce_record_hash(value):
+    return hashlib.sha256(
+        argus_persistent_storage._canonical(value)).hexdigest()
+
+
+def _validated_remote_recovery_nonce_history(value):
+    if not isinstance(value, dict) or set(value) != {
+            "schemaVersion", "generation", "previousRecordHash",
+            "keyMaterialCounters", "recordHash"} or value.get(
+                "schemaVersion") != _REMOTE_RECOVERY_NONCE_HISTORY_SCHEMA:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_invalid")
+    generation = value.get("generation")
+    previous = value.get("previousRecordHash")
+    if isinstance(generation, bool) or not isinstance(generation, int) or \
+            generation < 0 or (generation == 0 and previous is not None) or \
+            (generation > 0 and not re.fullmatch(
+                r"[0-9a-f]{64}", str(previous or ""))):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_invalid")
+    counters = _validated_remote_recovery_nonce_counters(
+        value.get("keyMaterialCounters"), allow_empty=(generation == 0))
+    body = {
+        "schemaVersion": _REMOTE_RECOVERY_NONCE_HISTORY_SCHEMA,
+        "generation": generation,
+        "previousRecordHash": previous,
+        "keyMaterialCounters": counters,
+    }
+    record_hash = str(value.get("recordHash") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", record_hash) or \
+            not hmac.compare_digest(
+                record_hash, _remote_recovery_nonce_record_hash(body)):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_invalid")
+    return {**body, "recordHash": record_hash}
+
+
+def _build_remote_recovery_nonce_history(
+        generation, previous_record_hash, counters):
+    body = {
+        "schemaVersion": _REMOTE_RECOVERY_NONCE_HISTORY_SCHEMA,
+        "generation": generation,
+        "previousRecordHash": previous_record_hash,
+        "keyMaterialCounters":
+            _validated_remote_recovery_nonce_counters(
+                counters, allow_empty=(generation == 0)),
+    }
+    return _validated_remote_recovery_nonce_history({
+        **body, "recordHash": _remote_recovery_nonce_record_hash(body)})
+
+
+def _validated_remote_recovery_nonce_history_head(value):
+    if not isinstance(value, dict) or set(value) != {
+            "schemaVersion", "generation", "recordHash", "headHash"} or \
+            value.get("schemaVersion") != \
+            _REMOTE_RECOVERY_NONCE_HISTORY_HEAD_SCHEMA:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_head_invalid")
+    generation = value.get("generation")
+    record_hash = str(value.get("recordHash") or "")
+    if isinstance(generation, bool) or not isinstance(generation, int) or \
+            generation < 0 or not re.fullmatch(r"[0-9a-f]{64}", record_hash):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_head_invalid")
+    body = {
+        "schemaVersion": _REMOTE_RECOVERY_NONCE_HISTORY_HEAD_SCHEMA,
+        "generation": generation,
+        "recordHash": record_hash,
+    }
+    head_hash = str(value.get("headHash") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", head_hash) or not \
+            hmac.compare_digest(
+                head_hash, _remote_recovery_nonce_record_hash(body)):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_head_invalid")
+    return {**body, "headHash": head_hash}
+
+
+def _build_remote_recovery_nonce_history_head(history):
+    body = {
+        "schemaVersion": _REMOTE_RECOVERY_NONCE_HISTORY_HEAD_SCHEMA,
+        "generation": history["generation"],
+        "recordHash": history["recordHash"],
+    }
+    return _validated_remote_recovery_nonce_history_head({
+        **body, "headHash": _remote_recovery_nonce_record_hash(body)})
+
+
+def _acquire_remote_recovery_nonce_lock(path):
+    descriptor = None
+    handle = None
+    try:
+        descriptor = os.open(
+            path + ".reservation.lock",
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        handle = os.fdopen(descriptor, "a+b")
+        handle._argus_nonce_anchor_path = path + ".reservation.lock.anchor"
+        descriptor = None
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_lock_invalid")
+        if stat.S_IMODE(os.fstat(handle.fileno()).st_mode) & 0o077:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_lock_permissions_invalid")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+    except Exception:
+        if handle is not None:
+            handle.close()
+        elif descriptor is not None:
+            os.close(descriptor)
+        raise
+
+
+def _release_remote_recovery_nonce_lock(handle):
+    if handle is None:
+        return
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    handle.close()
+
+
+def _remote_recovery_nonce_lock_anchor(handle):
+    """Read the latest fixed-width monotonic anchor from the locked file."""
+    epoch_path = _remote_recovery_nonce_anchor_path(handle)
+    try:
+        if os.path.lexists(epoch_path):
+            descriptor = os.open(
+                epoch_path,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode) or \
+                        stat.S_IMODE(metadata.st_mode) & 0o077:
+                    raise OSError("recovery_nonce_lock_permissions_invalid")
+                with os.fdopen(descriptor, "rb", buffering=0) as anchor_handle:
+                    descriptor = None
+                    return argus_remote_nonce_anchor.read(
+                        anchor_handle,
+                        maximum_bytes=_REMOTE_RECOVERY_NONCE_LOCK_MAX_BYTES,
+                        validate_counters=
+                        _validated_remote_recovery_nonce_counters)
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+        size = os.fstat(handle.fileno()).st_size
+        if size == 0:
+            return None
+        header_bytes = len(_REMOTE_RECOVERY_NONCE_LOCK_HEADER)
+        if size < header_bytes + _REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES or \
+                size > _REMOTE_RECOVERY_NONCE_LOCK_MAX_BYTES or \
+                (size - header_bytes) % \
+                _REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES:
+            raise OSError("recovery_nonce_lock_size_invalid")
+        handle.seek(0)
+        if handle.read(header_bytes) != _REMOTE_RECOVERY_NONCE_LOCK_HEADER:
+            raise OSError("recovery_nonce_lock_header_invalid")
+        count = (size - header_bytes) // \
+            _REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES
+        handle.seek(size - _REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES)
+        encoded = handle.read(_REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES)
+        generation = struct.unpack(">Q", encoded[:8])[0]
+        history_hash = encoded[8:40]
+        payload_length = struct.unpack(">I", encoded[40:44])[0]
+        if payload_length <= 0 or payload_length > \
+                _REMOTE_RECOVERY_NONCE_LOCK_PAYLOAD_BYTES:
+            raise OSError("recovery_nonce_lock_record_invalid")
+        payload_bytes = encoded[44:44 + payload_length]
+        if any(encoded[44 + payload_length:4140]):
+            raise OSError("recovery_nonce_lock_record_invalid")
+        try:
+            payload = json.loads(payload_bytes.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise OSError("recovery_nonce_lock_record_invalid") from exc
+        if not isinstance(payload, dict) or set(payload) != {
+                "previousRecordHash", "keyMaterialCounters"}:
+            raise OSError("recovery_nonce_lock_record_invalid")
+        previous_record_hash = payload["previousRecordHash"]
+        counters = _validated_remote_recovery_nonce_counters(
+            payload["keyMaterialCounters"], allow_empty=(generation == 0))
+        journal_hash = encoded[4140:4172]
+        if count == 1:
+            previous_generation = None
+            previous_journal_hash = hashlib.sha256(
+                _REMOTE_RECOVERY_NONCE_LOCK_HEADER).digest()
+        else:
+            handle.seek(size - 2 * _REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES)
+            previous = handle.read(_REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES)
+            previous_generation = struct.unpack(">Q", previous[:8])[0]
+            previous_journal_hash = previous[4140:4172]
+        expected = hashlib.sha256(
+            previous_journal_hash + encoded[:4140]).digest()
+        if generation != count - 1 or (
+                previous_generation is not None and
+                previous_generation + 1 != generation) or not \
+                hmac.compare_digest(journal_hash, expected):
+            raise OSError("recovery_nonce_lock_record_invalid")
+        return {
+            "generation": generation,
+            "recordHash": history_hash.hex(),
+            "journalHash": journal_hash.hex(),
+            "previousRecordHash": previous_record_hash,
+            "counters": counters,
+        }
+    except (OSError, argus_remote_nonce_anchor.AnchorError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_lock_invalid") from exc
+
+
+def _append_remote_recovery_nonce_lock_anchor(handle, history):
+    current = _remote_recovery_nonce_lock_anchor(handle)
+    expected_generation = 0 if current is None else current["generation"] + 1
+    if history["generation"] != expected_generation or (
+            current is not None and history["previousRecordHash"] !=
+            current["recordHash"]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_lock_sequence_invalid")
+    try:
+        epoch_path = _remote_recovery_nonce_anchor_path(handle)
+        if os.path.lexists(epoch_path):
+            descriptor = os.open(
+                epoch_path,
+                os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode) or \
+                        stat.S_IMODE(metadata.st_mode) & 0o077:
+                    raise OSError("recovery_nonce_lock_permissions_invalid")
+                with os.fdopen(descriptor, "r+b", buffering=0) as anchor_handle:
+                    descriptor = None
+                    return argus_remote_nonce_anchor.append(
+                        anchor_handle, history, path=epoch_path,
+                        maximum_bytes=_REMOTE_RECOVERY_NONCE_LOCK_MAX_BYTES,
+                        validate_counters=
+                        _validated_remote_recovery_nonce_counters)
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+        if current is not None and os.fstat(handle.fileno()).st_size + \
+                _REMOTE_RECOVERY_NONCE_LOCK_RECORD_BYTES > \
+                _REMOTE_RECOVERY_NONCE_LOCK_MAX_BYTES:
+            # Re-read the v1 journal through the epoch codec to obtain its
+            # terminal epoch digest; the legacy scanner shape intentionally
+            # exposed only generation/counter fields.
+            rollover_current = argus_remote_nonce_anchor.read(
+                handle,
+                maximum_bytes=_REMOTE_RECOVERY_NONCE_LOCK_MAX_BYTES,
+                validate_counters=_validated_remote_recovery_nonce_counters)
+            return argus_remote_nonce_anchor.replace_successor(
+                epoch_path, rollover_current, history,
+                maximum_bytes=_REMOTE_RECOVERY_NONCE_LOCK_MAX_BYTES,
+                validate_counters=_validated_remote_recovery_nonce_counters)
+        if current is None:
+            previous_journal_hash = hashlib.sha256(
+                _REMOTE_RECOVERY_NONCE_LOCK_HEADER).digest()
+            handle.seek(0)
+            handle.write(_REMOTE_RECOVERY_NONCE_LOCK_HEADER)
+        else:
+            previous_journal_hash = bytes.fromhex(current["journalHash"])
+            handle.seek(0, os.SEEK_END)
+        try:
+            payload = argus_persistent_storage._canonical({
+                "previousRecordHash": history["previousRecordHash"],
+                "keyMaterialCounters": history["keyMaterialCounters"],
+            })
+            if len(payload) > _REMOTE_RECOVERY_NONCE_LOCK_PAYLOAD_BYTES:
+                raise OSError("recovery_nonce_lock_payload_oversized")
+            prefix = (
+                struct.pack(">Q", history["generation"]) +
+                bytes.fromhex(history["recordHash"]) +
+                struct.pack(">I", len(payload)) + payload +
+                b"\x00" * (_REMOTE_RECOVERY_NONCE_LOCK_PAYLOAD_BYTES -
+                           len(payload)))
+        except (TypeError, ValueError) as exc:
+            raise OSError("recovery_nonce_lock_payload_invalid") from exc
+        record = prefix + hashlib.sha256(
+            previous_journal_hash + prefix).digest()
+        handle.write(record)
+        handle.flush()
+        os.fsync(handle.fileno())
+        verified = _remote_recovery_nonce_lock_anchor(handle)
+        if verified["generation"] != history["generation"] or not \
+                hmac.compare_digest(
+                    verified["recordHash"], history["recordHash"]):
+            raise OSError("recovery_nonce_lock_readback_failed")
+    except (OSError, argus_remote_nonce_anchor.AnchorError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_lock_activation_failed") from exc
+    return verified
+
+
+def _read_remote_recovery_nonce_json(
+        path, *, missing_ok, validator, invalid_classification,
+        require_private):
+    """Read one bounded stable private JSON inode without following links."""
+    descriptor = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0 or \
+                before.st_size > _REMOTE_RECOVERY_NONCE_STATE_MAX_BYTES or \
+                (require_private and stat.S_IMODE(before.st_mode) & 0o077):
+            raise argus_remote_recovery.RecoveryBundleError(
+                invalid_classification)
+        encoded = bytearray()
+        while True:
+            chunk = os.read(descriptor, 4096)
+            if not chunk:
+                break
+            if len(encoded) + len(chunk) > \
+                    _REMOTE_RECOVERY_NONCE_STATE_MAX_BYTES:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    invalid_classification)
+            encoded.extend(chunk)
+        after = os.fstat(descriptor)
+        current = os.stat(path, follow_symlinks=False)
+        identity = lambda item: (
+            item.st_dev, item.st_ino, item.st_mode, item.st_size,
+            item.st_mtime_ns, item.st_ctime_ns)
+        if identity(before) != identity(after) or identity(after) != \
+                identity(current) or len(encoded) != after.st_size:
+            raise argus_remote_recovery.RecoveryBundleError(
+                f"{invalid_classification}_changed")
+        try:
+            value = json.loads(encoded.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise argus_remote_recovery.RecoveryBundleError(
+                invalid_classification) from exc
+        return validator(value)
+    except FileNotFoundError:
+        if missing_ok:
+            return None
+        raise argus_remote_recovery.RecoveryBundleError(
+            f"{invalid_classification}_missing")
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except (OSError, TypeError, ValueError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            f"{invalid_classification}_unreadable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _write_remote_recovery_nonce_state(path, history):
+    reserved = _validated_remote_recovery_nonce_state({
+        "schemaVersion": _REMOTE_RECOVERY_NONCE_STATE_SCHEMA,
+        "historyGeneration": history["generation"],
+        "historyRecordHash": history["recordHash"],
+        "keyMaterialCounters": history["keyMaterialCounters"],
+    })
+    write = argus_persistent_storage.atomic_write_json(
+        path, reserved,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"],
+        validator=lambda value: value == reserved,
+        temp_label="recovery-nonce",
+        maximum_bytes=_REMOTE_RECOVERY_NONCE_STATE_MAX_BYTES,
+        file_mode=0o600)
+    if write.get("readBackVerified") is not True or \
+            _read_remote_recovery_nonce_state(
+                path, missing_ok=False) != reserved:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_state_unverified")
+    return reserved
+
+
+def _read_remote_recovery_nonce_state(path, *, missing_ok):
+    value = _read_remote_recovery_nonce_json(
+        path, missing_ok=missing_ok,
+        validator=_validated_remote_recovery_nonce_state,
+        invalid_classification="recovery_nonce_state",
+        # A legacy v2 file may predate explicit mode enforcement.  It is
+        # rewritten 0600 before a nonce can be returned.
+        require_private=False)
+    if value is not None and value.get("schemaVersion") == \
+            _REMOTE_RECOVERY_NONCE_STATE_SCHEMA:
+        try:
+            if stat.S_IMODE(os.stat(
+                    path, follow_symlinks=False).st_mode) & 0o077:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_nonce_state_permissions_invalid")
+        except FileNotFoundError as exc:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_state_changed") from exc
+    return value
+
+
+def _read_remote_recovery_nonce_history(path, *, missing_ok):
+    return _read_remote_recovery_nonce_json(
+        path, missing_ok=missing_ok,
+        validator=_validated_remote_recovery_nonce_history,
+        invalid_classification="recovery_nonce_history",
+        require_private=True)
+
+
+def _read_remote_recovery_nonce_history_head(path, *, missing_ok):
+    return _read_remote_recovery_nonce_json(
+        path, missing_ok=missing_ok,
+        validator=_validated_remote_recovery_nonce_history_head,
+        invalid_classification="recovery_nonce_history_head",
+        require_private=True)
+
+
+def _write_remote_recovery_nonce_history(path, history):
+    write = argus_persistent_storage.atomic_write_json(
+        path, history,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"],
+        validator=lambda value: value == history,
+        temp_label="recovery-nonce-history",
+        maximum_bytes=_REMOTE_RECOVERY_NONCE_STATE_MAX_BYTES,
+        file_mode=0o600)
+    if write.get("readBackVerified") is not True or \
+            _read_remote_recovery_nonce_history(
+                path, missing_ok=False) != history:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_unverified")
+
+
+def _write_remote_recovery_nonce_history_head(path, history):
+    head = _build_remote_recovery_nonce_history_head(history)
+    write = argus_persistent_storage.atomic_write_json(
+        path, head,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"],
+        validator=lambda value: value == head,
+        temp_label="recovery-nonce-history-head",
+        maximum_bytes=_REMOTE_RECOVERY_NONCE_STATE_MAX_BYTES,
+        file_mode=0o600)
+    if write.get("readBackVerified") is not True or \
+            _read_remote_recovery_nonce_history_head(
+                path, missing_ok=False) != head:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_head_unverified")
+    return head
+
+
+def _remote_recovery_nonce_paths():
+    return {
+        "state": _DURABILITY_PATHS["recoveryNonceState"],
+        "history": _DURABILITY_PATHS["recoveryNonceHistory"],
+        "head": _DURABILITY_PATHS["recoveryNonceHistoryHead"],
+    }
+
+
+def _load_remote_recovery_nonce_authority(
+        lock_handle, configured, *, allow_activation,
+        verify_installed_floor=True):
+    """Load or migrate the private authority under the reservation lock."""
+    paths = _remote_recovery_nonce_paths()
+    anchor = _remote_recovery_nonce_lock_anchor(lock_handle)
+    history = _read_remote_recovery_nonce_history(
+        paths["history"], missing_ok=True)
+    head = _read_remote_recovery_nonce_history_head(
+        paths["head"], missing_ok=True)
+    state = _read_remote_recovery_nonce_state(
+        paths["state"], missing_ok=True)
+    if history is None and head is None:
+        if anchor is not None:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_missing")
+        if not allow_activation:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_missing")
+        counters = {}
+        if state is not None:
+            if state.get("schemaVersion") == \
+                    _REMOTE_RECOVERY_NONCE_STATE_SCHEMA:
+                # A v3 cache proves history existed.  Missing authority is
+                # deletion/rollback, never a fresh activation.
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_nonce_history_missing")
+            counters.update(state["keyMaterialCounters"])
+        installed = _installed_remote_recovery_nonce_floor(configured)
+        if installed is not None:
+            installed_domain, installed_counter = installed
+            counters[installed_domain] = max(
+                int(counters.get(installed_domain) or 0), installed_counter)
+        history = _build_remote_recovery_nonce_history(
+            0, None, counters)
+        _write_remote_recovery_nonce_history(paths["history"], history)
+        head = _write_remote_recovery_nonce_history_head(
+            paths["head"], history)
+        _append_remote_recovery_nonce_lock_anchor(lock_handle, history)
+        state = _write_remote_recovery_nonce_state(paths["state"], history)
+        return history, head, state
+
+    if history is None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_missing")
+
+    # Complete only exact one-generation crash windows.  The append-only
+    # anchor is committed first; a following history/head/state replace may
+    # fail and is safely reconstructed from the anchor's counter record.
+    if anchor is None:
+        if history["generation"] != 0:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_lock_missing")
+        if head is None:
+            head = _write_remote_recovery_nonce_history_head(
+                paths["head"], history)
+        elif head["generation"] != 0 or not hmac.compare_digest(
+                head["recordHash"], history["recordHash"]):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_rollback")
+        anchor = _append_remote_recovery_nonce_lock_anchor(
+            lock_handle, history)
+    elif history["generation"] + 1 == anchor["generation"] and \
+            anchor.get("counters") is not None and \
+            anchor.get("previousRecordHash") == history["recordHash"]:
+        if head is not None and (
+                head["generation"] != history["generation"] or not
+                hmac.compare_digest(
+                    head["recordHash"], history["recordHash"])):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_rollback")
+        history = _build_remote_recovery_nonce_history(
+            anchor["generation"], anchor["previousRecordHash"],
+            anchor["counters"])
+        if not hmac.compare_digest(
+                history["recordHash"], anchor["recordHash"]):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_rollback")
+        _write_remote_recovery_nonce_history(paths["history"], history)
+        head = _write_remote_recovery_nonce_history_head(
+            paths["head"], history)
+    elif history["generation"] != anchor["generation"] or not \
+            hmac.compare_digest(
+                history["recordHash"], anchor["recordHash"]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_rollback")
+
+    if history["generation"] != anchor["generation"] or not \
+            hmac.compare_digest(
+                history["recordHash"], anchor["recordHash"]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_rollback")
+    expected_head = _build_remote_recovery_nonce_history_head(history)
+    if head != expected_head:
+        # The fsynced anchor is committed before its replaceable mirrors.  If
+        # the exact history mirror reached the same authority but the process
+        # crashed immediately before/during the head replace, repairing that
+        # derived head cannot lower a counter.  A future or otherwise
+        # divergent head remains rollback evidence and is never overwritten.
+        if head is not None and head["generation"] >= history["generation"]:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_rollback")
+        head = _write_remote_recovery_nonce_history_head(
+            paths["head"], history)
+    expected_state = {
+        "schemaVersion": _REMOTE_RECOVERY_NONCE_STATE_SCHEMA,
+        "historyGeneration": history["generation"],
+        "historyRecordHash": history["recordHash"],
+        "keyMaterialCounters": history["keyMaterialCounters"],
+    }
+    if state != expected_state:
+        state = _write_remote_recovery_nonce_state(paths["state"], history)
+    if verify_installed_floor:
+        _verify_installed_remote_recovery_nonce_floor(history, configured)
+    return history, head, state
+
+
+def _commit_remote_recovery_nonce_authority(
+        lock_handle, history, counters):
+    """Commit a consumed floor before returning or encrypting with a nonce."""
+    paths = _remote_recovery_nonce_paths()
+    anchor = _remote_recovery_nonce_lock_anchor(lock_handle)
+    if anchor is None or anchor["generation"] != history["generation"] or \
+            not hmac.compare_digest(
+                anchor["recordHash"], history["recordHash"]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_rollback")
+    next_history = _build_remote_recovery_nonce_history(
+        history["generation"] + 1, history["recordHash"], counters)
+    # The append-only anchor is the monotonic authority.  Commit it before the
+    # replaceable mirrors.  If either later write fails, the next invocation
+    # sees mirrors one generation behind and reconstructs the consumed floor
+    # from this anchor record instead of reusing the nonce.
+    _append_remote_recovery_nonce_lock_anchor(lock_handle, next_history)
+    _write_remote_recovery_nonce_history(paths["history"], next_history)
+    _write_remote_recovery_nonce_history_head(paths["head"], next_history)
+    _write_remote_recovery_nonce_state(paths["state"], next_history)
+    verified_history = _read_remote_recovery_nonce_history(
+        paths["history"], missing_ok=False)
+    verified_head = _read_remote_recovery_nonce_history_head(
+        paths["head"], missing_ok=False)
+    verified_state = _read_remote_recovery_nonce_state(
+        paths["state"], missing_ok=False)
+    if verified_history != next_history or \
+            verified_head != _build_remote_recovery_nonce_history_head(
+                next_history) or verified_state.get(
+                    "historyRecordHash") != next_history["recordHash"]:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_commit_unverified")
+    return next_history
+
+
+def _installed_remote_recovery_nonce_floor(configured):
+    """Authenticate the installed sidecar and return its material-domain floor."""
+    if not os.path.lexists(_REMOTE_RECOVERY_FILE):
+        return None
+    sidecar = _read_local_recovery_sidecar()
+    envelope = sidecar["recovery"]
+    selected = None
+    for slot in ("current", "previous"):
+        candidate = configured.get(slot)
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            # Pass the authenticated envelope ID deliberately: this detects
+            # the same AES material after an operator-only key-ID rename.
+            argus_remote_recovery.validate_pair(
+                sidecar["readback"], envelope, candidate["key"],
+                key_identifier=envelope["keyId"])
+            selected = candidate
+            break
+        except argus_remote_recovery.RecoveryBundleError:
+            continue
+    if selected is None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_sidecar_authentication_failed")
+    nonce = argus_remote_recovery._b64_decode(
+        envelope.get("nonce"), "recovery_nonce_invalid")
+    counter = int.from_bytes(nonce, "big")
+    if len(nonce) != 12 or counter <= 0:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_sidecar_invalid")
+    return _remote_recovery_nonce_domain(selected["key"]), counter
+
+
+def _probe_pinned_remote_recovery_nonce_floor(configured, pinned_ledger):
+    """Authenticate the latest immutable pair and return carried key floors.
+
+    This is a boot-time rollback boundary, not an optional availability probe:
+    once keys are configured, every ambiguous transport/pair/ancestry result
+    is terminal.  Both objects are fetched from the one ref resolution in
+    ``pinned_ledger`` so a moving ledger ref cannot mix generations.
+    """
+    if not isinstance(pinned_ledger, dict) or set(pinned_ledger) < {
+            "base", "commitSha", "owner", "repository"}:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_remote_probe_invalid")
+    readback_result = _fetch_pinned_recovery_object(
+        f"{pinned_ledger['base']}{_REMOTE_READBACK_PATH}",
+        _DURABLE_READBACK_MAX_BYTES, "readback")
+    recovery_result = _fetch_pinned_recovery_object(
+        f"{pinned_ledger['base']}{_REMOTE_RECOVERY_PATH}",
+        _DURABLE_RECOVERY_MAX_BYTES, "recovery")
+    if recovery_result.get("status") == "absent":
+        # A sidecar-free immutable head is not sufficient evidence by itself.
+        # Preserve its exact compact proof only after (a) strict receipt/WAL
+        # validation and (b) an authoritative path-history absence proof for
+        # this same pinned head.  Otherwise a rolled-back local keyed pair
+        # could silently outrank a newer legacy ledger generation.
+        if readback_result.get("status") == "absent":
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_remote_legacy_readback_missing")
+        if readback_result.get("status") != "present":
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_remote_probe_ambiguous")
+        readback = readback_result.get("value")
+        if not isinstance(readback, dict) or not \
+                argus_remote_journal.verify_strict_compact_readback_snapshot(
+                    readback):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_remote_legacy_readback_invalid")
+        if not _pinned_recovery_path_never_existed(pinned_ledger):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_remote_history_exists")
+        return _AuthenticatedPinnedLegacyReadbackEvidence(
+            pinned_ledger, readback)
+    if recovery_result.get("status") != "present":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_remote_probe_ambiguous")
+    if readback_result.get("status") != "present":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_remote_pair_missing")
+    sidecar_value = recovery_result.get("value")
+    if not isinstance(sidecar_value, dict) or sidecar_value.get(
+            "schemaVersion") != argus_remote_recovery.SIDECAR_SCHEMA:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_remote_sidecar_required")
+    sidecar = argus_remote_recovery.validate_sidecar(sidecar_value)
+    readback = readback_result.get("value")
+    if sidecar["readback"] != readback:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_remote_pair_mismatch")
+    envelope = sidecar["recovery"]
+    selected = _recovery_key_for_envelope(envelope, configured)
+    payload = argus_remote_recovery.validate_pair(
+        readback, envelope, selected["key"],
+        key_identifier=selected["keyId"])
+    ancestry = _verify_authenticated_ledger_commit_path(
+        payload["ledgerBaseCommitSha"], pinned_ledger["commitSha"],
+        owner=pinned_ledger["owner"],
+        repository=pinned_ledger["repository"])
+    nonce_authority = _authenticated_remote_recovery_nonce_authority(
+        envelope, payload, configured, selected)
+    return _AuthenticatedPinnedRemoteRecoveryEvidence(
+        pinned_ledger, readback, envelope, payload, selected, ancestry,
+        nonce_authority._key_material_counters)
+
+
+def _validated_pinned_remote_recovery_evidence(
+        evidence, pinned_ledger, configured):
+    """Revalidate one private pair without resolving or fetching a moving ref."""
+    if not isinstance(evidence, _AuthenticatedPinnedRemoteRecoveryEvidence) or \
+            evidence._pinned_token is not \
+            _PINNED_REMOTE_RECOVERY_PROCESS_TOKEN or not isinstance(
+                pinned_ledger, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_evidence_invalid")
+    expected = (
+        pinned_ledger.get("base"), pinned_ledger.get("commitSha"),
+        pinned_ledger.get("owner"), pinned_ledger.get("repository"))
+    observed = (
+        evidence._base, evidence._commit_sha, evidence._owner,
+        evidence._repository)
+    if observed != expected or not re.fullmatch(
+            r"[0-9a-f]{40}", str(evidence._commit_sha or "")):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_evidence_binding_invalid")
+    selected = evidence._selected
+    available = [candidate for candidate in (
+        configured.get("current"), configured.get("previous"))
+        if isinstance(candidate, dict)] if isinstance(configured, dict) else []
+    if not isinstance(selected, dict) or not any(
+            candidate.get("keyId") == selected.get("keyId") and
+            isinstance(candidate.get("key"), bytes) and
+            isinstance(selected.get("key"), bytes) and
+            hmac.compare_digest(candidate["key"], selected["key"])
+            for candidate in available):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_evidence_key_unavailable")
+    payload = argus_remote_recovery.validate_pair(
+        evidence._readback, evidence._envelope, selected["key"],
+        key_identifier=selected["keyId"])
+    if payload != evidence._payload:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_evidence_changed")
+    ancestry = evidence._ancestry
+    if not isinstance(ancestry, dict) or ancestry.get("status") != "verified" or \
+            ancestry.get("ledgerBaseCommitSha") != \
+            payload["ledgerBaseCommitSha"] or ancestry.get(
+                "exactCommitSha") != evidence._commit_sha or isinstance(
+                    ancestry.get("distance"), bool) or not isinstance(
+                        ancestry.get("distance"), int) or ancestry.get(
+                            "distance") < 0:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_evidence_ancestry_invalid")
+    _validated_remote_recovery_nonce_authority(evidence, seeded=False)
+    return evidence
+
+
+def _validated_pinned_legacy_readback_evidence(evidence, pinned_ledger):
+    """Revalidate one pre-sidecar compact proof at the already-pinned head."""
+    if not isinstance(evidence, _AuthenticatedPinnedLegacyReadbackEvidence) or \
+            evidence._token is not _PINNED_LEGACY_READBACK_PROCESS_TOKEN or \
+            not isinstance(pinned_ledger, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_legacy_evidence_invalid")
+    expected = (
+        pinned_ledger.get("base"), pinned_ledger.get("commitSha"),
+        pinned_ledger.get("owner"), pinned_ledger.get("repository"),
+        pinned_ledger.get("pathPrefix"))
+    observed = (
+        evidence._base, evidence._commit_sha, evidence._owner,
+        evidence._repository, evidence._path_prefix)
+    readback = evidence._readback
+    if observed != expected or not re.fullmatch(
+            r"[0-9a-f]{40}", str(evidence._commit_sha or "")) or not \
+            isinstance(readback, dict) or not \
+            hmac.compare_digest(
+                evidence._readback_hash,
+                argus_persistent_storage._canonical_sha256(readback)) or not \
+            argus_remote_journal.verify_strict_compact_readback_snapshot(
+                readback):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_legacy_evidence_invalid")
+    durability = readback.get("missionTickDurability") or {}
+    target_wal = durability.get("walAppliedSequence")
+    if isinstance(target_wal, bool) or not isinstance(target_wal, int) or \
+            target_wal <= 0 or durability.get(
+                "remoteWalAppliedSequence") != target_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_legacy_evidence_invalid")
+    return evidence
+
+
+def _pinned_recovery_path_never_existed(pinned_ledger):
+    """Prove the recovery path has no commit at or before the pinned head."""
+    if not isinstance(pinned_ledger, dict) or set(pinned_ledger) < {
+            "commitSha", "owner", "repository", "pathPrefix"}:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_query_invalid")
+    prefix = str(pinned_ledger.get("pathPrefix") or "").strip("/")
+    path = "/".join(filter(None, (prefix, _REMOTE_RECOVERY_PATH.strip("/"))))
+    if not path or not re.fullmatch(r"[A-Za-z0-9_./-]+", path):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_query_invalid")
+    response = None
+    try:
+        response = requests.get(
+            (f"https://api.github.com/repos/{pinned_ledger['owner']}/"
+             f"{pinned_ledger['repository']}/commits"),
+            params={
+                "sha": pinned_ledger["commitSha"], "path": path,
+                "per_page": 1,
+            },
+            timeout=(6, 15), stream=True,
+            headers={"Accept": "application/vnd.github+json"})
+        if response.status_code != 200:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_query_http_error")
+        value = _response_bounded_json(
+            response, _LEDGER_REF_RESPONSE_MAX_BYTES,
+            "recovery_nonce_history_query_unreadable")
+        if not isinstance(value, list):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_history_query_invalid")
+        return len(value) == 0
+    except (_RemoteRecoveryRestoreError,
+            argus_remote_recovery.RecoveryBundleError):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_query_ambiguous")
+    except Exception as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_history_query_ambiguous") from exc
+    finally:
+        if response is not None:
+            response.close()
+
+
+def _authenticated_installed_recovery_nonce_floor(configured):
+    """Return a private floor after authenticating the installed exact pair."""
+    if not os.path.lexists(_REMOTE_RECOVERY_FILE):
+        return None
+    sidecar = _read_local_recovery_sidecar()
+    envelope = sidecar["recovery"]
+    selected = None
+    for slot in ("current", "previous"):
+        candidate = configured.get(slot)
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            # Key IDs are operational labels.  Authenticate with the envelope
+            # ID so an explicit rename of identical key material retains its
+            # nonce domain without making arbitrary-key fallback possible.
+            argus_remote_recovery.validate_pair(
+                sidecar["readback"], envelope, candidate["key"],
+                key_identifier=envelope["keyId"])
+            selected = {
+                "keyId": envelope["keyId"], "key": candidate["key"]}
+            break
+        except argus_remote_recovery.RecoveryBundleError:
+            continue
+    if selected is None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_sidecar_authentication_failed")
+    return _authenticated_remote_recovery_nonce_floor(envelope, selected)
+
+
+def _remote_recovery_nonce_authority_absent(*, include_lock):
+    paths = _remote_recovery_nonce_paths()
+    candidates = [paths["state"], paths["history"], paths["head"]]
+    if include_lock:
+        lock_path = _DURABILITY_PATHS[
+            "recoveryNonceState"] + ".reservation.lock"
+        candidates.extend((lock_path, lock_path + ".anchor"))
+    return not any(os.path.lexists(path) for path in candidates)
+
+
+def _mint_remote_recovery_nonce_genesis_capability(
+        checkpoint_blob, configured, pinned_ledger):
+    """Mint the one activation proof only for canonical sealed legacy state."""
+    current = configured.get("current") if isinstance(configured, dict) \
+        else None
+    if configured.get("status") != "configured" or not isinstance(
+            current, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_genesis_key_invalid")
+    if _validated_recovery_required_marker(checkpoint_blob) is not None or \
+            os.path.lexists(_REMOTE_RECOVERY_FILE) or not \
+            _remote_recovery_nonce_authority_absent(include_lock=True):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_genesis_not_clean")
+    if not argus_persistent_storage.verify_checkpoint(
+            checkpoint_blob, require_seal=True):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_genesis_checkpoint_unsealed")
+    path = os.path.abspath(_OSINT_PERSIST_FILE)
+    try:
+        before = os.stat(path, follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode) or os.path.islink(path):
+            raise OSError("recovery_nonce_genesis_checkpoint_invalid")
+        reread = argus_persistent_storage.load_checkpoint(
+            path, require_seal=True)
+        after = os.stat(path, follow_symlinks=False)
+    except Exception as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_genesis_checkpoint_unreadable") from exc
+    if _remote_recovery_file_identity(before) != \
+            _remote_recovery_file_identity(after) or reread != \
+            checkpoint_blob:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_genesis_checkpoint_changed")
+    return _RemoteRecoveryNonceGenesisCapability(
+        path, argus_persistent_storage._canonical_sha256(checkpoint_blob),
+        _remote_recovery_file_identity(after),
+        _remote_recovery_nonce_domain(current["key"]),
+        str(pinned_ledger.get("commitSha") or "").lower())
+
+
+def _activate_remote_recovery_nonce_genesis(capability, configured):
+    """Consume a clean-ledger capability and create generation zero."""
+    current = configured.get("current") if isinstance(configured, dict) \
+        else None
+    if not isinstance(capability, _RemoteRecoveryNonceGenesisCapability) or \
+            capability._token is not _REMOTE_RECOVERY_GENESIS_PROCESS_TOKEN or \
+            capability._consumed or not isinstance(current, dict) or \
+            not hmac.compare_digest(
+                capability._key_domain,
+                _remote_recovery_nonce_domain(current.get("key"))):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_genesis_capability_invalid")
+    capability._consumed = True
+    lock_handle = None
+    try:
+        path = capability._checkpoint_path
+        metadata = os.stat(path, follow_symlinks=False)
+        checkpoint = argus_persistent_storage.load_checkpoint(
+            path, require_seal=True)
+        if _remote_recovery_file_identity(metadata) != \
+                capability._checkpoint_identity or \
+                argus_persistent_storage._canonical_sha256(checkpoint) != \
+                capability._checkpoint_hash or \
+                _validated_recovery_required_marker(checkpoint) is not None or \
+                os.path.lexists(_REMOTE_RECOVERY_FILE):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_genesis_checkpoint_changed")
+        nonce_path = _DURABILITY_PATHS["recoveryNonceState"]
+        lock_handle = _acquire_remote_recovery_nonce_lock(nonce_path)
+        activate = (
+            _remote_recovery_nonce_lock_anchor(lock_handle) is None and
+            _remote_recovery_nonce_authority_absent(include_lock=False))
+        history, _head, _state = _load_remote_recovery_nonce_authority(
+            lock_handle, configured, allow_activation=activate)
+        return history
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except Exception as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_genesis_failed") from exc
+    finally:
+        _release_remote_recovery_nonce_lock(lock_handle)
+
+
+def _verify_remote_recovery_nonce_authority(configured):
+    lock_handle = None
+    try:
+        lock_handle = _acquire_remote_recovery_nonce_lock(
+            _DURABILITY_PATHS["recoveryNonceState"])
+        return _load_remote_recovery_nonce_authority(
+            lock_handle, configured, allow_activation=False)[0]
+    finally:
+        _release_remote_recovery_nonce_lock(lock_handle)
+
+
+def _prepare_keyed_local_recovery_nonce_boot(
+        checkpoint_blob, configured, pinned_ledger, *, evidence_handoff=None):
+    """Reconcile local authority with immutable remote truth before restore."""
+    if evidence_handoff is not None and (
+            not isinstance(evidence_handoff, list) or evidence_handoff):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_evidence_handoff_invalid")
+    remote_evidence = _probe_pinned_remote_recovery_nonce_floor(
+        configured, pinned_ledger)
+    if remote_evidence is None and not _pinned_recovery_path_never_existed(
+            pinned_ledger):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_remote_history_exists")
+    try:
+        local_floor = _authenticated_installed_recovery_nonce_floor(
+            configured)
+    except argus_remote_recovery.RecoveryBundleError:
+        # An invalid local sidecar is never a nonce floor.  A fully
+        # authenticated remote floor can still recover the machine; without
+        # one, do not reinterpret the local bytes as genesis.
+        if remote_evidence is None:
+            raise
+        local_floor = None
+    if local_floor is not None:
+        _seed_authenticated_remote_recovery_nonce_floor(
+            local_floor, configured)
+    if isinstance(
+            remote_evidence, _AuthenticatedRemoteRecoveryNonceAuthority):
+        _seed_authenticated_remote_recovery_nonce_authority(
+            remote_evidence, configured)
+    elif isinstance(remote_evidence, _AuthenticatedRemoteRecoveryNonceFloor):
+        # Compatibility for a process-private pre-map caller.  Immutable
+        # production probes always return the full authenticated authority.
+        _seed_authenticated_remote_recovery_nonce_floor(
+            remote_evidence, configured)
+    elif isinstance(
+            remote_evidence, _AuthenticatedPinnedLegacyReadbackEvidence):
+        # The compact-only legacy head has no nonce floor to import.  Keep its
+        # exact immutable proof for the subsequent local-authority decision.
+        _validated_pinned_legacy_readback_evidence(
+            remote_evidence, pinned_ledger)
+    elif remote_evidence is not None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_remote_probe_invalid")
+    if isinstance(remote_evidence, (
+            _AuthenticatedPinnedRemoteRecoveryEvidence,
+            _AuthenticatedPinnedLegacyReadbackEvidence)) and \
+            evidence_handoff is not None:
+        evidence_handoff.append(remote_evidence)
+    if local_floor is not None or isinstance(remote_evidence, (
+            _AuthenticatedRemoteRecoveryNonceAuthority,
+            _AuthenticatedRemoteRecoveryNonceFloor)):
+        return {"status": "seeded", "pinnedCommitSha":
+                pinned_ledger["commitSha"]}
+    if not _remote_recovery_nonce_authority_absent(include_lock=True):
+        _verify_remote_recovery_nonce_authority(configured)
+        return {"status": "verified_existing", "pinnedCommitSha":
+                pinned_ledger["commitSha"]}
+    if _validated_recovery_required_marker(checkpoint_blob) is not None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_authority_missing")
+    capability = _mint_remote_recovery_nonce_genesis_capability(
+        checkpoint_blob, configured, pinned_ledger)
+    _activate_remote_recovery_nonce_genesis(capability, configured)
+    return {"status": "activated_genesis", "pinnedCommitSha":
+            pinned_ledger["commitSha"]}
+
+
+def _authenticated_remote_recovery_nonce_floor(envelope, selected):
+    """Create a private floor only after the caller authenticated the pair."""
+    verified = argus_remote_recovery.validate_envelope(envelope)
+    if not isinstance(selected, dict) or selected.get("keyId") != \
+            verified["keyId"] or not isinstance(selected.get("key"), bytes) or \
+            len(selected["key"]) != 32:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_key_invalid")
+    nonce = argus_remote_recovery._b64_decode(
+        verified["nonce"], "recovery_nonce_invalid")
+    counter = int.from_bytes(nonce, "big")
+    if len(nonce) != 12 or counter <= 0 or \
+            counter > _REMOTE_RECOVERY_NONCE_MAX:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_invalid")
+    return _AuthenticatedRemoteRecoveryNonceFloor(
+        selected["key"], counter)
+
+
+def _authenticated_remote_recovery_nonce_authority(
+        envelope, authenticated_payload, configured, selected):
+    """Mint one private capability for the full authenticated floor map.
+
+    The caller must pass the payload returned by ``validate_pair``.  The
+    encrypted carry-forward map retains every bounded material counter.  The
+    envelope itself must still have selected exactly one configured
+    current/previous key ID; the map never authorizes another decrypt key.
+    """
+    payload = argus_remote_recovery.validate_payload(authenticated_payload)
+    authority = argus_remote_recovery.validate_nonce_authority(
+        payload.get("nonceAuthority"))
+    available = [candidate for candidate in (
+        configured.get("current"), configured.get("previous"))
+        if isinstance(candidate, dict)] if isinstance(configured, dict) else []
+    if not any(candidate.get("keyId") == selected.get("keyId") and
+               isinstance(candidate.get("key"), bytes) and
+               hmac.compare_digest(candidate["key"], selected.get("key"))
+               for candidate in available):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_key_unavailable")
+    counters = dict(authority["keyMaterialCounters"])
+    envelope_floor = _authenticated_remote_recovery_nonce_floor(
+        envelope, selected)
+    envelope_domain = _remote_recovery_nonce_domain(selected["key"])
+    if int(counters.get(envelope_domain) or 0) < \
+            envelope_floor._remote_counter:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_authority_binding_invalid")
+    return _AuthenticatedRemoteRecoveryNonceAuthority(counters)
+
+
+def _validated_remote_recovery_nonce_floor(floor, configured, *, seeded):
+    if not isinstance(floor, _AuthenticatedRemoteRecoveryNonceFloor) or \
+            not isinstance(floor._key, bytes) or len(floor._key) != 32 or \
+            isinstance(floor._remote_counter, bool) or not isinstance(
+                floor._remote_counter, int) or floor._remote_counter <= 0 or \
+            floor._remote_counter > _REMOTE_RECOVERY_NONCE_MAX:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_invalid")
+    available = [candidate for candidate in (
+        configured.get("current"), configured.get("previous"))
+        if isinstance(candidate, dict) and isinstance(
+            candidate.get("key"), bytes)]
+    if not any(hmac.compare_digest(
+            floor._key, candidate["key"]) for candidate in available):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_key_unavailable")
+    if seeded:
+        if isinstance(floor._seeded_counter, bool) or not isinstance(
+                floor._seeded_counter, int) or \
+                floor._seeded_counter < floor._remote_counter or \
+                floor._seeded_counter > _REMOTE_RECOVERY_NONCE_MAX:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_bootstrap_unseeded")
+        counter = floor._seeded_counter
+    else:
+        counter = floor._remote_counter
+    return _remote_recovery_nonce_domain(floor._key), counter
+
+
+def _verify_installed_remote_recovery_nonce_floor(authority, configured):
+    floor = _installed_remote_recovery_nonce_floor(configured)
+    if floor is None:
+        return
+    floor_domain, floor_counter = floor
+    recorded_floor = authority["keyMaterialCounters"].get(floor_domain)
+    if recorded_floor is None or recorded_floor < floor_counter:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_state_rollback")
+
+
+def _seed_authenticated_remote_recovery_nonce_floor(floor, configured):
+    """Durably import an authenticated cross-host floor before re-encryption."""
+    domain, remote_counter = _validated_remote_recovery_nonce_floor(
+        floor, configured, seeded=False)
+    path = _DURABILITY_PATHS["recoveryNonceState"]
+    lock_handle = None
+    try:
+        lock_handle = _acquire_remote_recovery_nonce_lock(path)
+        history, _head, _state = _load_remote_recovery_nonce_authority(
+            lock_handle, configured, allow_activation=True,
+            verify_installed_floor=False)
+        counters = dict(history["keyMaterialCounters"])
+        if domain not in counters and len(counters) >= \
+                _REMOTE_RECOVERY_NONCE_MAX_DOMAINS:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_domain_capacity_exceeded")
+        seeded_counter = max(int(counters.get(domain) or 0), remote_counter)
+        if int(counters.get(domain) or 0) == seeded_counter:
+            floor._seeded_counter = seeded_counter
+            return floor
+        counters[domain] = seeded_counter
+        verified = _commit_remote_recovery_nonce_authority(
+            lock_handle, history, counters)
+        if verified["keyMaterialCounters"].get(domain) != seeded_counter:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_state_unverified")
+        floor._seeded_counter = seeded_counter
+        return floor
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except (OSError, TypeError, ValueError,
+            argus_persistent_storage.PersistentStorageError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_failed") from exc
+    finally:
+        _release_remote_recovery_nonce_lock(lock_handle)
+
+
+def _validated_remote_recovery_nonce_authority(authority, *, seeded):
+    if not isinstance(
+            authority, _AuthenticatedRemoteRecoveryNonceAuthority) or \
+            authority._token is not _REMOTE_RECOVERY_AUTHORITY_PROCESS_TOKEN:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_authority_invalid")
+    counters = argus_remote_recovery.validate_nonce_authority({
+        "schemaVersion": argus_remote_recovery.NONCE_AUTHORITY_SCHEMA,
+        "keyMaterialCounters": authority._key_material_counters,
+    })["keyMaterialCounters"]
+    if not counters:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_authority_invalid")
+    if not seeded:
+        return counters
+    durable = authority._seeded_counters
+    if not isinstance(durable, dict) or any(
+            int(durable.get(domain) or 0) < counter
+            for domain, counter in counters.items()):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_unseeded")
+    return counters
+
+
+def _seed_authenticated_remote_recovery_nonce_authority(
+        authority, configured):
+    """Atomically merge every floor from one AES-authenticated latest pair."""
+    remote_counters = _validated_remote_recovery_nonce_authority(
+        authority, seeded=False)
+    path = _DURABILITY_PATHS["recoveryNonceState"]
+    lock_handle = None
+    try:
+        lock_handle = _acquire_remote_recovery_nonce_lock(path)
+        history, _head, _state = _load_remote_recovery_nonce_authority(
+            lock_handle, configured, allow_activation=True,
+            verify_installed_floor=False)
+        counters = dict(history["keyMaterialCounters"])
+        if len(set(counters) | set(remote_counters)) > \
+                _REMOTE_RECOVERY_NONCE_MAX_DOMAINS:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_domain_capacity_exceeded")
+        merged = dict(counters)
+        for domain, counter in remote_counters.items():
+            merged[domain] = max(int(merged.get(domain) or 0), counter)
+        if merged == counters:
+            verified = history
+        else:
+            verified = _commit_remote_recovery_nonce_authority(
+                lock_handle, history, merged)
+        if any(int(verified["keyMaterialCounters"].get(domain) or 0) <
+               counter for domain, counter in remote_counters.items()):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_state_unverified")
+        authority._seeded_counters = {
+            domain: verified["keyMaterialCounters"][domain]
+            for domain in remote_counters
+        }
+        return authority
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except (OSError, TypeError, ValueError,
+            argus_persistent_storage.PersistentStorageError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_failed") from exc
+    finally:
+        _release_remote_recovery_nonce_lock(lock_handle)
+
+
+def _reserve_remote_recovery_nonce(
+        key_id, *, authenticated_remote_floor=None):
+    """Durably reserve a nonce and snapshot its committed private authority.
+
+    The material-derived domain survives a key-ID rename.  The lock spans the
+    complete read/installed-sidecar check/modify/fsync/replace/final-readback
+    transaction.  A crash may consume a counter, but cannot return a nonce
+    before its reservation is durable.
+    """
+    identifier = argus_remote_recovery.validate_key_id(key_id)
+    configured = argus_remote_recovery.configured_keys()
+    current = configured.get("current") if isinstance(configured, dict) else None
+    if configured.get("status") != "configured" or not isinstance(
+            current, dict) or current.get("keyId") != identifier:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_current_key_required")
+    key = current.get("key")
+    domain = _remote_recovery_nonce_domain(key)
+    if authenticated_remote_floor is None:
+        supplied = []
+    elif isinstance(authenticated_remote_floor, (
+            _AuthenticatedRemoteRecoveryNonceFloor,
+            _AuthenticatedRemoteRecoveryNonceAuthority)):
+        supplied = [authenticated_remote_floor]
+    elif isinstance(authenticated_remote_floor, (list, tuple)) and all(
+            isinstance(item, (
+                _AuthenticatedRemoteRecoveryNonceFloor,
+                _AuthenticatedRemoteRecoveryNonceAuthority))
+            for item in authenticated_remote_floor):
+        supplied = list(authenticated_remote_floor)
+    else:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_bootstrap_invalid")
+    bootstraps = [
+        _validated_remote_recovery_nonce_floor(
+            floor, configured, seeded=True)
+        for floor in supplied
+        if isinstance(floor, _AuthenticatedRemoteRecoveryNonceFloor)
+    ]
+    authority_bootstraps = [
+        _validated_remote_recovery_nonce_authority(
+            authority, seeded=True)
+        for authority in supplied
+        if isinstance(authority, _AuthenticatedRemoteRecoveryNonceAuthority)
+    ]
+    path = _DURABILITY_PATHS["recoveryNonceState"]
+    lock_handle = None
+    try:
+        lock_handle = _acquire_remote_recovery_nonce_lock(path)
+        history, _head, _state = _load_remote_recovery_nonce_authority(
+            lock_handle, configured, allow_activation=False)
+        for bootstrap in bootstraps:
+            bootstrap_domain, bootstrap_counter = bootstrap
+            recorded_floor = history["keyMaterialCounters"].get(
+                bootstrap_domain)
+            if recorded_floor is None or recorded_floor < bootstrap_counter:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_nonce_bootstrap_rollback")
+        for authority_counters in authority_bootstraps:
+            if any(int(history["keyMaterialCounters"].get(domain) or 0) <
+                   counter for domain, counter in
+                   authority_counters.items()):
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_nonce_bootstrap_rollback")
+
+        counters = dict(history["keyMaterialCounters"])
+        if domain not in counters and len(counters) >= \
+                _REMOTE_RECOVERY_NONCE_MAX_DOMAINS:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_domain_capacity_exceeded")
+        counter = int(counters.get(domain) or 0)
+        if counter >= _REMOTE_RECOVERY_NONCE_MAX:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_exhausted")
+        counter += 1
+        counters[domain] = counter
+        reserved = _commit_remote_recovery_nonce_authority(
+            lock_handle, history, counters)
+        if reserved["keyMaterialCounters"].get(domain) != counter:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_state_unverified")
+        return _RemoteRecoveryNonceReservation(
+            counter.to_bytes(12, "big"),
+            reserved["keyMaterialCounters"])
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except (OSError, TypeError, ValueError,
+            argus_persistent_storage.PersistentStorageError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_nonce_reservation_failed") from exc
+    finally:
+        _release_remote_recovery_nonce_lock(lock_handle)
+
+
+def _next_remote_recovery_nonce(
+        key_id, *, authenticated_remote_floor=None):
+    """Return only the nonce from one durable private reservation."""
+    return _reserve_remote_recovery_nonce(
+        key_id,
+        authenticated_remote_floor=authenticated_remote_floor)._nonce
+
+
+class _RemoteRecoveryCheckpointError(RuntimeError):
+    """Payload-free fail-closed classification for recovery persistence."""
+
+
+def _persist_remote_recovery_sidecar_once(
+        checkpoint, *, checkpoint_path=None,
+        authenticated_remote_floor=None):
+    """Encrypt the exact verified checkpoint projection before WAL compaction."""
+    keys = argus_remote_recovery.configured_keys()
+    if keys["status"] == "not_configured":
+        result = {"status": "not_configured"}
+        _DURABLE_STATE["remoteRecoverySidecar"] = result
+        return result
+    if not isinstance(checkpoint, dict) or checkpoint.get("verified") is not True or \
+            checkpoint.get("readBackVerified") is not True:
+        raise ValueError("recovery_checkpoint_not_verified")
+    snapshot_hash = str(checkpoint.get("snapshotHash") or "").lower()
+    verified_at = str(checkpoint.get("verifiedAt") or "")
+    target_wal = checkpoint.get("includedWalSequence")
+    if not re.fullmatch(r"[0-9a-f]{64}", snapshot_hash) or \
+            isinstance(target_wal, bool) or not isinstance(target_wal, int) or \
+            target_wal <= 0:
+        raise ValueError("recovery_checkpoint_proof_invalid")
+    checkpoint_blob = argus_persistent_storage.load_checkpoint(
+        checkpoint_path or _OSINT_PERSIST_FILE, require_seal=True)
+    if argus_persistent_storage._canonical_sha256(
+            checkpoint_blob) != snapshot_hash:
+        raise ValueError("recovery_checkpoint_hash_mismatch")
+    durable = copy.deepcopy(checkpoint_blob.get("missionTickDurability") or {})
+    if durable.get("walAppliedSequence") != target_wal:
+        raise ValueError("recovery_checkpoint_wal_mismatch")
+    durable["remoteWalAppliedSequence"] = target_wal
+    marker = _validated_recovery_required_marker(checkpoint_blob)
+    if marker is None or marker["keyId"] != keys["current"]["keyId"]:
+        raise ValueError("recovery_checkpoint_marker_mismatch")
+    journal = argus_remote_journal.snapshot_journal_section(
+        events=checkpoint_blob.get("opsJournal") or [],
+        meta=checkpoint_blob.get("opsJournalMeta") or {},
+        compacted=checkpoint_blob.get("opsJournalCompacted") or [],
+        now_iso=verified_at)
+    identity = {"appVersion": _semantic_app_version(),
+                "buildSha": _backend_exact_sha()}
+    compact = argus_remote_journal.build_compact_readback_snapshot(
+        schema_version=argus_remote_journal.SCHEMA_V3,
+        generated_at=verified_at, as_of=verified_at,
+        build_identity=identity, ops_journal=journal["opsJournal"],
+        integrity_manifest=journal["integrityManifest"],
+        outcomes=checkpoint_blob.get("outcomes") or [],
+        mission_tick_durability=durable,
+        market_ledger_state_hash=checkpoint_blob.get(
+            "marketLedgerStateHash"),
+        chart_intelligence_state_hash=checkpoint_blob.get(
+            "chartIntelligenceStateHash"),
+        today_intelligence_state_hash=checkpoint_blob.get(
+            "todayIntelligenceStateHash"),
+        market_replay_state_hash=checkpoint_blob.get(
+            "marketReplayStateHash"))
+    current = keys["current"]
+    reservation = _reserve_remote_recovery_nonce(
+        current["keyId"],
+        authenticated_remote_floor=authenticated_remote_floor)
+    nonce_authority = {
+        "schemaVersion": argus_remote_recovery.NONCE_AUTHORITY_SCHEMA,
+        "keyMaterialCounters": reservation._key_material_counters,
+    }
+    payload = argus_remote_recovery.build_payload(
+        compact_readback=compact,
+        targets=_checkpoint_recovery_targets(checkpoint_blob, durable),
+        generated_at=verified_at, build_identity=identity,
+        source_checkpoint_hash=snapshot_hash,
+        checkpoint_id=marker["checkpointId"],
+        checkpoint_verified_at=verified_at,
+        ledger_base_commit_sha=_recovery_ledger_base(checkpoint_blob),
+        nonce_authority=nonce_authority)
+    envelope = argus_remote_recovery.encrypt_payload(
+        payload, current["key"], key_identifier=current["keyId"],
+        nonce=reservation._nonce)
+    sidecar = argus_remote_recovery.build_sidecar(compact, envelope)
+
+    def _verify_exact_sidecar(value):
+        try:
+            verified = argus_remote_recovery.validate_sidecar(value)
+            if verified != sidecar:
+                return False
+            argus_remote_recovery.validate_pair(
+                verified["readback"], verified["recovery"], current["key"],
+                key_identifier=current["keyId"])
+            return True
+        except argus_remote_recovery.RecoveryBundleError:
+            return False
+
+    write = argus_persistent_storage.atomic_write_json(
+        _REMOTE_RECOVERY_FILE, sidecar,
+        temp_directory=_DURABILITY_PATHS["tempDirectory"],
+        validator=_verify_exact_sidecar,
+        temp_label="recovery",
+        maximum_bytes=argus_remote_recovery.MAX_SIDECAR_BYTES)
+    if write.get("readBackVerified") is not True:
+        raise ValueError("recovery_sidecar_readback_unverified")
+    installed = _read_local_recovery_sidecar()
+    if not _verify_exact_sidecar(installed):
+        raise ValueError("recovery_sidecar_installed_pair_invalid")
+    result = {
+        "status": "verified", "generationId": envelope["generationId"],
+        "keyId": envelope["keyId"],
+        "ledgerBaseCommitSha": envelope["ledgerBaseCommitSha"],
+        "targetWalSequence": envelope["targetWalSequence"],
+        "compactReceiptHash": envelope["compactReceiptHash"],
+        "bundleHash": envelope["bundleHash"],
+        "readBackVerified": True,
+    }
+    _DURABLE_STATE["remoteRecoverySidecar"] = result
+    return result
+
+
+def _persist_remote_recovery_sidecar(
+        checkpoint, *, checkpoint_path=None,
+        authenticated_remote_floor=None):
+    """Make configured recovery failures terminal for checkpoint callers."""
+    _DURABLE_STATE["remoteRecoverySidecar"] = {"status": "generating"}
+    try:
+        return _persist_remote_recovery_sidecar_once(
+            checkpoint, checkpoint_path=checkpoint_path,
+            authenticated_remote_floor=authenticated_remote_floor)
+    except Exception as exc:
+        _DURABLE_STATE["remoteRecoverySidecar"] = {
+            "status": "failed", "errorClass": type(exc).__name__}
+        raise _RemoteRecoveryCheckpointError(
+            "remote_recovery_sidecar_failed") from exc
+
+
 def _osint_persist():
     token = _memory_operation_begin(
         "internal", "checkpoint_persist", known=True)
@@ -16589,6 +18360,14 @@ def _osint_persist_locked():
                 "walBytes": wal_state.get("bytes"),
             }, sample=post_wal_sample)
 
+        recovery_keys = argus_remote_recovery.configured_keys()
+        if recovery_keys.get("status") == "configured":
+            # Convert the unbounded historical per-aggregate map into the
+            # complete bounded allocator state before this keyed checkpoint is
+            # sealed.  The high-water scalar prevents sequence/idempotency
+            # reuse if an evicted aggregate identifier later reappears.
+            _bound_ops_sequence_allocator_state()
+
         # S2 preserves the exact pre-diagnostic reference/slice/copy semantics.
         # List slices and shallow dictionaries coexist with their authoritative
         # stores; only the canary/Soak controls are deliberately deep-copied.
@@ -16611,7 +18390,7 @@ def _osint_persist_locked():
             "soakControl": dict(_SOAK_CONTROL),
             "checkpointV2Stage1Control": copy.deepcopy(
                 _CHECKPOINT_V2_STAGE1_CONTROL),
-            "missions": _MISSIONS[-120:],
+            "missions": _MISSIONS[-300:],
             "missionWindows": _MISSION_WINDOWS[-240:],
             "forecasts": _FORECAST_LEDGER[-200:],
             "outcomes": _OUTCOME_LEDGER[-200:],
@@ -16619,9 +18398,25 @@ def _osint_persist_locked():
             "opsJournal": _OPS_JOURNAL[-400:],
             "opsJournalMeta": dict(_OPS_JOURNAL_META),
             "opsJournalCompacted": _OPS_JOURNAL_COMPACT[-40:],
+            "opsSequenceByAggregate": dict(_OPS_SEQ),
+            "postmortems": copy.deepcopy(_POSTMORTEMS[-30:]),
+            "periodicReports": copy.deepcopy(_PERIODIC_REPORTS[-12:]),
+            "challengerRuns": copy.deepcopy(_CHALLENGER_RUNS[-8:]),
+            "agentQueue": copy.deepcopy(_OSINT_AGENT_QUEUE),
             "remoteAck": dict(_REMOTE_ACK),
             "remoteJournalCycle": dict(_REMOTE_CYCLE),
         }
+        if recovery_keys.get("status") == "configured":
+            # This marker is sealed into the checkpoint before it can become
+            # authoritative.  It contains no key material; it prevents a
+            # keyed checkpoint from being reclassified as legacy if the
+            # encrypted sidecar or key configuration is later removed.
+            blob["remoteRecoveryRequired"] = {
+                "schemaVersion": argus_remote_recovery.SIDECAR_SCHEMA,
+                "mode": "encrypted_required",
+                "keyId": recovery_keys["current"]["keyId"],
+                "checkpointId": f"rcp-{os.urandom(16).hex()}",
+            }
         _memory_attribution_source_capture("S2", "reference_sections_assembled", {
             "topLevelKeys": len(blob),
             "directReferenceSectionCount": 1,
@@ -16863,6 +18658,7 @@ def _osint_persist_locked():
             allow_wal_compaction=allow_wal_compaction,
             compaction_sequence=verified_wal_sequence,
             build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha(),
+            post_verify=_persist_remote_recovery_sidecar,
             mission_window_id=(
                 _MISSION_TICK_CONTEXT.get("missionWindowId")))
         _memory_attribution_capture(
@@ -16939,6 +18735,8 @@ def _osint_persist_locked():
             "[legacy-checkpoint] write failed "
             f"stage={stage} errorClass={type(exc).__name__} "
             f"error={safe_message}")
+        if isinstance(exc, _RemoteRecoveryCheckpointError):
+            raise
         return {"verified": False, "errorClass": type(exc).__name__}
 
 
@@ -17101,6 +18899,12 @@ def _apply_mission_wal_record(record):
         _OPS_SEQ[key] = max(
             int(_OPS_SEQ.get(key) or 0),
             int(journal_event.get("sequence") or 0))
+        high_water_field = \
+            argus_remote_journal.OPS_SEQUENCE_HIGH_WATER_FIELD
+        if high_water_field in _OPS_JOURNAL_META:
+            _OPS_JOURNAL_META[high_water_field] = max(
+                int(_OPS_JOURNAL_META.get(high_water_field) or 0),
+                _OPS_SEQ[key])
     patch = payload.get("aggregatePatch") or {}
     patch_type = patch.get("type")
     patch_record = patch.get("record")
@@ -17152,6 +18956,9 @@ def _restore_mission_wal(after_sequence=0):
     for record in state["records"]:
         if record.get("kind") != "checkpoint_verified":
             _apply_mission_wal_record(record)
+    if argus_remote_journal.OPS_SEQUENCE_HIGH_WATER_FIELD in \
+            _OPS_JOURNAL_META:
+        _bound_ops_sequence_allocator_state()
     _DURABLE_STATE["missionWalCorrupt"] = state["corruptCount"]
     _DURABLE_STATE["missionWalReplayed"] = len([
         row for row in state["records"]
@@ -17160,22 +18967,1051 @@ def _restore_mission_wal(after_sequence=0):
     return state
 
 
+class _RemoteRecoveryRestoreError(ValueError):
+    """Safe, payload-free classification for cold-bootstrap failures."""
+
+
+def _remote_recovery_restore_failure(classification):
+    value = str(classification or "remote_recovery_invalid")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,95}", value):
+        value = "remote_recovery_invalid"
+    _DURABLE_STATE["remoteRecoveryError"] = value
+    raise _RemoteRecoveryRestoreError(value)
+
+
+def _response_bounded_json(response, maximum_bytes, classification):
+    encoded = bytearray()
+    try:
+        for chunk in response.iter_content(chunk_size=16 * 1024):
+            if not chunk:
+                continue
+            if len(encoded) + len(chunk) > maximum_bytes:
+                _remote_recovery_restore_failure(classification)
+            encoded.extend(chunk)
+        return json.loads(encoded.decode("utf-8"))
+    except _RemoteRecoveryRestoreError:
+        raise
+    except (TypeError, UnicodeError, json.JSONDecodeError):
+        _remote_recovery_restore_failure(classification)
+
+
+def _github_ledger_repository(raw_base):
+    """Return the exact GitHub repository named by one raw-content base."""
+    matched = re.fullmatch(
+        r"https://raw\.githubusercontent\.com/"
+        r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:/[A-Za-z0-9_./-]+)?",
+        str(raw_base or "").rstrip("/"))
+    if not matched:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_repository_invalid")
+    return matched.group(1), matched.group(2)
+
+
+def _bounded_ledger_commit_metadata(owner, repository, commit_sha):
+    """Fetch one immutable Git commit object with a strict response cap."""
+    commit = str(commit_sha or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_commit_invalid")
+    response = None
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{owner}/{repository}/git/commits/"
+            f"{commit}", timeout=(6, 15), stream=True,
+            headers={"Accept": "application/vnd.github+json"})
+        if response.status_code != 200:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_metadata_http_error")
+        encoded = bytearray()
+        for chunk in response.iter_content(chunk_size=4096):
+            if not chunk:
+                continue
+            if len(encoded) + len(chunk) > \
+                    _LEDGER_COMMIT_METADATA_MAX_BYTES:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_commit_metadata_oversized")
+            encoded.extend(chunk)
+        try:
+            value = json.loads(encoded.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_metadata_invalid") from exc
+        if not isinstance(value, dict) or str(value.get("sha") or "").lower() \
+                != commit or not isinstance(value.get("parents"), list):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_metadata_invalid")
+        parents = []
+        for parent in value["parents"]:
+            parent_sha = (str(parent.get("sha") or "").lower()
+                          if isinstance(parent, dict) else "")
+            if not re.fullmatch(r"[0-9a-f]{40}", parent_sha):
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_commit_metadata_invalid")
+            parents.append(parent_sha)
+        return {"sha": commit, "parents": parents}
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except Exception as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_commit_metadata_transport_error") from exc
+    finally:
+        if response is not None:
+            response.close()
+
+
+def _verify_authenticated_ledger_commit_path(
+        ledger_base_commit_sha, exact_commit_sha, *, owner, repository):
+    """Prove authenticated base C is on one bounded linear path to exact X.
+
+    ``ledger_base_commit_sha`` is accepted only after AES-GCM pair validation
+    by each caller.  GitHub's immutable Git-object API independently binds the
+    exact pinned/receipt commit X to that C.  Merge commits are rejected so a
+    sibling cannot be smuggled in through second-parent ancestry, and the
+    finite traversal makes an old replay fail closed instead of causing an
+    unbounded boot or ACK operation.
+    """
+    base = str(ledger_base_commit_sha or "").lower()
+    exact = str(exact_commit_sha or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", base) or not re.fullmatch(
+            r"[0-9a-f]{40}", exact):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_commit_invalid")
+    current = exact
+    visited = set()
+    for distance in range(_LEDGER_ANCESTRY_MAX_COMMITS):
+        if current in visited:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_metadata_invalid")
+        visited.add(current)
+        metadata = _bounded_ledger_commit_metadata(
+            owner, repository, current)
+        parents = metadata["parents"]
+        if len(parents) > 1:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_multiparent")
+        if current == base:
+            return {
+                "status": "verified", "ledgerBaseCommitSha": base,
+                "exactCommitSha": exact, "distance": distance,
+            }
+        if not parents:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_nonancestor")
+        if distance + 1 >= _LEDGER_ANCESTRY_MAX_COMMITS:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_stale_replay")
+        current = parents[0]
+    raise argus_remote_recovery.RecoveryBundleError(
+        "recovery_ledger_commit_stale_replay")
+
+
+def _pinned_ledger_restore_base():
+    """Resolve the moving ledger ref once and return its immutable base+SHA."""
+    raw = str(_LEDGER_RAW_BASE or "").rstrip("/")
+    matched = re.fullmatch(
+        r"https://raw\.githubusercontent\.com/"
+        r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/"
+        r"([A-Za-z0-9_.-]+)(/[A-Za-z0-9_./-]+)?",
+        raw)
+    if not matched:
+        _remote_recovery_restore_failure("ledger_raw_base_invalid")
+    owner, repository, ref, suffix = matched.groups()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+        sha = ref.lower()
+    else:
+        response = None
+        try:
+            response = requests.get(
+                f"https://api.github.com/repos/{owner}/{repository}/commits/"
+                f"{ref}", timeout=(6, 15), stream=True,
+                headers={"Accept": "application/vnd.github+json"})
+            if response.status_code != 200:
+                _remote_recovery_restore_failure(
+                    "ledger_ref_resolution_http_error")
+            value = _response_bounded_json(
+                response, _LEDGER_REF_RESPONSE_MAX_BYTES,
+                "ledger_ref_resolution_unreadable")
+            sha = str(value.get("sha") if isinstance(value, dict) else "").lower()
+            if not re.fullmatch(r"[0-9a-f]{40}", sha):
+                _remote_recovery_restore_failure(
+                    "ledger_ref_resolution_invalid")
+        except _RemoteRecoveryRestoreError:
+            raise
+        except Exception:
+            _remote_recovery_restore_failure(
+                "ledger_ref_resolution_transport_error")
+        finally:
+            if response is not None:
+                response.close()
+    return {
+        "base": (f"https://raw.githubusercontent.com/{owner}/{repository}/{sha}"
+                 f"{suffix or ''}"),
+        "commitSha": sha,
+        "owner": owner,
+        "repository": repository,
+        "pathPrefix": str(suffix or "").strip("/"),
+    }
+
+
+def _fetch_pinned_recovery_object(url, maximum_bytes, name):
+    """Fetch one optional immutable object without deciding pair semantics."""
+    response = None
+    try:
+        try:
+            response = requests.get(
+                url, timeout=_DURABLE_RESTORE_HTTP_TIMEOUT, stream=True)
+        except Exception:
+            return {"status": "transport_error", "value": None}
+        if response.status_code == 404:
+            return {"status": "absent", "value": None}
+        if response.status_code != 200:
+            return {"status": "http_error", "value": None}
+        value = _response_bounded_json(
+            response, maximum_bytes, f"remote_{name}_unreadable_or_oversized")
+        return {"status": "present", "value": value}
+    finally:
+        if response is not None:
+            response.close()
+
+
+def _recovery_key_for_envelope(envelope, configured):
+    """Select only the key named by authenticated envelope metadata."""
+    verified = argus_remote_recovery.validate_envelope(envelope)
+    identifier = verified["keyId"]
+    for slot in ("current", "previous"):
+        candidate = configured.get(slot)
+        if isinstance(candidate, dict) and candidate.get("keyId") == identifier:
+            return candidate
+    raise argus_remote_recovery.RecoveryBundleError(
+        "recovery_key_id_unavailable")
+
+
+def _read_local_recovery_sidecar():
+    """Read one bounded local sidecar without exposing encrypted contents."""
+    descriptor = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(_REMOTE_RECOVERY_FILE, flags)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > \
+                argus_remote_recovery.MAX_SIDECAR_BYTES:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_sidecar_invalid")
+        encoded = bytearray()
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            if len(encoded) + len(chunk) > \
+                    argus_remote_recovery.MAX_SIDECAR_BYTES:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_local_sidecar_invalid")
+            encoded.extend(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size,
+                before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_dev, after.st_ino, after.st_size,
+                after.st_mtime_ns, after.st_ctime_ns):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_sidecar_changed")
+        sidecar = json.loads(encoded.decode("utf-8"))
+        return argus_remote_recovery.validate_sidecar(sidecar)
+    except FileNotFoundError as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_sidecar_missing") from exc
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_sidecar_unreadable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _validated_recovery_required_marker(checkpoint_blob):
+    """Return an exact sealed feature marker, or ``None`` for true legacy."""
+    marker = checkpoint_blob.get("remoteRecoveryRequired")
+    if marker is None:
+        return None
+    if not isinstance(marker, dict) or set(marker) != {
+            "schemaVersion", "mode", "keyId", "checkpointId"} or marker.get(
+                "schemaVersion") != argus_remote_recovery.SIDECAR_SCHEMA or \
+            marker.get("mode") != "encrypted_required":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_required_marker_invalid")
+    identifier = argus_remote_recovery.validate_key_id(marker.get("keyId"))
+    checkpoint_id = str(marker.get("checkpointId") or "")
+    if not argus_remote_recovery.CHECKPOINT_ID_RE.fullmatch(checkpoint_id):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_required_marker_invalid")
+    return {
+        "schemaVersion": argus_remote_recovery.SIDECAR_SCHEMA,
+        "mode": "encrypted_required",
+        "keyId": identifier,
+        "checkpointId": checkpoint_id,
+    }
+
+
+def _migrate_legacy_local_recovery(
+        checkpoint_blob, configured, *, authenticated_local_handoff=None):
+    """One-time sealed legacy -> encrypted-required local migration.
+
+    The rewritten checkpoint is never returned to the restore applicator until
+    its current-key sidecar has survived atomic replacement, read-back, tag
+    verification, and exact checkpoint projection verification.
+    """
+    current = configured.get("current")
+    if not isinstance(current, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_current_key_unavailable")
+    staged_checkpoint = None
+    staged_lock = None
+    try:
+        migrated = copy.deepcopy(checkpoint_blob)
+        migrated_sequences, migrated_meta = \
+            argus_remote_journal.bounded_sequence_allocator_state(
+                sequences=migrated.get("opsSequenceByAggregate") or {},
+                events=migrated.get("opsJournal") or [],
+                meta=migrated.get("opsJournalMeta") or {})
+        migrated["opsSequenceByAggregate"] = migrated_sequences
+        migrated["opsJournalMeta"] = migrated_meta
+        migrated["remoteRecoveryRequired"] = {
+            "schemaVersion": argus_remote_recovery.SIDECAR_SCHEMA,
+            "mode": "encrypted_required",
+            "keyId": current["keyId"],
+            "checkpointId": f"rcp-{os.urandom(16).hex()}",
+        }
+        durability = migrated.get("missionTickDurability")
+        target_wal = (durability.get("walAppliedSequence")
+                      if isinstance(durability, dict) else None)
+        if isinstance(target_wal, bool) or not isinstance(target_wal, int) or \
+                target_wal <= 0:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_legacy_migration_wal_invalid")
+        # Build and authenticate the new generation away from the canonical
+        # checkpoint first.  The encrypted sidecar is installed before the
+        # final checkpoint rename, so a crash can leave only either the old
+        # legacy authority or the complete new checkpoint/sidecar pair.  An
+        # interrupted sidecar-first attempt is safe to overwrite on the next
+        # migration because nonce reservation authenticates its installed
+        # floor before allocating a new value.
+        staged_checkpoint = os.path.join(
+            _DURABILITY_PATHS["tempDirectory"],
+            (f"{os.path.basename(_OSINT_PERSIST_FILE)}.{os.getpid()}."
+             f"{os.urandom(16).hex()}.recovery-migration-checkpoint"))
+        staged_lock = staged_checkpoint + ".writer.lock"
+        write = argus_persistent_storage.write_checkpoint(
+            staged_checkpoint, migrated,
+            temp_directory=_DURABILITY_PATHS["tempDirectory"])
+        _persist_remote_recovery_sidecar({
+            **write,
+            "verified": True,
+            "readBackVerified": write.get("readBackVerified") is True,
+            "includedWalSequence": target_wal,
+        }, checkpoint_path=staged_checkpoint)
+        staged = argus_persistent_storage.load_checkpoint(
+            staged_checkpoint, require_seal=True)
+        _verify_local_recovery_sidecar(
+            staged, allow_legacy_migration=False)
+        os.replace(staged_checkpoint, _OSINT_PERSIST_FILE)
+        staged_checkpoint = None
+        argus_persistent_storage._fsync_directory(
+            os.path.dirname(os.path.abspath(_OSINT_PERSIST_FILE)))
+        installed = argus_persistent_storage.load_checkpoint(
+            _OSINT_PERSIST_FILE, require_seal=True)
+        verified = _verify_local_recovery_sidecar(
+            installed, allow_legacy_migration=False,
+            authenticated_local_handoff=authenticated_local_handoff)
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except Exception as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_migration_failed") from exc
+    finally:
+        for candidate in (staged_checkpoint, staged_lock):
+            if candidate:
+                try:
+                    os.unlink(candidate)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    # A leftover staging generation is never authoritative;
+                    # startup only reads the canonical checkpoint path.
+                    pass
+    _DURABLE_STATE["remoteRecoveryMigration"] = {
+        "status": "verified", "keyId": current["keyId"],
+        "targetWalSequence": target_wal,
+    }
+    return verified
+
+
+def _verify_local_recovery_sidecar(
+        checkpoint_blob, *, allow_legacy_migration=True,
+        authenticated_local_handoff=None):
+    """Authenticate a keyed local checkpoint before it becomes authority."""
+    if authenticated_local_handoff is not None and (
+            not isinstance(authenticated_local_handoff, list) or
+            authenticated_local_handoff):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_evidence_handoff_invalid")
+    marker = _validated_recovery_required_marker(checkpoint_blob)
+    configured = argus_remote_recovery.configured_keys()
+    if configured.get("status") == "not_configured":
+        if os.path.lexists(_REMOTE_RECOVERY_FILE) or marker is not None:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_key_not_configured")
+        _DURABLE_STATE["remoteRecoveryLocal"] = {
+            "status": "not_configured_legacy"}
+        return checkpoint_blob
+    if marker is None:
+        if not allow_legacy_migration:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_required_marker_missing")
+        return _migrate_legacy_local_recovery(
+            checkpoint_blob, configured,
+            authenticated_local_handoff=authenticated_local_handoff)
+    sidecar = _read_local_recovery_sidecar()
+    envelope = sidecar["recovery"]
+    if marker["keyId"] != envelope.get("keyId"):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_required_marker_key_mismatch")
+    if marker["checkpointId"] != envelope.get("checkpointId"):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_required_marker_checkpoint_mismatch")
+    selected = _recovery_key_for_envelope(envelope, configured)
+    payload = argus_remote_recovery.validate_pair(
+        sidecar["readback"], envelope, selected["key"],
+        key_identifier=selected["keyId"])
+    checkpoint_hash = argus_persistent_storage._canonical_sha256(
+        checkpoint_blob)
+    if payload.get("sourceCheckpointHash") != checkpoint_hash:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_checkpoint_hash_mismatch")
+    if payload.get("checkpointId") != marker["checkpointId"]:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_checkpoint_identity_mismatch")
+    raw_durability = checkpoint_blob.get("missionTickDurability")
+    target_wal = payload["targetWalSequence"]
+    if not isinstance(raw_durability, dict) or \
+            raw_durability.get("walAppliedSequence") != target_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_checkpoint_wal_mismatch")
+    export_durability = copy.deepcopy(raw_durability)
+    export_durability["remoteWalAppliedSequence"] = target_wal
+    exported_targets = _checkpoint_recovery_targets(
+        checkpoint_blob, export_durability)
+    for target in argus_remote_recovery.TARGET_KEYS:
+        if exported_targets[target] != payload["targets"][target]:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_checkpoint_target_mismatch")
+    prior_provenance = checkpoint_blob.get("remoteRecoveryProvenance")
+    cycle = checkpoint_blob.get("remoteJournalCycle")
+    ledger_commit = (
+        prior_provenance.get("ledgerCommitSha")
+        if isinstance(prior_provenance, dict) else None)
+    if not re.fullmatch(r"[0-9a-f]{40}", str(ledger_commit or "").lower()):
+        remote_commit = (cycle.get("remoteCommitSha")
+                         if isinstance(cycle, dict) else None)
+        receipt_commit = (cycle.get("receiptCommitSha")
+                          if isinstance(cycle, dict) else None)
+        normalized_remote = str(remote_commit or "").lower()
+        ledger_commit = (normalized_remote
+                         if remote_commit == receipt_commit and re.fullmatch(
+                             r"[0-9a-f]{40}", normalized_remote) else None)
+    if ledger_commit is not None and not re.fullmatch(
+            r"[0-9a-f]{40}", str(ledger_commit).lower()):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_ledger_commit_invalid")
+    if authenticated_local_handoff is not None:
+        authenticated_local_handoff.append(_AuthenticatedLocalRecoveryPair(
+            sidecar["readback"], payload, envelope, selected,
+            str(ledger_commit).lower() if ledger_commit is not None else None))
+    verified = copy.deepcopy(checkpoint_blob)
+    verified["remoteRecoveryProvenance"] = {
+        "schemaVersion": envelope["schemaVersion"],
+        "restoreKind": "local_sidecar",
+        "buildIdentity": copy.deepcopy(payload["buildIdentity"]),
+        "targetWalSequence": payload["targetWalSequence"],
+        "compactReceiptHash": payload["compactReceiptHash"],
+        "sourceCheckpointHash": payload["sourceCheckpointHash"],
+        "checkpointVerifiedAt": payload["checkpointVerifiedAt"],
+        "checkpointId": payload["checkpointId"],
+        "bundleHash": envelope["bundleHash"],
+        "generationId": envelope["generationId"],
+        "keyId": envelope["keyId"],
+        "ledgerBaseCommitSha": envelope["ledgerBaseCommitSha"],
+        "ledgerCommitSha": (str(ledger_commit).lower()
+                            if ledger_commit is not None else None),
+        "walAllocatorFloor": payload["targetWalSequence"],
+    }
+    _DURABLE_STATE["remoteRecoveryLocal"] = {
+        "status": "verified", "keyId": envelope["keyId"],
+        "generationId": envelope["generationId"],
+        "targetWalSequence": payload["targetWalSequence"],
+    }
+    return verified
+
+
+def _validated_local_recovery_pair(evidence, checkpoint_blob, configured):
+    """Validate a process-private local pair handed off by exact restore."""
+    if not isinstance(evidence, _AuthenticatedLocalRecoveryPair) or \
+            evidence._token is not _LOCAL_RECOVERY_PAIR_PROCESS_TOKEN or not \
+            isinstance(checkpoint_blob, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_evidence_invalid")
+    selected = evidence._selected
+    available = [candidate for candidate in (
+        configured.get("current"), configured.get("previous"))
+        if isinstance(candidate, dict)] if isinstance(configured, dict) else []
+    if not isinstance(selected, dict) or not any(
+            candidate.get("keyId") == selected.get("keyId") and
+            isinstance(candidate.get("key"), bytes) and
+            isinstance(selected.get("key"), bytes) and
+            hmac.compare_digest(candidate["key"], selected["key"])
+            for candidate in available):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_evidence_key_unavailable")
+    payload = argus_remote_recovery.validate_pair(
+        evidence._readback, evidence._envelope,
+        selected["key"], key_identifier=selected["keyId"])
+    if payload != evidence._payload:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_evidence_changed")
+    target_wal = payload["targetWalSequence"]
+    durability = checkpoint_blob.get("missionTickDurability")
+    if not isinstance(durability, dict) or durability.get(
+            "walAppliedSequence") != target_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_evidence_wal_mismatch")
+    exported_durability = copy.deepcopy(durability)
+    exported_durability["remoteWalAppliedSequence"] = target_wal
+    if _checkpoint_recovery_targets(
+            checkpoint_blob, exported_durability) != payload["targets"]:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_evidence_target_mismatch")
+    provenance = checkpoint_blob.get("remoteRecoveryProvenance")
+    if not isinstance(provenance, dict) or provenance.get(
+            "targetWalSequence") != target_wal or provenance.get(
+                "ledgerBaseCommitSha") != payload["ledgerBaseCommitSha"]:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_evidence_provenance_invalid")
+    return evidence
+
+
+def _local_recovery_pair_has_pinned_provenance(
+        local_evidence, remote_evidence, pinned_ledger):
+    """Prove local authenticated base is on the already-pinned ledger line."""
+    local_base = local_evidence._payload["ledgerBaseCommitSha"]
+    ledger_commit = local_evidence._ledger_commit
+    if ledger_commit != local_base:
+        return False
+    if isinstance(remote_evidence, _AuthenticatedPinnedRemoteRecoveryEvidence) \
+            and local_base == remote_evidence._payload[
+                "ledgerBaseCommitSha"]:
+        return True
+    try:
+        _verify_authenticated_ledger_commit_path(
+            local_base, pinned_ledger["commitSha"],
+            owner=pinned_ledger["owner"],
+            repository=pinned_ledger["repository"])
+        return True
+    except argus_remote_recovery.RecoveryBundleError:
+        return False
+
+
+def _select_keyed_recovery_boot_authority(
+        checkpoint_blob, local_evidence, remote_evidence, pinned_ledger,
+        configured):
+    """Deterministically select local or exact pinned authority by WAL target."""
+    local = _validated_local_recovery_pair(
+        local_evidence, checkpoint_blob, configured)
+    if isinstance(remote_evidence, _AuthenticatedPinnedLegacyReadbackEvidence):
+        legacy = _validated_pinned_legacy_readback_evidence(
+            remote_evidence, pinned_ledger)
+        if not _local_recovery_pair_has_pinned_provenance(
+                local, legacy, pinned_ledger):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_authority_provenance_invalid")
+        local_wal = local._payload["targetWalSequence"]
+        legacy_wal = (legacy._readback.get(
+            "missionTickDurability") or {}).get("walAppliedSequence")
+        if legacy_wal > local_wal:
+            # The current immutable public ledger is ahead, but it has no
+            # encrypted private target map.  Never resurrect the older local
+            # checkpoint or fall back to the plaintext full snapshot.
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_pinned_legacy_newer_than_local")
+        if legacy_wal == local_wal and legacy._readback.get(
+                "receiptHash") != local._payload.get("compactReceiptHash"):
+            # Same-WAL, different compact identities are split-brain evidence;
+            # neither timestamp nor local availability breaks the tie.
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_pinned_legacy_receipt_mismatch")
+        return "local"
+    remote = _validated_pinned_remote_recovery_evidence(
+        remote_evidence, pinned_ledger, configured)
+    local_wal = local._payload["targetWalSequence"]
+    remote_wal = remote._payload["targetWalSequence"]
+    if remote_wal > local_wal:
+        return "remote"
+    coherent = _local_recovery_pair_has_pinned_provenance(
+        local, remote, pinned_ledger)
+    if local_wal > remote_wal:
+        if not coherent:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_authority_provenance_invalid")
+        return "local"
+    if not coherent:
+        return "remote"
+    # At one WAL target, prefer local only for the exact same authenticated
+    # recovery state.  Different same-sequence bodies are split-brain evidence;
+    # the immutable remote pair wins deterministically.
+    if local._payload["targetStateHash"] == remote._payload[
+            "targetStateHash"] and local._payload["targets"] == \
+            remote._payload["targets"] and local._payload[
+                "compactReceiptHash"] == remote._payload[
+                    "compactReceiptHash"]:
+        return "local"
+    return "remote"
+
+
+def _overlay_remote_recovery(
+        full_blob, pinned_base, pinned_commit_sha, *,
+        ledger_owner=None, ledger_repository=None,
+        nonce_floor_handoff=None, authenticated_pinned_evidence=None):
+    """Overlay a verified bounded recovery bundle onto a verified full blob.
+
+    A missing bundle preserves the legacy full-only bootstrap contract.  Once
+    the recovery object exists, every transport, size, JSON, and proof error is
+    terminal for this remote bootstrap: falling back to the older full object
+    could resurrect state behind an already acknowledged WAL cursor.
+    """
+    try:
+        if nonce_floor_handoff is not None and (
+                not isinstance(nonce_floor_handoff, list) or
+                nonce_floor_handoff):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_nonce_bootstrap_handoff_invalid")
+        configured = argus_remote_recovery.configured_keys()
+        if ledger_owner is None or ledger_repository is None:
+            ledger_owner, ledger_repository = \
+                _github_ledger_repository(pinned_base)
+        if authenticated_pinned_evidence is not None:
+            if configured.get("status") != "configured":
+                _remote_recovery_restore_failure(
+                    "recovery_key_not_configured")
+            evidence = _validated_pinned_remote_recovery_evidence(
+                authenticated_pinned_evidence, {
+                    "base": pinned_base, "commitSha": pinned_commit_sha,
+                    "owner": ledger_owner, "repository": ledger_repository,
+                }, configured)
+            readback = evidence._readback
+            bundle = evidence._envelope
+            selected = evidence._selected
+            authenticated_payload = evidence._payload
+            ancestry = evidence._ancestry
+            authenticated_nonce_authority = evidence
+        else:
+            readback_result = _fetch_pinned_recovery_object(
+                f"{pinned_base}{_REMOTE_READBACK_PATH}",
+                _DURABLE_READBACK_MAX_BYTES, "readback")
+            recovery_result = _fetch_pinned_recovery_object(
+                f"{pinned_base}{_REMOTE_RECOVERY_PATH}",
+                _DURABLE_RECOVERY_MAX_BYTES, "recovery")
+
+            if recovery_result["status"] == "absent":
+                if configured.get("status") == "not_configured":
+                    status = "absent_legacy_full_only"
+                else:
+                    _remote_recovery_restore_failure(
+                        "remote_recovery_missing_for_readback")
+                _DURABLE_STATE["remoteRecoveryOverlay"] = {"status": status}
+                return full_blob
+
+            if recovery_result["status"] != "present":
+                _remote_recovery_restore_failure(
+                    f"remote_recovery_{recovery_result['status']}")
+            if configured.get("status") != "configured":
+                _remote_recovery_restore_failure(
+                    "recovery_key_not_configured")
+            if readback_result["status"] != "present":
+                _remote_recovery_restore_failure(
+                    f"remote_recovery_pair_readback_"
+                    f"{readback_result['status']}")
+
+            remote_sidecar = recovery_result["value"]
+            readback = readback_result["value"]
+            if not isinstance(remote_sidecar, dict) or remote_sidecar.get(
+                    "schemaVersion") != argus_remote_recovery.SIDECAR_SCHEMA:
+                _remote_recovery_restore_failure("recovery_sidecar_required")
+            sidecar = argus_remote_recovery.validate_sidecar(remote_sidecar)
+            if sidecar["readback"] != readback:
+                _remote_recovery_restore_failure(
+                    "recovery_pair_readback_mismatch")
+            bundle = sidecar["recovery"]
+            selected = _recovery_key_for_envelope(bundle, configured)
+            authenticated_payload = argus_remote_recovery.validate_pair(
+                readback, bundle, selected["key"],
+                key_identifier=selected["keyId"])
+            ancestry = _verify_authenticated_ledger_commit_path(
+                authenticated_payload["ledgerBaseCommitSha"],
+                pinned_commit_sha, owner=ledger_owner,
+                repository=ledger_repository)
+            authenticated_nonce_authority = \
+                _authenticated_remote_recovery_nonce_authority(
+                    bundle, authenticated_payload, configured, selected)
+        merged = argus_remote_recovery.overlay_verified_bundle(
+            full_blob, bundle, selected["key"],
+            key_identifier=selected["keyId"],
+            ledger_commit_sha=pinned_commit_sha)
+        # These compact hashes describe the producer checkpoint, but their
+        # corresponding large state bodies are intentionally outside the
+        # recovery payload.  Keep each stale full body paired with its own
+        # hash; applying only a newer hash would manufacture a false verified
+        # body/hash pair.
+        merged["remoteRecoveryRequired"] = {
+            "schemaVersion": argus_remote_recovery.SIDECAR_SCHEMA,
+            "mode": "encrypted_required",
+            # A remote bundle may legitimately decrypt with the previous key.
+            # The newly sealed local checkpoint is paired below with a freshly
+            # encrypted sidecar, which always uses current.
+            "keyId": configured["current"]["keyId"],
+            "checkpointId": f"rcp-{os.urandom(16).hex()}",
+        }
+        provenance = merged.get("remoteRecoveryProvenance") or {}
+        provenance.update({
+            "keyId": bundle.get("keyId"),
+            "generationId": bundle.get("generationId"),
+            "ledgerBaseCommitSha": bundle.get("ledgerBaseCommitSha"),
+            "ledgerCommitDistance": ancestry["distance"],
+            "readbackReceiptHash": readback.get("receiptHash"),
+            "restoreKind": "pinned_remote_pair",
+            "walAllocatorFloor": bundle.get("targetWalSequence"),
+        })
+        merged["remoteRecoveryProvenance"] = provenance
+        restored_at = _ai_now_iso()
+        manifest_hash = (readback.get("integrityManifest") or {}).get(
+            "manifestHash")
+        events = readback.get("opsJournal") or []
+        outcomes = readback.get("outcomes") or []
+        merged["remoteJournalCycle"] = {
+            **copy.deepcopy(merged.get("remoteJournalCycle") or {}),
+            "remoteCommitSha": pinned_commit_sha,
+            "committedAt": readback.get("generatedAt") or readback.get("asOf"),
+            "readBackAt": restored_at,
+            "readBackVerified": True,
+            "walReadBackVerified": True,
+            "expectedHash": manifest_hash,
+            "actualHash": manifest_hash,
+            "remoteWalAppliedSequence": bundle.get("targetWalSequence"),
+            "verifiedWalSequence": bundle.get("targetWalSequence"),
+            "compactReceiptHash": readback.get("receiptHash"),
+            "pendingCount": 0,
+            "acknowledgedCount": len(events),
+            "remoteDurabilityState": "verified",
+            "receiptCommitSha": pinned_commit_sha,
+            "receiptCreatedAt": readback.get("generatedAt") or
+            readback.get("asOf"),
+            "receiptVerifiedAt": restored_at,
+            "receiptAgeSeconds": 0,
+            "receiptAttempts": 1,
+            "receiptErrorClass": None,
+            "errorClass": None,
+            "walErrorClass": None,
+        }
+        merged["remoteAck"] = {
+            **copy.deepcopy(merged.get("remoteAck") or {}),
+            "ackedKeys": [str(row.get("idempotencyKey")) for row in events
+                           if row.get("idempotencyKey")][-800:],
+            "lastVerifiedRemoteAckAt": restored_at if events else None,
+            "lastReceiptStatus": "verified",
+            "remoteGeneratedAt": readback.get("generatedAt") or
+            readback.get("asOf"),
+            "legacyRemote": False,
+            "readbackFailures": 0,
+            "outcomeAckedIds": [str(row.get("id")) for row in outcomes
+                                if row.get("id")][-400:],
+            "lastVerifiedOutcomeReadBackAt": (
+                restored_at if outcomes else None),
+        }
+        target_wal = bundle.get("targetWalSequence")
+        # The pinned envelope has passed exact-pair AES-GCM authentication.
+        # Atomically import every carried material-domain counter before the
+        # new local checkpoint or current-key ciphertext can become
+        # authoritative.  Only this process-private capability crosses into
+        # the producer; no domain/counter enters restored public state.
+        _seed_authenticated_remote_recovery_nonce_authority(
+            authenticated_nonce_authority, configured)
+        if nonce_floor_handoff is not None:
+            nonce_floor_handoff.append(authenticated_nonce_authority)
+        _DURABLE_STATE["remoteRecoveryOverlay"] = {
+            "status": "verified",
+            "schemaVersion": bundle.get("schemaVersion"),
+            "targetWalSequence": target_wal,
+            "ledgerCommitSha": pinned_commit_sha,
+            "keyId": bundle.get("keyId"),
+        }
+        _DURABLE_STATE.pop("remoteRecoveryError", None)
+        return merged
+    except argus_remote_recovery.RecoveryBundleError as exc:
+        _remote_recovery_restore_failure(exc.classification)
+
+
+_RESTORE_TRANSACTION_GLOBALS = (
+    "_OSINT_TERM_OVERLAY", "_OSINT_MEMORY", "_OSINT_URL_CACHE",
+    "_OSINT_CANARY_LAST", "_OSINT_RPS_HISTORY", "_OSINT_BASELINE_RUNS",
+    "_OSINT_BENCHMARK_RUNS", "_FORMAL_BENCHMARK",
+    "_FORMAL_BENCHMARK_V2", "_FOUNDATION_JOBS", "_SOAK_HISTORY",
+    "_SOAK_CONTROL", "_CHECKPOINT_V2_STAGE1_CONTROL", "_STARTUP", "_SOAK",
+    "_MISSIONS", "_MISSION_WINDOWS", "_FORECAST_LEDGER",
+    "_OUTCOME_LEDGER", "_INCIDENTS", "_POSTMORTEMS",
+    "_PERIODIC_REPORTS", "_CHALLENGER_RUNS", "_OSINT_AGENT_QUEUE",
+    "_COST_POLICY", "_MARKET_LEDGER", "_CHART_INTELLIGENCE",
+    "_TODAY_INTELLIGENCE", "_MARKET_REPLAY", "_VERIFIED_VIEW_SNAPSHOTS",
+    "_ASSET_CHART_REPORTS", "_OPS_JOURNAL", "_OPS_JOURNAL_META",
+    "_OPS_JOURNAL_COMPACT", "_OPS_SEQ", "_REMOTE_ACK", "_REMOTE_CYCLE",
+    "_MISSION_BATCH_STATE", "_REMOTE_RECEIPT_QUEUE", "_DURABLE_STATE",
+)
+
+
+def _restore_transaction_snapshot():
+    return {name: copy.deepcopy(globals()[name])
+            for name in _RESTORE_TRANSACTION_GLOBALS}
+
+
+def _restore_transaction_rollback(snapshot):
+    for name, saved in snapshot.items():
+        current = globals().get(name)
+        if isinstance(current, list) and isinstance(saved, list):
+            current[:] = saved
+        elif isinstance(current, dict) and isinstance(saved, dict):
+            current.clear()
+            current.update(saved)
+        else:
+            globals()[name] = saved
+
+
+def _rollback_remote_recovery_wal_floor(change):
+    """Undo only the exact cold-recovery anchor appended by this restore."""
+    if not isinstance(change, dict) or change.get("appended") is not True:
+        return True
+    path = _MISSION_WAL_FILE
+    before_bytes = int(change.get("beforeBytes") or 0)
+    after_bytes = int(change.get("afterBytes") or 0)
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) != after_bytes:
+            raise OSError("recovery_wal_changed_before_rollback")
+        state = argus_tick_durability.read_valid_wal(path)
+        matches = [row for row in (state.get("records") or [])
+                   if row.get("recordHash") == change.get("anchorHash") and
+                   int(row.get("sequence") or 0) ==
+                   int(change.get("targetWalSequence") or 0)]
+        if int(state.get("corruptCount") or 0) != 0 or len(matches) != 1 or \
+                int(state.get("maximumSequence") or 0) != int(
+                    change.get("targetWalSequence") or 0):
+            raise OSError("recovery_wal_anchor_not_exclusive")
+        if change.get("beforeExists") is True:
+            with open(path, "r+b") as handle:
+                handle.truncate(before_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+        else:
+            os.unlink(path)
+        argus_persistent_storage._fsync_directory(
+            os.path.dirname(os.path.abspath(path)))
+        if change.get("beforeExists") is True:
+            restored = argus_tick_durability.read_valid_wal(path)
+            if int(restored.get("bytes") or 0) != before_bytes or \
+                    int(restored.get("corruptCount") or 0) != 0 or \
+                    int(restored.get("maximumSequence") or 0) != int(
+                        change.get("beforeMaximum") or 0):
+                raise OSError("recovery_wal_rollback_readback_failed")
+        elif os.path.exists(path):
+            raise OSError("recovery_wal_rollback_unlink_failed")
+        return True
+    except Exception as exc:
+        raise _RemoteRecoveryRestoreError(
+            "recovery_wal_floor_rollback_failed") from exc
+
+
+def _seed_remote_recovery_wal_floor(blob):
+    """Materialize an authenticated allocator floor on a cold empty disk."""
+    provenance = blob.get("remoteRecoveryProvenance")
+    if not isinstance(provenance, dict):
+        return None
+    target = provenance.get("targetWalSequence")
+    durability = blob.get("missionTickDurability") or {}
+    if isinstance(target, bool) or not isinstance(target, int) or target <= 0 or \
+            durability.get("walAppliedSequence") != target:
+        raise _RemoteRecoveryRestoreError("recovery_wal_floor_invalid")
+    state = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
+    sequences = [int(row.get("sequence") or 0)
+                 for row in (state.get("records") or [])]
+    if int(state.get("corruptCount") or 0) != 0 or \
+            len(sequences) != len(set(sequences)):
+        raise _RemoteRecoveryRestoreError("recovery_wal_floor_corrupt")
+    maximum = int(state.get("maximumSequence") or 0)
+    anchor_hash = None
+    change = {
+        "appended": False,
+        "targetWalSequence": target,
+        "allocatorFloor": maximum,
+    }
+    if maximum < target:
+        receipt_hash = str(provenance.get("compactReceiptHash") or "")
+        bundle_hash = str(provenance.get("bundleHash") or "")
+        if not re.fullmatch(r"[0-9a-f]{16}", receipt_hash) or not \
+                re.fullmatch(r"[0-9a-f]{64}", bundle_hash):
+            raise _RemoteRecoveryRestoreError("recovery_wal_floor_proof_invalid")
+        change.update({
+            "beforeExists": os.path.exists(_MISSION_WAL_FILE),
+            "beforeBytes": int(state.get("bytes") or 0),
+            "beforeMaximum": maximum,
+        })
+        try:
+            anchor = argus_tick_durability.append_wal(
+                _MISSION_WAL_FILE, sequence=target, kind="checkpoint_verified",
+                payload={
+                    "schemaVersion": "argus-cold-recovery-anchor-v1",
+                    "includedWalSequence": target,
+                    "compactReceiptHash": receipt_hash,
+                    "bundleHash": bundle_hash,
+                    "ledgerCommitSha": provenance.get("ledgerCommitSha"),
+                },
+                job_id="cold-recovery",
+                transition_id=f"cold-recovery:{bundle_hash}:{target}",
+                occurred_at=str(provenance.get("checkpointVerifiedAt") or
+                                _ai_now_iso()),
+                build_sha=(provenance.get("buildIdentity") or {}).get(
+                    "buildSha"),
+            )
+            anchor_hash = anchor.get("recordHash")
+            change.update({
+                "appended": True,
+                "anchorHash": anchor_hash,
+                "afterBytes": os.path.getsize(_MISSION_WAL_FILE),
+            })
+            state = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
+            maximum = int(state.get("maximumSequence") or 0)
+            matches = [row for row in (state.get("records") or [])
+                       if int(row.get("sequence") or 0) == target and
+                       row.get("recordHash") == anchor_hash]
+            if len(matches) != 1:
+                raise _RemoteRecoveryRestoreError(
+                    "recovery_wal_floor_readback_failed")
+        except Exception:
+            # ``append_wal`` fsyncs the record before fsyncing its parent.  If
+            # that final durability call raises, the append can exist even
+            # though the helper did not return its record.  Detect only our
+            # exact transition and restore the prior byte boundary.
+            if change.get("appended") is not True and os.path.isfile(
+                    _MISSION_WAL_FILE) and os.path.getsize(
+                        _MISSION_WAL_FILE) > change["beforeBytes"]:
+                partial = argus_tick_durability.read_valid_wal(
+                    _MISSION_WAL_FILE)
+                expected_transition = f"cold-recovery:{bundle_hash}:{target}"
+                matches = [row for row in (partial.get("records") or [])
+                           if row.get("transitionId") == expected_transition and
+                           int(row.get("sequence") or 0) == target]
+                if len(matches) == 1:
+                    change.update({
+                        "appended": True,
+                        "anchorHash": matches[0].get("recordHash"),
+                        "afterBytes": os.path.getsize(_MISSION_WAL_FILE),
+                    })
+            if change.get("appended") is True:
+                _rollback_remote_recovery_wal_floor(change)
+            raise
+    sequences = [int(row.get("sequence") or 0)
+                 for row in (state.get("records") or [])]
+    if int(state.get("corruptCount") or 0) != 0 or maximum < target or \
+            len(sequences) != len(set(sequences)):
+        if change.get("appended") is True:
+            _rollback_remote_recovery_wal_floor(change)
+        raise _RemoteRecoveryRestoreError("recovery_wal_floor_readback_failed")
+    _DURABLE_STATE["remoteRecoveryWalFloor"] = {
+        "status": "verified", "targetWalSequence": target,
+        "allocatorFloor": maximum,
+    }
+    change["allocatorFloor"] = maximum
+    return change
+
+
 def _osint_restore_once():
     """Restore a sealed local checkpoint or verified Remote Journal snapshot."""
-    if _OSINT_PERSIST_STATE["restored"]:
+    if _OSINT_PERSIST_STATE.get("restored"):
         return _DURABLE_STATE.get("restoreSource")
-    _OSINT_PERSIST_STATE["restored"] = True
     blob = None
     source = None
+    pinned_ledger = None
+    pinned_remote_evidence = None
     try:
         if _DURABILITY_PRODUCTION:
             blob = argus_persistent_storage.load_checkpoint(
                 _OSINT_PERSIST_FILE, require_seal=True,
                 allow_legacy_file_seal=True)
-            if "localCheckpointIntegrity" in blob:
+            nonce_keys = argus_remote_recovery.configured_keys()
+            if nonce_keys.get("status") == "configured":
+                remote_evidence_handoff = []
+                try:
+                    # Resolve the moving ref once.  If the local generation is
+                    # rejected later, cold restore reuses this same immutable
+                    # commit rather than observing a second moving head.
+                    pinned_ledger = _pinned_ledger_restore_base()
+                    _DURABLE_STATE["remoteRecoveryNonceBoot"] = \
+                        _prepare_keyed_local_recovery_nonce_boot(
+                            blob, nonce_keys, pinned_ledger,
+                            evidence_handoff=remote_evidence_handoff)
+                except argus_remote_recovery.RecoveryBundleError as exc:
+                    _DURABLE_STATE["remoteRecoveryError"] = \
+                        exc.classification
+                    _DURABLE_STATE["remoteRecoveryLocalError"] = \
+                        exc.classification
+                    _DURABLE_STATE["restoreSource"] = "none_available"
+                    return None
+                if len(remote_evidence_handoff) > 1:
+                    raise argus_remote_recovery.RecoveryBundleError(
+                        "recovery_pinned_evidence_handoff_invalid")
+                pinned_remote_evidence = (
+                    remote_evidence_handoff[0]
+                    if remote_evidence_handoff else None)
+            local_evidence_handoff = []
+            blob = _verify_local_recovery_sidecar(
+                blob, authenticated_local_handoff=(
+                    local_evidence_handoff
+                    if nonce_keys.get("status") == "configured" else None))
+            if pinned_remote_evidence is not None:
+                if len(local_evidence_handoff) != 1:
+                    raise argus_remote_recovery.RecoveryBundleError(
+                        "recovery_local_evidence_handoff_invalid")
+                try:
+                    authority = _select_keyed_recovery_boot_authority(
+                        blob, local_evidence_handoff[0],
+                        pinned_remote_evidence, pinned_ledger, nonce_keys)
+                except argus_remote_recovery.RecoveryBundleError as exc:
+                    _DURABLE_STATE["remoteRecoveryError"] = \
+                        exc.classification
+                    _DURABLE_STATE["remoteRecoveryLocalError"] = \
+                        exc.classification
+                    _DURABLE_STATE["restoreSource"] = "none_available"
+                    return None
+                _DURABLE_STATE["remoteRecoveryNonceBoot"] = {
+                    **_DURABLE_STATE.get("remoteRecoveryNonceBoot", {}),
+                    "authority": ("pinned_remote" if authority == "remote"
+                                  else "local"),
+                }
+                if authority == "remote":
+                    blob = None
+                elif "localCheckpointIntegrity" in blob:
+                    source = "persistent_local"
+                else:
+                    source = "persistent_local_legacy_verified"
+            elif "localCheckpointIntegrity" in blob:
                 source = "persistent_local"
             else:
                 source = "persistent_local_legacy_verified"
+            if source == "persistent_local_legacy_verified":
                 _DURABLE_STATE["legacyCheckpointMigration"] = {
                     "status": "verified",
                     "schemaVersion":
@@ -17187,10 +20023,63 @@ def _osint_restore_once():
                 blob = json.load(handle)
             source = "tmp"
     except FileNotFoundError:
+        if _DURABILITY_PRODUCTION and os.path.lexists(
+                _REMOTE_RECOVERY_FILE):
+            try:
+                orphan_keys = argus_remote_recovery.configured_keys()
+            except argus_remote_recovery.RecoveryBundleError as exc:
+                _DURABLE_STATE["remoteRecoveryError"] = exc.classification
+                _DURABLE_STATE["remoteRecoveryLocalError"] = \
+                    exc.classification
+                _DURABLE_STATE["restoreSource"] = "none_available"
+                return None
+            if orphan_keys.get("status") != "configured":
+                _DURABLE_STATE["remoteRecoveryError"] = \
+                    "recovery_key_not_configured"
+                _DURABLE_STATE["remoteRecoveryLocalError"] = \
+                    "recovery_key_not_configured"
+                _DURABLE_STATE["restoreSource"] = "none_available"
+                return None
+            _DURABLE_STATE["remoteRecoveryLocalError"] = \
+                "recovery_local_checkpoint_missing"
         blob = None
     except Exception as exc:
         _DURABLE_STATE["localCheckpointError"] = type(exc).__name__
-        if _DURABILITY_PRODUCTION:
+        preserve_legacy_checkpoint = False
+        if isinstance(exc, argus_remote_recovery.RecoveryBundleError):
+            _DURABLE_STATE["remoteRecoveryError"] = exc.classification
+            _DURABLE_STATE["remoteRecoveryLocalError"] = exc.classification
+            if exc.classification in {
+                    "recovery_key_not_configured",
+                    "recovery_key_config_invalid",
+                    "recovery_key_invalid",
+                    "recovery_key_id_invalid",
+                    "recovery_key_id_duplicate",
+                    "recovery_key_id_unavailable",
+                    "recovery_authentication_failed"}:
+                # Key absence/rotation drift is configuration, not evidence
+                # that the sealed pair itself is corrupt.  Keep it in place and
+                # never downgrade to a legacy remote snapshot.
+                _DURABLE_STATE["restoreSource"] = "none_available"
+                return None
+            if exc.classification in {
+                    "recovery_required_marker_invalid",
+                    "recovery_required_marker_missing",
+                    "recovery_required_marker_key_mismatch"}:
+                try:
+                    repair_keys = argus_remote_recovery.configured_keys()
+                except argus_remote_recovery.RecoveryBundleError:
+                    repair_keys = {"status": "not_configured"}
+                if repair_keys.get("status") != "configured":
+                    _DURABLE_STATE["restoreSource"] = "none_available"
+                    return None
+            if exc.classification == "recovery_legacy_migration_failed":
+                # The migration is staged sidecar-first; its source remains a
+                # fully sealed legacy checkpoint and must stay available for
+                # a later retry or exact remote recovery.  It is deliberately
+                # not applied during this failed keyed boot.
+                preserve_legacy_checkpoint = True
+        if _DURABILITY_PRODUCTION and not preserve_legacy_checkpoint:
             try:
                 _DURABLE_STATE["quarantinedCheckpoint"] = \
                     argus_persistent_storage.quarantine(_OSINT_PERSIST_FILE)
@@ -17200,13 +20089,16 @@ def _osint_restore_once():
         blob = None
     if blob is None:
         try:
+            if pinned_ledger is None:
+                pinned_ledger = _pinned_ledger_restore_base()
+            pinned_ledger_base = pinned_ledger["base"]
             # The five-year breadth snapshot is intentionally kept outside the
             # web process and is currently tens of MB. A six-second read
             # timeout made a healthy ledger look like ``no_prior_state`` during
             # a cold deploy. Keep connection failure bounded while allowing a
             # large, continuously streaming snapshot enough time to arrive.
             r = requests.get(
-                f"{_LEDGER_RAW_BASE}/osint/memory.json?cb={int(time.time())}",
+                f"{pinned_ledger_base}/osint/memory.json",
                 timeout=_DURABLE_RESTORE_HTTP_TIMEOUT,
                 stream=True,
             )
@@ -17235,6 +20127,21 @@ def _osint_restore_once():
                         if blob.get("schemaVersion") != "argus-durable-v3" or \
                                 parsed_remote.get("status") != "ok":
                             raise ValueError("remote_snapshot_not_verified")
+                        remote_nonce_floor_handoff = []
+                        blob = _overlay_remote_recovery(
+                            blob, pinned_ledger_base,
+                            pinned_ledger["commitSha"],
+                            ledger_owner=pinned_ledger["owner"],
+                            ledger_repository=pinned_ledger["repository"],
+                            nonce_floor_handoff=
+                                remote_nonce_floor_handoff,
+                            authenticated_pinned_evidence=
+                                pinned_remote_evidence)
+                        if isinstance(
+                                blob.get("remoteRecoveryProvenance"), dict) and \
+                                len(remote_nonce_floor_handoff) != 1:
+                            raise _RemoteRecoveryRestoreError(
+                                "recovery_nonce_bootstrap_handoff_missing")
                         source = "remote_journal_verified"
                         # The new disk is not accepted until a sealed local
                         # checkpoint survives fsync, read-back and replacement.
@@ -17242,8 +20149,24 @@ def _osint_restore_once():
                             _OSINT_PERSIST_FILE, blob,
                             temp_directory=_DURABILITY_PATHS["tempDirectory"])
                         _DURABLE_STATE["bootstrapCheckpoint"] = bootstrap
+                        if isinstance(
+                                blob.get("remoteRecoveryProvenance"), dict):
+                            _persist_remote_recovery_sidecar({
+                                **bootstrap,
+                                "verified": True,
+                                "readBackVerified": True,
+                                "includedWalSequence": int(
+                                    (blob.get("missionTickDurability") or {})
+                                    .get("walAppliedSequence") or 0),
+                            }, authenticated_remote_floor=(
+                                remote_nonce_floor_handoff[0]
+                                if remote_nonce_floor_handoff else None))
                         blob = argus_persistent_storage.load_checkpoint(
                             _OSINT_PERSIST_FILE, require_seal=True)
+                        if isinstance(
+                                blob.get("remoteRecoveryRequired"), dict):
+                            blob = _verify_local_recovery_sidecar(
+                                blob, allow_legacy_migration=False)
                     else:
                         source = "ledger"
                 finally:
@@ -17266,8 +20189,8 @@ def _osint_restore_once():
         # last-known-goodを上書きしない。
         _DURABLE_STATE["integrityStatus"] = "corrupt_ignored"
         return None
-    _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
-    _DURABLE_STATE["restoreSource"] = source
+    _restore_snapshot = _restore_transaction_snapshot()
+    _wal_floor_change = None
     try:
         _restore_checkpoint_failure_history(
             blob.get("checkpointFailureHistory"))
@@ -17472,7 +20395,7 @@ def _osint_restore_once():
                     boot_iso=_RUNTIME["processBootedAt"])
             if _normalized_previous is not None:
                 _SOAK["previousSoak"] = _normalized_previous
-        for h in (blob.get("missions") or [])[-120:]:
+        for h in (blob.get("missions") or [])[-300:]:
             if isinstance(h, dict) and not any(
                     x.get("idempotencyKey") == h.get("idempotencyKey")
                     for x in _MISSIONS):
@@ -17499,6 +20422,21 @@ def _osint_restore_once():
         for h in (blob.get("incidents") or [])[-20:]:
             if isinstance(h, dict) and h not in _INCIDENTS:
                 _INCIDENTS.append(h)
+        # A recovery bundle is an exact projection of every collection that a
+        # transitionState WAL record can replace.  These four targets were not
+        # part of the historical full snapshot restore path; consume them only
+        # when present and keep their runtime bounds unchanged.
+        for _key, _target, _limit in (
+                ("postmortems", _POSTMORTEMS, 30),
+                ("periodicReports", _PERIODIC_REPORTS, 12),
+                ("challengerRuns", _CHALLENGER_RUNS, 8)):
+            _incoming = blob.get(_key)
+            if isinstance(_incoming, list):
+                _target[:] = copy.deepcopy(_incoming[-_limit:])
+        _agent_queue = blob.get("agentQueue")
+        if isinstance(_agent_queue, dict):
+            _OSINT_AGENT_QUEUE.clear()
+            _OSINT_AGENT_QUEUE.update(copy.deepcopy(_agent_queue))
         _cp = blob.get("costPolicy")
         if isinstance(_cp, dict):
             _restored_cp = argus_cost_policy.normalize_state(_cp)
@@ -17579,6 +20517,33 @@ def _osint_restore_once():
             _OPS_JOURNAL_COMPACT,
             [b for b in (blob.get("opsJournalCompacted") or [])
              if isinstance(b, dict)])
+        _recovery_exact = isinstance(
+            blob.get("remoteRecoveryProvenance"), dict)
+        if _recovery_exact:
+            if _jr.get("corruptCount"):
+                raise _RemoteRecoveryRestoreError(
+                    "recovery_journal_corrupt")
+            for _key, _target in (
+                    ("missions", _MISSIONS),
+                    ("missionWindows", _MISSION_WINDOWS),
+                    ("forecasts", _FORECAST_LEDGER),
+                    ("outcomes", _OUTCOME_LEDGER),
+                    ("incidents", _INCIDENTS),
+                    ("postmortems", _POSTMORTEMS),
+                    ("periodicReports", _PERIODIC_REPORTS),
+                    ("challengerRuns", _CHALLENGER_RUNS)):
+                _target[:] = copy.deepcopy(blob[_key])
+            _SOAK.clear()
+            _SOAK.update(copy.deepcopy(blob["soak"]))
+            _OSINT_AGENT_QUEUE.clear()
+            _OSINT_AGENT_QUEUE.update(copy.deepcopy(blob["agentQueue"]))
+            _OPS_JOURNAL[:] = copy.deepcopy(_jr["events"])
+            _OPS_JOURNAL_META.clear()
+            _OPS_JOURNAL_META.update(copy.deepcopy(blob["opsJournalMeta"]))
+            _OPS_JOURNAL_COMPACT[:] = copy.deepcopy(
+                blob["opsJournalCompacted"])
+            _OPS_SEQ.clear()
+            _OPS_SEQ.update(copy.deepcopy(blob["opsSequenceByAggregate"]))
         _ra = blob.get("remoteAck")
         if isinstance(_ra, dict) and isinstance(_ra.get("ackedKeys"), list):
             merged_keys = list(_REMOTE_ACK["ackedKeys"])
@@ -17612,20 +20577,39 @@ def _osint_restore_once():
         _restore_remote_receipt_queue()
         if "opsJournal" not in blob:
             _REMOTE_ACK["legacyRemote"] = True   # v2 snapshot=journal未同乗
-        for h in _OPS_JOURNAL:
-            k = f"{h.get('aggregateType')}:{h.get('aggregateId')}"
-            _OPS_SEQ[k] = max(_OPS_SEQ.get(k, 0), int(h.get("sequence") or 0))
+        if not _recovery_exact:
+            for h in _OPS_JOURNAL:
+                k = f"{h.get('aggregateType')}:{h.get('aggregateId')}"
+                _OPS_SEQ[k] = max(
+                    _OPS_SEQ.get(k, 0), int(h.get("sequence") or 0))
         # Legacy local/test blobs predate mission WAL cursors. Replaying an
         # unrelated process WAL into them would cross-contaminate state.
         if _DURABILITY_PRODUCTION or isinstance(_mt, dict):
             _restore_mission_wal(
                 after_sequence=int(_MISSION_BATCH_STATE.get(
                     "walAppliedSequence") or 0))
+        # Persist the allocator anchor only after all payload mutations and WAL
+        # replay have succeeded.  If a later metadata write fails, the exact
+        # append is rolled back together with the in-memory transaction.
+        _wal_floor_change = _seed_remote_recovery_wal_floor(blob)
         _persist_durability_metadata()
+        _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
+        _DURABLE_STATE["restoreSource"] = source
+        _OSINT_PERSIST_STATE["restored"] = True
         return source
     except Exception as exc:
+        if isinstance(_wal_floor_change, dict) and \
+                _wal_floor_change.get("appended") is True:
+            try:
+                _rollback_remote_recovery_wal_floor(_wal_floor_change)
+            except Exception:
+                exc = _RemoteRecoveryRestoreError(
+                    "recovery_wal_floor_rollback_failed")
+        _restore_transaction_rollback(_restore_snapshot)
         _DURABLE_STATE["integrityStatus"] = "corrupt_ignored"
         _DURABLE_STATE["restoreApplyError"] = type(exc).__name__
+        if isinstance(exc, _RemoteRecoveryRestoreError):
+            _DURABLE_STATE["remoteRecoveryError"] = str(exc)
         return None
 
 
@@ -18679,15 +21663,45 @@ def _persist_mission_transition(mission, cursor=None):
         "internal", "mission.persist_transition", _persist_transition)
 
 
+def _bound_ops_sequence_allocator_state():
+    """Install one deterministic bounded allocator projection in memory."""
+    bounded, meta = argus_remote_journal.bounded_sequence_allocator_state(
+        sequences=_OPS_SEQ, events=_OPS_JOURNAL, meta=_OPS_JOURNAL_META)
+    _OPS_SEQ.clear()
+    _OPS_SEQ.update(bounded)
+    _OPS_JOURNAL_META.clear()
+    _OPS_JOURNAL_META.update(meta)
+    return bounded
+
+
+def _next_ops_sequence(aggregate_key):
+    """Allocate without reuse after encrypted recovery bounding is active."""
+    high_water_field = argus_remote_journal.OPS_SEQUENCE_HIGH_WATER_FIELD
+    if high_water_field not in _OPS_JOURNAL_META:
+        sequence = int(_OPS_SEQ.get(aggregate_key) or 0) + 1
+        _OPS_SEQ[aggregate_key] = sequence
+        return sequence
+    high_water = _OPS_JOURNAL_META.get(high_water_field)
+    sequence = argus_remote_journal.next_bounded_ops_sequence(
+        aggregate_key=aggregate_key, sequences=_OPS_SEQ,
+        meta=_OPS_JOURNAL_META)
+    _OPS_SEQ[aggregate_key] = sequence
+    _OPS_JOURNAL_META[high_water_field] = max(high_water, sequence)
+    if len(_OPS_SEQ) > \
+            argus_remote_journal.OPS_SEQUENCE_BY_AGGREGATE_LIMIT:
+        _bound_ops_sequence_allocator_state()
+    return sequence
+
+
 def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
     """クリティカル遷移の即時ジャーナル(ローカル即時+30分ledger flush)。
     遷移コードからのみ呼ぶ — Data Quality等の公開GETからは呼ばない。"""
     try:
         key = f"{agg_type}:{agg_id}"
-        _OPS_SEQ[key] = _OPS_SEQ.get(key, 0) + 1
+        sequence = _next_ops_sequence(key)
         ev = argus_state_journal.event(
             event_type=event_type, aggregate_type=agg_type,
-            aggregate_id=agg_id, sequence=_OPS_SEQ[key],
+            aggregate_id=agg_id, sequence=sequence,
             occurred_at=_ai_now_iso(), payload=payload, origin=origin)
         if argus_state_journal.append(_OPS_JOURNAL, ev):
             _OPS_JOURNAL_META["totalObserved"] += 1
@@ -18840,6 +21854,13 @@ def _startup_bootstrap():
 def _bootstrap_hook():
     """最初のリクエストで起動復元を確定(Renderのhealthcheckで即時発火)。
     2回目以降はフラグ確認のみ — GETは復元を再実行/変更しない。"""
+    # Export endpoints are deliberately not startup triggers.  Their route
+    # handlers return a bounded 503 until WSGI/health boot has installed
+    # authority, so unauthenticated proof probes cannot initiate cold restore.
+    if request.path in {
+            "/api/argus/osint/remote-readback",
+            "/api/argus/admin/remote-journal/recovery-sidecar"}:
+        return None
     if _STARTUP["state"] == "bootstrapping":
         _startup_bootstrap()
 
@@ -19292,11 +22313,110 @@ def _remote_receipt_failure_is_permanent(error_class):
         "receipt_hash_mismatch", "compact_receipt_invalid",
         "remote_wal_manifest_mismatch", "remote_wal_sequence_regression",
         "remote_wal_sequence_mismatch", "remote_invalid_json",
+        "remote_receipt_compact_identity_mismatch",
+        "remote_receipt_recovery_pair_mismatch",
+        "remote_receipt_recovery_metadata_mismatch",
+        "remote_receipt_artifact_mode_invalid",
+        "remote_receipt_legacy_rejected",
+        "recovery_sidecar_schema_invalid", "recovery_sidecar_oversized",
+        "recovery_sidecar_required",
+        "recovery_pair_mismatch", "recovery_pair_readback_invalid",
+        "recovery_bundle_hash_mismatch", "recovery_ciphertext_hash_mismatch",
+        "recovery_authentication_failed", "recovery_envelope_binding_mismatch",
+        "recovery_ledger_repository_invalid",
+        "recovery_ledger_commit_invalid",
+        "recovery_ledger_commit_metadata_invalid",
+        "recovery_ledger_commit_metadata_oversized",
+        "recovery_ledger_commit_multiparent",
+        "recovery_ledger_commit_nonancestor",
+        "recovery_ledger_commit_stale_replay",
     }
 
 
+def _remote_commit_recovery_url(commit_sha):
+    if not re.fullmatch(r"[0-9a-f]{40}", str(commit_sha or "").lower()):
+        return None
+    repository = os.environ.get(
+        "LEDGER_RAW_REPOSITORY_BASE",
+        "https://raw.githubusercontent.com/mitsugue/argus").rstrip("/")
+    return (f"{repository}/{str(commit_sha).lower()}"
+            f"/ledger{_REMOTE_RECOVERY_PATH}")
+
+
+def _verified_remote_receipt_artifact(selected):
+    """Read one exact commit and authenticate its declared artifact pair."""
+    commit = str(selected.get("remoteCommitSha") or "").lower()
+    readback_url = _remote_commit_readback_url(commit)
+    if readback_url is None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_artifact_mode_invalid")
+    readback_result = _fetch_pinned_recovery_object(
+        readback_url, _DURABLE_READBACK_MAX_BYTES, "receipt_readback")
+    if readback_result.get("status") != "present":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_readback_" + str(readback_result.get("status")))
+    readback = readback_result.get("value")
+    if not isinstance(readback, dict) or not \
+            argus_remote_journal.verify_compact_readback_snapshot(readback):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_compact_identity_mismatch")
+    exact_receipt = selected.get("expectedReceiptHash")
+    if exact_receipt is not None and readback.get("receiptHash") != exact_receipt:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_compact_identity_mismatch")
+    mode = str(selected.get("artifactMode") or "legacy_full")
+    configured = argus_remote_recovery.configured_keys()
+    if mode == "legacy_full":
+        if configured.get("status") != "not_configured":
+            raise argus_remote_recovery.RecoveryBundleError(
+                "remote_receipt_legacy_rejected")
+        return readback
+    if mode != "encrypted_recovery_v1":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_artifact_mode_invalid")
+    if configured.get("status") != "configured":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_recovery_key_unavailable")
+    recovery_url = _remote_commit_recovery_url(commit)
+    recovery_result = _fetch_pinned_recovery_object(
+        recovery_url, _DURABLE_RECOVERY_MAX_BYTES, "receipt_recovery")
+    if recovery_result.get("status") != "present":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_recovery_" + str(recovery_result.get("status")))
+    sidecar = argus_remote_recovery.validate_sidecar(
+        recovery_result.get("value"))
+    if sidecar["readback"] != readback:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_recovery_pair_mismatch")
+    envelope = sidecar["recovery"]
+    expected_metadata = {
+        "bundleHash": selected.get("recoveryBundleHash"),
+        "generationId": selected.get("recoveryGenerationId"),
+        "keyId": selected.get("recoveryKeyId"),
+        "ledgerBaseCommitSha": selected.get("ledgerBaseCommitSha"),
+        "targetWalSequence": selected.get("targetWalSequence"),
+        "compactReceiptHash": selected.get("expectedReceiptHash"),
+    }
+    if any(envelope.get(key) != value
+           for key, value in expected_metadata.items()):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "remote_receipt_recovery_metadata_mismatch")
+    selected_key = _recovery_key_for_envelope(envelope, configured)
+    authenticated_payload = argus_remote_recovery.validate_pair(
+        readback, envelope, selected_key["key"],
+        key_identifier=selected_key["keyId"])
+    raw_repository = os.environ.get(
+        "LEDGER_RAW_REPOSITORY_BASE",
+        "https://raw.githubusercontent.com/mitsugue/argus")
+    owner, repository = _github_ledger_repository(raw_repository)
+    _verify_authenticated_ledger_commit_path(
+        authenticated_payload["ledgerBaseCommitSha"], commit,
+        owner=owner, repository=repository)
+    return readback
+
+
 def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
-    """Verify one cumulative highest-WAL intent; do not write a checkpoint.
+    """Verify one oldest immutable exact-commit intent; do not checkpoint.
 
     The caller must pass the returned plan to
     ``_complete_remote_receipt_drain`` immediately after its already-required
@@ -19313,7 +22433,7 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
         with _REMOTE_RECEIPT_QUEUE_LOCK:
             queue_before = argus_remote_receipt_queue.summary(
                 _REMOTE_RECEIPT_QUEUE, now_iso=now_iso)["pendingCount"]
-            selected = argus_remote_receipt_queue.highest_pending(
+            selected = argus_remote_receipt_queue.next_pending(
                 _REMOTE_RECEIPT_QUEUE, now_iso=now_iso,
                 limit=max(1, min(33, int(batch_limit))))
             if selected is None:
@@ -19332,6 +22452,7 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
             "queueBefore": queue_before,
             "targetWalSequence": target,
             "remoteCommitSha": selected.get("remoteCommitSha"),
+            "migrationLowerBound": bool(selected.get("migrationLowerBound")),
         })
         # A receipt accepted during this verification remains in the sidecar.
         # Only a sequence covered by this immutable commit is eligible below.
@@ -19353,12 +22474,28 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
             "errorClass": None,
             "walErrorClass": None,
         })
-        receipt = _remote_readback_ack(now_iso)
+        recovery_keys = argus_remote_recovery.configured_keys()
+        if selected.get("expectedReceiptHash") is None and \
+                recovery_keys.get("status") == "not_configured":
+            # Deterministic compatibility for a pre-v13.4.13 fsynced intent.
+            # The strengthened POST contract can no longer create this shape,
+            # and a keyed runtime may never use it to bypass pair validation.
+            receipt = _remote_readback_ack(now_iso)
+        elif selected.get("expectedReceiptHash") is None:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "remote_receipt_legacy_rejected")
+        else:
+            exact_artifact = _verified_remote_receipt_artifact(selected)
+            receipt = _remote_readback_ack(now_iso, blob=exact_artifact)
         verified_sequence = int(
             _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
         readback_ok = bool(
             receipt and _REMOTE_CYCLE.get("readBackVerified") is True and
-            _REMOTE_CYCLE.get("walReadBackVerified") is True)
+            _REMOTE_CYCLE.get("walReadBackVerified") is True and
+            (selected.get("expectedReceiptHash") is None and
+             recovery_keys.get("status") == "not_configured" or
+             _REMOTE_CYCLE.get("compactReceiptHash") == selected.get(
+                 "expectedReceiptHash")))
         sequence_ok = (
             verified_sequence == target or
             (selected.get("migrationLowerBound") is True and
@@ -19393,6 +22530,9 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
         })
         return plan
     except Exception as exc:
+        safe_error = (exc.classification if isinstance(
+            exc, argus_remote_recovery.RecoveryBundleError)
+            else type(exc).__name__)
         operation_id = plan.get("operationId")
         if operation_id:
             try:
@@ -19400,17 +22540,21 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
                     retried = argus_remote_receipt_queue.record_retry(
                         _REMOTE_RECEIPT_QUEUE, operation_id,
                         now_iso=now_iso,
-                        error_class=type(exc).__name__)
+                        error_class=safe_error,
+                        permanent=_remote_receipt_failure_is_permanent(
+                            safe_error))
                     _persist_remote_receipt_queue(retried)
             except Exception:
                 pass
-        plan.update({"status": "pending_retry",
-                     "errorClass": type(exc).__name__})
+        plan.update({
+            "status": ("failed" if _remote_receipt_failure_is_permanent(
+                safe_error) else "pending_retry"),
+            "errorClass": safe_error})
         return plan
 
 
 def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
-    """Acknowledge all cumulative intents only after the natural checkpoint."""
+    """Acknowledge only the exact verified intent after the natural checkpoint."""
     now_iso = now_iso or _ai_now_iso()
     result = dict(plan or {})
     try:
@@ -19428,11 +22572,14 @@ def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
             return result
         with _REMOTE_RECEIPT_QUEUE_LOCK:
             verified_queue, covered = \
-                argus_remote_receipt_queue.mark_covered_verified(
+                argus_remote_receipt_queue.mark_intent_verified(
                     _REMOTE_RECEIPT_QUEUE,
+                    operation_id=str(operation_id),
                     verified_sequence=int(result["verifiedWalSequence"]),
                     remote_commit_sha=str(result["remoteCommitSha"]),
-                    verified_at=now_iso)
+                    verified_at=now_iso,
+                    allow_sequence_floor=bool(
+                        result.get("migrationLowerBound")))
             queue_after = argus_remote_receipt_queue.summary(
                 verified_queue, now_iso=now_iso)["pendingCount"]
             result.update({
@@ -22645,6 +25792,256 @@ def api_argus_osint_memory_snapshot():
                     "noteJa": "公開安全メタデータのみ(オーナー貼り戻し本文は端末内のみ)。"})
 
 
+_REMOTE_RECOVERY_EXPORT_LOCK = threading.Lock()
+_REMOTE_RECOVERY_EXPORT_ATTESTATION = None
+_REMOTE_RECOVERY_EXPORT_RESTORE_SOURCES = frozenset({
+    "persistent_local",
+    "persistent_local_legacy_verified",
+    "remote_journal_verified",
+    # Non-production restore sources retain the same endpoint contract in tests
+    # and local verification without weakening production boot authority.
+    "tmp",
+    "ledger",
+})
+
+
+def _remote_recovery_export_boot_authority_installed():
+    """Return whether startup has already installed one verified state tree.
+
+    Export routes must never become an alternate restore trigger.  In
+    particular, a failed-safe boot must make repeated unauthenticated GETs a
+    constant-time 503 rather than repeatedly resolving and downloading the
+    large Remote Journal full snapshot.
+    """
+    return bool(
+        _STARTUP.get("state") == "ready" and
+        _OSINT_PERSIST_STATE.get("restored") is True and
+        str(_DURABLE_STATE.get("lastRestoreAt") or "").strip() and
+        _DURABLE_STATE.get("restoreSource") in
+        _REMOTE_RECOVERY_EXPORT_RESTORE_SOURCES)
+
+
+def _recovery_export_file_identity(metadata):
+    return (
+        metadata.st_dev, metadata.st_ino, metadata.st_mode,
+        metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns,
+    )
+
+
+def _recovery_export_checkpoint_identity():
+    try:
+        metadata = os.stat(_OSINT_PERSIST_FILE, follow_symlinks=False)
+        maximum = argus_persistent_storage._maximum_checkpoint_bytes()
+    except FileNotFoundError as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_export_checkpoint_missing") from exc
+    except (OSError, argus_persistent_storage.PersistentStorageError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_export_checkpoint_unreadable") from exc
+    if stat.S_ISLNK(metadata.st_mode):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_export_checkpoint_symlink")
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size <= 0 or \
+            metadata.st_size > maximum:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_export_checkpoint_invalid")
+    return _recovery_export_file_identity(metadata)
+
+
+def _read_bounded_recovery_export_sidecar():
+    """Read one stable regular sidecar and return its public file identity."""
+    descriptor = None
+    try:
+        if os.path.lexists(_REMOTE_RECOVERY_FILE) and os.path.islink(
+                _REMOTE_RECOVERY_FILE):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_sidecar_invalid")
+        descriptor = os.open(
+            _REMOTE_RECOVERY_FILE,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0 or \
+                before.st_size > argus_remote_recovery.MAX_SIDECAR_BYTES:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_sidecar_invalid")
+        encoded = bytearray()
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            if len(encoded) + len(chunk) > \
+                    argus_remote_recovery.MAX_SIDECAR_BYTES:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_local_sidecar_invalid")
+            encoded.extend(chunk)
+        after = os.fstat(descriptor)
+        current = os.stat(_REMOTE_RECOVERY_FILE, follow_symlinks=False)
+        identity = _recovery_export_file_identity(after)
+        if _recovery_export_file_identity(before) != identity or \
+                _recovery_export_file_identity(current) != identity or \
+                len(encoded) != after.st_size:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_local_sidecar_changed")
+        sidecar = json.loads(encoded.decode("utf-8"))
+        return argus_remote_recovery.validate_sidecar(sidecar), identity
+    except FileNotFoundError as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_sidecar_missing") from exc
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_local_sidecar_unreadable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _stream_verified_recovery_checkpoint(
+        expected_hash, *, expected_identity=None):
+    """Verify the canonical checkpoint file without materializing its JSON.
+
+    ``atomic_write_json`` hashes the exact canonical bytes it installs, and
+    the producer places that hash inside the authenticated recovery payload.
+    Reading through one descriptor keeps memory constant.  Descriptor and
+    path identities are both checked so an in-place mutation or atomic path
+    replacement during the read is rejected rather than exporting a stale or
+    mismatched pair.
+    """
+    descriptor = None
+    try:
+        if os.path.lexists(_OSINT_PERSIST_FILE) and os.path.islink(
+                _OSINT_PERSIST_FILE):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_export_checkpoint_symlink")
+        descriptor = os.open(
+            _OSINT_PERSIST_FILE,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        before = os.fstat(descriptor)
+        maximum = argus_persistent_storage._maximum_checkpoint_bytes()
+        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0 or \
+                before.st_size > maximum:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_export_checkpoint_invalid")
+        if expected_identity is not None and \
+                _recovery_export_file_identity(before) != expected_identity:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_export_checkpoint_changed")
+
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > maximum:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_export_checkpoint_invalid")
+            digest.update(chunk)
+
+        after = os.fstat(descriptor)
+        current = os.stat(_OSINT_PERSIST_FILE, follow_symlinks=False)
+
+        identity = _recovery_export_file_identity(after)
+        if stat.S_ISLNK(current.st_mode) or \
+                _recovery_export_file_identity(before) != identity or \
+                identity != _recovery_export_file_identity(current) or \
+                total != after.st_size:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_export_checkpoint_changed")
+        if digest.hexdigest() != expected_hash:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_export_checkpoint_mismatch")
+        return identity
+    except FileNotFoundError as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_export_checkpoint_missing") from exc
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except (OSError, argus_persistent_storage.PersistentStorageError) as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_export_checkpoint_unreadable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _validated_local_recovery_export():
+    """Return an authenticated checkpoint-bound sidecar, never plaintext."""
+    global _REMOTE_RECOVERY_EXPORT_ATTESTATION
+    with _REMOTE_RECOVERY_EXPORT_LOCK:
+        configured = argus_remote_recovery.configured_keys()
+        if configured.get("status") != "configured":
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_key_not_configured")
+        sidecar, sidecar_identity = _read_bounded_recovery_export_sidecar()
+        envelope = sidecar["recovery"]
+        selected = _recovery_key_for_envelope(envelope, configured)
+        payload = argus_remote_recovery.validate_pair(
+            sidecar["readback"], envelope, selected["key"],
+            key_identifier=selected["keyId"])
+        checkpoint_identity = _recovery_export_checkpoint_identity()
+        attestation = {
+            "checkpointIdentity": checkpoint_identity,
+            "sidecarIdentity": sidecar_identity,
+            "sourceCheckpointHash": payload["sourceCheckpointHash"],
+            "checkpointId": payload["checkpointId"],
+            "bundleHash": envelope["bundleHash"],
+            "generationId": envelope["generationId"],
+            "keyId": envelope["keyId"],
+            "targetWalSequence": payload["targetWalSequence"],
+            "compactReceiptHash": payload["compactReceiptHash"],
+        }
+        if _REMOTE_RECOVERY_EXPORT_ATTESTATION != attestation:
+            _stream_verified_recovery_checkpoint(
+                payload["sourceCheckpointHash"],
+                expected_identity=checkpoint_identity)
+            _REMOTE_RECOVERY_EXPORT_ATTESTATION = attestation
+        del payload
+        return sidecar
+
+
+@app.route("/api/argus/osint/remote-readback")
+def api_argus_osint_remote_readback():
+    """Public-safe compact proof from the exact authenticated local pair."""
+    if not _remote_recovery_export_boot_authority_installed():
+        return jsonify({"ok": False, "status": "unavailable"}), 503
+    try:
+        sidecar = _validated_local_recovery_export()
+    except argus_remote_recovery.RecoveryBundleError as exc:
+        if exc.classification == "recovery_key_not_configured":
+            return jsonify({"ok": False, "status": "not_configured"}), 503
+        return jsonify({"ok": False, "status": "unavailable"}), 503
+    except Exception:
+        return jsonify({"ok": False, "status": "unavailable"}), 503
+    response = jsonify(sidecar["readback"])
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
+@app.route(
+    "/api/argus/admin/remote-journal/recovery-sidecar", methods=["GET"])
+def api_argus_admin_remote_journal_recovery_sidecar():
+    """Serve one bounded encrypted pair only after tag/checkpoint verification."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    if not _remote_recovery_export_boot_authority_installed():
+        return jsonify({"ok": False, "status": "unavailable"}), 503
+    try:
+        sidecar = _validated_local_recovery_export()
+    except argus_remote_recovery.RecoveryBundleError as exc:
+        if exc.classification == "recovery_key_not_configured":
+            return jsonify({"ok": False, "status": "not_configured"}), 503
+        return jsonify({"ok": False, "status": "unavailable"}), 503
+    except Exception:
+        return jsonify({"ok": False, "status": "unavailable"}), 503
+    response = jsonify(sidecar)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
 @app.route("/api/argus/admin/remote-journal/commit-receipt", methods=["POST"])
 def api_argus_admin_remote_journal_commit_receipt():
     """Fsync a small intent; immutable read-back runs on a natural tick."""
@@ -22654,7 +26051,14 @@ def api_argus_admin_remote_journal_commit_receipt():
     body = request.get_json(silent=True) or {}
     commit_sha = str(body.get("remoteCommitSha") or "").lower()
     expected_hash = str(body.get("expectedHash") or "").lower()
+    expected_receipt_hash = str(
+        body.get("expectedReceiptHash") or "").lower()
     backend_build_sha = str(body.get("backendBuildSha") or "").lower()
+    artifact_mode = str(body.get("artifactMode") or "")
+    recovery_bundle_hash = body.get("recoveryBundleHash")
+    recovery_generation_id = body.get("recoveryGenerationId")
+    recovery_key_id = body.get("recoveryKeyId")
+    ledger_base_commit_sha = body.get("ledgerBaseCommitSha")
     idempotency_key = str(request.headers.get("Idempotency-Key") or "")
     try:
         target_wal_sequence = int(body.get("targetWalSequence"))
@@ -22662,13 +26066,36 @@ def api_argus_admin_remote_journal_commit_receipt():
         target_wal_sequence = -1
     if not re.fullmatch(r"[0-9a-f]{40}", commit_sha) or \
             not re.fullmatch(r"[0-9a-f]{16}", expected_hash) or \
+            not re.fullmatch(r"[0-9a-f]{16}", expected_receipt_hash) or \
             not re.fullmatch(r"[0-9a-f]{40}", backend_build_sha) or \
-            target_wal_sequence <= 0:
+            target_wal_sequence <= 0 or artifact_mode not in (
+                "legacy_full", "encrypted_recovery_v1"):
         return jsonify({"ok": False, "status": "failed",
                         "error": "invalid_public_receipt"}), 400
     if backend_build_sha != _backend_exact_sha():
         return jsonify({"ok": False, "status": "failed",
                         "error": "backend_build_sha_mismatch"}), 409
+    try:
+        recovery_keys = argus_remote_recovery.configured_keys()
+    except argus_remote_recovery.RecoveryBundleError:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "remote_recovery_unavailable"}), 503
+    recovery_values = (
+        recovery_bundle_hash, recovery_generation_id, recovery_key_id,
+        ledger_base_commit_sha)
+    if artifact_mode == "legacy_full":
+        if recovery_keys.get("status") != "not_configured" or any(
+                value is not None for value in recovery_values):
+            return jsonify({"ok": False, "status": "failed",
+                            "error": "receipt_artifact_mode_rejected"}), 409
+    elif recovery_keys.get("status") != "configured":
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "remote_recovery_not_configured"}), 503
+    elif str(recovery_key_id or "") not in {
+            str((recovery_keys.get(slot) or {}).get("keyId") or "")
+            for slot in ("current", "previous")}:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "recovery_key_id_unavailable"}), 409
     accepted_at = _ai_now_iso()
     try:
         with _REMOTE_RECEIPT_QUEUE_LOCK:
@@ -22680,7 +26107,13 @@ def api_argus_admin_remote_journal_commit_receipt():
                     remote_commit_sha=commit_sha,
                     expected_hash=expected_hash,
                     target_wal_sequence=target_wal_sequence,
-                    accepted_at=accepted_at)
+                    accepted_at=accepted_at,
+                    expected_receipt_hash=expected_receipt_hash,
+                    artifact_mode=artifact_mode,
+                    recovery_bundle_hash=recovery_bundle_hash,
+                    recovery_generation_id=recovery_generation_id,
+                    recovery_key_id=recovery_key_id,
+                    ledger_base_commit_sha=ledger_base_commit_sha)
             _persist_remote_receipt_queue(updated)
     except argus_remote_receipt_queue.ReceiptQueueError as exc:
         status_code = (409 if exc.error_class in (
@@ -22705,6 +26138,9 @@ def api_argus_admin_remote_journal_commit_receipt():
         "idempotentReplay": replay,
         "verifiedWalSequence": view["verifiedWalSequence"],
         "remoteCommitSha": view["remoteCommitSha"],
+        "expectedReceiptHash": view["expectedReceiptHash"],
+        "artifactMode": view["artifactMode"],
+        "recoveryBundleHash": view["recoveryBundleHash"],
         "readBackVerified": view["readBackVerified"],
         "verifiedAt": view["verifiedAt"],
         "attempts": view["attempts"],
