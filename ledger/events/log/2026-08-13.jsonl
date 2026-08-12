@@ -1,0 +1,2 @@
+{"eventId": "US:HYG:FLOW_ANOMALY:2026-08-12:45#2026-08-12T13:32:59Z", "eventType": "FLOW_ANOMALY", "symbol": "HYG", "market": "US", "severity": 3, "lifecycleState": "OBSERVING", "recommendedPosture": "WATCH", "detectedAt": "2026-08-12T13:32:59Z", "reasonJa": "大口資金が純流入 64%(閾値40%)"}
+{"eventId": "US:TLT:FLOW_ANOMALY:2026-08-12:45#2026-08-12T13:30:48Z", "eventType": "FLOW_ANOMALY", "symbol": "TLT", "market": "US", "severity": 3, "lifecycleState": "OBSERVING", "recommendedPosture": "WATCH", "detectedAt": "2026-08-12T13:30:48Z", "reasonJa": "大口資金が純流入 43%(閾値40%)"}
