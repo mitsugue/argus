@@ -89,9 +89,19 @@ prediction ledger is streamed only to count non-empty records and file bytes;
 rows are never parsed or retained.
 
 The mode-`0600` local diagnostic may retain a stable private mutation class as
-allowed metadata, but the public data-quality projection combines classes whose
-payload policy is `FORBIDDEN` into `private.redacted`. It never publishes their
-class name or target IDs.
+allowed metadata, but one canonical registry-driven public policy reconstructs
+the data-quality response from an explicit allowlist. Every public mutation
+projection, including interval rollups, emits a literal mutation ID only for an
+explicit `PUBLIC_METADATA` row whose targets are also telemetry-safe. All
+`FORBIDDEN`, private, internal and security-sensitive classes combine into
+`private.redacted`. Every checkpoint section is public only when all state
+registry owners explicitly set `allowedInTelemetry=true`; all other section
+sizes are summed into the same redacted bucket. Unknown future identifiers also
+fail closed into that bucket. Private-store details such as the legacy prediction
+ledger measurement remain local-only. No raw local measurement mapping is
+returned. Activity timestamps derived from redacted rows are exposed only at
+the same five-minute bucket boundary, with an explicit approximation flag. A
+projection failure returns a fixed, content-free `SHADOW/INCOMPLETE` response.
 
 Measurements aggregate into aligned 5-minute buckets. 15- and 30-minute totals
 and p50/p95/p99/max interval distributions are derived from those buckets.
@@ -113,10 +123,18 @@ state. The artifact is:
 - mode `0600`;
 - bounded to 31 days, 8,928 five-minute buckets, 256 recent metadata samples,
   2,048 checkpoint samples and 12 MiB total;
+- validated as a strict, closed nested schema on load and before atomic write:
+  every key is allowlisted, booleans are not accepted as integers, timestamps
+  are canonical UTC, numbers are finite/non-negative and at most JavaScript's
+  exact integer range, and registry IDs/count relationships are checked;
 - updated in memory on mutation and written only at the existing checkpoint
   boundary (plus explicit diagnostic/test flush), so the WAL hot path gains no
   measurement-only fsync;
 - ignored safely if absent, malformed, partial, oversized or invalid.
+
+An invalid artifact is discarded as a whole and replaced in memory with an
+empty shadow document. It cannot be partially trusted, echoed into the public
+response, or affect readiness, WAL, checkpoint validity or recovery authority.
 
 The metrics file is not placed inside the authoritative checkpoint and is never
 used for restore, WAL compaction, mutation acceptance, readiness or authority.

@@ -8160,6 +8160,8 @@ def _data_quality_console():
     except Exception:
         pass
     console["formalSoakControl"] = _formal_soak_public_projection()
+    console["recoveryMeasurement"] = \
+        argus_recovery_metrics.public_recovery_measurement_unavailable()
     try:
         _last_checkpoint = _DURABLE_STATE.get("lastCheckpoint") or {}
         _local_wal_high_water = int(
@@ -8170,14 +8172,32 @@ def _data_quality_console():
         _legacy_ack_at = (
             _REMOTE_CYCLE.get("receiptVerifiedAt") or
             _REMOTE_ACK.get("lastVerifiedRemoteAckAt"))
-        console["recoveryMeasurement"] = _RECOVERY_MEASUREMENTS.summary(
+        console["recoveryMeasurement"] = _RECOVERY_MEASUREMENTS.public_summary(
             legacy_remote_ack_at=_legacy_ack_at,
             legacy_remote_ack_sequence=_legacy_ack_sequence,
             local_wal_high_water=_local_wal_high_water)
+    except Exception:
+        # Fixed, content-free and conservative. Shadow diagnostic failures
+        # never remove the field or become health/readiness failures.
+        pass
+    try:
         _registry_status = argus_recovery_registry.registry_summary()
         _unresolved_ids = _registry_status.pop("unresolvedStateIds", [])
         _registry_status["unresolvedStateCount"] = len(_unresolved_ids)
+        _registry_errors = _registry_status.pop("validationErrors", [])
+        _registry_status["validationErrorCount"] = len(_registry_errors)
         console["authoritativeStateRegistry"] = _registry_status
+    except Exception:
+        console["authoritativeStateRegistry"] = {
+            "schemaVersion": argus_recovery_registry.REGISTRY_SCHEMA,
+            "mutationSchemaVersion":
+                argus_recovery_registry.MUTATION_REGISTRY_SCHEMA,
+            "validationStatus": "unavailable",
+            "validationErrorCount": 1,
+            "unresolvedStateCount": 0,
+            "shadowOnly": True,
+        }
+    try:
         _recovery_key_status = argus_remote_recovery.configured_keys().get(
             "status")
         _sidecar_status = str((
@@ -8199,7 +8219,7 @@ def _data_quality_console():
                 exact_wal_tail_verified=False,
                 exact_authority_manifest_verified=False)
     except Exception:
-        # Additive shadow diagnostics may be absent/degraded, but can never alter
+        # Additive shadow diagnostics may be degraded, but can never alter
         # established public health/readiness behavior in Phase A.
         console["exactColdRecovery"] = {
             "status": "not_proven", "authoritative": False,

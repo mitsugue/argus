@@ -8,6 +8,7 @@ checkpoint/WAL content, URLs, prompts, holdings, research or model output.
 from __future__ import annotations
 
 import datetime as dt
+from functools import lru_cache
 import json
 import math
 import os
@@ -29,8 +30,12 @@ MAX_DAILY_DISTRIBUTIONS = RETENTION_DAYS + 1
 MAX_RECENT_MUTATIONS = 256
 MAX_CHECKPOINT_SAMPLES = 2048
 MAX_PERSISTED_BYTES = 12 * 1024 * 1024
+# Keep every persisted/public number exactly representable by common JSON
+# consumers and reject attacker-controlled arbitrary-precision values.
+MAX_METRIC_NUMBER = (1 << 53) - 1
 PERSIST_INTERVAL_SECONDS = 5 * 60
 FUTURE_RECORD_FRAMING_ESTIMATE_BYTES = 256
+PUBLIC_REDACTED_IDENTIFIER = "private.redacted"
 LARGE_SECTION_KEYS = (
     "marketLedger", "verifiedViewSnapshots", "assetChartReports",
     "chartIntelligence", "marketReplay", "todayIntelligence")
@@ -60,6 +65,84 @@ def _parse_iso(value: Any) -> Optional[dt.datetime]:
         return parsed.astimezone(UTC)
     except (TypeError, ValueError):
         return None
+
+
+def _valid_timestamp(value: Any, *, optional: bool = False) -> bool:
+    if value is None:
+        return optional
+    if not isinstance(value, str) or len(value) > 40 or "T" not in value or \
+            not value.endswith("Z"):
+        return False
+    parsed = _parse_iso(value)
+    return parsed is not None and parsed.tzinfo is not None and \
+        2000 <= parsed.year <= 2100 and _iso(parsed) == value
+
+
+def _valid_nonnegative_int(value: Any, *, maximum: int = MAX_METRIC_NUMBER
+                           ) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and \
+        0 <= value <= maximum
+
+
+def _valid_nonnegative_number(value: Any, *, maximum: float = MAX_METRIC_NUMBER
+                              ) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and \
+        math.isfinite(float(value)) and 0 <= float(value) <= float(maximum)
+
+
+def _exact_keys(value: Any, keys: Iterable[str]) -> bool:
+    return isinstance(value, dict) and set(value) == set(keys)
+
+
+@lru_cache(maxsize=None)
+def _public_telemetry_identifier(kind: str, identifier: str) -> str:
+    """Return the sole canonical public label for registry identifiers.
+
+    Unknown/future identifiers fail closed into one aggregate bucket.  State
+    privacy flags and mutation telemetry policy remain authoritative; public
+    projections never infer safety from a name or call site.
+    """
+    candidate = str(identifier or "")
+    private_classes = {
+        argus_recovery_registry.PrivacyClass.OWNER_PRIVATE,
+        argus_recovery_registry.PrivacyClass.SECRET,
+        argus_recovery_registry.PrivacyClass.CLIENT_PRIVATE,
+        argus_recovery_registry.PrivacyClass.CLIENT_OPAQUE,
+    }
+    allowed = False
+    if kind == "mutation":
+        definition = argus_recovery_registry.mutation_by_class().get(candidate)
+        allowed = bool(
+            definition is not None and
+            definition.privacyClass ==
+            argus_recovery_registry.PrivacyClass.PUBLIC_METADATA and
+            definition.payloadTelemetryPolicy ==
+            argus_recovery_registry.PayloadTelemetryPolicy.METADATA_ONLY and
+            all(_public_telemetry_identifier("state", target) == target
+                for target in definition.targetStateIds))
+    elif kind == "state":
+        definition = argus_recovery_registry.state_by_id().get(candidate)
+        allowed = bool(
+            definition is not None and definition.allowedInTelemetry and
+            not definition.containsSecret and
+            not definition.containsOwnerPrivateData and
+            definition.privacyClass not in private_classes)
+    elif kind == "checkpoint_section":
+        owners = [row for row in argus_recovery_registry.states()
+                  if candidate in row.checkpointKeys]
+        allowed = bool(owners) and all(
+            _public_telemetry_identifier("state", row.stateId) == row.stateId
+            for row in owners)
+    return candidate if allowed else PUBLIC_REDACTED_IDENTIFIER
+
+
+def _public_identifier_counts(kind: str, values: Mapping[str, Any]
+                              ) -> Dict[str, int]:
+    projected: Dict[str, int] = {}
+    for identifier, value in sorted(values.items()):
+        label = _public_telemetry_identifier(kind, str(identifier))
+        projected[label] = projected.get(label, 0) + int(value)
+    return projected
 
 
 def _canonical_size(value: Any) -> int:
@@ -203,86 +286,194 @@ def _empty_document(now: dt.datetime) -> Dict[str, Any]:
 
 
 def _validate_document(value: Any) -> bool:
-    if not isinstance(value, dict) or value.get("schemaVersion") != SCHEMA or \
-            value.get("authoritative") is not False or \
-            value.get("coverage") != "SHADOW_INCOMPLETE":
+    """Validate every persisted v1 field without coercion or partial trust."""
+    try:
+        return _validate_document_strict(value)
+    except Exception:
+        # This validator handles untrusted local shadow state.  It must be total:
+        # malformed containers are discarded and never become startup failures.
         return False
-    for key, maximum in (("buckets", MAX_BUCKETS),
-                         ("recentMutations", MAX_RECENT_MUTATIONS),
-                         ("checkpointSamples", MAX_CHECKPOINT_SAMPLES)):
-        rows = value.get(key)
-        if not isinstance(rows, list) or len(rows) > maximum:
-            return False
-        if any(not isinstance(row, dict) for row in rows):
-            return False
-    if not isinstance(value.get("dailyDistributions"), dict) or len(
-            value.get("dailyDistributions") or {}) > MAX_DAILY_DISTRIBUTIONS:
-        return False
+
+
+def _validate_document_strict(value: Any) -> bool:
     top_keys = {
         "schemaVersion", "authoritative", "coverage", "createdAt",
         "updatedAt", "retentionDays", "bucketMinutes",
         "acceptanceClockStarted", "buckets", "dailyDistributions",
         "recentMutations", "checkpointSamples", "measurementErrors"}
-    if not set(value) <= top_keys:
+    if not _exact_keys(value, top_keys) or value["schemaVersion"] != SCHEMA or \
+            value["authoritative"] is not False or \
+            value["coverage"] != "SHADOW_INCOMPLETE" or \
+            type(value["retentionDays"]) is not int or \
+            value["retentionDays"] != RETENTION_DAYS or \
+            type(value["bucketMinutes"]) is not int or \
+            value["bucketMinutes"] != BUCKET_MINUTES or \
+            value["acceptanceClockStarted"] is not False or \
+            not _valid_timestamp(value["createdAt"]) or \
+            not _valid_timestamp(value["updatedAt"]) or \
+            not _valid_nonnegative_int(value["measurementErrors"]):
         return False
-    known_mutations = set(argus_recovery_registry.mutation_by_class())
-    known_coverage = {row.value for row in argus_recovery_registry.WalCoverage}
-    safe_state_ids = {row.stateId for row in argus_recovery_registry.states()
-                      if row.allowedInTelemetry}
-    histogram_keys = {str(value) for value in _HISTOGRAM_UPPER_BOUNDS}
+    created_at = _parse_iso(value["createdAt"])
+    updated_at = _parse_iso(value["updatedAt"])
+    if created_at > updated_at or \
+            updated_at > _utc_now() + dt.timedelta(days=1):
+        return False
+    for key, maximum in (("buckets", MAX_BUCKETS),
+                         ("recentMutations", MAX_RECENT_MUTATIONS),
+                         ("checkpointSamples", MAX_CHECKPOINT_SAMPLES)):
+        if not isinstance(value[key], list) or len(value[key]) > maximum:
+            return False
+    daily_distributions = value["dailyDistributions"]
+    if not isinstance(daily_distributions, dict) or \
+            len(daily_distributions) > MAX_DAILY_DISTRIBUTIONS:
+        return False
 
-    def valid_histogram(histogram: Any) -> bool:
-        return isinstance(histogram, dict) and \
-            set(histogram) <= histogram_keys and all(
-                isinstance(count, int) and not isinstance(count, bool) and
-                count >= 0 for count in histogram.values())
-    recent_keys = {
+    mutation_index = argus_recovery_registry.mutation_by_class()
+    known_mutations = set(mutation_index)
+    known_coverage = {row.value for row in argus_recovery_registry.WalCoverage}
+    state_index = argus_recovery_registry.state_by_id()
+    histogram_keys = {str(bound) for bound in _HISTOGRAM_UPPER_BOUNDS}
+
+    def valid_histogram(histogram: Any, mutation_count: int) -> bool:
+        return _exact_keys(histogram, histogram_keys) and all(
+            _valid_nonnegative_int(count) for count in histogram.values()) and \
+            sum(histogram.values()) == mutation_count
+
+    recent_required = {
         "observedAt", "mutationClass", "targetStateIds",
         "redactedTargetCount", "plaintextBytesEstimate",
         "candidateRecordPlaintextBytesEstimate", "transitionCount",
-        "recordCount", "latencyMs", "success", "currentWalCoverage",
-        "localSequence"}
-    for row in value.get("recentMutations") or []:
-        if not set(row) <= recent_keys or row.get("mutationClass") not in \
-                known_mutations or row.get("currentWalCoverage") not in \
-                known_coverage or not isinstance(row.get("targetStateIds"), list) \
-                or not set(row.get("targetStateIds") or []) <= safe_state_ids or \
-                _parse_iso(row.get("observedAt")) is None:
+        "recordCount", "latencyMs", "success", "currentWalCoverage"}
+    recent_allowed = recent_required | {"localSequence"}
+    previous_observed: Optional[dt.datetime] = None
+    for row in value["recentMutations"]:
+        if not isinstance(row, dict) or set(row) not in (
+                recent_required, recent_allowed):
             return False
+        definition = mutation_index.get(row["mutationClass"])
+        if definition is None or not _valid_timestamp(row["observedAt"]) or \
+                row["success"] not in (True, False) or \
+                not isinstance(row["success"], bool) or \
+                not _valid_nonnegative_number(row["latencyMs"]):
+            return False
+        observed = _parse_iso(row["observedAt"])
+        if observed > updated_at or \
+                (previous_observed is not None and
+                 observed < previous_observed):
+            return False
+        previous_observed = observed
+        safe_targets = [target for target in definition.targetStateIds
+                        if state_index[target].allowedInTelemetry]
+        if row["targetStateIds"] != safe_targets or \
+                not _valid_nonnegative_int(row["redactedTargetCount"]) or \
+                row["redactedTargetCount"] != (
+                    len(definition.targetStateIds) - len(safe_targets)) or \
+                row["currentWalCoverage"] != definition.currentWalCoverage.value:
+            return False
+        for key in ("plaintextBytesEstimate", "transitionCount", "recordCount",
+                    "candidateRecordPlaintextBytesEstimate"):
+            if not _valid_nonnegative_int(row[key]):
+                return False
+        expected_candidate = row["plaintextBytesEstimate"] + \
+            row["recordCount"] * FUTURE_RECORD_FRAMING_ESTIMATE_BYTES
+        if expected_candidate > MAX_METRIC_NUMBER or \
+                row["candidateRecordPlaintextBytesEstimate"] != expected_candidate:
+            return False
+        if "localSequence" in row and not _valid_nonnegative_int(
+                row["localSequence"]):
+            return False
+
     bucket_keys = {
         "bucketStart", "mutationCount", "transitionCount", "recordCount",
         "successCount", "failureCount", "plaintextBytesEstimate",
         "candidateRecordPlaintextBytesEstimate",
         "maxSingleMutationPlaintextBytesEstimate", "byMutationClass",
         "byWalCoverage"}
-    for row in value.get("buckets") or []:
-        by_class = row.get("byMutationClass")
-        by_coverage = row.get("byWalCoverage")
-        if not set(row) <= bucket_keys or not isinstance(by_class, dict) or \
+    bucket_numbers = bucket_keys - {
+        "bucketStart", "byMutationClass", "byWalCoverage"}
+    previous_bucket: Optional[dt.datetime] = None
+    for row in value["buckets"]:
+        if not _exact_keys(row, bucket_keys) or \
+                not _valid_timestamp(row["bucketStart"]) or any(
+                    not _valid_nonnegative_int(row[key])
+                    for key in bucket_numbers):
+            return False
+        bucket_at = _parse_iso(row["bucketStart"])
+        if bucket_at > updated_at or bucket_at.second or \
+                bucket_at.microsecond or \
+                bucket_at.minute % BUCKET_MINUTES or \
+                (previous_bucket is not None and bucket_at <= previous_bucket):
+            return False
+        previous_bucket = bucket_at
+        by_class = row["byMutationClass"]
+        by_coverage = row["byWalCoverage"]
+        if not isinstance(by_class, dict) or not set(by_class) <= known_mutations or \
                 not isinstance(by_coverage, dict) or \
-                not set(by_class) <= known_mutations or \
                 not set(by_coverage) <= known_coverage or any(
-                    not isinstance(count, int) or isinstance(count, bool) or
-                    count < 0 for count in by_class.values()):
+                    not _valid_nonnegative_int(count) or count == 0
+                    for count in list(by_class.values()) +
+                    list(by_coverage.values())):
             return False
-        if _parse_iso(row.get("bucketStart")) is None:
+        mutation_count = row["mutationCount"]
+        if mutation_count == 0 or sum(by_class.values()) != mutation_count or \
+                sum(by_coverage.values()) != mutation_count or \
+                row["successCount"] + row["failureCount"] != mutation_count or \
+                row["maxSingleMutationPlaintextBytesEstimate"] > \
+                row["plaintextBytesEstimate"] or \
+                row["plaintextBytesEstimate"] > mutation_count * \
+                row["maxSingleMutationPlaintextBytesEstimate"]:
             return False
+        expected_candidate = row["plaintextBytesEstimate"] + \
+            row["recordCount"] * FUTURE_RECORD_FRAMING_ESTIMATE_BYTES
+        if expected_candidate > MAX_METRIC_NUMBER or \
+                row["candidateRecordPlaintextBytesEstimate"] != expected_candidate:
+            return False
+        expected_coverage: Dict[str, int] = {}
+        for mutation_class, count in by_class.items():
+            coverage = mutation_index[mutation_class].currentWalCoverage.value
+            expected_coverage[coverage] = expected_coverage.get(coverage, 0) + count
+        if by_coverage != expected_coverage:
+            return False
+
     distribution_keys = {
         "mutationCount", "plaintextBytesEstimate",
         "candidateRecordPlaintextBytesEstimate",
         "maxSingleMutationPlaintextBytesEstimate", "plaintextBytesHistogram",
         "latencyMsHistogram"}
-    for day, daily in value["dailyDistributions"].items():
+    distribution_numbers = distribution_keys - {
+        "plaintextBytesHistogram", "latencyMsHistogram"}
+    for day, daily in daily_distributions.items():
+        if not isinstance(day, str):
+            return False
         try:
-            dt.date.fromisoformat(str(day))
+            parsed_day = dt.date.fromisoformat(day)
         except ValueError:
             return False
-        if not isinstance(daily, dict) or not set(daily) <= known_mutations or any(
-                not isinstance(row, dict) or not set(row) <= distribution_keys or
-                not valid_histogram(row.get("plaintextBytesHistogram") or {}) or
-                not valid_histogram(row.get("latencyMsHistogram") or {})
-                for row in daily.values()):
+        if parsed_day.isoformat() != day or parsed_day > updated_at.date() or \
+                not isinstance(daily, dict) or \
+                not daily or not set(daily) <= known_mutations:
             return False
+        for row in daily.values():
+            if not _exact_keys(row, distribution_keys) or any(
+                    not _valid_nonnegative_int(row[key])
+                    for key in distribution_numbers):
+                return False
+            mutation_count = row["mutationCount"]
+            if mutation_count == 0 or \
+                    row["candidateRecordPlaintextBytesEstimate"] < \
+                    row["plaintextBytesEstimate"] or \
+                    (row["candidateRecordPlaintextBytesEstimate"] -
+                     row["plaintextBytesEstimate"]) % \
+                    FUTURE_RECORD_FRAMING_ESTIMATE_BYTES or \
+                    row["maxSingleMutationPlaintextBytesEstimate"] > \
+                    row["plaintextBytesEstimate"] or \
+                    row["plaintextBytesEstimate"] > mutation_count * \
+                    row["maxSingleMutationPlaintextBytesEstimate"] or \
+                    not valid_histogram(
+                        row["plaintextBytesHistogram"], mutation_count) or \
+                    not valid_histogram(row["latencyMsHistogram"], mutation_count):
+                return False
+
     checkpoint_keys = {
         "observedAt", "success", "checkpointSerializedBytes",
         "sectionSerializedBytes", "dominantSectionSerializedBytes",
@@ -291,36 +482,92 @@ def _validate_document(value: Any) -> bool:
         "localWalRecordCount", "localWalHighWater",
         "legacyRemoteAckSequence", "legacyRemoteAckAt",
         "legacyRemoteAckIsExactWalDurability", "legacyPredictionsJsonl"}
+    checkpoint_ints = {
+        "checkpointSerializedBytes", "localWalBytes", "localWalRecordCount",
+        "localWalHighWater", "legacyRemoteAckSequence"}
+    checkpoint_durations = {
+        "sourceAssemblyMs", "sectionAccountingMs", "sealMs",
+        "atomicWriteFsyncReadbackMs"}
     allowed_sections = {key for row in argus_recovery_registry.states()
                         for key in row.checkpointKeys}
     prediction_keys = {"configured", "exists", "bytes", "recordCount",
                        "complete"}
-    for row in value.get("checkpointSamples") or []:
-        sections = row.get("sectionSerializedBytes")
-        dominant = row.get("dominantSectionSerializedBytes")
-        predictions = row.get("legacyPredictionsJsonl")
-        if not set(row) <= checkpoint_keys or not isinstance(sections, dict) or \
-                not set(sections) <= allowed_sections or \
-                not isinstance(dominant, dict) or \
-                not set(dominant) <= set(LARGE_SECTION_KEYS) or \
-                not isinstance(predictions, dict) or \
-                not set(predictions) <= prediction_keys or \
-                _parse_iso(row.get("observedAt")) is None:
+    previous_checkpoint: Optional[dt.datetime] = None
+    for row in value["checkpointSamples"]:
+        if not _exact_keys(row, checkpoint_keys) or \
+                not _valid_timestamp(row["observedAt"]) or \
+                not isinstance(row["success"], bool) or any(
+                    not _valid_nonnegative_int(row[key])
+                    for key in checkpoint_ints) or any(
+                    not _valid_nonnegative_number(row[key])
+                    for key in checkpoint_durations) or \
+                (row["peakRssBytes"] is not None and
+                 not _valid_nonnegative_int(row["peakRssBytes"])) or \
+                row["legacyRemoteAckIsExactWalDurability"] is not False or \
+                not _valid_timestamp(row["legacyRemoteAckAt"], optional=True):
             return False
-    # The persisted schema has no place for content-bearing keys.
-    forbidden = {"payload", "prompt", "url", "holdings", "sourceText",
-                 "modelOutput", "research", "plaintext", "secret"}
-    stack: List[Any] = [value]
-    while stack:
-        current = stack.pop()
-        if isinstance(current, dict):
-            if any(str(key).lower() in {item.lower() for item in forbidden}
-                   for key in current):
+        observed = _parse_iso(row["observedAt"])
+        if observed > updated_at or \
+                (previous_checkpoint is not None and
+                 observed < previous_checkpoint):
+            return False
+        previous_checkpoint = observed
+        ack_at = _parse_iso(row["legacyRemoteAckAt"])
+        if ack_at is not None and ack_at > observed:
+            return False
+        sections = row["sectionSerializedBytes"]
+        dominant = row["dominantSectionSerializedBytes"]
+        if not isinstance(sections, dict) or not set(sections) <= allowed_sections or \
+                any(not _valid_nonnegative_int(size)
+                    for size in sections.values()) or \
+                not _exact_keys(dominant, set(LARGE_SECTION_KEYS)) or any(
+                    not _valid_nonnegative_int(size)
+                    for size in dominant.values()) or \
+                any(dominant[key] != sections.get(key, 0)
+                    for key in LARGE_SECTION_KEYS) or \
+                sum(sections.values()) > row["checkpointSerializedBytes"]:
+            return False
+        predictions = row["legacyPredictionsJsonl"]
+        if not _exact_keys(predictions, prediction_keys) or any(
+                not isinstance(predictions[key], bool)
+                for key in ("configured", "exists", "complete")) or \
+                not _valid_nonnegative_int(predictions["bytes"]) or \
+                not _valid_nonnegative_int(predictions["recordCount"]):
+            return False
+        if (not predictions["exists"] and (
+                predictions["bytes"] or predictions["recordCount"])) or \
+                (predictions["exists"] and not predictions["configured"]) or \
+                predictions["recordCount"] > predictions["bytes"]:
+            return False
+    # Any value that can be produced by the bounded public rollups must remain
+    # an exact, non-saturating JSON integer. Reject the whole artifact instead
+    # of independently clipping fields and breaking aggregate relationships.
+    for minutes in (5, 15, 30):
+        for row in _rollup_buckets(value["buckets"], minutes):
+            if any(not _valid_nonnegative_int(item)
+                   for key, item in row.items()
+                   if key not in ("intervalStart", "byMutationClass")) or \
+                    any(not _valid_nonnegative_int(item)
+                        for item in row["byMutationClass"].values()):
                 return False
-            stack.extend(current.values())
-        elif isinstance(current, list):
-            stack.extend(current)
-        elif not isinstance(current, (str, int, float, bool, type(None))):
+    projected_distributions: Dict[str, Dict[str, Any]] = {}
+    for daily in daily_distributions.values():
+        for key, distribution in daily.items():
+            public_key = _public_telemetry_identifier("mutation", key)
+            target = projected_distributions.setdefault(
+                public_key, _new_distribution())
+            _merge_distribution(target, distribution)
+    for distribution in projected_distributions.values():
+        scalar_keys = (
+            "mutationCount", "plaintextBytesEstimate",
+            "candidateRecordPlaintextBytesEstimate",
+            "maxSingleMutationPlaintextBytesEstimate")
+        if any(not _valid_nonnegative_int(distribution[key])
+               for key in scalar_keys) or any(
+                   not _valid_nonnegative_int(count)
+                   for field in ("plaintextBytesHistogram",
+                                 "latencyMsHistogram")
+                   for count in distribution[field].values()):
             return False
     return True
 
@@ -371,11 +618,11 @@ def _rollup_buckets(buckets: Iterable[Mapping[str, Any]], minutes: int
         row["maxSingleMutationPlaintextBytesEstimate"] = max(
             row["maxSingleMutationPlaintextBytesEstimate"],
             int(bucket.get("maxSingleMutationPlaintextBytesEstimate") or 0))
-        for mutation_class, count in (
-                bucket.get("byMutationClass") or {}).items():
+        projected_counts = _public_identifier_counts(
+            "mutation", bucket.get("byMutationClass") or {})
+        for mutation_class, count in projected_counts.items():
             row["byMutationClass"][mutation_class] = int(
-                row["byMutationClass"].get(mutation_class) or 0) + int(
-                    count or 0)
+                row["byMutationClass"].get(mutation_class) or 0) + count
     return [rows[key] for key in sorted(rows)]
 
 
@@ -404,6 +651,137 @@ def _interval_statistics(buckets: Iterable[Mapping[str, Any]], minutes: int
             row["candidateSegmentPlaintextBytesEstimate"] for row in rows),
         "latest": rows[-1] if rows else None,
         "encryptedBytesClaimed": False,
+    }
+
+
+def _mutation_increment_fits_public_aggregates(
+        document: Mapping[str, Any], *, observed: dt.datetime,
+        mutation_class: str, size: int, transitions: int, records: int,
+        candidate: int, success: bool) -> bool:
+    """Bound the derived public totals without scanning the whole document.
+
+    The interval check touches at most six five-minute buckets. The distribution
+    check touches the fixed 32-day registry matrix. This keeps the WAL-adjacent
+    metadata path independent of retained checkpoint samples/recent history.
+    """
+    interval_increments = {
+        "mutationCount": 1,
+        "transitionCount": transitions,
+        "recordCount": records,
+        "successCount": 1 if success else 0,
+        "failureCount": 0 if success else 1,
+        "plaintextBytesEstimate": size,
+        "candidateRecordPlaintextBytesEstimate": candidate,
+    }
+    buckets = document["buckets"]
+
+    def lower_bound(key: str) -> int:
+        low, high = 0, len(buckets)
+        while low < high:
+            middle = (low + high) // 2
+            if buckets[middle]["bucketStart"] < key:
+                low = middle + 1
+            else:
+                high = middle
+        return low
+
+    for minutes in (5, 15, 30):
+        target = _bucket_start(observed, minutes)
+        target_end = target + dt.timedelta(minutes=minutes)
+        totals = {key: 0 for key in interval_increments}
+        start_index = lower_bound(_iso(target))
+        end_index = lower_bound(_iso(target_end))
+        for bucket in buckets[start_index:end_index]:
+            for key in totals:
+                totals[key] += int(bucket[key])
+        if any(totals[key] + increment > MAX_METRIC_NUMBER
+               for key, increment in interval_increments.items()):
+            return False
+
+    public_label = _public_telemetry_identifier("mutation", mutation_class)
+    distribution_totals = {
+        "mutationCount": 0,
+        "plaintextBytesEstimate": 0,
+        "candidateRecordPlaintextBytesEstimate": 0,
+    }
+    for daily in document["dailyDistributions"].values():
+        for identifier, distribution in daily.items():
+            if _public_telemetry_identifier("mutation", identifier) != \
+                    public_label:
+                continue
+            for key in distribution_totals:
+                distribution_totals[key] += int(distribution[key])
+    distribution_increments = {
+        "mutationCount": 1,
+        "plaintextBytesEstimate": size,
+        "candidateRecordPlaintextBytesEstimate": candidate,
+    }
+    return all(distribution_totals[key] + increment <= MAX_METRIC_NUMBER
+               for key, increment in distribution_increments.items())
+
+
+def _public_checkpoint_measurement(row: Optional[Mapping[str, Any]]
+                                   ) -> Optional[Dict[str, Any]]:
+    """Reconstruct a fixed typed projection; never return the persisted row."""
+    if row is None:
+        return None
+    sections = _public_identifier_counts(
+        "checkpoint_section", row["sectionSerializedBytes"])
+    dominant = _public_identifier_counts(
+        "checkpoint_section", row["dominantSectionSerializedBytes"])
+    return {
+        "observedAt": _iso(_parse_iso(row["observedAt"])),
+        "success": bool(row["success"]),
+        "checkpointSerializedBytes": int(row["checkpointSerializedBytes"]),
+        "sectionSerializedBytes": sections,
+        "dominantSectionSerializedBytes": dominant,
+        "sourceAssemblyMs": float(row["sourceAssemblyMs"]),
+        "sectionAccountingMs": float(row["sectionAccountingMs"]),
+        "sealMs": float(row["sealMs"]),
+        "atomicWriteFsyncReadbackMs": float(
+            row["atomicWriteFsyncReadbackMs"]),
+        "peakRssBytes": (None if row["peakRssBytes"] is None else
+                         int(row["peakRssBytes"])),
+        "localWalBytes": int(row["localWalBytes"]),
+        "localWalRecordCount": int(row["localWalRecordCount"]),
+        "localWalHighWater": int(row["localWalHighWater"]),
+        "legacyRemoteAckSequence": int(row["legacyRemoteAckSequence"]),
+        "legacyRemoteAckAt": (None if row["legacyRemoteAckAt"] is None else
+                              _iso(_parse_iso(row["legacyRemoteAckAt"]))),
+        "legacyRemoteAckIsExactWalDurability": False,
+    }
+
+
+def public_recovery_measurement_unavailable() -> Dict[str, Any]:
+    """Return a fixed conservative response when shadow diagnostics fail."""
+    return {
+        "schemaVersion": SCHEMA,
+        "status": "SHADOW",
+        "coverage": "INCOMPLETE",
+        "authoritative": False,
+        "hardRpoClaim": None,
+        "hardRpoClaimPermitted": False,
+        "latestObservedLocalMutationAt": None,
+        "latestObservedLocalMutationAtIsBucketApproximation": True,
+        "oldestObservedAuthoritativeMutationAgeSeconds": None,
+        "oldestAgeIsBucketApproximation": True,
+        "latestLegacyRemoteAckAt": None,
+        "legacyRemoteAckSequence": 0,
+        "localWalHighWater": 0,
+        "legacySequenceLag": 0,
+        "legacyRemoteAckIsExactWalDurability": False,
+        "retentionDays": RETENTION_DAYS,
+        "acceptanceClockStarted": False,
+        "loadStatus": "unavailable",
+        "measurementErrors": 1,
+        "intervalStatistics": {
+            str(minutes): _interval_statistics([], minutes)
+            for minutes in (5, 15, 30)},
+        "mutationDistributions": {},
+        "latestCheckpointMeasurement": None,
+        "candidateWalEstimatesArePlaintextOnly": True,
+        "candidateWalEstimateCoverage": "INCOMPLETE",
+        "encryptedWalBytesClaimed": False,
     }
 
 
@@ -491,7 +869,8 @@ class RecoveryMeasurementStore:
             self._document = loaded
             self._load_status = "loaded"
             self._prune(now)
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError,
+                RecursionError):
             self._load_status = "invalid_or_partial"
 
     def _prune(self, now: dt.datetime) -> None:
@@ -520,12 +899,15 @@ class RecoveryMeasurementStore:
                 -MAX_DAILY_DISTRIBUTIONS:]
             self._document["dailyDistributions"] = {
                 key: self._document["dailyDistributions"][key] for key in keys}
-        self._document["updatedAt"] = _iso(now)
+        prior_updated = _parse_iso(self._document.get("updatedAt"))
+        self._document["updatedAt"] = _iso(max(
+            now.astimezone(UTC), prior_updated or now.astimezone(UTC)))
 
     def _note_error(self) -> None:
         if self._document is not None:
-            self._document["measurementErrors"] = int(
-                self._document.get("measurementErrors") or 0) + 1
+            self._document["measurementErrors"] = min(
+                MAX_METRIC_NUMBER, int(
+                    self._document.get("measurementErrors") or 0) + 1)
 
     def record_mutation(self, mutation_class: str, *,
                         plaintext_bytes_estimate: int,
@@ -540,14 +922,32 @@ class RecoveryMeasurementStore:
             str(mutation_class))
         if definition is None:
             raise ValueError("unregistered_mutation_class")
-        size = max(0, int(plaintext_bytes_estimate))
-        transitions = max(0, int(transition_count))
-        records = max(0, int(record_count))
-        latency = max(0.0, float(latency_ms))
+        if not _valid_nonnegative_int(plaintext_bytes_estimate) or \
+                not _valid_nonnegative_int(transition_count) or \
+                not _valid_nonnegative_int(record_count) or \
+                not _valid_nonnegative_number(latency_ms) or \
+                not isinstance(success, bool) or \
+                (local_sequence is not None and
+                 not _valid_nonnegative_int(local_sequence)):
+            raise ValueError("invalid_recovery_measurement")
+        size = plaintext_bytes_estimate
+        transitions = transition_count
+        records = record_count
+        latency = float(latency_ms)
         observed = observed_at or self.clock()
+        if not isinstance(observed, dt.datetime):
+            raise ValueError("invalid_recovery_measurement")
         if observed.tzinfo is None:
             observed = observed.replace(tzinfo=UTC)
         candidate = size + records * FUTURE_RECORD_FRAMING_ESTIMATE_BYTES
+        if candidate > MAX_METRIC_NUMBER or \
+                not _valid_timestamp(_iso(observed)) or \
+                observed.astimezone(UTC) > \
+                _utc_now() + dt.timedelta(days=1) or \
+                observed.astimezone(UTC) < \
+                self.clock().astimezone(UTC) - dt.timedelta(
+                    days=RETENTION_DAYS):
+            raise ValueError("invalid_recovery_measurement")
         state_index = argus_recovery_registry.state_by_id()
         safe_targets = [target for target in definition.targetStateIds
                         if state_index[target].allowedInTelemetry]
@@ -555,14 +955,56 @@ class RecoveryMeasurementStore:
         with self._lock:
             self._ensure_loaded()
             assert self._document is not None
-            self._prune(observed)
-            start = _bucket_start(observed)
-            key = _iso(start)
-            buckets = self._document["buckets"]
-            bucket = next((row for row in reversed(buckets)
-                           if row.get("bucketStart") == key), None)
-            if bucket is None:
-                bucket = _new_bucket(start)
+            previous = {
+                key: self._document[key] for key in (
+                    "buckets", "dailyDistributions", "recentMutations",
+                    "checkpointSamples", "updatedAt")}
+            try:
+                self._prune(observed)
+                start = _bucket_start(observed)
+                key = _iso(start)
+                buckets = self._document["buckets"]
+                bucket = next((row for row in reversed(buckets)
+                               if row.get("bucketStart") == key), None)
+                if bucket is None:
+                    bucket = _new_bucket(start)
+                day = observed.astimezone(UTC).date().isoformat()
+                all_daily = self._document["dailyDistributions"]
+                if day not in all_daily and len(all_daily) >= \
+                        MAX_DAILY_DISTRIBUTIONS:
+                    del all_daily[sorted(all_daily)[0]]
+                daily = all_daily.get(day) or {}
+                distribution = daily.get(definition.mutationClass) or \
+                    _new_distribution()
+                increments = (
+                    (bucket["mutationCount"], 1),
+                    (bucket["transitionCount"], transitions),
+                    (bucket["recordCount"], records),
+                    (bucket["successCount" if success else "failureCount"], 1),
+                    (bucket["plaintextBytesEstimate"], size),
+                    (bucket["candidateRecordPlaintextBytesEstimate"], candidate),
+                    (int(bucket["byMutationClass"].get(
+                        definition.mutationClass) or 0), 1),
+                    (int(bucket["byWalCoverage"].get(
+                        definition.currentWalCoverage.value) or 0), 1),
+                    (distribution["mutationCount"], 1),
+                    (distribution["plaintextBytesEstimate"], size),
+                    (distribution["candidateRecordPlaintextBytesEstimate"],
+                     candidate),
+                )
+                if any(current + increment > MAX_METRIC_NUMBER
+                       for current, increment in increments) or not \
+                        _mutation_increment_fits_public_aggregates(
+                            self._document, observed=observed,
+                            mutation_class=definition.mutationClass,
+                            size=size, transitions=transitions,
+                            records=records, candidate=candidate,
+                            success=success):
+                    raise ValueError("invalid_recovery_measurement")
+            except Exception:
+                self._document.update(previous)
+                raise
+            if bucket not in buckets:
                 buckets.append(bucket)
                 buckets.sort(key=lambda row: str(row.get("bucketStart") or ""))
                 self._document["buckets"] = buckets[-MAX_BUCKETS:]
@@ -579,7 +1021,6 @@ class RecoveryMeasurementStore:
             coverage = definition.currentWalCoverage.value
             bucket["byWalCoverage"][coverage] = int(
                 bucket["byWalCoverage"].get(coverage) or 0) + 1
-            day = observed.astimezone(UTC).date().isoformat()
             distribution = self._document["dailyDistributions"].setdefault(
                 day, {}).setdefault(definition.mutationClass, _new_distribution())
             distribution["mutationCount"] += 1
@@ -609,7 +1050,10 @@ class RecoveryMeasurementStore:
                 key=lambda row: str(row.get("observedAt") or ""))
             self._document["recentMutations"] = self._document[
                 "recentMutations"][-MAX_RECENT_MUTATIONS:]
-            self._document["updatedAt"] = _iso(observed)
+            prior_updated = _parse_iso(self._document.get("updatedAt"))
+            self._document["updatedAt"] = _iso(max(
+                observed.astimezone(UTC), prior_updated or
+                observed.astimezone(UTC)))
         # Hot mutations update memory only. Persistence is forced by the
         # already-existing checkpoint boundary; diagnostics never add WAL-path
         # fsync latency per record.
@@ -630,55 +1074,114 @@ class RecoveryMeasurementStore:
                           success: bool = True,
                           observed_at: Optional[dt.datetime] = None) -> bool:
         observed = observed_at or self.clock()
+        if not isinstance(observed, dt.datetime):
+            raise ValueError("invalid_recovery_measurement")
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=UTC)
         allowed_sections = {key for row in argus_recovery_registry.states()
                             for key in row.checkpointKeys}
         parsed_ack_at = _parse_iso(legacy_remote_ack_at)
+        integer_inputs = (
+            checkpoint_bytes, local_wal_bytes, local_wal_record_count,
+            local_wal_high_water, legacy_remote_ack_sequence)
+        duration_inputs = (
+            source_assembly_ms, section_accounting_ms, seal_ms,
+            atomic_write_readback_ms)
+        if any(not _valid_nonnegative_int(value) for value in integer_inputs) or \
+                any(not _valid_nonnegative_number(value)
+                    for value in duration_inputs) or \
+                not isinstance(success, bool) or \
+                not _valid_timestamp(_iso(observed)) or \
+                observed.astimezone(UTC) > \
+                _utc_now() + dt.timedelta(days=1) or \
+                observed.astimezone(UTC) < \
+                self.clock().astimezone(UTC) - dt.timedelta(
+                    days=RETENTION_DAYS) or \
+                (legacy_remote_ack_at is not None and (
+                    not _valid_timestamp(legacy_remote_ack_at) or
+                    parsed_ack_at is None or parsed_ack_at > observed)):
+            raise ValueError("invalid_recovery_measurement")
+        safe_sections: Dict[str, int] = {}
+        for key, value in section_sizes.items():
+            if str(key) not in allowed_sections:
+                continue
+            if not _valid_nonnegative_int(value):
+                raise ValueError("invalid_recovery_measurement")
+            safe_sections[str(key)] = value
+        if sum(safe_sections.values()) > checkpoint_bytes:
+            raise ValueError("invalid_recovery_measurement")
+        prediction_keys = {
+            "configured", "exists", "bytes", "recordCount", "complete"}
+        prediction_allowed_keys = prediction_keys | {"reason"}
+        if not isinstance(legacy_predictions, Mapping) or \
+                not prediction_keys <= set(legacy_predictions) or \
+                not set(legacy_predictions) <= prediction_allowed_keys or \
+                ("reason" in legacy_predictions and
+                 legacy_predictions["reason"] not in (
+                     "measurement_maximum_exceeded",
+                     "measurement_io_error")) or any(
+                not isinstance(legacy_predictions[key], bool)
+                for key in ("configured", "exists", "complete")) or \
+                not _valid_nonnegative_int(legacy_predictions["bytes"]) or \
+                not _valid_nonnegative_int(
+                    legacy_predictions["recordCount"]):
+            raise ValueError("invalid_recovery_measurement")
+        if (not legacy_predictions["exists"] and (
+                legacy_predictions["bytes"] or
+                legacy_predictions["recordCount"])) or \
+                (legacy_predictions["exists"] and
+                 not legacy_predictions["configured"]) or \
+                legacy_predictions["recordCount"] > \
+                legacy_predictions["bytes"]:
+            raise ValueError("invalid_recovery_measurement")
         sample = {
-            "observedAt": _iso(observed), "success": bool(success),
-            "checkpointSerializedBytes": max(0, int(checkpoint_bytes)),
-            "sectionSerializedBytes": {
-                str(key): max(0, int(value))
-                for key, value in sorted(section_sizes.items())
-                if str(key) in allowed_sections},
+            "observedAt": _iso(observed), "success": success,
+            "checkpointSerializedBytes": checkpoint_bytes,
+            "sectionSerializedBytes": dict(sorted(safe_sections.items())),
             "dominantSectionSerializedBytes": {
-                key: max(0, int(section_sizes.get(key) or 0))
+                key: safe_sections.get(key, 0)
                 for key in LARGE_SECTION_KEYS},
-            "sourceAssemblyMs": round(max(0.0, float(source_assembly_ms)), 3),
-            "sectionAccountingMs": round(max(0.0, float(section_accounting_ms)), 3),
-            "sealMs": round(max(0.0, float(seal_ms)), 3),
+            "sourceAssemblyMs": round(float(source_assembly_ms), 3),
+            "sectionAccountingMs": round(float(section_accounting_ms), 3),
+            "sealMs": round(float(seal_ms), 3),
             # Existing writer combines stream serialization, file flush/fsync,
             # hash readback, replace and parent fsync; do not invent a split.
             "atomicWriteFsyncReadbackMs": round(
-                max(0.0, float(atomic_write_readback_ms)), 3),
-            "peakRssBytes": peak_rss_bytes(),
-            "localWalBytes": max(0, int(local_wal_bytes)),
-            "localWalRecordCount": max(0, int(local_wal_record_count)),
-            "localWalHighWater": max(0, int(local_wal_high_water)),
-            "legacyRemoteAckSequence": max(0, int(legacy_remote_ack_sequence)),
+                float(atomic_write_readback_ms), 3),
+            "peakRssBytes": (lambda value: value if
+                              value is None or
+                              _valid_nonnegative_int(value) else None)(
+                                  peak_rss_bytes()),
+            "localWalBytes": local_wal_bytes,
+            "localWalRecordCount": local_wal_record_count,
+            "localWalHighWater": local_wal_high_water,
+            "legacyRemoteAckSequence": legacy_remote_ack_sequence,
             "legacyRemoteAckAt": (_iso(parsed_ack_at)
                                   if parsed_ack_at is not None else None),
             "legacyRemoteAckIsExactWalDurability": False,
             "legacyPredictionsJsonl": {
-                "configured": bool(legacy_predictions.get("configured")),
-                "exists": bool(legacy_predictions.get("exists")),
-                "bytes": max(0, int(legacy_predictions.get("bytes") or 0)),
-                "recordCount": max(0, int(
-                    legacy_predictions.get("recordCount") or 0)),
-                "complete": bool(legacy_predictions.get("complete")),
+                key: legacy_predictions[key] for key in sorted(prediction_keys)
             },
         }
         with self._lock:
             self._ensure_loaded()
             assert self._document is not None
+            before = json.loads(json.dumps(
+                self._document, ensure_ascii=False, allow_nan=False))
             self._prune(observed)
             self._document["checkpointSamples"].append(sample)
             self._document["checkpointSamples"].sort(
                 key=lambda row: str(row.get("observedAt") or ""))
             self._document["checkpointSamples"] = self._document[
                 "checkpointSamples"][-MAX_CHECKPOINT_SAMPLES:]
-            self._document["updatedAt"] = _iso(observed)
-        self.maybe_persist(force=True)
-        return True
+            prior_updated = _parse_iso(self._document.get("updatedAt"))
+            self._document["updatedAt"] = _iso(max(
+                observed.astimezone(UTC), prior_updated or
+                observed.astimezone(UTC)))
+            if not _validate_document(self._document):
+                self._document = before
+                raise ValueError("invalid_recovery_measurement")
+        return self.maybe_persist(force=True) if self.path else True
 
     def _bounded_snapshot(self) -> Dict[str, Any]:
         assert self._document is not None
@@ -724,24 +1227,23 @@ class RecoveryMeasurementStore:
                 self._load_status = "persist_failed"
                 return False
 
-    def summary(self, *, legacy_remote_ack_at: Optional[str] = None,
-                legacy_remote_ack_sequence: int = 0,
-                local_wal_high_water: int = 0) -> Dict[str, Any]:
+    def public_summary(self, *, legacy_remote_ack_at: Optional[str] = None,
+                       legacy_remote_ack_sequence: int = 0,
+                       local_wal_high_water: int = 0) -> Dict[str, Any]:
+        """Return the canonical allowlisted public recovery projection."""
         now = self.clock()
         with self._lock:
             self._ensure_loaded()
             assert self._document is not None
             self._prune(now)
+            if not _validate_document(self._document):
+                return public_recovery_measurement_unavailable()
             buckets = list(self._document["buckets"])
             raw_distributions: Dict[str, Dict[str, Any]] = {}
             mutation_index = argus_recovery_registry.mutation_by_class()
             for daily in self._document["dailyDistributions"].values():
                 for key, value in sorted(daily.items()):
-                    definition = mutation_index[key]
-                    public_key = ("private.redacted" if
-                                  definition.payloadTelemetryPolicy ==
-                                  argus_recovery_registry.PayloadTelemetryPolicy.FORBIDDEN
-                                  else key)
+                    public_key = _public_telemetry_identifier("mutation", key)
                     _merge_distribution(
                         raw_distributions.setdefault(
                             public_key, _new_distribution()), value)
@@ -762,8 +1264,26 @@ class RecoveryMeasurementStore:
             checkpoints = list(self._document["checkpointSamples"])
             load_status = self._load_status
             errors = int(self._document.get("measurementErrors") or 0)
-        latest_mutation_at = recent[-1].get("observedAt") if recent else None
-        ack_time = _parse_iso(legacy_remote_ack_at)
+        # A redacted/private event must not leak its exact activity timestamp.
+        # The public observation clock is therefore derived from the same
+        # five-minute aggregate boundary used by the public interval report.
+        latest_mutation_at = (
+            _iso(_bucket_start(_parse_iso(recent[-1]["observedAt"])))
+            if recent else None)
+        parsed_runtime_ack = _parse_iso(legacy_remote_ack_at)
+        safe_ack_at = (
+            legacy_remote_ack_at if
+            _valid_timestamp(legacy_remote_ack_at, optional=True) and
+            (parsed_runtime_ack is None or
+             parsed_runtime_ack <= now.astimezone(UTC) + dt.timedelta(days=1))
+            else None)
+        ack_time = _parse_iso(safe_ack_at)
+        safe_ack_sequence = (legacy_remote_ack_sequence if
+                             _valid_nonnegative_int(legacy_remote_ack_sequence)
+                             else 0)
+        safe_local_high_water = (local_wal_high_water if
+                                 _valid_nonnegative_int(local_wal_high_water)
+                                 else 0)
         oldest_after_ack = None
         for row in buckets:
             bucket_at = _parse_iso(row.get("bucketStart"))
@@ -783,13 +1303,14 @@ class RecoveryMeasurementStore:
             "hardRpoClaim": None,
             "hardRpoClaimPermitted": False,
             "latestObservedLocalMutationAt": latest_mutation_at,
+            "latestObservedLocalMutationAtIsBucketApproximation": True,
             "oldestObservedAuthoritativeMutationAgeSeconds": age_seconds,
             "oldestAgeIsBucketApproximation": True,
-            "latestLegacyRemoteAckAt": legacy_remote_ack_at,
-            "legacyRemoteAckSequence": max(0, int(legacy_remote_ack_sequence)),
-            "localWalHighWater": max(0, int(local_wal_high_water)),
+            "latestLegacyRemoteAckAt": safe_ack_at,
+            "legacyRemoteAckSequence": int(safe_ack_sequence),
+            "localWalHighWater": int(safe_local_high_water),
             "legacySequenceLag": max(
-                0, int(local_wal_high_water) - int(legacy_remote_ack_sequence)),
+                0, int(safe_local_high_water) - int(safe_ack_sequence)),
             "legacyRemoteAckIsExactWalDurability": False,
             "retentionDays": RETENTION_DAYS,
             "acceptanceClockStarted": False,
@@ -799,15 +1320,26 @@ class RecoveryMeasurementStore:
                 str(minutes): _interval_statistics(buckets, minutes)
                 for minutes in (5, 15, 30)},
             "mutationDistributions": distributions,
-            "latestCheckpointMeasurement": checkpoints[-1] if checkpoints else None,
+            "latestCheckpointMeasurement": _public_checkpoint_measurement(
+                checkpoints[-1] if checkpoints else None),
             "candidateWalEstimatesArePlaintextOnly": True,
             "candidateWalEstimateCoverage": "INCOMPLETE",
             "encryptedWalBytesClaimed": False,
         }
 
+    def summary(self, *, legacy_remote_ack_at: Optional[str] = None,
+                legacy_remote_ack_sequence: int = 0,
+                local_wal_high_water: int = 0) -> Dict[str, Any]:
+        """Compatibility name for the same canonical public projection."""
+        return self.public_summary(
+            legacy_remote_ack_at=legacy_remote_ack_at,
+            legacy_remote_ack_sequence=legacy_remote_ack_sequence,
+            local_wal_high_water=local_wal_high_water)
+
 
 __all__ = [
     "RecoveryMeasurementStore", "checkpoint_section_sizes",
     "exact_cold_recovery_diagnostic", "measure_jsonl_metadata",
-    "peak_rss_bytes", "serialized_size_estimate", "SCHEMA",
+    "peak_rss_bytes", "public_recovery_measurement_unavailable",
+    "serialized_size_estimate", "SCHEMA",
 ]
