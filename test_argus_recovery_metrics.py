@@ -323,8 +323,11 @@ def test_hot_producer_rejects_public_rollup_overflow_without_state_change():
 def test_deep_json_is_discarded_and_prediction_reason_is_sanitized(tmp_path):
     path = tmp_path / "measurement.json"
     path.write_text("[" * 1100 + "]" * 1100, encoding="utf-8")
+    # Python may reject extreme nesting in json.load (invalid_or_partial) or
+    # decode it and let the closed schema reject the non-document value
+    # (invalid_schema). Both are total, content-free whole-artifact rejection.
     assert metrics.RecoveryMeasurementStore(str(path)).public_summary()[
-        "loadStatus"] == "invalid_or_partial"
+        "loadStatus"] in ("invalid_or_partial", "invalid_schema")
 
     now = dt.datetime.now(UTC).replace(microsecond=0)
     store = metrics.RecoveryMeasurementStore(
