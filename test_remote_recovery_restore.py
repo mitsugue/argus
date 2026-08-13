@@ -382,6 +382,17 @@ def _keyed_local_probe_responses(readback, envelope, *, full=None,
     return values
 
 
+def _deep_outer_sidecar_response(depth=10_000):
+    response = FakeResponse(200)
+    response._encoded = (
+        b'{"schemaVersion":"' + recovery.SIDECAR_SCHEMA.encode("ascii") +
+        b'","readback":{},"recovery":' +
+        (b'{"nested":' * depth) + b'null' + (b'}' * depth) + b'}'
+    )
+    assert len(response._encoded) < scanner._DURABLE_RECOVERY_MAX_BYTES
+    return response
+
+
 def _keyed_local_legacy_probe_responses(readback, *, history=None,
                                         ancestry=None):
     """One immutable legacy readback plus proved recovery-path absence."""
@@ -428,6 +439,38 @@ def test_keyed_boot_remote_newer_than_local_uses_same_pinned_pair():
         assert sum(url.endswith("/osint/readback.json") for url in urls) == 1
         assert sum(url.endswith("/osint/recovery.json") for url in urls) == 1
         assert sum(url.endswith("/osint/memory.json") for url in urls) == 1
+
+
+def test_deep_remote_outer_envelope_preserves_healthy_local_checkpoint():
+    readback, envelope, targets = _artifacts(mission_count=2)
+    sealed, sidecar = _sealed_local_pair(
+        key=CURRENT_KEY, key_id=CURRENT_ID, readback=readback,
+        envelope=envelope, targets=targets, generation_digit="2")
+    with tempfile.TemporaryDirectory() as root, \
+            scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        _install_local_pair(paths, root, sealed, sidecar)
+        checkpoint_before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        responses = [
+            FakeResponse(200, {"sha": PINNED_SHA}),
+            FakeResponse(200, readback),
+            _deep_outer_sidecar_response(),
+            FakeResponse(500),
+        ]
+        with mock.patch.object(
+                scanner.requests, "get", side_effect=responses):
+            assert scanner._osint_restore_once() is None
+
+        assert scanner._DURABLE_STATE["remoteRecoveryError"] == \
+            "remote_recovery_unreadable_or_oversized"
+        assert scanner._DURABLE_STATE["remoteRecoveryLocalError"] == \
+            "remote_recovery_unreadable_or_oversized"
+        assert not scanner._DURABLE_STATE.get("localCheckpointError")
+        assert not scanner._DURABLE_STATE.get("quarantinedCheckpoint")
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+            checkpoint_before
+        assert pathlib.Path(paths["recovery"]).is_file()
+        assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
 
 
 def test_keyed_boot_local_newer_than_remote_stays_persistent_local():
@@ -1195,6 +1238,32 @@ def test_local_sidecar_reader_rejects_symlink_and_growth_before_json_parse():
                 assert exc.classification == "recovery_local_sidecar_invalid"
             else:
                 raise AssertionError("growing sidecar accepted")
+
+
+def test_deep_local_sidecar_and_outer_tree_fail_in_recovery_domain():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths:
+        pathlib.Path(paths["recovery"]).write_bytes(
+            _deep_outer_sidecar_response()._encoded)
+        try:
+            scanner._read_local_recovery_sidecar()
+        except recovery.RecoveryBundleError as exc:
+            assert exc.classification == "recovery_local_sidecar_unreadable"
+        else:
+            raise AssertionError("deep local sidecar accepted")
+
+    nested = None
+    for _ in range(recovery.MAX_DEPTH + 1):
+        nested = {"nested": nested}
+    try:
+        recovery.validate_sidecar({
+            "schemaVersion": recovery.SIDECAR_SCHEMA,
+            "readback": {},
+            "recovery": nested,
+        })
+    except recovery.RecoveryBundleError as exc:
+        assert exc.classification == "recovery_outer_bounds_invalid"
+    else:
+        raise AssertionError("deep in-memory outer sidecar accepted")
 
 
 def test_late_apply_failure_rolls_back_and_never_sets_restore_success():

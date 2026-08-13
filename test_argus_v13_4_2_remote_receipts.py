@@ -11,7 +11,9 @@ from unittest import mock
 
 import pytest
 
+import argus_remote_journal as journal
 import argus_remote_receipt_queue as queue
+from scripts.remote_journal_publish_policy import receipt_request
 
 
 _moomoo = types.ModuleType("moomoo")
@@ -53,6 +55,28 @@ def _store(count=1):
 def _persist_in_memory(store):
     scanner._REMOTE_RECEIPT_QUEUE = copy.deepcopy(store)
     return {"verified": True, "readBackVerified": True}
+
+
+def _legacy_receipt_readback():
+    snapshot = {
+        "schemaVersion": journal.SCHEMA_V3,
+        "generatedAt": NOW,
+        "asOf": NOW,
+        "buildIdentity": {"appVersion": "13.4.13", "buildSha": BUILD},
+        "outcomes": [],
+        "missionTickDurability": {
+            "walAppliedSequence": 3296,
+            "remoteWalAppliedSequence": 3296,
+            "verifiedWalSequence": 3296,
+        },
+        "marketLedgerStateHash": "1" * 16,
+        "chartIntelligenceStateHash": "2" * 16,
+        "todayIntelligenceStateHash": "3" * 16,
+        "marketReplayStateHash": "4" * 16,
+        **journal.snapshot_journal_section(
+            events=[], meta={}, now_iso=NOW),
+    }
+    return journal.compact_readback_snapshot(snapshot)
 
 
 def _verify_selected(sequence, *, commit=None):
@@ -114,6 +138,38 @@ def test_post_accepts_and_returns_before_full_checkpoint():
     assert response.get_json()["accepted"] is True
     assert elapsed < 1.0
     checkpoint.assert_not_called()
+
+
+def test_real_legacy_receipt_policy_matches_hardened_endpoint():
+    readback = _legacy_receipt_readback()
+    request = receipt_request(
+        readback,
+        remote_commit_sha=COMMIT,
+        backend_build_sha=BUILD,
+        expected_hash=readback["integrityManifest"]["manifestHash"],
+        expected_receipt_hash=readback["receiptHash"],
+        artifact_mode="legacy_full",
+        idempotency_prefix="caos-scan",
+    )
+    assert request["payload"]["artifactMode"] == "legacy_full"
+    assert request["payload"]["expectedReceiptHash"] == \
+        readback["receiptHash"]
+    assert request["payload"]["targetWalSequence"] == 3296
+
+    scanner._ARGUS_ADMIN_TOKEN = "admin"
+    with mock.patch.object(scanner, "_backend_exact_sha", return_value=BUILD), \
+            mock.patch.object(scanner, "_persist_remote_receipt_queue",
+                              side_effect=_persist_in_memory):
+        response = scanner.app.test_client().post(
+            "/api/argus/admin/remote-journal/commit-receipt",
+            headers={
+                "X-ARGUS-ADMIN-TOKEN": "admin",
+                "Idempotency-Key": request["idempotencyKey"],
+            },
+            json=request["payload"],
+        )
+    assert response.status_code == 202
+    assert response.get_json()["accepted"] is True
 
 
 def test_post_auth_schema_sha_sequence_and_idempotency_are_fail_closed():

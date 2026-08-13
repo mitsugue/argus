@@ -316,6 +316,8 @@ jobs:
             "$RUNNER_TEMP/osint-memory.json" "$RUNNER_TEMP/osint-readback.json"
           cp scripts/prepare_remote_journal_publish.py \
             "$RUNNER_TEMP/prepare_remote_journal_publish.py"
+          cp scripts/remote_journal_publish_policy.py \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py"
           cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"
           echo "remoteArtifactMode=legacy_full" >> "$GITHUB_OUTPUT"
       - name: Commit verified snapshot and post receipt
@@ -397,14 +399,15 @@ jobs:
             --ledger-full ledger/osint/memory.json \
             --ledger-readback ledger/osint/readback.json)
           PREPARED_VALUES=$(printf '%s' "$PREPARED" | python3 -c \
-            'import json,sys; d=json.load(sys.stdin); print(d["status"]); print(d["expectedHash"]); print(d["generatedAt"]); print(d.get("previousGeneratedAt") or ""); print(d["fullSnapshotBytes"]); print(str(d["fullSnapshotPublished"]).lower()); print(str(d["fullSnapshotRetained"]).lower())')
+            'import json,sys; d=json.load(sys.stdin); print(d["status"]); print(d["expectedHash"]); print(d["expectedReceiptHash"]); print(d["generatedAt"]); print(d.get("previousGeneratedAt") or ""); print(d["fullSnapshotBytes"]); print(str(d["fullSnapshotPublished"]).lower()); print(str(d["fullSnapshotRetained"]).lower())')
           PREPARED_STATUS=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '1p')
           NEW_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '2p')
-          NEW_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '3p')
-          OLD_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '4p')
-          FULL_BYTES=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '5p')
-          FULL_PUBLISHED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '6p')
-          FULL_RETAINED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '7p')
+          NEW_RECEIPT_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '3p')
+          NEW_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '4p')
+          OLD_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '5p')
+          FULL_BYTES=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '6p')
+          FULL_PUBLISHED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '7p')
+          FULL_RETAINED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '8p')
           echo "remote journal publish: status=$PREPARED_STATUS old=$OLD_ASOF new=$NEW_ASOF fullBytes=$FULL_BYTES fullPublished=$FULL_PUBLISHED fullRetained=$FULL_RETAINED"
           if [ "$PREPARED_STATUS" = "stale" ]; then
             echo "durabilityResult=expected_skip_stale_snapshot" >> "$GITHUB_OUTPUT"
@@ -441,15 +444,26 @@ jobs:
           }
           VERIFIED=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
             verify-committed --readback ledger/osint/readback.json \
-            --expected-hash "$NEW_HASH")
+            --expected-hash "$NEW_HASH" \
+            --expected-receipt-hash "$NEW_RECEIPT_HASH")
           EXPECTED_HASH=$(printf '%s' "$VERIFIED" | python3 -c \
             'import json,sys; print(json.load(sys.stdin)["actualHash"])')
-          TARGET_WAL_SEQUENCE=$(python3 -c \
-            'import json; d=json.load(open("ledger/osint/readback.json")); m=d.get("missionTickDurability") or {}; local=int(m.get("walAppliedSequence") or 0); remote=int(m.get("remoteWalAppliedSequence") or -1); assert local > 0 and remote == local; print(remote)')
-          RECEIPT_IDEMPOTENCY_KEY="caos-scan-${REMOTE_COMMIT_SHA}-${TARGET_WAL_SEQUENCE}"
+          RECEIPT_REQUEST=$(python3 \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py" receipt \
+            --readback ledger/osint/readback.json \
+            --remote-commit-sha "$REMOTE_COMMIT_SHA" \
+            --backend-build-sha "$BACKEND_BUILD_SHA" \
+            --expected-hash "$EXPECTED_HASH" \
+            --expected-receipt-hash "$NEW_RECEIPT_HASH" \
+            --artifact-mode legacy_full \
+            --idempotency-prefix caos-scan)
+          RECEIPT_IDEMPOTENCY_KEY=$(printf '%s' "$RECEIPT_REQUEST" | \
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["idempotencyKey"])')
+          TARGET_WAL_SEQUENCE=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["payload"]["targetWalSequence"])')
+          RECEIPT_PAYLOAD=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.dumps(json.load(sys.stdin)["payload"],separators=(",",":")))')
           export REMOTE_COMMIT_SHA EXPECTED_HASH TARGET_WAL_SEQUENCE BACKEND_BUILD_SHA
-          RECEIPT_PAYLOAD=$(python3 -c \
-            'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"],"backendBuildSha":os.environ["BACKEND_BUILD_SHA"],"targetWalSequence":int(os.environ["TARGET_WAL_SEQUENCE"])},separators=(",",":")))')
           export RECEIPT_IDEMPOTENCY_KEY
           RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" \
             --name remote-journal-accept-receipt \

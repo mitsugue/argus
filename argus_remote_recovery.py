@@ -94,6 +94,8 @@ def _canonical(value: Any) -> bytes:
             value, sort_keys=True, ensure_ascii=False,
             separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")
+    except RecursionError as exc:
+        raise RecoveryBundleError("recovery_json_too_deep") from exc
     except (TypeError, ValueError) as exc:
         raise RecoveryBundleError("recovery_json_invalid") from exc
 
@@ -176,6 +178,21 @@ def _strict_positive_int(value: Any, classification: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise RecoveryBundleError(classification)
     return value
+
+
+def _validate_outer_json_tree(value: Any) -> None:
+    """Bound untrusted public containers without recursive Python calls."""
+    nodes = 0
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        nodes += 1
+        if nodes > MAX_NODES or depth > MAX_DEPTH:
+            raise RecoveryBundleError("recovery_outer_bounds_invalid")
+        if isinstance(current, Mapping):
+            pending.extend((item, depth + 1) for item in current.values())
+        elif isinstance(current, list):
+            pending.extend((item, depth + 1) for item in current)
 
 
 def _validate_json_tree(value: Any) -> None:
@@ -561,6 +578,7 @@ def validate_envelope(envelope: Any) -> Dict[str, Any]:
             "keyDerivation", "keyDerivationSalt", "nonce", "ciphertext",
             "ciphertextSha256", "bundleHash"}:
         raise RecoveryBundleError("recovery_envelope_invalid")
+    _validate_outer_json_tree(envelope)
     if envelope.get("algorithm") != ALGORITHM or \
             envelope.get("keyDerivation") != KEY_DERIVATION or \
             _timestamp(envelope.get("generatedAt")) is None:
@@ -628,7 +646,7 @@ def decrypt_envelope(
         raise RecoveryBundleError("recovery_authentication_failed") from exc
     try:
         payload = json.loads(_unpadded_plaintext(plaintext).decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError) as exc:
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise RecoveryBundleError("recovery_payload_unreadable") from exc
     payload = validate_payload(payload)
     _validate_nonce_authority_binding(payload, key, nonce)
@@ -688,6 +706,7 @@ def validate_sidecar(sidecar: Any) -> Dict[str, Any]:
             "schemaVersion", "readback", "recovery"} or \
             sidecar.get("schemaVersion") != SIDECAR_SCHEMA:
         raise RecoveryBundleError("recovery_sidecar_schema_invalid")
+    _validate_outer_json_tree(sidecar)
     if len(_canonical(sidecar)) > MAX_SIDECAR_BYTES:
         raise RecoveryBundleError("recovery_sidecar_oversized")
     return build_sidecar(sidecar.get("readback"), sidecar.get("recovery"))

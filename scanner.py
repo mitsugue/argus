@@ -18991,7 +18991,7 @@ def _response_bounded_json(response, maximum_bytes, classification):
         return json.loads(encoded.decode("utf-8"))
     except _RemoteRecoveryRestoreError:
         raise
-    except (TypeError, UnicodeError, json.JSONDecodeError):
+    except (TypeError, UnicodeError, json.JSONDecodeError, RecursionError):
         _remote_recovery_restore_failure(classification)
 
 
@@ -19166,8 +19166,16 @@ def _fetch_pinned_recovery_object(url, maximum_bytes, name):
             return {"status": "absent", "value": None}
         if response.status_code != 200:
             return {"status": "http_error", "value": None}
-        value = _response_bounded_json(
-            response, maximum_bytes, f"remote_{name}_unreadable_or_oversized")
+        try:
+            value = _response_bounded_json(
+                response, maximum_bytes,
+                f"remote_{name}_unreadable_or_oversized")
+        except _RemoteRecoveryRestoreError as exc:
+            # This fetch also runs before a healthy local keyed checkpoint can
+            # become authority. Keep malformed remote evidence in the recovery
+            # domain so the caller fails closed without quarantining local
+            # checkpoint bytes as though they were corrupt.
+            raise argus_remote_recovery.RecoveryBundleError(str(exc)) from exc
         return {"status": "present", "value": value}
     finally:
         if response is not None:
@@ -19221,7 +19229,8 @@ def _read_local_recovery_sidecar():
             "recovery_local_sidecar_missing") from exc
     except argus_remote_recovery.RecoveryBundleError:
         raise
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, TypeError, ValueError, json.JSONDecodeError,
+            RecursionError) as exc:
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_local_sidecar_unreadable") from exc
     finally:
