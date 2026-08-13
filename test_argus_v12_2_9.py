@@ -325,6 +325,10 @@ def test_remote_restore_allows_large_snapshot_read_timeout(monkeypatch, tmp_path
     monkeypatch.setitem(scanner._OSINT_PERSIST_STATE, "restored", False)
     monkeypatch.setitem(scanner._DURABLE_STATE, "lastRestoreAt", None)
     monkeypatch.setitem(scanner._DURABLE_STATE, "restoreSource", None)
+    monkeypatch.setattr(
+        scanner, "_pinned_ledger_restore_base",
+        lambda: {"base": "https://example.invalid/pinned/ledger",
+                 "commitSha": "a" * 40})
     observed = {}
 
     class _Response:

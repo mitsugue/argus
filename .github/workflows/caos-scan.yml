@@ -267,25 +267,59 @@ jobs:
       - name: Fetch validated durable snapshots
         id: fetch
         if: steps.recheck.outputs.durabilityAllowed == 'true'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
           curl --fail --silent --show-error --max-time 60 \
             "$BE/api/argus/news/ja-cache-snapshot" \
             -o "$RUNNER_TEMP/news-ja.json"
-          curl --fail --silent --show-error --max-time 60 \
-            "$BE/api/argus/osint/memory-snapshot" \
-            -o "$RUNNER_TEMP/osint-memory.json"
           NEWS_JA_COUNT=$(python3 -c \
             "import json; d=json.load(open('$RUNNER_TEMP/news-ja.json')); assert d.get('schemaVersion')=='news-ja-cache-v1'; print(d.get('count',0))")
+          echo "newsJaCount=$NEWS_JA_COUNT" >> "$GITHUB_OUTPUT"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "remoteArtifactMode=auth_unavailable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          RECOVERY_STATUS=$(curl --silent --show-error --max-time 60 \
+            --max-filesize 8388608 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            -o "$RUNNER_TEMP/osint-recovery-status.json" -w '%{http_code}' \
+            "$BE/api/argus/admin/remote-journal/recovery-sidecar")
+          if [ "$RECOVERY_STATUS" = "200" ]; then
+            python3 scripts/prepare_remote_journal_publish.py \
+              validate-sidecar \
+              --recovery "$RUNNER_TEMP/osint-recovery-status.json" > /dev/null
+            rm -f "$RUNNER_TEMP/osint-recovery-status.json"
+            # Keyed Remote Journal publication has one owner: Watchtower (or
+            # its bounded re-arm). This legacy writer retires before checkout,
+            # staging, push, or receipt creation.
+            echo "remoteArtifactMode=encrypted_recovery_v1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$RECOVERY_STATUS" != "503" ] || ! python3 -c \
+              "import json; assert json.load(open('$RUNNER_TEMP/osint-recovery-status.json')).get('status') == 'not_configured'"; then
+            echo "Remote Journal recovery configuration is indeterminate"
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/osint-recovery-status.json"
+          # Only an explicit not_configured response preserves the pre-key
+          # full-snapshot writer and its existing publication behavior.
+          curl --fail --silent --show-error --max-time 60 \
+            --max-filesize 268435456 \
+            "$BE/api/argus/osint/memory-snapshot" \
+            -o "$RUNNER_TEMP/osint-memory.json"
           python3 -c \
             "import json; d=json.load(open('$RUNNER_TEMP/osint-memory.json')); assert d.get('schemaVersion')=='argus-durable-v3'; assert d.get('integrityManifest',{}).get('manifestHash')"
           python3 scripts/build_remote_readback_receipt.py \
             "$RUNNER_TEMP/osint-memory.json" "$RUNNER_TEMP/osint-readback.json"
           cp scripts/prepare_remote_journal_publish.py \
             "$RUNNER_TEMP/prepare_remote_journal_publish.py"
+          cp scripts/remote_journal_publish_policy.py \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py"
           cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"
-          echo "newsJaCount=$NEWS_JA_COUNT" >> "$GITHUB_OUTPUT"
+          echo "remoteArtifactMode=legacy_full" >> "$GITHUB_OUTPUT"
       - name: Commit verified snapshot and post receipt
         id: flush
         if: steps.recheck.outputs.durabilityAllowed == 'true'
@@ -293,6 +327,7 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
           NEWS_JA_COUNT: ${{ steps.fetch.outputs.newsJaCount }}
           BACKEND_BUILD_SHA: ${{ steps.recheck.outputs.actualBackendSha }}
+          REMOTE_ARTIFACT_MODE: ${{ steps.fetch.outputs.remoteArtifactMode }}
         run: |
           [ -z "$ARGUS_ADMIN_TOKEN" ] && {
             echo "durabilityResult=expected_skip_missing_auth" >> "$GITHUB_OUTPUT"
@@ -300,6 +335,51 @@ jobs:
             echo "readBackVerified=false" >> "$GITHUB_OUTPUT"
             echo "no admin token — expected_skip"
             exit 0
+          }
+          if [ "$REMOTE_ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
+            echo "durabilityResult=expected_skip_encrypted_recovery_owned_by_watchtower" >> "$GITHUB_OUTPUT"
+            echo "receiptSequence=0" >> "$GITHUB_OUTPUT"
+            echo "readBackVerified=false" >> "$GITHUB_OUTPUT"
+            echo "encrypted recovery configured — durability writer retired"
+            exit 0
+          fi
+          [ "$REMOTE_ARTIFACT_MODE" = "legacy_full" ] || {
+            echo "Remote Journal artifact mode was not explicitly established"
+            exit 1
+          }
+          BE="https://argus-backend-3j2m.onrender.com"
+          recheck_remote_artifact_mode() {
+            local status
+            status=$(curl --silent --show-error --max-time 60 \
+              --max-filesize 8388608 \
+              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              -o "$RUNNER_TEMP/osint-recovery-recheck.json" -w '%{http_code}' \
+              "$BE/api/argus/admin/remote-journal/recovery-sidecar")
+            if [ "$status" = "200" ] && python3 \
+                "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+                validate-sidecar \
+                --recovery "$RUNNER_TEMP/osint-recovery-recheck.json" \
+                > /dev/null; then
+              printf '%s' encrypted_recovery_v1
+            elif [ "$status" = "503" ] && python3 -c \
+                "import json; assert json.load(open('$RUNNER_TEMP/osint-recovery-recheck.json')).get('status') == 'not_configured'"; then
+              printf '%s' legacy_full
+            else
+              printf '%s' indeterminate
+            fi
+            rm -f "$RUNNER_TEMP/osint-recovery-recheck.json"
+          }
+          CURRENT_MODE=$(recheck_remote_artifact_mode)
+          if [ "$CURRENT_MODE" = "encrypted_recovery_v1" ]; then
+            echo "durabilityResult=expected_skip_encrypted_recovery_owned_by_watchtower" >> "$GITHUB_OUTPUT"
+            echo "receiptSequence=0" >> "$GITHUB_OUTPUT"
+            echo "readBackVerified=false" >> "$GITHUB_OUTPUT"
+            echo "encrypted recovery activated — legacy writer retired before checkout"
+            exit 0
+          fi
+          [ "$CURRENT_MODE" = "legacy_full" ] || {
+            echo "Remote Journal recovery configuration changed or is indeterminate"
+            exit 1
           }
           git fetch origin "ledger:refs/remotes/origin/ledger"
           git checkout -B ledger refs/remotes/origin/ledger
@@ -319,14 +399,15 @@ jobs:
             --ledger-full ledger/osint/memory.json \
             --ledger-readback ledger/osint/readback.json)
           PREPARED_VALUES=$(printf '%s' "$PREPARED" | python3 -c \
-            'import json,sys; d=json.load(sys.stdin); print(d["status"]); print(d["expectedHash"]); print(d["generatedAt"]); print(d.get("previousGeneratedAt") or ""); print(d["fullSnapshotBytes"]); print(str(d["fullSnapshotPublished"]).lower()); print(str(d["fullSnapshotRetained"]).lower())')
+            'import json,sys; d=json.load(sys.stdin); print(d["status"]); print(d["expectedHash"]); print(d["expectedReceiptHash"]); print(d["generatedAt"]); print(d.get("previousGeneratedAt") or ""); print(d["fullSnapshotBytes"]); print(str(d["fullSnapshotPublished"]).lower()); print(str(d["fullSnapshotRetained"]).lower())')
           PREPARED_STATUS=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '1p')
           NEW_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '2p')
-          NEW_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '3p')
-          OLD_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '4p')
-          FULL_BYTES=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '5p')
-          FULL_PUBLISHED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '6p')
-          FULL_RETAINED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '7p')
+          NEW_RECEIPT_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '3p')
+          NEW_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '4p')
+          OLD_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '5p')
+          FULL_BYTES=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '6p')
+          FULL_PUBLISHED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '7p')
+          FULL_RETAINED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '8p')
           echo "remote journal publish: status=$PREPARED_STATUS old=$OLD_ASOF new=$NEW_ASOF fullBytes=$FULL_BYTES fullPublished=$FULL_PUBLISHED fullRetained=$FULL_RETAINED"
           if [ "$PREPARED_STATUS" = "stale" ]; then
             echo "durabilityResult=expected_skip_stale_snapshot" >> "$GITHUB_OUTPUT"
@@ -340,6 +421,18 @@ jobs:
           git add ledger/news-ja/ ledger/osint/
           if ! git diff --cached --quiet; then
             git commit -m "news-ja: $(date -u +%FT%TZ) translation-cache snapshot"
+            CURRENT_MODE=$(recheck_remote_artifact_mode)
+            if [ "$CURRENT_MODE" = "encrypted_recovery_v1" ]; then
+              echo "durabilityResult=expected_skip_encrypted_recovery_owned_by_watchtower" >> "$GITHUB_OUTPUT"
+              echo "receiptSequence=0" >> "$GITHUB_OUTPUT"
+              echo "readBackVerified=false" >> "$GITHUB_OUTPUT"
+              echo "encrypted recovery activated — legacy push suppressed"
+              exit 0
+            fi
+            [ "$CURRENT_MODE" = "legacy_full" ] || {
+              echo "Remote Journal recovery configuration changed or is indeterminate"
+              exit 1
+            }
             git push origin HEAD:ledger ||
               { git pull --rebase origin ledger && git push origin HEAD:ledger; }
           fi
@@ -351,15 +444,26 @@ jobs:
           }
           VERIFIED=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
             verify-committed --readback ledger/osint/readback.json \
-            --expected-hash "$NEW_HASH")
+            --expected-hash "$NEW_HASH" \
+            --expected-receipt-hash "$NEW_RECEIPT_HASH")
           EXPECTED_HASH=$(printf '%s' "$VERIFIED" | python3 -c \
             'import json,sys; print(json.load(sys.stdin)["actualHash"])')
-          TARGET_WAL_SEQUENCE=$(python3 -c \
-            'import json; d=json.load(open("ledger/osint/readback.json")); m=d.get("missionTickDurability") or {}; local=int(m.get("walAppliedSequence") or 0); remote=int(m.get("remoteWalAppliedSequence") or -1); assert local > 0 and remote == local; print(remote)')
-          RECEIPT_IDEMPOTENCY_KEY="caos-scan-${REMOTE_COMMIT_SHA}-${TARGET_WAL_SEQUENCE}"
+          RECEIPT_REQUEST=$(python3 \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py" receipt \
+            --readback ledger/osint/readback.json \
+            --remote-commit-sha "$REMOTE_COMMIT_SHA" \
+            --backend-build-sha "$BACKEND_BUILD_SHA" \
+            --expected-hash "$EXPECTED_HASH" \
+            --expected-receipt-hash "$NEW_RECEIPT_HASH" \
+            --artifact-mode legacy_full \
+            --idempotency-prefix caos-scan)
+          RECEIPT_IDEMPOTENCY_KEY=$(printf '%s' "$RECEIPT_REQUEST" | \
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["idempotencyKey"])')
+          TARGET_WAL_SEQUENCE=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["payload"]["targetWalSequence"])')
+          RECEIPT_PAYLOAD=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.dumps(json.load(sys.stdin)["payload"],separators=(",",":")))')
           export REMOTE_COMMIT_SHA EXPECTED_HASH TARGET_WAL_SEQUENCE BACKEND_BUILD_SHA
-          RECEIPT_PAYLOAD=$(python3 -c \
-            'import json,os; print(json.dumps({"remoteCommitSha":os.environ["REMOTE_COMMIT_SHA"],"expectedHash":os.environ["EXPECTED_HASH"],"backendBuildSha":os.environ["BACKEND_BUILD_SHA"],"targetWalSequence":int(os.environ["TARGET_WAL_SEQUENCE"])},separators=(",",":")))')
           export RECEIPT_IDEMPOTENCY_KEY
           RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" \
             --name remote-journal-accept-receipt \

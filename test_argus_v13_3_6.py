@@ -132,10 +132,19 @@ def test_exact_commit_receipt_reaches_verified_state():
     remote = {
         "schemaVersion": "argus-durable-v3",
         "generatedAt": "2026-07-31T00:00:00Z",
+        "asOf": "2026-07-31T00:00:00Z",
+        "buildIdentity": {
+            "appVersion": "13.3.6", "buildSha": FULL_SHA},
+        "outcomes": [],
+        "marketLedgerStateHash": "1" * 16,
+        "chartIntelligenceStateHash": "2" * 16,
+        "todayIntelligenceStateHash": "3" * 16,
+        "marketReplayStateHash": "4" * 16,
         "missionTickDurability": {
             "schemaVersion": "argus-mission-batch-v1",
             "walAppliedSequence": 4,
             "remoteWalAppliedSequence": 4,
+            "verifiedWalSequence": 0,
         },
         **section,
     }

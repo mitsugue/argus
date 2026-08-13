@@ -20,6 +20,9 @@ import argus_remote_journal
 
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 HASH_RE = re.compile(r"[0-9a-f]{16}")
+LONG_HASH_RE = re.compile(r"[0-9a-f]{64}")
+GENERATION_RE = re.compile(r"rrg-[0-9a-f]{32}")
+KEY_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
 NATURAL_EVENT = "schedule"
 MANUAL_EVENT = "workflow_dispatch"
 DATA_QUALITY_SCHEMA = "data-quality-v1"
@@ -184,6 +187,49 @@ def _runtime_remote_truth(
     }
 
 
+def _runtime_wal_truth(data_quality: Optional[Mapping[str, Any]]) \
+        -> Dict[str, int]:
+    """Validate the stricter WAL/checkpoint truth for an explicit re-arm."""
+    if data_quality is None:
+        raise PublishPolicyError("runtime_data_quality_required_for_rearm")
+    # Reuse schema, event counts, cumulative failure and corruption validation.
+    _runtime_remote_truth(data_quality)
+    durable = data_quality.get("durableState")
+    if not isinstance(durable, Mapping):
+        raise PublishPolicyError("runtime_durable_integrity_invalid")
+    checkpoint = durable.get("lastCheckpoint")
+    if not isinstance(checkpoint, Mapping) or \
+            checkpoint.get("verified") is not True or \
+            checkpoint.get("readBackVerified") is not True:
+        raise PublishPolicyError("runtime_checkpoint_unverified")
+    remote = data_quality.get("remoteJournalVerification")
+    if not isinstance(remote, Mapping) or \
+            remote.get("readBackVerified") is not True or \
+            remote.get("walReadBackVerified") is not True or \
+            remote.get("remoteDurabilityState") != "verified":
+        raise PublishPolicyError("runtime_remote_readback_unverified")
+    wal_values = (
+        checkpoint.get("includedWalSequence"),
+        remote.get("remoteWalAppliedSequence"),
+        remote.get("verifiedWalSequence"),
+    )
+    if any(isinstance(value, bool) or not isinstance(value, int)
+           for value in wal_values):
+        raise PublishPolicyError("runtime_wal_sequence_invalid")
+    local_wal, remote_applied, remote_verified = wal_values
+    if local_wal <= 0 or remote_verified <= 0 or \
+            remote_applied != remote_verified or local_wal < remote_verified:
+        raise PublishPolicyError("runtime_wal_sequence_invalid")
+    if any(remote.get(key) not in (None, "") for key in (
+            "errorClass", "walErrorClass", "receiptErrorClass")):
+        raise PublishPolicyError("runtime_remote_readback_unverified")
+    return {
+        "localIncludedWalSequence": local_wal,
+        "runtimeVerifiedWalSequence": remote_verified,
+        "runtimeWalGap": local_wal - remote_verified,
+    }
+
+
 def runtime_remote_pending_count(
         data_quality: Optional[Mapping[str, Any]]) -> Optional[int]:
     """Return the validated pending count for callers and focused tests."""
@@ -196,6 +242,7 @@ def publication_decision(
         ledger_readback: Optional[Mapping[str, Any]], *, event_name: str,
         utc_minute: int,
         runtime_data_quality: Optional[Mapping[str, Any]] = None,
+        natural_rearm: bool = False,
         ) -> Dict[str, Any]:
     """Return a scalar-only decision; payloads and identifiers never escape."""
     try:
@@ -207,6 +254,8 @@ def publication_decision(
     event = str(event_name or "")
     if event not in (NATURAL_EVENT, MANUAL_EVENT):
         raise PublishPolicyError("workflow_event_invalid")
+    if natural_rearm and event != MANUAL_EVENT:
+        raise PublishPolicyError("natural_rearm_event_invalid")
 
     progress = remote_progress(source_readback, ledger_readback)
     runtime_truth = _runtime_remote_truth(runtime_data_quality)
@@ -214,15 +263,36 @@ def publication_decision(
         runtime_truth["pendingCount"] if runtime_truth is not None else None)
     runtime_failures = (
         runtime_truth["failureCount"] if runtime_truth is not None else None)
-    ordinary_hourly_slot = minute < 15
-    if event == MANUAL_EVENT:
+    runtime_wal_truth = (
+        _runtime_wal_truth(runtime_data_quality) if natural_rearm else None)
+    runtime_wal_gap = (
+        runtime_wal_truth["runtimeWalGap"]
+        if runtime_wal_truth is not None else None)
+    if natural_rearm and (
+            progress["remoteProofMissing"] or
+            progress["sourceWalTarget"] !=
+            runtime_wal_truth["localIncludedWalSequence"] or
+            progress["remoteWalTarget"] <
+            runtime_wal_truth["runtimeVerifiedWalSequence"] or
+            progress["remoteWalTarget"] > progress["sourceWalTarget"]):
+        raise PublishPolicyError("natural_rearm_proof_runtime_mismatch")
+    natural = event == NATURAL_EVENT or natural_rearm
+    policy_source = (
+        "remote_journal_rearm" if natural_rearm else
+        "github_schedule" if event == NATURAL_EVENT else "manual")
+    ordinary_hourly_slot = event == NATURAL_EVENT and minute < 15
+    if not natural:
         action, reason = "publish", "manual"
+    elif natural_rearm and runtime_wal_gap == 0:
+        action, reason = "skip", "natural_rearm_caught_up"
     elif ordinary_hourly_slot:
         action, reason = "publish", "ordinary_hourly_slot"
     elif progress["forwardProgress"]:
         action, reason = "publish", "natural_remote_backlog"
     elif runtime_pending is not None and runtime_pending > 0:
         action, reason = "receipt_only", "natural_receipt_recovery"
+    elif runtime_wal_gap is not None and runtime_wal_gap > 0:
+        action, reason = "receipt_only", "natural_runtime_wal_recovery"
     else:
         action, reason = "skip", "bounded_churn_skip"
     return {
@@ -231,11 +301,21 @@ def publication_decision(
         "publish": action == "publish",
         "receiptOnly": action == "receipt_only",
         "reason": reason,
-        "natural": event == NATURAL_EVENT,
+        "natural": natural,
+        "eventName": event,
+        "naturalRearm": bool(natural_rearm),
+        "policySource": policy_source,
         "utcMinute": minute,
         "runtimeTruthAvailable": runtime_pending is not None,
         "runtimeRemotePendingCount": runtime_pending,
         "runtimeRemoteFailureCount": runtime_failures,
+        "runtimeLocalIncludedWalSequence": (
+            runtime_wal_truth["localIncludedWalSequence"]
+            if runtime_wal_truth is not None else None),
+        "runtimeVerifiedWalSequence": (
+            runtime_wal_truth["runtimeVerifiedWalSequence"]
+            if runtime_wal_truth is not None else None),
+        "runtimeWalGap": runtime_wal_gap,
         **progress,
     }
 
@@ -243,7 +323,13 @@ def publication_decision(
 def receipt_request(
         readback: Mapping[str, Any], *, remote_commit_sha: str,
         backend_build_sha: str, expected_hash: str,
-        idempotency_prefix: str = "caos-watchtower") -> Dict[str, Any]:
+        idempotency_prefix: str = "caos-watchtower",
+        expected_receipt_hash: Optional[str] = None,
+        artifact_mode: Optional[str] = None,
+        recovery_bundle_hash: Optional[str] = None,
+        recovery_generation_id: Optional[str] = None,
+        recovery_key_id: Optional[str] = None,
+        ledger_base_commit_sha: Optional[str] = None) -> Dict[str, Any]:
     """Build the same exact-WAL async intent contract used by caos-scan."""
     commit = str(remote_commit_sha or "").lower()
     build = str(backend_build_sha or "").lower()
@@ -261,21 +347,67 @@ def receipt_request(
     if actual_hash != manifest_hash:
         raise PublishPolicyError("compact_readback_hash_mismatch")
     remote_sequence = _wal_target(readback, label="source")
+    receipt_hash = str(readback.get("receiptHash") or "").lower()
+    if expected_receipt_hash is not None and (
+            not HASH_RE.fullmatch(str(expected_receipt_hash).lower()) or
+            receipt_hash != str(expected_receipt_hash).lower()):
+        raise PublishPolicyError("compact_receipt_hash_mismatch")
+    mode = str(artifact_mode or "")
+    recovery_fields = (
+        recovery_bundle_hash, recovery_generation_id, recovery_key_id,
+        ledger_base_commit_sha)
+    if mode and mode not in ("legacy_full", "encrypted_recovery_v1"):
+        raise PublishPolicyError("artifact_mode_invalid")
+    if mode == "legacy_full" and any(value not in (None, "")
+                                      for value in recovery_fields):
+        raise PublishPolicyError("legacy_recovery_metadata_invalid")
+    if mode == "encrypted_recovery_v1":
+        recovery_hash = str(recovery_bundle_hash or "").lower()
+        generation = str(recovery_generation_id or "")
+        key_id = str(recovery_key_id or "")
+        base_commit = str(ledger_base_commit_sha or "").lower()
+        if not LONG_HASH_RE.fullmatch(recovery_hash) or not \
+                GENERATION_RE.fullmatch(generation) or not \
+                KEY_ID_RE.fullmatch(key_id) or not SHA_RE.fullmatch(base_commit):
+            raise PublishPolicyError("recovery_receipt_metadata_invalid")
     prefix = str(idempotency_prefix or "")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,39}", prefix):
         raise PublishPolicyError("idempotency_prefix_invalid")
     key = f"{prefix}-{commit}-{remote_sequence}"
     if len(key) > 128:
         raise PublishPolicyError("idempotency_key_too_long")
+    payload = {
+        "remoteCommitSha": commit,
+        "expectedHash": manifest_hash,
+        "backendBuildSha": build,
+        "targetWalSequence": remote_sequence,
+    }
+    # Backward-compatible direct callers may omit the strengthened artifact
+    # contract.  Production workflows always provide it; the backend endpoint
+    # rejects newly submitted payloads without an exact compact receipt hash.
+    if expected_receipt_hash is not None or mode:
+        if expected_receipt_hash is None or not mode:
+            raise PublishPolicyError("receipt_artifact_contract_incomplete")
+        payload.update({
+            "expectedReceiptHash": receipt_hash,
+            "artifactMode": mode,
+            "recoveryBundleHash": (
+                str(recovery_bundle_hash).lower()
+                if mode == "encrypted_recovery_v1" else None),
+            "recoveryGenerationId": (
+                str(recovery_generation_id)
+                if mode == "encrypted_recovery_v1" else None),
+            "recoveryKeyId": (
+                str(recovery_key_id)
+                if mode == "encrypted_recovery_v1" else None),
+            "ledgerBaseCommitSha": (
+                str(ledger_base_commit_sha).lower()
+                if mode == "encrypted_recovery_v1" else None),
+        })
     return {
         "schemaVersion": "argus-remote-journal-receipt-request-v1",
         "idempotencyKey": key,
-        "payload": {
-            "remoteCommitSha": commit,
-            "expectedHash": manifest_hash,
-            "backendBuildSha": build,
-            "targetWalSequence": remote_sequence,
-        },
+        "payload": payload,
     }
 
 
@@ -288,11 +420,18 @@ def _parser() -> argparse.ArgumentParser:
     decision.add_argument("--runtime-data-quality", type=pathlib.Path)
     decision.add_argument("--event-name", required=True)
     decision.add_argument("--utc-minute", required=True, type=int)
+    decision.add_argument("--natural-rearm", action="store_true")
     receipt = sub.add_parser("receipt")
     receipt.add_argument("--readback", required=True, type=pathlib.Path)
     receipt.add_argument("--remote-commit-sha", required=True)
     receipt.add_argument("--backend-build-sha", required=True)
     receipt.add_argument("--expected-hash", required=True)
+    receipt.add_argument("--expected-receipt-hash")
+    receipt.add_argument("--artifact-mode")
+    receipt.add_argument("--recovery-bundle-hash")
+    receipt.add_argument("--recovery-generation-id")
+    receipt.add_argument("--recovery-key-id")
+    receipt.add_argument("--ledger-base-commit-sha")
     receipt.add_argument(
         "--idempotency-prefix", default="caos-watchtower")
     return parser
@@ -310,6 +449,7 @@ def main(argv=None) -> int:
             _read_json(args.source_readback), ledger,
             event_name=args.event_name,
             utc_minute=args.utc_minute,
+            natural_rearm=args.natural_rearm,
             runtime_data_quality=(
                 _read_json(args.runtime_data_quality)
                 if args.runtime_data_quality else None))
@@ -319,7 +459,13 @@ def main(argv=None) -> int:
             remote_commit_sha=args.remote_commit_sha,
             backend_build_sha=args.backend_build_sha,
             expected_hash=args.expected_hash,
-            idempotency_prefix=args.idempotency_prefix)
+            idempotency_prefix=args.idempotency_prefix,
+            expected_receipt_hash=args.expected_receipt_hash,
+            artifact_mode=args.artifact_mode,
+            recovery_bundle_hash=args.recovery_bundle_hash,
+            recovery_generation_id=args.recovery_generation_id,
+            recovery_key_id=args.recovery_key_id,
+            ledger_base_commit_sha=args.ledger_base_commit_sha)
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     return 0
 

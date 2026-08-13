@@ -29,7 +29,9 @@ jobs:
           ARGUS_RENDER_SKIP_TEXT: ${{ github.event.pull_request.title || github.event.head_commit.message || '' }}
         run: python3 -B scripts/render_deploy_guard.py
       - name: Install deps (ci.ymlと同一セット)
-        run: pip install --quiet anthropic flask flask-cors requests pytz python-dotenv json-repair pytest
+        run: >-
+          pip install --quiet anthropic flask flask-cors requests pytz
+          python-dotenv json-repair pytest cryptography==49.0.0
       - name: Install web deps
         run: cd web && npm ci --no-audit --no-fund
       - name: Validate control-plane scripts and workflows
@@ -40,14 +42,19 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
+          python3 -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'
           python3 -m py_compile \
+            argus_remote_nonce_anchor.py \
+            argus_remote_recovery.py \
             scripts/production_release_manifest.py \
             scripts/render_deployment_identity.py \
             scripts/verify_manifest_publication.py \
             scripts/verify_production_backend_release.py \
             scripts/argus_build_identity.py \
             scripts/resolve_backend_identity.py \
-            scripts/argus_mission_tick.py
+            scripts/argus_mission_tick.py \
+            scripts/argus_remote_journal_rearm.py \
+            scripts/remote_journal_publish_policy.py
           bash -n scripts/install_argus_mission_timer.sh
           shellcheck scripts/install_argus_mission_timer.sh \
             scripts/check_argus_mission_timer.sh

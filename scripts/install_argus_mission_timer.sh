@@ -26,9 +26,12 @@ FILES=(
   "scripts/production_release_manifest.py|${ROOT}/scripts/production_release_manifest.py|0755"
   "scripts/argus_build_identity.py|${ROOT}/scripts/argus_build_identity.py|0755"
   "scripts/argus_mission_tick.py|${ROOT}/scripts/argus_mission_tick.py|0755"
+  "scripts/argus_remote_journal_rearm.py|${ROOT}/scripts/argus_remote_journal_rearm.py|0755"
   "scripts/check_argus_mission_timer.sh|${ROOT}/scripts/check_argus_mission_timer.sh|0755"
   "ops/systemd/argus-mission-tick.service|/etc/systemd/system/argus-mission-tick.service|0644"
   "ops/systemd/argus-mission-tick.timer|/etc/systemd/system/argus-mission-tick.timer|0644"
+  "ops/systemd/argus-remote-journal-rearm.service|/etc/systemd/system/argus-remote-journal-rearm.service|0644"
+  "ops/systemd/argus-remote-journal-rearm.timer|/etc/systemd/system/argus-remote-journal-rearm.timer|0644"
 )
 
 sha256() {
@@ -90,16 +93,24 @@ validate_sources() {
         ;;
       *.service|*.timer)
         validate_systemd_unit_shape "$source"
-        # systemd-analyze also resolves User= and absolute ExecStart= paths.
-        # Those production-only dependencies do not exist on a clean CI host,
-        # so portable dry-run validates unit structure while --apply performs
-        # the target-aware verification before making any changes.
-        if [[ "$MODE" == "apply" ]] && command -v systemd-analyze >/dev/null 2>&1; then
-          systemd-analyze verify "$source"
-        fi
-        ;;
+      ;;
     esac
   done
+}
+
+verify_installed_systemd_units() {
+  command -v systemd-analyze >/dev/null 2>&1 || return 0
+  local row source destination mode
+  local -a installed_units=()
+  for row in "${FILES[@]}"; do
+    IFS='|' read -r source destination mode <<< "$row"
+    case "$source" in
+      *.service|*.timer) installed_units+=("$destination") ;;
+    esac
+  done
+  # Verify only after ExecStart helpers and units have been copied.  This
+  # avoids a false first-install failure and does not reload or start units.
+  systemd-analyze verify "${installed_units[@]}"
 }
 
 validate_sources
@@ -154,8 +165,61 @@ if [[ "$MODE" == "rollback" ]]; then
   exit 0
 fi
 
+[[ "$MODE" == "apply" ]] || {
+  echo "explicit --apply is required" >&2
+  exit 2
+}
+
 [[ -f /etc/argus-bridge.env ]] || {
   echo "missing /etc/argus-bridge.env; existing secret management is required" >&2
+  exit 1
+}
+
+rearm_env="/etc/argus-remote-journal-rearm.env"
+rearm_service_user="argus-rearm"
+getent passwd "$rearm_service_user" >/dev/null || {
+  echo "missing dedicated $rearm_service_user service user" >&2
+  exit 1
+}
+getent group "$rearm_service_user" >/dev/null || {
+  echo "missing dedicated $rearm_service_user service group" >&2
+  exit 1
+}
+[[ -f "$rearm_env" && ! -L "$rearm_env" ]] || {
+  echo "missing regular $rearm_env; dedicated workflow credential is required" >&2
+  exit 1
+}
+rearm_owner="$(stat -c '%U' "$rearm_env")"
+[[ "$rearm_owner" == "root" ]] || {
+  echo "$rearm_env must be owned by root" >&2
+  exit 1
+}
+rearm_group="$(stat -c '%G' "$rearm_env")"
+[[ "$rearm_group" == "$rearm_service_user" ]] || {
+  echo "$rearm_env must be group-owned by $rearm_service_user" >&2
+  exit 1
+}
+rearm_mode="$(stat -c '%a' "$rearm_env")"
+case "$rearm_mode" in
+  640|440) ;;
+  *)
+    echo "unsafe permissions on $rearm_env; require 0640 (or read-only 0440)" >&2
+    exit 1
+    ;;
+esac
+sudo -u "$rearm_service_user" test -r "$rearm_env" || {
+  echo "$rearm_env is not readable by the rearm service user" >&2
+  exit 1
+}
+# Fail closed unless the file contains exactly one non-comment assignment and
+# that assignment is the dedicated PAT.  Never print the assignment or value.
+awk '
+  /^[[:space:]]*($|#)/ { next }
+  /^ARGUS_REMOTE_JOURNAL_REARM_PAT=[^[:space:]#]+$/ { allowed += 1; next }
+  { invalid += 1 }
+  END { exit !(allowed == 1 && invalid == 0) }
+' "$rearm_env" || {
+  echo "invalid dedicated credential file; require one allowed assignment" >&2
   exit 1
 }
 
@@ -163,7 +227,48 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_dir="${BACKUP_ROOT}/${timestamp}"
 sudo install -d -o root -g root -m 0700 "$backup_dir"
 manifest_tmp="$(mktemp)"
-trap 'rm -f "$manifest_tmp"' EXIT
+apply_in_progress="true"
+
+restore_partial_apply() {
+  local destination backup sha owner group mode previous_state
+  local restore_failed=0
+  while IFS=$'\t' read -r destination backup sha owner group mode previous_state; do
+    if [[ "$previous_state" == "absent" ]]; then
+      sudo rm -f -- "$destination" || restore_failed=1
+      sudo test ! -e "$destination" || restore_failed=1
+      continue
+    fi
+    if [[ "$previous_state" != "present" || ! -f "$backup" ]] || \
+       [[ "$(sha256 "$backup")" != "$sha" ]]; then
+      restore_failed=1
+      continue
+    fi
+    sudo install -D -o "$owner" -g "$group" -m "$mode" \
+      "$backup" "$destination" || restore_failed=1
+    if sudo test -f "$destination"; then
+      [[ "$(sudo sha256sum "$destination" | awk '{print $1}')" == "$sha" ]] || \
+        restore_failed=1
+    else
+      restore_failed=1
+    fi
+  done < "$manifest_tmp"
+  return "$restore_failed"
+}
+
+finish_apply() {
+  local status="$1"
+  trap - EXIT
+  if [[ "$status" -ne 0 && "$apply_in_progress" == "true" ]]; then
+    if restore_partial_apply; then
+      echo "apply failed; installed files restored from verified backups" >&2
+    else
+      echo "apply failed; automatic restore was incomplete" >&2
+    fi
+  fi
+  rm -f "$manifest_tmp"
+  exit "$status"
+}
+trap 'finish_apply $?' EXIT
 
 for row in "${FILES[@]}"; do
   IFS='|' read -r source destination default_mode <<< "$row"
@@ -195,6 +300,8 @@ for row in "${FILES[@]}"; do
   }
 done
 
+verify_installed_systemd_units
+
 sudo install -d -o root -g root -m 0700 /var/lib/argus-build-identity
 sudo install -d -o root -g root -m 0755 /run/argus-build-identity
 if [[ ! -f /etc/argus-mission-tick.env ]]; then
@@ -206,6 +313,7 @@ if [[ ! -f /etc/argus-mission-tick.env ]]; then
 fi
 sudo install -o root -g root -m 0600 "$manifest_tmp" \
   "${backup_dir}/manifest.tsv"
+apply_in_progress="false"
 
 echo "install complete backup=$timestamp"
 echo "systemctl daemon-reload is required but was not executed"

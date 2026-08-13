@@ -179,6 +179,18 @@ def configured_paths(
         "receiptQueue": value(
             "ARGUS_REMOTE_RECEIPT_QUEUE_FILE",
             "argus_remote_receipt_queue.json"),
+        "recovery": value(
+            "ARGUS_REMOTE_RECOVERY_FILE",
+            "argus_remote_recovery.json"),
+        "recoveryNonceState": value(
+            "ARGUS_REMOTE_RECOVERY_NONCE_STATE_FILE",
+            "argus_remote_recovery_nonce_state.json"),
+        "recoveryNonceHistory": value(
+            "ARGUS_REMOTE_RECOVERY_NONCE_HISTORY_FILE",
+            "argus_remote_recovery_nonce_history.json"),
+        "recoveryNonceHistoryHead": value(
+            "ARGUS_REMOTE_RECOVERY_NONCE_HISTORY_HEAD_FILE",
+            "argus_remote_recovery_nonce_history.head.json"),
         "tempDirectory": os.path.abspath(str(
             env.get("ARGUS_CHECKPOINT_TEMP_DIR") or root)),
     }
@@ -498,7 +510,8 @@ def validate_storage(
     resolved: Dict[str, str] = {"root": root}
     for key in (
             "wal", "checkpoint", "lease", "cursor", "receipt",
-            "receiptQueue"):
+            "receiptQueue", "recovery", "recoveryNonceState",
+            "recoveryNonceHistory", "recoveryNonceHistoryHead"):
         raw = os.path.abspath(paths[key])
         candidate = _resolve_candidate(raw)
         permitted_test_path = bool(
@@ -598,7 +611,8 @@ def atomic_write_json(
         path: str, value: Mapping[str, Any], *,
         temp_directory: Optional[str] = None,
         validator=None, temp_label: str = "tmp",
-        maximum_bytes: Optional[int] = None) -> Dict[str, Any]:
+        maximum_bytes: Optional[int] = None,
+        file_mode: Optional[int] = None) -> Dict[str, Any]:
     final = os.path.abspath(path)
     directory = os.path.realpath(temp_directory or os.path.dirname(final))
     if os.stat(directory).st_dev != os.stat(os.path.dirname(final)).st_dev:
@@ -627,6 +641,11 @@ def atomic_write_json(
     written = 0
     try:
         with open(temporary, "xb") as handle:
+            if file_mode is not None:
+                if isinstance(file_mode, bool) or not isinstance(
+                        file_mode, int) or file_mode < 0 or file_mode > 0o777:
+                    raise PersistentStorageError("checkpoint_file_mode_invalid")
+                os.fchmod(handle.fileno(), file_mode)
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             for chunk in _canonical_chunks(value):
                 if written + len(chunk) > maximum:
@@ -736,6 +755,7 @@ def public_diagnostics(
         "cursorPath": paths.get("cursor"),
         "receiptPath": paths.get("receipt"),
         "receiptQueuePath": paths.get("receiptQueue"),
+        "recoveryPath": paths.get("recovery"),
         "sameFilesystem": status.get("sameFilesystem"),
         "atomicRename": status.get("atomicRename"),
         "fsync": status.get("fsync"),

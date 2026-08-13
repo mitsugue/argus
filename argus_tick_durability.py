@@ -352,7 +352,8 @@ def verified_checkpoint(path: str, blob: Dict[str, Any], *,
                         allow_wal_compaction: bool = True,
                         compaction_sequence: Optional[int] = None,
                         build_sha: Optional[str] = None,
-                        mission_window_id: Optional[str] = None) -> Dict[str, Any]:
+                        mission_window_id: Optional[str] = None,
+                        post_verify=None) -> Dict[str, Any]:
     """Stream, fsync, hash read-back, then atomically replace the snapshot."""
     started = time.monotonic()
     sealed = "localCheckpointIntegrity" in blob
@@ -379,6 +380,10 @@ def verified_checkpoint(path: str, blob: Dict[str, Any], *,
         "checkpointMs": round((time.monotonic() - started) * 1000),
         "includedWalSequence": int(included_sequence),
     }
+    # A recovery sidecar must be derived from the exact fsynced/read-back
+    # checkpoint, and must exist before the corresponding WAL can compact.
+    if post_verify is not None:
+        result["postVerify"] = post_verify(dict(result))
     if wal_path and allow_wal_compaction:
         covered_sequence = min(
             int(included_sequence),

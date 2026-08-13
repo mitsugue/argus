@@ -129,8 +129,13 @@ def test_async_receipt_contract_is_fast_idempotent_and_exact():
     assert "--name remote-journal-accept-receipt" in flush
     assert "--timeout 15" in flush
     assert "Idempotency-Key=RECEIPT_IDEMPOTENCY_KEY" in flush
-    assert '"backendBuildSha":os.environ["BACKEND_BUILD_SHA"]' in flush
-    assert '"targetWalSequence":int(os.environ["TARGET_WAL_SEQUENCE"])' in flush
+    assert 'remote_journal_publish_policy.py" receipt' in flush
+    assert '--expected-receipt-hash "$NEW_RECEIPT_HASH"' in flush
+    assert "--artifact-mode legacy_full" in flush
+    assert "--idempotency-prefix caos-scan" in flush
+    assert 'json.load(sys.stdin)["payload"]["targetWalSequence"]' in flush
+    assert 'json.load(sys.stdin)["payload"]' in flush
+    assert 'json.dumps({"remoteCommitSha"' not in flush
     assert "--timeout 60" not in flush.split(
         "remote-journal-accept-receipt", 1)[1].split(")", 1)[0]
 

@@ -286,6 +286,8 @@ class OutcomeAndJournalIntegrationTests(unittest.TestCase):
                              "Idempotency-Key": "test-receipt-pending"},
                     json={"remoteCommitSha": "a" * 40,
                           "expectedHash": "b" * 16,
+                          "expectedReceiptHash": "d" * 16,
+                          "artifactMode": "legacy_full",
                           "backendBuildSha": "c" * 40,
                           "targetWalSequence": 42})
             self.assertEqual(response.status_code, 202)

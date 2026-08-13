@@ -1,0 +1,13 @@
+[Unit]
+Description=A.R.G.U.S. Remote Journal natural re-arm opportunities
+
+[Timer]
+# Phase after the natural :07/:37 EC2 mission without blocking that mission.
+OnCalendar=*-*-* *:13,43:00 UTC
+Persistent=true
+AccuracySec=1s
+RandomizedDelaySec=0
+Unit=argus-remote-journal-rearm.service
+
+[Install]
+WantedBy=timers.target

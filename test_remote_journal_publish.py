@@ -12,6 +12,13 @@ from scripts.prepare_remote_journal_publish import prepare, verify_committed
 
 
 NOW = "2026-07-27T00:00:00Z"
+BUILD = {"appVersion": "13.4.13", "buildSha": "a" * 40}
+STATE_HASHES = {
+    "marketLedgerStateHash": "1" * 32,
+    "chartIntelligenceStateHash": "2" * 32,
+    "todayIntelligenceStateHash": "3" * 32,
+    "marketReplayStateHash": "4" * 32,
+}
 
 
 def _snapshot(*, generated_at=NOW, padding=""):
@@ -26,9 +33,16 @@ def _snapshot(*, generated_at=NOW, padding=""):
     return {
         "schemaVersion": journal.SCHEMA_V3,
         "generatedAt": generated_at,
+        "asOf": generated_at,
+        "buildIdentity": dict(BUILD),
         "padding": padding,
         "outcomes": [],
-        "missionTickDurability": {"walAppliedSequence": 41},
+        "missionTickDurability": {
+            "walAppliedSequence": 41,
+            "remoteWalAppliedSequence": 41,
+            "verifiedWalSequence": 41,
+        },
+        **STATE_HASHES,
         **journal.snapshot_journal_section(
             events=[event], meta={}, now_iso=generated_at
         ),
@@ -154,17 +168,24 @@ def test_same_manifest_with_wal_only_progress_is_published(tmp_path):
     old["missionTickDurability"] = {
         "walAppliedSequence": 4492,
         "remoteWalAppliedSequence": 4492,
+        "verifiedWalSequence": 4492,
     }
     new = _snapshot()
     new["missionTickDurability"] = {
         "walAppliedSequence": 4512,
         "remoteWalAppliedSequence": 4512,
+        "verifiedWalSequence": 4512,
     }
-    # The journal manifest remains identical while the full receipt has a
-    # strictly newer publication time and exact WAL target.
+    # The signed journal events remain identical while the full receipt has a
+    # strictly newer publication time and exact WAL target. The clock-bound
+    # manifest hash changes, but event identity does not.
     new["generatedAt"] = "2026-07-27T00:00:01Z"
+    new["asOf"] = new["generatedAt"]
+    new.update(journal.snapshot_journal_section(
+        events=old["opsJournal"], meta={}, compacted=[],
+        now_iso=new["generatedAt"]))
     assert (old["integrityManifest"]["manifestHash"] ==
-            new["integrityManifest"]["manifestHash"])
+            new["integrityManifest"]["manifestHash"]) is False
     source_full, source_readback, ledger_full, ledger_readback = _paths(
         tmp_path, new
     )
@@ -208,11 +229,13 @@ def test_valid_receipt_from_different_full_snapshot_is_rejected(tmp_path):
     full["missionTickDurability"] = {
         "walAppliedSequence": 4492,
         "remoteWalAppliedSequence": 4492,
+        "verifiedWalSequence": 4492,
     }
     other = _snapshot()
     other["missionTickDurability"] = {
         "walAppliedSequence": 4512,
         "remoteWalAppliedSequence": 4512,
+        "verifiedWalSequence": 4512,
     }
     source_full, source_readback, ledger_full, ledger_readback = _paths(
         tmp_path, full

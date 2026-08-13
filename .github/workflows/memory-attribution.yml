@@ -9,13 +9,45 @@ on:
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
+      - "argus_remote_journal.py"
+      - "argus_remote_nonce_anchor.py"
+      - "argus_remote_recovery.py"
+      - "argus_remote_receipt_queue.py"
+      - "argus_state_journal.py"
+      - "argus_tick_durability.py"
+      - "argus_persistent_storage.py"
+      - "requirements.txt"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
       - "scripts/normalized_hash_resource_probe.py"
+      - "scripts/remote_recovery_resource_probe.py"
       - "test_argus_memory_attribution.py"
       - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
+      # Remote Journal recurrence changes must receive fresh exact-head
+      # normalized-hash, contributor #2 and exact-4-GiB regression evidence.
+      - ".github/workflows/caos-watchtower.yml"
+      - ".github/workflows/caos-scan.yml"
+      - "ops/systemd/argus-remote-journal-rearm.service"
+      - "ops/systemd/argus-remote-journal-rearm.timer"
+      - "scripts/argus_remote_journal_rearm.py"
+      - "scripts/install_argus_mission_timer.sh"
+      - "scripts/remote_journal_publish_policy.py"
+      - "scripts/prepare_remote_journal_publish.py"
+      - "test_remote_journal_liveness.py"
+      - "test_remote_journal_rearm.py"
+      - "test_remote_journal_publish.py"
+      - "test_argus_v13_4_2_remote_receipts.py"
+      - "test_remote_nonce_anchor.py"
+      - "test_remote_nonce_anchor_scanner.py"
+      - "test_remote_recovery_nonce.py"
+      - "test_remote_recovery_nonce_bootstrap.py"
+      - "test_remote_recovery_hkdf.py"
+      - "test_remote_recovery_ops_sequence.py"
+      - "test_remote_recovery_producer.py"
+      - "test_remote_recovery_publish.py"
+      - "test_remote_recovery_restore.py"
       - ".github/workflows/memory-attribution.yml"
   push:
     branches:
@@ -27,13 +59,43 @@ on:
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
+      - "argus_remote_journal.py"
+      - "argus_remote_nonce_anchor.py"
+      - "argus_remote_recovery.py"
+      - "argus_remote_receipt_queue.py"
+      - "argus_state_journal.py"
+      - "argus_tick_durability.py"
+      - "argus_persistent_storage.py"
+      - "requirements.txt"
       - "scripts/deep_memory_attribution_probe.py"
       - "scripts/memory_attribution_probe.py"
       - "scripts/normalized_hash_resource_probe.py"
+      - "scripts/remote_recovery_resource_probe.py"
       - "test_argus_memory_attribution.py"
       - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
+      - ".github/workflows/caos-watchtower.yml"
+      - ".github/workflows/caos-scan.yml"
+      - "ops/systemd/argus-remote-journal-rearm.service"
+      - "ops/systemd/argus-remote-journal-rearm.timer"
+      - "scripts/argus_remote_journal_rearm.py"
+      - "scripts/install_argus_mission_timer.sh"
+      - "scripts/prepare_remote_journal_publish.py"
+      - "scripts/remote_journal_publish_policy.py"
+      - "test_argus_v13_4_2_remote_receipts.py"
+      - "test_remote_journal_liveness.py"
+      - "test_remote_journal_publish.py"
+      - "test_remote_journal_rearm.py"
+      - "test_remote_nonce_anchor.py"
+      - "test_remote_nonce_anchor_scanner.py"
+      - "test_remote_recovery_nonce.py"
+      - "test_remote_recovery_nonce_bootstrap.py"
+      - "test_remote_recovery_hkdf.py"
+      - "test_remote_recovery_ops_sequence.py"
+      - "test_remote_recovery_producer.py"
+      - "test_remote_recovery_publish.py"
+      - "test_remote_recovery_restore.py"
       - ".github/workflows/memory-attribution.yml"
 
 permissions:
@@ -51,12 +113,12 @@ jobs:
           cache: pip
       - run: >-
           pip install --quiet anthropic flask flask-cors requests pytz
-          python-dotenv json-repair pytest
+          python-dotenv json-repair pytest cryptography==49.0.0
       - name: Diagnostic unit and privacy tests
         run: >-
           pytest -q test_argus_memory_attribution.py
           test_argus_normalized_hash.py test_argus_asset_chart_cache.py
-          test_argus_verified_snapshot.py
+          test_argus_verified_snapshot.py test_remote_recovery_restore.py
       - name: 32-cycle modes and 100-record bound
         run: |
           python scripts/memory_attribution_probe.py \
@@ -86,7 +148,8 @@ jobs:
             sh -c 'pip install --quiet -r requirements.txt pytest && \
               python3 -B -m pytest -q test_argus_memory_attribution.py \
                 test_argus_normalized_hash.py \
-                test_argus_asset_chart_cache.py test_argus_verified_snapshot.py && \
+                test_argus_asset_chart_cache.py test_argus_verified_snapshot.py \
+                test_remote_recovery_restore.py && \
               python3 -B scripts/deep_memory_attribution_probe.py \
                 --cycles 32 \
                 --output artifacts/deep-memory-attribution-proof.json \
@@ -97,6 +160,92 @@ jobs:
         with:
           name: deep-memory-attribution-proof-${{ github.sha }}
           path: artifacts/deep-memory-attribution-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-encrypted-recovery-producer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Encrypted producer source gate
+        run: >-
+          python3 -B -m py_compile argus_remote_nonce_anchor.py
+          scripts/remote_recovery_resource_probe.py
+      - name: Eight-cycle encrypted producer proof in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 256 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'pip install --quiet \
+              anthropic flask flask-cors requests pytz cryptography==49.0.0 && \
+              python3 -B scripts/remote_recovery_resource_probe.py \
+                --cycles 8 \
+                --require-cgroup-max-bytes 4294967296 \
+                --output artifacts/encrypted-recovery-resource-proof.json \
+                --quiet'
+      - name: Scalar artifact privacy and terminal gates
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json
+          import pathlib
+
+          path = pathlib.Path(
+              "artifacts/encrypted-recovery-resource-proof.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          allowed = {
+              "schemaVersion", "processTopology", "cycles",
+              "verifiedCycleCount", "walCompactionCount", "uniqueNonceCount",
+              "uniqueKeyDerivationSaltCount",
+              "fixedEncryptedBodyBytes", "maximumSidecarBytes",
+              "targetCoverageCount", "opsJournalCount",
+              "opsJournalMetaCount", "opsJournalCompactedCount",
+              "opsSequenceCount", "missionsCount", "missionWindowsCount",
+              "forecastsCount", "outcomesCount", "incidentsCount",
+              "postmortemsCount", "periodicReportsCount",
+              "challengerRunsCount", "agentQueueCount", "soakFieldCount",
+              "processPeakRssBytes", "cgroupObservedPeakBytes",
+              "cgroupSampledPeakBytes", "cgroupMaxBytes", "oomDelta",
+              "oomKillDelta", "temporaryRootRemoved", "abnormalExitCount",
+              "passed",
+          }
+          assert set(report) == allowed
+          assert all(not isinstance(value, (dict, list, tuple, set))
+                     for value in report.values())
+          assert report["schemaVersion"] == \
+              "argus-encrypted-producer-resource-proof-v1"
+          assert report["processTopology"] == \
+              "single-process-temporary-production-path"
+          boolean_fields = {"temporaryRootRemoved", "passed"}
+          assert all(type(report[key]) is bool for key in boolean_fields)
+          assert all(type(value) is int for key, value in report.items()
+                     if key not in boolean_fields | {
+                         "schemaVersion", "processTopology"})
+          assert report["cycles"] == 8
+          assert report["verifiedCycleCount"] == 8
+          assert report["walCompactionCount"] == 8
+          assert report["uniqueNonceCount"] == 8
+          assert report["uniqueKeyDerivationSaltCount"] == 8
+          assert report["cgroupMaxBytes"] == 4294967296
+          assert report["oomDelta"] == 0
+          assert report["oomKillDelta"] == 0
+          assert report["temporaryRootRemoved"] is True
+          assert report["abnormalExitCount"] == 0
+          assert report["passed"] is True
+          PY
+      - name: Publish encrypted producer resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-recovery-resource-proof-${{ github.sha }}
+          path: artifacts/encrypted-recovery-resource-proof.json
           if-no-files-found: error
           retention-days: 14
 

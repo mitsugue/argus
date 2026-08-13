@@ -58,11 +58,17 @@ def _readback(*, events, generated_at, wal_sequence):
         "schemaVersion": journal.SCHEMA_V3,
         "generatedAt": generated_at,
         "asOf": generated_at,
+        "buildIdentity": {"appVersion": "13.4.13", "buildSha": BUILD},
         "outcomes": [],
         "missionTickDurability": {
             "walAppliedSequence": wal_sequence,
             "remoteWalAppliedSequence": wal_sequence,
+            "verifiedWalSequence": min(wal_sequence, REMOTE_WAL),
         },
+        "marketLedgerStateHash": "1" * 16,
+        "chartIntelligenceStateHash": "2" * 16,
+        "todayIntelligenceStateHash": "3" * 16,
+        "marketReplayStateHash": "4" * 16,
         **journal.snapshot_journal_section(
             events=events, meta={}, now_iso=generated_at),
     }
@@ -263,7 +269,7 @@ def test_lost_receipt_uses_runtime_truth_without_rewriting_ledger():
      "runtime_remote_journal_truth_invalid"),
     ({**_runtime_truth(), "durableState": {
         "integrityStatus": "failed", "journalCorrupt": 1,
-        "missionWalCorrupt": 0}},
+        "missionWalCorrupt": 0, "lastCheckpoint": {}}},
      "runtime_durable_integrity_invalid"),
 ])
 def test_runtime_truth_is_optional_but_malformed_values_fail_closed(
@@ -296,6 +302,29 @@ def test_cumulative_remote_failures_never_latch_natural_progress_off():
     assert runtime_remote_pending_count(historical_failure) == 1
 
 
+def test_rearm_wal_bool_fails_closed_without_changing_ordinary_schedule():
+    _, ledger = _stuck_proofs()
+    malformed = _runtime_truth(local=16, pending=0, committed=16)
+    malformed["durableState"]["lastCheckpoint"] = {
+        "verified": True, "readBackVerified": True,
+        "includedWalSequence": LOCAL_WAL,
+    }
+    malformed["remoteJournalVerification"] = {
+        "readBackVerified": True, "walReadBackVerified": True,
+        "remoteDurabilityState": "verified",
+        "remoteWalAppliedSequence": True,
+        "verifiedWalSequence": REMOTE_WAL,
+    }
+    ordinary = publication_decision(
+        ledger, ledger, event_name="schedule", utc_minute=18,
+        runtime_data_quality=malformed)
+    assert ordinary["action"] == "skip"
+    with pytest.raises(PublishPolicyError, match="runtime_wal_sequence_invalid"):
+        publication_decision(
+            ledger, ledger, event_name="workflow_dispatch", utc_minute=18,
+            runtime_data_quality=malformed, natural_rearm=True)
+
+
 def test_receipt_request_requires_exact_identity_hash_and_wal():
     source, _ = _stuck_proofs()
     expected_hash = source["integrityManifest"]["manifestHash"]
@@ -324,9 +353,9 @@ def test_receipt_request_requires_exact_identity_hash_and_wal():
 
 
 def test_same_signed_event_manifest_with_new_wal_is_published(tmp_path):
-    # Normal snapshots also refresh integrityManifest.generatedAt, but a valid
-    # compact-proof identity must still cover the WAL-only boundary.  Comparing
-    # manifestHash alone would return already_committed and strand WAL 4493-4512.
+    # Normal snapshots refresh integrityManifest.generatedAt and manifestHash,
+    # but the progress identity ignores those clock-only fields and still
+    # detects the independently bound WAL boundary.
     event = _event(1, "2026-08-11T12:37:21Z")
     old_full, old_readback = _readback(
         events=[event], generated_at="2026-08-11T12:37:21Z",
@@ -334,14 +363,17 @@ def test_same_signed_event_manifest_with_new_wal_is_published(tmp_path):
     source_full = copy.deepcopy(old_full)
     source_full["generatedAt"] = "2026-08-11T12:37:22Z"
     source_full["asOf"] = "2026-08-11T12:37:22Z"
+    source_full.update(journal.snapshot_journal_section(
+        events=[event], meta={}, now_iso="2026-08-11T12:37:22Z"))
     source_full["missionTickDurability"] = {
         "walAppliedSequence": LOCAL_WAL,
         "remoteWalAppliedSequence": LOCAL_WAL,
+        "verifiedWalSequence": REMOTE_WAL,
     }
     source_readback = journal.compact_readback_snapshot(source_full)
     assert (
         source_readback["integrityManifest"]["manifestHash"] ==
-        old_readback["integrityManifest"]["manifestHash"])
+        old_readback["integrityManifest"]["manifestHash"]) is False
     assert source_readback["receiptHash"] != old_readback["receiptHash"]
     progress = remote_progress(source_readback, old_readback)
     assert progress["eventSetChanged"] is False
@@ -474,10 +506,21 @@ def test_watchtower_wires_verified_publish_and_receipt_only_paths():
     assert "/api/argus/data-quality" in text
     assert '--runtime-data-quality "$RUNNER_TEMP/data-quality.json"' in step
     assert 'DECISION_ACTION" = "receipt_only"' in step
-    assert "reuse verified ledger proof" in step
+    assert "exact proof ready" in step
+    assert "verify-ledger-base-ancestor" in step
+    assert '--recovery-ledger-base "$RECOVERY_LEDGER_BASE"' in step
+    assert '--cas-ledger-head "$LEDGER_CAS_BASE"' in step
+    assert '--force-with-lease=refs/heads/ledger:"$LEDGER_CAS_BASE"' in step
+    assert "git pull --rebase" not in step
+    receipt_only = step.split(
+        'elif [ "$DECISION_ACTION" = "receipt_only" ]; then', 1)[1]
+    assert receipt_only.index("inspect-pair") < receipt_only.index(
+        "prepare-pair") < receipt_only.index("origin HEAD:ledger")
+    assert 'PAIR_NEEDS_COMMIT=false' in receipt_only
+    assert 'PAIR_NEEDS_COMMIT" = "true"' in receipt_only
     assert "--expected-receipt-hash" in step
     remote_head = step.index('[ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ]')
-    exact_receipt = step.index("--expected-receipt-hash")
+    exact_receipt = step.index("--expected-receipt-hash", remote_head)
     post = step.index("watchtower-remote-journal-accept-receipt")
     assert remote_head < exact_receipt < post
     assert "--timeout 15" in step[post:]
@@ -489,6 +532,67 @@ def test_watchtower_wires_verified_publish_and_receipt_only_paths():
     assert 'd.get("targetWalSequence")' in step
 
 
+def test_caos_scan_retires_legacy_writer_when_recovery_is_configured():
+    text = Path(".github/workflows/caos-scan.yml").read_text(
+        encoding="utf-8")
+    durability = text.split("\n  durability-flush:\n", 1)[1].split(
+        "\n  result:\n", 1)[0]
+    probe = durability.index(
+        "/api/argus/admin/remote-journal/recovery-sidecar")
+    configured = durability.index(
+        'remoteArtifactMode=encrypted_recovery_v1', probe)
+    retired = durability.index(
+        "expected_skip_encrypted_recovery_owned_by_watchtower", configured)
+    checkout = durability.index('git checkout -B ledger')
+    assert probe < configured < retired < checkout
+    assert durability.count("validate-sidecar") == 2
+    assert durability.count("prepare_remote_journal_publish.py") >= 4
+    not_configured = durability.index("'not_configured'", probe)
+    full_snapshot = durability.index(
+        "/api/argus/osint/memory-snapshot", not_configured)
+    assert not_configured < full_snapshot < checkout
+    assert '--max-filesize 268435456' in durability[
+        not_configured:full_snapshot]
+    flush = durability.split(
+        "- name: Commit verified snapshot and post receipt", 1)[1]
+    assert "recheck_remote_artifact_mode" in flush
+    assert flush.count("CURRENT_MODE=$(recheck_remote_artifact_mode)") == 2
+    assert flush.index("CURRENT_MODE=$(recheck_remote_artifact_mode)") < \
+        flush.index('git checkout -B ledger')
+    second_recheck = flush.rindex(
+        "CURRENT_MODE=$(recheck_remote_artifact_mode)")
+    assert second_recheck < flush.index("git push origin HEAD:ledger")
+    assert "legacy push suppressed" in flush[second_recheck:]
+    assert "prepare-pair" not in durability
+    assert "ledger/osint/recovery.json" not in durability
+
+
+def test_watchtower_fetches_full_snapshot_only_for_not_configured_mode():
+    text = Path(".github/workflows/caos-watchtower.yml").read_text(
+        encoding="utf-8")
+    patrol = text.split("\n  patrol:\n", 1)[1].split(
+        "\n  remote-journal-rearm:\n", 1)[0]
+    probe = patrol.index(
+        "/api/argus/admin/remote-journal/recovery-sidecar")
+    configured = patrol.index(
+        "encrypted_recovery_v1", probe)
+    not_configured = patrol.index("'not_configured'", probe)
+    full_snapshot = patrol.index(
+        "/api/argus/osint/memory-snapshot", not_configured)
+    checkout = patrol.index("ref: main", full_snapshot)
+    assert probe < configured < not_configured < full_snapshot < checkout
+    assert '--max-filesize 268435456' in patrol[
+        not_configured:full_snapshot]
+    missing_token = patrol.index(
+        'ARGUS_ADMIN_TOKEN missing; remote artifact mode is indeterminate')
+    default_legacy = patrol.index(
+        "printf '%s' legacy_full", not_configured)
+    assert missing_token < probe < not_configured < default_legacy < \
+        full_snapshot
+    assert "printf '%s' legacy_full" not in patrol[:not_configured]
+    assert patrol.count("validate-sidecar") == 1
+
+
 def test_watchtower_remote_journal_step_is_valid_bash():
     text = Path(".github/workflows/caos-watchtower.yml").read_text(
         encoding="utf-8")
@@ -497,6 +601,7 @@ def test_watchtower_remote_journal_step_is_valid_bash():
         1)[1]
     script = textwrap.dedent(step.split("        run: |\n", 1)[1])
     script = script.replace("${{ github.event_name }}", "schedule")
+    script = script.replace("${{ inputs.remoteJournalRearm }}", "false")
     checked = subprocess.run(
         ["bash", "-n"], input=script, text=True,
         capture_output=True, check=False)
