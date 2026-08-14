@@ -116,14 +116,14 @@ def test_jsf_freshness_measured_when_table_warm(monkeypatch):
     monkeypatch.setitem(scanner._JSF_CACHE, "date", recent)
     monkeypatch.setitem(scanner._JSF_CACHE, "table", {"6146": {"loan": 1, "short": 1}})
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     row = [r for r in d["sourceHealth"] if r["sourceName"] == "jsf-daily-balance"][0]
     assert "-" in (row["lastSuccessAt"] or "")     # ハイフン正規化済み
     assert row["freshnessBucket"] in ("fresh", "recent")   # 実測でunknownを脱する
     # 日付が無ければ従来どおりunknown(捏造しない)
     monkeypatch.setitem(scanner._JSF_CACHE, "date", None)
     with scanner.app.test_client() as c:
-        d2 = c.get("/api/argus/data-quality").get_json()
+        d2 = scanner._data_quality_console()
     row2 = [r for r in d2["sourceHealth"] if r["sourceName"] == "jsf-daily-balance"][0]
     assert row2["lastSuccessAt"] is None
     assert row2["freshnessBucket"] == "unknown"

@@ -113,7 +113,7 @@ def test_structured_outputs_shadow_mode():
 
 def test_dq_new_blocks_no_leak():
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
         for k in ("durabilityLevel", "firstForwardLiveEvidence", "gpt56",
                   "structuredOutputs", "rcBlockers"):
             assert k in d, k

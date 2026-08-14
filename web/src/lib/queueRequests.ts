@@ -1,12 +1,7 @@
-// ARGUS V11.5.2 — public enqueue-only clients. These POST endpoints NEVER start AI or a
-// provider fetch on the server; they only add a request to a queue the admin/cron drains.
-// The UI uses them so (a) 「理由を詳しく調べる」 records an investigation request and
-// (b) on-screen English news is guaranteed to enter the visible-first translation queue.
-
-function backend(): string | null {
-  const b = import.meta.env.VITE_ARGUS_BACKEND_URL;
-  return b ? b.replace(/\/$/, '') : null;
-}
+// Recovery Phase A: queue mutations moved to the authenticated operational
+// boundary. The static browser deliberately has no admin credential, so these
+// compatibility functions degrade to a local no-op until an owner-authenticated
+// browser architecture exists.
 
 export type ExplainRequestStatus =
   | 'queued' | 'already_queued' | 'cached_available' | 'rate_limited' | 'invalid';
@@ -25,21 +20,8 @@ export async function requestExplanation(
   symbol: string, market: string,
   context: 'cause-stack' | 'mover-card' | 'downside-card' | string,
 ): Promise<ExplainRequestResult | null> {
-  const b = backend();
-  if (!b) return null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8_000);
-    const r = await fetch(b + '/api/argus/mover-causes/explain-request', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol, market, context }), signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!r.ok) return null;
-    return (await r.json()) as ExplainRequestResult;
-  } catch {
-    return null;
-  }
+  void symbol; void market; void context;
+  return null;
 }
 
 // ── V11.5.4 investigate-now: immediate bounded source sweep (server-side; no LLM) ──
@@ -79,21 +61,8 @@ export interface InvestigateNowResult {
 export async function investigateNow(
   symbol: string, market: string, context: string,
 ): Promise<InvestigateNowResult | null> {
-  const b = backend();
-  if (!b) return null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 20_000);
-    const r = await fetch(b + '/api/argus/caos/investigate-now', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol, market, context }), signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!r.ok) return null;
-    return (await r.json()) as InvestigateNowResult;
-  } catch {
-    return null;
-  }
+  void symbol; void market; void context;
+  return null;
 }
 
 export interface TranslationRequestItem {
@@ -116,22 +85,8 @@ export interface TranslationRequestResult {
 export async function requestTranslation(
   context: string, symbol: string, market: string, items: TranslationRequestItem[],
 ): Promise<TranslationRequestResult | null> {
-  const b = backend();
-  if (!b || !items.length) return null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8_000);
-    const r = await fetch(b + '/api/argus/news/translation-request', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ context, symbol, market, items: items.slice(0, 40) }),
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!r.ok) return null;
-    return (await r.json()) as TranslationRequestResult;
-  } catch {
-    return null;
-  }
+  void context; void symbol; void market; void items;
+  return null;
 }
 
 // ── auto-queue de-dupe: only POST once per (context|symbol) per session ──

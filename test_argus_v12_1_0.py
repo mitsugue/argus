@@ -6,9 +6,19 @@
 """
 import json
 import os
+import pytest
 
 import argus_osint_engine as oe
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_handler_contract(monkeypatch):
+    original = scanner._require_admin
+    monkeypatch.setattr(
+        scanner, "_require_admin",
+        lambda: (True, None, 200) if scanner.request.path in
+        scanner._AUTH_OPERATIONAL_MUTATION_ROUTES else original())
 
 WEB = os.path.join(os.path.dirname(__file__), "web", "src")
 NOW = "2026-07-07T10:00:00Z"
@@ -272,7 +282,7 @@ def test_admin_agents_run_requires_admin():
 def test_dq_shows_osint_health(monkeypatch):
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     oh = d.get("osintHealth")
     assert oh is not None
     assert "geminiProviderConfigured" in oh and "gptProviderConfigured" in oh
@@ -298,15 +308,17 @@ def test_fe_paste_back_stays_local():
     assert "localStorage" in src
     assert "postTerms" in src
     hook = _read("hooks", "useOsintInvestigation.ts")
-    assert "'terms'" not in hook or True
-    assert "text" not in hook.split("postTerms")[1].split("body: JSON.stringify")[1].split(")")[0]
+    post_terms = hook.split("const postTerms", 1)[1].split("return {", 1)[0]
+    assert "fetch(" not in post_terms
+    assert "X-ARGUS-ADMIN-TOKEN" not in hook
 
 
 def test_fe_dq_page_osint_section():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "OSINT AGENTS" in src
-    assert "外部AIベンチマーク未実行" in src
-    assert "OSINT監視に見落としの可能性" in src
+    assert "PUBLIC SERVICE STATUS" in src
+    assert "FRESHNESS SUMMARY" in src
+    assert "RECOVERY CLAIM" in src
+    assert "OSINT AGENTS" not in src
 
 
 def test_pack_includes_osint_deep():

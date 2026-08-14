@@ -5,9 +5,19 @@
 """
 import json
 import os
+import pytest
 
 import argus_osint_engine as oe
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_handler_contract(monkeypatch):
+    original = scanner._require_admin
+    monkeypatch.setattr(
+        scanner, "_require_admin",
+        lambda: (True, None, 200) if scanner.request.path in
+        scanner._AUTH_OPERATIONAL_MUTATION_ROUTES else original())
 
 WEB = os.path.join(os.path.dirname(__file__), "web", "src")
 NOW = "2026-07-08T03:00:00Z"
@@ -263,7 +273,7 @@ def test_dq_benchmark_verdict_below(monkeypatch):
         "6965": {"superiority": {"superiorityStatus": "below_gemini",
                                  "argusMissedImportantCount": 3}}})
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     assert d["osintHealth"]["benchmarkVerdictJa"] == \
         "OSINTはGemini基準に未達です。未回収ソースがあります。"
 
@@ -275,4 +285,5 @@ def test_fe_gap_workflow_ui():
                    "サーバー判定は不変"):
         assert needle in src, needle
     dq = _read("routes", "DataQualityPage.tsx")
-    assert "benchmarkVerdictJa" in dq and "検証上限到達" in dq
+    assert "argus-public-diagnostics-v1" in dq
+    assert "benchmarkVerdictJa" not in dq

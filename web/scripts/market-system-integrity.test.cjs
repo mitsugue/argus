@@ -114,7 +114,6 @@ check('N1 notification feed renders one semantic incident', compact.length === 1
 
 const marketSource = src('src', 'components', 'marketReplay', 'MarketContextReplay.tsx');
 const dqSource = src('src', 'routes', 'DataQualityPage.tsx');
-const dqTableSource = src('src', 'components', 'system', 'DataQualityIncidents.tsx');
 const backupSource = src('src', 'routes', 'BackupPage.tsx');
 const backupOverviewSource = src('src', 'components', 'system', 'BackupStatusOverview.tsx');
 const guideSource = src('src', 'routes', 'Guide.tsx');
@@ -128,11 +127,12 @@ check('U2 Replay and Ledger remain secondary navigation',
 check('U3 FROZEN market path remains cached GET with AI POST 0',
   marketSource.includes('useChartIntelligence') && marketSource.includes('AI POST 0')
   && !marketSource.includes("method: 'POST'"));
-check('U4 Data Quality defaults to actionable incidents',
-  dqSource.indexOf('<DataQualityIncidents') < dqSource.indexOf('<details className=\"dq-diagnostics\"')
-  && dqTableSource.includes('<table className="dq-incidents__table"')
-  && ['IMPACT', 'LAST SUCCESS', 'STATE', 'NEXT RETRY', 'OWNER ACTION']
-    .every((label) => dqTableSource.includes(label)));
+check('U4 Data Quality is a fixed public-safe lamp surface',
+  dqSource.includes("schemaVersion: 'argus-public-diagnostics-v1'")
+  && ['PUBLIC SERVICE STATUS', 'FRESHNESS SUMMARY', 'RECOVERY CLAIM']
+    .every((label) => dqSource.includes(label))
+  && !dqSource.includes('<DataQualityIncidents')
+  && !dqSource.includes('ARGUS_ADMIN_TOKEN'));
 check('U5 Backup defaults to restore readiness, not configured-state optimism',
   backupSource.indexOf('<BackupStatusOverview') < backupSource.indexOf('<details className=\"backup-actions\"')
   && backupOverviewSource.includes('RESTORE READINESS')

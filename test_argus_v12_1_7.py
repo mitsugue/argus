@@ -202,20 +202,18 @@ def test_readiness_insufficient_without_runs():
 # ── Phase 7: UI/DQ/Pack ─────────────────────────────────────────────────────
 
 def test_dq_shows_plan_readiness_benchmark():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
-        oh = (r.get_json() or {}).get("osintHealth") or {}
-        assert "calibrationPlan" in oh
-        assert "twoXReadiness" in oh
-        assert "benchmarkRunsSummary" in oh
-        assert oh["benchmarkRunsSummary"]["budget"]["maxCasesPerInvocation"] == 2
+    oh = (scanner._data_quality_console() or {}).get("osintHealth") or {}
+    assert "calibrationPlan" in oh
+    assert "twoXReadiness" in oh
+    assert "benchmarkRunsSummary" in oh
+    assert oh["benchmarkRunsSummary"]["budget"]["maxCasesPerInvocation"] == 2
 
 
 def test_fe_dq_shows_progress():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "calibrationPlan" in src
-    assert "twoXReadiness" in src
-    assert "progressPct" in src
+    assert "argus-public-diagnostics-v1" in src
+    assert "calibrationPlan" not in src
+    assert "twoXReadiness" not in src
 
 
 def test_pack_includes_readiness():

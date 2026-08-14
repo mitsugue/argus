@@ -159,7 +159,7 @@ def test_data_quality_no_fabricated_freshness(monkeypatch):
     """v12.0.1: 「存在すればnow」の偽装freshを禁止 — 実測 or unknownのみ。"""
     monkeypatch.setattr(scanner, "requests", _Boom())
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
         rows = {s["sourceName"]: s for s in d["sourceHealth"]}
         # 新プロセス直後 = 計測点未発火 → unknown(捏造しない)
         for name in ("event-calendar", "institutional-intel", "jp-fallback-prices"):

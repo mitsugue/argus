@@ -119,6 +119,8 @@ import argus_memory_attribution     # bounded parent-process phase telemetry
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
+import argus_diagnostics_contract  # closed public/operational DTO boundary
+import argus_recovery_registry     # accepted shadow registry metadata only
 from flask import Flask, jsonify, request, make_response, g
 from collections import deque
 import hashlib
@@ -522,7 +524,7 @@ app        = Flask(__name__)
 # and localhost dev) call the ledger / rates endpoints. Other routes
 # stay same-origin.
 if CORS is not None:
-    CORS(app, resources={r"/api/argus/*": {"origins": [
+    _PUBLIC_BROWSER_ORIGINS = [
         re.compile(r"^http://localhost(:\d+)?$"),
         re.compile(r"^http://127\.0\.0\.1(:\d+)?$"),
         # Pin Vercel to this project's deploys (argus*.vercel.app) rather than
@@ -531,7 +533,14 @@ if CORS is not None:
         # Vercel project is ever renamed.
         re.compile(r"^https://argus[a-z0-9-]*\.vercel\.app$"),
         re.compile(r"^https://mitsugue\.github\.io$"),
-    ]}})
+    ]
+    CORS(app, resources={
+        # Operational diagnostics are server-to-server only.  The more
+        # specific expression wins Flask-CORS resource ordering and prevents
+        # any browser origin from receiving an allow-origin header.
+        r"/api/argus/admin/diagnostics/operational": {"origins": []},
+        r"/api/argus/*": {"origins": _PUBLIC_BROWSER_ORIGINS},
+    })
 
 @app.after_request
 def add_no_cache(response):
@@ -1645,21 +1654,24 @@ def index(): return HTML
 
 @app.route("/healthz")
 def healthz():
-    """Liveness + build metadata (v10.38). Public, secret-free. buildSha lets
-    the smoke-test workflow confirm WHICH commit is live before asserting, and
-    gives the backend the build identity GPT's version-sync review asked for."""
+    """Minimal public liveness/build identity; never a recovery proof."""
     if not _RUNTIME.get("firstHealthAt"):     # v12.2.9: 初回health実測(捏造なし)
         _RUNTIME["firstHealthAt"] = _ai_now_iso()
-    return jsonify({
-        "status": "ok",
-        "engineVersion": "argus-backend-v1",
-        "backendVersion": _semantic_app_version() or None,
-        # The production release manifest is allowed to advance only after an
-        # exact comparison with the deployed Render commit.  A short prefix is
-        # useful for display, but is not an unambiguous release identity.
-        "buildSha": _backend_exact_sha(),
-        "asOf": _ai_now_iso(),
-    })
+    now_iso = _ai_now_iso()
+    try:
+        payload = argus_diagnostics_contract.build_public_liveness(
+            generated_at=now_iso,
+            backend_version=_semantic_app_version(),
+            build_sha=_backend_exact_sha())
+    except Exception:
+        payload = {
+            "schemaVersion": "argus-public-liveness-v1",
+            "generatedAt": now_iso,
+            "status": "ok",
+            "backendVersion": "unknown",
+            "buildSha": None,
+        }
+    return jsonify(payload)
 
 @app.route("/api/state")
 def api_state():
@@ -7493,6 +7505,203 @@ def _dq_iso(epoch):
         return None
 
 
+def _diagnostic_readiness_truth():
+    state = str(_STARTUP.get("state") or "unknown")
+    ready = state in ("ready", "ready_degraded")
+    reason = {
+        "ready": "READY",
+        "ready_degraded": "READY_DEGRADED",
+        "bootstrapping": "BOOTSTRAPPING",
+        "failed_safe": "FAILED_SAFE",
+    }.get(state, "NOT_READY")
+    return ready, reason
+
+
+def _diagnostic_freshness_snapshot():
+    """Cheap, scalar-only public freshness aggregation.
+
+    The old rich console walks missions, OSINT investigations and journal
+    internals.  Public diagnostics deliberately do none of that work.
+    """
+    now = time.time()
+
+    def from_age(age, fresh_seconds, aging_seconds):
+        if isinstance(age, bool) or not isinstance(age, (int, float)) or \
+                not math.isfinite(float(age)) or age < 0:
+            return "unknown"
+        if age <= fresh_seconds:
+            return "fresh"
+        if age <= aging_seconds:
+            return "aging"
+        return "stale"
+
+    observations = []
+    try:
+        bridge = _bridge_status_doc()
+        observations.append(from_age(
+            bridge.get("lastUsPushAgeSec"), 180, 900))
+    except Exception:
+        observations.append("unknown")
+    for epoch, fresh_seconds, aging_seconds in (
+            (_JP_FALLBACK_LAST.get("ts"), 1800, 7200),
+            (_EVENTS_BUILD_LAST.get("ts"), 6 * 3600, 36 * 3600),
+            (_INTEL_LAST.get("ts"), 2 * 3600, 12 * 3600)):
+        age = now - float(epoch) if isinstance(epoch, (int, float)) and \
+            not isinstance(epoch, bool) and epoch > 0 else None
+        observations.append(from_age(age, fresh_seconds, aging_seconds))
+    counts = {name: observations.count(name)
+              for name in ("fresh", "aging", "stale", "unknown")}
+    if counts["stale"]:
+        overall = "stale"
+    elif counts["aging"] and counts["fresh"]:
+        overall = "mixed"
+    elif counts["aging"]:
+        overall = "aging"
+    elif counts["unknown"]:
+        overall = "unknown" if not counts["fresh"] else "mixed"
+    else:
+        overall = "fresh"
+    return {"overall": overall, "sourceCounts": counts,
+            "expectedDisabledCount": 3}
+
+
+def _public_diagnostics_snapshot():
+    now_iso = _ai_now_iso()
+    try:
+        ready, _ = _diagnostic_readiness_truth()
+        freshness = _diagnostic_freshness_snapshot()
+        overall = "ok" if ready and freshness["overall"] not in \
+            ("stale", "unknown") else "degraded"
+        return argus_diagnostics_contract.build_public_diagnostics(
+            generated_at=now_iso,
+            backend_version=_semantic_app_version(),
+            build_sha=_backend_exact_sha(),
+            liveness="ok",
+            readiness="ready" if ready else "not_ready",
+            overall=overall,
+            freshness_overall=freshness["overall"],
+            source_counts=freshness["sourceCounts"],
+            expected_disabled_count=freshness["expectedDisabledCount"])
+    except Exception:
+        return argus_diagnostics_contract.public_diagnostics_fallback(now_iso)
+
+
+def _operational_diagnostics_snapshot():
+    """Admin-only, fixed-schema scalar diagnostics; no raw dict is returned."""
+    now_iso = _ai_now_iso()
+    ready, readiness_code = _diagnostic_readiness_truth()
+    freshness = _diagnostic_freshness_snapshot()
+    checkpoint = _DURABLE_STATE.get("lastCheckpoint")
+    checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+    try:
+        remote_summary = argus_remote_journal.remote_durability_summary(
+            local_events=_OPS_JOURNAL,
+            acked_keys=_REMOTE_ACK.get("ackedKeys"),
+            last_verified_ack_at=_REMOTE_ACK.get(
+                "lastVerifiedRemoteAckAt"),
+            now_iso=now_iso,
+            legacy_remote=bool(_REMOTE_ACK.get("legacyRemote")),
+            failed_count=int(_REMOTE_ACK.get("readbackFailures") or 0))
+    except Exception:
+        remote_summary = {
+            "localCommittedCount": 0, "remotePendingCount": 0,
+            "remoteCommittedCount": 0, "remoteFailedCount": 0,
+        }
+    registry = argus_recovery_registry.registry_summary()
+    jobs = (_FOUNDATION_JOBS.get("jobs")
+            if isinstance(_FOUNDATION_JOBS, dict) else None)
+    return argus_diagnostics_contract.build_operational_diagnostics(
+        generated_at=now_iso,
+        backend_version=_semantic_app_version(),
+        build_sha=_backend_exact_sha(),
+        ready=ready, readiness_code=readiness_code,
+        startup_state=_STARTUP.get("state"),
+        process_booted_at=_RUNTIME.get("processBootedAt"),
+        freshness=freshness,
+        storage={
+            "productionMode": _DURABILITY_PRODUCTION,
+            "valid": _DURABLE_STORAGE_STATUS.get("valid"),
+            "runtimeVerified": _DURABLE_STORAGE_STATUS.get(
+                "runtimeVerified"),
+            "statusCode": ("OK" if _DURABLE_STORAGE_STATUS.get("valid")
+                           else "INVALID"),
+            "checkpointBytes": int(
+                _DURABLE_STORAGE_STATUS.get("checkpointBytes") or 0),
+            "walBytes": int(_DURABLE_STORAGE_STATUS.get("walBytes") or 0),
+        },
+        durability={
+            "integrityStatus": _DURABLE_STATE.get("integrityStatus"),
+            "journalCorruptCount": int(
+                _DURABLE_STATE.get("journalCorrupt") or 0),
+            "missionWalCorruptCount": int(
+                _DURABLE_STATE.get("missionWalCorrupt") or 0),
+            "writeCount": int(_DURABLE_STATE.get("writeCount") or 0),
+            "successCount": int(_DURABLE_STATE.get("successCount") or 0),
+            "failureCount": int(_DURABLE_STATE.get("failureCount") or 0),
+            "checkpoint": {
+                "verified": checkpoint.get("verified") is True,
+                "readBackVerified": checkpoint.get(
+                    "readBackVerified") is True,
+                "includedWalSequence": int(
+                    checkpoint.get("includedWalSequence") or 0),
+                "verifiedAt": checkpoint.get("verifiedAt"),
+            },
+        },
+        remote_journal={
+            "localCommittedCount": int(
+                remote_summary.get("localCommittedCount") or 0),
+            "pendingCount": int(remote_summary.get("remotePendingCount") or 0),
+            "committedCount": int(
+                remote_summary.get("remoteCommittedCount") or 0),
+            "failedCount": int(remote_summary.get("remoteFailedCount") or 0),
+            "readBackVerified": _REMOTE_CYCLE.get("readBackVerified") is True,
+            "walReadBackVerified": _REMOTE_CYCLE.get(
+                "walReadBackVerified") is True,
+            "state": _REMOTE_CYCLE.get("remoteDurabilityState"),
+            "remoteWalAppliedSequence": int(
+                _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0),
+            "verifiedWalSequence": int(
+                _REMOTE_CYCLE.get("verifiedWalSequence") or 0),
+            "errorPresent": any(_REMOTE_CYCLE.get(name) not in (None, "")
+                                for name in ("errorClass", "walErrorClass",
+                                             "receiptErrorClass")),
+            "lastVerifiedAckAt": _REMOTE_ACK.get(
+                "lastVerifiedRemoteAckAt"),
+        },
+        features={
+            "checkpointMode": "legacy_only",
+            "checkpointV2State": _CHECKPOINT_V2_STATUS.get("state"),
+            "stage1Enabled": _CHECKPOINT_V2_STAGE1_ENABLED,
+            "soakArmed": _SOAK_CONTROL.get("armed") is True,
+            "soakState": _SOAK.get("state") or "not_started",
+        },
+        scheduler={
+            "missionCount": len(_MISSIONS),
+            "missionWindowCount": len(_MISSION_WINDOWS),
+            "foundationJobCount": len(jobs) if isinstance(jobs, list) else 0,
+            "agentQueueDepth": len(_OSINT_AGENT_QUEUE),
+        },
+        registry={
+            "stateCount": int(registry.get("stateCount") or 0),
+            "mutationCount": int(registry.get("mutationClassCount") or 0),
+            "validationErrorCount": len(registry.get(
+                "validationErrors") or []),
+        },
+        osint={
+            "investigationCount": len(_OSINT_STORE),
+            "memoryRecordCount": len(_OSINT_MEMORY),
+            "urlCacheCount": len(_OSINT_URL_CACHE),
+            "canaryState": ("degraded" if (
+                _OSINT_CANARY_LAST.get("data") or {}).get("degraded") else
+                "ok" if _OSINT_CANARY_LAST.get("data") else "not_run"),
+        },
+        cost_policy={
+            "mode": _COST_POLICY.get("mode") or "DETERMINISTIC",
+            "daySpentUsd": _AI_COST_STATE.get("daySpentUsd") or 0.0,
+            "monthSpentUsd": _AI_COST_STATE.get("monthSpentUsd") or 0.0,
+        })
+
+
 # v12.0.4/12.0.5: JP APIメンテナンス — オーナー/サポート確認済みの事実のみ(捏造なし)。
 # 2026-07-06時点(サポート正式回答で「疑い」→「確認済み」に昇格):
 #   ①日本株API相場情報サービスのメンテナンスがOpenD APIのJP snapshot/ORDER_BOOKに
@@ -8170,15 +8379,34 @@ def _data_quality_console():
 
 @app.route("/api/argus/data-quality")
 def api_argus_data_quality():
-    """Public REDACTED console — statuses/buckets/timestamps only. No holdings,
-    no fund data, no secrets. Honest: unmeasurable freshness stays unknown."""
-    return jsonify(_data_quality_console())
+    """Compatibility alias for the closed PublicDiagnosticsDTO v1."""
+    return jsonify(_public_diagnostics_snapshot())
 
 
 @app.route("/api/argus/data-quality/status")
 def api_argus_data_quality_status():
-    return jsonify(argus_data_quality.public_status(
-        _data_quality_console(), now_iso=_ai_now_iso()))
+    return jsonify(_public_diagnostics_snapshot())
+
+
+@app.route("/api/argus/admin/diagnostics/operational")
+def api_argus_admin_diagnostics_operational():
+    """Server-to-server operational metadata under existing admin auth."""
+    ok, err, code = _require_admin()
+    if not ok:
+        safe, safe_code = _operational_auth_failure(code)
+        return jsonify(safe), safe_code
+    now_iso = _ai_now_iso()
+    try:
+        payload = _operational_diagnostics_snapshot()
+        response = jsonify(payload)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+    except Exception:
+        response = jsonify(
+            argus_diagnostics_contract.operational_diagnostics_fallback(
+                now_iso))
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response, 503
 
 
 @app.route("/api/argus/review-pack/status")
@@ -12980,6 +13208,25 @@ _LEGACY_API_PREFIXES = ("/api/run", "/api/reset", "/api/logs", "/api/chart",
                         "/api/price_history", "/api/price_now", "/api/order_book",
                         "/api/margin")
 
+# Recovery Phase A PR B: these routes mutate owner/operational state and are no
+# longer callable from an unauthenticated browser.  Reuse the existing admin
+# credential only; no browser credential or new token is introduced.
+_AUTH_OPERATIONAL_MUTATION_ROUTES = frozenset({
+    "/api/argus/caos/investigate-now",
+    "/api/argus/news/translation-request",
+    "/api/argus/osint/deep-dive",
+    "/api/argus/osint/terms",
+    "/api/argus/osint/verify-gaps",
+    "/api/argus/osint/url-verify",
+    "/api/argus/mover-causes/explain-request",
+    "/api/argus/vault-push",
+})
+
+
+def _operational_auth_failure(code):
+    return ({"error": "admin_unavailable"}, 503) if code == 503 else \
+        ({"error": "unauthorized"}, 401)
+
 @app.before_request
 def _gate_legacy_api():
     if request.method == "OPTIONS":
@@ -12988,7 +13235,21 @@ def _gate_legacy_api():
     if any(p.startswith(x) for x in _LEGACY_API_PREFIXES):
         ok, err, code = _require_admin()
         if not ok:
-            return jsonify(err), code
+            safe, safe_code = _operational_auth_failure(code)
+            return jsonify(safe), safe_code
+    return None
+
+
+@app.before_request
+def _gate_operational_mutations():
+    if request.method == "OPTIONS":
+        return None
+    if request.method == "POST" and request.path in \
+            _AUTH_OPERATIONAL_MUTATION_ROUTES:
+        ok, err, code = _require_admin()
+        if not ok:
+            safe, safe_code = _operational_auth_failure(code)
+            return jsonify(safe), safe_code
     return None
 
 def _ai_run_gate(force=False):
@@ -21261,6 +21522,217 @@ def api_argus_osint_deep_dive():
                                    "公開画面から外部AIは起動しません)。"})
 
 
+def _public_scalar_fields(source, names):
+    """Copy only named JSON scalars for a public product DTO."""
+    row = source if isinstance(source, dict) else {}
+    return {
+        name: row.get(name) if isinstance(
+            row.get(name), (str, int, float, bool, type(None))) else None
+        for name in names
+    }
+
+
+def _public_string_list(value, limit=24):
+    return [item[:500] for item in (value if isinstance(value, list) else [])
+            if isinstance(item, str)][:limit]
+
+
+def _public_osint_source(row):
+    if not isinstance(row, dict):
+        return None
+    return _public_scalar_fields(row, (
+        "titleJa", "url", "sourceName", "publishedAt", "ageHours",
+        "freshness", "directness", "verificationStatus", "labelJa",
+        "primaryEligible", "supportStrength", "sourceType",
+        "causalRelevance",
+    ))
+
+
+def _public_osint_investigation(investigation):
+    """Fixed public product projection; private/future fields fail closed.
+
+    The internal investigation may contain owner terms, raw agent claims,
+    private-mode markers, and future model metadata.  This route preserves the
+    verified public market-research product while constructing every nested
+    response family from an explicit key list.
+    """
+    if not isinstance(investigation, dict):
+        return None
+    inv = investigation
+    out = _public_scalar_fields(inv, (
+        "schemaVersion", "id", "symbol", "assetName", "asOf", "mode",
+        "modeJa", "investigationQuestionJa", "ownerReadableSummaryJa",
+        "freshCandidateCount", "freshCandidateAlertJa", "costLabelJa",
+        "complianceNote",
+    ))
+
+    query = inv.get("queryPlan") if isinstance(inv.get("queryPlan"), dict) else {}
+    out["queryPlan"] = {
+        "queryCount": query.get("queryCount") if isinstance(
+            query.get("queryCount"), int) and not isinstance(
+                query.get("queryCount"), bool) else 0,
+        **{key: _public_string_list(query.get(key), 32)
+           for key in ("direct", "sector", "valueChain", "globalCatalyst",
+                       "negative")},
+    }
+
+    # Agent status is public product health; raw claims/model output are not.
+    out["agentRuns"] = [
+        _public_scalar_fields(row, ("provider", "status"))
+        for row in (inv.get("agentRuns") or [])[:4] if isinstance(row, dict)
+    ]
+    out["verifiedSources"] = [projected for projected in (
+        _public_osint_source(row) for row in (inv.get("verifiedSources") or [])[:10]
+    ) if projected is not None]
+    # Unverified agent claims are deliberately not a public product payload.
+    out["rejectedSources"] = []
+
+    verdict = inv.get("catalystVerdict")
+    out["catalystVerdict"] = _public_scalar_fields(verdict, (
+        "verdict", "verdictJa", "primaryCauseJa", "confidence",
+        "sourceDiversity", "directEvidencePresent", "ownerReadableJa",
+        "whyThisMightBeWrongJa",
+    ))
+    verdict = verdict if isinstance(verdict, dict) else {}
+    for key in ("secondaryCausesJa", "rejectedCausesJa", "missingEvidenceJa"):
+        out["catalystVerdict"][key] = _public_string_list(verdict.get(key), 8)
+
+    out["contradictionReport"] = _public_string_list(
+        inv.get("contradictionReport"), 12)
+    out["missingAreasJa"] = _public_string_list(inv.get("missingAreasJa"), 12)
+    # Expansion terms can originate in raw model/owner input; keep them private.
+    out["nextResearchJa"] = []
+
+    out["coverageScore"] = _public_scalar_fields(inv.get("coverageScore"), (
+        "directCompanyCoverage", "officialDisclosureCoverage",
+        "sectorCoverage", "valueChainCoverage", "globalNewsCoverage",
+        "japaneseNewsCoverage", "agentCoverage", "totalCoverage",
+        "totalCoverageJa",
+    ))
+    out["reliabilityScore"] = _public_scalar_fields(
+        inv.get("reliabilityScore"), (
+            "sourceFreshness", "sourceDiversity", "verificationRate",
+            "directEvidence", "contradictionPenalty", "dataQualityPenalty",
+            "overall", "overallJa",
+        ))
+    benchmark = inv.get("benchmark")
+    out["benchmark"] = _public_scalar_fields(benchmark, (
+        "argusCount", "geminiCount", "gptCount", "overlapCount",
+        "geminiOnlyCount", "gptOnlyCount", "argusOnlyCount",
+        "missedByArgusCount",
+    ))
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    out["benchmark"]["notesJa"] = _public_string_list(
+        benchmark.get("notesJa"), 12)
+
+    superiority = inv.get("superiority")
+    out["superiority"] = _public_scalar_fields(superiority, (
+        "superiorityStatus", "superiorityJa", "ownerReadableVerdictJa",
+        "unresolvedImportant", "argusOnlyVerifiedCount",
+        "verifiedOverlapCount", "sourceVerificationRate", "contextEdgeJa",
+    )) if isinstance(superiority, dict) else None
+    if isinstance(out["superiority"], dict):
+        out["superiority"]["gapProgressLinesJa"] = _public_string_list(
+            superiority.get("gapProgressLinesJa"), 12)
+
+    power = inv.get("researchPower")
+    out["researchPower"] = _public_scalar_fields(power, (
+        "geminiBaselineScore", "gptBaselineScore",
+        "bestExternalBaselineScore", "argusScore", "argusVsGeminiRatio",
+        "argusVsBestExternalRatio", "status", "statusJa", "displayJa",
+        "ownerReadableVerdictJa", "baselineType", "baselineLabelJa",
+        "baselineConfidence", "baselineRunCount", "ratioConfidence",
+        "ratioLabelJa", "publicResearchRatio",
+    )) if isinstance(power, dict) else None
+    if isinstance(out["researchPower"], dict):
+        out["researchPower"]["blockersJa"] = _public_string_list(
+            power.get("blockersJa"), 8)
+        out["researchPower"]["strengthsJa"] = _public_string_list(
+            power.get("strengthsJa"), 8)
+
+    out["gapLedger"] = []
+    for gap in (inv.get("gapLedger") or [])[:24]:
+        if not isinstance(gap, dict):
+            continue
+        projected = _public_scalar_fields(gap, (
+            "id", "claimType", "resolutionStatus", "resolutionStatusJa",
+            "providedBy", "verificationAttempts", "confidenceImpact",
+        ))
+        # Do not expose raw agent title, URL, claim, or owner-readable reason.
+        projected.update({"sourceTitle": "非公開候補", "sourceUrl": None,
+                          "resolutionReasonJa": "詳細は運用診断で確認"})
+        out["gapLedger"].append(projected)
+
+    out["sourceCoverage"] = [
+        _public_scalar_fields(row, (
+            "key", "labelJa", "state", "resultCount", "coverageImpact"))
+        for row in (inv.get("sourceCoverage") or [])[:32]
+        if isinstance(row, dict)
+    ]
+    out["coverageGuardsJa"] = _public_string_list(
+        inv.get("coverageGuardsJa"), 12)
+    graph = inv.get("valueChainGraph")
+    out["valueChainGraph"] = _public_scalar_fields(graph, (
+        "symbol", "company", "sector", "incomplete", "incompleteNoteJa",
+    )) if isinstance(graph, dict) else None
+    if isinstance(out["valueChainGraph"], dict):
+        for key in ("products", "technologies", "competitors",
+                    "adjacentThemes", "globalRelatedCompanies",
+                    "macroSensitivities", "queryExpansions"):
+            out["valueChainGraph"][key] = _public_string_list(graph.get(key), 24)
+    context = inv.get("valueChainContext")
+    out["valueChainContext"] = _public_scalar_fields(context, (
+        "theme", "labelJa", "cautionJa",
+    )) if isinstance(context, dict) else None
+    if isinstance(out["valueChainContext"], dict):
+        out["valueChainContext"]["queryExpansions"] = _public_string_list(
+            context.get("queryExpansions"), 20)
+    report = inv.get("contradictionReportV2")
+    out["contradictionReportV2"] = _public_scalar_fields(report, (
+        "directEvidenceAbsent", "themeInferenceOnly", "priceOnlyNarrativeRisk",
+        "agentDisagreement", "staleEvidencePresent", "unsupportedClaims",
+    )) if isinstance(report, dict) else None
+    if isinstance(out["contradictionReportV2"], dict):
+        out["contradictionReportV2"]["ownerReadableWarningsJa"] = \
+            _public_string_list(report.get("ownerReadableWarningsJa"), 12)
+    out["sourceUniverse"] = [
+        _public_scalar_fields(row, ("key", "labelJa", "availability", "noteJa"))
+        for row in (inv.get("sourceUniverse") or [])[:32]
+        if isinstance(row, dict)
+    ]
+    out["primarySourceChecks"] = [
+        _public_scalar_fields(row, (
+            "sourceCategory", "sourceCategoryJa", "status", "resultCount",
+            "verifiedResultCount", "ownerReadableJa"))
+        for row in (inv.get("primarySourceChecks") or [])[:32]
+        if isinstance(row, dict)
+    ]
+    out["primaryAbsenceGuardsJa"] = _public_string_list(
+        inv.get("primaryAbsenceGuardsJa"), 12)
+    causal = inv.get("causalRelevanceSummary")
+    out["causalRelevanceSummary"] = _public_scalar_fields(causal, (
+        "hasHighRelevance", "weakCausalOnly", "ownerReadableJa",
+    )) if isinstance(causal, dict) else None
+    # OwnerConclusion and private-mode/source-acquisition detail remain internal.
+    out["ownerConclusion"] = None
+    out["budget"] = _public_scalar_fields(inv.get("budget"), (
+        "maxUrls", "maxLoops", "maxSeconds", "maxCostLabel",
+    )) if isinstance(inv.get("budget"), dict) else None
+    return out
+
+
+def _public_osint_progress(progress):
+    if not isinstance(progress, dict):
+        return None
+    out = _public_scalar_fields(progress, ("stage", "loop", "maxLoops", "at"))
+    out["notesJa"] = []
+    autopilot = progress.get("autopilot")
+    out["autopilot"] = _public_scalar_fields(autopilot, (
+        "doneCount", "totalStages", "status",
+    )) if isinstance(autopilot, dict) else None
+    return out
+
+
 @app.route("/api/argus/osint/investigation")
 def api_argus_osint_investigation():
     """公開GET: 最新のOSINT調査(cached-only・redacted設計)。無ければ正直にnone。"""
@@ -21268,8 +21740,8 @@ def api_argus_osint_investigation():
     _osint_restore_once()
     inv = _OSINT_STORE.get(sym)
     return jsonify({"status": "live" if inv else "none", "symbol": sym or None,
-                    "investigation": inv,
-                    "progress": _OSINT_PROGRESS.get(sym),
+                    "investigation": _public_osint_investigation(inv),
+                    "progress": _public_osint_progress(_OSINT_PROGRESS.get(sym)),
                     "queuePosition": (list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1
                                       if sym in _OSINT_AGENT_QUEUE else None),
                     "nextCronEtaMin": _osint_next_cron_eta_min() if sym in _OSINT_AGENT_QUEUE else None,
@@ -21932,39 +22404,27 @@ def _formal_soak_public_projection():
 
 @app.route("/readyz")
 def readyz():
-    """運用readiness(/healthz=livenessと分離)。ready=200・復元中/破損=503。
-    秘密なし・redacted理由のみ。Renderのhealth check設定変更はしない(準備のみ)。"""
-    payload, code = argus_runtime.readyz_view(
-        startup_state=_STARTUP["state"],
-        app_version=_semantic_app_version(),
-        build_sha=_backend_exact_sha(),
-        restore_outcome=_STARTUP.get("restoreOutcome"),
-        blocker_ja=_STARTUP.get("blockerJa"), now_iso=_ai_now_iso())
-    payload["persistentStorage"] = argus_persistent_storage.public_diagnostics(
-        _DURABLE_STORAGE_STATUS, _DURABILITY_PATHS,
-        production=_DURABILITY_PRODUCTION)
-    payload["checkpointV2"] = dict(_CHECKPOINT_V2_STATUS)
-    formal_soak = _formal_soak_public_projection()
-    payload["checkpointV2Stage1"] = {
-        "checkpointMode": formal_soak["checkpointMode"],
-        "formalSoakArmed": formal_soak["armed"],
-        "formalSoakArmState": formal_soak["armState"],
-        "formalSoakState": formal_soak["activeRuntime"]["state"],
-        "formalSoak": formal_soak,
-        "validationWindowCount": int(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get("validationWindowCount") or 0),
-        "generationCount": int(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get("generationCount") or 0),
-        "naturalGenerationCount": len(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get("naturalGenerations") or []),
-        "resourceAcceptance": argus_checkpoint_v2_stage1.resource_acceptance(
-            _CHECKPOINT_V2_STAGE1_CONTROL),
-        "legacyRestoreAuthority": True,
-        "v2RestoreAuthority": False,
-        "authorityPromotionBlocked": bool(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get(
-                "authorityPromotionBlocked")),
-    }
+    """Minimal public readiness/build identity with unchanged 200/503 truth."""
+    now_iso = _ai_now_iso()
+    ready, reason_code = _diagnostic_readiness_truth()
+    code = 200 if ready else 503
+    try:
+        payload = argus_diagnostics_contract.build_public_readiness(
+            generated_at=now_iso,
+            backend_version=_semantic_app_version(),
+            build_sha=_backend_exact_sha(), ready=ready,
+            reason_code=reason_code)
+    except Exception:
+        payload = {
+            "schemaVersion": "argus-public-readiness-v1",
+            "generatedAt": now_iso,
+            "ready": False,
+            "status": "not_ready",
+            "reasonCode": "NOT_READY",
+            "backendVersion": "unknown",
+            "buildSha": None,
+        }
+        code = 503
     return jsonify(payload), code
 
 
@@ -33775,9 +34235,22 @@ def _dispatch_research_missions(nowt):
 
 @app.route("/api/argus/research-missions")
 def api_argus_research_missions():
-    """Recent deterministic research missions (auto-dispatched on triggers). Read-only."""
+    """Public mission status without owner flags or synthesis/model payloads."""
     items = sorted(_MISSION_STORE.values(), key=lambda x: x.get("at") or "", reverse=True)[:20]
-    return jsonify({"count": len(_MISSION_STORE), "missions": items})
+    public_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        trigger = item.get("trigger") if isinstance(item.get("trigger"), dict) else {}
+        public_items.append({
+            "at": item.get("at") if isinstance(item.get("at"), str) else None,
+            "confidence": (item.get("confidence") if isinstance(
+                item.get("confidence"), (str, int, float, type(None))) else None),
+            "trigger": _public_scalar_fields(trigger, (
+                "eventId", "symbol", "severity", "moveStartedAt", "kind")),
+            "analysisAvailable": isinstance(item.get("argusView"), dict),
+        })
+    return jsonify({"count": len(_MISSION_STORE), "missions": public_items})
 
 def _residency_ai_tick():
     """Resident replacement for the flaky GitHub */15 cron (v10.191). Keeps the

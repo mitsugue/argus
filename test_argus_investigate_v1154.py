@@ -6,7 +6,17 @@ searched/blocked/alternative sources. Old-only news → no fresh lead. The deep-
 research status detects old-news-as-primary violations (must be empty).
 """
 import json
+import pytest
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_handler_contract(monkeypatch):
+    original = scanner._require_admin
+    monkeypatch.setattr(
+        scanner, "_require_admin",
+        lambda: (True, None, 200) if scanner.request.path in
+        scanner._AUTH_OPERATIONAL_MUTATION_ROUTES else original())
 
 
 class _Boom(BaseException):

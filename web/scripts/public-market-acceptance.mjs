@@ -17,7 +17,7 @@ const PAGE_TIMEOUT_MS = 25_000;
 const BACKEND_READY_TIMEOUT_MS = 8 * 60_000;
 const MARKET_CACHE_READY_TIMEOUT_MS = 30 * 60_000;
 const BACKEND_IDENTITY_URL =
-  'https://argus-backend-3j2m.onrender.com/api/argus/data-quality';
+  'https://argus-backend-3j2m.onrender.com/api/argus/data-quality/status';
 const VIEWPORTS = [
   { width: 1440, height: 900 },
   { width: 1280, height: 800 },
@@ -301,7 +301,11 @@ async function waitForBackendIdentity(request) {
       });
       if (response.ok()) {
         const body = await response.json();
-        const identity = body.buildIdentity || {};
+        const service = body.service || {};
+        const identity = {
+          backendVersion: service.backendVersion || null,
+          backendBuildSha: service.buildSha || null,
+        };
         const versionMatches = !EXPECTED_BACKEND_VERSION
           || (identity.backendVersion || identity.appVersion) === EXPECTED_BACKEND_VERSION;
         const shaMatches = !EXPECTED_BACKEND_SHA
@@ -696,8 +700,7 @@ async function mainAcceptance() {
   await waitForMarket(page);
   const initialDataLoadMs = await waitForData(page);
   if (initialDataLoadMs > DATA_TIMEOUT_MS) evidence.failures.push(`initial-pending:${initialDataLoadMs}`);
-  const backendBody = publicIdentity.body;
-  const backend = backendBody.buildIdentity || {};
+  const backend = publicIdentity.identity;
   const actualSha = await page.evaluate(() => globalThis.__ARGUS_BUILD_SHA__ || null);
   if (actualSha !== EXPECTED_SHA) evidence.failures.push(`frontend-sha:${actualSha}:${EXPECTED_SHA}`);
   if (await page.evaluate(() => location.hash) !== '#market') evidence.failures.push('normal-url-deeplink');

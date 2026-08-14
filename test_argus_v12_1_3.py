@@ -246,14 +246,11 @@ def test_investigation_get_exposes_research_power_without_leak():
 
 
 def test_dq_osint_health_has_universe_and_rps():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
-        assert r.status_code == 200
-        oh = (r.get_json() or {}).get("osintHealth") or {}
-        su = oh.get("sourceUniverse") or {}
-        assert su.get("total") == 18
-        assert su.get("unavailable", 0) >= 1
-        assert "researchPowerLatest" in oh
+    oh = (scanner._data_quality_console() or {}).get("osintHealth") or {}
+    su = oh.get("sourceUniverse") or {}
+    assert su.get("total") == 18
+    assert su.get("unavailable", 0) >= 1
+    assert "researchPowerLatest" in oh
 
 
 def test_autopilot_wired_in_worker_progress():
@@ -276,7 +273,8 @@ def test_fe_shows_research_power_ratio():
 
 def test_fe_dq_shows_source_universe():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "sourceUniverse" in src
+    assert "argus-public-diagnostics-v1" in src
+    assert "sourceUniverse" not in src
 
 
 def test_review_pack_includes_research_power():

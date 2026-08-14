@@ -451,37 +451,21 @@ def v_news_japanese_first():
 
 
 def v_explain_request_public():
-    # v11.5.2: public enqueue-only. A harmless test symbol returns a valid status,
-    # never a 500. It must NOT start AI (we can only observe the shape here).
+    # Recovery Phase A: mutation is no longer public.
     code, d = _post_json("/api/argus/mover-causes/explain-request",
                          {"symbol": "IONQ", "market": "US", "context": "cause-stack"})
-    if code == 429:
-        return True, "429 pre-routing (skip)"
-    if code >= 500:
-        return False, f"explain-request 5xx: {code}"
-    if d.get("schemaVersion") != "mover-explain-request-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("status") not in ("queued", "already_queued", "cached_available", "rate_limited", "invalid"):
-        return False, f"bad status {d.get('status')}"
-    return True, f"status={d.get('status')}"
+    return code in (401, 503) and d.get("error") in (
+        "unauthorized", "admin_unavailable"), f"status={code}"
 
 
 def v_translation_request_public():
-    # v11.5.2: public enqueue-only translation request returns a valid shape, never 500.
+    # Recovery Phase A: mutation is no longer public.
     code, d = _post_json("/api/argus/news/translation-request",
                          {"context": "cause-stack", "symbol": "IONQ", "market": "US",
                           "items": [{"titleOriginal": "IonQ smoke-test headline about markets",
                                      "source": "smoke"}]})
-    if code == 429:
-        return True, "429 pre-routing (skip)"
-    if code >= 500:
-        return False, f"translation-request 5xx: {code}"
-    if d.get("schemaVersion") != "news-translation-request-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    for k in ("queued", "alreadyTranslated", "alreadyQueued"):
-        if not isinstance(d.get(k), int):
-            return False, f"missing {k}"
-    return True, f"queued={d.get('queued')} remaining={d.get('queueRemaining')}"
+    return code in (401, 503) and d.get("error") in (
+        "unauthorized", "admin_unavailable"), f"status={code}"
 
 
 def v_queue_admin_gated():
@@ -588,27 +572,12 @@ def v_caos_watchtower_status():
 
 
 def v_investigate_now_public():
-    # v11.5.4: the 念押し button performs a REAL bounded sweep — valid shape, never 500.
+    # Recovery Phase A: mutation is no longer public.
     code, d = _post_json("/api/argus/caos/investigate-now",
                          {"symbol": "IONQ", "market": "US", "context": "cause-stack"},
                          timeout=40)
-    if code == 429:
-        return True, "429 pre-routing (skip)"
-    if code >= 500:
-        return False, f"investigate-now 5xx: {code}"
-    if d.get("schemaVersion") != "caos-investigate-now-v2":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("status") not in ("completed", "partial", "rate_limited", "blocked", "error"):
-        return False, f"bad status {d.get('status')}"
-    if d.get("status") in ("completed", "partial"):
-        sw = d.get("sweep") or {}
-        if not sw.get("searchedSources"):
-            return False, "searchedSources missing"
-        if "次回自動生成で反映" in (d.get("messageJa") or ""):
-            return False, "queue-ticket message as primary result"
-        return True, (f"status={d['status']} searched={len(sw['searchedSources'])} "
-                      f"fresh={len(sw.get('freshItems') or [])} blocked={len(sw.get('blockedSources') or [])}")
-    return True, f"status={d.get('status')}"
+    return code in (401, 503) and d.get("error") in (
+        "unauthorized", "admin_unavailable"), f"status={code}"
 
 
 def v_caos_patrol_plan():
@@ -1082,33 +1051,30 @@ def v_review_pack_status():
 
 
 def v_data_quality_console():
-    # v11.22.0: honest freshness console — expected-disabled never counts as a
-    # failure; no secrets/private fields in the public doc.
+    # Recovery Phase A: closed public diagnostics DTO only.
     c, d = _get("/api/argus/data-quality")
-    if d.get("schemaVersion") != "data-quality-v1":
+    if d.get("schemaVersion") != "argus-public-diagnostics-v1":
         return False, f"schema={d.get('schemaVersion')}"
-    if d.get("overallStatus") not in ("ok", "degraded", "partial", "warning",
-                                      "critical", "unknown"):
-        return False, f"overall={d.get('overallStatus')}"
-    dis = [s for s in d.get("sourceHealth") or [] if s.get("isExpectedDisabled")]
-    if len(dis) != 3 or any(s.get("status") != "disabled_expected" for s in dis):
-        return False, "expected-disabled trio wrong"
+    if (d.get("service") or {}).get("overall") not in (
+            "ok", "degraded", "unavailable"):
+        return False, f"overall={(d.get('service') or {}).get('overall')}"
     blob = json.dumps(d, ensure_ascii=False)
     for banned in ("vaultPass", "passphrase=", "login_pwd", "Bearer ",
                    "quantity", "averageCost", "monthlyContribution"):
         if banned in blob:
             return False, f"LEAK: {banned}"
-    return True, f"overall={d['overallStatus']} sources={len(d.get('sourceHealth') or [])}"
+    return True, f"overall={d['service']['overall']}"
 
 
 def v_data_quality_status():
     c, d = _get("/api/argus/data-quality/status")
-    if d.get("schemaVersion") != "data-quality-status-v1":
+    if d.get("schemaVersion") != "argus-public-diagnostics-v1":
         return False, f"schema={d.get('schemaVersion')}"
-    if d.get("storageMode") != "public_redacted":
-        return False, "must be public_redacted"
-    return True, (f"overall={d.get('overallStatus')} hb={d.get('heartbeatBucket')} "
-                  f"disabled={d.get('expectedDisabledCount')}")
+    recovery = d.get("recovery") or {}
+    if recovery.get("exactColdRecovery") != "NOT_PROVEN":
+        return False, "recovery claim must be conservative"
+    return True, (f"overall={(d.get('service') or {}).get('overall')} "
+                  f"disabled={(d.get('freshness') or {}).get('expectedDisabledCount')}")
 
 
 def v_bridge_status_segmented():

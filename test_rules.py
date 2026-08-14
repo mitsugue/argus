@@ -426,13 +426,19 @@ def test_scenarios_for_matches_frontend_thresholds():
 
 
 # ── Backup vault relay (v10.3.4) ─────────────────────────────────────
-def test_vault_push_validation():
+def test_vault_push_validation(monkeypatch):
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "test-admin")
+    headers = {"X-ARGUS-ADMIN-TOKEN": "test-admin"}
     c = scanner.app.test_client()
-    assert c.post("/api/argus/vault-push", json={"vaultId": "short", "blob": "x"}).status_code == 400
-    assert c.post("/api/argus/vault-push", json={"vaultId": "g" * 64, "blob": "x"}).status_code == 400
+    assert c.post("/api/argus/vault-push", headers=headers,
+                  json={"vaultId": "short", "blob": "x"}).status_code == 400
+    assert c.post("/api/argus/vault-push", headers=headers,
+                  json={"vaultId": "g" * 64, "blob": "x"}).status_code == 400
     vid = "ab" * 32
-    assert c.post("/api/argus/vault-push", json={"vaultId": vid, "blob": "x" * (300 * 1024)}).status_code == 413
-    r = c.post("/api/argus/vault-push", json={"vaultId": vid, "blob": "ciphertext"})
+    assert c.post("/api/argus/vault-push", headers=headers,
+                  json={"vaultId": vid, "blob": "x" * (300 * 1024)}).status_code == 413
+    r = c.post("/api/argus/vault-push", headers=headers,
+               json={"vaultId": vid, "blob": "ciphertext"})
     assert r.status_code == 200 and r.get_json()["ok"] is True
     # pull requires admin (503 locally: token unconfigured)
     assert c.post("/api/argus/vault-pull").status_code in (401, 503)
@@ -584,12 +590,15 @@ def test_sensor_row_carries_band_and_valid_distribution():
 
 
 # ── Vault relay (sync-v1, v10.10) ────────────────────────────────────
-def test_vault_relay_roundtrip_and_validation():
+def test_vault_relay_roundtrip_and_validation(monkeypatch):
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "test-admin")
+    headers = {"X-ARGUS-ADMIN-TOKEN": "test-admin"}
     c = scanner.app.test_client()
     assert c.get("/api/argus/vault-relay?vaultId=bogus").status_code == 400
     vid = "cd" * 32
     assert c.get(f"/api/argus/vault-relay?vaultId={vid}").status_code == 404
-    r = c.post("/api/argus/vault-push", json={"vaultId": vid, "blob": "ciphertext-xyz"})
+    r = c.post("/api/argus/vault-push", headers=headers,
+               json={"vaultId": vid, "blob": "ciphertext-xyz"})
     assert r.status_code == 200
     r = c.get(f"/api/argus/vault-relay?vaultId={vid}")
     assert r.status_code == 200

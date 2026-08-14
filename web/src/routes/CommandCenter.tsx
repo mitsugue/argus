@@ -265,19 +265,25 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     return () => clearTimeout(t);
   }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets, positionPlans, portfolioStrategy]);
 
-  // v11.22.0: Data Quality — 一度だけ取得し、warning/critical時のみTodayに一行警告。
-  // 取得内容はパック/スナップショットにも共有(鮮度注意は私的情報ではない)。
+  // Recovery Phase A: fixed public diagnostics only. Rich operational state is
+  // intentionally unavailable to the static browser bundle.
   useEffect(() => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
     if (!backend) return;
     const t = setTimeout(() => {
-      fetch(backend.replace(/\/$/, '') + '/api/argus/data-quality')
+      fetch(backend.replace(/\/$/, '') + '/api/argus/data-quality/status')
         .then((r) => r.json())
         .then((d) => {
-          publishDataQuality({ overallStatus: d.overallStatus, overallStatusJa: d.overallStatusJa,
-            topIssuesJa: d.topIssuesJa ?? [],
-            expectedDisabledJa: (d.expectedDisabled ?? [])
-              .map((x: { sourceName: string; reasonJa: string }) => `${x.sourceName}: ${x.reasonJa}`) });
+          const overall = d?.service?.overall ?? 'unavailable';
+          const freshness = d?.freshness?.overall ?? 'unknown';
+          publishDataQuality({
+            overallStatus: overall,
+            overallStatusJa: overall === 'ok' ? '稼働中' : '一部確認が必要',
+            topIssuesJa: overall === 'ok' ? [] : [`公開診断: ${overall} / 鮮度 ${freshness}`],
+            expectedDisabledJa: d?.freshness?.expectedDisabledCount
+              ? [`仕様上無効なソース ${d.freshness.expectedDisabledCount}件`]
+              : [],
+          });
         })
         .catch(() => { /* Data Qualityページ自体が疎通チェック — Todayは静かに */ });
     }, 5000);

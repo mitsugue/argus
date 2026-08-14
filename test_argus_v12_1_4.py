@@ -278,13 +278,11 @@ def test_fe_shows_hypothesis_separation():
 
 
 def test_dq_exposes_recovery_and_hypothesis_counts():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
-        oh = (r.get_json() or {}).get("osintHealth") or {}
-        for k in ("blockedRecoveryAttempted", "blockedRecoveryRecovered",
-                  "hypothesisNotSourceCount", "metadataOnlyCount",
-                  "freshCandidateCount"):
-            assert k in oh, k
+    oh = (scanner._data_quality_console() or {}).get("osintHealth") or {}
+    for k in ("blockedRecoveryAttempted", "blockedRecoveryRecovered",
+              "hypothesisNotSourceCount", "metadataOnlyCount",
+              "freshCandidateCount"):
+        assert k in oh, k
 
 
 def test_pack_includes_gap_groups():
