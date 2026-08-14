@@ -572,6 +572,54 @@ def test_expired_component_evidence_is_not_restamped_live(monkeypatch):
     assert stale["items"][0]["runtimeStatus"] == "stale"
 
 
+@pytest.mark.parametrize(
+    ("case", "jp_data", "fresh", "expected_status", "expected_cache_state",
+     "expected_overall"),
+    [
+        ("fresh live", {"status": "live", "stocks": [
+            {"symbol": "8058", "status": "live"}]}, True,
+         "live", "fresh_read_only", "live"),
+        ("fresh partial", {"status": "partial", "stocks": [
+            {"symbol": "8058", "status": "live"}],
+            "coverage": {"live": 1, "mock": 1, "total": 2}}, True,
+         "partial", "fresh_read_only", "partial"),
+        ("expired nonempty", {"status": "live", "stocks": [
+            {"symbol": "8058", "status": "live", "delayClass": "LIVE"}]}, False,
+         "delayed", "stale_read_only", "partial"),
+        ("empty cold", None, False,
+         "mock", "unavailable", "partial"),
+    ],
+)
+def test_integrations_quote_cache_truth_matrix(
+        monkeypatch, case, jp_data, fresh, expected_status,
+        expected_cache_state, expected_overall):
+    now = scanner.time.time()
+    monkeypatch.setattr(scanner, "_FRED_API_KEY", "configured-for-test")
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "configured-for-test")
+    monkeypatch.setattr(scanner, "_TWELVEDATA_API_KEY", "configured-for-test")
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "data", None)
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._RATES_CACHE, "data", {"status": "live"})
+    monkeypatch.setitem(scanner._RATES_CACHE, "expires", now + 300)
+    monkeypatch.setitem(scanner._JP_CACHE, "data", jp_data)
+    monkeypatch.setitem(scanner._JP_CACHE, "expires", now + 300 if fresh else 0.0)
+    monkeypatch.setitem(scanner._US_CACHE, "data", {
+        "status": "live", "stocks": [{"symbol": "AAPL", "status": "live"}]})
+    monkeypatch.setitem(scanner._US_CACHE, "expires", now + 300)
+
+    snapshot = scanner.get_integrations_snapshot(allow_provider_fetch=False)
+    provider = next(row for row in snapshot["providers"]
+                    if row["id"] == "jquants")
+    assert provider["runtimeStatus"] == expected_status, case
+    assert provider["cacheState"] == expected_cache_state, case
+    assert snapshot["status"] == expected_overall, case
+    if case == "fresh partial":
+        projected = scanner._quote_cache_projection(scanner._JP_CACHE)
+        assert projected["status"] == "partial"
+        assert projected["coverage"] == {"live": 1, "mock": 1, "total": 2}
+        assert projected["stocks"][0]["status"] == "live"
+
+
 def test_expired_status_and_evidence_components_fail_conservatively(monkeypatch):
     old = "2000-01-01T00:00:00Z"
     monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "configured-for-test")

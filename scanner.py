@@ -3399,6 +3399,29 @@ def _cached_quote_snapshot(data):
             "stocks": stocks, "cacheState": "stale_read_only"}
 
 
+def _fresh_cached_quote_snapshot(data):
+    """Read-only projection for an unexpired provider cache.
+
+    Cache-only describes acquisition authority, not evidence quality: retain
+    live/partial truth and coverage instead of routing fresh data through the
+    expired-cache downgrade above.
+    """
+    if not isinstance(data, dict):
+        return {"status": "mock", "stocks": [], "cacheState": "unavailable"}
+    return {**data,
+            "stocks": [dict(row) for row in data.get("stocks", [])],
+            "cacheState": "fresh_read_only"}
+
+
+def _quote_cache_projection(cache):
+    data = cache.get("data")
+    if not isinstance(data, dict):
+        return {"status": "mock", "stocks": [], "cacheState": "unavailable"}
+    if time.time() < cache.get("expires", 0.0):
+        return _fresh_cached_quote_snapshot(data)
+    return _cached_quote_snapshot(data)
+
+
 def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
     """Live snapshot of watched Japan names (price/change/volume/date).
 
@@ -31264,14 +31287,8 @@ def get_integrations_snapshot(*, allow_provider_fetch=True):
     else:
         rates = (_RATES_CACHE.get("data") or {}
                  if now < _RATES_CACHE.get("expires", 0.0) else {})
-        jp_data = (_JP_CACHE.get("data")
-                   if now < _JP_CACHE.get("expires", 0.0) else None)
-        us_data = (_US_CACHE.get("data")
-                   if now < _US_CACHE.get("expires", 0.0) else None)
-        jp = (_cached_quote_snapshot(jp_data)
-              if jp_data else {"status": "mock"})
-        us = (_cached_quote_snapshot(us_data)
-              if us_data else {"status": "mock"})
+        jp = _quote_cache_projection(_JP_CACHE)
+        us = _quote_cache_projection(_US_CACHE)
     def _st(x):
         return x.get("status", "unknown") if isinstance(x, dict) else "unknown"
     fred_rt = _st(rates)
@@ -31323,10 +31340,12 @@ def get_integrations_snapshot(*, allow_provider_fetch=True):
          "notesJa": "金利・VIX・HY OASに使用。"},
         {"id": "jquants", "label": "J-Quants", "category": "market_data",
          "configured": bool(_JQUANTS_API_KEY), "runtimeStatus": jq_rt if _JQUANTS_API_KEY else "missing",
+         "cacheState": jp.get("cacheState", "unknown"),
          "usedFor": ["japan-watchlist", "catalysts", "market-regime"], "lastKnownStatus": jq_rt,
          "notesJa": "日本株価格・決算/開示メタデータ・日本レジームproxyに使用。"},
         {"id": "twelvedata", "label": "Twelve Data", "category": "market_data",
          "configured": bool(_TWELVEDATA_API_KEY), "runtimeStatus": td_rt if _TWELVEDATA_API_KEY else "missing",
+         "cacheState": us.get("cacheState", "unknown"),
          "usedFor": ["us-watchlist", "market-regime"], "lastKnownStatus": td_rt,
          "notesJa": "米国株価格・ETFレジームproxyに使用。"},
         {"id": "finnhub", "label": "Finnhub", "category": "news_catalyst",
