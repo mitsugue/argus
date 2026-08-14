@@ -103,30 +103,18 @@ def _public_telemetry_identifier(kind: str, identifier: str) -> str:
     projections never infer safety from a name or call site.
     """
     candidate = str(identifier or "")
-    private_classes = {
-        argus_recovery_registry.PrivacyClass.OWNER_PRIVATE,
-        argus_recovery_registry.PrivacyClass.SECRET,
-        argus_recovery_registry.PrivacyClass.CLIENT_PRIVATE,
-        argus_recovery_registry.PrivacyClass.CLIENT_OPAQUE,
-    }
     allowed = False
     if kind == "mutation":
         definition = argus_recovery_registry.mutation_by_class().get(candidate)
         allowed = bool(
             definition is not None and
-            definition.privacyClass ==
-            argus_recovery_registry.PrivacyClass.PUBLIC_METADATA and
-            definition.payloadTelemetryPolicy ==
-            argus_recovery_registry.PayloadTelemetryPolicy.METADATA_ONLY and
-            all(_public_telemetry_identifier("state", target) == target
-                for target in definition.targetStateIds))
+            argus_recovery_registry.mutation_allows_public_telemetry(
+                definition))
     elif kind == "state":
         definition = argus_recovery_registry.state_by_id().get(candidate)
         allowed = bool(
-            definition is not None and definition.allowedInTelemetry and
-            not definition.containsSecret and
-            not definition.containsOwnerPrivateData and
-            definition.privacyClass not in private_classes)
+            definition is not None and
+            argus_recovery_registry.state_allows_public_telemetry(definition))
     elif kind == "checkpoint_section":
         owners = [row for row in argus_recovery_registry.states()
                   if candidate in row.checkpointKeys]

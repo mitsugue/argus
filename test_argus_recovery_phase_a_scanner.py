@@ -78,22 +78,27 @@ def test_public_diagnostic_separates_legacy_health_from_exact_recovery():
 
 def test_actual_public_data_quality_route_redacts_all_recovery_identifiers():
     now = dt.datetime(2026, 8, 13, 12, 0, 0, tzinfo=dt.timezone.utc)
+    registry = scanner.argus_recovery_registry
     store = scanner.argus_recovery_metrics.RecoveryMeasurementStore(
         None, clock=lambda: now)
     private = [
-        row for row in scanner.argus_recovery_registry.mutations()
-        if row.privacyClass !=
-        scanner.argus_recovery_registry.PrivacyClass.PUBLIC_METADATA or
-        row.payloadTelemetryPolicy !=
-        scanner.argus_recovery_registry.PayloadTelemetryPolicy.METADATA_ONLY]
+        row for row in registry.mutations()
+        if not registry.mutation_allows_public_telemetry(row)]
+    denied_states = [
+        row for row in registry.states()
+        if not registry.state_allows_public_telemetry(row)]
+    denied_checkpoint_keys = sorted({
+        key for row in denied_states for key in row.checkpointKeys})
     for row in private:
         store.record_mutation(
             row.mutationClass, plaintext_bytes_estimate=10,
             observed_at=now)
+    section_sizes = {
+        key: index + 1
+        for index, key in enumerate(denied_checkpoint_keys)}
     store.record_checkpoint(
-        checkpoint_bytes=10_000,
-        section_sizes={"marketLedger": 44, "termOverlay": 11,
-                       "agentQueue": 22, "urlCache": 33},
+        checkpoint_bytes=sum(section_sizes.values()) + 100,
+        section_sizes=section_sizes,
         source_assembly_ms=1, section_accounting_ms=2, seal_ms=3,
         atomic_write_readback_ms=4, local_wal_bytes=5,
         local_wal_record_count=6, local_wal_high_water=7,
@@ -102,7 +107,18 @@ def test_actual_public_data_quality_route_redacts_all_recovery_identifiers():
                             "bytes": 0, "recordCount": 0,
                             "complete": True}, observed_at=now)
 
+    periodic_reports = [{"report": "PRIVATE_REPORT_SENTINEL"}]
+    challenger_runs = [{
+        "state": "SECURITY_STATE_SENTINEL",
+        "ownerDecision": "OWNER_DECISION_SENTINEL",
+    }]
+    postmortems = [{"body": "PRIVATE_POSTMORTEM_SENTINEL"}]
     with mock.patch.object(scanner, "_RECOVERY_MEASUREMENTS", store), \
+            mock.patch.object(
+                scanner, "_PERIODIC_REPORTS", periodic_reports), \
+            mock.patch.object(
+                scanner, "_CHALLENGER_RUNS", challenger_runs), \
+            mock.patch.object(scanner, "_POSTMORTEMS", postmortems), \
             mock.patch.object(
                 scanner.argus_remote_recovery, "configured_keys",
                 return_value={"status": "not_configured"}), \
@@ -114,8 +130,20 @@ def test_actual_public_data_quality_route_redacts_all_recovery_identifiers():
         assert row.mutationClass not in encoded
         for target in row.targetStateIds:
             assert target not in encoded
-    for section in ("termOverlay", "agentQueue", "urlCache"):
+    for row in denied_states:
+        assert row.stateId not in encoded
+    for section in denied_checkpoint_keys:
         assert f'"{section}"' not in encoded
+    for sentinel in ("PRIVATE_REPORT_SENTINEL", "SECURITY_STATE_SENTINEL",
+                     "OWNER_DECISION_SENTINEL",
+                     "PRIVATE_POSTMORTEM_SENTINEL"):
+        assert sentinel not in encoded
+    agent_ops = document["agentOps"]
+    for field in ("periodicReports", "challengerRuns", "postmortems",
+                  "ownerDecision"):
+        assert field not in agent_ops
+    assert all(value is not source for value in agent_ops.values()
+               for source in (periodic_reports, challenger_runs, postmortems))
     assert "validationErrors" not in document["authoritativeStateRegistry"]
     assert document["authoritativeStateRegistry"]["validationErrorCount"] == 0
     assert document["recoveryMeasurement"]["mutationDistributions"][

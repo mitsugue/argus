@@ -1,6 +1,7 @@
 """Privacy, bounding, interval and recovery-claim tests for Phase A metrics."""
 
 import copy
+import dataclasses
 import datetime as dt
 import inspect
 import json
@@ -115,6 +116,65 @@ def test_complete_public_projection_uses_one_fail_closed_identifier_policy():
     assert checkpoint["sectionSerializedBytes"][redacted] == 121
     assert checkpoint["sectionSerializedBytes"]["marketLedger"] == 44
     assert "legacyPredictionsJsonl" not in checkpoint
+
+
+def test_future_security_state_and_mixed_target_never_project_identifiers(
+        monkeypatch):
+    future = registry._s(
+        "security.future_counter", "Future security counter",
+        registry.Classification.A, registry.StorageKind.CHECKPOINT_SECTION,
+        registry.RecoveryCoverage.LOCAL_ONLY, "security",
+        registry.PrivacyClass.SECURITY_SENSITIVE,
+        registry.FutureDurability.FULL_PLUS_WAL,
+        registry.StateNature.CONTROL, registry.ReducerExpectation.REQUIRED,
+        "test", "Hostile future state with telemetry omitted by default.",
+        keys=("futureSecurityCheckpoint",))
+    public_template = next(
+        row for row in registry.mutations()
+        if registry.mutation_allows_public_telemetry(row))
+    future_mutation = dataclasses.replace(
+        public_template,
+        mutationClass="security.future_public_event",
+        stableId="security.future_public_event",
+        targetStateIds=(public_template.targetStateIds[0], future.stateId))
+    states = registry.states() + (future,)
+    state_index = {row.stateId: row for row in states}
+    mutation_index = {
+        **registry.mutation_by_class(),
+        future_mutation.mutationClass: future_mutation,
+    }
+    now = dt.datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(registry, "states", lambda: states)
+        patch.setattr(registry, "state_by_id", lambda: state_index)
+        patch.setattr(registry, "mutation_by_class", lambda: mutation_index)
+        metrics._public_telemetry_identifier.cache_clear()
+        store = metrics.RecoveryMeasurementStore(None, clock=Clock(now))
+        store.record_mutation(
+            future_mutation.mutationClass, plaintext_bytes_estimate=13,
+            observed_at=now)
+        store.record_checkpoint(
+            checkpoint_bytes=100,
+            section_sizes={"futureSecurityCheckpoint": 77},
+            source_assembly_ms=1, section_accounting_ms=2, seal_ms=3,
+            atomic_write_readback_ms=4, local_wal_bytes=5,
+            local_wal_record_count=6, local_wal_high_water=7,
+            legacy_remote_ack_sequence=0, legacy_remote_ack_at=None,
+            legacy_predictions={"configured": True, "exists": False,
+                                "bytes": 0, "recordCount": 0,
+                                "complete": True}, observed_at=now)
+        public = store.public_summary()
+        encoded = json.dumps(public, sort_keys=True)
+        assert future.stateId not in encoded
+        assert future_mutation.mutationClass not in encoded
+        assert "futureSecurityCheckpoint" not in encoded
+        redacted = metrics.PUBLIC_REDACTED_IDENTIFIER
+        assert public["mutationDistributions"][redacted][
+            "mutationCount"] == 1
+        assert public["latestCheckpointMeasurement"][
+            "sectionSerializedBytes"] == {redacted: 77}
+    metrics._public_telemetry_identifier.cache_clear()
 
 
 def test_private_event_time_is_bucketed_and_public_failure_is_fixed_shape():

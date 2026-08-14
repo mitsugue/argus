@@ -7779,11 +7779,9 @@ def _data_quality_console():
             "soak": argus_scheduler.soak_status(
                 started_at=_SOAK["startedAt"], now_iso=_ai_now_iso(),
                 summary=argus_scheduler.ops_summary(_MISSIONS)),
-            "periodicReports": len(_PERIODIC_REPORTS),
-            "challengerRuns": [{"state": c.get("state"),
-                                "ownerDecision": c.get("ownerDecision")}
-                               for c in _CHALLENGER_RUNS[-2:]],
-            "postmortems": len(_POSTMORTEMS),
+            # Mission artifacts are telemetry-disabled registry state. Their
+            # content, owner decisions, identifiers and topology are never part
+            # of this unauthenticated public route.
             "noteJa": "見逃しミッションは検知・回収され、沈黙消失しません。",
         }
         console["dualPlane"] = argus_dual_plane.dual_plane_status(

@@ -27,8 +27,11 @@ State classifications are:
 
 F is not disposable. Every F row is `mustPreserveNow=true`. C and D rows also
 remain preserve-now until their explicit proof/contract flag is accepted. An E
-row cannot be marked `FULL_PLUS_WAL` without a recorded reason. Private, client
-or secret rows cannot be telemetry-exportable.
+row cannot be marked `FULL_PLUS_WAL` without a recorded reason. Public telemetry
+defaults to false and requires an explicit per-state opt-in. Security-sensitive,
+owner-private, secret and client-private/opaque rows are incompatible with that
+opt-in; registry validation rejects the combination even if a future row sets
+`allowedInTelemetry=true`.
 
 Registry v1 contains 61 state definitions: A 30, B 13, C 5, D 1, E 2 and F 10.
 The ten unresolved states are asset reports, legacy scan state, buy candidates,
@@ -95,13 +98,22 @@ projection, including interval rollups, emits a literal mutation ID only for an
 explicit `PUBLIC_METADATA` row whose targets are also telemetry-safe. All
 `FORBIDDEN`, private, internal and security-sensitive classes combine into
 `private.redacted`. Every checkpoint section is public only when all state
-registry owners explicitly set `allowedInTelemetry=true`; all other section
-sizes are summed into the same redacted bucket. Unknown future identifiers also
-fail closed into that bucket. Private-store details such as the legacy prediction
-ledger measurement remain local-only. No raw local measurement mapping is
-returned. Activity timestamps derived from redacted rows are exposed only at
-the same five-minute bucket boundary, with an explicit approximation flag. A
-projection failure returns a fixed, content-free `SHADOW/INCOMPLETE` response.
+registry owners explicitly set `allowedInTelemetry=true` and pass the shared
+privacy-compatibility policy; all other section sizes are summed into the same
+redacted bucket. Mixed-target mutations are redacted in full when any target is
+not explicitly telemetry-safe. Unknown future identifiers also fail closed into
+that bucket. Private-store details such as the legacy prediction ledger
+measurement remain local-only. No raw local measurement mapping is returned.
+Activity timestamps derived from redacted rows are exposed only at the same
+five-minute bucket boundary, with an explicit approximation flag. A projection
+failure returns a fixed, content-free `SHADOW/INCOMPLETE` response.
+
+The complete unauthenticated `/api/argus/data-quality` response follows the same
+boundary. `agentOps` retains the explicitly constructed scheduler/Soak status
+and explanatory note, but does not return mission-artifact report, challenger
+or postmortem objects. In particular, `ownerDecision`, report text and internal
+artifact identifiers are not public diagnostics. Internal storage and mission
+behavior are unchanged.
 
 Measurements aggregate into aligned 5-minute buckets. 15- and 30-minute totals
 and p50/p95/p99/max interval distributions are derived from those buckets.
@@ -130,7 +142,9 @@ state. The artifact is:
 - updated in memory on mutation and written only at the existing checkpoint
   boundary (plus explicit diagnostic/test flush), so the WAL hot path gains no
   measurement-only fsync;
-- ignored safely if absent, malformed, partial, oversized or invalid.
+- loads structurally valid artifacts and prunes observations outside the
+  retention window; malformed, partial, oversized or unsafe artifacts are
+  rejected safely.
 
 An invalid artifact is discarded as a whole and replaced in memory with an
 empty shadow document. It cannot be partially trusted, echoed into the public

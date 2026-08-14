@@ -1,7 +1,7 @@
 """Recovery Phase A registry safety invariants."""
 
-import dataclasses
 import ast
+import dataclasses
 import json
 import pathlib
 
@@ -43,15 +43,79 @@ def test_unproved_c_and_uncontracted_d_remain_preserved():
             assert row.mustPreserveNow is True
 
 
-def test_private_and_secret_states_are_never_telemetry_exportable():
-    private = {registry.PrivacyClass.OWNER_PRIVATE,
-               registry.PrivacyClass.SECRET,
-               registry.PrivacyClass.CLIENT_PRIVATE,
-               registry.PrivacyClass.CLIENT_OPAQUE}
+def test_public_telemetry_is_explicit_and_privacy_compatible():
+    forbidden = {registry.PrivacyClass.OWNER_PRIVATE,
+                 registry.PrivacyClass.SECURITY_SENSITIVE,
+                 registry.PrivacyClass.SECRET,
+                 registry.PrivacyClass.CLIENT_PRIVATE,
+                 registry.PrivacyClass.CLIENT_OPAQUE}
     for row in registry.states():
+        if row.allowedInTelemetry:
+            assert registry.state_allows_public_telemetry(row) is True
         if row.containsSecret or row.containsOwnerPrivateData or \
-                row.privacyClass in private:
+                row.privacyClass in forbidden:
             assert row.allowedInTelemetry is False
+            assert registry.state_allows_public_telemetry(row) is False
+    for privacy in forbidden:
+        row = next(row for row in registry.states()
+                   if row.privacyClass == privacy)
+        unsafe = dataclasses.replace(row, allowedInTelemetry=True)
+        assert registry.state_allows_public_telemetry(unsafe) is False
+        assert f"{row.stateId}:incompatible_public_telemetry" in \
+            registry.validate_registry([unsafe], [])
+
+    base = registry.states()[0]
+    unknown = dataclasses.replace(
+        base, privacyClass="UNKNOWN_PRIVACY", allowedInTelemetry=True)
+    assert registry.state_allows_public_telemetry(unknown) is False
+    errors = registry.validate_registry([unknown], [])
+    assert f"{base.stateId}:invalid_privacyClass" in errors
+    assert f"{base.stateId}:incompatible_public_telemetry" in errors
+
+
+def test_future_state_defaults_private_and_public_mutation_targets_fail_closed():
+    future = registry._s(
+        "security.future_counter", "Future security counter",
+        registry.Classification.A, registry.StorageKind.LOCAL_SIDECAR,
+        registry.RecoveryCoverage.LOCAL_ONLY, "security",
+        registry.PrivacyClass.SECURITY_SENSITIVE,
+        registry.FutureDurability.FULL_PLUS_WAL,
+        registry.StateNature.CONTROL, registry.ReducerExpectation.REQUIRED,
+        "test", "Hostile future registry row intentionally omits telemetry.")
+    assert future.allowedInTelemetry is False
+    assert registry.state_allows_public_telemetry(future) is False
+
+    explicitly_unsafe = dataclasses.replace(future, allowedInTelemetry=True)
+    state_rows = tuple(sorted(
+        registry.states() + (explicitly_unsafe,), key=lambda row: row.stateId))
+    state_index = {row.stateId: row for row in state_rows}
+    errors = registry.validate_registry(state_rows, registry.mutations())
+    assert "security.future_counter:incompatible_public_telemetry" in errors
+
+    public_template = next(
+        row for row in registry.mutations()
+        if registry.mutation_allows_public_telemetry(row))
+    future_mutation = dataclasses.replace(
+        public_template,
+        mutationClass="security.future_public_event",
+        stableId="security.future_public_event",
+        targetStateIds=(future.stateId,))
+    assert registry.mutation_allows_public_telemetry(
+        future_mutation, state_index) is False
+    mutation_rows = tuple(sorted(
+        registry.mutations() + (future_mutation,),
+        key=lambda row: row.mutationClass))
+    errors = registry.validate_registry(state_rows, mutation_rows)
+    assert "security.future_public_event:" \
+        "public_mutation_targets_nonpublic_state" in errors
+
+    mixed_target = dataclasses.replace(
+        future_mutation,
+        mutationClass="security.future_mixed_event",
+        stableId="security.future_mixed_event",
+        targetStateIds=(public_template.targetStateIds[0], future.stateId))
+    assert registry.mutation_allows_public_telemetry(
+        mixed_target, state_index) is False
 
 
 def test_unknown_classification_and_unsafe_omission_fail_closed():

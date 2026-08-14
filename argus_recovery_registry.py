@@ -67,6 +67,15 @@ class PrivacyClass(_ValueEnum):
     CLIENT_OPAQUE = "CLIENT_OPAQUE"
 
 
+# Public telemetry is an affirmative registry capability.  INTERNAL metadata
+# may be opted in when its identifier/count semantics are explicitly reviewed;
+# security, owner, secret and client boundaries can never be opted in.
+PUBLIC_TELEMETRY_COMPATIBLE_PRIVACY = frozenset({
+    PrivacyClass.PUBLIC_METADATA,
+    PrivacyClass.INTERNAL,
+})
+
+
 class FutureDurability(_ValueEnum):
     FULL_PLUS_WAL = "FULL_PLUS_WAL"
     IMMUTABLE_EXTERNAL_REF = "IMMUTABLE_EXTERNAL_REF"
@@ -123,7 +132,7 @@ def _s(state_id: str, name: str, classification: Classification,
        reducer: ReducerExpectation, owner: str, notes: str, *,
        keys: Tuple[str, ...] = (), inputs: Tuple[str, ...] = (),
        private: bool = False, secret: bool = False,
-       telemetry: bool = True, preserve: Optional[bool] = None,
+       telemetry: bool = False, preserve: Optional[bool] = None,
        proof: bool = False, contract: bool = False) -> StateDefinition:
     # The explicit default is conservative and is materialized into every row.
     if preserve is None:
@@ -136,15 +145,25 @@ def _s(state_id: str, name: str, classification: Classification,
         reacquisitionContractAccepted=bool(contract), checkpointKeys=tuple(keys))
 
 
+def state_allows_public_telemetry(row: StateDefinition) -> bool:
+    """Return the one fail-closed state identifier authorization decision."""
+    return bool(
+        isinstance(row, StateDefinition) and
+        row.allowedInTelemetry is True and
+        row.privacyClass in PUBLIC_TELEMETRY_COMPATIBLE_PRIVACY and
+        row.containsSecret is False and
+        row.containsOwnerPrivateData is False)
+
+
 _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("backend.schema_identity", "Checkpoint schema identity", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "durability",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
-       ReducerExpectation.REQUIRED, "scanner.py/argus_persistent_storage.py", "Reader compatibility must be explicit and generation-bound.", keys=("schemaVersion",)),
+       ReducerExpectation.REQUIRED, "scanner.py/argus_persistent_storage.py", "Reader compatibility must be explicit and generation-bound.", keys=("schemaVersion",), telemetry=True),
     _s("backend.integrity_hashes", "Checkpoint section hashes and local seal", Classification.E,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "durability",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.EPHEMERAL, StateNature.DERIVED,
-       ReducerExpectation.NOT_APPLICABLE, "scanner.py/argus_persistent_storage.py", "Recomputed from retained state; future artifacts need their own authenticated hashes.", keys=("marketLedgerStateHash", "chartIntelligenceStateHash", "todayIntelligenceStateHash", "marketReplayStateHash", "verifiedViewSnapshotsStateHash", "assetChartReportsStateHash", "localCheckpointIntegrity"), preserve=False),
+       ReducerExpectation.NOT_APPLICABLE, "scanner.py/argus_persistent_storage.py", "Recomputed from retained state; future artifacts need their own authenticated hashes.", keys=("marketLedgerStateHash", "chartIntelligenceStateHash", "todayIntelligenceStateHash", "marketReplayStateHash", "verifiedViewSnapshotsStateHash", "assetChartReportsStateHash", "localCheckpointIntegrity"), telemetry=True, preserve=False),
     _s("backend.term_overlay", "OSINT learned term overlay", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "osint",
        PrivacyClass.OWNER_PRIVATE, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
@@ -152,7 +171,7 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("backend.learned_memory", "Bounded learned OSINT memory", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "osint",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "scanner.py", "Only public-safe records enter the legacy checkpoint.", keys=("memory",)),
+       ReducerExpectation.REQUIRED, "scanner.py", "Only public-safe records enter the legacy checkpoint.", keys=("memory",), telemetry=True),
     _s("backend.url_cache", "Verified URL metadata cache", Classification.D,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "osint",
        PrivacyClass.INTERNAL, FutureDurability.REACQUIRE_AFTER_CONTRACT, StateNature.CACHE,
@@ -160,11 +179,11 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("backend.checkpoint_histories", "Canary, RPS, baseline and benchmark histories", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "control",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.FULL_PLUS_WAL, StateNature.MIXED,
-       ReducerExpectation.REQUIRED, "scanner.py", "Acceptance and calibration evidence.", keys=("canaryLast", "rpsHistory", "baselineRuns", "benchmarkRuns", "checkpointFailureHistory")),
+       ReducerExpectation.REQUIRED, "scanner.py", "Acceptance and calibration evidence.", keys=("canaryLast", "rpsHistory", "baselineRuns", "benchmarkRuns", "checkpointFailureHistory"), telemetry=True),
     _s("backend.soak_state", "Soak state, history and control", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.PARTIAL, "control",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
-       ReducerExpectation.REQUIRED, "scanner.py", "Build-scoped control; no authority change in Phase A.", keys=("soak", "soakHistory", "soakControl", "soakLastPersistAt")),
+       ReducerExpectation.REQUIRED, "scanner.py", "Build-scoped control; no authority change in Phase A.", keys=("soak", "soakHistory", "soakControl", "soakLastPersistAt"), telemetry=True),
     _s("backend.stage1_control", "Checkpoint V2 Stage1 control", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "control",
        PrivacyClass.SECURITY_SENSITIVE, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
@@ -172,27 +191,27 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("backend.missions", "Research missions", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.ENCRYPTED_OVERLAY_WHEN_CONFIGURED, "mission",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "scanner.py", "Current WAL covers only some mission transitions.", keys=("missions",)),
+       ReducerExpectation.REQUIRED, "scanner.py", "Current WAL covers only some mission transitions.", keys=("missions",), telemetry=True),
     _s("backend.mission_windows", "Mission scheduling windows", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.ENCRYPTED_OVERLAY_WHEN_CONFIGURED, "mission",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
-       ReducerExpectation.REQUIRED, "scanner.py", "Window transitions are not fully redo-logged.", keys=("missionWindows",)),
+       ReducerExpectation.REQUIRED, "scanner.py", "Window transitions are not fully redo-logged.", keys=("missionWindows",), telemetry=True),
     _s("backend.forecasts", "Decision forecasts", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.ENCRYPTED_OVERLAY_WHEN_CONFIGURED, "decision",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "scanner.py", "Forward-live issuance history.", keys=("forecasts",)),
+       ReducerExpectation.REQUIRED, "scanner.py", "Forward-live issuance history.", keys=("forecasts",), telemetry=True),
     _s("backend.outcomes", "Forecast outcomes", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.ENCRYPTED_OVERLAY_WHEN_CONFIGURED, "decision",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "scanner.py", "Outcome observations and resolution state.", keys=("outcomes",)),
+       ReducerExpectation.REQUIRED, "scanner.py", "Outcome observations and resolution state.", keys=("outcomes",), telemetry=True),
     _s("backend.incidents", "Durability and operational incidents", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.ENCRYPTED_OVERLAY_WHEN_CONFIGURED, "operations",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "scanner.py", "Operational evidence.", keys=("incidents",)),
+       ReducerExpectation.REQUIRED, "scanner.py", "Operational evidence.", keys=("incidents",), telemetry=True),
     _s("backend.ops_journal", "Operational journal and metadata", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.ENCRYPTED_OVERLAY_WHEN_CONFIGURED, "journal",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "scanner.py/argus_state_journal.py", "Includes journal rows, metadata and compacted proof.", keys=("opsJournal", "opsJournalMeta", "opsJournalCompacted")),
+       ReducerExpectation.REQUIRED, "scanner.py/argus_state_journal.py", "Includes journal rows, metadata and compacted proof.", keys=("opsJournal", "opsJournalMeta", "opsJournalCompacted"), telemetry=True),
     _s("backend.ops_sequence_allocator", "Aggregate sequence allocator", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.ENCRYPTED_OVERLAY_WHEN_CONFIGURED, "journal",
        PrivacyClass.SECURITY_SENSITIVE, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
@@ -216,11 +235,11 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("backend.formal_benchmarks", "Formal benchmark and holdout state", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "benchmark",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
-       ReducerExpectation.REQUIRED, "argus_research_benchmark*.py", "One-shot/holdout consumption must survive.", keys=("formalResearchBenchmark", "formalResearchBenchmarkV2")),
+       ReducerExpectation.REQUIRED, "argus_research_benchmark*.py", "One-shot/holdout consumption must survive.", keys=("formalResearchBenchmark", "formalResearchBenchmarkV2"), telemetry=True),
     _s("backend.foundation_jobs", "Foundation job lifecycle", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.PARTIAL, "foundation",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
-       ReducerExpectation.REQUIRED, "argus_foundation_jobs.py", "Also has a local same-volume sidecar.", keys=("foundationJobs",)),
+       ReducerExpectation.REQUIRED, "argus_foundation_jobs.py", "Also has a local same-volume sidecar.", keys=("foundationJobs",), telemetry=True),
     _s("backend.cost_policy", "Cost usage, events and run guards", Classification.A,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "ai-control",
        PrivacyClass.SECURITY_SENSITIVE, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
@@ -248,39 +267,39 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("market.ledger_source", "Market Ledger source facts and import receipts", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-data",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "argus_market_ledger.py", "Observations/import/rollback receipts are authority.", keys=("marketLedger",)),
+       ReducerExpectation.REQUIRED, "argus_market_ledger.py", "Observations/import/rollback receipts are authority.", keys=("marketLedger",), telemetry=True),
     _s("market.ledger_derived", "Market Ledger metrics, turning points and backtests", Classification.C,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-data",
        PrivacyClass.INTERNAL, FutureDurability.REBUILD_AFTER_PROOF, StateNature.DERIVED,
-       ReducerExpectation.REQUIRED, "argus_market_ledger.py", "No accepted hash-equal rebuild proof; preserve now.", keys=("marketLedger",), inputs=("exact observations", "method/build/schema", "detection timestamps")),
+       ReducerExpectation.REQUIRED, "argus_market_ledger.py", "No accepted hash-equal rebuild proof; preserve now.", keys=("marketLedger",), inputs=("exact observations", "method/build/schema", "detection timestamps"), telemetry=True),
     _s("market.chart_intelligence", "Chart intelligence", Classification.C,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-analytics",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.REBUILD_AFTER_PROOF, StateNature.DERIVED,
-       ReducerExpectation.REQUIRED, "argus_chart_intelligence.py", "Preserve until exact-input/hash rebuild drill passes.", keys=("chartIntelligence",), inputs=("exact OHLCV", "ledger/events", "method/build/schema")),
+       ReducerExpectation.REQUIRED, "argus_chart_intelligence.py", "Preserve until exact-input/hash rebuild drill passes.", keys=("chartIntelligence",), inputs=("exact OHLCV", "ledger/events", "method/build/schema"), telemetry=True),
     _s("market.today_source", "Today intelligence short-selling source history", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-data",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "argus_today_intelligence.py", "Revision-bearing source rows.", keys=("todayIntelligence",)),
+       ReducerExpectation.REQUIRED, "argus_today_intelligence.py", "Revision-bearing source rows.", keys=("todayIntelligence",), telemetry=True),
     _s("market.today_derived", "Today intelligence snapshots and outcomes", Classification.C,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-analytics",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.REBUILD_AFTER_PROOF, StateNature.DERIVED,
-       ReducerExpectation.REQUIRED, "argus_today_intelligence.py", "No accepted exact rebuild proof.", keys=("todayIntelligence",), inputs=("exact bars", "short rows", "comparison rows", "method/build/schema")),
+       ReducerExpectation.REQUIRED, "argus_today_intelligence.py", "No accepted exact rebuild proof.", keys=("todayIntelligence",), inputs=("exact bars", "short rows", "comparison rows", "method/build/schema"), telemetry=True),
     _s("market.replay_receipts", "Market replay history receipts", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-analytics",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "argus_market_replay.py", "Compact dataset/outcome/calibration evidence.", keys=("marketReplay",)),
+       ReducerExpectation.REQUIRED, "argus_market_replay.py", "Compact dataset/outcome/calibration evidence.", keys=("marketReplay",), telemetry=True),
     _s("market.replay_contexts", "Market replay contexts", Classification.C,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-analytics",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.REBUILD_AFTER_PROOF, StateNature.DERIVED,
-       ReducerExpectation.REQUIRED, "argus_market_replay.py", "Preserve until exact-input rebuild proof.", keys=("marketReplay",), inputs=("exact bars", "ledger", "chart", "calibration", "method/build/schema")),
+       ReducerExpectation.REQUIRED, "argus_market_replay.py", "Preserve until exact-input rebuild proof.", keys=("marketReplay",), inputs=("exact bars", "ledger", "chart", "calibration", "method/build/schema"), telemetry=True),
     _s("market.verified_views", "Verified published view snapshots", Classification.B,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "publication",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.FULL_PLUS_WAL, StateNature.MIXED,
-       ReducerExpectation.REQUIRED, "argus_verified_snapshot.py", "Publication identity/timestamps are source facts.", keys=("verifiedViewSnapshots",)),
+       ReducerExpectation.REQUIRED, "argus_verified_snapshot.py", "Publication identity/timestamps are source facts.", keys=("verifiedViewSnapshots",), telemetry=True),
     _s("market.asset_reports", "Asset chart reports", Classification.F,
        StorageKind.CHECKPOINT_SECTION, RecoveryCoverage.LEGACY_FULL, "market-analytics",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.UNRESOLVED, StateNature.MIXED,
-       ReducerExpectation.UNRESOLVED, "argus_asset_chart_cache.py", "Called a durable cache, but publication/audit semantics need owner decision.", keys=("assetChartReports",)),
+       ReducerExpectation.UNRESOLVED, "argus_asset_chart_cache.py", "Called a durable cache, but publication/audit semantics need owner decision.", keys=("assetChartReports",), telemetry=True),
     _s("secondary.osint_investigation_store", "Latest OSINT investigations", Classification.A,
        StorageKind.MEMORY_ONLY, RecoveryCoverage.NONE, "osint",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
@@ -292,7 +311,7 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("secondary.decision_jobs", "Decision ledger jobs", Classification.A,
        StorageKind.MEMORY_ONLY, RecoveryCoverage.NONE, "decision",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
-       ReducerExpectation.REQUIRED, "scanner.py", "Stable job IDs but volatile dedupe state."),
+       ReducerExpectation.REQUIRED, "scanner.py", "Stable job IDs but volatile dedupe state.", telemetry=True),
     _s("secondary.owner_intelligence", "Owner aliases, feedback and entity profiles", Classification.A,
        StorageKind.LOCAL_TEMP, RecoveryCoverage.EXTERNAL_BEST_EFFORT, "owner-intel",
        PrivacyClass.OWNER_PRIVATE, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
@@ -304,7 +323,7 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("secondary.accepted_queues", "News translation and mover-explain queues", Classification.A,
        StorageKind.LOCAL_TEMP, RecoveryCoverage.PARTIAL, "queue",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.CONTROL,
-       ReducerExpectation.REQUIRED, "scanner.py", "Cross-store writes are not atomic."),
+       ReducerExpectation.REQUIRED, "scanner.py", "Cross-store writes are not atomic.", telemetry=True),
     _s("secondary.ai_results", "AI results and pre-analysis receipts", Classification.B,
        StorageKind.LOCAL_TEMP, RecoveryCoverage.EXTERNAL_BEST_EFFORT, "ai",
        PrivacyClass.OWNER_PRIVATE, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
@@ -316,7 +335,7 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("secondary.learning_materialization", "Learning-memory materialization", Classification.C,
        StorageKind.LOCAL_TEMP, RecoveryCoverage.EXTERNAL_BEST_EFFORT, "learning",
        PrivacyClass.INTERNAL, FutureDurability.REBUILD_AFTER_PROOF, StateNature.DERIVED,
-       ReducerExpectation.REQUIRED, "argus_learning_memory*.py", "Owner semantics and exact inputs/version are not yet proved.", inputs=("exact event cohorts", "method/build/schema")),
+       ReducerExpectation.REQUIRED, "argus_learning_memory*.py", "Owner semantics and exact inputs/version are not yet proved.", inputs=("exact event cohorts", "method/build/schema"), telemetry=True),
     _s("secondary.legacy_scan_state", "Legacy scan/TOP3 state", Classification.F,
        StorageKind.LOCAL_TEMP, RecoveryCoverage.NONE, "legacy-scan",
        PrivacyClass.OWNER_PRIVATE, FutureDurability.UNRESOLVED, StateNature.MIXED,
@@ -328,7 +347,7 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("secondary.sweep_cooldown", "Sweep, cooldown and patrol scheduling state", Classification.F,
        StorageKind.LOCAL_TEMP, RecoveryCoverage.PARTIAL, "operations",
        PrivacyClass.INTERNAL, FutureDurability.UNRESOLVED, StateNature.CONTROL,
-       ReducerExpectation.UNRESOLVED, "scanner.py", "Audit intent and restart-reset policy require owner decision."),
+       ReducerExpectation.UNRESOLVED, "scanner.py", "Audit intent and restart-reset policy require owner decision.", telemetry=True),
     _s("secondary.legacy_predictions", "Legacy predictions.jsonl", Classification.F,
        StorageKind.EC2_DISK, RecoveryCoverage.LOCAL_ONLY, "legacy-prediction",
        PrivacyClass.OWNER_PRIVATE, FutureDurability.UNRESOLVED, StateNature.SOURCE,
@@ -336,11 +355,11 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("secondary.event_backbone", "24/7 event backbone", Classification.B,
        StorageKind.MEMORY_ONLY, RecoveryCoverage.EXTERNAL_BEST_EFFORT, "events",
        PrivacyClass.INTERNAL, FutureDurability.FULL_PLUS_WAL, StateNature.SOURCE,
-       ReducerExpectation.REQUIRED, "scanner.py/argus_event_store.py", "First detection/lifecycle/dossier can precede async snapshot."),
+       ReducerExpectation.REQUIRED, "scanner.py/argus_event_store.py", "First detection/lifecycle/dossier can precede async snapshot.", telemetry=True),
     _s("secondary.tdnet_timing", "TDnet timing and causality evidence", Classification.F,
        StorageKind.MEMORY_ONLY, RecoveryCoverage.NONE, "events",
        PrivacyClass.INTERNAL, FutureDurability.UNRESOLVED, StateNature.SOURCE,
-       ReducerExpectation.UNRESOLVED, "scanner.py", "Non-reacquirable timing evidence; business authority unresolved."),
+       ReducerExpectation.UNRESOLVED, "scanner.py", "Non-reacquirable timing evidence; business authority unresolved.", telemetry=True),
     _s("external.private_git_objects", "Private Git membership, Layer2B, Decision Value, entity and vault objects", Classification.A,
        StorageKind.PRIVATE_GIT, RecoveryCoverage.INDEPENDENT_DURABLE, "external-private",
        PrivacyClass.OWNER_PRIVATE, FutureDurability.IMMUTABLE_EXTERNAL_REF, StateNature.EXTERNAL_REFERENCE,
@@ -348,7 +367,7 @@ _STATES: Tuple[StateDefinition, ...] = tuple(sorted((
     _s("external.public_ledger_originals", "Public ledger original snapshots", Classification.B,
        StorageKind.PUBLIC_GIT, RecoveryCoverage.INDEPENDENT_DURABLE, "external-public",
        PrivacyClass.PUBLIC_METADATA, FutureDurability.IMMUTABLE_EXTERNAL_REF, StateNature.EXTERNAL_REFERENCE,
-       ReducerExpectation.EXTERNAL_REFERENCE, ".github/workflows", "Future generation must bind immutable commit identities."),
+       ReducerExpectation.EXTERNAL_REFERENCE, ".github/workflows", "Future generation must bind immutable commit identities.", telemetry=True),
     _s("external.ec2_build_identity", "EC2 build identity anti-regression state", Classification.A,
        StorageKind.EC2_DISK, RecoveryCoverage.INDEPENDENT_DURABLE, "deployment",
        PrivacyClass.SECURITY_SENSITIVE, FutureDurability.IMMUTABLE_EXTERNAL_REF, StateNature.EXTERNAL_REFERENCE,
@@ -466,6 +485,21 @@ _MUTATIONS: Tuple[MutationDefinition, ...] = tuple(sorted((
 ), key=lambda row: row.mutationClass))
 
 
+def mutation_allows_public_telemetry(
+        row: MutationDefinition,
+        state_index: Optional[Dict[str, StateDefinition]] = None) -> bool:
+    """Return the one fail-closed mutation identifier authorization decision."""
+    states_by_id = state_by_id() if state_index is None else state_index
+    return bool(
+        isinstance(row, MutationDefinition) and
+        row.privacyClass == PrivacyClass.PUBLIC_METADATA and
+        row.payloadTelemetryPolicy == PayloadTelemetryPolicy.METADATA_ONLY and
+        row.targetStateIds and
+        all(target in states_by_id and
+            state_allows_public_telemetry(states_by_id[target])
+            for target in row.targetStateIds))
+
+
 def states() -> Tuple[StateDefinition, ...]:
     return _STATES
 
@@ -513,8 +547,6 @@ def validate_registry(state_rows: Optional[Iterable[StateDefinition]] = None,
         errors.append("state_registry_not_sorted")
     if len(ids) != len(set(ids)):
         errors.append("duplicate_state_id")
-    private_classes = {PrivacyClass.OWNER_PRIVATE, PrivacyClass.SECRET,
-                       PrivacyClass.CLIENT_PRIVATE, PrivacyClass.CLIENT_OPAQUE}
     for row in state_rows:
         prefix = row.stateId or "<empty>"
         if not _STABLE_ID_RE.fullmatch(str(row.stateId or "")):
@@ -562,15 +594,16 @@ def validate_registry(state_rows: Optional[Iterable[StateDefinition]] = None,
                 row.intendedFutureDurability == FutureDurability.FULL_PLUS_WAL and \
                 not str(row.ephemeralFullWalReason or "").strip():
             errors.append(f"{prefix}:ephemeral_full_wal_reason_required")
-        if (row.containsSecret or row.containsOwnerPrivateData or
-                row.privacyClass in private_classes) and row.allowedInTelemetry:
-            errors.append(f"{prefix}:private_or_secret_telemetry_forbidden")
+        if row.allowedInTelemetry is True and not \
+                state_allows_public_telemetry(row):
+            errors.append(f"{prefix}:incompatible_public_telemetry")
     mids = [row.mutationClass for row in mutation_rows]
     if mids != sorted(mids):
         errors.append("mutation_registry_not_sorted")
     if len(mids) != len(set(mids)):
         errors.append("duplicate_mutation_class")
     state_ids = set(ids)
+    state_index = {row.stateId: row for row in state_rows}
     for row in mutation_rows:
         prefix = row.mutationClass or "<empty>"
         if not _STABLE_ID_RE.fullmatch(str(row.mutationClass or "")) or \
@@ -593,6 +626,11 @@ def validate_registry(state_rows: Optional[Iterable[StateDefinition]] = None,
                  PayloadTelemetryPolicy)):
             if not isinstance(value, kind):
                 errors.append(f"{prefix}:invalid_{name}")
+        if row.privacyClass == PrivacyClass.PUBLIC_METADATA and \
+                row.payloadTelemetryPolicy == \
+                PayloadTelemetryPolicy.METADATA_ONLY and not \
+                mutation_allows_public_telemetry(row, state_index):
+            errors.append(f"{prefix}:public_mutation_targets_nonpublic_state")
     return sorted(set(errors))
 
 
