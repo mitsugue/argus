@@ -6,7 +6,7 @@ import type { AssetItem } from '../../types/assetItem';
 
 // My Trade Journal card (v10.23): record YOUR own trades + the rationale, see
 // live P/L, and build the human side of the learning loop. Device-local;
-// synced via the encrypted vault. Born from the 9984 @6450 trade.
+// protect newer records with a local JSON export. Born from the 9984 @6450 trade.
 
 export const TradeJournalCard: React.FC<{ assets: AssetItem[] }> = ({ assets }) => {
   const [trades, setTrades] = useState<TradeEntry[]>(() => readTrades());
@@ -70,7 +70,7 @@ export const TradeJournalCard: React.FC<{ assets: AssetItem[] }> = ({ assets }) 
           </div>
         )}
         {openTrades.length === 0 && closedTrades.length === 0 && !open && (
-          <div className="tj__empty">自分の売買と根拠を記録すると、ここで損益と「あなたの判断 vs 結果」を追えます(端末内のみ・同期対象)。</div>
+          <div className="tj__empty">自分の売買と根拠を記録すると、ここで損益と「あなたの判断 vs 結果」を追えます(この端末内のみ。保護にはJSON書き出しが必要です)。</div>
         )}
         {openTrades.map((t) => {
           const pnl = tradePnlPct(t, priceOf(t));

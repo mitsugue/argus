@@ -1,12 +1,13 @@
 // V11.19.1 — Mutual Fund / FIRE Core Tracker (device-local TS port of
 // argus_fire_core.py). オーナー方針:「投資信託の合計額をFIRE用の本丸資産として
 // 扱います。個別株の利益は、将来的にこのFIRE Coreへ移す候補として見ます。」
-// 投信の詳細(口数・評価額・積立額・口座区分)は端末内+暗号化バックアップのみ。
+// 投信の詳細(口数・評価額・積立額・口座区分)は端末内のみ。
 // NAV捏造なし・リアルタイム不要(日次/手動更新)・証券会社連携なし。
 
 import type { AssetItem } from '../types/assetItem';
 import type { PortfolioExposure } from '../domain/positionExposure';
 import type { LocalAssetRole } from '../domain/portfolioStrategy';
+import { markLocalEdit } from './vault';
 
 export const FIRE_CORE_KEY = 'argus.fireCore.v1';
 const FIRE_CORE_CHANGE_EVENT = 'argus:fire-core-change';
@@ -41,6 +42,7 @@ export function saveFundMeta(symbol: string, patch: Partial<FundMeta>): void {
   all[symbol.toUpperCase()] = { ...all[symbol.toUpperCase()], ...patch };
   try {
     localStorage.setItem(FIRE_CORE_KEY, JSON.stringify(all));
+    markLocalEdit();
     window.dispatchEvent(new Event(FIRE_CORE_CHANGE_EVENT));
   } catch { /* quota */ }
 }

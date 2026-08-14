@@ -3,7 +3,7 @@
 // パスフレーズ・暗号ペイロード・保護状態がサーバーへ送られることはない。
 
 import type { AssetItem } from '../types/assetItem';
-import { lastCloudBackupAt } from './vault';
+import { lastCloudBackupAt, recoveryDurability } from './vault';
 import { buildPortfolioBackup, listSnapshots, previewImport, syncMeta } from './portfolioSync';
 import { listDQ } from './decisionQuality';
 import { listNotifications } from './notifications';
@@ -53,12 +53,13 @@ export function assessBackupSafety(assets: AssetItem[]): BackupSafety {
   const exportAgeDays = ageDays(sm.lastExportAt);
   const m = meta();
   const verified = !!m.restoreVerified;
+  const durability = recoveryDurability(hasData, Date.parse(sm.lastExportAt || '') || null);
 
   const risks: string[] = [];
   risks.push('cloud_push_unavailable');
   if (!vault) risks.push('vault_passphrase_not_stored');
   if (vaultSyncAgeDays == null || vaultSyncAgeDays > 2) risks.push('vault_recovery_point_stale');
-  if (exportAgeDays == null || exportAgeDays > 30) risks.push('no_export_backup');
+  if (exportAgeDays == null || exportAgeDays > 30 || durability.localExportRequired) risks.push('no_export_backup');
   if (hasData && (snapshotAgeDays == null || snapshotAgeDays > 3)) risks.push('no_snapshot');
   if (!verified) risks.push('restore_not_verified');
   if (hasData && exportAgeDays == null) risks.push('local_only_with_private_data');
@@ -67,16 +68,18 @@ export function assessBackupSafety(assets: AssetItem[]): BackupSafety {
   if (!hasData) {
     level = 'unknown';
     statusJa = '保護対象の個人データはまだ端末にありません(保有数量を入力すると保護状態を判定します)。';
-  } else if (exportAgeDays != null && exportAgeDays <= 30
+  } else if (exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired
     && snapshotAgeDays != null && snapshotAgeDays <= 3 && verified) {
     level = 'protected';
     statusJa = 'バックアップ保護済み：最近のJSONエクスポート、スナップショット、復元ドリルを確認済みです。';
-  } else if (exportAgeDays != null && exportAgeDays <= 30) {
+  } else if (exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired) {
     level = 'partially_protected';
     statusJa = '一部保護：最近のJSONエクスポートがあります。復元ドリルとスナップショットも確認してください。';
   } else if (vault && vaultSyncAgeDays != null) {
     level = 'partially_protected';
-    statusJa = '一部保護：既存の暗号化復旧点は読み取り可能ですが、公開ブラウザから新しい復旧点は送信できません。';
+    statusJa = durability.state === 'changes_after_envelope'
+      ? '一部保護：既存の暗号化復旧点は復元できますが、それ以降の変更はこの端末内だけです。'
+      : '一部保護：既存の暗号化復旧点は読み取り・復元できます。新しい変更はクラウドへ送信されません。';
   } else {
     level = 'unprotected';
     statusJa = 'バックアップ未保護：保有データはこの端末内にのみあります。JSONエクスポートを安全な場所へ保存してください。';
@@ -84,18 +87,20 @@ export function assessBackupSafety(assets: AssetItem[]): BackupSafety {
   return {
     protectionLevel: level, protectionLevelJa: LEVEL_JA[level],
     storageMode: !hasData ? 'unknown'
-      : vaultSyncAgeDays != null && exportAgeDays != null && exportAgeDays <= 30
+      : vaultSyncAgeDays != null && exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired
         ? 'read_only_encrypted_recovery_plus_export'
-        : exportAgeDays != null && exportAgeDays <= 30 ? 'local_export' : 'local_only',
+        : exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired ? 'local_export' : 'local_only',
     vaultConfigured: vault, vaultSyncAgeDays, snapshotAgeDays, exportAgeDays,
     restoreVerified: verified, lastDrillAt: m.lastDrillAt ?? null,
     riskFlags: risks,
     statusJa,
-    riskJa: level === 'unprotected'
+    riskJa: durability.state === 'changes_after_envelope' && durability.localExportRequired
+      ? '既存の暗号化復旧点より新しい変更はリモート保護されていません。JSONを書き出して安全な場所へ保存してください。'
+      : level === 'unprotected'
       ? '保有・判断記録・通知・学習履歴がこの端末だけにあり、サイトデータ削除・ブラウザリセット・PWA削除・端末紛失で失われます。'
       : !verified && level !== 'unknown'
         ? '復元できることを一度も確認していません。復元ドリル(非破壊)の実行を推奨します。' : '',
-    nextStepJa: risks.includes('no_export_backup') && hasData ? 'バックアップJSONを書き出してiCloud Drive等に保管'
+    nextStepJa: durability.localExportRequired ? 'バックアップJSONを書き出してiCloud Drive等に保管'
       : !verified && hasData ? '「復元ドリルを実行」で戻せることを確認(非破壊)'
       : '現状維持でOK(週1回のエクスポート保管を推奨)',
     whatCanBeLostJa: 'サイトデータ消去/ブラウザ初期化/PWA削除/プライベートブラウズ/端末変更・紛失で、端末内のデータが消える可能性があります。アプリを閉じるだけでは通常消えません。',

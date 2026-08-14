@@ -6,7 +6,7 @@ import { jpDisplay } from '../../lib/displayName';
 
 // V11.19.1 — FIRE CORE / MUTUAL FUNDS (Core Portfolio)。投資信託=FIREの本丸資産。
 // 口数×日次NAV(既存追跡)または現在評価額の手動入力。口座区分・毎月積立額もここで
-// 入力する。全て端末内+暗号化バックアップのみ・証券会社連携なし・NAV捏造なし。
+// 入力する。全て端末内のみ・証券会社連携なし・NAV捏造なし。
 
 const fmtJpy = (v: number | null) =>
   v == null ? '未入力' : `¥${Math.round(v).toLocaleString('ja-JP')}`;
@@ -122,7 +122,8 @@ export const FireCoreCard: React.FC<{
           </>
         )}
         <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-          ファンド名・口数・評価額・積立額・口座区分は端末内+暗号化バックアップのみ(サーバー送信なし)。
+          ファンド名・口数・評価額・積立額・口座区分はこの端末内だけに保存されます(サーバー送信なし)。
+          新しい変更を守るにはSettings / RecoveryでJSONを書き出してください。
           証券会社ログイン・口座連携はありません。将来見込みの精密計算もしません。
         </p>
       </div>

@@ -10,6 +10,7 @@
 import { restoreBackup, BACKUP_KEYS, type BackupFile } from './backup';
 import { mergeAssets, loadTombstones, saveTombstones, type Tombstones } from './assetMerge';
 import type { AssetItem } from '../types/assetItem';
+import { buildRecoveryDurability, type RecoveryDurability } from '../domain/recoveryDurability';
 
 const PASS_KEY = 'argus.vaultPass.v1';
 const LAST_KEY = 'argus.lastCloudBackup.v1';
@@ -71,6 +72,12 @@ export function lastCloudBackupAt(): number {
   try { return Number(localStorage.getItem(LAST_KEY) || 0); } catch { return 0; }
 }
 
+function recordExistingEnvelope(exportedAt: string): void {
+  const timestamp = Date.parse(exportedAt || '') || 0;
+  if (!timestamp) return;
+  try { localStorage.setItem(LAST_KEY, String(timestamp)); } catch { /* ignore */ }
+}
+
 // ── Read-only encrypted recovery ─────────────────────────────────────────────
 // The static browser has no authenticated cloud-push channel. It can read an
 // existing encrypted envelope on startup/tab return and can restore it, but it
@@ -93,6 +100,15 @@ function setSyncState(patch: Partial<SyncState>): void {
 }
 export function lastLocalEditAt(): number {
   try { return Number(localStorage.getItem(EDIT_KEY) || 0); } catch { return 0; }
+}
+
+export function recoveryDurability(hasLocalData: boolean, lastLocalExportAt?: number | null): RecoveryDurability {
+  return buildRecoveryDurability({
+    hasLocalData,
+    existingEnvelopeAt: lastCloudBackupAt() || null,
+    lastLocalEditAt: lastLocalEditAt() || null,
+    lastLocalExportAt,
+  });
 }
 
 /** Called by data hooks whenever device data changes. This only records the
@@ -158,6 +174,7 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
     let payload: BackupFile | null = null;
     try { payload = await decryptBackup(pass, env); } catch { payload = null; }
     if (payload?.data) {
+      recordExistingEnvelope(payload.exportedAt);
       // v11.3.4 migration guard: a RECENT envelope without syncProtocolVersion
       // means another device still runs pre-sync-v2 code (whole-payload LWW,
       // no tombstones). The merge below stays safe on THIS device; the UI
@@ -239,6 +256,7 @@ export async function cloudRestore(pass: string): Promise<number> {
     throw new Error('クラウド上にバックアップが見つかりません(パスフレーズ違い、または他端末がまだ一度も送信していません)。');
   }
   const payload = await decryptBackup(pass, envelopeStr);
+  recordExistingEnvelope(payload.exportedAt);
   const n = restoreBackup(payload);
   // Record what was applied so a later visibility pull does not re-apply it,
   // and let mounted hooks reload without a manual refresh.

@@ -49,7 +49,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
     const pe = latestExposure();
     if (!pe) { setSnapMsg('先にTodayページを開いて計算させてください。'); return; }
     const s = createSnapshot(pe, { appVersion });
-    setSnapMsg(s ? `スナップショット作成: ${s.asOf}(端末内・暗号化バックアップに含まれます)`
+    setSnapMsg(s ? `スナップショット作成: ${s.asOf}(この端末内に保存。保護するにはJSONを書き出してください)`
       : '保有数量・価格が揃っていないため、スナップショットは作成できません(捏造しません)。');
     bump();
   };

@@ -12,7 +12,7 @@ import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — RESEARCH & NOTES(§7-9)。旧Watchlistのリサーチメモ/AI相談/Removeと
 // 旧TodayのReview Packコピー/OSINT Deep Dive/DECISION HISTORYを統合。
-// コピーは全て手動(自動送信なし)・メモは端末内/同期レイヤーのみ(不変)。
+// コピーは全て手動(自動送信なし)・メモは端末内のみ(不変)。
 
 const aiBtn: React.CSSProperties = { fontSize: 10.5, cursor: 'pointer', marginLeft: 5,
   background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
@@ -108,7 +108,7 @@ export const AssetResearchPanel: React.FC<{
   return (
     <>
       <div className="asset-detail__note">
-        <span className="asset-detail__k">📝 リサーチメモ(Gemini/GPTの回答を貼り付け・端末内/同期)</span>
+        <span className="asset-detail__k">📝 リサーチメモ(Gemini/GPTの回答を貼り付け・端末内のみ。保護はJSON書き出し)</span>
         <textarea
           className="asset-detail__note-area"
           value={note}

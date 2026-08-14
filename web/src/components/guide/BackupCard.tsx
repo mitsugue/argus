@@ -95,7 +95,8 @@ export const BackupCard: React.FC = () => {
           既存復旧点: {lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '未確認'}。
           最終取込: {lastSyncInfo()?.lastPullAppliedAt
             ? new Date(lastSyncInfo()!.lastPullAppliedAt!).toLocaleString('ja-JP') : '未記録'}。
-          データは端末上で暗号化され、サーバーとGitHubには<b>暗号文しか</b>渡りません。
+          既存復旧点は端末上で復号され、サーバーとGitHubにあるのは保存済みの<b>暗号文だけ</b>です。
+          その復旧点より新しい変更はこの端末内だけです。上のJSONエクスポートで保護してください。
           パスフレーズを忘れると誰にも復元できません(本人含む)。
         </p>
         {cloudMsg && <p className="backup__msg">{cloudMsg}</p>}
