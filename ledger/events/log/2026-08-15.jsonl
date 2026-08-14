@@ -1,0 +1,2 @@
+{"eventId": "US:TLT:FLOW_REVERSAL:2026-08-14:45#2026-08-14T13:43:55Z", "eventType": "FLOW_REVERSAL", "symbol": "TLT", "market": "US", "severity": 4, "lifecycleState": "VERIFIED", "recommendedPosture": "INVESTIGATE", "detectedAt": "2026-08-14T13:43:55Z", "reasonJa": "大口資金が流出→流入に反転(-26%→35%)"}
+{"eventId": "US:XLU:FLOW_ANOMALY:2026-08-14:45#2026-08-14T13:30:06Z", "eventType": "FLOW_ANOMALY", "symbol": "XLU", "market": "US", "severity": 3, "lifecycleState": "OBSERVING", "recommendedPosture": "WATCH", "detectedAt": "2026-08-14T13:30:06Z", "reasonJa": "大口資金が純流入 92%(閾値40%)"}
