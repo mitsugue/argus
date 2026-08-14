@@ -78,22 +78,10 @@ export function lastCloudBackupAt(): number {
 
 /** Push one encrypted envelope to the relay. Returns the backend note. */
 export async function cloudBackupNow(pass: string): Promise<string> {
-  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
-  if (!backend) throw new Error('backend not configured');
-  const payload = buildBackupPayload(true);
-  if (Object.keys(payload.data).length === 0) return '保存するデータがまだありません。';
-  const blob = await encryptBackup(pass, payload);
-  const vaultId = await vaultIdFrom(pass);
-  const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/vault-push', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vaultId, blob }),
-  });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  try { localStorage.setItem(LAST_KEY, String(Date.now())); } catch { /* ignore */ }
-  // Own push = already applied locally — the sync loop must not re-apply it.
-  setSyncState({ appliedExportedAt: payload.exportedAt });
-  const d = await r.json();
-  return d.noteJa || 'OK';
+  void pass;
+  // The relay mutation is now server-to-server admin-only. Do not add an admin
+  // token to this static bundle; local encrypted export remains available.
+  throw new Error('cloud backup requires an authenticated owner channel');
 }
 
 /** Daily-ish automatic cloud backup on app open (no-op until enabled). */

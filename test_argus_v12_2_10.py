@@ -659,7 +659,7 @@ def test_no_circular_dependency_static():
 
 def test_dq_pipeline_reports_clear():
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
     dp = d.get("deploymentPipeline") or {}
     assert dp.get("cycleStatus") == "clear"
     assert dp.get("preDeployRequiredChecks") == ["backend-rules",
@@ -671,7 +671,7 @@ def test_dq_pipeline_reports_clear():
 def test_dq_v12_2_10_sections_and_no_leak():
     scanner._STARTUP.update({"state": "ready"})
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
     rjt = d.get("remoteJournalTruth") or {}
     for k in ("localCommittedCount", "remotePendingCount",
               "remoteCommittedCount", "lossWindowClaimStatus", "slo",

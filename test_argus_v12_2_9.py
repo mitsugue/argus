@@ -374,7 +374,7 @@ def test_corrupt_state_ready_degraded(monkeypatch, tmp_path):
     with scanner.app.test_client() as c:
         r = c.get("/readyz")
         assert r.status_code == 200                      # degradedでも運用可
-        assert "last-known-good" in (r.get_json() or {}).get("reasonJa", "")
+        assert (r.get_json() or {}).get("reasonCode") == "READY_DEGRADED"
     _ready_startup()
     scanner._DURABLE_STATE["integrityStatus"] = "ok"
 
@@ -514,7 +514,7 @@ def test_calibration_runs_do_not_warm_store(monkeypatch):
         scanner._OSINT_BASELINE_RUNS.append(
             {"score": 68 + i, "case": cse, "at": NOW, "epochId": ep})
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
     fa = d.get("forecastActivation") or {}
     assert fa.get("benchmarkCalibrationRuns") == 6
     assert fa.get("forecastStoreRecordCount") == 0
@@ -529,7 +529,7 @@ def test_live_mission_store_counts_as_ready():
     scanner._OSINT_STORE["6965"] = {"id": "inv-1", "symbol": "6965",
                                     "catalystVerdict": {"verdict": "unknown"}}
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
     fa = d.get("forecastActivation") or {}
     assert fa.get("sourceStoreReady") is True
     assert fa.get("blockerCode") not in (
@@ -886,7 +886,7 @@ def test_owner_attested_semantics():
 
 def test_dq_owner_controls_attested_not_runtime_verified():
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
     ocs = d.get("ownerControls") or []
     assert {o.get("control") for o in ocs} == \
         {"github_branch_ruleset", "render_after_ci_checks"}
@@ -903,7 +903,7 @@ def test_dq_owner_controls_attested_not_runtime_verified():
 def test_dq_runtime_truth_sections_and_no_leak():
     _ready_startup()
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
     for k in ("runtimeIdentity", "buildSoak", "soakContinuity",
               "startupRestore", "operationalJournal", "forecastActivation",
               "freshnessPolicies", "serverRuntime", "ownerControls"):

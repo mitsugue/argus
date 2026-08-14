@@ -11,8 +11,18 @@ Hard rules under test:
 """
 import json
 import re
+import pytest
 import argus_news_i18n as NI
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_handler_contract(monkeypatch):
+    original = scanner._require_admin
+    monkeypatch.setattr(
+        scanner, "_require_admin",
+        lambda: (True, None, 200) if scanner.request.path in
+        scanner._AUTH_OPERATIONAL_MUTATION_ROUTES else original())
 
 _EN = re.compile(r"[A-Za-z]")
 _JP = re.compile(r"[぀-ヿ㐀-䶵一-鿋]")

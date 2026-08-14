@@ -13,15 +13,10 @@ def test_data_quality_console_redacted(monkeypatch):
     monkeypatch.setattr(scanner, "requests", _Boom())
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/data-quality").get_json()
-        assert d["schemaVersion"] == "data-quality-v1"
-        assert d["overallStatus"] in scanner.argus_data_quality.OVERALL
-        # 恒久の意図的無効3件 — 障害として数えられない
-        dis = [s for s in d["sourceHealth"] if s["isExpectedDisabled"]]
-        assert len(dis) == 3
-        for s in dis:
-            assert s["status"] == "disabled_expected"
-        assert d["bridgeHealth"]["jpRealtimeStatus"] in ("disabled", "unknown", "ok",
-                                                         "entitlement_unavailable")
+        assert d["schemaVersion"] == "argus-public-diagnostics-v1"
+        assert d["service"]["overall"] in ("ok", "degraded", "unavailable")
+        assert d["freshness"]["expectedDisabledCount"] == 3
+        assert d["recovery"]["exactColdRecovery"] == "NOT_PROVEN"
         blob = json.dumps(d, ensure_ascii=False)
         for banned in ("vaultPass", "passphrase=", "X-ARGUS-ADMIN-TOKEN", "login_pwd",
                        "Bearer ", "quantity", "averageCost", "monthlyContribution",
@@ -34,9 +29,8 @@ def test_data_quality_status_summary(monkeypatch):
     monkeypatch.setattr(scanner, "requests", _Boom())
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/data-quality/status").get_json()
-        assert d["schemaVersion"] == "data-quality-status-v1"
-        assert d["storageMode"] == "public_redacted"
-        assert d["expectedDisabledCount"] == 3
+        assert d["schemaVersion"] == "argus-public-diagnostics-v1"
+        assert d["freshness"]["expectedDisabledCount"] == 3
         assert "lastSuccessAt" not in json.dumps(d)      # counts/buckets only
         assert scanner.argus_portfolio_sync.contains_sensitive(d) == []
 

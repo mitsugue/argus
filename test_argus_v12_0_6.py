@@ -139,13 +139,13 @@ def test_sd_unknown_extra_symbol_stays_honest_unknown():
 def test_dq_institutional_freshness_measured_or_unknown(monkeypatch):
     monkeypatch.setitem(scanner._INTEL_LAST, "ts", 0.0)
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     row = [r for r in d["sourceHealth"] if r["sourceName"] == "institutional-intel"][0]
     assert row["lastSuccessAt"] is None              # 未収集はunknownのまま(捏造なし)
     assert row["freshnessBucket"] == "unknown"
     monkeypatch.setitem(scanner._INTEL_LAST, "ts", time.time())
     with scanner.app.test_client() as c:
-        d2 = c.get("/api/argus/data-quality").get_json()
+        d2 = scanner._data_quality_console()
     row2 = [r for r in d2["sourceHealth"] if r["sourceName"] == "institutional-intel"][0]
     assert row2["lastSuccessAt"] is not None         # 収集済みは実測時刻
     assert row2["freshnessBucket"] in ("fresh", "recent")
