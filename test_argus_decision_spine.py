@@ -35,7 +35,10 @@ def test_evidence_pack_get_is_strictly_cached_only(monkeypatch):
     for name in ("_jquants_tdnet_fetch", "_get_tdnet_yanoshin", "get_tdnet_recent",
                  "get_japan_watchlist_snapshot", "get_us_watchlist_snapshot",
                  "_openai_judge", "_gemini_check", "_fetch_public_text",
-                 "_market_depth_report", "_visibility_guard"):
+                 "_market_depth_report", "_visibility_guard",
+                 "_ledger_summary", "_dv_shadow_public_summary",
+                 "_gh_private_get", "_learning_memory_restore_once",
+                 "_official_events_restore_once"):
         monkeypatch.setattr(scanner, name, boom)
     with scanner.app.test_client() as c:
         r1 = c.get("/api/argus/evidence-pack?symbol=MU")
@@ -60,6 +63,17 @@ def test_decision_spine_status_shape():
     assert set(d["safety"].values()) == {True}
     assert "actionLabels" in d and "aiJudgment" in d
     assert isinstance(d["limitationsJa"], list)
+
+
+def test_decision_spine_status_does_not_acquire_action_labels(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("status attempted live action-label acquisition")
+
+    monkeypatch.setattr(scanner, "get_action_labels", boom)
+    with scanner.app.test_client() as client:
+        response = client.get("/api/argus/decision-spine/status")
+    assert response.status_code == 200
+    assert response.get_json()["safety"]["publicFetchBlocked"] is True
 
 
 def test_decision_spine_status_no_secrets():

@@ -69,7 +69,7 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual)
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 244
     assert not [
         row for row in catalog.ROUTE_CATALOG
         if row.trustDomain == "PUBLIC" and row.mutatesState
@@ -91,13 +91,41 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
                for path in moved)
 
 
-def test_public_diagnostics_aliases_are_exact_bounded_and_not_proof():
+def test_public_cache_only_consumer_manifest_is_exact_and_pinned():
+    assert catalog.PUBLIC_CACHE_ONLY_VALIDATION_ERRORS == ()
+    expected = {
+        "/api/argus/action-labels",
+        "/api/argus/ai-judgment",
+        "/api/argus/calibration/v4/status",
+        "/api/argus/decision-value/status",
+        "/api/argus/event-backbone-status",
+        "/api/argus/events-active",
+        "/api/argus/integrations",
+        "/api/argus/japan-watchlist",
+        "/api/argus/learning-memory/status",
+        "/api/argus/market-depth",
+        "/api/argus/market-depth/proof",
+        "/api/argus/provider-diagnostics/public",
+        "/api/argus/runtime-manifest",
+        "/api/argus/source-coverage",
+        "/api/argus/source-registry",
+        "/api/argus/system-health",
+        "/api/argus/us-watchlist",
+        "/api/argus/visibility-guard",
+    }
+    assert {row.route for row in catalog.PUBLIC_CACHE_ONLY_CONSUMERS} == expected
+    for row in catalog.PUBLIC_CACHE_ONLY_CONSUMERS:
+        for consumer in row.consumers:
+            source = Path(consumer).read_text(encoding="utf-8")
+            assert row.route in source, (row.route, consumer)
+
+def test_public_diagnostics_canonical_route_is_bounded_and_alias_is_retired():
     client = scanner.app.test_client()
-    first = client.get("/api/argus/data-quality")
-    second = client.get("/api/argus/data-quality/status")
-    assert first.status_code == second.status_code == 200
-    for response in (first, second):
-        _assert_public_contract(response.get_json())
+    retired = client.get("/api/argus/data-quality")
+    canonical = client.get("/api/argus/data-quality/status")
+    assert retired.status_code == 404
+    assert canonical.status_code == 200
+    _assert_public_contract(canonical.get_json())
 
 
 def test_public_liveness_and_readiness_are_minimal_and_preserve_truth(
@@ -197,10 +225,394 @@ def test_hostile_internal_and_future_fields_never_reach_public_diagnostics(
             replacement["futureSecurityField"] = sentinel
         monkeypatch.setattr(scanner, name, replacement)
     client = scanner.app.test_client()
-    for path in ("/healthz", "/readyz", "/api/argus/data-quality",
-                 "/api/argus/data-quality/status"):
+    for path in ("/healthz", "/readyz", "/api/argus/data-quality/status"):
         response = client.get(path)
         assert sentinel not in response.get_data(as_text=True)
+
+
+class _OutboundForbidden(BaseException):
+    pass
+
+
+def test_named_public_status_routes_are_cache_only_even_when_cold(monkeypatch):
+    """Cold public reads must not invoke any live provider/ledger refresh path."""
+    def forbidden(*_args, **_kwargs):
+        raise _OutboundForbidden("public GET attempted outbound refresh")
+
+    protected_caches = (
+            scanner._PROVIDER_DIAG_CACHE, scanner._MARKET_DEPTH_CACHE, scanner._VWAP_CACHE,
+            scanner._VISIBILITY_CACHE, scanner._INTEGRATIONS_CACHE,
+            scanner._REGIME_CACHE, scanner._LEDGER_SUMMARY_CACHE,
+            scanner._RATES_CACHE, scanner._JP_CACHE, scanner._US_CACHE,
+            scanner._DOWNSIDE_CACHE, scanner._TDNET_OFFICIAL_CACHE,
+            scanner._TDNET_FEED_CACHE, scanner._AI_RESULT_CACHE,
+            scanner._CALIB_V4_CACHE, scanner._DV_STATUS_CACHE,
+            scanner._EVENT_SNAP_META)
+    for cache in protected_caches:
+        monkeypatch.setitem(cache, "data", None)
+        if "expires" in cache:
+            monkeypatch.setitem(cache, "expires", 0.0)
+    monkeypatch.setitem(scanner._LEARNING_MEMORY, "doc", None)
+    monkeypatch.setitem(scanner._LEARNING_MEMORY_STATE, "pathType", "ephemeral_tmp")
+    monkeypatch.setattr(scanner.requests, "get", forbidden)
+    monkeypatch.setattr(scanner.requests, "post", forbidden)
+    for name in (
+            "get_rates_snapshot", "_ai_cached_result", "_ai_try_restore",
+            "_gh_private_get", "get_downside_incidents", "get_tdnet_recent",
+            "_dv_shadow_public_summary", "_ai_cost_roll", "_finnhub_quote_row",
+            "_edinet_filings",
+            "_jquants_tdnet_fetch", "_provider_diagnostics", "_vwap_probe",
+            "get_market_regime_snapshot", "_ledger_summary",
+            "_learning_memory_restore_once", "_dv_shadow_phase"):
+        monkeypatch.setattr(scanner, name, forbidden)
+    for name in ("_dv_shadow_public_summary", "_events_restore_once",
+                 "_event_snapshot_meta"):
+        monkeypatch.setattr(scanner, name, forbidden)
+
+    client = scanner.app.test_client()
+    for path in (
+            "/api/argus/action-labels?jp=8058&us=NVDA",
+            "/api/argus/ai-judgment",
+            "/api/argus/calibration/v4/status",
+            "/api/argus/decision-value/status",
+            "/api/argus/event-backbone-status",
+            "/api/argus/events-active",
+            "/api/argus/integrations",
+            "/api/argus/japan-watchlist?symbols=8058",
+            "/api/argus/learning-memory/status",
+            "/api/argus/market-depth",
+            "/api/argus/market-depth/proof",
+            "/api/argus/provider-diagnostics/public",
+            "/api/argus/source-coverage",
+            "/api/argus/source-registry",
+            "/api/argus/system-health",
+            "/api/argus/us-watchlist?symbols=NVDA",
+            "/api/argus/runtime-manifest",
+            "/api/argus/visibility-guard"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        if path == "/api/argus/runtime-manifest":
+            assert response.get_json()["activeRoutes"] == [
+                "Today", "Holdings / Watchlist", "Notifications", "Settings"]
+    assert all(cache.get("data") is None for cache in protected_caches)
+
+
+def test_public_jp_watchlist_is_read_only_and_provider_cache_only(monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        raise _OutboundForbidden("JP public GET attempted provider work")
+
+    seen_before = copy.deepcopy(scanner._JP_SEEN_SYMBOLS)
+    monkeypatch.setitem(scanner._JP_CACHE, "data", None)
+    monkeypatch.setitem(scanner._JP_CACHE, "expires", 0.0)
+    monkeypatch.setattr(scanner, "_JP_DYN_CACHE", {})
+    monkeypatch.setattr(scanner, "_jq_fetch_bar_row", forbidden)
+    monkeypatch.setattr(scanner, "_jquants_fetch_quote", forbidden)
+    before_cache = copy.deepcopy(scanner._JP_DYN_CACHE)
+
+    response = scanner.app.test_client().get(
+        "/api/argus/japan-watchlist?symbols=8058")
+    assert response.status_code == 200
+    assert scanner._JP_DYN_CACHE == before_cache
+    assert scanner._JP_SEEN_SYMBOLS == seen_before
+
+
+def test_jp_bridge_dynamic_membership_remains_owner_synced_and_admin_gated(
+        monkeypatch):
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "boundary-test-admin")
+    monkeypatch.setattr(scanner, "_JP_SEEN_SYMBOLS", {})
+    monkeypatch.setattr(scanner, "_layer2b_read_latest", lambda: {
+        "members": [
+            {"market": "JP", "symbol": "6965"},
+            {"market": "US", "symbol": "AAPL"},
+        ]
+    })
+    client = scanner.app.test_client()
+
+    assert client.get("/api/argus/jp-watchlist-codes").status_code == 401
+    before = client.get(
+        "/api/argus/jp-watchlist-codes", headers=ADMIN_HEADER)
+    assert before.status_code == 200
+    assert before.get_json()["codes"] == ["JP.6965"]
+
+    public = client.get("/api/argus/japan-watchlist?symbols=8058")
+    assert public.status_code == 200
+    after = client.get(
+        "/api/argus/jp-watchlist-codes", headers=ADMIN_HEADER)
+    assert after.get_json()["codes"] == ["JP.6965"]
+
+
+def test_public_action_labels_does_not_record_symbol_interest_or_refresh(
+        monkeypatch):
+    seen_before = copy.deepcopy(scanner._JP_SEEN_SYMBOLS)
+    calls = []
+    original_jp = scanner.get_japan_watchlist_snapshot
+    original_us = scanner.get_us_watchlist_snapshot
+
+    def jp(*args, **kwargs):
+        calls.append(("jp", kwargs))
+        return original_jp(*args, **kwargs)
+
+    def us(*args, **kwargs):
+        calls.append(("us", kwargs))
+        return original_us(*args, **kwargs)
+
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot", jp)
+    monkeypatch.setattr(scanner, "get_us_watchlist_snapshot", us)
+    response = scanner.app.test_client().get(
+        "/api/argus/action-labels?jp=8058&us=NVDA")
+    assert response.status_code == 200
+    assert calls == [
+        ("jp", {"allow_provider_fetch": False,
+                "record_requested_symbols": False}),
+        ("us", {"allow_provider_fetch": False}),
+    ]
+    assert scanner._JP_SEEN_SYMBOLS == seen_before
+
+
+def test_public_us_watchlist_does_not_fill_from_provider_when_cache_is_cold(
+        monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        raise _OutboundForbidden("public GET attempted provider fill")
+
+    monkeypatch.setitem(scanner._US_CACHE, "data", None)
+    monkeypatch.setitem(scanner._US_CACHE, "expires", 0.0)
+    monkeypatch.setattr(scanner, "_US_DYN_CACHE", {})
+    monkeypatch.setattr(scanner, "_finnhub_quote_row", forbidden)
+    response = scanner.app.test_client().get(
+        "/api/argus/us-watchlist?symbols=NVDA")
+    assert response.status_code == 200
+    assert scanner._US_CACHE.get("data") is None
+
+
+def test_public_ai_judgment_does_not_restore_on_get(monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        raise _OutboundForbidden("public GET attempted AI restore")
+
+    monkeypatch.setattr(scanner, "_AI_JUDGE_ENABLED", True)
+    monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "configured-for-test")
+    monkeypatch.setitem(scanner._AI_RESULT_CACHE, "data", None)
+    monkeypatch.setitem(scanner._AI_RESULT_CACHE, "expires", 0.0)
+    for name in ("_ai_cached_result", "_ai_restore_local", "_ai_try_restore"):
+        monkeypatch.setattr(scanner, name, forbidden)
+    response = scanner.app.test_client().get("/api/argus/ai-judgment")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "not_run_yet"
+
+
+def test_event_and_ai_product_cache_restore_runs_once_in_process_bootstrap(
+        monkeypatch):
+    calls = []
+    startup_before = copy.deepcopy(scanner._STARTUP)
+    runtime_before = copy.deepcopy(scanner._RUNTIME)
+    durable_before = copy.deepcopy(scanner._DURABLE_STATE)
+    try:
+        monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", False)
+        monkeypatch.setattr(scanner, "_AI_JUDGE_ENABLED", True)
+        monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "configured-for-test")
+        monkeypatch.setattr(scanner, "_validate_durable_storage", lambda: True)
+        monkeypatch.setattr(
+            scanner, "_osint_restore_once", lambda: calls.append("osint"))
+        monkeypatch.setattr(
+            scanner, "_events_restore_once", lambda: calls.append("events"))
+        monkeypatch.setattr(
+            scanner, "_ai_cached_result", lambda: calls.append("ai"))
+        scanner._STARTUP.update({
+            "state": "bootstrapping",
+            "restoreStartedAt": None,
+            "restoreCompletedAt": None,
+            "restoreOutcome": None,
+        })
+        scanner._DURABLE_STATE.update({
+            "lastRestoreAt": None,
+            "integrityStatus": "unknown",
+        })
+
+        scanner._startup_bootstrap()
+        scanner._startup_bootstrap()
+        assert calls == ["osint", "events", "ai"]
+        assert scanner._STARTUP["state"] == "ready"
+    finally:
+        scanner._STARTUP.clear()
+        scanner._STARTUP.update(startup_before)
+        scanner._RUNTIME.clear()
+        scanner._RUNTIME.update(runtime_before)
+        scanner._DURABLE_STATE.clear()
+        scanner._DURABLE_STATE.update(durable_before)
+
+
+def test_expired_component_evidence_is_not_restamped_live(monkeypatch):
+    old = "2026-01-01T00:00:00Z"
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "data", None)
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "expires", 0.0)
+    for cache in (scanner._RATES_CACHE, scanner._JP_CACHE, scanner._US_CACHE):
+        monkeypatch.setitem(cache, "data", {
+            "status": "live", "asOf": old, "stocks": []})
+        monkeypatch.setitem(cache, "expires", 0.0)
+    snapshot = scanner.get_integrations_snapshot(allow_provider_fetch=False)
+    statuses = {row["id"]: row["runtimeStatus"]
+                for row in snapshot["providers"]}
+    assert statuses["fred"] != "live"
+    assert statuses["jquants"] != "live"
+    assert statuses["twelvedata"] != "live"
+
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "data", {
+        "status": "live", "asOf": old, "providers": [],
+        "aiJudgment": {}, "nextRecommendedApis": []})
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "expires", 0.0)
+    assert (scanner.get_integrations_snapshot(
+        allow_provider_fetch=False)["asOf"] != old)
+
+    monkeypatch.setitem(scanner._CALIB_V4_CACHE, "data", {
+        "nPredictions": 99, "updated": old})
+    monkeypatch.setitem(scanner._CALIB_V4_CACHE, "expires", 0.0)
+    assert scanner._calibration_v4_summary(allow_ledger_fetch=False) is None
+
+    monkeypatch.setitem(scanner._DV_STATUS_CACHE, "data", {
+        "phase": "scoring_active", "lastShadowRunAt": old})
+    monkeypatch.setitem(scanner._DV_STATUS_CACHE, "expires", 0.0)
+    stale_dv = scanner._dv_status_public_dict(allow_private_fetch=False)
+    assert stale_dv["phase"] != "scoring_active"
+    assert stale_dv["cacheFreshness"] == "stale"
+
+    monkeypatch.setitem(scanner._MARKET_DEPTH_CACHE, "data", {
+        "asOf": old,
+        "capabilities": {"L2": {"status": "live", "probed": True}},
+    })
+    monkeypatch.setitem(scanner._MARKET_DEPTH_CACHE, "expires", 0.0)
+    assert scanner._market_depth_report(allow_provider_fetch=False) is None
+
+    monkeypatch.setitem(scanner._VISIBILITY_CACHE, "data", {
+        "asOf": old, "visibilityLevel": "FULL_SENTINEL"})
+    monkeypatch.setitem(scanner._VISIBILITY_CACHE, "expires", 0.0)
+    assert scanner._visibility_guard(
+        allow_provider_fetch=False).get("visibilityLevel") != "FULL_SENTINEL"
+
+    monkeypatch.setitem(scanner._PROVIDER_DIAG_CACHE, "data", {
+        "asOf": old,
+        "items": [{"provider": "sentinel", "configured": True,
+                   "runtimeStatus": "live"}],
+    })
+    monkeypatch.setitem(scanner._PROVIDER_DIAG_CACHE, "expires", 0.0)
+    stale = scanner._provider_diagnostics_cached_only()
+    assert stale["asOf"] == old
+    assert stale["items"][0]["runtimeStatus"] == "stale"
+
+
+def test_expired_status_and_evidence_components_fail_conservatively(monkeypatch):
+    old = "2000-01-01T00:00:00Z"
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "configured-for-test")
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "data", {
+        "status": "official_tdnet_live", "official": True,
+        "asOf": old, "items": [{"id": "stale-tdnet"}]})
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._TDNET_FEED_CACHE, "data", None)
+    monkeypatch.setitem(scanner._TDNET_FEED_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._DOWNSIDE_CACHE, "data", {
+        "asOf": old, "activeCount": 77})
+    monkeypatch.setitem(scanner._DOWNSIDE_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._LEDGER_SUMMARY_CACHE, "data", {
+        "overall": {"days": 999, "n": 999}})
+    monkeypatch.setitem(scanner._LEDGER_SUMMARY_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._CALIB_V4_CACHE, "data", {
+        "nPredictions": 99, "updated": old})
+    monkeypatch.setitem(scanner._CALIB_V4_CACHE, "expires", 0.0)
+
+    client = scanner.app.test_client()
+    calibration = client.get("/api/argus/calibration/v4/status").get_json()
+    assert calibration["artifactFound"] is False
+    assert calibration["v3HeadlineDays"] == 0
+    runtime = client.get("/api/argus/runtime-manifest").get_json()
+    assert runtime["downside"]["activeIncidents"] == 0
+    assert runtime["tdnet"]["count"] == 0
+    registry = scanner._source_registry(allow_provider_fetch=False)
+    tdnet = next(row for row in registry["sources"]
+                 if row["capability"] == "企業開示(TDnet 公式)")
+    assert tdnet["status"] != "confirmed_live"
+
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", {
+        "ZZZZ": {"ts": 0.0, "row": {
+            "symbol": "ZZZZ", "price": 999, "date": old,
+            "status": "live"}}})
+    monkeypatch.setattr(scanner, "_US_DYN_CACHE", {})
+    monkeypatch.setitem(scanner._US_CACHE, "data", None)
+    monkeypatch.setitem(scanner._US_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._VISIBILITY_CACHE, "data", {
+        "asOf": old, "visibilityLevel": "FULL_SENTINEL"})
+    monkeypatch.setitem(scanner._VISIBILITY_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._MARKET_DEPTH_CACHE, "data", {
+        "asOf": old,
+        "capabilities": {"L2": {"status": "live", "probed": True}}})
+    monkeypatch.setitem(scanner._MARKET_DEPTH_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._DV_STATUS_CACHE, "data", {
+        "phase": "scoring_active", "lastShadowRunAt": old})
+    monkeypatch.setitem(scanner._DV_STATUS_CACHE, "expires", 0.0)
+    pack = scanner._build_evidence_pack("ZZZZ", "US")
+    serialized = json.dumps(pack, ensure_ascii=False)
+    assert "FULL_SENTINEL" not in serialized
+    assert '"price": 999' not in serialized
+    markers = set(pack["missingConfirmations"])
+    assert "cache:quote" in markers
+    assert "cache:visibility_guard" in markers
+    assert "cache:market_depth" in markers
+    assert "cache:calibration:stale" in markers
+    assert "cache:calibration-ledger:stale" in markers
+    assert "cache:decision-value:stale" in markers
+
+
+def test_learning_memory_cache_only_change_is_status_scoped(monkeypatch):
+    restore_calls = []
+    monkeypatch.setitem(scanner._LEARNING_MEMORY, "doc", None)
+    monkeypatch.setattr(
+        scanner, "_learning_memory_restore_once",
+        lambda: restore_calls.append("restore"))
+    client = scanner.app.test_client()
+    assert client.get("/api/argus/learning-memory/status").status_code == 200
+    assert restore_calls == []
+    assert client.get("/api/argus/learning-memory").status_code == 200
+    assert restore_calls == ["restore"]
+
+
+def test_authenticated_and_internal_refresh_paths_remain_live_capable(monkeypatch):
+    provider_calls = []
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "boundary-test-admin")
+    monkeypatch.setattr(
+        scanner, "_provider_diagnostics",
+        lambda: provider_calls.append("admin") or {
+            "schemaVersion": "provider-diagnostics-v1", "items": []})
+    response = scanner.app.test_client().get(
+        "/api/argus/admin/provider-diagnostics", headers=ADMIN_HEADER)
+    assert response.status_code == 200
+    assert provider_calls == ["admin"]
+
+    integration_calls = []
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "data", None)
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "expires", 0.0)
+    monkeypatch.setattr(
+        scanner, "get_rates_snapshot",
+        lambda: integration_calls.append("rates") or {"status": "live"})
+    monkeypatch.setattr(
+        scanner, "get_japan_watchlist_snapshot",
+        lambda: integration_calls.append("jp") or {"status": "live"})
+    monkeypatch.setattr(
+        scanner, "get_us_watchlist_snapshot",
+        lambda: integration_calls.append("us") or {"status": "live"})
+    scanner.get_integrations_snapshot()
+    assert integration_calls == ["rates", "jp", "us"]
+
+    refresh_calls = []
+    monkeypatch.setitem(scanner._MARKET_DEPTH_CACHE, "data", None)
+    monkeypatch.setitem(scanner._MARKET_DEPTH_CACHE, "expires", 0.0)
+    monkeypatch.setattr(
+        scanner, "_source_registry",
+        lambda *, allow_provider_fetch=True: refresh_calls.append(
+            ("source", allow_provider_fetch)) or {"sources": []})
+    monkeypatch.setattr(
+        scanner, "_vwap_probe",
+        lambda: refresh_calls.append(("vwap", True)) or {
+            "computed": False, "probed": True, "values": {}})
+    assert scanner._market_depth_report() is not None
+    assert ("source", True) in refresh_calls
+    assert ("vwap", True) in refresh_calls
 
 
 def _public_probe_path(rule):
@@ -342,8 +754,7 @@ def test_public_diagnostic_serializers_have_no_raw_state_copy_path():
         assert forbidden not in builders
 
     routes = "\n".join(inspect.getsource(fn) for fn in (
-        scanner.healthz, scanner.readyz, scanner.api_argus_data_quality,
-        scanner.api_argus_data_quality_status,
+        scanner.healthz, scanner.readyz, scanner.api_argus_data_quality_status,
     ))
     for forbidden in (
             "_data_quality_console", "_REMOTE_CYCLE", "_DURABLE_STATE",
@@ -359,7 +770,7 @@ def test_builder_failures_return_fixed_content_free_fallbacks(monkeypatch):
         diagnostics, "build_public_diagnostics",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("PRIVATE-SENTINEL")),
     )
-    public = client.get("/api/argus/data-quality").get_json()
+    public = client.get("/api/argus/data-quality/status").get_json()
     _assert_public_contract(public)
     assert "PRIVATE-SENTINEL" not in json.dumps(public)
 

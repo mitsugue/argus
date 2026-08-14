@@ -2092,8 +2092,36 @@ def api_argus_decision_value_shadow_summary():
         return jsonify({"status": "parse_error"})
 
 
-def _dv_status_public_dict():
+_DV_STATUS_CACHE = {"data": None, "expires": 0.0}
+
+
+def _dv_status_public_dict(*, allow_private_fetch=True):
     """PUBLIC-SAFE Decision Value status dict (route + Evidence Pack both read this)."""
+    now = time.time()
+    cached = _DV_STATUS_CACHE.get("data")
+    if (isinstance(cached, dict) and
+            now < _DV_STATUS_CACHE["expires"]):
+        return cached
+    if not allow_private_fetch:
+        configured = _layer2b_store_configured()
+        return {
+            "schemaVersion": argus_decision_value.DECISION_VALUE_SCHEMA,
+            "phase": ("engine_ready_no_records_yet" if configured else
+                      "not_configured"),
+            "cacheFreshness": ("stale" if cached else "missing"),
+            "privateStoreConfigured": configured,
+            "lastShadowRunAt": None,
+            "totalRecords": 0,
+            "scoredCount": 0,
+            "pendingOutcomeCount": 0,
+            "policyCounts": {},
+            "noTradeCounts": {},
+            "sampleStage": "none",
+            "reasonJa": ("キャッシュ期限切れ。管理側の定期実行後に更新します。"
+                         if cached else
+                         "キャッシュ未取得。管理側の定期実行後に更新します。"),
+            "disclaimer": "Research simulation only. No order was or will be submitted.",
+        }
     pub = _dv_shadow_public_summary()
     shadow = pub.get("shadow") or {}
     pol = shadow.get("policies") or {}
@@ -2113,9 +2141,10 @@ def _dv_status_public_dict():
     stages = [v.get("sampleStage") for v in list(pol.values()) + list(nt.values()) if v.get("sampleStage")]
     sample_stage = "usable" if any(s in ("validation", "provisional") for s in stages) else (
         "early_signal" if any(s == "exploratory" for s in stages) else ("burn_in" if stages else "none"))
-    return {
+    result = {
         "schemaVersion": argus_decision_value.DECISION_VALUE_SCHEMA,
         "phase": phase,
+        "cacheFreshness": "fresh",
         "privateStoreConfigured": configured,
         "lastShadowRunAt": shadow.get("asOf"),
         "totalRecords": total,
@@ -2127,6 +2156,9 @@ def _dv_status_public_dict():
         "reasonJa": pub.get("blockersJa") or "",
         "disclaimer": "Research simulation only. No order was or will be submitted.",
     }
+    _DV_STATUS_CACHE["data"] = result
+    _DV_STATUS_CACHE["expires"] = now + 300
+    return result
 
 
 @app.route("/api/argus/decision-value/status")
@@ -2134,18 +2166,21 @@ def api_argus_decision_value_status():
     """PUBLIC-SAFE Decision Value status (ARGUS Pro v11). Auditable phase + per-policy
     counts + sampleStage ONLY — never netR / prices / holdings (those stay owner-private).
     phase can never claim recording/scoring unless records/scores actually exist."""
-    return jsonify(_dv_status_public_dict())
+    return jsonify(_dv_status_public_dict(allow_private_fetch=False))
 
 
 # ── Calibration Operations (v10.195) — is v4 capture actually happening? ─────
 _CALIB_V4_CACHE = {"data": None, "expires": 0.0}
 
-def _calibration_v4_summary():
+def _calibration_v4_summary(*, allow_ledger_fetch=True):
     """Read the parallel v4 dry-run summary (calibration_v1/summary.json) off the
     ledger branch. None until the GitHub Action has written it (fresh env → 404)."""
     now = time.time()
-    if _CALIB_V4_CACHE["data"] is not None and now < _CALIB_V4_CACHE["expires"]:
+    if (_CALIB_V4_CACHE["data"] is not None and
+            now < _CALIB_V4_CACHE["expires"]):
         return _CALIB_V4_CACHE["data"]
+    if not allow_ledger_fetch:
+        return None
     out = None
     try:
         import json as _json
@@ -2237,8 +2272,10 @@ def api_argus_calibration_v4_status():
     never claims "proven". Reads the public ledger-branch v4 dry-run summary (no
     owner data). reliabilityStage comes from the real trading-day count."""
     C = argus_calibration
-    v4 = _calibration_v4_summary()   # ledger-branch calibration_v1/summary.json, or None
-    led = _ledger_summary() or {}
+    v4 = _calibration_v4_summary(allow_ledger_fetch=False)
+    led = (_LEDGER_SUMMARY_CACHE.get("data") or {}
+           if time.time() < _LEDGER_SUMMARY_CACHE.get("expires", 0.0)
+           else {})
     overall = led.get("overall") or {}
     days = int(overall.get("days") or 0)
     artifact = isinstance(v4, dict) and bool(v4)
@@ -3062,6 +3099,44 @@ def get_rates_snapshot():
     return snap
 
 
+def _rates_snapshot_cached_only():
+    """Public read projection for rates; never calls FRED/Yahoo or writes caches."""
+    now = time.time()
+    cached = (_RATES_CACHE.get("data")
+              if now < _RATES_CACHE.get("expires", 0.0) else None)
+    if isinstance(cached, dict):
+        snap = dict(cached)
+        cache_state = "fresh"
+    else:
+        series = {sid: _fred_mock_series(sid) for sid in _FRED_SERIES}
+        us10y, vix = series["DGS10"], series["VIXCLS"]
+        rates_pressure = _classify_rates_pressure(us10y["change"])
+        risk_volatility = _classify_risk_volatility(vix["latestValue"])
+        snap = {
+            "us10y": series["DGS10"], "us2y": series["DGS2"],
+            "usReal10y": series["DFII10"], "vix": series["VIXCLS"],
+            "usdJpy": series["DEXJPUS"],
+            "ratesPressure": rates_pressure,
+            "riskVolatility": risk_volatility,
+            "summary": (f"10Y {us10y['latestValue']:.2f}% "
+                        f"({us10y['changeBp']:+.0f}bp), VIX {vix['latestValue']:.1f}. "
+                        f"Pressure: {rates_pressure}, Vol: {risk_volatility}."),
+            "status": "mock",
+        }
+        cache_state = "unavailable"
+    realtime = (_YF_RT_CACHE.get("data")
+                if now < _YF_RT_CACHE.get("expires", 0.0) else None)
+    if isinstance(realtime, dict) and realtime:
+        snap = {**snap, **realtime}
+        u10, vx = snap.get("us10y") or {}, snap.get("vix") or {}
+        if u10 and vx:
+            snap["summary"] = (
+                f"10Y {u10['latestValue']:.2f}% ({u10['changeBp']:+.0f}bp), "
+                f"VIX {vx['latestValue']:.1f}. Pressure: {snap.get('ratesPressure')}, "
+                f"Vol: {snap.get('riskVolatility')}.")
+    return {**snap, "cacheState": cache_state}
+
+
 @app.route("/api/argus/rates")
 def api_argus_rates():
     return jsonify(get_rates_snapshot())
@@ -3375,6 +3450,8 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
             if len(_JP_DYN_CACHE) >= _DYN_CACHE_MAX:
                 _JP_DYN_CACHE.clear()
             _JP_DYN_CACHE[syms] = {"data": snapshot, "expires": now + _JP_CACHE_TTL}
+            if "_JP_FALLBACK_LAST" in globals():
+                _JP_FALLBACK_LAST["ts"] = now
         return snapshot
 
     if _JP_CACHE["data"] is not None and now < _JP_CACHE["expires"]:
@@ -3403,9 +3480,12 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
     if overall != "mock":
         _JP_CACHE["data"]    = snapshot
         _JP_CACHE["expires"] = now + _JP_CACHE_TTL
+        if "_JP_FALLBACK_LAST" in globals():
+            _JP_FALLBACK_LAST["ts"] = now
     return snapshot
 
-def get_japan_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
+def get_japan_watchlist_snapshot(
+        symbols=None, allow_provider_fetch=True, *, record_requested_symbols=True):
     """Core snapshot + real-time overlay: quotes pushed from the local moomoo
     bridge (fresh ≤ 10 min) override the J-Quants T-1 rows (v9.11)."""
     # Preserve the legacy one-argument call shape for internal callers/tests.
@@ -3415,10 +3495,10 @@ def get_japan_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
             else _get_japan_watchlist_core(symbols, allow_provider_fetch=False))
     requested = (_sanitize_symbols(symbols, _JP_SYM_RE, _JP_DYN_MAX) if symbols
                  else [s["symbol"] for s in _JP_WATCHLIST])
-    # Remember the requested symbols HERE (not just in the HTTP route) so BOTH the
-    # watchlist page AND the Today page (which reaches this via get_action_labels)
-    # teach the bridge the owner's watchlist → /jp-watchlist-codes → realtime push.
-    if symbols and requested:
+    # Internal/background callers may teach the bridge a bounded interest hint.
+    # Public GET callers explicitly disable this; authenticated owner membership
+    # reaches /jp-watchlist-codes through private Layer-2B authority instead.
+    if record_requested_symbols and symbols and requested:
         _remember_jp_symbols(requested)
     return _overlay_pushed(snap, "JP", requested)
 
@@ -3430,20 +3510,16 @@ def api_argus_japan_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
     # Public GET is cache/bridge-only. Provider refresh belongs to scheduled or
-    # admin-controlled work, so page refreshes cannot multiply provider calls.
-    snap = get_japan_watchlist_snapshot(symbols, allow_provider_fetch=False)
-    try:
-        if any((st.get("status") or "") not in ("", "mock") and st.get("price") is not None
-               for st in (snap.get("stocks") or [])):
-            _JP_FALLBACK_LAST["ts"] = time.time()
-    except Exception:
-        pass
-    return jsonify(snap)
+    # admin-controlled work. It also must not change the EC2 push target set;
+    # dynamic realtime membership comes from authenticated Layer-2B owner sync.
+    return jsonify(get_japan_watchlist_snapshot(
+        symbols, allow_provider_fetch=False,
+        record_requested_symbols=False))
 
 
-# Watchlist symbols the frontend has actually requested — so the moomoo bridge can
-# push REALTIME for them (not just the hardcoded CODES). The frontend's watchlist is
-# client-side; this is how the server-side bridge learns about a newly-added name.
+# Bounded interest hints from trusted internal/background callers. Public browser
+# reads no longer populate this set. Authenticated Layer-2B membership remains the
+# canonical dynamic owner-watchlist input to /jp-watchlist-codes.
 _JP_SEEN_SYMBOLS = {}      # symbol(upper) -> last_seen_epoch
 _JP_SEEN_MAX = 200
 _JP_SEEN_TTL = 7 * 24 * 3600   # forget a symbol unseen for a week
@@ -3666,7 +3742,7 @@ def get_us_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
     try:
         have = {s.get("symbol") for s in (snap.get("stocks") or [])}
         missing = [s for s in requested if s not in have]
-        if missing and FINNHUB_API_KEY:
+        if allow_provider_fetch and missing and FINNHUB_API_KEY:
             filled = [r for r in (_finnhub_quote_row(s) for s in missing) if r]
             if filled:
                 snap = {**snap, "stocks": list(snap.get("stocks") or []) + filled}
@@ -4320,14 +4396,23 @@ def _events_restore_once():
         r = requests.get(f"{_LEDGER_RAW_BASE}/events/snapshot.json?cb={int(time.time())}", timeout=6)
         if r.status_code != 200:
             return
+        snapshot = r.json()
         active, log = argus_event_store.restore_state(
-            r.json(), time.time(), _parse_iso_epoch, lambda e: e.get("deduplicationKey"))
+            snapshot, time.time(), _parse_iso_epoch,
+            lambda e: e.get("deduplicationKey"))
         with _EVENT_LOCK:
             for k, v in active.items():
                 if k and k not in _EVENTS_ACTIVE:
                     _EVENTS_ACTIVE[k] = v
             for e in reversed(log):
                 _EVENTS_LOG.appendleft(e)
+        snapshot_meta = globals().get("_EVENT_SNAP_META")
+        if isinstance(snapshot_meta, dict):
+            snapshot_meta["data"] = {
+                "snapshotAt": snapshot.get("snapshotAt"),
+                "activeCount": snapshot.get("activeCount"),
+            }
+            snapshot_meta["expires"] = time.time() + 600
         if active:
             add_log(f"[event] restored {len(active)} active events from ledger branch")
     except Exception:
@@ -4336,7 +4421,6 @@ def _events_restore_once():
 @app.route("/api/argus/events-active")
 def api_argus_events_active():
     """Public read: current active 24/7 events for the frontend. Secret-free."""
-    _events_restore_once()
     active = _events_active_list()
     return jsonify({"enabled": _EVENT_BACKBONE_ENABLED, "asOf": _ai_now_iso(),
                     "schemaVersion": argus_events.SCHEMA_VERSION,
@@ -4453,41 +4537,54 @@ def api_argus_caos_audit():
 # ── Evidence Pack — the decision spine's canonical input (v11.2) ─────────────
 # CACHED-ONLY accessors (v11.2.1): the PUBLIC evidence-pack GET must never trigger a
 # paid provider fetch, an LLM call, or a public-text fetch — not even on a cold cache.
-# These read the in-process caches AS-IS (stale is fine, honest) and return None/{} on
-# a miss; the scheduled/cron/other endpoints keep refreshing those caches.
+# These read only fresh in-process evidence and return None/{} on a miss or expiry;
+# the scheduled/cron/other endpoints keep refreshing those caches.
 def _tdnet_recent_cached_only():
-    d = _TDNET_OFFICIAL_CACHE.get("data")
+    now = time.time()
+    d = (_TDNET_OFFICIAL_CACHE.get("data")
+         if now < _TDNET_OFFICIAL_CACHE.get("expires", 0.0) else None)
     if d and d.get("items"):
         return d
-    return _TDNET_FEED_CACHE.get("data")            # yanoshin cache, may be None
+    return (_TDNET_FEED_CACHE.get("data")
+            if now < _TDNET_FEED_CACHE.get("expires", 0.0) else None)
 
 def _quote_cached_only(sym, market):
     """Cached quote for one symbol: bridge push → dynamic snapshot caches → curated
     cache. NEVER fetches."""
+    now = time.time()
     q = (_PUSHED_QUOTES.get(market) or {}).get(sym)
-    if q and isinstance(q.get("row"), dict):
+    if (q and now - float(q.get("ts") or 0) <= _PUSH_TTL and
+            isinstance(q.get("row"), dict)):
         return dict(q["row"], status="live")
     dyn = _JP_DYN_CACHE if market == "JP" else _US_DYN_CACHE
     try:
         for ent in list(dyn.values()):
+            if now >= float(ent.get("expires") or 0):
+                continue
             for s in ((ent.get("data") or {}).get("stocks") or []):
                 if str(s.get("symbol")).upper() == sym:
                     return s
     except Exception:
         pass
-    cur = (_JP_CACHE if market == "JP" else _US_CACHE).get("data") or {}
+    curated = _JP_CACHE if market == "JP" else _US_CACHE
+    cur = (curated.get("data") or {}
+           if now < curated.get("expires", 0.0) else {})
     for s in (cur.get("stocks") or []):
         if str(s.get("symbol")).upper() == sym:
             return s
     return None
 
 def _visibility_guard_cached_only():
+    if time.time() >= _VISIBILITY_CACHE.get("expires", 0.0):
+        return {}
     return _VISIBILITY_CACHE.get("data") or {}
 
 def _market_depth_proof_cached_only():
     """Depth-proof summary from the CACHED depth report only (a cold _market_depth_report
     can reach the paid TDnet probe via _source_registry — so never trigger it here)."""
-    rep = _MARKET_DEPTH_CACHE.get("data")
+    rep = (_MARKET_DEPTH_CACHE.get("data")
+           if time.time() < _MARKET_DEPTH_CACHE.get("expires", 0.0)
+           else None)
     if not rep:
         return None
     items = _market_depth_proof_items(rep.get("capabilities") or {})
@@ -4558,23 +4655,35 @@ def _build_evidence_pack(symbol, market=None):
     # public artifact — no paid provider, no LLM, no article text). Cold cache → honest
     # cache marker instead of a fetch.
     try:
-        _v4 = _CALIB_V4_CACHE.get("data")
-        _days = int((((_ledger_summary() or {}).get("overall")) or {}).get("days") or 0)
+        now_epoch = time.time()
+        _v4_fresh = now_epoch < _CALIB_V4_CACHE.get("expires", 0.0)
+        _ledger_fresh = now_epoch < _LEDGER_SUMMARY_CACHE.get("expires", 0.0)
+        _v4 = _CALIB_V4_CACHE.get("data") if _v4_fresh else None
+        _ledger = (_LEDGER_SUMMARY_CACHE.get("data") or {}
+                   if _ledger_fresh else {})
+        if not _v4_fresh:
+            cache_missing.add("cache:calibration:stale")
+        if not _ledger_fresh:
+            cache_missing.add("cache:calibration-ledger:stale")
+        _days = int(((_ledger.get("overall") or {}).get("days")) or 0)
         cal = {"isActive": bool(_v4) and any(isinstance((_v4 or {}).get(k), (int, float)) and (_v4 or {}).get(k) > 0
                                              for k in ("nPredictions", "n", "count", "records")),
                "reliabilityStage": argus_calibration.reliability_stage(_days)}
     except Exception:
         cal = None
     try:
-        _dv = _dv_status_public_dict()
+        _dv = _dv_status_public_dict(allow_private_fetch=False)
         dvd = {"phase": _dv.get("phase"), "sampleStage": _dv.get("sampleStage")}
+        if _dv.get("cacheFreshness") == "stale":
+            cache_missing.add("cache:decision-value:stale")
     except Exception:
         dvd = None
     # v11.3: lifecycle-tracked official events for this symbol (in-memory store =
     # cached-only compliant).
     try:
         oe_refs = [argus_official_event_lifecycle.evidence_ref(r)
-                   for r in _official_events_by_symbol(sym)[:5]]
+                   for r in _official_events_by_symbol(
+                       sym, allow_restore=False)[:5]]
     except Exception:
         oe_refs = []
     pack = argus_evidence_pack.build_pack(
@@ -4623,18 +4732,16 @@ def api_argus_decision_spine_status():
     Public-safe: no keys/headers/provider URLs, no private holdings/P&L; the last-built
     symbol is public-watchlist scope by construction."""
     limitations = []
-    # action labels: same cached composition the public /action-labels endpoint serves
-    try:
-        al = get_action_labels()
-        labs = al.get("labels") or []
-        with_refs = sum(1 for l in labs
-                        if str(((l.get("decisionRefs") or {}).get("evidencePackId")) or "").startswith("ep-"))
-        al_stats = {"decisionRefsAttached": bool(labs) and with_refs == sum(
-                        1 for l in labs if l.get("status") != "mock"),
-                    "labelsWithEvidenceRefs": with_refs, "totalLabels": len(labs)}
-    except Exception:
-        al_stats = {"decisionRefsAttached": False, "labelsWithEvidenceRefs": 0, "totalLabels": 0}
-        limitations.append("action-labelsの取得に失敗（一時的）。")
+    # This status endpoint is cache-only. Action Labels remain a separate product
+    # acquisition route, so a status read must not invoke their provider graph.
+    al_stats = {
+        "decisionRefsAttached": False,
+        "labelsWithEvidenceRefs": 0,
+        "totalLabels": 0,
+        "status": "not_measured_in_cache_only_status",
+    }
+    limitations.append(
+        "Action Labelの参照付与率は、provider取得を伴わないstatusでは再計算しません。")
     # AI judgment: cached payload only (never triggers a run)
     ai_payload = _AI_RESULT_CACHE.get("data")
     if not ai_payload:
@@ -5004,10 +5111,9 @@ def _event_snapshot_meta():
 @app.route("/api/argus/event-backbone-status")
 def api_argus_event_backbone_status():
     """Public ops summary (no secrets) — for the Ledger Health / Ops view."""
-    _events_restore_once()
     with _EVENT_LOCK:
         active = len(_EVENTS_ACTIVE)
-    snap = _event_snapshot_meta()
+    snap = _EVENT_SNAP_META.get("data")
     return jsonify({
         "enabled": _EVENT_BACKBONE_ENABLED, "gear2Enabled": _EVENT_GEAR2_ENABLED,
         "activeCount": active, "schemaVersion": argus_events.SCHEMA_VERSION,
@@ -5776,7 +5882,7 @@ _EVENT_SPECS = [
 _EVENT_SOURCE_NAMES = ["Federal Reserve", "Bureau of Labor Statistics",
                        "Bureau of Economic Analysis", "Bank of Japan"]
 
-_TD_CACHE = {"data": None, "status": None, "expires": 0.0}
+_TD_CACHE = {"data": None, "status": None, "expires": 0.0, "asOf": None}
 
 def _event_timing(date_str, et_time, today_jst):
     """Return (eventTimeUtc, localTimeJst, daysUntil) computed from Tokyo time.
@@ -5863,12 +5969,19 @@ def _treasury_auctions_cached():
         return _TD_CACHE["data"], _TD_CACHE["status"]
     rows, status = _fetch_treasury_raw()
     _TD_CACHE["data"], _TD_CACHE["status"] = rows, status
+    _TD_CACHE["asOf"] = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     # Cache a good fetch for 6h; back off only briefly on error so it recovers.
     _TD_CACHE["expires"] = now + (6 * 3600 if status == "live" else 300)
     return rows, status
 
-def _build_auction_events(today_jst):
-    rows, status = _treasury_auctions_cached()
+def _build_auction_events(today_jst, *, allow_provider_fetch=True):
+    if allow_provider_fetch:
+        rows, status = _treasury_auctions_cached()
+    elif (_TD_CACHE.get("data") is not None and
+          time.time() < _TD_CACHE.get("expires", 0.0)):
+        rows, status = _TD_CACHE["data"], _TD_CACHE.get("status")
+    else:
+        rows, status = [], "stale"
     out = []
     for a in rows:
         days = (datetime.strptime(a["date"], "%Y-%m-%d").date() - today_jst).days
@@ -5887,7 +6000,7 @@ def _build_auction_events(today_jst):
         })
     return out, status
 
-def get_events_snapshot():
+def get_events_snapshot(*, allow_provider_fetch=True):
     """Aggregated official event calendar for ARGUS Event Radar (Phase 1).
 
     Curated sources (Fed/BLS/BEA/BOJ) are always available; TreasuryDirect is
@@ -5898,14 +6011,15 @@ def get_events_snapshot():
     try:
         today_jst = datetime.now(TZ_JST).date()
         events = _build_curated_events(today_jst)
-        auctions, td_status = _build_auction_events(today_jst)
+        auctions, td_status = _build_auction_events(
+            today_jst, allow_provider_fetch=allow_provider_fetch)
         events += auctions
         td_src_status = "live" if td_status == "live" else "error"
         sources = [{"name": n, "status": "live", "lastUpdated": f"{_EVENTS_CURATED_ASOF}T00:00:00Z"}
                    for n in _EVENT_SOURCE_NAMES]
         sources.append({
             "name": "TreasuryDirect", "status": td_src_status,
-            "lastUpdated": (datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if td_status == "live" else None),
+            "lastUpdated": (_TD_CACHE.get("asOf") if td_status == "live" else None),
         })
         status = "live" if td_status == "live" else "partial"
         return {
@@ -8377,12 +8491,6 @@ def _data_quality_console():
     return console
 
 
-@app.route("/api/argus/data-quality")
-def api_argus_data_quality():
-    """Compatibility alias for the closed PublicDiagnosticsDTO v1."""
-    return jsonify(_public_diagnostics_snapshot())
-
-
 @app.route("/api/argus/data-quality/status")
 def api_argus_data_quality_status():
     return jsonify(_public_diagnostics_snapshot())
@@ -10544,6 +10652,41 @@ def get_market_regime_snapshot():
         _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if full else _REGIME_PARTIAL_TTL)
     return payload
 
+
+def _market_regime_cached_only():
+    """Public projection of the last fresh regime; never refreshes providers."""
+    now = time.time()
+    cached = (_REGIME_CACHE.get("data")
+              if now < _REGIME_CACHE.get("expires", 0.0) else None)
+    if isinstance(cached, dict):
+        return {**cached, "cacheState": "fresh"}
+    return {
+        "status": "mock", "asOf": None, "engineVersion": "regime-v1",
+        "cacheState": "unavailable",
+        "regime": {
+            "label": "MIXED", "growthValueAxis": 0.0,
+            "riskDurationAxis": 0.0,
+            "summaryJa": "保存済みの地合い評価がないため、方向感は未判定です。",
+            "confidence": 0.1,
+        },
+        "ratesBackdrop": {}, "rotationGroups": [], "jpRotationGroups": [],
+        "jpMatrix": {}, "topRotations": [],
+        "matrix": {
+            "x": 0.0, "y": 0.0, "xLabel": "Growth vs Defensive",
+            "yLabel": "Risk vs Duration", "points": [],
+            "rationaleJa": "cache unavailable",
+        },
+        "supportingEvidence": [],
+        "sourceStatuses": {
+            "fred": "unavailable", "twelveData": "unavailable",
+            "jquants": "unavailable", "manualFallback": "unused",
+        },
+        "dataLimitations": [
+            "公開GETは提供元を更新しません。次のbackground refreshを待っています。"
+        ],
+        "jpIntradayOverlay": None,
+    }
+
 @app.route("/api/argus/market-regime")
 def api_argus_market_regime():
     return jsonify(get_market_regime_snapshot())
@@ -10783,14 +10926,27 @@ def _apply_visibility_guard(action, conf, reason, nxt, dq, vg_cap, vg_blocked, v
     return action, conf, reason, nxt, sig, downgraded
 
 
-def get_action_labels(jp_symbols=None, us_symbols=None):
+def get_action_labels(jp_symbols=None, us_symbols=None, *, allow_provider_fetch=True):
     """Rule-based action labels, aggregated server-side. Accepts the user's
     actual watchlist symbols (dynamic) — default is the curated list."""
-    rates = get_rates_snapshot()
-    jp    = get_japan_watchlist_snapshot(jp_symbols)
-    us    = get_us_watchlist_snapshot(us_symbols)
-    ev    = get_events_snapshot()
-    reg   = get_market_regime_snapshot()  # 6h-cached; no extra cost when warm
+    if allow_provider_fetch:
+        rates = get_rates_snapshot()
+        jp = get_japan_watchlist_snapshot(jp_symbols)
+        us = get_us_watchlist_snapshot(us_symbols)
+        ev = get_events_snapshot()
+        reg = get_market_regime_snapshot()
+        ledger_summary = _ledger_summary()
+    else:
+        rates = _rates_snapshot_cached_only()
+        jp = get_japan_watchlist_snapshot(
+            jp_symbols, allow_provider_fetch=False,
+            record_requested_symbols=False)
+        us = get_us_watchlist_snapshot(us_symbols, allow_provider_fetch=False)
+        ev = get_events_snapshot(allow_provider_fetch=False)
+        reg = _market_regime_cached_only()
+        ledger_summary = (_LEDGER_SUMMARY_CACHE.get("data")
+                          if time.time() < _LEDGER_SUMMARY_CACHE.get("expires", 0.0)
+                          else None)
     reg_status = reg.get("status") if isinstance(reg, dict) else "mock"
     reg_block  = reg.get("regime", {}) if isinstance(reg, dict) else {}
     reg_label  = reg_block.get("label")
@@ -10801,7 +10957,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                      "JP": _region_event_escalation(events, "JP")}
     # calibration-v1: the ledger's scored track record for today's posture
     # adjusts label confidence (neutral 1.0 until enough evidence accumulates).
-    cal = _calibration_for(_ledger_summary(), posture)
+    cal = _calibration_for(ledger_summary, posture)
 
     # ── Visibility Guard wiring (ARGUS Pro v11) ──────────────────────────────
     # The guard was previously only a warning surface. It now ACTUALLY constrains
@@ -10814,7 +10970,12 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     # no cap/block) with no redeploy — the gate is the only change that alters what
     # the user is told to DO, so it must be instantly reversible.
     try:
-        _vg = _visibility_guard() if os.environ.get("ARGUS_VISIBILITY_GATE", "1") != "0" else {}
+        if os.environ.get("ARGUS_VISIBILITY_GATE", "1") == "0":
+            _vg = {}
+        elif allow_provider_fetch:
+            _vg = _visibility_guard()
+        else:
+            _vg = _visibility_guard(allow_provider_fetch=False)
     except Exception:
         _vg = {}
     _vg_cap = _vg.get("confidenceCap")
@@ -11022,7 +11183,8 @@ def api_argus_action_labels():
         vals = [s for s in raw.split(",") if s.strip()]
         return vals or None
     jp_syms, us_syms = _parse("jp"), _parse("us")
-    return jsonify(get_action_labels(jp_syms, us_syms))
+    return jsonify(get_action_labels(
+        jp_syms, us_syms, allow_provider_fetch=False))
 
 
 # ━━━ AI Judgment Layer (OpenAI primary + Gemini double-check) — LIVE ━━━
@@ -11935,7 +12097,7 @@ def _ai_session_freshness(as_of_iso, age_min):
     except Exception:
         return "persisted" if age_min < 24 * 60 else "stale"
 
-def _ai_judgment_truth():
+def _ai_judgment_truth(*, allow_restore=True):
     """Single source of truth for the automated-AI-judgment status.
 
     Truthful, key-aware status (NEVER 'live' merely because AI_JUDGE_ENABLED is
@@ -11952,7 +12114,9 @@ def _ai_judgment_truth():
     admin = bool(_ARGUS_ADMIN_TOKEN)
     # In-memory cache, falling back to the run persisted on the ledger branch
     # (survives dyno restarts and the 30-min TTL — ai-persist-v1).
-    cached = _ai_cached_result() if (enabled and (oai or gem)) else _AI_RESULT_CACHE["data"]
+    cached = (_ai_cached_result()
+              if allow_restore and enabled and (oai or gem)
+              else _AI_RESULT_CACHE["data"])
     has_cache = bool(cached) and time.time() < _AI_RESULT_CACHE["expires"]
     cached_status = (cached.get("status") if has_cache else ("expired" if cached else "none"))
     last_run_at = (cached.get("asOf") if cached else None) or _AI_LAST_RUN.get("at")
@@ -13326,7 +13490,7 @@ def api_argus_ai_judgment():
     # to exist — show it as persisted/stale with its age, not "no result".
     now = time.time()
     cache_valid = bool(_AI_RESULT_CACHE["data"]) and now < _AI_RESULT_CACHE["expires"]
-    cached = _ai_cached_result()
+    cached = _AI_RESULT_CACHE.get("data")
     if cached:
         as_of = cached.get("asOf")
         age_min = _age_min_iso(as_of)
@@ -13379,7 +13543,7 @@ def api_argus_ai_cost():
         return jsonify(err), code
     return jsonify(_ai_cost_snapshot())
 
-def _system_health():
+def _system_health(*, allow_provider_fetch=True):
     """PUBLIC-safe at-a-glance health lamps for the metered/important systems
     (green=ok, amber=warning, red=stopped). Colors + coarse JA only — NO dollar
     amounts or secrets (those stay in the admin-only Operations endpoints). The
@@ -13391,7 +13555,8 @@ def _system_health():
 
     # ── AI budget (the 'overheat' lamp) — color only, never the $ amount. ──
     with _AI_LOCK:
-        _ai_cost_roll(datetime.now(TZ_JST))
+        if allow_provider_fetch:
+            _ai_cost_roll(datetime.now(TZ_JST))
         day_s, mon_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
     def _frac(s, b): return (s / b) if (isinstance(b, (int, float)) and b > 0) else 0.0
     worst = max(_frac(day_s, _AI_DAILY_BUDGET_USD), _frac(mon_s, _AI_MONTHLY_BUDGET_USD))
@@ -13402,7 +13567,8 @@ def _system_health():
     else:
         L("ai_budget", "AI予算", "ok", "余裕あり")
 
-    integ = get_integrations_snapshot()
+    integ = get_integrations_snapshot(
+        allow_provider_fetch=allow_provider_fetch)
     prov = {p["id"]: p for p in integ.get("providers", [])}
     def conf(pid): return bool((prov.get(pid) or {}).get("configured"))
 
@@ -13508,7 +13674,7 @@ def _system_health():
 
 @app.route("/api/argus/system-health")
 def api_argus_system_health():
-    return jsonify(_system_health())
+    return jsonify(_system_health(allow_provider_fetch=False))
 
 
 # ── V11.5.7 bridge heartbeat + segmented status (Jul-3 OpenD incident) ────────
@@ -13678,8 +13844,8 @@ def api_argus_jp_universe():
                 priority.append("JP." + str(m["symbol"]))
     except Exception:
         pass
-    # Also include symbols the frontend recently requested (covers watchlist adds
-    # that aren't in the synced Layer-2B set yet, e.g. a just-added 6965).
+    # Also include bounded hints from trusted internal/background acquisition.
+    # Public quote reads cannot modify this set.
     priority += _recent_jp_watchlist_codes()
     for s in list(argus_calibration.TACTICAL_BENCHMARK) + list(argus_calibration.REGIME_SENSORS):
         if s and s[0].isdigit():          # JP listing code (e.g. 7203 / 285A)
@@ -13697,9 +13863,9 @@ def api_argus_jp_universe():
 @app.route("/api/argus/jp-watchlist-codes")
 def api_argus_jp_watchlist_codes():
     """Lightweight list of JP names the bridge should PUSH REALTIME (not just sweep
-    for movers): Layer-2B synced watchlist ∪ recently-requested frontend symbols, as
-    moomoo codes. Admin-gated. The bridge merges these into its 15s quote push so any
-    watchlist add (e.g. 6965) goes realtime without editing the bridge's CODES env."""
+    for movers): authenticated Layer-2B owner membership plus bounded trusted
+    internal/background hints, as moomoo codes. Admin-gated. Public quote reads
+    cannot change this set."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
@@ -15042,8 +15208,9 @@ def _official_lifecycle_ingest(td_snapshot):
         pass                                        # ingest is best-effort, never breaks the feed
 
 
-def _official_events_by_symbol(sym, material_only=False):
-    _official_events_restore_once()
+def _official_events_by_symbol(sym, material_only=False, *, allow_restore=True):
+    if allow_restore:
+        _official_events_restore_once()
     sym = str(sym or "").upper()
     out = [r for r in _OFFICIAL_EVENTS.values()
            if r.get("symbol") == sym and (r.get("material") or not material_only)]
@@ -22286,6 +22453,11 @@ def _startup_bootstrap():
     try:
         _STARTUP["state"] = "loading_remote"
         _osint_restore_once()
+        # Event state is part of process bootstrap, never an incidental public
+        # status-read side effect. The restore also warms _EVENT_SNAP_META.
+        _events_restore_once()
+        if _AI_JUDGE_ENABLED and (_OPENAI_API_KEY or GEMINI_API_KEY):
+            _ai_cached_result()
         _STARTUP["state"] = "reconciling"      # 冪等キー照合は復元内で実施済み
     except Exception:
         pass
@@ -30688,11 +30860,23 @@ def _learning_memory_doc():
     return _LEARNING_MEMORY["doc"] or argus_learning_memory.build_memory([], now_iso=_ai_now_iso())
 
 
+def _learning_memory_status_doc_cached_only():
+    """Return only the already materialized document for the public status DTO.
+
+    The status GET must not turn a cold process into a ledger read. Restore/build
+    and the existing full-document contracts retain their prior semantics.
+    """
+    return (_LEARNING_MEMORY["doc"] or
+            argus_learning_memory.build_memory([], now_iso=_ai_now_iso()))
+
+
 def _learning_memory_compact_for_symbol(symbol, market):
     """Compact, symbol/context-relevant memory slice for the Evidence Pack. Pure
     read of the in-memory doc — cached-only, never triggers a build."""
     try:
-        doc = _learning_memory_doc()
+        doc = _LEARNING_MEMORY.get("doc")
+        if not isinstance(doc, dict):
+            return None
         cause_cats, src_families = set(), set()
         today = _ai_now_iso()[:10].replace("-", "")
         rec = _MOVER_CAUSES.get(f"mc-{str(market).upper()}-{str(symbol).upper()}-{today}")
@@ -30740,23 +30924,22 @@ def api_argus_learning_memory():
 
 @app.route("/api/argus/learning-memory/status")
 def api_argus_learning_memory_status():
-    doc = _learning_memory_doc()
+    doc = _learning_memory_status_doc_cached_only()
     counts = doc.get("counts") or {}
     stage = doc.get("sampleStage") or "none"
     status = _LEARNING_MEMORY_STATE.get("status")
     if not status or status == "not_ready":
         status = "ready" if doc.get("lessons") else "not_ready"
-    # ledger meta (restore availability) — cached-only read of ARGUS's own artifact
-    ledger = {"restoreAvailable": False, "latestDate": None, "latestCount": 0}
-    try:
-        r = requests.get(f"{_LEDGER_RAW_BASE}/learning-memory/latest.json?cb={int(time.time())}",
-                         timeout=6)
-        if r.status_code == 200 and r.text.strip().startswith("{"):
-            snap = json.loads(r.text)
-            ledger = {"restoreAvailable": True, "latestDate": str(snap.get("asOf") or "")[:10],
-                      "latestCount": int((snap.get("summary") or {}).get("lessons", 0))}
-    except Exception:
-        pass
+    # Cache evidence only. A public status read must never probe the remote ledger.
+    # A prior authenticated/background restore is enough to establish availability.
+    restored_from_ledger = _LEARNING_MEMORY_STATE.get("pathType") == "ledger_restored"
+    ledger = {
+        "restoreAvailable": restored_from_ledger,
+        "latestDate": (str(doc.get("asOf") or "")[:10]
+                       if restored_from_ledger else None),
+        "latestCount": (int(counts.get("lessons", 0))
+                        if restored_from_ledger else 0),
+    }
     return jsonify({
         "schemaVersion": "learning-memory-status-v1",
         "asOf": _ai_now_iso(),
@@ -30824,7 +31007,8 @@ def api_argus_admin_learning_memory_restore():
         if restored:
             _LEARNING_MEMORY["doc"] = argus_learning_memory_store.merge_memory(
                 _LEARNING_MEMORY["doc"], restored, now_iso=_ai_now_iso())
-            _LEARNING_MEMORY_STATE.update(lastRestoreAt=_ai_now_iso(), status="ready")
+            _LEARNING_MEMORY_STATE.update(lastRestoreAt=_ai_now_iso(), status="ready",
+                                          pathType="ledger_restored")
             _learning_memory_persist()
             return jsonify({"ok": True, "restored": True,
                             "sampleStage": _LEARNING_MEMORY["doc"].get("sampleStage")})
@@ -31048,23 +31232,36 @@ _NEXT_RECOMMENDED_APIS = [
     "what-if-simulator",
 ]
 
-def get_integrations_snapshot():
+def get_integrations_snapshot(*, allow_provider_fetch=True):
     now = time.time()
-    if _INTEGRATIONS_CACHE["data"] is not None and now < _INTEGRATIONS_CACHE["expires"]:
+    if (_INTEGRATIONS_CACHE["data"] is not None and
+            now < _INTEGRATIONS_CACHE["expires"]):
         return _INTEGRATIONS_CACHE["data"]
 
     # Market-data runtime status comes from the same cached getters the pages use
     # (cheap when warm). AI status comes from the key-aware truth helper (no call).
-    rates = get_rates_snapshot()
-    jp    = get_japan_watchlist_snapshot()
-    us    = get_us_watchlist_snapshot()
+    if allow_provider_fetch:
+        rates = get_rates_snapshot()
+        jp = get_japan_watchlist_snapshot()
+        us = get_us_watchlist_snapshot()
+    else:
+        rates = (_RATES_CACHE.get("data") or {}
+                 if now < _RATES_CACHE.get("expires", 0.0) else {})
+        jp_data = (_JP_CACHE.get("data")
+                   if now < _JP_CACHE.get("expires", 0.0) else None)
+        us_data = (_US_CACHE.get("data")
+                   if now < _US_CACHE.get("expires", 0.0) else None)
+        jp = (_cached_quote_snapshot(jp_data)
+              if jp_data else {"status": "mock"})
+        us = (_cached_quote_snapshot(us_data)
+              if us_data else {"status": "mock"})
     def _st(x):
         return x.get("status", "unknown") if isinstance(x, dict) else "unknown"
     fred_rt = _st(rates)
     jq_rt   = _st(jp)
     td_rt   = _st(us)
 
-    ai = _ai_judgment_truth()
+    ai = _ai_judgment_truth(allow_restore=allow_provider_fetch)
     # OpenAI / Gemini runtime status, key-aware and honest.
     if not ai["enabled"]:
         oai_rt = "disabled" if bool(_OPENAI_API_KEY) else "missing"
@@ -31142,13 +31339,14 @@ def get_integrations_snapshot():
         },
         "nextRecommendedApis": list(_NEXT_RECOMMENDED_APIS),
     }
-    _INTEGRATIONS_CACHE["data"] = payload
-    _INTEGRATIONS_CACHE["expires"] = now + _INTEGRATIONS_TTL
+    if allow_provider_fetch:
+        _INTEGRATIONS_CACHE["data"] = payload
+        _INTEGRATIONS_CACHE["expires"] = now + _INTEGRATIONS_TTL
     return payload
 
 @app.route("/api/argus/integrations")
 def api_argus_integrations():
-    return jsonify(get_integrations_snapshot())
+    return jsonify(get_integrations_snapshot(allow_provider_fetch=False))
 
 # ── Source Capability Registry (source-registry-v1, v10.47) ──────────────────
 # One honest, capability-LEVEL view of every data source: a provider being
@@ -31301,15 +31499,22 @@ def _moomoo_capability_report():
         ),
     }
 
-def _source_registry():
+def _source_registry(*, allow_provider_fetch=True):
+    """Build the capability registry, optionally allowing live provider work.
+
+    Public consumers pass ``allow_provider_fetch=False``.  They may use a stale
+    registry/cache snapshot, but never turn an unauthenticated GET into an
+    EDINET, J-Quants, or market-data request.
+    """
     # Self-verify EDINET once when a key is configured (cached) so the registry
     # flips missing→confirmed_live/requires_test without waiting for a JP event.
-    if _EDINET_API_KEY and not _EDINET_STATE["lastFetchOk"]:
+    if allow_provider_fetch and _EDINET_API_KEY and not _EDINET_STATE["lastFetchOk"]:
         try:
             _edinet_filings(datetime.now(TZ_JST).strftime("%Y-%m-%d"))
         except Exception:
             pass
-    integ = get_integrations_snapshot()
+    integ = get_integrations_snapshot(
+        allow_provider_fetch=allow_provider_fetch)
     prov = {p["id"]: p for p in integ.get("providers", [])}
     def rt(pid):
         return (prov.get(pid) or {}).get("runtimeStatus", "missing")
@@ -31334,10 +31539,20 @@ def _source_registry():
     moomoo_us_status = _moomoo_market_status("US")
     # Official J-Quants TDnet Add-on status (v11.1) — the registry must reflect the REAL
     # probe, never stay 'paid_not_enabled' once contracted. Cheap (cached in the fetch).
-    try:
-        _td_off, _td_usable = _jquants_tdnet_fetch(20)
-    except Exception:
-        _td_off, _td_usable = {"status": "unavailable", "entitlement": "unknown"}, False
+    if allow_provider_fetch:
+        try:
+            _td_off, _td_usable = _jquants_tdnet_fetch(20)
+        except Exception:
+            _td_off, _td_usable = {"status": "unavailable", "entitlement": "unknown"}, False
+    else:
+        _td_off = ((_TDNET_OFFICIAL_CACHE.get("data")
+                    if time.time() < _TDNET_OFFICIAL_CACHE.get("expires", 0.0)
+                    else None) or {
+            "status": ("not_configured" if not _JQUANTS_API_KEY else "unavailable"),
+            "entitlement": ("missing" if not _JQUANTS_API_KEY else "unknown"),
+        })
+        _td_usable = bool(_td_off.get("status") == "official_tdnet_live" and
+                          _td_off.get("items"))
     _td_off_status = _td_off.get("status")
     if not _JQUANTS_API_KEY:
         _td_reg_status, _td_ent, _td_note = "missing", "APIキー未設定", "JQUANTS_API_KEY未設定。"
@@ -31356,7 +31571,9 @@ def _source_registry():
         _td_reg_status, _td_ent, _td_note = "requires_test", "未実証", "キーはあるが公式TDnetの成功プローブがまだ無い。"
     # J-Quants STANDARD datasets summary (v11.1.1) — reads the diagnostics CACHE only
     # (a public GET must never fire provider probes). Unknown until an admin diag ran.
-    _dc = _PROVIDER_DIAG_CACHE.get("data") if time.time() < _PROVIDER_DIAG_CACHE.get("expires", 0.0) else None
+    _dc = (_PROVIDER_DIAG_CACHE.get("data")
+           if time.time() < _PROVIDER_DIAG_CACHE.get("expires", 0.0)
+           else None)
     def _dc_rt(pid):
         for i in ((_dc or {}).get("items") or []):
             if i.get("provider") == pid:
@@ -31428,14 +31645,15 @@ def _source_registry():
         S("AIチェック(Gemini)", "Gemini", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("gemini"), "missing"),
           "管理者実行のみ", "paid/free", "ok", "OpenAI判断の二重チェック。"),
     ]
-    return {"asOf": _ai_now_iso(), "engineVersion": "source-registry-v1",
-            "confirmedLive": sum(1 for s in sources if s["status"] == "confirmed_live"),
-            "total": len(sources), "sources": sources,
-            "noteJa": "『設定済み』≠『その機能がライブ』。各capabilityの真の状態を表示。"}
+    out = {"asOf": _ai_now_iso(), "engineVersion": "source-registry-v1",
+           "confirmedLive": sum(1 for s in sources if s["status"] == "confirmed_live"),
+           "total": len(sources), "sources": sources,
+           "noteJa": "『設定済み』≠『その機能がライブ』。各capabilityの真の状態を表示。"}
+    return out
 
 @app.route("/api/argus/source-registry")
 def api_argus_source_registry():
-    return jsonify(_source_registry())
+    return jsonify(_source_registry(allow_provider_fetch=False))
 
 
 @app.route("/api/argus/source-coverage")
@@ -31444,7 +31662,7 @@ def api_argus_source_coverage():
     is not enough — zero items / no successful fetch ≠ live. Weak tiers (aggregator/
     unknown/social) cannot ground judgment or confirm cause. Reuses the source registry
     (configured≠live) + a tally of the live IntelligenceItem store by tier."""
-    reg = _source_registry() or {}
+    reg = _source_registry(allow_provider_fetch=False) or {}
     # Tally the actual collected items by tier (what's really flowing in).
     tier_counts = {}
     fam_seen = set()
@@ -31688,11 +31906,64 @@ def api_argus_admin_provider_diagnostics():
         return jsonify(err), code
     return jsonify(_provider_diagnostics())
 
+
+def _provider_diagnostics_cached_only():
+    """Return the last probe result, or a configuration-only cold snapshot.
+
+    This deliberately ignores expiry: stale evidence is safer than spending
+    provider quota from a public status request.  The authenticated diagnostics
+    route remains the refresh authority.
+    """
+    cached = _PROVIDER_DIAG_CACHE.get("data")
+    if isinstance(cached, dict):
+        if time.time() < _PROVIDER_DIAG_CACHE.get("expires", 0.0):
+            return cached
+        stale = copy.deepcopy(cached)
+        for item in stale.get("items") or []:
+            if item.get("runtimeStatus") in ("live", "partial"):
+                item["runtimeStatus"] = "stale"
+        return stale
+    configured = (
+        ("jquants-core", bool(_JQUANTS_API_KEY)),
+        ("jquants-tdnet", bool(_JQUANTS_API_KEY)),
+        ("jquants-trading-calendar", bool(_JQUANTS_API_KEY)),
+        ("jquants-earnings-calendar", bool(_JQUANTS_API_KEY)),
+        ("jquants-margin-interest", bool(_JQUANTS_API_KEY)),
+        ("jquants-short-ratio", bool(_JQUANTS_API_KEY)),
+        ("jquants-investor-types", bool(_JQUANTS_API_KEY)),
+        ("edinet", bool(_EDINET_API_KEY)),
+        ("twelvedata-quote", bool(_TWELVEDATA_API_KEY)),
+        ("twelvedata-timeseries", bool(_TWELVEDATA_API_KEY)),
+        ("fred", bool(_FRED_API_KEY)),
+        ("finnhub", bool(FINNHUB_API_KEY)),
+        ("alphavantage", bool(_ALPHAVANTAGE_KEY)),
+        ("coingecko", True),
+        ("openai", bool(_OPENAI_API_KEY)),
+        ("gemini", bool(GEMINI_API_KEY)),
+        ("layer2b-private-store", _layer2b_store_configured()),
+    )
+    items = [{
+        "provider": provider,
+        "configured": is_configured,
+        "runtimeStatus": ("configured" if is_configured else "missing"),
+    } for provider, is_configured in configured]
+    return {
+        "asOf": _ai_now_iso(),
+        "schemaVersion": "provider-diagnostics-v1",
+        "items": items,
+        "summary": {
+            "live": 0,
+            "configured": sum(1 for item in items if item["configured"]),
+            "total": len(items),
+        },
+    }
+
+
 @app.route("/api/argus/provider-diagnostics/public")
 def api_argus_provider_diagnostics_public():
     """PUBLIC-safe provider status: configured booleans + live/partial/missing ONLY.
     No admin detail, no httpStatus, no sample counts, no messages."""
-    full = _provider_diagnostics()
+    full = _provider_diagnostics_cached_only()
     pub = [{"provider": i["provider"], "configured": i["configured"],
             "status": ("live" if i["runtimeStatus"] == "live" else
                        "partial" if i["runtimeStatus"] == "partial" else
@@ -31754,17 +32025,36 @@ def _vwap_probe():
     _VWAP_CACHE["expires"] = now + (1800 if probe["computed"] else 900)
     return probe
 
-def _market_depth_report():
+
+def _vwap_cached_only():
+    cached = _VWAP_CACHE.get("data")
+    if isinstance(cached, dict):
+        return cached
+    return {
+        "computed": False,
+        "values": {},
+        "probed": False,
+        "asOf": _ai_now_iso(),
+        "note": "cached VWAP proof unavailable; authenticated/background refresh pending",
+    }
+
+
+def _market_depth_report(*, allow_provider_fetch=True):
     now = time.time()
-    if _MARKET_DEPTH_CACHE["data"] is not None and now < _MARKET_DEPTH_CACHE["expires"]:
+    if (_MARKET_DEPTH_CACHE["data"] is not None and
+            now < _MARKET_DEPTH_CACHE["expires"]):
         return _MARKET_DEPTH_CACHE["data"]
+    if not allow_provider_fetch:
+        return None
     try: mc = _moomoo_capability_report()
     except Exception: mc = {}
     try: rp = _MOOMOO_ALLMARKET_REPORT.get("realtimeProof") or {}
     except Exception: rp = {}
-    try: reg = _source_registry()
+    try: reg = _source_registry(allow_provider_fetch=allow_provider_fetch)
     except Exception: reg = {}
-    try: vwap = _vwap_probe()
+    try:
+        vwap = (_vwap_probe() if allow_provider_fetch else
+                _vwap_cached_only())
     except Exception: vwap = None
     try:
         rep = argus_market_depth.build_market_depth_report(
@@ -31774,13 +32064,14 @@ def _market_depth_report():
             vwap_probe=vwap)
     except Exception:
         rep = None
-    _MARKET_DEPTH_CACHE["data"] = rep
-    _MARKET_DEPTH_CACHE["expires"] = now + 60
+    if allow_provider_fetch:
+        _MARKET_DEPTH_CACHE["data"] = rep
+        _MARKET_DEPTH_CACHE["expires"] = now + 60
     return rep
 
 @app.route("/api/argus/market-depth")
 def api_argus_market_depth():
-    rep = _market_depth_report()
+    rep = _market_depth_report(allow_provider_fetch=False)
     return jsonify(rep or {"status": "unavailable", "engineVersion": "market-depth-v1",
                            "capabilities": {}, "note": "depth report temporarily unavailable"})
 
@@ -31826,7 +32117,7 @@ def api_argus_market_depth_proof():
     """PROOF-level Market Depth (ARGUS Pro v11): 'live' only where a real measurement
     (probed=true) backs it; otherwise 'unverified_live'. L2/TAPE/OPTIONS_IV/BORROW_FEE
     remain unavailable/requires_contract until a real feed exists — cadence ≠ proof."""
-    rep = _market_depth_report() or {}
+    rep = _market_depth_report(allow_provider_fetch=False) or {}
     items = _market_depth_proof_items(rep.get("capabilities") or {})
     true_live = sum(1 for i in items if i["status"] == "live" and i["isTrueDepth"])
     computed_live = sum(1 for i in items if i["status"] == "live" and not i["isTrueDepth"])
@@ -31855,25 +32146,36 @@ def api_argus_market_depth_proof():
 # v10.196: capabilities now come from the live Market Depth report (data-driven).
 _VISIBILITY_CACHE = {"data": None, "expires": 0.0}
 
-def _visibility_guard():
+def _visibility_guard(*, allow_provider_fetch=True):
     now = time.time()
-    if _VISIBILITY_CACHE["data"] is not None and now < _VISIBILITY_CACHE["expires"]:
+    if (_VISIBILITY_CACHE["data"] is not None and
+            now < _VISIBILITY_CACHE["expires"]):
         return _VISIBILITY_CACHE["data"]
-    try: sh = _system_health()
+    try: sh = _system_health(allow_provider_fetch=allow_provider_fetch)
     except Exception: sh = None
     try: moomoo_ent = (_moomoo_capability_report() or {}).get("overallEntitlement")
     except Exception: moomoo_ent = None
     try:
-        _reg = get_market_regime_snapshot()
+        _reg = (get_market_regime_snapshot() if allow_provider_fetch else
+                ((_REGIME_CACHE.get("data") or {})
+                 if now < _REGIME_CACHE.get("expires", 0.0) else {}))
         held = _reg.get("heldOverMin") if isinstance(_reg, dict) else None
     except Exception: held = None
     try:
-        _n = int(((_ledger_summary() or {}).get("overall") or {}).get("n") or 0)
+        _ledger = (_ledger_summary() if allow_provider_fetch else
+                   (_LEDGER_SUMMARY_CACHE.get("data")
+                    if now < _LEDGER_SUMMARY_CACHE.get("expires", 0.0)
+                    else None))
+        _n = int(((_ledger or {}).get("overall") or {}).get("n") or 0)
         cal_stage = argus_calibration.reliability_stage(_n)
     except Exception: cal_stage = None
-    try: dv_phase = _dv_shadow_phase()
+    try:
+        dv_phase = (_dv_shadow_phase() if allow_provider_fetch else
+                    "v1-phase1-engine-only")
     except Exception: dv_phase = "v1-phase1-engine-only"
-    try: caps = (_market_depth_report() or {}).get("capabilitiesForGuard")
+    try:
+        caps = (_market_depth_report(
+            allow_provider_fetch=allow_provider_fetch) or {}).get("capabilitiesForGuard")
     except Exception: caps = None
     g = argus_visibility.build_visibility_guard(
         now_iso=_ai_now_iso(),
@@ -31887,13 +32189,14 @@ def _visibility_guard():
         calibration_stage=cal_stage,
         decision_value_phase=dv_phase,
     )
-    _VISIBILITY_CACHE["data"] = g
-    _VISIBILITY_CACHE["expires"] = now + 60
+    if allow_provider_fetch:
+        _VISIBILITY_CACHE["data"] = g
+        _VISIBILITY_CACHE["expires"] = now + 60
     return g
 
 @app.route("/api/argus/visibility-guard")
 def api_argus_visibility_guard():
-    return jsonify(_visibility_guard())
+    return jsonify(_visibility_guard(allow_provider_fetch=False))
 
 
 # ── Runtime manifest (v10.107) ───────────────────────────────────────────────
@@ -31901,18 +32204,18 @@ def api_argus_visibility_guard():
 # so GPT/Claude never reason from a STALE static doc. Public, secret-free — only
 # booleans for config presence, never any key/value.
 def get_runtime_manifest():
-    reg = _source_registry()
+    """Public cache-only runtime summary; live refresh stays operational."""
+    now = time.time()
+    reg = _source_registry(allow_provider_fetch=False)
+    ds = (_DOWNSIDE_CACHE.get("data") or {}
+          if now < _DOWNSIDE_CACHE.get("expires", 0.0) else {})
+    td = ((_TDNET_OFFICIAL_CACHE.get("data")
+           if now < _TDNET_OFFICIAL_CACHE.get("expires", 0.0) else None) or
+          (_TDNET_FEED_CACHE.get("data")
+           if now < _TDNET_FEED_CACHE.get("expires", 0.0) else None) or {})
+    aij = _ai_judgment_truth(allow_restore=False)
     try:
-        ds = get_downside_incidents()
-    except Exception:
-        ds = {}
-    try:
-        td = get_tdnet_recent()
-    except Exception:
-        td = {}
-    aij = _ai_judgment_truth()
-    try:
-        vg = _visibility_guard()
+        vg = _visibility_guard(allow_provider_fetch=False)
     except Exception:
         vg = {}
     layer2b_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO")
@@ -31922,7 +32225,7 @@ def get_runtime_manifest():
     return {
         "asOf": _ai_now_iso(), "engineVersion": "runtime-manifest-v1",
         "buildSha": (os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None),
-        "activeRoutes": ["Today", "Watchlist", "Market Context", "Core Portfolio", "Glossary / Guide"],
+        "activeRoutes": ["Today", "Holdings / Watchlist", "Notifications", "Settings"],
         "providers": {"confirmedLive": reg.get("confirmedLive"), "total": reg.get("total"),
                       "degraded": degraded[:14]},
         "calibration": {
@@ -31939,7 +32242,8 @@ def get_runtime_manifest():
                   "count": len(td.get("items") or [])},
         "ownerWatchlist": {"layer2bConfigured": layer2b_configured,
                            "note": "non-monetary flags only (ownerState/strictness/priority); amounts NEVER sent"},
-        "decisionValue": {"phase": (_dv_shadow_public_summary().get("status") or "v1-phase1-engine-only"),
+        "decisionValue": {"phase": ("configured_unverified" if layer2b_configured
+                                      else "blocked_pending_private_store"),
                            "note": "shadow simulation only; NO order/broker/execute routes — ever; real netR owner-private"},
         "visibility": {"visibilityLevel": vg.get("visibilityLevel"), "confidenceCap": vg.get("confidenceCap"),
                        "reasonCodes": vg.get("reasonCodes", []), "coverageLineJa": vg.get("coverageLineJa"),

@@ -384,8 +384,8 @@ def test_dq_get_is_side_effect_free():
     before_j = len(scanner._OPS_JOURNAL)
     before_s = dict(scanner._STARTUP)
     with scanner.app.test_client() as c:
-        c.get("/api/argus/data-quality")
-        c.get("/api/argus/data-quality")
+        c.get("/api/argus/data-quality/status")
+        c.get("/api/argus/data-quality/status")
     assert len(scanner._OPS_JOURNAL) == before_j         # GETはイベントを作らない
     assert scanner._STARTUP == before_s                  # 復元を再実行しない
 

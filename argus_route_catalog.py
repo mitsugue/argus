@@ -31,6 +31,110 @@ class RouteCatalogEntry:
     consumerCategory: str
 
 
+@dataclass(frozen=True)
+class CacheOnlyConsumerContract:
+    route: str
+    consumers: tuple[str, ...]
+    refreshAuthority: str
+
+
+# Narrow machine-readable contract for public status surfaces whose browser reads
+# must never initiate provider/ledger traffic.  Paths are repository-relative and
+# intentionally literal so consumer drift is reviewed alongside route drift.
+PUBLIC_CACHE_ONLY_CONSUMERS = (
+    CacheOnlyConsumerContract(
+        "/api/argus/action-labels",
+        ("web/src/hooks/useActionLabels.ts",),
+        "background judgment, prediction-ledger, or scheduled market acquisition",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/ai-judgment",
+        ("web/src/hooks/useAIJudgment.ts",),
+        "process bootstrap or authenticated/background AI execution",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/calibration/v4/status",
+        ("web/src/hooks/useArgusProStatus.ts",),
+        "authenticated/background calibration ledger acquisition",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/decision-value/status",
+        ("web/src/hooks/useArgusProStatus.ts",),
+        "authenticated decision-value shadow run or background acquisition",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/event-backbone-status",
+        ("web/src/hooks/useEventsActive.ts",),
+        "background event snapshot publication and restore",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/events-active",
+        ("web/src/hooks/useEventsActive.ts",),
+        "process bootstrap or background event snapshot restore",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/integrations",
+        ("web/src/hooks/useIntegrations.ts",),
+        "authenticated/background integration acquisition",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/japan-watchlist",
+        ("web/src/hooks/useJapanWatchlist.ts",),
+        "owner-synced Layer-2B membership and background market acquisition",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/learning-memory/status",
+        ("web/src/components/guide/DecisionSpineCard.tsx",),
+        "admin learning-memory build/restore or background job",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/market-depth",
+        ("web/src/hooks/useMarketDepth.ts",),
+        "POST /api/argus/ai-judgment/run or scheduled AI judgment refresh",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/market-depth/proof",
+        ("web/src/hooks/useArgusProStatus.ts",),
+        "POST /api/argus/ai-judgment/run or scheduled AI judgment refresh",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/provider-diagnostics/public",
+        ("web/src/hooks/usePaidSources.ts",),
+        "GET /api/argus/admin/provider-diagnostics",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/runtime-manifest",
+        ("web/src/routes/AIReview.tsx",),
+        "authenticated/background status builders",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/source-coverage",
+        ("web/src/hooks/useArgusProStatus.ts",),
+        "GET /api/argus/admin/provider-diagnostics and scheduled AI judgment refresh",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/source-registry",
+        ("web/src/components/guide/SourceRegistryCard.tsx",),
+        "GET /api/argus/admin/provider-diagnostics and scheduled AI judgment refresh",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/system-health",
+        ("web/src/hooks/useSystemHealth.ts",),
+        "authenticated/background integration acquisition",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/us-watchlist",
+        ("web/src/hooks/useUSWatchlist.ts",),
+        "background judgment, prediction-ledger, or the authenticated provider path",
+    ),
+    CacheOnlyConsumerContract(
+        "/api/argus/visibility-guard",
+        ("web/src/hooks/useVisibilityGuard.ts",),
+        "POST /api/argus/ai-judgment/run or scheduled AI judgment refresh",
+    ),
+)
+
+
 ROUTE_CATALOG = (
     RouteCatalogEntry("/", ("GET",), "index", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/action-alerts", ("GET",), "api_argus_action_alerts", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
@@ -119,7 +223,6 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/crypto-watchlist", ("GET",), "api_argus_crypto_watchlist", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/daily-digest", ("GET",), "api_argus_daily_digest", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/dashboard-events", ("GET",), "api_argus_dashboard_events", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
-    RouteCatalogEntry("/api/argus/data-quality", ("GET",), "api_argus_data_quality", "PUBLIC", "NONE", False, "PUBLIC_DIAGNOSTICS_V1", "BROWSER_INFRASTRUCTURE"),
     RouteCatalogEntry("/api/argus/data-quality/status", ("GET",), "api_argus_data_quality_status", "PUBLIC", "NONE", False, "PUBLIC_DIAGNOSTICS_V1", "BROWSER_INFRASTRUCTURE"),
     RouteCatalogEntry("/api/argus/decision-quality/status", ("GET",), "api_argus_decision_quality_status", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/decision-spine/status", ("GET",), "api_argus_decision_spine_status", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
@@ -324,7 +427,43 @@ def route_catalog_document() -> dict[str, Any]:
     return {
         "schemaVersion": "argus-route-trust-catalog-v1",
         "entries": [asdict(row) for row in ROUTE_CATALOG],
+        "publicCacheOnlyConsumers": [
+            asdict(row) for row in PUBLIC_CACHE_ONLY_CONSUMERS
+        ],
     }
 
 
+def validate_public_cache_only_consumers(
+        contracts: Any = PUBLIC_CACHE_ONLY_CONSUMERS) -> tuple[str, ...]:
+    errors: list[str] = []
+    if type(contracts) is not tuple:
+        return ("cache_only_contracts_not_tuple",)
+    by_route = {row.route: row for row in ROUTE_CATALOG}
+    if tuple(contract.route for contract in contracts) != tuple(sorted(
+            contract.route for contract in contracts)):
+        errors.append("cache_only_contracts_not_sorted")
+    seen: set[str] = set()
+    for index, contract in enumerate(contracts):
+        if type(contract) is not CacheOnlyConsumerContract:
+            errors.append(f"cache_only_{index}_invalid")
+            continue
+        if contract.route in seen:
+            errors.append(f"cache_only_{index}_duplicate")
+        seen.add(contract.route)
+        row = by_route.get(contract.route)
+        if row is None:
+            errors.append(f"cache_only_{index}_route_missing")
+        elif not (row.trustDomain == "PUBLIC" and row.methods == ("GET",)
+                  and row.mutatesState is False):
+            errors.append(f"cache_only_{index}_route_not_public_read")
+        if not contract.consumers or any(
+                not consumer.startswith("web/src/")
+                for consumer in contract.consumers):
+            errors.append(f"cache_only_{index}_consumer_invalid")
+        if not contract.refreshAuthority:
+            errors.append(f"cache_only_{index}_refresh_authority_missing")
+    return tuple(errors)
+
+
 ROUTE_CATALOG_VALIDATION_ERRORS = validate_route_catalog()
+PUBLIC_CACHE_ONLY_VALIDATION_ERRORS = validate_public_cache_only_consumers()

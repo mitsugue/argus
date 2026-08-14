@@ -28,7 +28,8 @@ hand-maintained acceptance condition.
 |---|---|---|
 | `/healthz` | `KEEP_PUBLIC` | minimal liveness/build DTO |
 | `/readyz` | `KEEP_PUBLIC` | minimal readiness/build DTO; 200/503 truth unchanged |
-| data-quality aliases | `PRODUCT_DTO` | fixed public lamps/status only |
+| `/api/argus/data-quality/status` | `PRODUCT_DTO` | canonical fixed public lamps/status; byte-identical `/data-quality` alias retired |
+| selected Action Label/JP-US quote/AI/integration/calibration/Decision Value/event/source/provider/depth/visibility/runtime/learning consumers | `PRODUCT_DTO` | public GET is state-free and provider/ledger-cache-only; process-bootstrap/authenticated/background paths retain refresh authority; JP bridge membership comes only from existing OWNER_SYNC/private Layer-2B or trusted background work |
 | cached OSINT investigation | `PRODUCT_DTO` | verified-source allowlist; owner terms/raw agent claims excluded |
 | research mission status | `PRODUCT_DTO` | trigger/status scalars; synthesis and owner flags excluded |
 | Watchtower | `MOVE_TO_AUTH_OPERATIONAL` | existing Actions admin secret |

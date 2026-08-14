@@ -1,15 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import type { CostPolicyPayload, MarketLedgerPayload } from '../types/marketLedger';
 
 type Snapshot = { ledger: MarketLedgerPayload | null; cost: CostPolicyPayload | null; loading: boolean; error: string | null };
 let cache: Snapshot = { ledger: null, cost: null, loading: false, error: null };
 let fetchedAt = 0;
 let inFlight: Promise<Snapshot> | null = null;
-const listeners = new Set<(s: Snapshot) => void>();
 const STALE_MS = 15 * 60 * 1000;
 const apiUrl = (path: string) => `${String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/, '')}${path}`;
 
-const publish = (next: Snapshot) => { cache = next; listeners.forEach((fn) => fn(cache)); };
+const marketLedgerStore = createSharedPollingStore<Snapshot>(cache, () => {
+  const refresh = () => { if (!document.hidden) void refreshMarketLedger(); };
+  refresh();
+  const timer = window.setInterval(refresh, STALE_MS);
+  document.addEventListener('visibilitychange', refresh);
+  return () => {
+    window.clearInterval(timer);
+    document.removeEventListener('visibilitychange', refresh);
+  };
+});
+
+const publish = (next: Snapshot) => {
+  cache = next;
+  marketLedgerStore.setSnapshot(next);
+};
 
 export async function refreshMarketLedger(force = false): Promise<Snapshot> {
   if (!force && cache.ledger && Date.now() - fetchedAt < STALE_MS) return cache;
@@ -33,14 +47,9 @@ export async function refreshMarketLedger(force = false): Promise<Snapshot> {
 export function cachedMarketLedger(): MarketLedgerPayload | null { return cache.ledger; }
 
 export function useMarketLedger(): Snapshot {
-  const [snapshot, setSnapshot] = useState(cache);
-  useEffect(() => {
-    listeners.add(setSnapshot);
-    const refresh = () => { if (!document.hidden) void refreshMarketLedger(); };
-    refresh();
-    const timer = window.setInterval(refresh, STALE_MS);
-    document.addEventListener('visibilitychange', refresh);
-    return () => { listeners.delete(setSnapshot); window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
-  }, []);
-  return snapshot;
+  return useSyncExternalStore(
+    marketLedgerStore.subscribe,
+    marketLedgerStore.getSnapshot,
+    marketLedgerStore.getSnapshot,
+  );
 }
