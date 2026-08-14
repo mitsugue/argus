@@ -22,6 +22,31 @@ class HostileValue:
     def __str__(self):
         raise AssertionError("validator called __str__")
 
+    def __repr__(self):
+        raise AssertionError("validator called __repr__")
+
+
+class HostileCollisionKey:
+    def __init__(self, collision):
+        self.collision = collision
+        self.calls = []
+
+    def __hash__(self):
+        self.calls.append("hash")
+        return hash(self.collision)
+
+    def __eq__(self, other):
+        self.calls.append("eq")
+        raise AssertionError("authorization called hostile __eq__")
+
+    def __str__(self):
+        self.calls.append("str")
+        raise AssertionError("authorization called hostile __str__")
+
+    def __repr__(self):
+        self.calls.append("repr")
+        raise AssertionError("authorization called hostile __repr__")
+
 
 class WrongEnum(str, Enum):
     VALUE = "PUBLIC_METADATA"
@@ -408,3 +433,169 @@ def test_helper_does_not_coerce_explicit_hostile_values():
     assert any(":checkpointKeys:not_exact_tuple" in error for error in errors)
     assert any(":rebuildRequirements:not_exact_tuple" in error
                for error in errors)
+
+
+def test_uninitialized_exact_declarations_return_specific_canonical_errors():
+    state = object.__new__(registry.StateDeclaration)
+    mutation = object.__new__(registry.MutationDeclaration)
+
+    state_first = registry.validate_registry((state,), ())
+    state_second = registry.validate_registry((state,), ())
+    assert state_first == state_second
+    assert "state[0]:stateId:missing_field" in state_first
+    assert "state[0]:allowedInTelemetry:missing_field" in state_first
+    assert "registry:validation_containment" not in state_first
+    assert registry.state_allows_public_telemetry(state) is False
+
+    mutation_first = registry.validate_registry((), (mutation,))
+    mutation_second = registry.validate_registry((), (mutation,))
+    assert mutation_first == mutation_second
+    assert "mutation[0]:mutationId:missing_field" in mutation_first
+    assert "mutation[0]:targetStateIds:missing_field" in mutation_first
+    assert "registry:validation_containment" not in mutation_first
+    assert registry.mutation_allows_public_telemetry(mutation) is False
+
+
+def test_exact_declaration_with_deleted_field_is_specific_and_denied():
+    state = dataclasses.replace(registry.states()[0])
+    object.__delattr__(state, "classification")
+    assert registry.validate_registry((state,), ()) == (
+        "state[0]:classification:missing_field",)
+    assert registry.state_allows_public_telemetry(state) is False
+
+    mutation = dataclasses.replace(registry.mutations()[0])
+    object.__delattr__(mutation, "criticality")
+    errors = registry.validate_registry(registry.states(), (mutation,))
+    assert any(error.endswith(":criticality:missing_field")
+               for error in errors)
+    assert registry.mutation_allows_public_telemetry(mutation) is False
+
+
+def test_subclass_wrong_dataclass_and_malformed_tuple_are_total():
+    class StateSubclass(registry.StateDeclaration):
+        pass
+
+    state_subclass = object.__new__(StateSubclass)
+    wrong_dataclass = object.__new__(registry.MutationDeclaration)
+    assert registry.validate_registry((state_subclass,), ()) == (
+        "state[0]:not_exact_StateDeclaration",)
+    assert registry.validate_registry((wrong_dataclass,), ()) == (
+        "state[0]:not_exact_StateDeclaration",)
+    assert registry.validate_registry((), (state_subclass,)) == (
+        "mutation[0]:not_exact_MutationDeclaration",)
+    assert registry.validate_registry((None, 1, [], {}), ()) == (
+        "state[0]:not_exact_StateDeclaration",
+        "state[1]:not_exact_StateDeclaration",
+        "state[2]:not_exact_StateDeclaration",
+        "state[3]:not_exact_StateDeclaration",
+    )
+
+
+def test_hostile_extra_instance_key_is_not_interpreted_by_validator():
+    state = object.__new__(registry.StateDeclaration)
+    key = HostileCollisionKey("stateId")
+    object.__getattribute__(state, "__dict__")[key] = HostileValue()
+    key.calls.clear()
+
+    errors = registry.validate_registry((state,), ())
+    assert "state[0]:unexpected_instance_field" in errors
+    assert "state[0]:stateId:missing_field" in errors
+    assert key.calls == []
+
+
+def test_validation_invalid_raw_state_enum_is_never_authorized():
+    template = next(row for row in registry.states()
+                    if registry.state_allows_public_telemetry(row))
+    raw = dataclasses.replace(
+        template, classification=template.classification.value)
+    assert any(":classification:not_exact_enum" in error
+               for error in registry.validate_registry((raw,), ()))
+    assert registry.state_allows_public_telemetry(raw) is False
+
+
+def test_validation_invalid_raw_mutation_enum_is_never_authorized():
+    template = next(row for row in registry.mutations()
+                    if registry.mutation_allows_public_telemetry(row))
+    raw = dataclasses.replace(
+        template, criticality=template.criticality.value)
+    assert any(":criticality:not_exact_enum" in error
+               for error in registry.validate_registry(
+                   registry.states(), (raw,)))
+    assert registry.mutation_allows_public_telemetry(raw) is False
+
+
+def test_duplicate_safe_target_is_validation_invalid_and_policy_denied():
+    template = next(row for row in registry.mutations()
+                    if registry.mutation_allows_public_telemetry(row))
+    duplicate = dataclasses.replace(
+        template,
+        targetStateIds=(template.targetStateIds[0],
+                        template.targetStateIds[0]))
+    assert any(":targetStateIds:duplicate_item" in error
+               for error in registry.validate_registry(
+                   registry.states(), (duplicate,)))
+    assert registry.mutation_allows_public_telemetry(duplicate) is False
+
+
+def test_hostile_collision_index_key_is_rejected_without_special_methods():
+    mutation = next(row for row in registry.mutations()
+                    if registry.mutation_allows_public_telemetry(row))
+    key = HostileCollisionKey(mutation.targetStateIds[0])
+    hostile_index = {key: registry.states()[0]}
+    key.calls.clear()
+
+    assert registry.mutation_allows_public_telemetry(
+        mutation, hostile_index) is False
+    assert key.calls == []
+
+
+@pytest.mark.parametrize("index_factory", [
+    lambda target, state: {1: state},
+    lambda target, state: {target: object.__new__(
+        registry.StateDeclaration)},
+    lambda target, state: {target: None},
+    lambda target, state: {"future.key_mismatch": state},
+    lambda target, state: {},
+    lambda target, state: [(target, state)],
+])
+def test_malformed_raw_state_indexes_fail_closed(index_factory):
+    mutation = next(row for row in registry.mutations()
+                    if registry.mutation_allows_public_telemetry(row))
+    target = mutation.targetStateIds[0]
+    state = registry.state_by_id()[target]
+    assert registry.mutation_allows_public_telemetry(
+        mutation, index_factory(target, state)) is False
+
+
+def test_custom_mapping_and_dict_subclass_indexes_fail_closed():
+    mutation = next(row for row in registry.mutations()
+                    if registry.mutation_allows_public_telemetry(row))
+    target = mutation.targetStateIds[0]
+    state = registry.state_by_id()[target]
+
+    class CustomMapping:
+        def items(self):
+            raise AssertionError("custom mapping must not be inspected")
+
+    class DictSubclass(dict):
+        pass
+
+    assert registry.mutation_allows_public_telemetry(
+        mutation, CustomMapping()) is False
+    assert registry.mutation_allows_public_telemetry(
+        mutation, DictSubclass({target: state})) is False
+
+
+def test_semantically_duplicate_or_mismatched_state_index_is_denied():
+    mutation = next(row for row in registry.mutations()
+                    if registry.mutation_allows_public_telemetry(row))
+    target = mutation.targetStateIds[0]
+    state = registry.state_by_id()[target]
+    # Two keys cannot represent the same valid declaration: the second key
+    # must mismatch its declaration stateId and therefore denies the index.
+    duplicate_semantics = {
+        target: state,
+        "future.duplicate_semantics": state,
+    }
+    assert registry.mutation_allows_public_telemetry(
+        mutation, duplicate_semantics) is False

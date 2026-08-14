@@ -1,8 +1,14 @@
 """Registry Core inventory, determinism, and non-authority invariants."""
 
 import ast
+import dataclasses
 import json
+import os
 import pathlib
+import subprocess
+import sys
+
+import pytest
 
 import argus_recovery_registry as registry
 
@@ -102,7 +108,8 @@ startup.restore_transition
 """.split()))
 
 EXPECTED_POLICY_SHA256 = \
-    "f08a22350686f4c0fcbbdea50b185915ca17331edc15ffc84ad854b51ed550c1"
+    "c98c2d8995bdbf7b256d997f6987e8b898cb0e542a23fe7f7817959543752304"
+EXPECTED_POLICY_CANONICAL_BYTES = 60653
 
 
 def test_registry_is_valid_sorted_unique_and_exact_inventory_equivalent():
@@ -186,7 +193,8 @@ def test_policy_document_and_sha_are_byte_deterministic():
         registry.registry_policy_canonical_bytes()
     assert registry.registry_policy_sha256() == EXPECTED_POLICY_SHA256
     assert registry.REGISTRY_POLICY_SHA256 == EXPECTED_POLICY_SHA256
-    assert len(registry.registry_policy_canonical_bytes()) == 57972
+    assert len(registry.registry_policy_canonical_bytes()) == \
+        EXPECTED_POLICY_CANONICAL_BYTES
 
     encoded = json.dumps(
         first_document, ensure_ascii=False, allow_nan=False,
@@ -196,6 +204,156 @@ def test_policy_document_and_sha_are_byte_deterministic():
     assert first_document["authoritative"] is False
     assert first_document["stateRegistry"]["authoritative"] is False
     assert first_document["mutationRegistry"]["authoritative"] is False
+    assert first_document["policySemantics"] == \
+        registry.policy_semantics_document()
+    assert first_document["policySemanticGoldenVector"] == \
+        registry.policy_semantic_golden_vector()
+
+
+def test_policy_semantics_document_is_explicit_and_golden_vector_is_actual():
+    semantics = registry.policy_semantics_document()
+    assert semantics["schemaVersion"] == registry.POLICY_SEMANTICS_SCHEMA
+    assert semantics["validatorRules"] == {
+        "totalForAnyPythonValue": True,
+        "malformedValues": "deny_with_canonical_bounded_errors",
+        "hostileValueFormatting": "forbidden",
+        "outerContainmentError": "registry:validation_containment",
+    }
+    assert semantics["stateAuthorizationRules"][
+        "declarationMustBeFullyValid"] is True
+    assert semantics["mutationAuthorizationRules"][
+        "declarationMustBeFullyValid"] is True
+    assert semantics["mutationAuthorizationRules"]["targetStateIds"][
+        "unique"] is True
+    assert semantics["mutationAuthorizationRules"]["stateIndex"][
+        "malformed"] == "deny"
+    assert set(semantics["durabilityCompatibilityRules"]) == {
+        member.value for member in registry.Classification}
+
+    vector = registry.policy_semantic_golden_vector()
+    assert vector["schemaVersion"] == registry.POLICY_GOLDEN_VECTOR_SCHEMA
+    assert vector["stateAuthorization"] == {
+        "validPublic": True,
+        "telemetryDisabled": False,
+        "rawClassificationString": False,
+        "deniedPrivacyClasses": {
+            "INTERNAL": False,
+            "OWNER_PRIVATE": False,
+            "SECURITY_SENSITIVE": False,
+            "SECRET": False,
+            "CLIENT_PRIVATE": False,
+            "CLIENT_OPAQUE": False,
+        },
+        "missingFieldExactDataclass": False,
+    }
+    assert vector["mutationAuthorization"] == {
+        "validPublicAllSafeTargets": True,
+        "mixedSafePrivateTargets": False,
+        "duplicateTarget": False,
+        "unknownTarget": False,
+        "rawCriticalityString": False,
+        "malformedStateIndex": False,
+    }
+    assert vector["durabilityValidation"]["validA"]["valid"] is True
+    assert vector["durabilityValidation"]["aEphemeral"]["valid"] is False
+    assert vector["durabilityValidation"]["validC"]["valid"] is True
+    assert vector["durabilityValidation"]["cPreserveFalse"]["valid"] is False
+    assert vector["durabilityValidation"]["validF"]["valid"] is True
+    assert vector["durabilityValidation"]["fFullPlusWal"]["valid"] is False
+
+
+def test_policy_only_authorization_changes_change_fingerprint(monkeypatch):
+    baseline = registry.registry_policy_sha256()
+    monkeypatch.setattr(
+        registry, "state_allows_public_telemetry", lambda _row: True)
+    assert registry.registry_policy_sha256() != baseline
+
+    monkeypatch.undo()
+    baseline = registry.registry_policy_sha256()
+    monkeypatch.setattr(
+        registry, "mutation_allows_public_telemetry",
+        lambda _row, _state_index=None: True)
+    assert registry.registry_policy_sha256() != baseline
+
+
+def _replace_state_in_registry(monkeypatch, replacement):
+    monkeypatch.setattr(
+        registry, "_STATES", tuple(
+            replacement if row.stateId == replacement.stateId else row
+            for row in registry.states()))
+
+
+def _replace_mutation_in_registry(monkeypatch, replacement):
+    monkeypatch.setattr(
+        registry, "_MUTATIONS", tuple(
+            replacement if row.mutationId == replacement.mutationId else row
+            for row in registry.mutations()))
+
+
+@pytest.mark.parametrize("change", [
+    {"privacyClass": registry.PrivacyClass.INTERNAL},
+    {"allowedInTelemetry": False},
+    {"classification": registry.Classification.B},
+    {"intendedFutureDurability":
+     registry.FutureDurability.IMMUTABLE_EXTERNAL_REF},
+    {"containsSecret": True},
+    {"containsOwnerPrivateData": True},
+])
+def test_state_policy_fields_independently_change_fingerprint(
+        monkeypatch, change):
+    baseline = registry.registry_policy_sha256()
+    state = registry.state_by_id()["backend.schema_identity"]
+    _replace_state_in_registry(
+        monkeypatch, dataclasses.replace(state, **change))
+    assert registry.registry_policy_sha256() != baseline
+
+
+@pytest.mark.parametrize("change", [
+    {"targetStateIds": ("backend.schema_identity",)},
+    {"payloadTelemetryPolicy":
+     registry.PayloadTelemetryPolicy.AGGREGATE_REDACTED},
+    {"privacyClass": registry.PrivacyClass.INTERNAL},
+    {"criticality": registry.MutationCriticality.CONDITIONAL},
+])
+def test_mutation_policy_fields_independently_change_fingerprint(
+        monkeypatch, change):
+    baseline = registry.registry_policy_sha256()
+    mutation = registry.mutation_by_id()["external.public_ledger_write"]
+    _replace_mutation_in_registry(
+        monkeypatch, dataclasses.replace(mutation, **change))
+    assert registry.registry_policy_sha256() != baseline
+
+
+@pytest.mark.parametrize("constant", [
+    "POLICY_DURABILITY_RULES_VERSION",
+    "POLICY_TYPE_RULES_VERSION",
+    "POLICY_AUTHORIZATION_RULES_VERSION",
+])
+def test_policy_rule_version_changes_change_fingerprint(monkeypatch, constant):
+    baseline = registry.registry_policy_sha256()
+    monkeypatch.setattr(registry, constant, getattr(registry, constant) + ".x")
+    assert registry.registry_policy_sha256() != baseline
+
+
+def test_runtime_environment_does_not_change_fingerprint(monkeypatch):
+    baseline = registry.registry_policy_sha256()
+    monkeypatch.setenv("ARGUS_UNRELATED_RUNTIME_VALUE", "changed")
+    assert registry.registry_policy_sha256() == baseline
+
+
+def test_fingerprint_is_cross_process_and_hash_seed_deterministic():
+    expected = f"{EXPECTED_POLICY_SHA256} {EXPECTED_POLICY_CANONICAL_BYTES}"
+    program = (
+        "import argus_recovery_registry as r; "
+        "print(r.registry_policy_sha256(), "
+        "len(r.registry_policy_canonical_bytes()))")
+    for seed in ("0", "1", "42", "random"):
+        environment = os.environ.copy()
+        environment["PYTHONHASHSEED"] = seed
+        completed = subprocess.run(
+            [sys.executable, "-c", program], check=True,
+            capture_output=True, text=True, env=environment)
+        assert completed.stdout.strip() == expected
 
 
 def _checkpoint_literal_keys() -> tuple[str, ...]:

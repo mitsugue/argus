@@ -81,6 +81,15 @@ stable sorted error codes. It does not call arbitrary `__str__`, `__iter__`,
 `__hash__`, or truthiness hooks. Inputs beyond the fixed 512-row safety bound
 are rejected before row iteration.
 
+Exact declaration type is not treated as proof that the dataclass constructor
+ran. The validator snapshots the exact instance dictionary, accepts only the
+complete fixed field set, and reports a static `missing_field` or
+`unexpected_instance_field` code for malformed exact instances. This includes
+objects created with `object.__new__` and instances with a deleted field. It
+never formats an invalid field value. A final static containment code protects
+the total API from novel Python objects, while the supported malformed forms
+retain their field-specific canonical errors.
+
 ## Privacy and telemetry
 
 Telemetry permission is an affirmative policy capability, not evidence that
@@ -102,6 +111,12 @@ These classes can never authorize literal public identifiers:
 
 Unknown or malformed privacy is invalid and non-public. PR A exposes no public
 API; the helper exists for PR B/C policy decisions.
+
+Authorization is validity-bound: the state helper first applies the complete
+declaration structural, exact-type, compatibility and privacy validator. A raw
+string that happens to equal an enum value, an incomplete exact dataclass, or
+any other validation-invalid declaration is denied even when its remaining
+telemetry fields look permissive.
 
 The current privacy counts are:
 
@@ -127,14 +142,24 @@ authorize production mutations.
 
 A mutation identity is telemetry-safe only when all of these are true:
 
-1. mutation privacy is exact `PUBLIC_METADATA`;
-2. telemetry policy is exact `METADATA_ONLY`;
-3. the target tuple is non-empty and exact;
-4. every target exists;
-5. every target independently passes the state telemetry policy.
+1. the complete mutation declaration is valid;
+2. mutation privacy is exact `PUBLIC_METADATA`;
+3. telemetry policy is exact `METADATA_ONLY`;
+4. the target tuple is non-empty, exact, and contains no duplicate;
+5. every target exists;
+6. every target independently passes the state telemetry policy.
 
 One private, internal, security, secret, client or unknown target denies the
 whole mutation identity. Payloads are never authorized by this helper.
+
+The optional raw state index boundary accepts only an exact `dict`. Before any
+target lookup it iterates the raw entries without lookup, rejects every
+non-exact-string key and incomplete/invalid value, proves each key equals the
+validated declaration `stateId`, and builds a fresh canonical index. A custom
+mapping, dict subclass, key mismatch, missing target, semantically duplicated
+declaration or hostile object key is denied. Hostile key equality, hashing and
+formatting are not invoked by authorization. Duplicate mutation targets are
+malformed policy input and are never silently de-duplicated.
 
 Current WAL-coverage inventory:
 
@@ -158,23 +183,31 @@ Exactly three mutation identities currently satisfy the literal-ID policy:
 
 ## Deterministic document and policy fingerprint
 
-`registry_document()` returns declarations and the validation-policy contract
-only. It contains no timestamp or runtime payload. Every field is explicitly
-serialized; arbitrary object serialization is not used.
+`registry_document()` returns declarations, a normative machine-readable
+policy-semantics document, and a semantic golden vector evaluated through the
+actual exported validation and authorization helpers. It contains no timestamp
+or runtime payload. Every declaration field is explicitly serialized;
+arbitrary object serialization is not used.
 
 Canonical bytes use UTF-8 JSON with sorted keys, compact separators,
 `allow_nan=false`, and no timestamp. `registryPolicySha256` binds:
 
 - state and mutation schema versions;
 - every declaration field;
-- classification/durability compatibility;
-- exact-type semantics;
-- public privacy allowlist;
-- mutation target telemetry requirements.
+- versioned exact-type and total-validator semantics;
+- all A–F classification/durability compatibility rules;
+- the complete state and mutation authorization rules;
+- raw-index and duplicate-target denial semantics;
+- an evaluated allow/deny/error-code golden vector covering public, private,
+  malformed, mixed-target, unknown-target and representative durability cases.
 
-Identical policy produces byte-identical content and digest. A declaration or
-policy change intentionally changes the digest. PR C may later use it to reject
-measurement artifacts written under a different policy; PR A persists nothing.
+The fingerprint is therefore not merely a declaration digest. Changing either
+authorization helper's evaluated behavior changes the vector and digest even
+when declarations are byte-identical. Changing a compatibility/type rule is
+bound through its explicit rule version and normative document. Identical
+policy produces byte-identical content and digest across processes and hash
+seeds. PR C may later use it to reject measurement artifacts written under a
+different policy; PR A persists nothing.
 
 ## Checkpoint inventory tripwire
 

@@ -6,7 +6,7 @@ Unknowns are kept explicit and conservative so later FullGeneration/WAL work
 cannot silently treat an unproved state as disposable.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import hashlib
 import json
@@ -17,6 +17,12 @@ from typing import Any, Dict, Optional, Tuple
 REGISTRY_SCHEMA = "argus-authoritative-state-registry-v1"
 MUTATION_REGISTRY_SCHEMA = "argus-mutation-class-registry-v1"
 REGISTRY_POLICY_SCHEMA = "argus-recovery-registry-policy-v1"
+POLICY_SEMANTICS_SCHEMA = "argus-recovery-registry-policy-semantics-v2"
+POLICY_GOLDEN_VECTOR_SCHEMA = \
+    "argus-recovery-registry-policy-golden-vector-v1"
+POLICY_TYPE_RULES_VERSION = "exact-types-total-v2"
+POLICY_DURABILITY_RULES_VERSION = "classification-durability-v1"
+POLICY_AUTHORIZATION_RULES_VERSION = "telemetry-authorization-v2"
 _STABLE_ID_RE = re.compile(
     r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$", re.ASCII)
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]*$", re.ASCII)
@@ -138,6 +144,18 @@ class StateDeclaration:
     allowedInTelemetry: bool = False
 
 
+_STATE_DECLARATION_FIELDS = (
+    "stateId", "humanName", "classification", "mustPreserveNow",
+    "currentStorageKind", "currentRecoveryCoverage", "mutationDomain",
+    "privacyClass", "containsSecret", "containsOwnerPrivateData",
+    "intendedFutureDurability", "sourceDerivedStatus",
+    "rebuildRequirements", "mutationRegistryExpectation",
+    "evidenceOwnerModule", "checkpointKeys", "notes",
+    "ephemeralRetentionReason", "allowedInTelemetry",
+)
+_STATE_DECLARATION_FIELD_SET = frozenset(_STATE_DECLARATION_FIELDS)
+
+
 def _s(state_id: str, name: str, classification: Classification,
        storage: StorageKind, coverage: RecoveryCoverage, domain: str,
        privacy: PrivacyClass, future: FutureDurability, nature: StateNature,
@@ -162,17 +180,12 @@ def _s(state_id: str, name: str, classification: Classification,
 
 
 def state_allows_public_telemetry(row: Any) -> bool:
-    """Return the one fail-closed state identifier authorization decision."""
-    return (
-        type(row) is StateDeclaration and
-        type(row.allowedInTelemetry) is bool and
-        row.allowedInTelemetry is True and
-        type(row.privacyClass) is PrivacyClass and
-        row.privacyClass is PrivacyClass.PUBLIC_METADATA and
-        type(row.containsSecret) is bool and
-        row.containsSecret is False and
-        type(row.containsOwnerPrivateData) is bool and
-        row.containsOwnerPrivateData is False)
+    """Authorize a state identifier only after complete declaration validity."""
+    try:
+        values, errors = _validated_state_declaration(row, 0)
+        return not errors and _state_values_allow_public_telemetry(values)
+    except Exception:
+        return False
 
 
 _STATES: Tuple[StateDeclaration, ...] = tuple(sorted((
@@ -464,6 +477,15 @@ class MutationDeclaration:
     notes: str
 
 
+_MUTATION_DECLARATION_FIELDS = (
+    "mutationId", "targetStateIds", "criticality", "sourceFamily",
+    "deterministicReducerExpected", "currentPersistenceRoute",
+    "currentWalCoverage", "futureTreatment", "syncDurabilityCandidate",
+    "privacyClass", "payloadTelemetryPolicy", "notes",
+)
+_MUTATION_DECLARATION_FIELD_SET = frozenset(_MUTATION_DECLARATION_FIELDS)
+
+
 def _m(mid: str, targets: Tuple[str, ...], criticality: MutationCriticality,
        source: str, reducer: bool, route: str, coverage: WalCoverage,
        future: FutureMutationTreatment, sync: bool, privacy: PrivacyClass,
@@ -528,24 +550,51 @@ def mutation_by_class() -> Dict[str, MutationDeclaration]:
 
 def mutation_allows_public_telemetry(
         row: Any, state_index: Any = _USE_BUILTIN) -> bool:
-    """Fail-closed mutation-identifier authorization; never payload policy."""
-    if type(row) is not MutationDeclaration:
-        return False
-    states_by_id = state_by_id() if state_index is _USE_BUILTIN else state_index
-    if type(states_by_id) is not dict or \
-            type(row.privacyClass) is not PrivacyClass or \
-            row.privacyClass is not PrivacyClass.PUBLIC_METADATA or \
-            type(row.payloadTelemetryPolicy) is not PayloadTelemetryPolicy or \
-            row.payloadTelemetryPolicy is not PayloadTelemetryPolicy.METADATA_ONLY or \
-            type(row.targetStateIds) is not tuple or not row.targetStateIds:
-        return False
-    for target in row.targetStateIds:
-        if type(target) is not str:
+    """Authorize a mutation identifier only through a validated state index."""
+    try:
+        raw_index = state_by_id() if state_index is _USE_BUILTIN else state_index
+        trusted_index = _trusted_state_index(raw_index)
+        if trusted_index is None:
             return False
-        target_row = states_by_id.get(target)
-        if not state_allows_public_telemetry(target_row):
-            return False
-    return True
+        values, errors = _validated_mutation_declaration(
+            row, 0, trusted_index)
+        return not errors and _mutation_values_allow_public_telemetry(
+            values, trusted_index)
+    except Exception:
+        return False
+
+
+def _safe_exact_instance_fields(
+        row: Any, expected_type: type, field_names: Tuple[str, ...],
+        field_name_set: frozenset[str], kind: str,
+        index: int) -> Tuple[Dict[str, Any], set[str]]:
+    """Snapshot exact instance fields without invoking hostile field values."""
+    prefix = f"{kind}[{index}]"
+    errors: set[str] = set()
+    if type(row) is not expected_type:
+        errors.add(f"{prefix}:not_exact_{expected_type.__name__}")
+        return {}, errors
+    try:
+        raw_fields = object.__getattribute__(row, "__dict__")
+    except (AttributeError, TypeError):
+        errors.add(f"{prefix}:instance_fields_unavailable")
+        return {}, errors
+    if type(raw_fields) is not dict:
+        errors.add(f"{prefix}:instance_fields_not_exact_dict")
+        return {}, errors
+
+    values: Dict[str, Any] = {}
+    for key, value in raw_fields.items():
+        # Check the key type before membership.  A hostile non-string key is
+        # never hashed, compared, formatted or otherwise interpreted here.
+        if type(key) is not str or key not in field_name_set:
+            errors.add(f"{prefix}:unexpected_instance_field")
+            continue
+        values[key] = value
+    for field in field_names:
+        if field not in values:
+            errors.add(f"{prefix}:{field}:missing_field")
+    return values, errors
 
 
 def _prefix(kind: str, index: int, value: Any) -> str:
@@ -621,166 +670,239 @@ def _validate_string_tuple(errors: set[str], prefix: str, field: str,
     return valid and (len(value) > 0 or not required)
 
 
-def _validate_state_row(errors: set[str], row: StateDeclaration,
-                        index: int) -> None:
-    prefix = _prefix("state", index, row.stateId)
+def _state_values_allow_public_telemetry(values: Dict[str, Any]) -> bool:
+    return (
+        values.get("allowedInTelemetry") is True and
+        values.get("privacyClass") is PrivacyClass.PUBLIC_METADATA and
+        values.get("containsSecret") is False and
+        values.get("containsOwnerPrivateData") is False)
+
+
+def _validate_state_values(errors: set[str], values: Dict[str, Any],
+                           index: int) -> None:
+    state_id = values["stateId"]
+    prefix = _prefix("state", index, state_id)
     state_id_valid = _validate_text(
-        errors, prefix, "stateId", row.stateId, _MAX_STABLE_ID,
+        errors, prefix, "stateId", state_id, _MAX_STABLE_ID,
         ascii_only=True, pattern=_STABLE_ID_RE)
     if state_id_valid:
-        prefix = row.stateId
-    _validate_text(errors, prefix, "humanName", row.humanName, _MAX_NAME)
+        prefix = state_id
+    _validate_text(errors, prefix, "humanName", values["humanName"], _MAX_NAME)
     classification_valid = _validate_enum(
-        errors, prefix, "classification", row.classification, Classification)
+        errors, prefix, "classification", values["classification"],
+        Classification)
     preserve_valid = _validate_bool(
-        errors, prefix, "mustPreserveNow", row.mustPreserveNow)
+        errors, prefix, "mustPreserveNow", values["mustPreserveNow"])
     _validate_enum(errors, prefix, "currentStorageKind",
-                   row.currentStorageKind, StorageKind)
+                   values["currentStorageKind"], StorageKind)
     _validate_enum(errors, prefix, "currentRecoveryCoverage",
-                   row.currentRecoveryCoverage, RecoveryCoverage)
-    _validate_text(errors, prefix, "mutationDomain", row.mutationDomain,
+                   values["currentRecoveryCoverage"], RecoveryCoverage)
+    _validate_text(errors, prefix, "mutationDomain", values["mutationDomain"],
                    _MAX_DOMAIN, ascii_only=True, pattern=_TOKEN_RE)
     privacy_valid = _validate_enum(
-        errors, prefix, "privacyClass", row.privacyClass, PrivacyClass)
+        errors, prefix, "privacyClass", values["privacyClass"], PrivacyClass)
     secret_valid = _validate_bool(
-        errors, prefix, "containsSecret", row.containsSecret)
+        errors, prefix, "containsSecret", values["containsSecret"])
     private_valid = _validate_bool(
         errors, prefix, "containsOwnerPrivateData",
-        row.containsOwnerPrivateData)
+        values["containsOwnerPrivateData"])
     telemetry_valid = _validate_bool(
-        errors, prefix, "allowedInTelemetry", row.allowedInTelemetry)
+        errors, prefix, "allowedInTelemetry", values["allowedInTelemetry"])
     future_valid = _validate_enum(
         errors, prefix, "intendedFutureDurability",
-        row.intendedFutureDurability, FutureDurability)
+        values["intendedFutureDurability"], FutureDurability)
     _validate_enum(errors, prefix, "sourceDerivedStatus",
-                   row.sourceDerivedStatus, StateNature)
+                   values["sourceDerivedStatus"], StateNature)
     rebuild_valid = _validate_string_tuple(
-        errors, prefix, "rebuildRequirements", row.rebuildRequirements)
+        errors, prefix, "rebuildRequirements", values["rebuildRequirements"])
     reducer_valid = _validate_enum(
         errors, prefix, "mutationRegistryExpectation",
-        row.mutationRegistryExpectation, ReducerExpectation)
+        values["mutationRegistryExpectation"], ReducerExpectation)
     _validate_text(errors, prefix, "evidenceOwnerModule",
-                   row.evidenceOwnerModule, _MAX_OWNER_MODULE,
+                   values["evidenceOwnerModule"], _MAX_OWNER_MODULE,
                    ascii_only=True)
     _validate_string_tuple(
-        errors, prefix, "checkpointKeys", row.checkpointKeys,
+        errors, prefix, "checkpointKeys", values["checkpointKeys"],
         item_limit=64, pattern=_CHECKPOINT_KEY_RE)
-    _validate_text(errors, prefix, "notes", row.notes, _MAX_NOTES)
-    if row.ephemeralRetentionReason is not None:
+    _validate_text(errors, prefix, "notes", values["notes"], _MAX_NOTES)
+    if values["ephemeralRetentionReason"] is not None:
         _validate_text(errors, prefix, "ephemeralRetentionReason",
-                       row.ephemeralRetentionReason, _MAX_NOTES)
+                       values["ephemeralRetentionReason"], _MAX_NOTES)
 
     if classification_valid and preserve_valid and future_valid:
-        classification = row.classification
-        future = row.intendedFutureDurability
+        classification = values["classification"]
+        future = values["intendedFutureDurability"]
         if classification in (Classification.A, Classification.B):
-            if row.mustPreserveNow is not True:
+            if values["mustPreserveNow"] is not True:
                 errors.add(f"{prefix}:classification_must_preserve")
             if future not in (FutureDurability.FULL_PLUS_WAL,
                               FutureDurability.IMMUTABLE_EXTERNAL_REF):
                 errors.add(f"{prefix}:classification_future_incompatible")
         elif classification is Classification.C:
-            if row.mustPreserveNow is not True:
+            if values["mustPreserveNow"] is not True:
                 errors.add(f"{prefix}:v1_rebuild_state_must_preserve")
             if future is not FutureDurability.REBUILD_AFTER_PROOF or \
-                    not rebuild_valid or not row.rebuildRequirements:
+                    not rebuild_valid or not values["rebuildRequirements"]:
                 errors.add(f"{prefix}:rebuild_contract_incomplete")
-            if reducer_valid and row.mutationRegistryExpectation is not \
+            if reducer_valid and values["mutationRegistryExpectation"] is not \
                     ReducerExpectation.REQUIRED:
                 errors.add(f"{prefix}:rebuild_reducer_required")
         elif classification is Classification.D:
-            if row.mustPreserveNow is not True:
+            if values["mustPreserveNow"] is not True:
                 errors.add(f"{prefix}:v1_reacquirable_state_must_preserve")
             if future is not FutureDurability.REACQUIRE_AFTER_CONTRACT or \
-                    not rebuild_valid or not row.rebuildRequirements:
+                    not rebuild_valid or not values["rebuildRequirements"]:
                 errors.add(f"{prefix}:reacquisition_contract_incomplete")
         elif classification is Classification.E:
             if future is FutureDurability.EPHEMERAL:
-                if row.mustPreserveNow is not False:
+                if values["mustPreserveNow"] is not False:
                     errors.add(f"{prefix}:ephemeral_state_must_not_preserve")
             elif future is FutureDurability.FULL_PLUS_WAL:
-                if row.mustPreserveNow is not True:
+                if values["mustPreserveNow"] is not True:
                     errors.add(f"{prefix}:retained_cache_must_preserve")
-                reason = row.ephemeralRetentionReason
+                reason = values["ephemeralRetentionReason"]
                 if type(reason) is not str or not reason.strip():
                     errors.add(f"{prefix}:retained_cache_reason_required")
             else:
                 errors.add(f"{prefix}:classification_future_incompatible")
         elif classification is Classification.F:
-            if row.mustPreserveNow is not True:
+            if values["mustPreserveNow"] is not True:
                 errors.add(f"{prefix}:classification_must_preserve")
             if future is not FutureDurability.UNRESOLVED:
                 errors.add(f"{prefix}:unresolved_state_must_remain_unresolved")
-            if reducer_valid and row.mutationRegistryExpectation is not \
+            if reducer_valid and values["mutationRegistryExpectation"] is not \
                     ReducerExpectation.UNRESOLVED:
                 errors.add(f"{prefix}:unresolved_reducer_must_remain_unresolved")
 
     if privacy_valid and secret_valid and private_valid:
-        if row.privacyClass is PrivacyClass.PUBLIC_METADATA and \
-                (row.containsSecret is not False or
-                 row.containsOwnerPrivateData is not False):
+        if values["privacyClass"] is PrivacyClass.PUBLIC_METADATA and \
+                (values["containsSecret"] is not False or
+                 values["containsOwnerPrivateData"] is not False):
             errors.add(f"{prefix}:public_metadata_contains_private_content")
-        if row.privacyClass is PrivacyClass.SECRET and \
-                row.containsSecret is not True:
+        if values["privacyClass"] is PrivacyClass.SECRET and \
+                values["containsSecret"] is not True:
             errors.add(f"{prefix}:secret_privacy_requires_secret_flag")
-        if row.privacyClass in (
+        if values["privacyClass"] in (
                 PrivacyClass.OWNER_PRIVATE, PrivacyClass.CLIENT_PRIVATE,
                 PrivacyClass.CLIENT_OPAQUE) and \
-                row.containsOwnerPrivateData is not True:
+                values["containsOwnerPrivateData"] is not True:
             errors.add(f"{prefix}:private_privacy_requires_private_flag")
-    if telemetry_valid and row.allowedInTelemetry is True and \
-            not state_allows_public_telemetry(row):
+    if telemetry_valid and values["allowedInTelemetry"] is True and \
+            not _state_values_allow_public_telemetry(values):
         errors.add(f"{prefix}:incompatible_public_telemetry")
 
 
-def _validate_mutation_row(errors: set[str], row: MutationDeclaration,
-                           index: int,
-                           state_index: Dict[str, StateDeclaration]) -> None:
-    prefix = _prefix("mutation", index, row.mutationId)
+def _validated_state_declaration(
+        row: Any, index: int) -> Tuple[Dict[str, Any], set[str]]:
+    values, errors = _safe_exact_instance_fields(
+        row, StateDeclaration, _STATE_DECLARATION_FIELDS,
+        _STATE_DECLARATION_FIELD_SET, "state", index)
+    if not errors:
+        _validate_state_values(errors, values, index)
+    return values, errors
+
+
+def _trusted_state_index(
+        raw_index: Any) -> Optional[
+            Dict[str, Tuple[StateDeclaration, Dict[str, Any]]]]:
+    if type(raw_index) is not dict or len(raw_index) > _MAX_REGISTRY_ROWS:
+        return None
+    trusted: Dict[str, Tuple[StateDeclaration, Dict[str, Any]]] = {}
+    for index, (key, row) in enumerate(raw_index.items()):
+        # A non-string key is rejected before hashing/equality/formatting.
+        if type(key) is not str:
+            return None
+        values, errors = _validated_state_declaration(row, index)
+        if errors or values["stateId"] != key or key in trusted:
+            return None
+        trusted[key] = (row, values)
+    return trusted
+
+
+def _validate_mutation_values(
+        errors: set[str], values: Dict[str, Any], index: int,
+        state_index: Dict[
+            str, Tuple[StateDeclaration, Dict[str, Any]]]) -> None:
+    mutation_id = values["mutationId"]
+    prefix = _prefix("mutation", index, mutation_id)
     mutation_id_valid = _validate_text(
-        errors, prefix, "mutationId", row.mutationId, _MAX_STABLE_ID,
+        errors, prefix, "mutationId", mutation_id, _MAX_STABLE_ID,
         ascii_only=True, pattern=_STABLE_ID_RE)
     if mutation_id_valid:
-        prefix = row.mutationId
+        prefix = mutation_id
     targets_valid = _validate_string_tuple(
-        errors, prefix, "targetStateIds", row.targetStateIds,
+        errors, prefix, "targetStateIds", values["targetStateIds"],
         item_limit=_MAX_STABLE_ID, pattern=_STABLE_ID_RE, required=True)
-    _validate_enum(errors, prefix, "criticality", row.criticality,
+    _validate_enum(errors, prefix, "criticality", values["criticality"],
                    MutationCriticality)
-    _validate_text(errors, prefix, "sourceFamily", row.sourceFamily,
+    _validate_text(errors, prefix, "sourceFamily", values["sourceFamily"],
                    _MAX_DOMAIN, ascii_only=True, pattern=_TOKEN_RE)
     _validate_bool(errors, prefix, "deterministicReducerExpected",
-                   row.deterministicReducerExpected)
+                   values["deterministicReducerExpected"])
     _validate_text(errors, prefix, "currentPersistenceRoute",
-                   row.currentPersistenceRoute, _MAX_OWNER_MODULE,
+                   values["currentPersistenceRoute"], _MAX_OWNER_MODULE,
                    ascii_only=True)
     _validate_enum(errors, prefix, "currentWalCoverage",
-                   row.currentWalCoverage, WalCoverage)
+                   values["currentWalCoverage"], WalCoverage)
     _validate_enum(errors, prefix, "futureTreatment",
-                   row.futureTreatment, FutureMutationTreatment)
+                   values["futureTreatment"], FutureMutationTreatment)
     _validate_bool(errors, prefix, "syncDurabilityCandidate",
-                   row.syncDurabilityCandidate)
+                   values["syncDurabilityCandidate"])
     privacy_valid = _validate_enum(
-        errors, prefix, "privacyClass", row.privacyClass, PrivacyClass)
+        errors, prefix, "privacyClass", values["privacyClass"], PrivacyClass)
     policy_valid = _validate_enum(
         errors, prefix, "payloadTelemetryPolicy",
-        row.payloadTelemetryPolicy, PayloadTelemetryPolicy)
-    _validate_text(errors, prefix, "notes", row.notes, _MAX_NOTES)
+        values["payloadTelemetryPolicy"], PayloadTelemetryPolicy)
+    _validate_text(errors, prefix, "notes", values["notes"], _MAX_NOTES)
 
     if targets_valid:
-        for target in row.targetStateIds:
+        for target in values["targetStateIds"]:
             if target not in state_index:
                 errors.add(f"{prefix}:unknown_target:{target}")
     if privacy_valid and policy_valid and \
-            row.privacyClass is PrivacyClass.PUBLIC_METADATA and \
-            row.payloadTelemetryPolicy is PayloadTelemetryPolicy.METADATA_ONLY and \
-            not mutation_allows_public_telemetry(row, state_index):
+            values["privacyClass"] is PrivacyClass.PUBLIC_METADATA and \
+            values["payloadTelemetryPolicy"] is \
+            PayloadTelemetryPolicy.METADATA_ONLY and targets_valid and \
+            any(target not in state_index or
+                not _state_values_allow_public_telemetry(
+                    state_index[target][1])
+                for target in values["targetStateIds"]):
         errors.add(f"{prefix}:public_mutation_targets_nonpublic_state")
 
 
-def validate_registry(state_rows: Any = _USE_BUILTIN,
-                      mutation_rows: Any = _USE_BUILTIN) -> Tuple[str, ...]:
-    """Validate every input value without coercion or arbitrary iteration."""
+def _validated_mutation_declaration(
+        row: Any, index: int,
+        state_index: Dict[
+            str, Tuple[StateDeclaration, Dict[str, Any]]]
+        ) -> Tuple[Dict[str, Any], set[str]]:
+    values, errors = _safe_exact_instance_fields(
+        row, MutationDeclaration, _MUTATION_DECLARATION_FIELDS,
+        _MUTATION_DECLARATION_FIELD_SET, "mutation", index)
+    if not errors:
+        _validate_mutation_values(errors, values, index, state_index)
+    return values, errors
+
+
+def _mutation_values_allow_public_telemetry(
+        values: Dict[str, Any],
+        state_index: Dict[
+            str, Tuple[StateDeclaration, Dict[str, Any]]]) -> bool:
+    targets = values.get("targetStateIds")
+    if values.get("privacyClass") is not PrivacyClass.PUBLIC_METADATA or \
+            values.get("payloadTelemetryPolicy") is not \
+            PayloadTelemetryPolicy.METADATA_ONLY or \
+            type(targets) is not tuple or not targets or \
+            len(targets) != len(set(targets)):
+        return False
+    for target in targets:
+        if type(target) is not str or target not in state_index or \
+                not state_allows_public_telemetry(state_index[target][0]):
+            return False
+    return True
+
+
+def _validate_registry_impl(state_rows: Any,
+                            mutation_rows: Any) -> Tuple[str, ...]:
     states_value = _STATES if state_rows is _USE_BUILTIN else state_rows
     mutations_value = _MUTATIONS if mutation_rows is _USE_BUILTIN else mutation_rows
     errors: set[str] = set()
@@ -800,37 +922,48 @@ def validate_registry(state_rows: Any = _USE_BUILTIN,
 
     exact_states = []
     for index, row in enumerate(states_value):
-        if type(row) is not StateDeclaration:
-            errors.add(f"state[{index}]:not_exact_StateDeclaration")
-            continue
-        exact_states.append(row)
-        _validate_state_row(errors, row, index)
+        values, row_errors = _validated_state_declaration(row, index)
+        errors.update(row_errors)
+        if type(row) is StateDeclaration and "stateId" in values and \
+                type(values["stateId"]) is str:
+            exact_states.append((row, values, not row_errors))
 
-    state_ids = [row.stateId for row in exact_states
-                 if type(row.stateId) is str]
-    if len(state_ids) == len(exact_states) and state_ids != sorted(state_ids):
+    state_ids = [values["stateId"] for _, values, _ in exact_states]
+    if len(state_ids) == len(states_value) and state_ids != sorted(state_ids):
         errors.add("state_registry:not_sorted")
     if len(state_ids) != len(set(state_ids)):
         errors.add("state_registry:duplicate_state_id")
-    state_index = {row.stateId: row for row in exact_states
-                   if type(row.stateId) is str}
+    state_index = {
+        values["stateId"]: (row, values)
+        for row, values, valid in exact_states if valid}
 
     exact_mutations = []
     for index, row in enumerate(mutations_value):
-        if type(row) is not MutationDeclaration:
-            errors.add(f"mutation[{index}]:not_exact_MutationDeclaration")
-            continue
-        exact_mutations.append(row)
-        _validate_mutation_row(errors, row, index, state_index)
+        values, row_errors = _validated_mutation_declaration(
+            row, index, state_index)
+        errors.update(row_errors)
+        if type(row) is MutationDeclaration and "mutationId" in values and \
+                type(values["mutationId"]) is str:
+            exact_mutations.append(values)
 
-    mutation_ids = [row.mutationId for row in exact_mutations
-                    if type(row.mutationId) is str]
-    if len(mutation_ids) == len(exact_mutations) and \
+    mutation_ids = [values["mutationId"] for values in exact_mutations]
+    if len(mutation_ids) == len(mutations_value) and \
             mutation_ids != sorted(mutation_ids):
         errors.add("mutation_registry:not_sorted")
     if len(mutation_ids) != len(set(mutation_ids)):
         errors.add("mutation_registry:duplicate_mutation_id")
     return tuple(sorted(errors))
+
+
+def validate_registry(state_rows: Any = _USE_BUILTIN,
+                      mutation_rows: Any = _USE_BUILTIN) -> Tuple[str, ...]:
+    """Return canonical errors for every Python value; never authorize here."""
+    try:
+        return _validate_registry_impl(state_rows, mutation_rows)
+    except Exception:
+        # The field-level paths above are precise for all supported malformed
+        # forms.  This final boundary preserves totality under novel objects.
+        return ("registry:validation_containment",)
 
 
 def _serialize_state(row: StateDeclaration) -> Dict[str, Any]:
@@ -890,40 +1023,202 @@ def mutation_registry_document() -> Dict[str, Any]:
     }
 
 
-def _policy_contract_document() -> Dict[str, Any]:
+def policy_semantics_document() -> Dict[str, Any]:
+    """Normative, machine-readable policy rules bound by the fingerprint."""
     return {
-        "schemaVersion": REGISTRY_POLICY_SCHEMA,
-        "exactTypeSemantics": True,
-        "publicTelemetryPrivacyClasses": [
-            PrivacyClass.PUBLIC_METADATA.value],
-        "classificationFutureDurability": {
-            Classification.A.value: [
-                FutureDurability.FULL_PLUS_WAL.value,
-                FutureDurability.IMMUTABLE_EXTERNAL_REF.value],
-            Classification.B.value: [
-                FutureDurability.FULL_PLUS_WAL.value,
-                FutureDurability.IMMUTABLE_EXTERNAL_REF.value],
-            Classification.C.value: [
-                FutureDurability.REBUILD_AFTER_PROOF.value],
-            Classification.D.value: [
-                FutureDurability.REACQUIRE_AFTER_CONTRACT.value],
-            Classification.E.value: [
-                FutureDurability.EPHEMERAL.value,
-                FutureDurability.FULL_PLUS_WAL.value],
-            Classification.F.value: [
-                FutureDurability.UNRESOLVED.value],
+        "schemaVersion": POLICY_SEMANTICS_SCHEMA,
+        "ruleVersions": {
+            "authorization": POLICY_AUTHORIZATION_RULES_VERSION,
+            "durabilityCompatibility": POLICY_DURABILITY_RULES_VERSION,
+            "typeAndTotality": POLICY_TYPE_RULES_VERSION,
         },
-        "v1MustPreserveClassifications": [
-            member.value for member in (
-                Classification.A, Classification.B, Classification.C,
-                Classification.D, Classification.F)],
-        "publicMutationRequirements": {
+        "typeRules": {
+            "bool": "exact_bool",
+            "enum": "exact_declared_enum_class",
+            "tuple": "exact_tuple",
+            "coercion": "forbidden",
+            "instanceFields": "exact_complete_dataclass_instance_dict",
+        },
+        "validatorRules": {
+            "totalForAnyPythonValue": True,
+            "malformedValues": "deny_with_canonical_bounded_errors",
+            "hostileValueFormatting": "forbidden",
+            "outerContainmentError": "registry:validation_containment",
+        },
+        "stateAuthorizationRules": {
+            "ruleId": "state-public-telemetry-v2",
+            "declarationMustBeFullyValid": True,
+            "privacyClass": PrivacyClass.PUBLIC_METADATA.value,
+            "allowedInTelemetry": "exact_true",
+            "containsSecret": "exact_false",
+            "containsOwnerPrivateData": "exact_false",
+            "deniedPrivacyClasses": [
+                member.value for member in (
+                    PrivacyClass.INTERNAL, PrivacyClass.OWNER_PRIVATE,
+                    PrivacyClass.SECURITY_SENSITIVE, PrivacyClass.SECRET,
+                    PrivacyClass.CLIENT_PRIVATE,
+                    PrivacyClass.CLIENT_OPAQUE)],
+            "malformedOrUnknownDeclaration": "deny",
+        },
+        "mutationAuthorizationRules": {
+            "ruleId": "mutation-public-telemetry-v2",
+            "declarationMustBeFullyValid": True,
             "privacyClass": PrivacyClass.PUBLIC_METADATA.value,
             "payloadTelemetryPolicy":
                 PayloadTelemetryPolicy.METADATA_ONLY.value,
-            "allTargetsPublicTelemetrySafe": True,
+            "targetStateIds": {
+                "container": "exact_tuple",
+                "nonEmpty": True,
+                "unique": True,
+                "items": "exact_valid_state_id",
+            },
+            "stateIndex": {
+                "rawContainer": "exact_dict",
+                "keys": "exact_str",
+                "values": "fully_valid_exact_StateDeclaration",
+                "keyMustEqualStateId": True,
+                "canonicalCopyBeforeLookup": True,
+                "malformed": "deny",
+            },
+            "everyTargetExists": True,
+            "everyTargetTelemetrySafe": True,
+        },
+        "durabilityCompatibilityRules": {
+            Classification.A.value: {
+                "mustPreserveNow": True,
+                "allowedFutureDurability": [
+                    FutureDurability.FULL_PLUS_WAL.value,
+                    FutureDurability.IMMUTABLE_EXTERNAL_REF.value],
+            },
+            Classification.B.value: {
+                "mustPreserveNow": True,
+                "allowedFutureDurability": [
+                    FutureDurability.FULL_PLUS_WAL.value,
+                    FutureDurability.IMMUTABLE_EXTERNAL_REF.value],
+            },
+            Classification.C.value: {
+                "mustPreserveNow": True,
+                "allowedFutureDurability": [
+                    FutureDurability.REBUILD_AFTER_PROOF.value],
+                "rebuildRequirements": "nonempty_exact_tuple",
+                "mutationRegistryExpectation":
+                    ReducerExpectation.REQUIRED.value,
+            },
+            Classification.D.value: {
+                "mustPreserveNow": True,
+                "allowedFutureDurability": [
+                    FutureDurability.REACQUIRE_AFTER_CONTRACT.value],
+                "rebuildRequirements": "nonempty_exact_tuple",
+            },
+            Classification.E.value: {
+                "ephemeral": {
+                    "mustPreserveNow": False,
+                    "futureDurability": FutureDurability.EPHEMERAL.value,
+                },
+                "retained": {
+                    "mustPreserveNow": True,
+                    "futureDurability":
+                        FutureDurability.FULL_PLUS_WAL.value,
+                    "ephemeralRetentionReason": "required_nonempty_text",
+                },
+            },
+            Classification.F.value: {
+                "mustPreserveNow": True,
+                "allowedFutureDurability": [
+                    FutureDurability.UNRESOLVED.value],
+                "mutationRegistryExpectation":
+                    ReducerExpectation.UNRESOLVED.value,
+            },
         },
     }
+
+
+def _validity_vector(row: StateDeclaration) -> Dict[str, Any]:
+    errors = validate_registry((row,), ())
+    return {"valid": not errors, "errorCodes": list(errors)}
+
+
+def policy_semantic_golden_vector() -> Dict[str, Any]:
+    """Evaluate canonical allow/deny cases through the exported APIs."""
+    by_state = state_by_id()
+    by_mutation = mutation_by_id()
+    public_state = by_state["backend.schema_identity"]
+    public_mutation = by_mutation["external.public_ledger_write"]
+    public_target = public_mutation.targetStateIds[0]
+    f_state = next(
+        row for row in _STATES if row.classification is Classification.F)
+    c_state = next(
+        row for row in _STATES if row.classification is Classification.C)
+    missing_state = object.__new__(StateDeclaration)
+
+    denied_privacy = {}
+    for privacy in (
+            PrivacyClass.INTERNAL, PrivacyClass.OWNER_PRIVATE,
+            PrivacyClass.SECURITY_SENSITIVE, PrivacyClass.SECRET,
+            PrivacyClass.CLIENT_PRIVATE, PrivacyClass.CLIENT_OPAQUE):
+        candidate = next(row for row in _STATES
+                         if row.privacyClass is privacy)
+        denied_privacy[privacy.value] = \
+            state_allows_public_telemetry(candidate)
+
+    raw_classification = replace(
+        public_state, classification=public_state.classification.value)
+    duplicate_target = replace(
+        public_mutation,
+        targetStateIds=(public_target, public_target))
+    unknown_target = replace(
+        public_mutation, targetStateIds=("future.unknown_state",))
+    raw_criticality = replace(
+        public_mutation, criticality=public_mutation.criticality.value)
+    mixed_target = replace(
+        public_mutation,
+        targetStateIds=(public_target, "backend.stage1_control"))
+
+    return {
+        "schemaVersion": POLICY_GOLDEN_VECTOR_SCHEMA,
+        "stateAuthorization": {
+            "validPublic": state_allows_public_telemetry(public_state),
+            "telemetryDisabled": state_allows_public_telemetry(replace(
+                public_state, allowedInTelemetry=False)),
+            "rawClassificationString":
+                state_allows_public_telemetry(raw_classification),
+            "deniedPrivacyClasses": denied_privacy,
+            "missingFieldExactDataclass":
+                state_allows_public_telemetry(missing_state),
+        },
+        "mutationAuthorization": {
+            "validPublicAllSafeTargets":
+                mutation_allows_public_telemetry(public_mutation),
+            "mixedSafePrivateTargets":
+                mutation_allows_public_telemetry(mixed_target),
+            "duplicateTarget":
+                mutation_allows_public_telemetry(duplicate_target),
+            "unknownTarget":
+                mutation_allows_public_telemetry(unknown_target),
+            "rawCriticalityString":
+                mutation_allows_public_telemetry(raw_criticality),
+            "malformedStateIndex": mutation_allows_public_telemetry(
+                public_mutation, {public_target: missing_state}),
+        },
+        "durabilityValidation": {
+            "validA": _validity_vector(public_state),
+            "aEphemeral": _validity_vector(replace(
+                public_state,
+                intendedFutureDurability=FutureDurability.EPHEMERAL)),
+            "validC": _validity_vector(c_state),
+            "cPreserveFalse": _validity_vector(replace(
+                c_state, mustPreserveNow=False)),
+            "validF": _validity_vector(f_state),
+            "fFullPlusWal": _validity_vector(replace(
+                f_state,
+                intendedFutureDurability=FutureDurability.FULL_PLUS_WAL)),
+        },
+    }
+
+
+def _policy_contract_document() -> Dict[str, Any]:
+    """Compatibility alias for the prior internal name."""
+    return policy_semantics_document()
 
 
 def registry_document() -> Dict[str, Any]:
@@ -933,7 +1228,8 @@ def registry_document() -> Dict[str, Any]:
         "authoritative": False,
         "stateRegistry": state_registry_document(),
         "mutationRegistry": mutation_registry_document(),
-        "policyContract": _policy_contract_document(),
+        "policySemantics": policy_semantics_document(),
+        "policySemanticGoldenVector": policy_semantic_golden_vector(),
     }
 
 
