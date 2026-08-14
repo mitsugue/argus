@@ -34,6 +34,7 @@ const osintHook = read('src/hooks/useOsintInvestigation.ts');
 const osintPanel = read('src/components/dashboard/OsintDeepDive.tsx');
 const vault = read('src/lib/vault.ts');
 const backupCard = read('src/components/guide/BackupCard.tsx');
+const locales = read('src/i18n/locales.ts');
 const deferredManifest = read('../docs/ARGUS_B2A_DEFERRED_UI_MANIFEST.md');
 
 assert.deepEqual(
@@ -138,5 +139,6 @@ assert.match(deferredManifest, /Unreachable UI modules \(47\)/);
 assert.match(deferredManifest, /Newly unreachable after B2a \(16\)/);
 assert.match(deferredManifest, /63 unreachable component\/route TSX/);
 assert.match(deferredManifest, /No domain engine, polling hook, storage format/);
+assert.doesNotMatch(locales, /Asset Deskで銘柄カード/);
 
 console.log('lean-surface.test: ok (4-nav, contextual detail, disclosure, recovery boundary)');

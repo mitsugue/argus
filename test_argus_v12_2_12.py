@@ -72,15 +72,17 @@ def test_nav_order_and_route_keys():
     navigation = _read("navigation.ts")
     i_today = navigation.index("route: 'command'")
     i_desk = navigation.index("route: 'watchlist'")
-    i_core = navigation.index("route: 'core'")
-    i_regime = navigation.index("route: 'regime'")
-    assert i_today < i_desk < i_core < i_regime
+    i_notifications = navigation.index("route: 'notifications'")
+    i_settings = navigation.index("route: 'settings'")
+    assert i_today < i_desk < i_notifications < i_settings
     app = _read("App.tsx")
     assert "PRIMARY_NAVIGATION" in app     # overscroll順同期
     assert "routeLabel" in app
-    # route keyは不変(localStorage/既存挙動の互換)
-    for key in ("'command'", "'watchlist'", "'core'", "'regime'"):
+    # Lean v13 has four primary owner routes; market remains contextual.
+    for key in ("'command'", "'watchlist'", "'notifications'", "'settings'", "'regime'"):
         assert key in navigation
+    assert "desktopLabel: 'Holdings / Watchlist'" in navigation
+    assert "'#positions'" in navigation and "portfolioOpen: true" in navigation
     assert "PRIMARY_NAVIGATION" in nav
 
 
@@ -162,8 +164,9 @@ def test_migrated_features_present():
 def test_portfolio_wide_features_moved_to_core():
     wl = _read("routes", "Watchlist.tsx")
     assert "WhatIfPanel" not in wl and "ExposureCard" not in wl
-    assert "ASSET DESK" in wl
-    assert "今日どれを先に確認し、どう扱い、何を待つか。" in wl
+    assert "HOLDINGS / WATCHLIST" in wl
+    assert "保有と監視銘柄を、今日確認する順にまとめます。" in wl
+    assert "portfolioOpen && <CorePortfolio embedded />" in wl
     cp = _read("routes", "CorePortfolio.tsx")
     assert "PortfolioExposureCard" in cp and "WhatIfPanel" in cp
 

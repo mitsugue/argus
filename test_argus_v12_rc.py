@@ -136,11 +136,16 @@ def test_frontend_no_execution_wording():
 def test_mobile_nav_reaches_backup_and_data_quality():
     src = open(os.path.join(WEB, "components", "NavRail.tsx"), encoding="utf-8").read()
     navigation = open(os.path.join(WEB, "navigation.ts"), encoding="utf-8").read()
-    assert "Backup" in navigation and "Data Quality" in navigation
-    assert "SYSTEM_NAVIGATION" in src
+    assert "mobileLabel: 'Holdings'" in navigation
+    assert "mobileLabel: 'Alerts'" in navigation
+    assert "mobileLabel: 'Settings'" in navigation
+    assert "SYSTEM_NAVIGATION" not in src
     app = open(os.path.join(WEB, "App.tsx"), encoding="utf-8").read()
-    assert "backup:" in app and "quality:" in app
-    assert "HASH_ROUTES" in app
+    assert "<Settings settingsSection=" in app
+    settings = open(os.path.join(WEB, "routes", "Settings.tsx"), encoding="utf-8").read()
+    assert "PublicDiagnosticsPanel" in settings and "BackupSettingsPanel" in settings
+    assert "#backup" in navigation and "settingsSection: 'recovery'" in navigation
+    assert "#quality" in navigation and "settingsSection: 'status'" in navigation
 
 
 def test_backend_landing_is_clearly_not_the_app(monkeypatch):
