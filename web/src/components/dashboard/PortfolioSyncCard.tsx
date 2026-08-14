@@ -7,9 +7,8 @@ import {
 } from '../../lib/portfolioSync';
 import { assessBackupSafety, runRecoveryDrill, drillMeta, LEVEL_TONE } from '../../lib/backupSafety';
 
-// V11.9.0 — PORTFOLIO SYNC & BACKUP (Core Portfolio). Owner-facing truth about
-// where holdings live + export/import/snapshot tools. The cloud only ever sees
-// ciphertext (passphrase vault); server-side plaintext sync stays disabled.
+// Owner-facing LOCAL BACKUP & RESTORE: where holdings live plus
+// export/import/snapshot tools. Browser cloud push remains unavailable.
 
 const fmtTs = (iso?: string) => (iso ? iso.slice(0, 16).replace('T', ' ') : '—');
 
@@ -58,8 +57,8 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
   return (
     <section>
       <div className="section-head">
-        <span className="section-head__title">PORTFOLIO SYNC & BACKUP</span>
-        <span className="section-head__count">v11.9 · 端末内+暗号化バックアップ</span>
+        <span className="section-head__title">LOCAL BACKUP &amp; RESTORE</span>
+        <span className="section-head__count">端末内 + 手動JSON</span>
       </div>
       <div className="card cmd-alloc">
         {/* BACKUP SAFETY (v11.16.0) — 保護状態の見える化(端末内判定) */}
@@ -85,14 +84,14 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         </details>
 
         <div className="cmd-alloc__note" style={{ fontSize: 12, color: 'var(--text-sub)' }}>
-          保存モード: <b>{vaultOn ? '端末内 + パスフレーズ暗号化バックアップ(端末間同期 有効)' : '端末内のみ(Local only)'}</b>
+          保存モード: <b>端末内 + 手動JSONエクスポート</b>
+          {vaultOn && ' / 既存の暗号化復旧点は読み取り可能'}
         </div>
         <div className="cmd-alloc__note">
-          現在、保有データはこの端末内に保存されています。サーバーには送信されません。
-          {!vaultOn && ' このBackupページ上部の「暗号化バックアップ / 端末間同期」でパスフレーズを設定すると、Mac/iPhone/iPad間で暗号化同期されます。'}
+          現在、保有データはこの端末内に保存されています。公開ブラウザからサーバーへは送信されません。
         </div>
         <div className="cmd-alloc__note">
-          クラウド同期(平文)は安全な認証が整うまで無効です。将来、Mac/iPhone/iPadで同期できるようにするため、同期用データ構造だけ先に準備しています。
+          クラウド送信・端末間ライブ同期は無効です。既存暗号文の読み取り/復元と、ローカルexport/importだけ利用できます。
         </div>
         <div className="cmd-alloc__note">
           最終スナップショット: {fmtTs(meta.lastSnapshotAt)}(計{snaps.length}件) / 最終エクスポート: {fmtTs(meta.lastExportAt)} / 最終インポート: {fmtTs(meta.lastImportAt)}

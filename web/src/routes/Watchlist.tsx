@@ -8,6 +8,7 @@ import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
 import { useAssets } from '../hooks/useAssets';
 import { useLocale, t } from '../i18n';
+import { CorePortfolio } from './CorePortfolio';
 import '../components/dashboard/Dashboard.css';
 
 // V12.2.12 — ASSET DESK(route key `watchlist` 不変): 個別銘柄情報の唯一の正本。
@@ -23,15 +24,28 @@ function ageLabel(ts: number, nowMs: number): string {
 interface Props {
   /** Today等からのdeep-link(展開+スクロール)。App.tsxのpendingAssetFocus。 */
   assetFocus?: AssetFocusIntent | null;
+  assetDetail?: boolean;
+  initialPortfolioOpen?: boolean;
+  onNavigateToAsset?: (symbol: string, section?: string) => void;
+  onBackToHoldings?: () => void;
 }
 
-export const Watchlist: React.FC<Props> = ({ assetFocus }) => {
+export const Watchlist: React.FC<Props> = ({
+  assetFocus, assetDetail = false, initialPortfolioOpen = false,
+  onNavigateToAsset, onBackToHoldings,
+}) => {
   useLocale();   // re-render on locale switch
   const { assets, add, remove, reorderGenre, updateHolding } = useAssets();
   const [addOpen, setAddOpen] = useState(false);
   const [nonce, setNonce] = useState(0);            // rescan → remounts the data section
   const [updatedAt, setUpdatedAt] = useState(() => Date.now());
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [portfolioOpen, setPortfolioOpen] = useState(initialPortfolioOpen);
+
+  useEffect(() => {
+    setPortfolioOpen(initialPortfolioOpen);
+  }, [initialPortfolioOpen]);
 
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -46,9 +60,14 @@ export const Watchlist: React.FC<Props> = ({ assetFocus }) => {
 
   return (
     <PageShell
-      title="ASSET DESK"
-      subtitle="今日どれを先に確認し、どう扱い、何を待つか。"
+      title={assetDetail ? 'ASSET DETAIL' : 'HOLDINGS / WATCHLIST'}
+      subtitle={assetDetail
+        ? `${assetFocus?.symbol ?? '銘柄'} · Decision / Chart / Evidence / Position`
+        : '保有と監視銘柄を、今日確認する順にまとめます。'}
     >
+      {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>
+        ← Holdings / Watchlist
+      </button>}
       <AssetDeskList
         key={nonce}
         assets={assets}
@@ -56,6 +75,8 @@ export const Watchlist: React.FC<Props> = ({ assetFocus }) => {
         onRemove={remove}
         onUpdateHolding={updateHolding}
         focus={assetFocus}
+        detailSymbol={assetDetail ? assetFocus?.symbol : undefined}
+        onOpenAsset={onNavigateToAsset}
         toolbar={(
           <div className="asset-toolbar asset-toolbar--end">
             <span className="asset-toolbar__age">{t('wl.updated')} {ageLabel(updatedAt, nowMs)}</span>
@@ -67,19 +88,26 @@ export const Watchlist: React.FC<Props> = ({ assetFocus }) => {
         )}
       />
 
-      <details className="card ad-support">
+      {!assetDetail && <details className="card cp-workspace" open={portfolioOpen}
+        onToggle={(event) => setPortfolioOpen(event.currentTarget.open)}>
+        <summary>Advanced portfolio / allocation / risk</summary>
+        {portfolioOpen && <CorePortfolio embedded />}
+      </details>}
+
+      {!assetDetail && <details className="card ad-support" open={supportOpen}
+        onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
         <summary>Supporting tools</summary>
-        <div className="ad-support__body">
+        {supportOpen && <div className="ad-support__body">
           <AIReview />
           <EntityProfileEditor />
           <TradeJournalCard assets={assets} />
           <div className="watch-toolbar">
             <ProHandoffButton />
           </div>
-        </div>
-      </details>
+        </div>}
+      </details>}
 
-      {addOpen && <AddAssetModal onClose={() => setAddOpen(false)} onAdd={add} />}
+      {!assetDetail && addOpen && <AddAssetModal onClose={() => setAddOpen(false)} onAdd={add} />}
     </PageShell>
   );
 };

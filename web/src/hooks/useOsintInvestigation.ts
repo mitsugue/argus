@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-// Recovery Phase A: cached public GET remains available. All mutation helpers
-// intentionally no-op because the static bundle must never carry admin auth.
+// Recovery Phase A: cached public GET remains available. Mutation helpers are
+// absent because the static bundle must never carry admin auth.
 
 export interface OsintVerifiedSource {
   titleJa: string; url?: string | null; sourceName?: string | null;
@@ -126,11 +126,11 @@ export interface OsintProgress {
   };
 }
 
-interface State { inv: OsintInvestigation | null; loading: boolean; running: boolean;
+interface State { inv: OsintInvestigation | null; loading: boolean;
   progress: OsintProgress | null; queuePosition: number | null; etaMin: number | null; }
 
-export function useOsintInvestigation(symbol: string, market: string) {
-  const [state, setState] = useState<State>({ inv: null, loading: true, running: false,
+export function useOsintInvestigation(symbol: string) {
+  const [state, setState] = useState<State>({ inv: null, loading: true,
     progress: null, queuePosition: null, etaMin: null });
   const backend = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
 
@@ -146,26 +146,5 @@ export function useOsintInvestigation(symbol: string, market: string) {
 
   useEffect(() => { load(); }, [load]);
 
-  const runDeepDive = useCallback(async (
-    privacyMode: 'redacted' | 'owner_context' | 'full_private',
-  ): Promise<{ ok: boolean; duplicate?: boolean } | null> => {
-    void privacyMode; void market;
-    setState((s) => ({ ...s, running: false }));
-    return null;
-  }, [backend, symbol, market]);
-
-  const verifyGaps = useCallback(async (): Promise<{ ok: boolean } | null> => {
-    return null;
-  }, [backend, symbol]);
-
-  const verifyUrl = useCallback(async (url: string): Promise<{ ok: boolean } | null> => {
-    void url;
-    return null;
-  }, [backend]);
-
-  const postTerms = useCallback(async (terms: string[]) => {
-    void terms;
-  }, [backend, symbol]);
-
-  return { ...state, reload: load, runDeepDive, postTerms, verifyGaps, verifyUrl };
+  return { ...state, reload: load };
 }

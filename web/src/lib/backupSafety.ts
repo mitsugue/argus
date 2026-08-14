@@ -55,39 +55,38 @@ export function assessBackupSafety(assets: AssetItem[]): BackupSafety {
   const verified = !!m.restoreVerified;
 
   const risks: string[] = [];
-  if (!vault) risks.push('vault_not_configured', 'passphrase_not_set');
-  if (vault && (vaultSyncAgeDays == null || vaultSyncAgeDays > 2)) risks.push('vault_sync_stale');
+  risks.push('cloud_push_unavailable');
+  if (!vault) risks.push('vault_passphrase_not_stored');
+  if (vaultSyncAgeDays == null || vaultSyncAgeDays > 2) risks.push('vault_recovery_point_stale');
   if (exportAgeDays == null || exportAgeDays > 30) risks.push('no_export_backup');
   if (hasData && (snapshotAgeDays == null || snapshotAgeDays > 3)) risks.push('no_snapshot');
   if (!verified) risks.push('restore_not_verified');
-  if (hasData && !vault) risks.push('local_only_with_private_data');
+  if (hasData && exportAgeDays == null) risks.push('local_only_with_private_data');
 
   let level: ProtectionLevel; let statusJa: string;
   if (!hasData) {
     level = 'unknown';
     statusJa = '保護対象の個人データはまだ端末にありません(保有数量を入力すると保護状態を判定します)。';
-  } else if (vault && vaultSyncAgeDays != null && vaultSyncAgeDays <= 2
-    && snapshotAgeDays != null && snapshotAgeDays <= 3
-    && ((exportAgeDays != null && exportAgeDays <= 30) || verified)) {
+  } else if (exportAgeDays != null && exportAgeDays <= 30
+    && snapshotAgeDays != null && snapshotAgeDays <= 3 && verified) {
     level = 'protected';
-    statusJa = 'バックアップ保護済み：暗号化バックアップが最近同期され、スナップショットも最新です。';
-  } else if (vault) {
-    level = 'partially_protected';
-    const missing = (risks.includes('no_export_backup') && !verified) ? '復元確認またはJSONエクスポート'
-      : risks.includes('no_snapshot') ? 'スナップショット' : '同期の更新';
-    statusJa = `一部保護：暗号化バックアップは有効ですが、${missing}がまだです。`;
+    statusJa = 'バックアップ保護済み：最近のJSONエクスポート、スナップショット、復元ドリルを確認済みです。';
   } else if (exportAgeDays != null && exportAgeDays <= 30) {
     level = 'partially_protected';
-    statusJa = '一部保護：JSONエクスポートはありますが、暗号化バックアップ(端末間同期)が未設定です。';
+    statusJa = '一部保護：最近のJSONエクスポートがあります。復元ドリルとスナップショットも確認してください。';
+  } else if (vault && vaultSyncAgeDays != null) {
+    level = 'partially_protected';
+    statusJa = '一部保護：既存の暗号化復旧点は読み取り可能ですが、公開ブラウザから新しい復旧点は送信できません。';
   } else {
     level = 'unprotected';
-    statusJa = 'バックアップ未保護：保有データはこの端末内にのみあります。暗号化バックアップを有効化してください。';
+    statusJa = 'バックアップ未保護：保有データはこの端末内にのみあります。JSONエクスポートを安全な場所へ保存してください。';
   }
   return {
     protectionLevel: level, protectionLevelJa: LEVEL_JA[level],
     storageMode: !hasData ? 'unknown'
-      : vault && exportAgeDays != null && exportAgeDays <= 30 ? 'encrypted_vault_plus_export'
-      : vault ? 'encrypted_vault' : 'local_only',
+      : vaultSyncAgeDays != null && exportAgeDays != null && exportAgeDays <= 30
+        ? 'read_only_encrypted_recovery_plus_export'
+        : exportAgeDays != null && exportAgeDays <= 30 ? 'local_export' : 'local_only',
     vaultConfigured: vault, vaultSyncAgeDays, snapshotAgeDays, exportAgeDays,
     restoreVerified: verified, lastDrillAt: m.lastDrillAt ?? null,
     riskFlags: risks,
@@ -96,9 +95,8 @@ export function assessBackupSafety(assets: AssetItem[]): BackupSafety {
       ? '保有・判断記録・通知・学習履歴がこの端末だけにあり、サイトデータ削除・ブラウザリセット・PWA削除・端末紛失で失われます。'
       : !verified && level !== 'unknown'
         ? '復元できることを一度も確認していません。復元ドリル(非破壊)の実行を推奨します。' : '',
-    nextStepJa: !vault && hasData ? 'Backupページでパスフレーズを設定(暗号化バックアップ有効化)'
+    nextStepJa: risks.includes('no_export_backup') && hasData ? 'バックアップJSONを書き出してiCloud Drive等に保管'
       : !verified && hasData ? '「復元ドリルを実行」で戻せることを確認(非破壊)'
-      : risks.includes('no_export_backup') && hasData ? 'バックアップJSONを書き出してiCloud Drive等に保管'
       : '現状維持でOK(週1回のエクスポート保管を推奨)',
     whatCanBeLostJa: 'サイトデータ消去/ブラウザ初期化/PWA削除/プライベートブラウズ/端末変更・紛失で、端末内のデータが消える可能性があります。アプリを閉じるだけでは通常消えません。',
   };

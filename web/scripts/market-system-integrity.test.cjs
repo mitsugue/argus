@@ -116,7 +116,7 @@ const marketSource = src('src', 'components', 'marketReplay', 'MarketContextRepl
 const dqSource = src('src', 'routes', 'DataQualityPage.tsx');
 const backupSource = src('src', 'routes', 'BackupPage.tsx');
 const backupOverviewSource = src('src', 'components', 'system', 'BackupStatusOverview.tsx');
-const guideSource = src('src', 'routes', 'Guide.tsx');
+const settingsSource = src('src', 'routes', 'Settings.tsx');
 const pageShellSource = src('src', 'routes', 'PageShell.tsx');
 const appSource = src('src', 'App.tsx');
 check('U1 first market viewport exposes seven decision contracts',
@@ -138,15 +138,15 @@ check('U5 Backup defaults to restore readiness, not configured-state optimism',
   && backupOverviewSource.includes('RESTORE READINESS')
   && backupOverviewSource.includes('LATEST RECOVERY POINT')
   && backupOverviewSource.includes('LAST RESTORE DRILL'));
-check('U6 Guide is contextual, searchable and collapsed',
-  guideSource.includes('type=\"search\"') && guideSource.includes('guide-result')
-  && guideSource.includes('guide-reference')
-  && guideSource.includes('resolveGuideContext(context)')
-  && guideSource.includes("window.addEventListener('hashchange'")
-  && guideSource.includes('filteredGlossary'));
-check('U7 every non-Guide page has a contextual Guide route',
-  pageShellSource.includes('#guide:') && pageShellSource.includes('この画面のGuide')
-  && appSource.includes("hash.startsWith('#guide:')"));
+check('U6 Settings owns language, status, recovery and minimal help',
+  settingsSource.includes('<PublicDiagnosticsPanel />')
+  && settingsSource.includes('<BackupSettingsPanel')
+  && settingsSource.includes('aria-pressed={locale === value}')
+  && settingsSource.includes('id="settings-help"'));
+check('U7 contextual help resolves into Settings without mounting legacy Guide',
+  pageShellSource.includes('href="#settings/help"')
+  && appSource.includes('parseLocationHash')
+  && !appSource.includes("from './routes/Guide'"));
 
 if (failed) {
   console.error(`\nmarket-system integrity tests: ${failed} FAILED`);

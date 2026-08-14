@@ -2,72 +2,67 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { NavRail, type RouteKey } from './components/NavRail';
 import {
-  HASH_ROUTES, PRIMARY_NAVIGATION, pageDirection, primaryRouteIndex,
-  routeHash, routeLabel,
+  PRIMARY_NAVIGATION, assetDetailHash, pageDirection, parseLocationHash,
+  primaryRouteIndex, routeHash, routeLabel, type ParsedLocation, type SettingsSection,
 } from './navigation';
 import { CommandCenter } from './routes/CommandCenter';
 import { MarketRegime } from './routes/MarketRegime';
 import { Watchlist } from './routes/Watchlist';
-import { CorePortfolio } from './routes/CorePortfolio';
-import { BackupPage } from './routes/BackupPage';
-import { DataQualityPage } from './routes/DataQualityPage';
-import { Guide } from './routes/Guide';
-import { AIReview } from './routes/AIReview';
-import { useActionLabels } from './hooks/useActionLabels';
-import { useImportantEvents } from './hooks/useImportantEvents';
-import { nextUpcomingEvent } from './lib/eventClock';
+import { NotificationsPage } from './routes/NotificationsPage';
+import { Settings } from './routes/Settings';
 import { startCloudSync } from './lib/vault';
 import { useMarketLedger } from './hooks/useMarketLedger';
 import { resolveSessionJst } from './domain/sessionBrief';
-
 import type { AssetFocusIntent } from './components/assetDesk/AssetDeskList';
 
-interface RouteProps {
-  onNavigate: (key: RouteKey) => void;
-  /** V12.2.12: Asset Deskの銘柄カードを開いてスクロールする遷移(Today等から)。 */
-  onNavigateToAsset?: (symbol: string, section?: string) => void;
-  /** V12.2.12: Asset Deskへ渡す展開対象(state経由 — CustomEventだけに依存しない)。 */
-  assetFocus?: AssetFocusIntent | null;
-}
-
-const ROUTES: Record<RouteKey, React.FC<RouteProps>> = {
-  command:   CommandCenter,
-  regime:    MarketRegime as React.FC<RouteProps>,
-  watchlist: Watchlist as React.FC<RouteProps>,
-  core:      CorePortfolio as React.FC<RouteProps>,
-  backup:    BackupPage as React.FC<RouteProps>,
-  quality:   DataQualityPage as React.FC<RouteProps>,
-  guide:     Guide as React.FC<RouteProps>,
+const initialLocation = (): ParsedLocation =>
+  parseLocationHash(window.location.hash) ?? { route: 'command' };
+const readHistoryIndex = (): number | null => {
+  const value = Number((history.state as { argusNavigationIndex?: unknown } | null)?.argusNavigationIndex);
+  return Number.isInteger(value) && value >= 0 ? value : null;
 };
-const routeFromHash = (hash: string): RouteKey | undefined =>
-  HASH_ROUTES[hash.startsWith('#guide:') ? '#guide' : hash];
+const currentHistoryState = () => history.state && typeof history.state === 'object'
+  ? history.state as Record<string, unknown> : {};
 
 const App: React.FC = () => {
-  const [route, setRoute] = useState<RouteKey>(
-    () => routeFromHash(window.location.hash) ?? 'command');
-  const routeRef = useRef(route);
+  const initial = useMemo(initialLocation, []);
+  const [location, setLocation] = useState<ParsedLocation>(initial);
+  const routeRef = useRef<RouteKey>(initial.route);
+  const historyIndexRef = useRef(readHistoryIndex() ?? 0);
+  const historyHashRef = useRef(window.location.hash);
   const [pageEnterDirection, setPageEnterDirection] = useState<1 | -1>(1);
-  // V12.2.12: Asset Desk deep-link intent — Today(OWNER CRITICAL/Your Exposure/
-  // Action Queue/例外サマリー)から「この銘柄を開く」。nonceで同一銘柄の再クリック
-  // も再スクロールされる。localStorageには保存しない(一時的なUI意図のみ)。
-  const [assetFocus, setAssetFocus] = useState<AssetFocusIntent | null>(null);
-  // The AI review sheet lives outside the main 6 routes — accessible only
-  // via #review in the URL hash so it can be shared without polluting the
-  // nav. Reviewers paste the URL into ChatGPT (or click "Copy markdown").
-  const [isReview, setIsReview] = useState(() => window.location.hash === '#review');
-
+  const [assetFocus, setAssetFocus] = useState<AssetFocusIntent | null>(() =>
+    initial.asset ? { ...initial.asset, nonce: Date.now() } : null);
   useEffect(() => {
+    if (!(history.state && typeof history.state === 'object'
+      && Number.isInteger((history.state as { argusNavigationIndex?: unknown }).argusNavigationIndex))) {
+      history.replaceState({ ...currentHistoryState(),
+        argusNavigationIndex: historyIndexRef.current }, '', window.location.href);
+    }
     const onLocation = () => {
-      setIsReview(window.location.hash === '#review');
-      const target = routeFromHash(window.location.hash);
-      // Browsers can emit both popstate and hashchange for one history move.
-      // Ignore the duplicate event so it cannot overwrite the canonical
-      // previous-page animation direction with the same-route default.
-      if (target && target !== routeRef.current) {
-        setPageEnterDirection(pageDirection(routeRef.current, target));
-        routeRef.current = target;
-        setRoute(target);
+      const target = parseLocationHash(window.location.hash);
+      if (!target) return;
+      let nextHistoryIndex = readHistoryIndex();
+      // Native anchors and integrations can change the hash without going
+      // through commitLocation. Stamp that new entry so subsequent Back/
+      // Forward transitions retain the same direction contract.
+      if (nextHistoryIndex == null
+        || (nextHistoryIndex === historyIndexRef.current
+          && window.location.hash !== historyHashRef.current)) {
+        nextHistoryIndex = historyIndexRef.current + 1;
+        history.replaceState({ ...currentHistoryState(),
+          argusNavigationIndex: nextHistoryIndex }, '', window.location.href);
       }
+      if (nextHistoryIndex !== historyIndexRef.current) {
+        setPageEnterDirection(nextHistoryIndex < historyIndexRef.current ? -1 : 1);
+      } else if (target.route !== routeRef.current) {
+        setPageEnterDirection(pageDirection(routeRef.current, target.route));
+      }
+      historyIndexRef.current = nextHistoryIndex;
+      historyHashRef.current = window.location.hash;
+      routeRef.current = target.route;
+      setLocation(target);
+      setAssetFocus(target.asset ? { ...target.asset, nonce: Date.now() } : null);
     };
     window.addEventListener('hashchange', onLocation);
     window.addEventListener('popstate', onLocation);
@@ -77,147 +72,92 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Cloud sync (sync-v1, v10.10): 20h cloud heartbeat + same-passphrase device
-  // sync (debounced push on edit + 90s pull while visible). v10.32: the weekly
-  // auto-DOWNLOAD was removed — it popped a file-save dialog on app open, which
-  // the user disliked. Cloud sync already protects the device-local state, and
-  // a manual "DL backup" button lives in AI Review for an explicit local copy.
+  // Recovery remains device-driven. The unavailable push path is disabled in
+  // vault.ts; startup/visibility pulls still restore readable encrypted state.
   useEffect(() => { startCloudSync(); }, []);
 
-  const exitReview = () => {
-    if (window.location.hash === '#review') {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    }
-    setIsReview(false);
-  };
-
-  const enterReview = () => {
-    if (window.location.hash !== '#review') {
-      history.pushState(null, '', '#review');
-    }
-    setIsReview(true);
-  };
-
-  const Active = ROUTES[route];
-
-  // Live "Today's call" pill + header chip + freshness — composed from the
-  // action-labels posture and the live event calendar (mock-safe defaults
-  // while connecting; never a hand-written judgment).
-  const al = useActionLabels();
-  const lastUpdated = useMemo(() => new Date(), [al.data]);
   const marketLedger = useMarketLedger();
+  const lastUpdated = useMemo(() => {
+    const parsed = Date.parse(marketLedger.ledger?.asOf ?? '');
+    return Number.isFinite(parsed) ? new Date(parsed) : new Date();
+  }, [marketLedger.ledger?.asOf]);
   const marketStatusLabel = useMemo(() => resolveSessionJst(
     new Date(), marketLedger.ledger?.phase3?.calendar).marketStatusJa,
   [marketLedger.ledger]);
 
-  // v12.0.8追補: 「次のイベント」は単一のイベント時計(eventClock)から —
-  // 発表済・日付不明は次に出さず、Important Events(公式日程)と必ず一致させる。
-  const impEv = useImportantEvents();
-  const nextEvent = useMemo(() => {
-    const pick = nextUpcomingEvent(impEv.data?.events ?? [], Date.now(), { highImpactOnly: true });
-    if (!pick) return undefined;
-    return {
-      title: pick.title,
-      kind: `${pick.eventCode} ${pick.dateJa}`,
-      daysAway: pick.daysUntil,
-      impact: 'high' as const,
-      onClick: () => {
-        // Navigation only (v10.138): jump to the single Important Events source on
-        // Today and focus it — no second countdown/explanation lives in the chip.
-        // v12.2.11: 重要イベントはDETAILS/MARKET DETAILS内(lazy)のため、
-        // まずグループを開くイベントを送ってから、要素の出現をリトライで待つ。
-        exitReview();
-        const commandHash = routeHash('command');
-        setPageEnterDirection(pageDirection(routeRef.current, 'command'));
-        routeRef.current = 'command';
-        if (window.location.hash !== commandHash) {
-          history.pushState(null, '',
-            `${window.location.pathname}${window.location.search}${commandHash}`);
-        }
-        setRoute('command');
-        // 開く指示(CustomEvent)は毎リトライで再送する — Today未マウントで
-        // 最初の発火が失われても、マウント後のリトライが確実に届く(要素検索
-        // だけのリトライにしない)。チップが出る時点でイベントfeedは取得済みの
-        // ため、~4.5秒のリトライ窓でカードの出現まで十分カバーする。
-        let tries = 0;
-        const tryScroll = () => {
-          window.dispatchEvent(new CustomEvent('argus:open-today-section', { detail: 'g-market' }));
-          const el = document.getElementById('important-events');
-          if (el) {
-            // 即時スクロール(グループ内の遅延ロードで高さが変わるとsmoothは
-            // 中断されるため)+700ms後に一度だけ位置を再固定(settle pass)。
-            el.scrollIntoView({ block: 'start' });
-            el.querySelector('details')?.setAttribute('open', '');
-            setTimeout(() => {
-              document.getElementById('important-events')
-                ?.scrollIntoView({ block: 'start' });
-            }, 700);
-          } else if (tries++ < 30) {
-            setTimeout(tryScroll, 150);
-          }
-        };
-        setTimeout(tryScroll, 140);
-      },
-    };
-    // exitReview is stable in practice (defined per render but only mutates state)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [impEv.data]);
-
-  const handleNavSelect = (key: RouteKey) => {
-    const hash = routeHash(key);
-    setIsReview(false);
-    setPageEnterDirection(pageDirection(routeRef.current, key));
-    routeRef.current = key;
+  const commitLocation = (target: ParsedLocation, hash: string) => {
+    setPageEnterDirection(pageDirection(routeRef.current, target.route));
+    routeRef.current = target.route;
+    setLocation(target);
+    setAssetFocus(target.asset ? { ...target.asset, nonce: Date.now() } : null);
     if (window.location.hash !== hash) {
-      history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+      const nextHistoryIndex = historyIndexRef.current + 1;
+      history.pushState({ ...currentHistoryState(), argusNavigationIndex: nextHistoryIndex }, '',
+        `${window.location.pathname}${window.location.search}${hash}`);
+      historyIndexRef.current = nextHistoryIndex;
+      historyHashRef.current = hash;
     }
-    setRoute(key);
   };
 
-  // V12.2.12: Todayの銘柄行→Asset Deskの当該カードを開いてスクロール。
+  const handleNavSelect = (route: RouteKey) => {
+    commitLocation({ route }, routeHash(route));
+  };
+
   const navigateToAsset = (symbol: string, section?: string) => {
-    exitReview();
-    setAssetFocus({ symbol: symbol.toUpperCase(), section, nonce: Date.now() });
-    handleNavSelect('watchlist');
+    const asset = { symbol: symbol.toUpperCase(), section };
+    commitLocation({ route: 'watchlist', asset }, assetDetailHash(symbol, section));
   };
 
-  // Supporting system pages are a menu and intentionally do not participate
-  // in the primary Today → Assets → Review → Market swipe sequence.
-  const curIdx = primaryRouteIndex(route);
-  const overscrollNext = (!isReview && curIdx >= 0 && curIdx + 1 < PRIMARY_NAVIGATION.length)
+  const navigateToSettings = (settingsSection: SettingsSection) => {
+    commitLocation({ route: 'settings', settingsSection }, `#settings/${settingsSection}`);
+  };
+
+  const route = location.route;
+  const contextual = !!location.asset || route === 'regime';
+  const curIdx = !contextual ? primaryRouteIndex(route) : -1;
+  const overscrollNext = curIdx >= 0 && curIdx + 1 < PRIMARY_NAVIGATION.length
     ? { label: routeLabel(PRIMARY_NAVIGATION[curIdx + 1].route),
       go: () => handleNavSelect(PRIMARY_NAVIGATION[curIdx + 1].route) }
     : undefined;
-  // Up-pull at the top → previous page (v10.28). On the FIRST page (Today) there is
-  // no previous page, so an up-pull RELOADS instead (v10.153, owner request) — same
-  // gesture + threshold + indicator, label "再読み込み".
-  const overscrollPrev = (!isReview && curIdx > 0)
+  const overscrollPrev = curIdx > 0
     ? { label: routeLabel(PRIMARY_NAVIGATION[curIdx - 1].route),
       go: () => handleNavSelect(PRIMARY_NAVIGATION[curIdx - 1].route) }
-    : (!isReview && curIdx === 0)
+    : curIdx === 0
       ? { label: '再読み込み', go: () => window.location.reload() }
       : undefined;
 
+  const content = route === 'command' ? (
+      <CommandCenter onNavigate={handleNavSelect} onNavigateToAsset={navigateToAsset}
+        onNavigateToSettings={navigateToSettings} />
+    ) : route === 'watchlist' ? (
+      <Watchlist
+        assetFocus={assetFocus}
+        assetDetail={!!location.asset}
+        initialPortfolioOpen={!!location.portfolioOpen}
+        onNavigateToAsset={navigateToAsset}
+        onBackToHoldings={() => handleNavSelect('watchlist')}
+      />
+    ) : route === 'notifications' ? (
+      <NotificationsPage onNavigate={handleNavSelect} />
+    ) : route === 'settings' ? (
+      <Settings settingsSection={location.settingsSection} />
+    ) : (
+      <MarketRegime />
+    );
+
   return (
     <AppShell
-      sidebar={
-        <NavRail
-          active={isReview ? null : route}
-          onSelect={handleNavSelect}
-          onReviewLink={enterReview}
-          isReview={isReview}
-        />
-      }
+      sidebar={<NavRail active={route === 'regime' ? null : route}
+        onSelect={handleNavSelect} />}
       lastUpdated={lastUpdated}
-      nextEvent={!isReview && route === 'command' ? undefined : nextEvent}
       overscrollNext={overscrollNext}
       overscrollPrev={overscrollPrev}
-      pageKey={isReview ? 'review' : route}
+      pageKey={location.asset
+        ? `asset:${location.asset.symbol}:${location.asset.section ?? ''}` : route}
       pageDirection={pageEnterDirection}
       marketStatusLabel={marketStatusLabel}
-      hideNotifications={!isReview && route === 'command'}
     >
-      {isReview ? <AIReview /> : <Active onNavigate={handleNavSelect} onNavigateToAsset={navigateToAsset} assetFocus={assetFocus} />}
+      {content}
     </AppShell>
   );
 };

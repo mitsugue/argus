@@ -1,5 +1,6 @@
 import React from 'react';
 import type { RouteKey } from '../NavRail';
+import type { SettingsSection } from '../../navigation';
 import './Today.css';
 
 // V12.2.11 — ATTENTION: 非critical警告の集約領域。
@@ -17,10 +18,11 @@ interface Props {
   strategyNote: { tone: string; textJa: string } | null;
   fireNote: { tone: string; textJa: string } | null;
   onNavigate: (key: RouteKey) => void;
+  onNavigateToSettings?: (section: SettingsSection) => void;
 }
 
 export const TodayAttention: React.FC<Props> = ({
-  notifications, backupUnprotected, strategyNote, fireNote, onNavigate,
+  notifications, backupUnprotected, strategyNote, fireNote, onNavigate, onNavigateToSettings,
 }) => {
   const [notifOpen, setNotifOpen] = React.useState(false);
   const rows = (notifications.length ? 1 : 0) + (backupUnprotected ? 1 : 0)
@@ -59,26 +61,27 @@ export const TodayAttention: React.FC<Props> = ({
       {backupUnprotected && (
         <button type="button" className="tattn__row tattn__row--btn"
           style={{ borderLeftColor: 'var(--value-negative)' }}
-          onClick={() => onNavigate('backup')}>
+          onClick={() => onNavigateToSettings
+            ? onNavigateToSettings('recovery') : onNavigate('settings')}>
           <b style={{ color: 'var(--value-negative)' }}>[バックアップ]</b>
-          {' '}未保護 — 保有データはこの端末内のみ。暗号化バックアップを有効化してください。
-          <span className="tattn__hint">Backupへ</span>
+          {' '}未保護 — 保有データはこの端末内のみ。JSONエクスポートを安全な場所へ保存してください。
+          <span className="tattn__hint">Settings / Recoveryへ</span>
         </button>
       )}
       {strategyNote && (
         <button type="button" className="tattn__row tattn__row--btn"
           style={{ borderLeftColor: strategyNote.tone }}
-          onClick={() => onNavigate('core')}>
+          onClick={() => onNavigate('watchlist')}>
           <b style={{ color: strategyNote.tone }}>[戦略]</b> {strategyNote.textJa}
-          <span className="tattn__hint">Positions &amp; Riskへ</span>
+          <span className="tattn__hint">Holdings / Watchlistへ</span>
         </button>
       )}
       {fireNote && (
         <button type="button" className="tattn__row tattn__row--btn"
           style={{ borderLeftColor: fireNote.tone }}
-          onClick={() => onNavigate('core')}>
+          onClick={() => onNavigate('watchlist')}>
           <b style={{ color: fireNote.tone }}>[FIRE]</b> {fireNote.textJa}
-          <span className="tattn__hint">Positions &amp; Riskへ</span>
+          <span className="tattn__hint">Holdings / Watchlistへ</span>
         </button>
       )}
     </div>

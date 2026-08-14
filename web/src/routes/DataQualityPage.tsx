@@ -39,7 +39,7 @@ const FRESHNESS_JA: Record<PublicDiagnostics['freshness']['overall'], string> = 
   mixed: '混在',
 };
 
-export const DataQualityPage: React.FC = () => {
+export const PublicDiagnosticsPanel: React.FC = () => {
   const [diagnostics, setDiagnostics] = React.useState<PublicDiagnostics | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [failed, setFailed] = React.useState(false);
@@ -81,10 +81,7 @@ export const DataQualityPage: React.FC = () => {
   React.useEffect(() => { load(); }, [load]);
 
   return (
-    <PageShell
-      title="Data Quality"
-      subtitle="公開画面では固定スキーマの稼働・鮮度・復旧ステータスだけを表示します。詳細な運用診断はサーバー間認証された管理経路へ移動しました。"
-    >
+    <section id="settings-status" aria-label="Data quality status">
       {loading && <p className="cmd-alloc__note">公開診断を確認中…</p>}
       {failed && !loading && (
         <div className="card cmd-alloc">
@@ -144,8 +141,17 @@ export const DataQualityPage: React.FC = () => {
           </section>
         </>
       )}
-    </PageShell>
+    </section>
   );
 };
+
+export const DataQualityPage: React.FC = () => (
+  <PageShell
+    title="Data Quality"
+    subtitle="公開画面では固定スキーマの稼働・鮮度・復旧ステータスだけを表示します。詳細な運用診断はサーバー間認証された管理経路へ移動しました。"
+  >
+    <PublicDiagnosticsPanel />
+  </PageShell>
+);
 
 export default DataQualityPage;

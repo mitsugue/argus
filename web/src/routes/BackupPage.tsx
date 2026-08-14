@@ -5,28 +5,30 @@ import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
 import { BackupCard } from '../components/guide/BackupCard';
 import { BackupStatusOverview } from '../components/system/BackupStatusOverview';
 
-// V11.19.1 — Backup page (owner request 2026-07-05): バックアップ関連の操作が
-// ④Core Portfolio(PORTFOLIO SYNC & BACKUP)と⑤Guide(バックアップ/パスフレーズ)に
-// 散在していたため、専用ページに集約。ナビ下側・Guideの隣。
-// 中身は既存コンポーネントの移設であり、保存仕様・暗号化仕様は一切変更しない。
+// Lean v13: backup and recovery live under Settings. The public browser can
+// export/import local JSON and read/restore an existing encrypted envelope;
+// cloud push and live sync are intentionally unavailable.
 
-export const BackupPage: React.FC = () => {
+export const BackupSettingsPanel: React.FC<{ initiallyOpen?: boolean }> = ({ initiallyOpen = false }) => {
   const assetsApi = useAssets();
+  const [actionsOpen, setActionsOpen] = React.useState(initiallyOpen);
+
+  React.useEffect(() => {
+    setActionsOpen(initiallyOpen);
+  }, [initiallyOpen]);
 
   return (
-    <PageShell
-      title="Backup"
-      subtitle="保有・判断記録・通知・学習履歴のバックアップ操作をここに集約。①パスフレーズで暗号化バックアップ(端末間同期・クラウドには暗号文のみ)②バックアップJSONの書き出し/読み込み③スナップショット④復元ドリル(非破壊)。パスフレーズは忘れると復元不能・チャット等に絶対貼らないでください。"
-    >
+    <section id="settings-recovery" aria-label="Backup and recovery">
       <BackupStatusOverview assets={assetsApi.assets} />
-      <details className="backup-actions">
-        <summary>Manual backup / restore / sync actions</summary>
-        <div className="backup-actions__body">
-      {/* ① 暗号化バックアップ(パスフレーズ)設定 — Guideから移設 */}
+      <details className="backup-actions" open={actionsOpen}
+        onToggle={(event) => setActionsOpen(event.currentTarget.open)}>
+        <summary>Manual export / import / restore actions</summary>
+        {actionsOpen && <div className="backup-actions__body">
+      {/* ① 既存暗号化バックアップのread/restore — public push is unavailable. */}
       <section>
         <div className="section-head">
-          <span className="section-head__title">暗号化バックアップ / 端末間同期</span>
-          <span className="section-head__count">パスフレーズ · 暗号文のみクラウドへ</span>
+          <span className="section-head__title">暗号化バックアップ / 読み取り復元</span>
+          <span className="section-head__count">クラウド送信なし · 既存暗号文のみ</span>
         </div>
         <BackupCard />
       </section>
@@ -38,10 +40,19 @@ export const BackupPage: React.FC = () => {
         バックアップの保護状態(保護済み/一部保護/未保護)と復元ドリルの結果は上のBACKUP SAFETYに表示されます。
         サーバーはパスフレーズの有無・保護状態・バックアップ内容を一切知りません。
       </p>
-        </div>
+        </div>}
       </details>
-    </PageShell>
+    </section>
   );
 };
+
+export const BackupPage: React.FC = () => (
+  <PageShell
+    title="Backup"
+    subtitle="保有・判断記録・通知・学習履歴のバックアップ操作をここに集約。"
+  >
+    <BackupSettingsPanel />
+  </PageShell>
+);
 
 export default BackupPage;
