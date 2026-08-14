@@ -59,7 +59,8 @@ PUBLIC_CACHE_ONLY_CONSUMERS = (
     ),
     CacheOnlyConsumerContract(
         "/api/argus/decision-value/status",
-        ("web/src/hooks/useArgusProStatus.ts",),
+        ("web/src/hooks/useArgusProStatus.ts",
+         "web/src/components/guide/DecisionValueOpsCard.tsx"),
         "authenticated decision-value shadow run or background acquisition",
     ),
     CacheOnlyConsumerContract(

@@ -2377,8 +2377,10 @@ def _layer2b_store_configured():
 def _require_owner_sync(body_token=None):
     """(authorized, error, code) — accepts the dedicated OWNER-SYNC token OR the
     admin token, from a header OR the request body (body lets a non-ASCII
-    passphrase work — header values must be ASCII). Scoped ONLY to watchlist-sync
-    (membership metadata; no portfolio, no other admin action). Never logs it."""
+    passphrase work — header values must be ASCII). The dedicated token is
+    limited to OWNER_SYNC catalog operations (membership, Layer-2B calibration,
+    and owner profile actions); it has no general admin or deploy authority.
+    Never logs it."""
     owner = os.environ.get("ARGUS_OWNER_SYNC_TOKEN", "")
     admin = _ARGUS_ADMIN_TOKEN
     if not owner and not admin:
@@ -3370,9 +3372,12 @@ def _sanitize_symbols(raw, pattern, cap):
             out.append(s)
     return out[:cap]
 
-def _jq_name_for(code4):
-    """Japanese company name from the cached J-Quants master ('' if unknown)."""
-    for r in _jq_master():
+def _jq_name_for(code4, *, allow_provider_fetch=True):
+    """Japanese company name, optionally restricted to the existing master cache."""
+    rows = (_jq_master() if allow_provider_fetch
+            else ((_JQ_MASTER_CACHE.get("data") or [])
+                  if "_JQ_MASTER_CACHE" in globals() else []))
+    for r in rows:
         if r["code4"] == code4:
             return r["ja"] or r["en"] or ""
     return ""
@@ -3500,7 +3505,10 @@ def get_japan_watchlist_snapshot(
     # reaches /jp-watchlist-codes through private Layer-2B authority instead.
     if record_requested_symbols and symbols and requested:
         _remember_jp_symbols(requested)
-    return _overlay_pushed(snap, "JP", requested)
+    return (_overlay_pushed(snap, "JP", requested)
+            if allow_provider_fetch else
+            _overlay_pushed(
+                snap, "JP", requested, allow_provider_fetch=False))
 
 _JP_FALLBACK_LAST = {"ts": None}   # v12.0.1 実測: JP代替価格を最後に実データで返せた時刻
 
@@ -3733,12 +3741,18 @@ def get_us_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
               if now - p.get("ts", 0) <= _PUSH_TTL}
     if requested and all(s in bridge for s in requested):
         base = {"status": "live", "asOf": _ai_now_iso(), "provider": "moomoo-bridge", "stocks": []}
-        return _overlay_pushed(base, "US", requested)
+        return (_overlay_pushed(base, "US", requested)
+                if allow_provider_fetch else
+                _overlay_pushed(
+                    base, "US", requested, allow_provider_fetch=False))
     # Preserve the legacy one-argument call shape for internal callers/tests.
     snap = (_get_us_watchlist_core(symbols)
             if allow_provider_fetch
             else _get_us_watchlist_core(symbols, allow_provider_fetch=False))
-    snap = _overlay_pushed(snap, "US", requested)
+    snap = (_overlay_pushed(snap, "US", requested)
+            if allow_provider_fetch else
+            _overlay_pushed(
+                snap, "US", requested, allow_provider_fetch=False))
     try:
         have = {s.get("symbol") for s in (snap.get("stocks") or [])}
         missing = [s for s in requested if s not in have]
@@ -3841,7 +3855,8 @@ def _jp_market_open(now_jst=None):
         argus_market_clock.JP_EQUITY, n.astimezone(pytz.utc))
     return state["session"] in ("MORNING_SESSION", "AFTERNOON_SESSION")
 
-def _overlay_pushed(snapshot, market, requested):
+def _overlay_pushed(
+        snapshot, market, requested, *, allow_provider_fetch=True):
     """Copy of a watchlist snapshot with fresh pushed quotes overlaid (and
     holes filled for requested symbols the provider missed). Cache-safe —
     never mutates the cached object. No fresh pushes → snapshot unchanged."""
@@ -3926,7 +3941,9 @@ def _overlay_pushed(snapshot, market, requested):
                 stocks.append(q)
         for sym in requested or []:
             if sym in fresh and sym not in seen:
-                name = (_jq_name_for(sym) or sym) if market == "JP" else sym
+                name = ((_jq_name_for(
+                    sym, allow_provider_fetch=allow_provider_fetch) or sym)
+                    if market == "JP" else sym)
                 stocks.append({**_stamp(fresh[sym]), "name": name, "nameJa": name})
                 overlaid += 1
         if overlaid == 0:
@@ -31261,6 +31278,31 @@ def get_integrations_snapshot(*, allow_provider_fetch=True):
     jq_rt   = _st(jp)
     td_rt   = _st(us)
 
+    # A configured Finnhub key is not runtime evidence.  Public/cache-only
+    # readers may call this before any quote/news acquisition has succeeded,
+    # so derive the status only from fresh provider-owned caches.
+    fresh_finnhub_quote = any(
+        isinstance(hit, dict) and hit.get("row") is not None and
+        isinstance(hit.get("ts"), (int, float)) and
+        not isinstance(hit.get("ts"), bool) and
+        -5 <= now - hit["ts"] <= _FINNHUB_QUOTE_TTL
+        for hit in _FINNHUB_QUOTE_CACHE.values())
+    fresh_finnhub_news = bool(
+        isinstance(_MARKET_NEWS_CACHE.get("data"), dict) and
+        _MARKET_NEWS_CACHE["data"].get("status") == "live" and
+        _MARKET_NEWS_CACHE["data"].get("stale") is not True and
+        _MARKET_NEWS_CACHE.get("lastErrorClass") is None and
+        now < float(_MARKET_NEWS_CACHE.get("expires") or 0.0))
+    if not FINNHUB_API_KEY:
+        finnhub_rt = "missing"
+    elif fresh_finnhub_quote or fresh_finnhub_news:
+        finnhub_rt = "live"
+    elif (_FINNHUB_QUOTE_CACHE or
+          _MARKET_NEWS_CACHE.get("lastSuccessfulPollAt")):
+        finnhub_rt = "stale"
+    else:
+        finnhub_rt = "requires_test"
+
     ai = _ai_judgment_truth(allow_restore=allow_provider_fetch)
     # OpenAI / Gemini runtime status, key-aware and honest.
     if not ai["enabled"]:
@@ -31288,8 +31330,8 @@ def get_integrations_snapshot(*, allow_provider_fetch=True):
          "usedFor": ["us-watchlist", "market-regime"], "lastKnownStatus": td_rt,
          "notesJa": "米国株価格・ETFレジームproxyに使用。"},
         {"id": "finnhub", "label": "Finnhub", "category": "news_catalyst",
-         "configured": bool(FINNHUB_API_KEY), "runtimeStatus": ("live" if FINNHUB_API_KEY else "missing"),
-         "usedFor": ["corporate-catalysts"], "lastKnownStatus": ("live" if FINNHUB_API_KEY else "missing"),
+         "configured": bool(FINNHUB_API_KEY), "runtimeStatus": finnhub_rt,
+         "usedFor": ["corporate-catalysts"], "lastKnownStatus": finnhub_rt,
          "notesJa": "未設定なら米国ニュース/決算カレンダーはpartial。"},
         {"id": "openai", "label": "OpenAI GPT-5.5", "category": "ai",
          "configured": bool(_OPENAI_API_KEY), "runtimeStatus": oai_rt,
@@ -31506,9 +31548,20 @@ def _source_registry(*, allow_provider_fetch=True):
     registry/cache snapshot, but never turn an unauthenticated GET into an
     EDINET, J-Quants, or market-data request.
     """
-    # Self-verify EDINET once when a key is configured (cached) so the registry
-    # flips missing→confirmed_live/requires_test without waiting for a JP event.
-    if allow_provider_fetch and _EDINET_API_KEY and not _EDINET_STATE["lastFetchOk"]:
+    now_epoch = time.time()
+
+    def _edinet_success_is_recent():
+        last_epoch = _parse_iso_epoch(_EDINET_STATE.get("lastAt"))
+        return bool(
+            _EDINET_STATE.get("lastFetchOk") and
+            last_epoch is not None and
+            -5 <= time.time() - last_epoch <= 6 * 3600)
+
+    # Self-verify EDINET when configured and the prior success evidence is no
+    # longer fresh, so internal/background refresh remains authoritative while
+    # public readers stay cache-only.
+    if (allow_provider_fetch and _EDINET_API_KEY and
+            not _edinet_success_is_recent()):
         try:
             _edinet_filings(datetime.now(TZ_JST).strftime("%Y-%m-%d"))
         except Exception:
@@ -31521,6 +31574,29 @@ def _source_registry(*, allow_provider_fetch=True):
     bridge_live = rt("moomoo") == "live"
     jq, td, fred, cg = rt("jquants"), rt("twelvedata"), rt("fred"), rt("coingecko")
     moomoo_cap = _moomoo_capability_report()
+
+    # Quote transport alone cannot prove that the optional capital-distribution
+    # fields are fresh.  The bridge currently carries its last known flow value
+    # on later quotes without a flow-specific acquisition timestamp, so even an
+    # observed numeric value remains requires_test rather than LIVE.
+    flow_observed = False
+    for market_rows in _PUSHED_QUOTES.values():
+        for rec in market_rows.values():
+            row = rec.get("row") or {}
+            flow = row.get("flow")
+            received_epoch = rec.get("ts")
+            if (isinstance(received_epoch, (int, float)) and
+                    not isinstance(received_epoch, bool) and
+                    -5 <= now_epoch - received_epoch <= 900 and
+                    isinstance(flow, dict) and
+                    isinstance(flow.get("bigNetRatio"), (int, float)) and
+                    not isinstance(flow.get("bigNetRatio"), bool)):
+                flow_observed = True
+                break
+        if flow_observed:
+            break
+
+    edinet_recent_success = _edinet_success_is_recent()
     def _moomoo_market_status(market):
         summary = (moomoo_cap.get("markets") or {}).get(market) or {}
         if summary.get("verdict") == "realtime_proven":
@@ -31601,9 +31677,10 @@ def _source_registry(*, allow_provider_fetch=True):
           "moomooはexchange timestampのquote-set p95≤60秒でのみLIVE。"
           "Twelve Dataは契約・市場権限・source timestampの実測が揃うまでrequires_test。"),
         S("大口フロー(資金分布)", "moomoo", "JP/US",
-          "confirmed_live" if bridge_live else "requires_test",
+          "requires_test" if (bridge_live or flow_observed) else "missing",
           "口座のデータ権限依存", "free", "entitlement-dependent",
-          "新規買い/買い戻し/分配の推定に使用。"),
+          "資金分布値は受信できるがflow専用の取得時刻が無いためLIVE未実証。"
+          "新規買い/買い戻し/分配の推定には参考値として使用。"),
         S("暗号資産 価格/ショック", "CoinGecko", "CRYPTO",
           "confirmed_live" if cg == "live" else "partial", "数分遅延", "free", "ok",
           "24時間ショック検知に使用(キー不要)。"),
@@ -31625,7 +31702,7 @@ def _source_registry(*, allow_provider_fetch=True):
           + ("" if _jq_known else "admin診断が未実行のため requires_test 表示。")),
         S("企業開示(EDINET)", "EDINET API v2", "JP",
           ("missing" if not _EDINET_API_KEY else
-           "confirmed_live" if _EDINET_STATE["lastFetchOk"] else "requires_test"),
+           "confirmed_live" if edinet_recent_success else "requires_test"),
           ("APIキー未設定" if not _EDINET_API_KEY else "Subscription-Key設定済"),
           "free", "ok",
           "公式開示=official_fact。official_catalystは臨時報告/大量保有など材料性のある開示が"

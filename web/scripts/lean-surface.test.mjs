@@ -35,6 +35,7 @@ const osintPanel = read('src/components/dashboard/OsintDeepDive.tsx');
 const vault = read('src/lib/vault.ts');
 const backupCard = read('src/components/guide/BackupCard.tsx');
 const locales = read('src/i18n/locales.ts');
+const layer2bSync = read('src/components/guide/Layer2BSyncCard.tsx');
 const deferredManifest = read('../docs/ARGUS_B2A_DEFERRED_UI_MANIFEST.md');
 
 assert.deepEqual(
@@ -97,6 +98,12 @@ assert.match(watchlist, /\{portfolioOpen && <CorePortfolio embedded \/>\}/);
 assert.match(watchlist, /setPortfolioOpen\(initialPortfolioOpen\)/);
 assert.doesNotMatch(watchlist, /if \(initialPortfolioOpen\) setPortfolioOpen/);
 assert.match(watchlist, /\{supportOpen && <div className="ad-support__body">/);
+assert.match(
+  watchlist,
+  /\{supportOpen && <div className="ad-support__body">[\s\S]*<Layer2BSyncCard assets=\{assets\} \/>/,
+);
+assert.match(layer2bSync, /assets: AssetItem\[\]/);
+assert.doesNotMatch(layer2bSync, /useAssets|useEffect|setInterval/);
 assert.match(assetDecision, /\{supportOpen && <div className="ad-research-drawer__body">/);
 assert.match(assetDecision, /interactive=\{collapsible\}/);
 assert.match(assetSummary, /interactive \? \(/);
@@ -136,8 +143,9 @@ assert.match(backupCard, /クラウドから復元/);
 assert.doesNotMatch(backupCard, /今すぐ送信|cloudBackupNow/);
 
 assert.match(deferredManifest, /Unreachable UI modules \(47\)/);
-assert.match(deferredManifest, /Newly unreachable after B2a \(16\)/);
-assert.match(deferredManifest, /63 unreachable component\/route TSX/);
+assert.match(deferredManifest, /still deferred after B2b \(15\)/);
+assert.match(deferredManifest, /62 unreachable component\/route TSX/);
+assert.doesNotMatch(deferredManifest, /- `web\/src\/components\/guide\/Layer2BSyncCard\.tsx`/);
 assert.match(deferredManifest, /No domain engine, polling hook, storage format/);
 assert.doesNotMatch(locales, /Asset Deskで銘柄カード/);
 

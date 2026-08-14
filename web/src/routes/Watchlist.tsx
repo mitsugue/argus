@@ -6,6 +6,7 @@ import { AssetDeskList, type AssetFocusIntent } from '../components/assetDesk/As
 import { EntityProfileEditor } from '../components/dashboard/EntityProfileEditor';
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
+import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
 import { useAssets } from '../hooks/useAssets';
 import { useLocale, t } from '../i18n';
 import { CorePortfolio } from './CorePortfolio';
@@ -98,6 +99,7 @@ export const Watchlist: React.FC<Props> = ({
         onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
         <summary>Supporting tools</summary>
         {supportOpen && <div className="ad-support__body">
+          <Layer2BSyncCard assets={assets} />
           <AIReview />
           <EntityProfileEditor />
           <TradeJournalCard assets={assets} />

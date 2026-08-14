@@ -94,11 +94,11 @@ for (const source of [command, diagnostics]) {
   assert.doesNotMatch(source, /\/api\/argus\/data-quality['"`]/);
 }
 assert.match(manifest, /Catalogued HTTP contracts: `245 -> 244`/);
-assert.match(manifest, /Important Events `3 -> 1`/);
+assert.match(manifest, /Important Events `2 -> 1`/);
 assert.match(manifest, /Market\n\s+Ledger `3 -> 1`/);
 assert.match(manifest, /Action Labels `2 -> 1`/);
 assert.match(manifest, /`4 -> 2`/);
 assert.match(manifest, /PWA timers `2 -> 1`/);
 assert.match(manifest, /Route deletions: `1`/);
 
-console.log('polling-singleton.test: ok (events 3→1, ledger 3→1, actions 2→1, quotes 4→2, PWA 2→1)');
+console.log('polling-singleton.test: ok (events 2→1, ledger 3→1, actions 2→1, quotes 4→2, PWA 2→1)');

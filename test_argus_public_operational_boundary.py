@@ -305,15 +305,89 @@ def test_public_jp_watchlist_is_read_only_and_provider_cache_only(monkeypatch):
     monkeypatch.setitem(scanner._JP_CACHE, "data", None)
     monkeypatch.setitem(scanner._JP_CACHE, "expires", 0.0)
     monkeypatch.setattr(scanner, "_JP_DYN_CACHE", {})
+    monkeypatch.setitem(scanner._JQ_MASTER_CACHE, "data", None)
+    monkeypatch.setitem(scanner._JQ_MASTER_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "JP", {
+        "8058": {"ts": scanner.time.time(), "row": {
+            "symbol": "8058", "price": 1_234.0, "status": "live",
+            "exchangeTs": scanner._ai_now_iso(),
+        }},
+    })
     monkeypatch.setattr(scanner, "_jq_fetch_bar_row", forbidden)
     monkeypatch.setattr(scanner, "_jquants_fetch_quote", forbidden)
+    monkeypatch.setattr(scanner, "_jq_master", forbidden)
     before_cache = copy.deepcopy(scanner._JP_DYN_CACHE)
 
     response = scanner.app.test_client().get(
         "/api/argus/japan-watchlist?symbols=8058")
     assert response.status_code == 200
+    assert [row["symbol"] for row in response.get_json()["stocks"]] == ["8058"]
+    assert response.get_json()["stocks"][0]["name"] == "8058"
     assert scanner._JP_DYN_CACHE == before_cache
     assert scanner._JP_SEEN_SYMBOLS == seen_before
+
+
+def test_cache_only_provider_truth_requires_recent_capability_evidence(
+        monkeypatch):
+    old = "2000-01-01T00:00:00Z"
+    now = scanner.time.time()
+    monkeypatch.setattr(scanner, "FINNHUB_API_KEY", "configured-for-test")
+    monkeypatch.setattr(scanner, "_FINNHUB_QUOTE_CACHE", {})
+    monkeypatch.setitem(scanner._MARKET_NEWS_CACHE, "data", None)
+    monkeypatch.setitem(scanner._MARKET_NEWS_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._MARKET_NEWS_CACHE, "lastSuccessfulPollAt", None)
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "data", None)
+    monkeypatch.setitem(scanner._INTEGRATIONS_CACHE, "expires", 0.0)
+
+    integrations = scanner.get_integrations_snapshot(
+        allow_provider_fetch=False)
+    finnhub = next(row for row in integrations["providers"]
+                   if row["id"] == "finnhub")
+    assert finnhub["configured"] is True
+    assert finnhub["runtimeStatus"] == "requires_test"
+
+    # A failed refresh keeps the last good payload for fallback, but the new
+    # failure backoff deadline must not relabel that old payload LIVE.
+    monkeypatch.setitem(scanner._MARKET_NEWS_CACHE, "data", {
+        "status": "live", "stale": False, "items": []})
+    monkeypatch.setitem(
+        scanner._MARKET_NEWS_CACHE, "expires", now + 300)
+    monkeypatch.setitem(
+        scanner._MARKET_NEWS_CACHE, "lastSuccessfulPollAt", old)
+    monkeypatch.setitem(
+        scanner._MARKET_NEWS_CACHE, "lastErrorClass", "Timeout")
+    failed_refresh = scanner.get_integrations_snapshot(
+        allow_provider_fetch=False)
+    failed_finnhub = next(row for row in failed_refresh["providers"]
+                          if row["id"] == "finnhub")
+    assert failed_finnhub["runtimeStatus"] == "stale"
+
+    monkeypatch.setattr(scanner, "_EDINET_API_KEY", "configured-for-test")
+    monkeypatch.setitem(scanner._EDINET_STATE, "lastFetchOk", True)
+    monkeypatch.setitem(scanner._EDINET_STATE, "lastAt", old)
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "JP", {})
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", {
+        "AAPL": {"ts": now, "row": {
+            "symbol": "AAPL", "price": 200.0,
+            "exchangeTs": scanner._ai_now_iso(),
+        }},
+    })
+    registry = scanner._source_registry(allow_provider_fetch=False)
+    edinet = next(row for row in registry["sources"]
+                  if row["capability"] == "企業開示(EDINET)")
+    flow = next(row for row in registry["sources"]
+                if row["capability"] == "大口フロー(資金分布)")
+    assert edinet["status"] == "requires_test"
+    assert flow["status"] != "confirmed_live"
+
+    monkeypatch.setitem(scanner._PUSHED_QUOTES["US"]["AAPL"]["row"], "flow", {
+        "bigNetRatio": 0.25,
+    })
+    proven = scanner._source_registry(allow_provider_fetch=False)
+    proven_flow = next(row for row in proven["sources"]
+                       if row["capability"] == "大口フロー(資金分布)")
+    assert proven_flow["status"] == "requires_test"
+    assert "flow専用の取得時刻" in proven_flow["notesJa"]
 
 
 def test_jp_bridge_dynamic_membership_remains_owner_synced_and_admin_gated(
