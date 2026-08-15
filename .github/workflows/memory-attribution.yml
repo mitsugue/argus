@@ -478,11 +478,15 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify exact checked-out head
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          expected_head='${{ github.event.pull_request.head.sha || github.sha }}'
+          test "$(git rev-parse HEAD)" = "$expected_head"
+          printf 'ROUND2_HEAD_SHA=%s\n' "$expected_head" >> "$GITHUB_ENV"
       - name: Truth and ledger proof in exact 4 GiB cgroup
         shell: bash
         run: |
@@ -551,7 +555,7 @@ jobs:
 
           proof = {
               "schemaVersion": "argus-round2-truth-ledger-ci-proof-v1",
-              "headSha": os.environ["GITHUB_SHA"],
+              "headSha": os.environ["ROUND2_HEAD_SHA"],
               "benchmarkDigest": report["deterministicDigest"],
               "requestCount": counts["requestCount"],
               "selectedCount": counts["selectedCount"],
@@ -574,7 +578,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: round2-truth-ledger-proof-${{ github.sha }}
+          name: round2-truth-ledger-proof-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             artifacts/truth-ledger-benchmark.json
             artifacts/round2-truth-ledger-ci-proof.json

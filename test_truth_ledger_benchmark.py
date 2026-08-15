@@ -305,7 +305,11 @@ def test_exact_head_truth_ledger_ci_gate_preserves_exact_4gib_contract():
 
     job = workflow.split("\n  linux-4gib-truth-ledger:\n", 1)[1]
     assert job.count("actions/checkout@v5") == 1
-    assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in job
+    exact_head = "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert f"ref: {exact_head}" in job
+    assert f"expected_head='{exact_head}'" in job
+    assert 'test "$(git rev-parse HEAD)" = "$expected_head"' in job
+    assert "ROUND2_HEAD_SHA=%s" in job
     assert "--memory 4g --memory-swap 4g --pids-limit 128" in job
     assert 'memory.max)" = "4294967296"' in job
     assert 'memory.swap.max)" = "0"' in job
@@ -322,8 +326,8 @@ def test_exact_head_truth_ledger_ci_gate_preserves_exact_4gib_contract():
     assert 'cgroup["memoryPeakBytes"] < cgroup["memoryMaxBytes"]' in job
     assert 'cgroup["oomDelta"] == 0' in job
     assert 'cgroup["oomKillDelta"] == 0' in job
-    assert '"headSha": os.environ["GITHUB_SHA"]' in job
-    assert "round2-truth-ledger-proof-${{ github.sha }}" in job
+    assert '"headSha": os.environ["ROUND2_HEAD_SHA"]' in job
+    assert f"round2-truth-ledger-proof-{exact_head}" in job
     assert "artifacts/truth-ledger-benchmark.json" in job
     assert "artifacts/round2-truth-ledger-ci-proof.json" in job
     assert "scanner.py" not in job
