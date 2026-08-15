@@ -37,6 +37,7 @@ import argus_remote_recovery  # bounded cold-restore delta for compact journal p
 import argus_remote_nonce_anchor  # bounded private nonce-authority epochs
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
+import argus_market_data_truth  # v13 Round 2A: canonical provider-neutral market truth
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
 import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
 import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist sync validation (pure, v10.74)
@@ -2025,8 +2026,12 @@ def _dv_status_public_dict(*, allow_private_fetch=True):
 _CALIB_V4_CACHE = {"data": None, "expires": 0.0}
 
 def _calibration_v4_summary(*, allow_ledger_fetch=True):
-    """Read the parallel v4 dry-run summary (calibration_v1/summary.json) off the
-    ledger branch. None until the GitHub Action has written it (fresh env → 404)."""
+    """Read the historical-compatibility/shadow-derived calibration_v1 summary.
+
+    This legacy branch artifact is not canonical live-calibration authority;
+    the sealed v2 forward_live ledger is separately evidence-only. None until
+    the GitHub Action has written the compatibility artifact (fresh env → 404).
+    """
     now = time.time()
     if (_CALIB_V4_CACHE["data"] is not None and
             now < _CALIB_V4_CACHE["expires"]):
@@ -2533,8 +2538,36 @@ def _fred_normalize(series_id, latest, prev, latest_date, status):
         # VIX changeBp as informational only.
         "changeBp":      round(change * 100, 1),
         "latestDate":    latest_date,
+        "sourceTimestamp": latest_date,
+        "receivedAt": _ai_now_iso(),
+        "source": "fred" if status != "mock" else "mock",
         "status":        status,
     }
+
+
+def _rates_truth_axes(snapshot):
+    """Independent freshness/completeness axes for all decision-rate inputs."""
+    keys = ("us10y", "us2y", "usReal10y", "vix", "usdJpy")
+    rows = [snapshot.get(key) or {} for key in keys]
+    usable = [row for row in rows
+              if row.get("latestValue") is not None
+              and row.get("status") not in (None, "", "mock", "unavailable")]
+    missing = [key for key, row in zip(keys, rows)
+               if row.get("latestValue") is None
+               or row.get("status") in (None, "", "mock", "unavailable")]
+    completeness = ("complete" if not missing else
+                    "partial" if usable else "missing")
+    freshness = ("fresh" if usable and all(
+        isinstance(row.get("sourceTimestamp"), str)
+        and "T" in row["sourceTimestamp"]
+        and row.get("status") == "live"
+        for row in usable) else "delayed" if usable else "unavailable")
+    # Legacy status remains a projection of BOTH axes. A live primary pair with
+    # mock secondary components is partial, never a top-level LIVE/COMPLETE claim.
+    status = ("live" if completeness == "complete" and freshness == "fresh"
+              else "partial" if usable else "mock")
+    return {**snapshot, "status": status, "freshness": freshness,
+            "completeness": completeness, "missingSeries": missing}
 
 def _fred_mock_series(series_id):
     latest, prev = _FRED_MOCK[series_id]
@@ -2616,13 +2649,8 @@ def _rates_snapshot_base():
     vix    = series["VIXCLS"]
     rates_pressure  = _classify_rates_pressure(us10y["change"])
     risk_volatility = _classify_risk_volatility(vix["latestValue"])
-    # Top-level status reflects the data behind the *displayed signals*:
-    # ratesPressure derives from DGS10 and riskVolatility from VIXCLS, and the
-    # summary is built from both. The secondary cells (2Y, real 10Y) don't
-    # drive any signal, so a flaky DFII10/DGS2 must NOT flip the whole snapshot
-    # to "mock" while 10Y + VIX are genuinely live. Each series still carries
-    # its own per-series `status` for cell-level accuracy.
-    overall_status  = "live" if us10y["status"] == "live" and vix["status"] == "live" else "mock"
+    # Each component carries its own truth; the top-level axes below remain
+    # partial/delayed if even a secondary decision input is mock or date-only.
     summary = (
         f"10Y {us10y['latestValue']:.2f}% ({us10y['changeBp']:+.0f}bp), "
         f"VIX {vix['latestValue']:.1f}. "
@@ -2637,9 +2665,10 @@ def _rates_snapshot_base():
         "ratesPressure":  rates_pressure,
         "riskVolatility": risk_volatility,
         "summary":        summary,
-        "status":         overall_status,
+        "status":         "mock",
     }
-    if overall_status == "live":
+    snapshot = _rates_truth_axes(snapshot)
+    if snapshot["status"] in ("live", "partial"):
         _RATES_CACHE["data"]    = snapshot
         _RATES_CACHE["expires"] = now + _RATES_CACHE_TTL
     return snapshot
@@ -2654,7 +2683,7 @@ _YF_RT_MAP = {"usdJpy": ("JPY=X", "USD/JPY"),
 
 
 def _yf_quote(sym):
-    """One realtime quote from Yahoo Finance chart API (keyless). None on failure."""
+    """One quote plus provider timestamp from Yahoo's chart metadata."""
     try:
         r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d",
                          headers={"User-Agent": "Mozilla/5.0 (compatible; argus-research/1.0)"}, timeout=8)
@@ -2666,7 +2695,9 @@ def _yf_quote(sym):
         prev = m.get("chartPreviousClose") or m.get("previousClose")
         if px is None:
             return None
-        return (float(px), float(prev) if prev is not None else float(px))
+        source_ts = m.get("regularMarketTime")
+        return (float(px), float(prev) if prev is not None else float(px),
+                source_ts)
     except Exception:
         return None
 
@@ -2686,9 +2717,17 @@ def _yahoo_rates_rt():
             continue
         px, prev = round(q[0], 2), round(q[1], 2)
         chg = round(px - prev, 2)
+        source_ts = q[2]
+        source_iso = (datetime.fromtimestamp(source_ts, pytz.utc)
+                      .strftime("%Y-%m-%dT%H:%M:%SZ")
+                      if isinstance(source_ts, (int, float)) else None)
         out[key] = {"label": label, "latestValue": px, "previousValue": prev,
                     "change": chg, "changeBp": round(chg * 100, 1),
-                    "latestDate": today, "source": "yahoo-rt", "status": "live"}
+                    "latestDate": (source_iso or today)[:10],
+                    "sourceTimestamp": source_iso,
+                    "receivedAt": _ai_now_iso(),
+                    "source": "yahoo-rt",
+                    "status": "live" if source_iso else "delayed"}
     if out:
         _YF_RT_CACHE["data"] = out
         _YF_RT_CACHE["expires"] = now + _YF_RT_TTL
@@ -2709,7 +2748,7 @@ def get_rates_snapshot():
             snap["summary"] = (f"10Y {u10['latestValue']:.2f}% ({u10['changeBp']:+.0f}bp), "
                                f"VIX {vx['latestValue']:.1f}. Pressure: {snap.get('ratesPressure')}, "
                                f"Vol: {snap.get('riskVolatility')}.")
-    return snap
+    return _rates_truth_axes(snap)
 
 
 def _rates_snapshot_cached_only():
@@ -2747,7 +2786,7 @@ def _rates_snapshot_cached_only():
                 f"10Y {u10['latestValue']:.2f}% ({u10['changeBp']:+.0f}bp), "
                 f"VIX {vx['latestValue']:.1f}. Pressure: {snap.get('ratesPressure')}, "
                 f"Vol: {snap.get('riskVolatility')}.")
-    return {**snap, "cacheState": cache_state}
+    return {**_rates_truth_axes(snap), "cacheState": cache_state}
 
 
 @app.route("/api/argus/rates")
@@ -2811,8 +2850,14 @@ def _yahoo_jp_row(code, name):
         px, prev = round(q[0], 2), round(q[1], 2)
         chg = round(px - prev, 2)
         pct = round((chg / prev) * 100, 2) if prev else 0.0
+        source_ts = q[2]
+        source_iso = (datetime.fromtimestamp(source_ts, pytz.utc)
+                      .strftime("%Y-%m-%dT%H:%M:%SZ")
+                      if isinstance(source_ts, (int, float)) else None)
         row = {"symbol": code, "name": name, "nameJa": name, "price": px,
-               "changeAbs": chg, "changePct": pct, "volume": 0, "date": None,
+               "changeAbs": chg, "changePct": pct, "volume": 0,
+               "date": (source_iso or "")[:10] or None,
+               "sourceTimestamp": source_iso, "receivedAt": _ai_now_iso(),
                "source": "yahoo-delayed", "status": "delayed"}
     _YF_JP_CACHE[code] = {"row": row, "ts": now}
     return row
@@ -2925,6 +2970,19 @@ def _jq_fetch_bar_row(code, name, headers):
         return {
             "symbol": code, "name": name, "nameJa": name,
             "price": close,
+            "open": (float(latest.get("AdjO") if latest.get("AdjO") is not None
+                           else latest.get("O"))
+                     if (latest.get("AdjO") is not None or
+                         latest.get("O") is not None) else None),
+            "high": (float(latest.get("AdjH") if latest.get("AdjH") is not None
+                           else latest.get("H"))
+                     if (latest.get("AdjH") is not None or
+                         latest.get("H") is not None) else None),
+            "low": (float(latest.get("AdjL") if latest.get("AdjL") is not None
+                          else latest.get("L"))
+                    if (latest.get("AdjL") is not None or
+                        latest.get("L") is not None) else None),
+            "close": close,
             "changeAbs": change,
             "changePct": round((change / pclose) * 100, 2) if pclose else 0.0,
             "volume": int(vol) if vol is not None else 0,
@@ -2933,6 +2991,10 @@ def _jq_fetch_bar_row(code, name, headers):
             # the bar is actually today's; otherwise it is delayed (T-1+), so the UI
             # shows 遅延 instead of pretending a yesterday close is a live quote.
             "status": "live" if latest.get("Date") == datetime.now(TZ_JST).strftime("%Y-%m-%d") else "delayed",
+            "sourceTimestamp": latest.get("Date"),
+            "receivedAt": _ai_now_iso(),
+            "delayClass": "EOD",
+            "realtimeEvidence": False,
             "source": "jquants",
         }
     except Exception:
@@ -3217,6 +3279,59 @@ def _us_mock_snapshot():
     return {"status": "mock", "asOf": None, "provider": "twelvedata",
             "stocks": [_us_mock_quote(s) for s in _US_WATCHLIST]}
 
+
+_DECISION_QUOTE_LIVE_MAX_AGE_SEC = 20 * 60
+
+
+def _canonical_quote_source_age(source_timestamp, *, now_epoch=None):
+    """One source-age contract for decision-relevant legacy quote rows.
+
+    A provider label or successful transport is never sufficient for LIVE.
+    Exact source time must be present, must not be in the future, and must be
+    within the bounded quote age.  A real value with missing/old source time is
+    retained as delayed evidence; it is never upgraded to realtime truth.
+    """
+    now = time.time() if now_epoch is None else float(now_epoch)
+    source_epoch = _coerce_epoch(source_timestamp)
+    future = source_epoch is not None and source_epoch > now
+    age = (max(0.0, now - source_epoch)
+           if source_epoch is not None and not future else None)
+    live = age is not None and age <= _DECISION_QUOTE_LIVE_MAX_AGE_SEC
+    return {
+        "ageSec": int(age) if age is not None else None,
+        "timestampInversion": bool(future),
+        "delayClass": "LIVE" if live else "UNKNOWN",
+        "realtimeEvidence": bool(live),
+        "status": "live" if live else "delayed",
+    }
+
+
+def _canonical_quote_snapshot_age(snapshot, rows_key):
+    """Re-evaluate cached provider rows without renewing their source time."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    rows = []
+    for raw in snapshot.get(rows_key) or []:
+        row = dict(raw) if isinstance(raw, dict) else raw
+        if isinstance(row, dict) and str(row.get("status") or "").lower() \
+                not in ("mock", "unavailable", "offline", "error"):
+            row.update(_canonical_quote_source_age(
+                row.get("sourceTimestamp")))
+        rows.append(row)
+    result = {**snapshot, rows_key: rows}
+    statuses = [str(row.get("status") or "").lower()
+                for row in rows if isinstance(row, dict)]
+    # Preserve known partial coverage and mock/unavailable failure states; a
+    # cache read may only downgrade individual source age, never upgrade scope.
+    if snapshot.get("status") not in ("partial", "mock", "unavailable"):
+        result["status"] = (
+            "live" if statuses and all(item == "live" for item in statuses)
+            else "delayed" if statuses and all(
+                item == "delayed" for item in statuses)
+            else "partial" if statuses else snapshot.get("status"))
+    return result
+
+
 def _td_parse_row(s, q):
     """Normalize one Twelve Data quote object → live row, or None if invalid.
 
@@ -3235,14 +3350,25 @@ def _td_parse_row(s, q):
             return None
         vol = q.get("volume")
         dt  = q.get("datetime")
+        source_truth = _canonical_quote_source_age(dt)
         return {
             "symbol": s["symbol"], "name": s["name"],
             "price": round(float(close), 2),
+            "open": (round(float(q["open"]), 4)
+                     if q.get("open") not in (None, "") else None),
+            "high": (round(float(q["high"]), 4)
+                     if q.get("high") not in (None, "") else None),
+            "low": (round(float(q["low"]), 4)
+                    if q.get("low") not in (None, "") else None),
+            "close": round(float(close), 4),
             "changeAbs": round(float(chg), 2),
             "changePct": round(float(pct), 2),
             "volume": int(float(vol)) if vol not in (None, "") else 0,
             "date": (str(dt)[:10] if dt else None),
-            "status": "live",
+            "sourceTimestamp": str(dt) if dt else None,
+            "receivedAt": _ai_now_iso(),
+            "source": "twelvedata",
+            **source_truth,
         }
     except Exception:
         return None
@@ -3262,7 +3388,7 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         hit = _US_DYN_CACHE.get(syms)
         if hit and now < hit["expires"]:
-            return hit["data"]
+            return _canonical_quote_snapshot_age(hit["data"], "stocks")
         if not allow_provider_fetch:
             return (_cached_quote_snapshot(hit["data"]) if hit
                     else {"status": "mock", "asOf": None,
@@ -3285,7 +3411,11 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
                 row = _td_parse_row(meta, q)
                 if row is not None:
                     rows.append(row)
-            overall = "live" if len(rows) == len(syms) else ("partial" if rows else "mock")
+            overall = ("live" if len(rows) == len(syms) and all(
+                row.get("status") == "live" for row in rows)
+                else "delayed" if len(rows) == len(syms) and rows and all(
+                    row.get("status") == "delayed" for row in rows)
+                else "partial" if rows else "mock")
             as_of = max((row["date"] for row in rows if row.get("date")), default=None)
             snapshot = {"status": overall, "asOf": as_of, "provider": "twelvedata", "stocks": rows}
             if rows:
@@ -3297,7 +3427,7 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
 
     if _US_CACHE["data"] is not None and now < _US_CACHE["expires"]:
-        return _US_CACHE["data"]
+        return _canonical_quote_snapshot_age(_US_CACHE["data"], "stocks")
     if not allow_provider_fetch:
         return (_cached_quote_snapshot(_US_CACHE["data"]) if _US_CACHE["data"]
                 else _us_mock_snapshot())
@@ -3322,7 +3452,12 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
                 return _us_mock_snapshot()  # any miss → full mock, never partial fake-live
             rows.append(row)
         as_of = max((row["date"] for row in rows if row.get("date")), default=None)
-        snapshot = {"status": "live", "asOf": as_of, "provider": "twelvedata", "stocks": rows}
+        overall = ("live" if all(row.get("status") == "live" for row in rows)
+                   else "delayed" if all(
+                       row.get("status") == "delayed" for row in rows)
+                   else "partial")
+        snapshot = {"status": overall, "asOf": as_of,
+                    "provider": "twelvedata", "stocks": rows}
         _US_CACHE["data"]    = snapshot
         _US_CACHE["expires"] = now + _US_CACHE_TTL
         return snapshot
@@ -3341,7 +3476,11 @@ def _finnhub_quote_row(sym):
     now = time.time()
     c = _FINNHUB_QUOTE_CACHE.get(sym)
     if c and now - c["ts"] <= _FINNHUB_QUOTE_TTL:
-        return c["row"]
+        row = dict(c["row"]) if isinstance(c.get("row"), dict) else c.get("row")
+        if row is not None:
+            row.update(_canonical_quote_source_age(
+                row.get("sourceTimestamp"), now_epoch=now))
+        return row
     row = None
     try:
         r = requests.get("https://finnhub.io/api/v1/quote",
@@ -3350,11 +3489,24 @@ def _finnhub_quote_row(sym):
         price = d.get("c")
         if isinstance(price, (int, float)) and price > 0:
             ts = d.get("t") or 0
+            source_timestamp = (datetime.fromtimestamp(ts, pytz.utc)
+                                .strftime("%Y-%m-%dT%H:%M:%SZ")
+                                if ts else None)
+            source_truth = _canonical_quote_source_age(source_timestamp)
             row = {"symbol": sym, "name": sym, "price": float(price),
+                   "open": (float(d["o"]) if isinstance(d.get("o"), (int, float))
+                            and d.get("o") > 0 else None),
+                   "high": (float(d["h"]) if isinstance(d.get("h"), (int, float))
+                            and d.get("h") > 0 else None),
+                   "low": (float(d["l"]) if isinstance(d.get("l"), (int, float))
+                           and d.get("l") > 0 else None),
+                   "close": float(price),
                    "changeAbs": float(d.get("d") or 0), "changePct": float(d.get("dp") or 0),
                    "volume": 0,
                    "date": datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%d") if ts else None,
-                   "status": "live", "source": "finnhub"}
+                   "sourceTimestamp": source_timestamp,
+                   "receivedAt": _ai_now_iso(),
+                   "source": "finnhub", **source_truth}
     except Exception:
         row = None
     _FINNHUB_QUOTE_CACHE[sym] = {"row": row, "ts": now}
@@ -3516,10 +3668,15 @@ def _overlay_pushed(
         active_session = session in ("PRE", "REGULAR", "AFTER")
 
         source_ages = []
+        future_source_timestamps = 0
         for p in fresh.values():
             ex_epoch = _coerce_epoch((p.get("row") or {}).get("exchangeTs"))
             if ex_epoch is not None:
-                source_ages.append(max(0.0, now - ex_epoch))
+                age = now - ex_epoch
+                if age < 0:
+                    future_source_timestamps += 1
+                else:
+                    source_ages.append(age)
         source_ages.sort()
         coverage = len(source_ages) / len(fresh) if fresh else 0.0
         median_age = None
@@ -3549,7 +3706,10 @@ def _overlay_pushed(
             row = p["row"]
             transport_age = max(0, int(now - p["ts"]))
             source_epoch = _coerce_epoch(row.get("exchangeTs"))
-            source_age = max(0, int(now - source_epoch)) if source_epoch is not None else None
+            source_delta = now - source_epoch if source_epoch is not None else None
+            timestamp_inversion = source_delta is not None and source_delta < 0
+            source_age = (int(source_delta) if source_delta is not None
+                          and source_delta >= 0 else None)
             return {
                 **row,
                 "status": "live" if delay_class == "LIVE" else "delayed",
@@ -3558,18 +3718,59 @@ def _overlay_pushed(
                     p["ts"], pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "ageSec": source_age,
                 "transportAgeSec": transport_age,
+                "timestampInversion": timestamp_inversion,
                 "delayClass": delay_class,
                 "session": session,
                 "quoteRight": row.get("quoteRight") or row.get("entitlement", "unknown"),
                 "entitlement": row.get("entitlement", "unknown"),
                 "realtimeEvidence": delay_class == "LIVE",
             }
+
+        def _candidate(row, selected):
+            price = row.get("price")
+            if not isinstance(price, (int, float)) or not math.isfinite(price):
+                return None
+            return {
+                "value": round(float(price), 6),
+                "source": str(row.get("source") or snapshot.get("provider")
+                              or "unknown")[:40],
+                "sourceTimestamp": row.get("sourceTimestamp")
+                or row.get("exchangeTs") or row.get("date"),
+                "receivedAt": row.get("receivedAt"),
+                "status": row.get("status") or "unknown",
+                "selected": bool(selected),
+            }
+
+        def _with_candidates(selected_row, alternate_row=None):
+            selected = _candidate(selected_row, True)
+            alternate = _candidate(alternate_row or {}, False)
+            candidates = [item for item in (selected, alternate) if item]
+            conflict = False
+            difference_pct = None
+            if selected and alternate and selected["value"]:
+                difference_pct = round(
+                    abs(alternate["value"] - selected["value"])
+                    / abs(selected["value"]) * 100.0, 6)
+                conflict = difference_pct > 0.25
+            return {
+                **selected_row,
+                "selectedSource": selected["source"] if selected else "unknown",
+                "providerCandidates": candidates[:2],
+                "sourceDisagreement": {
+                    "conflict": conflict,
+                    "differencePct": difference_pct,
+                },
+                "selectionPolicyId": (
+                    "jp-moomoo-jquants-v1" if market == "JP"
+                    else "us-moomoo-twelvedata-finnhub-v1"),
+            }
         stocks, seen, overlaid = [], set(), 0
         for q in snapshot.get("stocks", []):
             sym = q.get("symbol")
             seen.add(sym)
             if sym in fresh:
-                stocks.append({**q, **_stamp(fresh[sym])})
+                selected_row = {**q, **_stamp(fresh[sym])}
+                stocks.append(_with_candidates(selected_row, q))
                 overlaid += 1
             else:
                 stocks.append(q)
@@ -3578,7 +3779,9 @@ def _overlay_pushed(
                 name = ((_jq_name_for(
                     sym, allow_provider_fetch=allow_provider_fetch) or sym)
                     if market == "JP" else sym)
-                stocks.append({**_stamp(fresh[sym]), "name": name, "nameJa": name})
+                selected_row = {**_stamp(fresh[sym]), "name": name,
+                                "nameJa": name}
+                stocks.append(_with_candidates(selected_row))
                 overlaid += 1
         if overlaid == 0:
             return snapshot
@@ -3596,6 +3799,7 @@ def _overlay_pushed(
                    "sourceAgeMedianSec": round(median_age, 1) if median_age is not None else None,
                    "sourceAgeP95Sec": round(p95_age, 1) if p95_age is not None else None,
                    "sourceTimestampCoverage": round(coverage, 3),
+                   "futureSourceTimestampCount": future_source_timestamps,
                    "newestTransportAgeSec": int(min(transport_ages)) if transport_ages else None,
                    "oldestTransportAgeSec": int(max(transport_ages)) if transport_ages else None,
                    "entitlement": ent,
@@ -4657,9 +4861,10 @@ _COINBASE_STATS = "https://api.exchange.coinbase.com/products/{}-USD/stats"
 
 def _crypto_coinbase_fallback(ids):
     """Keyless Coinbase stats (datacenter-friendly) for the major coins — used
-    ONLY when CoinGecko is unavailable. 24h change = (last-open)/open. status is a
-    real-time last-trade price, so 'live' is honest. Coins outside the map are
-    skipped (no fabricated numbers)."""
+    ONLY when CoinGecko is unavailable. 24h change = (last-open)/open. Coinbase's
+    stats response has no source observation timestamp, so the row is explicitly
+    delayed/unknown-age rather than being promoted to LIVE. Coins outside the map
+    are skipped (no fabricated numbers)."""
     rows = []
     for i in ids:
         sym = _CG_TO_COINBASE.get(i)
@@ -4673,10 +4878,13 @@ def _crypto_coinbase_fallback(ids):
             last = float(s.get("last"))
             openp = float(s.get("open") or last)
             chg = ((last - openp) / openp * 100.0) if openp else 0.0
+            source_truth = _canonical_quote_source_age(None)
             rows.append({"id": i, "priceUsd": round(last, 2),
                          "changePct": round(chg, 2),
                          "volume": int(float(s.get("volume") or 0)),  # base-ccy 24h vol
-                         "date": None, "status": "live"})
+                         "date": None, "sourceTimestamp": None,
+                         "receivedAt": _ai_now_iso(),
+                         "source": "coinbase", **source_truth})
         except Exception:
             continue
     return rows
@@ -4687,7 +4895,7 @@ def get_crypto_watchlist_snapshot(ids):
     now = time.time()
     hit = _CRYPTO_CACHE.get(ids)
     if hit and now < hit["expires"]:
-        return hit["data"]
+        return _canonical_quote_snapshot_age(hit["data"], "quotes")
 
     def _mock_rows():
         return [{"id": i, "priceUsd": m["price"], "changePct": m["changePct"],
@@ -4698,7 +4906,7 @@ def get_crypto_watchlist_snapshot(ids):
         """CoinGecko unavailable → try keyless Coinbase (real), else mock."""
         fb = _crypto_coinbase_fallback(ids)
         if fb:
-            snap = {"status": ("live" if len(fb) == len(ids) else "partial"),
+            snap = {"status": ("delayed" if len(fb) == len(ids) else "partial"),
                     "asOf": None, "provider": "coinbase", "quotes": fb}
             if len(_CRYPTO_CACHE) >= _CRYPTO_CACHE_MAX:
                 _CRYPTO_CACHE.clear()
@@ -4723,17 +4931,27 @@ def get_crypto_watchlist_snapshot(ids):
             if not isinstance(q, dict) or q.get("usd") is None:
                 continue
             ts = q.get("last_updated_at")
+            source_iso = (datetime.fromtimestamp(ts, pytz.utc)
+                          .strftime("%Y-%m-%dT%H:%M:%SZ") if ts else None)
+            source_truth = _canonical_quote_source_age(source_iso)
             rows.append({
                 "id": i,
                 "priceUsd": round(float(q["usd"]), 2),
                 "changePct": round(float(q.get("usd_24h_change") or 0.0), 2),
                 "volume": int(float(q.get("usd_24h_vol") or 0)),
-                "date": (datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%d") if ts else None),
-                "status": "live",
+                "date": (source_iso or "")[:10] or None,
+                "sourceTimestamp": source_iso,
+                "receivedAt": _ai_now_iso(),
+                "source": "coingecko",
+                **source_truth,
             })
         if not rows:
             return _fallback_or_mock()
-        status = "live" if len(rows) == len(ids) else "partial"
+        status = ("live" if len(rows) == len(ids) and all(
+            row.get("status") == "live" for row in rows)
+            else "delayed" if len(rows) == len(ids) and all(
+                row.get("status") == "delayed" for row in rows)
+            else "partial" if rows else "mock")
         as_of  = max((x["date"] for x in rows if x["date"]), default=None)
         snapshot = {"status": status, "asOf": as_of, "provider": "coingecko", "quotes": rows}
         if len(_CRYPTO_CACHE) >= _CRYPTO_CACHE_MAX:
@@ -6684,15 +6902,13 @@ def _action_priority_items(cap=12):
 
 def _session_brief_public():
     now = datetime.now(TZ_JST)
-    jp_open = False
-    us_open = False
     try:
-        jp_open = now.weekday() < 5 and (9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30))
-        us_h = now.hour
-        us_open = now.weekday() < 5 and (us_h >= 22 or us_h < 5) \
-            or (now.weekday() == 5 and now.hour < 5)
+        states = _market_calendar_states(now.astimezone(pytz.utc))
+        jp_open = states["JP"]["session"] in (
+            "MORNING_SESSION", "AFTERNOON_SESSION")
+        us_open = states["US"]["session"] == "REGULAR"
     except Exception:
-        pass
+        jp_open = us_open = False
     sess = argus_session_brief.resolve_session(now.hour, now.weekday(), jp_open, us_open)
     items = _action_priority_items(cap=20)
     events = []
@@ -6810,12 +7026,17 @@ def _market_scenario_public():
 
 def _market_open_now(mkt):
     try:
-        now = datetime.now(TZ_JST)
-        if now.weekday() >= 5:
-            return False
-        if mkt == "JP":
-            return 9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30)
-        return now.hour >= 22 or now.hour < 5
+        market = (argus_market_clock.JP_EQUITY if mkt == "JP"
+                  else argus_market_clock.US_EQUITY if mkt == "US"
+                  else argus_market_clock.CRYPTO if mkt == "CRYPTO"
+                  else None)
+        if market is None:
+            return None
+        state = argus_market_clock.market_session(
+            market, datetime.now(pytz.utc))
+        return state["session"] in (
+            "MORNING_SESSION", "AFTERNOON_SESSION", "REGULAR",
+            "CONTINUOUS")
     except Exception:
         return None
 
@@ -7695,8 +7916,9 @@ def _data_quality_console():
             "missedJobs": argus_decision_ledger.detect_missed_jobs(
                 _DL_JOBS, _ai_now_iso()),
             "rubricVersion": argus_decision_ledger.RUBRIC_VERSION,
-            "noteJa": ("不変予測台帳(v2基盤・shadow) — 既存Calibration Ledger v4が"
-                       "本番採点として継続。"),
+            "noteJa": ("calibration_v1は履歴互換・shadow由来のみ。"
+                       "canonical sealed v2 forward_live台帳もEVIDENCE_ONLYで、"
+                       "最終判断権限や本番採点の証明ではない。"),
         }
         console["providerCost"] = {
             "activeModels": {k: v for k, v in _OPENAI_MODEL_ROLES.items()},
@@ -9178,31 +9400,55 @@ def _scale_ret(r):
 # ledger's class predictions and the /class-quotes scoring endpoint (v10.5).
 _ETF_LAST_PRICE = {}   # sym -> {"price": float, "m1d": float, "ts": epoch}
 
-# ETF daily-close cache (v10.134): these are DAILY bars — they don't change
-# intraday — but the regime engine used to refetch them on every refresh, so a
-# Twelve Data free-tier rate-limit/miss dropped coverage and flipped the whole
-# regime to "partial" (capping confidence). Cache for hours, and on a flaky/partial
-# fetch MERGE with the last-good values so coverage never silently degrades.
-_TD_TS_CACHE = {}   # ",".join(symbols) -> {"data": {sym: closes}, "expires": epoch}
+# ETF daily-close cache. Freshness is tracked per symbol: a partial provider
+# refresh may retain still-fresh symbols, but it cannot renew the age of symbols
+# absent from that response or make the whole cache look complete.
+_TD_TS_CACHE = {}   # key -> {data, symbolUpdatedAt, expires}
 _TD_TS_TTL = float(os.environ.get("TD_TS_TTL", "7200"))   # 2h
+_TD_TS_RETRY_TTL = min(_TD_TS_TTL, 600.0)
 
 def _td_timeseries(symbols):
     """Batched daily closes for the ETF universe.
 
-    Returns {symbol: [latest_close, ..., older]} (newest-first). Cached ~2h and
-    merged with the last-good set, so a transient rate-limit/partial fetch keeps
-    full coverage instead of downgrading the regime to partial. Never raises.
+    Returns {symbol: [latest_close, ..., older]} (newest-first). A transient
+    partial refresh can reuse still-fresh per-symbol rows; rows older than their
+    own TTL disappear and downstream coverage becomes explicitly partial.
+    Never raises.
     ONE request, len(symbols) credits — keep len(symbols) <= 8 for the free cap.
     """
     key = ",".join(symbols)
     now = time.time()
     cached = _TD_TS_CACHE.get(key)
     prev = (cached or {}).get("data") or {}
-    # Fresh + full cache → reuse without spending quota (daily data is stable).
-    if cached and now < cached["expires"] and len(prev) == len(symbols):
-        return dict(prev)
+    updated_at = dict((cached or {}).get("symbolUpdatedAt") or {})
+    usable_prev = {
+        sym: closes for sym, closes in prev.items()
+        if now - float(updated_at.get(sym) or 0.0) <= _TD_TS_TTL}
+
+    def _cap_retry_expiry():
+        if cached is None:
+            return
+        next_expiry = now + _TD_TS_RETRY_TTL
+        member_expiries = [
+            float(updated_at[sym]) + _TD_TS_TTL
+            for sym in usable_prev if sym in updated_at]
+        if member_expiries:
+            next_expiry = min(next_expiry, min(member_expiries))
+        cached["expires"] = next_expiry
+    # The side stash is also decision-relevant.  A member that has aged out of
+    # this provider cache must not survive there merely because older consumers
+    # historically allowed a wider window.  Do not remove a copy refreshed by a
+    # different cache key in the meantime.
+    for sym in set(prev) - set(usable_prev):
+        stashed = _ETF_LAST_PRICE.get(sym)
+        if stashed and now - float(stashed.get("ts") or 0.0) > _TD_TS_TTL:
+            _ETF_LAST_PRICE.pop(sym, None)
+    # A fresh cache may be full or explicitly partial; respect its bounded retry
+    # time without upgrading the missing members.
+    if cached and now < float(cached.get("expires") or 0.0):
+        return dict(usable_prev)
     if not _TWELVEDATA_API_KEY:
-        return dict(prev)
+        return dict(usable_prev)
     try:
         r = requests.get(_TWELVEDATA_TS, params={
             "symbol": ",".join(symbols), "interval": "1day",
@@ -9212,7 +9458,8 @@ def _td_timeseries(symbols):
         body = r.json()
         # Top-level error (bad key / quota / rate limit) → flat dict status=error.
         if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
-            return dict(prev)   # serve last-good instead of dropping to partial
+            _cap_retry_expiry()
+            return dict(usable_prev)
         out = {}
         for sym in symbols:
             # Multi-symbol responses are keyed by symbol; single is flat.
@@ -9225,11 +9472,14 @@ def _td_timeseries(symbols):
             if not isinstance(node, dict) or str(node.get("status", "ok")).lower() == "error":
                 continue
             closes = []
+            latest_source_time = None
             for v in (node.get("values") or []):
                 c = v.get("close")
                 if c not in (None, ""):
                     try:
                         closes.append(float(c))
+                        if latest_source_time is None and v.get("datetime"):
+                            latest_source_time = str(v.get("datetime"))
                     except (TypeError, ValueError):
                         pass
             if len(closes) >= 2:
@@ -9240,16 +9490,41 @@ def _td_timeseries(symbols):
                     "price": closes[0],
                     "m1d": round((closes[0] / closes[1] - 1) * 100, 2),
                     "ts": time.time(),
+                    "source": "twelvedata",
+                    "sourceTimestamp": latest_source_time,
+                    "receivedAt": _ai_now_iso(),
+                    "status": "delayed",
                 }
-        # Merge: fresh symbols overwrite; any missing this refresh keep last-good,
-        # so a partial response doesn't collapse coverage (→ no spurious partial).
+        # Merge only with independently fresh members. Missing provider rows keep
+        # their old timestamp and therefore cannot be renewed by this refresh.
         if out:
-            merged = {**prev, **out}
-            _TD_TS_CACHE[key] = {"data": merged, "expires": now + _TD_TS_TTL}
+            merged = {**usable_prev, **out}
+            merged_updated_at = {
+                sym: updated_at[sym] for sym in usable_prev if sym in updated_at}
+            merged_updated_at.update({sym: now for sym in out})
+            provider_complete = all(sym in out for sym in symbols)
+            # A partial response may temporarily remain coverage-complete by
+            # carrying independently-fresh members, but it must not renew the
+            # whole cache for a full TTL.  Retry by the earlier of the partial
+            # backoff or the first carried member's own expiry.
+            next_expiry = now + (_TD_TS_TTL if provider_complete
+                                 else _TD_TS_RETRY_TTL)
+            member_expiries = [
+                float(merged_updated_at[sym]) + _TD_TS_TTL
+                for sym in merged if sym in merged_updated_at]
+            if member_expiries:
+                next_expiry = min(next_expiry, min(member_expiries))
+            _TD_TS_CACHE[key] = {
+                "data": merged,
+                "symbolUpdatedAt": merged_updated_at,
+                "expires": next_expiry,
+            }
             return merged
-        return dict(prev)   # empty fetch → last-good
+        _cap_retry_expiry()
+        return dict(usable_prev)
     except Exception:
-        return dict(prev)   # network error → last-good, never {}
+        _cap_retry_expiry()
+        return dict(usable_prev)
 
 # US entry-scout history (us-scout-v1, v10.27): ~130d daily OHLCV for one US
 # symbol from Twelve Data, newest-first. 6h cache; never raises. 1 credit/call.
@@ -9289,7 +9564,11 @@ def _td_price_history(sym):
             add_log(f"[scout] US history fetch failed {sym}: {type(e).__name__}")
     # Short failure cache (150s) so a transient TD rate-limit (8/min free) on
     # one symbol self-heals fast instead of locking it out for 10 min.
-    _TD_HISTORY_CACHE[sym] = {"data": data, "expires": now + (_TD_HISTORY_TTL if data else 150)}
+    _TD_HISTORY_CACHE[sym] = {
+        "data": data, "expires": now + (_TD_HISTORY_TTL if data else 150),
+        "acquiredAt": (datetime.fromtimestamp(now, pytz.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ") if data else None),
+    }
     return data
 
 def _etf_momentum(closes):
@@ -9808,6 +10087,7 @@ def _flow_adjust(action, conf, reason, nxt, chg, ratio, esc, posture, reg_label)
 # 蓄積中. The bands are deliberately wide — argmax hit rate on ±2% buckets is
 # noisy, so only a clear pattern (≥60% / <40%) earns an adjustment.
 _CAL_MIN_N = 33
+_CAL_MIN_TRADING_DAYS = 20
 _CAL_TRUST_HIT = 0.60
 _CAL_DOUBT_HIT = 0.40
 _CAL_UP, _CAL_DOWN = 1.05, 0.85
@@ -9830,13 +10110,30 @@ def _ledger_summary():
     return _LEDGER_SUMMARY_CACHE["data"]
 
 def _calibration_for(summary, posture):
-    """Pure (unit-tested): ledger summary + today's posture →
-    {factor, basisJa, n, hitRate}. Malformed input → neutral factor."""
+    """Mode- and maturity-scoped calibration projection.
+
+    Legacy/mixed summaries are deliberately neutral. Only the canonical v2
+    aggregate for forward_live, backed by independent trading-session evidence,
+    may change live confidence.
+    """
     try:
+        canonical = (isinstance(summary, dict)
+                     and summary.get("schemaVersion") ==
+                     "argus-prediction-ledger-summary-v2"
+                     and summary.get("mode") == "forward_live")
+        if not canonical:
+            return {"factor": 1.0, "n": 0, "hitRate": None,
+                    "independentTradingDays": 0,
+                    "basisJa": ("校正データ蓄積中(legacy/mixed modeは本番校正に"
+                                "不使用) — 確信度は未調整")}
         b = ((summary or {}).get("byPosture") or {}).get(posture) or {}
         n = int(b.get("n") or 0)
+        independent_days = int(b.get("independentTradingDays") or 0)
         hr = b.get("hitRate")
-        if n >= _CAL_MIN_N and isinstance(hr, (int, float)):
+        mature = (n >= _CAL_MIN_N
+                  and independent_days >= _CAL_MIN_TRADING_DAYS
+                  and b.get("maturityStatus") == "mature")
+        if mature and isinstance(hr, (int, float)):
             if hr >= _CAL_TRUST_HIT:
                 f, verdict = _CAL_UP, "確信度を僅かに引き上げ"
             elif hr < _CAL_DOUBT_HIT:
@@ -9844,13 +10141,19 @@ def _calibration_for(summary, posture):
             else:
                 f, verdict = 1.0, "調整なし(ノイズ域)"
             return {"factor": f, "n": n, "hitRate": hr,
-                    "basisJa": f"姿勢{posture}での過去的中率{hr:.0%}(n={n}) → {verdict}"}
+                    "independentTradingDays": independent_days,
+                    "basisJa": (f"姿勢{posture}のforward-live的中率{hr:.0%}"
+                                f"(n={n}/独立営業日{independent_days}) → {verdict}")}
         total = int(((summary or {}).get("overall") or {}).get("n") or 0)
         return {"factor": 1.0, "n": n,
+                "independentTradingDays": independent_days,
                 "hitRate": hr if isinstance(hr, (int, float)) else None,
-                "basisJa": f"校正データ蓄積中(この姿勢n={n}/必要{_CAL_MIN_N}・全体n={total}) — 確信度は未調整"}
+                "basisJa": (f"校正データ蓄積中(この姿勢n={n}/"
+                            f"独立営業日{independent_days}/必要"
+                            f"{_CAL_MIN_TRADING_DAYS}日・全体n={total}) — 確信度は未調整")}
     except Exception:
         return {"factor": 1.0, "n": 0, "hitRate": None,
+                "independentTradingDays": 0,
                 "basisJa": "校正不可(summary形式不明) — 確信度は未調整"}
 
 def _apply_visibility_guard(action, conf, reason, nxt, dq, vg_cap, vg_blocked, vg_reason):
@@ -26174,8 +26477,37 @@ def api_argus_market_ledger_view():
     return jsonify(argus_market_intelligence.normalize_public_names(view))
 
 
-def _chart_rows_from_history(history):
-    """Convert an existing newest-first provider cache to public-safe OHLCV."""
+def _history_cache_known_at(cache, ttl):
+    """Exact/conservative acquisition time for one provider-cache revision."""
+    if not isinstance(cache, dict):
+        return None
+    exact = str(cache.get("acquiredAt") or "").strip()
+    if exact:
+        try:
+            parsed = datetime.fromisoformat(exact.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(pytz.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%fZ")
+        except (TypeError, ValueError):
+            pass
+    try:
+        acquired = float(cache.get("expires")) - float(ttl)
+        if acquired > 0:
+            return datetime.fromtimestamp(acquired, pytz.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ")
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    return None
+
+
+def _chart_rows_from_history(history, *, market, provider, known_at,
+                             dataset_id):
+    """Convert a provider-cache revision without backdating its knowledge.
+
+    Historical bars imported in one response are first knowable to ARGUS when
+    that response/cache revision was acquired.  Their market dates are not
+    silently reused as publication timestamps.
+    """
     if not isinstance(history, dict):
         return []
     dates = history.get("dates") or []
@@ -26185,16 +26517,27 @@ def _chart_rows_from_history(history):
     closes = history.get("closes") or []
     volumes = history.get("volumes") or []
     adjusted = history.get("adjusted") or []
+    revision = _canonical_truth_revision(known_at) if known_at else 0
     out = []
     for i, date in enumerate(dates):
         if i >= len(closes):
             break
+        observed_at = _canonical_truth_iso(
+            date, market, date_means_close=True)
         out.append({"date": date, "open": opens[i] if i < len(opens) else None,
                     "high": highs[i] if i < len(highs) else None,
                     "low": lows[i] if i < len(lows) else None,
                     "close": closes[i], "volume": volumes[i] if i < len(volumes) else None,
                     "adjusted": adjusted[i] if i < len(adjusted) else False,
-                    "sourceId": f"price:{date}", "availableFrom": str(date)[:10]})
+                    "source": provider,
+                    "sourceId": f"price:{provider}:{date}",
+                    "datasetId": dataset_id,
+                    "observedAt": observed_at,
+                    "knownAt": known_at,
+                    "revision": revision,
+                    # Retained for legacy display only; PIT admission uses the
+                    # exact knownAt above, never this date-only label.
+                    "availableFrom": str(date)[:10]})
     return out
 
 
@@ -26219,13 +26562,28 @@ def _chart_weekly_rows(rows):
             item["close"] = row.get("close")
             item["volume"] = (item.get("volume") or 0) + (row.get("volume") or 0)
             item["availableFrom"] = row.get("availableFrom") or row.get("date")
+            item["knownAt"] = max(str(item.get("knownAt") or ""),
+                                  str(row.get("knownAt") or "")) or None
+            item["observedAt"] = row.get("observedAt")
+            item["revision"] = max(int(item.get("revision") or 0),
+                                   int(row.get("revision") or 0))
     return list(weekly.values())
 
 
 def _chart_history(symbol, market):
     if market == "JP":
-        return _chart_rows_from_history(_jq_price_history(symbol[:4]))
-    return _chart_rows_from_history(_td_price_history(symbol))
+        history = _jq_price_history(symbol[:4])
+        cache = _JQ_HISTORY_CACHE.get(symbol[:4])
+        known_at = _history_cache_known_at(cache, _JQ_HISTORY_TTL)
+        return _chart_rows_from_history(
+            history, market="JP", provider="jquants", known_at=known_at,
+            dataset_id=f"jquants:{symbol}:{known_at or 'unknown'}")
+    history = _td_price_history(symbol)
+    cache = _TD_HISTORY_CACHE.get(symbol)
+    known_at = _history_cache_known_at(cache, _TD_HISTORY_TTL)
+    return _chart_rows_from_history(
+        history, market="US", provider="twelvedata", known_at=known_at,
+        dataset_id=f"twelvedata:{symbol}:{known_at or 'unknown'}")
 
 
 def _chart_history_cached(symbol, market):
@@ -26235,7 +26593,13 @@ def _chart_history_cached(symbol, market):
              else _TD_HISTORY_CACHE.get(symbol))
     if not isinstance(cache, dict) or now >= float(cache.get("expires") or 0):
         return []
-    return _chart_rows_from_history(cache.get("data"))
+    ttl = _JQ_HISTORY_TTL if market == "JP" else _TD_HISTORY_TTL
+    provider = "jquants" if market == "JP" else "twelvedata"
+    known_at = _history_cache_known_at(cache, ttl)
+    return _chart_rows_from_history(
+        cache.get("data"), market=market, provider=provider,
+        known_at=known_at,
+        dataset_id=f"{provider}:{symbol}:{known_at or 'unknown'}")
 
 
 _JP_DAILY_SHORT_CACHE = {"rows": None, "expires": 0.0,
@@ -26470,6 +26834,20 @@ def _asset_chart_provider_history(symbol, market):
                     "adjusted": False,
                     "sourceId": f"price:{market}:{symbol}:{date}",
                 })
+        acquired_at = _ai_now_iso()
+        provider = "jquants" if market == "JP" else "twelvedata"
+        revision = _canonical_truth_revision(acquired_at)
+        dataset_id = f"{provider}:{symbol}:{acquired_at}"
+        for row in rows:
+            row.update({
+                "source": provider,
+                "sourceId": f"price:{provider}:{symbol}:{row.get('date')}",
+                "datasetId": dataset_id,
+                "observedAt": _canonical_truth_iso(
+                    row.get("date"), market, date_means_close=True),
+                "knownAt": acquired_at,
+                "revision": revision,
+            })
         rows.sort(key=lambda row: str(row.get("date") or ""))
         if len(rows) < 20:
             raise RuntimeError("asset_chart_history_insufficient")
@@ -26673,7 +27051,14 @@ def _jp_daily_short_history(cached_only=False):
         rows = argus_today_intelligence.normalize_short_history([
             {**item, "source": "J-Quants /markets/short-ratio S33=0050",
              "availableFrom": str(item.get("Date") or "")[:10],
-             "observedAt": observed, "revision": 0}
+             "observedAt": _canonical_truth_iso(
+                 str(item.get("Date") or "")[:10], "JP",
+                 date_means_close=True),
+             "knownAt": observed,
+             "sourceId": (f"jquants:short-ratio:"
+                          f"{str(item.get('Date') or '')[:10]}"),
+             "datasetId": f"jquants:short-ratio:{observed}",
+             "revision": _canonical_truth_revision(observed)}
             for item in raw if isinstance(item, dict)
         ])
         if rows:
@@ -26765,6 +27150,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 _classification = "earnings"
             events.append({"id": f"earnings:{symbol}:{_earnings_date}",
                            "date": _earnings_date, "availableFrom": _earnings_date,
+                           "knownAt": now_iso,
                            "titleJa": f"{symbol} 決算", "kind": "earnings",
                            "classification": _classification})
         for _kind, _items in (("filing", _catalyst_item.get("filings") or []),
@@ -26774,6 +27160,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 if _date:
                     events.append({"id": f"{_kind}:{symbol}:{_date}", "date": _date,
                                    "availableFrom": _date,
+                                   "knownAt": now_iso,
                                    "titleJa": str(_item.get("title") or _item.get("form") or
                                                   f"{symbol} 公式開示")[:100],
                                    "kind": _kind, "classification": "unconfirmed"})
@@ -26806,7 +27193,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     _today_intel = argus_today_intelligence.analyze(
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
-        as_of=report.get("periodEnd"))
+        as_of=now_iso)
     report["todayIntelligence"] = _today_intel
     # Every Replay instrument keeps an isolated relative-price series.  The JP
     # primary view later adds the full cross-market matrix.
@@ -26839,6 +27226,9 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 "history": [{
                     "periodEnd": row.get("date"),
                     "availableFrom": row.get("availableFrom") or row.get("date"),
+                    "knownAt": row.get("knownAt") or now_iso,
+                    "observedAt": row.get("observedAt") or row.get("date"),
+                    "revision": int(row.get("revision") or 0),
                     "value": row.get("totalShortRatio"), "unit": "percent",
                 } for row in _short_rows],
             })
@@ -26850,14 +27240,32 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 "history": [{
                     "periodEnd": point.get("date"),
                     "availableFrom": point.get("date"),
+                    # Relative history is assembled from the current provider
+                    # revision. It is first known now, not on each old bar date.
+                    "knownAt": now_iso,
+                    "observedAt": point.get("date"),
+                    "revision": 0,
                     "value": point.get("value"), "unit": "ratio",
                 } for point in (_relative_row.get("history") or [])],
             })
+        try:
+            _replay_chart_input = argus_market_replay.seal_auxiliary_input(
+                report, kind="chart_report", known_at=now_iso)
+        except (TypeError, ValueError, OverflowError):
+            _replay_chart_input = {}
+        try:
+            _replay_calibration_input = \
+                argus_market_replay.seal_auxiliary_input(
+                    _today_intel.get("calibration") or {},
+                    kind="calibration", known_at=now_iso)
+        except (TypeError, ValueError, OverflowError):
+            _replay_calibration_input = {}
         for _replay_horizon in argus_market_replay.HORIZONS:
             _replay_context = argus_market_replay.build_context(
                 daily_rows, symbol=symbol, market=market,
-                horizon=_replay_horizon, chart_report=report, ledger=_replay_ledger,
-                calibration=_today_intel.get("calibration") or {},
+                horizon=_replay_horizon, chart_report=_replay_chart_input,
+                ledger=_replay_ledger,
+                calibration=_replay_calibration_input,
                 now_iso=now_iso)
             _replay_merged = argus_market_replay.merge_context(
                 _MARKET_REPLAY, _replay_context, now_iso)
@@ -31193,7 +31601,8 @@ def get_runtime_manifest():
         "calibration": {
             "schema": argus_calibration.SCHEMA_VERSION, "universe": argus_calibration.UNIVERSE_VERSION,
             "tacticalBenchmark": argus_calibration.TACTICAL_BENCHMARK_VERSION, "cohort": argus_calibration.COHORT_VERSION,
-            "phase": "v4 dry-run (parallel epoch calibration_v1) alongside v3 headline; burn-in — accuracy NOT proven",
+            "phase": ("calibration_v1 is historical compatibility/shadow-derived only; "
+                      "canonical sealed v2 forward_live is EVIDENCE_ONLY; accuracy NOT proven"),
         },
         "downside": {
             "engine": "downside-v1", "activeIncidents": ds.get("activeCount", 0),
@@ -31461,7 +31870,11 @@ def _jq_price_history(code):
                         "adjusted": [q.get("AdjC") is not None for q in rows]}
         except Exception as e:
             add_log(f"[scout] history fetch failed {code}: {type(e).__name__}")
-    _JQ_HISTORY_CACHE[code] = {"data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600)}
+    _JQ_HISTORY_CACHE[code] = {
+        "data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600),
+        "acquiredAt": (datetime.fromtimestamp(now, pytz.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ") if data else None),
+    }
     return data
 
 def _jq_weekly_margin(code):
@@ -32146,6 +32559,637 @@ def _v4_record_meta(symbol):
         return {"calibrationSchema": argus_calibration.SCHEMA_VERSION}
 
 
+_CANONICAL_OUTCOME_BARS_PER_SYMBOL = 8
+_CANONICAL_TRUTH_MAX_OUTCOME_OBSERVATIONS = 320
+
+
+def _canonical_truth_iso(value, market, *, date_means_close=False):
+    """Normalize an existing provider timestamp without inventing precision.
+
+    Date-only daily bars may be placed at the official regular-session close,
+    with that limitation retained in provenance.  Unknown timestamps stay
+    unknown; callers must omit the observation rather than use receipt time as
+    a fake source time.
+    """
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed = datetime.fromtimestamp(float(value), pytz.utc)
+        else:
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            if len(raw) == 10:
+                if not date_means_close:
+                    return None
+                day = datetime.strptime(raw, "%Y-%m-%d")
+                if market == "JP":
+                    parsed = TZ_JST.localize(day.replace(hour=15, minute=30))
+                elif market == "US":
+                    parsed = TZ_ET.localize(day.replace(hour=16))
+                else:
+                    parsed = pytz.utc.localize(day.replace(hour=23, minute=59,
+                                                            second=59))
+            else:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    local_tz = TZ_JST if market == "JP" else \
+                        TZ_ET if market == "US" else pytz.utc
+                    parsed = local_tz.localize(parsed)
+        return parsed.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _canonical_truth_revision(received_at):
+    try:
+        parsed = datetime.fromisoformat(
+            str(received_at).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return 0
+        return max(0, int(parsed.timestamp() * 1000))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _canonical_truth_asset_type(symbol, market):
+    if str(symbol).lower() in _CRYPTO_DEFAULT_IDS or str(symbol).upper() in {
+            "BTC", "ETH", "SOL"}:
+        return "CRYPTO"
+    if str(symbol).upper() in set(_L1_SENSORS_US) | {
+            code for code, _ in _L1_SENSORS_JP} | {
+            "XLK", "XLU", "XLRE", "GLD", "HYG"}:
+        return "ETF"
+    return "EQUITY" if market in ("JP", "US") else "ETF_PROXY"
+
+
+def _canonical_quote_candidates(row, snapshot_provider):
+    candidates = list(row.get("providerCandidates") or []) \
+        if isinstance(row, dict) else []
+    if candidates:
+        # The legacy overlay keeps the selected provider's derived quote fields
+        # on the parent row.  Bind those fields only to the explicitly selected
+        # candidate; copying them to alternates would fabricate agreement.
+        out = []
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            candidate = dict(item)
+            if candidate.get("selected") is True:
+                for field in ("changePct", "volume"):
+                    if field not in candidate and field in row:
+                        candidate[field] = row.get(field)
+            out.append(candidate)
+        return out
+    return [dict(row, source=(row.get("source") or snapshot_provider or
+                             "unknown"))]
+
+
+def _canonical_quote_observations(rows, decision_at):
+    observations = []
+    seen = set()
+    try:
+        decision_dt = datetime.fromisoformat(
+            str(decision_at).replace("Z", "+00:00"))
+        if decision_dt.tzinfo is None:
+            return observations
+        decision_dt = decision_dt.astimezone(pytz.utc)
+    except (TypeError, ValueError, OverflowError):
+        return observations
+    for market, snapshot_provider, row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("id") or "").strip().upper()
+        if not symbol:
+            continue
+        instrument_id = f"{market}:{symbol}"
+        explicit_candidates = bool(row.get("providerCandidates"))
+        for candidate in _canonical_quote_candidates(row, snapshot_provider):
+            # An explicit provider candidate must carry its own status.  The
+            # parent row describes the selected display projection and cannot
+            # make an unclassified alternate look available/realtime.
+            candidate_status = (
+                candidate.get("status") if explicit_candidates else
+                candidate.get("status") or row.get("status") or "stale")
+            status = str(candidate_status or "unavailable").lower()
+            if status not in ("live", "delayed", "partial", "stale"):
+                # Mock/unavailable values are display fallbacks, never provider
+                # observations or disagreement evidence.
+                continue
+            price = candidate.get("value", candidate.get("price"))
+            if not isinstance(price, (int, float)) or isinstance(price, bool) \
+                    or not math.isfinite(float(price)) or float(price) <= 0:
+                continue
+            received_raw = candidate.get("receivedAt")
+            if not received_raw and not explicit_candidates:
+                received_raw = row.get("receivedAt") or decision_at
+            received = _canonical_truth_iso(received_raw, market)
+            source_raw = (candidate.get("sourceTimestamp") or
+                          candidate.get("exchangeTs") or
+                          candidate.get("date"))
+            if not source_raw and not explicit_candidates:
+                source_raw = (row.get("sourceTimestamp") or
+                              row.get("exchangeTs") or row.get("date"))
+            observed = _canonical_truth_iso(
+                source_raw, market, date_means_close=True)
+            if not received or not observed or observed > received:
+                continue                    # future/unknown source time is not truth
+            provider_raw = (candidate.get("source") if explicit_candidates else
+                            candidate.get("source") or row.get("source") or
+                            snapshot_provider)
+            if not provider_raw:
+                continue
+            provider = str(provider_raw)
+            received_dt = datetime.fromisoformat(received.replace("Z", "+00:00"))
+            observed_dt = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+            if received_dt > decision_dt or observed_dt > decision_dt:
+                continue
+            # Quality is evaluated at the decision cutoff, not frozen at the
+            # earlier transport instant of a cache entry.  Otherwise a quote
+            # received at age 1m would jump from FRESH directly to STALE after
+            # 20m instead of truthfully becoming DELAYED through 36h.
+            source_age = decision_dt - observed_dt
+            if status == "live" and source_age <= timedelta(minutes=20):
+                base_freshness = argus_market_data_truth.FRESH
+                fresh_until_dt = observed_dt + timedelta(minutes=20)
+                fresh_until = fresh_until_dt.isoformat().replace("+00:00", "Z")
+            elif status in ("live", "delayed", "partial") and \
+                    source_age <= timedelta(hours=36):
+                # An exact official close is still valid delayed evidence at the
+                # scheduled 16:05 run; it is not realtime and not stale.
+                base_freshness = argus_market_data_truth.DELAYED
+                fresh_until_dt = observed_dt + timedelta(hours=36)
+                fresh_until = fresh_until_dt.isoformat().replace("+00:00", "Z")
+            else:
+                base_freshness = argus_market_data_truth.STALE
+                fresh_until = None
+            values = {"price": float(price)}
+            for field in ("changePct", "volume"):
+                raw_value = candidate.get(field)
+                if isinstance(raw_value, (int, float)) and not isinstance(
+                        raw_value, bool) and math.isfinite(float(raw_value)):
+                    values[field] = raw_value
+            try:
+                observation = argus_market_data_truth.build_observation(
+                    instrument_id=instrument_id, symbol=symbol, market=market,
+                    asset_type=_canonical_truth_asset_type(symbol, market),
+                    fact_type="QUOTE", values=values, provider=provider,
+                    adapter="scanner_quote_adapter_v1",
+                    source_ref=(f"{provider}:{symbol}:{source_raw}"[:256]),
+                    observed_at=observed, received_at=received,
+                    known_at=received, freshness=base_freshness,
+                    completeness=argus_market_data_truth.COMPLETE,
+                    fresh_until=fresh_until,
+                    currency="JPY" if market == "JP" else "USD",
+                    revision=_canonical_truth_revision(received),
+                    provenance={
+                        "timestampPrecision": (
+                            "date_only_official_close" if isinstance(source_raw, str)
+                            and len(source_raw) == 10 else "provider_exact"),
+                        "selectionPolicyId": str(
+                            row.get("selectionPolicyId") or
+                            argus_market_data_truth.AUTHORITY_POLICY_ID)[:128],
+                    })
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if observation["observationId"] not in seen:
+                observations.append(observation)
+                seen.add(observation["observationId"])
+    return observations
+
+
+def _canonical_current_outcome_observations(rows, decision_at):
+    """Exact full daily bars already returned by formal provider adapters.
+
+    Today only J-Quants' daily-bar adapter has an unambiguous date-only close
+    contract here. Intraday quote high/low fields are not silently relabeled as
+    an end-of-session outcome.
+    """
+    observations = []
+    for market, snapshot_provider, row in rows:
+        if market != "JP" or not isinstance(row, dict):
+            continue
+        try:
+            provider = argus_market_data_truth.provider_key(
+                row.get("source") or snapshot_provider or "unknown")
+        except (TypeError, ValueError):
+            continue
+        if provider != "jquants":
+            continue
+        symbol = str(row.get("symbol") or "").upper()
+        day = row.get("date")
+        received = _canonical_truth_iso(
+            row.get("receivedAt") or decision_at, market)
+        observed = _canonical_truth_iso(day, market, date_means_close=True)
+        values = {field: row.get(field) for field in (
+            "open", "high", "low", "close", "volume")}
+        if not symbol or not received or not observed or observed > received or \
+                received > decision_at or \
+                any(not isinstance(values[field], (int, float)) or
+                    isinstance(values[field], bool) or
+                    not math.isfinite(float(values[field]))
+                    for field in ("open", "high", "low", "close")):
+            continue
+        try:
+            observations.append(argus_market_data_truth.build_observation(
+                instrument_id=f"JP:{symbol}", symbol=symbol, market="JP",
+                asset_type=_canonical_truth_asset_type(symbol, "JP"),
+                fact_type="OHLCV_BAR", values=values, provider="jquants",
+                adapter="scanner_jquants_daily_adapter_v1",
+                source_ref=f"jquants:{symbol}:daily:{day}",
+                observed_at=observed, received_at=received, known_at=received,
+                freshness=argus_market_data_truth.STALE,
+                completeness=argus_market_data_truth.COMPLETE,
+                currency="JPY", period_end=observed,
+                revision=_canonical_truth_revision(received),
+                provenance={
+                    "timestampPrecision": "date_only_official_close",
+                    "knowledgeTime": "provider_response_received_at",
+                    "adjustmentStatus": "provider_reported",
+                }))
+        except (TypeError, ValueError, OverflowError):
+            continue
+    return observations
+
+
+def _canonical_history_observations(symbols, decision_at):
+    """Bounded cached OHLC revisions for exact-session outcome resolution.
+
+    Cache acquisition time is the conservative first-known time.  Missing OHLC
+    members stay partial and therefore cannot satisfy ledger MFE/MAE scoring.
+    """
+    observations = []
+    for market, symbol in sorted(set(symbols)):
+        if market not in ("JP", "US"):
+            continue
+        cache = (_JQ_HISTORY_CACHE.get(symbol[:4]) if market == "JP"
+                 else _TD_HISTORY_CACHE.get(symbol))
+        if not isinstance(cache, dict) or not isinstance(cache.get("data"), dict):
+            continue
+        ttl = _JQ_HISTORY_TTL if market == "JP" else _TD_HISTORY_TTL
+        acquired_epoch = max(0.0, float(cache.get("expires") or 0.0) - ttl)
+        received = _canonical_truth_iso(acquired_epoch, market)
+        if not received or received > decision_at:
+            continue
+        history = cache["data"]
+        dates = list(history.get("dates") or [])[:_CANONICAL_OUTCOME_BARS_PER_SYMBOL]
+        provider = "jquants" if market == "JP" else "twelvedata"
+        for index, day in enumerate(dates):
+            observed = _canonical_truth_iso(day, market, date_means_close=True)
+            if not observed or observed > received:
+                continue
+            values = {}
+            missing = []
+            for field, source_key in (("open", "opens"), ("high", "highs"),
+                                      ("low", "lows"), ("close", "closes"),
+                                      ("volume", "volumes")):
+                series = history.get(source_key) or []
+                value = series[index] if index < len(series) else None
+                if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                        and math.isfinite(float(value)):
+                    values[field] = value
+                else:
+                    missing.append(field)
+            if "close" in missing:
+                continue
+            completeness = (argus_market_data_truth.COMPLETE if not missing
+                            else argus_market_data_truth.PARTIAL)
+            try:
+                observations.append(argus_market_data_truth.build_observation(
+                    instrument_id=f"{market}:{symbol}", symbol=symbol,
+                    market=market,
+                    asset_type=_canonical_truth_asset_type(symbol, market),
+                    fact_type="OHLCV_BAR", values=values, provider=provider,
+                    adapter="scanner_history_cache_adapter_v1",
+                    source_ref=f"{provider}:{symbol}:daily:{day}",
+                    observed_at=observed, received_at=received,
+                    known_at=received, freshness=argus_market_data_truth.STALE,
+                    completeness=completeness,
+                    currency="JPY" if market == "JP" else "USD",
+                    missing_fields=missing, period_end=observed,
+                    revision=_canonical_truth_revision(received),
+                    provenance={
+                        "timestampPrecision": "date_only_official_close",
+                        "knowledgeTime": "provider_cache_acquired_at",
+                        "adjustmentStatus": "provider_reported",
+                    }))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if len(observations) >= _CANONICAL_TRUTH_MAX_OUTCOME_OBSERVATIONS:
+                return observations
+    return observations
+
+
+def _canonical_target_contract(symbol, issued_at, horizon):
+    try:
+        issued = datetime.fromisoformat(str(issued_at).replace("Z", "+00:00"))
+        if issued.tzinfo is None:
+            return None
+        clock_symbol = ({"BITCOIN": "BTC", "ETHEREUM": "ETH"}.get(
+            str(symbol).upper(), symbol))
+        clock = argus_market_clock.forecast_clock(
+            clock_symbol, issued.astimezone(pytz.utc))
+        target = next((row for row in clock.get("targets") or []
+                       if row.get("horizon") == horizon), None)
+        target_at = (target or {}).get("targetClose") or \
+            (target or {}).get("targetTimestamp")
+        target_iso = _canonical_truth_iso(
+            target_at, "JP" if clock.get("market") ==
+            argus_market_clock.JP_EQUITY else "US"
+            if clock.get("market") == argus_market_clock.US_EQUITY else
+            "CRYPTO")
+        if not target_iso:
+            return None
+        target_dt = datetime.fromisoformat(target_iso.replace("Z", "+00:00"))
+        target_date = (target or {}).get("targetTradingDate") or \
+            target_dt.date().isoformat()
+        calendar_id = (f"{clock.get('marketCalendar')}:"
+                       f"{clock.get('calendarVersion')}")
+        session_kind = ("continuous" if clock.get("market") ==
+                        argus_market_clock.CRYPTO else "regular")
+        target_session_id = f"{calendar_id}:{target_date}:{session_kind}"
+        maturity_at = (target_dt + timedelta(minutes=15)).isoformat().replace(
+            "+00:00", "Z")
+        return argus_decision_ledger.session_maturity_contract(
+            calendar_id=calendar_id,
+            target_session_id=target_session_id,
+            target_at=target_iso, maturity_at=maturity_at,
+            horizon=horizon, session_kind=session_kind)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+_CANONICAL_PREDICTION_HORIZONS = ("1d", "3d", "5d")
+_CANONICAL_OMITTED_ID_LIMIT = 64
+_CANONICAL_SOURCE_CANDIDATE_LIMIT = 64
+
+
+def _canonical_scenario_policy(*, band_pct, horizon):
+    material = {
+        "bandPct": float(band_pct),
+        "bandVersion": argus_calibration.BAND_VERSION,
+        "classOrder": list(argus_calibration.CLASSES),
+        "classOrderVersion": (
+            f"{argus_calibration.SCHEMA_VERSION}:"
+            f"{argus_calibration.BAND_VERSION}"),
+        "downsideComparator": "<",
+        "horizon": horizon,
+        "reboundComparator": ">",
+        "scorerVersion": argus_calibration.SCORER_VERSION,
+    }
+    digest = hashlib.sha256(json.dumps(
+        material, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+    return material, {
+        "policyId": "argus-calibration-three-class-v1",
+        "policyVersion": argus_calibration.SCORER_VERSION,
+        "parametersHash": digest,
+    }
+
+
+def _canonical_prediction_candidate_id(family, market, symbol, ordinal):
+    return f"{family}:{market}:{symbol}:{ordinal}"
+
+
+def _canonical_prediction_ledger_projection(
+        *, legacy_rows, quote_rows, decision_at, engine_version,
+        generated_at=None):
+    generated_at = generated_at or _ai_now_iso()
+    quote_observations = _canonical_quote_observations(quote_rows, decision_at)
+    prediction_rows = []
+    for ordinal, (family, row) in enumerate(legacy_rows):
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("sensor") or "").upper()
+        market = str(row.get("market") or
+                     ("JP" if symbol[:1].isdigit() else
+                      "CRYPTO" if symbol in ("BTC", "BITCOIN", "ETH",
+                                              "ETHEREUM") else "US")).upper()
+        if not symbol or market not in ("JP", "US", "CRYPTO"):
+            continue
+        instrument_id = f"{market}:{symbol}"
+        prediction_rows.append({
+            "candidateId": _canonical_prediction_candidate_id(
+                family, market, symbol, ordinal),
+            "family": str(family), "row": row, "symbol": symbol,
+            "market": market, "instrumentId": instrument_id,
+        })
+    prediction_rows.sort(key=lambda item: (
+        item["market"], item["symbol"], item["family"], item["candidateId"]))
+    if not prediction_rows:
+        return {
+            "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+            "mode": "forward_live", "marketTruthSnapshot": None,
+            "issuedDecisions": [], "outcomeTruthObservations": [],
+            "status": "INCOMPLETE", "reason": "no_prediction_candidates",
+            "decisionAt": decision_at, "generatedAt": generated_at,
+        }
+
+    bounded_prediction_rows = prediction_rows[
+        :_CANONICAL_SOURCE_CANDIDATE_LIMIT]
+    overflow_rows = prediction_rows[_CANONICAL_SOURCE_CANDIDATE_LIMIT:]
+    request_keys = sorted({
+        (item["instrumentId"], item["market"])
+        for item in bounded_prediction_rows
+    })
+    admitted_keys = set(request_keys[:argus_market_data_truth.MAX_SNAPSHOT_REQUESTS])
+    admitted_rows = [item for item in bounded_prediction_rows
+                     if (item["instrumentId"], item["market"]) in admitted_keys]
+    omitted_rows = overflow_rows + [
+        item for item in bounded_prediction_rows
+        if (item["instrumentId"], item["market"]) not in admitted_keys]
+    omitted_ids = [item["candidateId"] for item in omitted_rows]
+    requests = [
+        {"instrumentId": instrument_id, "market": market,
+         "factType": "QUOTE",
+         "currency": "JPY" if market == "JP" else "USD",
+         "required": True}
+        for instrument_id, market in sorted(admitted_keys)
+    ]
+    build_identity = _backend_exact_sha()
+    if not build_identity:
+        return {
+            "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+            "mode": "forward_live", "authority": "PREDICTION_EVIDENCE_ONLY",
+            "finalDecisionAuthorityActive": False,
+            "marketTruthSchemaVersion": argus_market_data_truth.SCHEMA_VERSION,
+            "marketTruthSnapshot": None, "issuedDecisions": [],
+            "outcomeTruthObservations": [], "status": "INCOMPLETE",
+            "reason": "build_identity_unavailable",
+            "decisionAt": decision_at, "generatedAt": generated_at,
+            "producerBuildSha": None,
+            "sourceCandidateCount": len(prediction_rows),
+            "candidateCount": len(prediction_rows) * len(
+                _CANONICAL_PREDICTION_HORIZONS),
+            "issuedCount": 0,
+            "omittedCandidateCount": len(omitted_ids),
+            "omittedCandidateIds": omitted_ids[:_CANONICAL_OMITTED_ID_LIMIT],
+            "omittedCandidateIdsTruncated": (
+                len(omitted_ids) > _CANONICAL_OMITTED_ID_LIMIT),
+            "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
+        }
+    try:
+        market_snapshot = argus_market_data_truth.build_decision_snapshot(
+            quote_observations, requests=requests, decision_at=decision_at,
+            generated_at=generated_at, build_identity=build_identity)
+    except (TypeError, ValueError, OverflowError):
+        market_snapshot = None
+    snapshot_verified = bool(
+        market_snapshot and
+        argus_market_data_truth.verify_decision_snapshot(market_snapshot)[0])
+    selections = {
+        row.get("instrumentId"): row
+        for row in ((market_snapshot or {}).get("selections") or [])}
+    issued = []
+    complete_input_ids = set()
+    for candidate in admitted_rows:
+        family = candidate["family"]
+        row = candidate["row"]
+        symbol = candidate["symbol"]
+        market = candidate["market"]
+        instrument_id = candidate["instrumentId"]
+        selection = selections.get(instrument_id) or {}
+        selected = (selection.get("selected") or {}).get("observation") or {}
+        values = selected.get("values") or {}
+        selected_freshness = selection.get("freshness")
+        selected_completeness = selection.get("completeness")
+        selected_price = values.get("price")
+        selected_change = values.get("changePct")
+        if not snapshot_verified or not selected or not isinstance(
+                selected_price, (int, float)) or isinstance(selected_price, bool) \
+                or not math.isfinite(float(selected_price)) or \
+                not isinstance(selected_change, (int, float)) or isinstance(
+                    selected_change, bool) or not math.isfinite(
+                        float(selected_change)) or selected_freshness not in (
+                            argus_market_data_truth.FRESH,
+                            argus_market_data_truth.DELAYED) or \
+                selected_completeness != argus_market_data_truth.COMPLETE:
+            continue
+        truth_ref = argus_decision_ledger.point_in_time_truth_ref(
+            snapshot_id=market_snapshot["snapshotId"],
+            source_id=selected.get("observationId"),
+            as_of=selected.get("observedAt"), known_at=selected.get("knownAt"),
+            content_hash=selected.get("observationId"),
+            observation_kind="decision_quote",
+            observed_fields=sorted((selected.get("values") or {}).keys()),
+            provider=(selected.get("source") or {}).get("providerKey") or "",
+            revision=str(selected.get("revision") or ""))
+        if not truth_ref:
+            continue
+        raw_band = row.get("bandPct", 2.0)
+        if not isinstance(raw_band, (int, float)) or isinstance(raw_band, bool) \
+                or not math.isfinite(float(raw_band)) or float(raw_band) <= 0:
+            continue
+        band_pct = float(raw_band)
+        scenario_pairs = _scenarios_scaled(float(selected_change), band_pct)
+        scenario_map = {label: float(probability) / 100.0
+                        for label, probability in scenario_pairs}
+        if set(scenario_map) != set(argus_calibration.CLASSES):
+            continue
+        probabilities = [scenario_map[label]
+                         for label in argus_calibration.CLASSES]
+        distribution = argus_decision_ledger.forecast_distribution(
+            class_labels=list(argus_calibration.CLASSES),
+            probabilities=probabilities,
+            class_order_version=(
+                f"{argus_calibration.SCHEMA_VERSION}:"
+                f"{argus_calibration.BAND_VERSION}"))
+        if distribution is None:
+            continue
+        winner_index = max(range(len(probabilities)),
+                           key=lambda index: probabilities[index])
+        winner_label = argus_calibration.CLASSES[winner_index]
+        # FRESH and DELAYED are both explicitly admissible canonical quality
+        # states.  DELAYED remains visible in the sealed selection; it is not
+        # mislabeled as missing evidence (which the runner correctly rejects).
+        missing = []
+        disagreement = selection.get("disagreement") or {}
+        dissent = ([f"provider_disagreement:{disagreement.get('status')}"]
+                   if disagreement.get("status") == "PRESENT" else [])
+        complete_input_ids.add(candidate["candidateId"])
+        for horizon in _CANONICAL_PREDICTION_HORIZONS:
+            maturity = _canonical_target_contract(symbol, generated_at, horizon)
+            if not maturity:
+                continue
+            _, evaluation_policy = _canonical_scenario_policy(
+                band_pct=band_pct, horizon=horizon)
+            target_ladder = [
+                argus_decision_ledger.target_ladder_entry(
+                    target_id="scenario.downside_boundary", value=-band_pct,
+                    unit="%", comparator="<",
+                    target_at=maturity["targetAt"]),
+                argus_decision_ledger.target_ladder_entry(
+                    target_id="scenario.rebound_boundary", value=band_pct,
+                    unit="%", comparator=">",
+                    target_at=maturity["targetAt"]),
+            ]
+            if any(target is None for target in target_ladder):
+                continue
+            rec = argus_decision_ledger.prediction_record_v2(
+                mode="forward_live", symbol=symbol, market=market,
+                issued_at=generated_at, horizon=horizon,
+                target_type="scenario", forecast_value=winner_label,
+                forecast_distribution=distribution,
+                truth_ref=truth_ref, maturity=maturity,
+                engine_id=f"argus-{family}-candidate",
+                engine_version=engine_version, build_sha=build_identity,
+                evaluation_policy=evaluation_policy,
+                now_iso=generated_at,
+                confidence=float(probabilities[winner_index]),
+                # Legacy action emitters depend on flow/regime/other inputs that
+                # are not sealed in this quote-only projection.  Keep the
+                # canonical forecast identity independent of that unbound label.
+                candidate_action="",
+                target_ladder=target_ladder,
+                evidence_refs=[selected["observationId"]],
+                missing_evidence=missing, dissent=dissent)
+            if rec:
+                issued.append(rec)
+    symbols = [(item["market"], item["symbol"])
+               for item in admitted_rows]
+    outcome_observations = _canonical_current_outcome_observations(
+        quote_rows, decision_at)
+    known_outcome_ids = {row["observationId"] for row in outcome_observations}
+    for observation in _canonical_history_observations(symbols, decision_at):
+        if observation["observationId"] not in known_outcome_ids:
+            outcome_observations.append(observation)
+            known_outcome_ids.add(observation["observationId"])
+        if len(outcome_observations) >= \
+                _CANONICAL_TRUTH_MAX_OUTCOME_OBSERVATIONS:
+            break
+    expected_issued = len(admitted_rows) * len(_CANONICAL_PREDICTION_HORIZONS)
+    quality_complete = (
+        len(complete_input_ids) == len(admitted_rows) and
+        bool(admitted_rows))
+    status = ("COMPLETE" if snapshot_verified and not omitted_rows and
+              quality_complete and len(issued) == expected_issued
+              else "INCOMPLETE")
+    return {
+        "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+        "mode": "forward_live", "authority": "PREDICTION_EVIDENCE_ONLY",
+        "finalDecisionAuthorityActive": False,
+        "decisionAt": decision_at, "generatedAt": generated_at,
+        "producerBuildSha": build_identity,
+        "marketTruthSchemaVersion": argus_market_data_truth.SCHEMA_VERSION,
+        "marketTruthSnapshot": market_snapshot,
+        "issuedDecisions": issued,
+        "outcomeTruthObservations": outcome_observations,
+        "status": status,
+        "reason": (None if status == "COMPLETE" else
+                   "canonical_evidence_incomplete"),
+        "sourceCandidateCount": len(prediction_rows),
+        "candidateCount": len(prediction_rows) * len(
+            _CANONICAL_PREDICTION_HORIZONS),
+        "issuedCount": len(issued),
+        "omittedCandidateCount": len(omitted_ids),
+        "omittedCandidateIds": omitted_ids[:_CANONICAL_OMITTED_ID_LIMIT],
+        "omittedCandidateIdsTruncated": (
+            len(omitted_ids) > _CANONICAL_OMITTED_ID_LIMIT),
+        "marketTruthSnapshotVerified": snapshot_verified,
+        "truthQualityComplete": quality_complete,
+        "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
+    }
+
+
 def get_prediction_snapshot():
     al  = get_action_labels()
     jp  = get_japan_watchlist_snapshot()
@@ -32154,6 +33198,18 @@ def get_prediction_snapshot():
     vol = _vix_assess(_fred_vix_history())
     rg  = reg.get("regime", {}) if isinstance(reg, dict) else {}
     rb  = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
+
+    truth_quote_rows = []
+
+    def remember_quote_rows(snapshot, market):
+        if not isinstance(snapshot, dict):
+            return
+        provider = snapshot.get("provider")
+        for row in snapshot.get("stocks") or []:
+            truth_quote_rows.append((market, provider, row))
+
+    remember_quote_rows(jp, "JP")
+    remember_quote_rows(us, "US")
 
     prices = {}
     for snap in (jp, us):
@@ -32203,11 +33259,15 @@ def get_prediction_snapshot():
         bus = [s for s in bench if not s[0].isdigit()]
         bprice = {}
         if bjp:
-            for s in (get_japan_watchlist_snapshot(bjp).get("stocks") or []):
+            benchmark_jp = get_japan_watchlist_snapshot(bjp)
+            remember_quote_rows(benchmark_jp, "JP")
+            for s in (benchmark_jp.get("stocks") or []):
                 if s.get("status") == "live":
                     bprice[s["symbol"]] = s
         if bus:
-            for s in (get_us_watchlist_snapshot(bus).get("stocks") or []):
+            benchmark_us = get_us_watchlist_snapshot(bus)
+            remember_quote_rows(benchmark_us, "US")
+            for s in (benchmark_us.get("stocks") or []):
                 if s.get("status") == "live":
                     bprice[s["symbol"]] = s
         for sym in bench:
@@ -32249,8 +33309,16 @@ def get_prediction_snapshot():
             "changePct": st["m1d"],
             "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(st["m1d"])],
         })
+        truth_quote_rows.append(("US", st.get("source"), {
+            "symbol": sym, "price": st["price"], "changePct": st["m1d"],
+            "source": st.get("source"),
+            "sourceTimestamp": st.get("sourceTimestamp"),
+            "receivedAt": st.get("receivedAt"), "status": st.get("status"),
+        }))
     cw = get_crypto_watchlist_snapshot(list(_CRYPTO_DEFAULT_IDS))
     for q in (cw.get("quotes") or []):
+        truth_quote_rows.append(("CRYPTO", cw.get("provider"), {
+            **q, "symbol": q.get("id"), "price": q.get("priceUsd")}))
         if q.get("status") == "live":
             ccls = ("CRYPTO_BTC" if q["id"] == "bitcoin" else
                     "CRYPTO_ETH" if q["id"] == "ethereum" else None)
@@ -32264,6 +33332,7 @@ def get_prediction_snapshot():
     # ── Layer-1 sensors (ledger-v3): the FIXED 16-asset regime universe ──
     sensors = []
     jp_sens = get_japan_watchlist_snapshot([s for s, _ in _L1_SENSORS_JP])
+    remember_quote_rows(jp_sens, "JP")
     jp_sens_live = {s["symbol"]: s for s in (jp_sens.get("stocks") or [])
                     if s.get("status") == "live"}
     for sym, name in _L1_SENSORS_JP:
@@ -32279,11 +33348,20 @@ def get_prediction_snapshot():
             _sr = _sensor_row(sym, sym, "etf_us", st["price"], st["m1d"])
             _sr.update(_v4_record_meta(sym))
             sensors.append(_sr)
+            truth_quote_rows.append(("US", st.get("source"), {
+                "symbol": sym, "price": st["price"],
+                "changePct": st["m1d"], "source": st.get("source"),
+                "sourceTimestamp": st.get("sourceTimestamp"),
+                "receivedAt": st.get("receivedAt"),
+                "status": st.get("status"),
+            }))
     for q in (cw.get("quotes") or []):
         if q.get("id") == "bitcoin" and q.get("status") == "live":
             _sr = _sensor_row("BTC", "Bitcoin", "crypto", q["priceUsd"], q.get("changePct"))
             _sr.update(_v4_record_meta("BTC"))
             sensors.append(_sr)
+            truth_quote_rows.append(("CRYPTO", cw.get("provider"), {
+                **q, "symbol": "BTC", "price": q.get("priceUsd")}))
     # Context Variables (v2): USDJPY/VIX (+ yields/HY OAS when available) are
     # RECORDED for regime context but NOT scored as equal return-sensors — VIX is
     # inverse-risk, USDJPY is context-dependent, yields/OAS are levels not returns.
@@ -32319,10 +33397,39 @@ def get_prediction_snapshot():
         posture_prediction = {"posture": posture_label, "proxy": "SPY",
                               "price": spy["price"], "rule": rule}
 
+    as_of = _ai_now_iso()
+    canonical_issued_at = _ai_now_iso()
+    canonical_legacy_rows = ([
+        ("tactical_rule", row) for row in predictions] + [
+        ("regime_sensor", row) for row in sensors] + [
+        ("asset_class", row) for row in class_predictions])
+    try:
+        canonical_ledger = _canonical_prediction_ledger_projection(
+            legacy_rows=canonical_legacy_rows, quote_rows=truth_quote_rows,
+            decision_at=as_of, generated_at=canonical_issued_at,
+            engine_version="ledger-v3-compat-projection")
+    except Exception:
+        # Canonical recording is fail-closed but cannot turn an optional public
+        # diagnostics projection into a provider/readiness failure.
+        canonical_ledger = {
+            "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+            "mode": "forward_live", "authority": "PREDICTION_EVIDENCE_ONLY",
+            "finalDecisionAuthorityActive": False,
+            "marketTruthSchemaVersion": argus_market_data_truth.SCHEMA_VERSION,
+            "marketTruthSnapshot": None, "issuedDecisions": [],
+            "outcomeTruthObservations": [], "status": "INCOMPLETE",
+            "reason": "canonical_projection_failed", "decisionAt": as_of,
+            "generatedAt": canonical_issued_at,
+        }
+
+    snapshot_generated_at = _ai_now_iso()
+
     return {
         "dateJst": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
-        "asOf": _ai_now_iso(),
+        "asOf": as_of,
+        "generatedAt": snapshot_generated_at,
         "engineVersion": "ledger-v3",
+        "canonicalPredictionLedger": canonical_ledger,
         "universeVersion": argus_calibration.UNIVERSE_VERSION,
         "tacticalBenchmarkVersion": argus_calibration.TACTICAL_BENCHMARK_VERSION,
         "factorGroupVersion": argus_calibration.FACTOR_GROUP_VERSION,

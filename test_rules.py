@@ -174,6 +174,21 @@ def test_vix_short_history_no_crash():
     assert scanner._vix_assess([]) is None
 
 
+def test_rates_truth_axes_never_promote_mock_components_to_live_complete():
+    exact = "2026-08-15T10:00:00Z"
+    rows = {key: {"latestValue": 1.0, "status": "live",
+                  "sourceTimestamp": exact}
+            for key in ("us10y", "us2y", "usReal10y", "vix", "usdJpy")}
+    full = scanner._rates_truth_axes(rows)
+    assert full["status"] == "live" and full["completeness"] == "complete"
+    rows["usReal10y"] = {"latestValue": 1.0, "status": "mock",
+                         "sourceTimestamp": "2026-08-15"}
+    partial = scanner._rates_truth_axes(rows)
+    assert partial["status"] == "partial"
+    assert partial["completeness"] == "partial"
+    assert "usReal10y" in partial["missingSeries"]
+
+
 # ── moomoo real-time overlay (v9.11) ─────────────────────────────────
 def _snap(*rows):
     return {"status": "live", "asOf": "2026-06-10", "stocks": list(rows)}
@@ -197,6 +212,9 @@ def test_overlay_replaces_and_fills(monkeypatch):
     assert by["8058"]["name"] == "三菱商事"        # name preserved
     assert "7203" in by                            # hole filled
     assert out["realtimeCount"] == 2
+    assert by["8058"]["selectedSource"] == "moomoo-rt"
+    assert len(by["8058"]["providerCandidates"]) == 2
+    assert by["8058"]["selectionPolicyId"] == "jp-moomoo-jquants-v1"
     assert base["stocks"][0]["price"] == 4805.0    # cached object untouched
 
 
@@ -258,6 +276,29 @@ def test_overlay_quote_set_p95_classifies_live_then_delayed(monkeypatch):
     assert delayed["quoteFreshness"]["delayClass"] == "15m"
     assert delayed["stocks"][0]["status"] == "delayed"
     assert delayed["status"] == "delayed"
+
+
+def test_overlay_future_source_timestamp_is_never_live(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    monkeypatch.setattr(scanner.argus_market_clock, "market_session",
+                        lambda *_a, **_k: {"session": "REGULAR"})
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", {
+        "SPY": {"row": {"symbol": "SPY", "price": 700.0,
+                          "changeAbs": 1.0, "changePct": 0.1, "volume": 1,
+                          "status": "live", "source": "moomoo-rt",
+                          "entitlement": "realtime",
+                          "exchangeTs": now + 1}, "ts": now - 5},
+    })
+    out = scanner._overlay_pushed(
+        {"status": "mock", "stocks": []}, "US", ["SPY"])
+    row = out["stocks"][0]
+    assert out["quoteFreshness"]["futureSourceTimestampCount"] == 1
+    assert out["quoteFreshness"]["delayClass"] == "UNKNOWN"
+    assert row["timestampInversion"] is True
+    assert row["ageSec"] is None
+    assert row["status"] == "delayed"
+    assert row["realtimeEvidence"] is False
 
 
 def test_formal_jp_quote_never_uses_yahoo(monkeypatch):
@@ -523,15 +564,31 @@ def test_calibration_neutral_while_accumulating():
     # below the 33-row evidence floor → still neutral even with a strong rate
     s = {"byPosture": {"CAUTIOUS": {"n": 22, "hitRate": 0.9}}}
     assert scanner._calibration_for(s, "CAUTIOUS")["factor"] == 1.0
+    # A high-count legacy/mixed summary is never production calibration.
+    legacy = {"byPosture": {"CAUTIOUS": {"n": 999, "hitRate": 0.99}}}
+    assert scanner._calibration_for(legacy, "CAUTIOUS")["factor"] == 1.0
 
 
 def test_calibration_trust_and_doubt_bands():
-    up = {"byPosture": {"CAUTIOUS": {"n": 44, "hitRate": 0.65}}}
-    mid = {"byPosture": {"CAUTIOUS": {"n": 44, "hitRate": 0.50}}}
-    down = {"byPosture": {"CAUTIOUS": {"n": 44, "hitRate": 0.30}}}
+    def summary(hit_rate, *, mode="forward_live", days=20, maturity="mature"):
+        return {
+            "schemaVersion": "argus-prediction-ledger-summary-v2",
+            "mode": mode,
+            "byPosture": {"CAUTIOUS": {
+                "n": 44, "hitRate": hit_rate,
+                "independentTradingDays": days,
+                "maturityStatus": maturity,
+            }},
+            "overall": {"n": 44},
+        }
+    up = summary(0.65)
+    mid = summary(0.50)
+    down = summary(0.30)
     assert scanner._calibration_for(up, "CAUTIOUS")["factor"] == scanner._CAL_UP
     assert scanner._calibration_for(mid, "CAUTIOUS")["factor"] == 1.0
     assert scanner._calibration_for(down, "CAUTIOUS")["factor"] == scanner._CAL_DOWN
+    assert scanner._calibration_for(summary(0.99, mode="shadow"), "CAUTIOUS")["factor"] == 1.0
+    assert scanner._calibration_for(summary(0.99, days=19), "CAUTIOUS")["factor"] == 1.0
 
 
 def test_calibration_only_reads_matching_posture_bucket():

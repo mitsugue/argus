@@ -146,15 +146,26 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
       }
     }
 
-    // Silent background refresh — only swaps in fresh data, never degrades the
-    // visible state on failure.
+    // A failed refresh may retain the last observed values, but it must age their
+    // source timestamps again.  In particular an old LIVE proof cannot remain
+    // LIVE merely because the transport failed before a replacement arrived.
     async function refresh() {
       if (cancelled || document.hidden) return;
       try {
         const data = await fetchSnapshot();
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
-      } catch { /* keep the last good snapshot */ }
+      } catch (err: unknown) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setState((s) => {
+          if (!s.data) return { ...s, error: msg };
+          const aged = normalizeJapanWatchSnapshot(
+            s.data as unknown as JapanWatchlistSnapshot,
+          );
+          return { ...s, data: aged, error: msg, phase: aged.status };
+        });
+      }
     }
     const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
     // Returning to the tab after a while → refresh immediately, don't wait out

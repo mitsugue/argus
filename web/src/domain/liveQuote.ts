@@ -66,7 +66,8 @@ function isoTimestamp(value: string | number | null | undefined): string | null 
 function exactAgeSec(timestamp: string | null, nowMs: number): number | null {
   if (!timestamp || /^\d{4}-\d{2}-\d{2}$/.test(timestamp)) return null;
   const ms = Date.parse(timestamp);
-  return Number.isFinite(ms) ? Math.max(0, Math.round((nowMs - ms) / 1000)) : null;
+  if (!Number.isFinite(ms) || ms > nowMs) return null;
+  return Math.round((nowMs - ms) / 1000);
 }
 
 function tokyoTradingDate(nowMs: number): string {

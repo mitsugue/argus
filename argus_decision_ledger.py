@@ -13,6 +13,8 @@ LOOP B(判断学習ループ)の土台:
 """
 import hashlib
 import json
+import math
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -489,3 +491,1009 @@ def decision_scoring_readiness(forecasts: List[Dict[str, Any]],
                    " — 成熟または成果解決を待っています")
                 + (f"(成熟待ち{pending_maturity}件/解決待ち"
                    f"{matured_awaiting}件)"))}
+
+
+# ── Prediction Ledger sealed v2 (additive; legacy checkpoint shape unchanged) ─
+#
+# These records deliberately remain storage-neutral.  Runtime/Git adapters may
+# append them to durable storage, but this core neither creates another ledger
+# authority nor assumes the scanner's bounded legacy forecast/outcome lists are
+# canonical history.
+
+PREDICTION_LEDGER_V2_SCHEMA = "argus-prediction-ledger-v2"
+PIT_TRUTH_REF_SCHEMA = "argus-pit-truth-ref-v1"
+SESSION_MATURITY_SCHEMA = "argus-session-maturity-v1"
+EVALUATION_METRIC_SCHEMA = "argus-evaluation-metric-v1"
+FORECAST_DISTRIBUTION_SCHEMA = "argus-categorical-forecast-distribution-v1"
+
+PREDICTION_MODES = ("historical_replay", "forward_live", "shadow")
+PREDICTION_LEDGER_MODES = PREDICTION_MODES
+LEGACY_PREDICTION_MODE = "unknown_legacy"
+OUTCOME_RESOLUTION_STATUSES = ("OBSERVED", "UNSCORABLE", "AMBIGUOUS")
+METRIC_FAMILIES = ("mfe", "mae", "target", "invalidation", "end",
+                   "opportunity", "benchmark", "score", "missing")
+METRIC_POLARITIES = ("higher_better", "lower_better", "neutral",
+                     "contextual")
+
+_V2_MAX_EVIDENCE_REFS = 24
+_V2_MAX_METRICS = 64
+_V2_MAX_AGGREGATE_EVENTS = 10000
+_V2_MAX_EMBEDDED_BYTES = 8192
+_V2_MAX_DISTRIBUTION_CLASSES = 16
+_V2_DISTRIBUTION_SUM_TOLERANCE = 1e-9
+_V2_METRIC_TYPE_RE = re.compile(r"^[a-z][a-z0-9_.:-]{1,95}$")
+_V2_CLASS_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
+_V2_FORBIDDEN_PREDICTION_FIELDS = set(_FORBIDDEN_FORECAST_FIELDS) | {
+    "outcomeEventId", "outcomeResolution", "evaluation", "evaluationMetrics",
+    "realizedReturn", "maximumFavorableExcursion", "maximumAdverseExcursion",
+}
+_WAIT_AVOIDED_MAE = "opportunity.avoided_mae_pct"
+_WAIT_MISSED_MFE = "opportunity.missed_mfe_pct"
+
+
+def _v2_hash(value: Any) -> Optional[str]:
+    """Full canonical SHA-256.  Non-JSON/non-finite values are never sealable."""
+    try:
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _v2_json_copy(value: Any, max_bytes: int = _V2_MAX_EMBEDDED_BYTES) -> Any:
+    try:
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if len(raw) > max_bytes:
+            return None
+        return json.loads(raw.decode("utf-8"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _v2_string(value: Any, limit: int, *, required: bool = False) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    out = value.strip()
+    if required and not out:
+        return None
+    if len(out) > limit:
+        return None
+    return out
+
+
+def _v2_string_list(value: Any, limit: int,
+                    item_limit: int = 160) -> Optional[List[str]]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)) or len(value) > limit:
+        return None
+    out = []
+    for item in value:
+        text = _v2_string(item, item_limit, required=True)
+        if text is None:
+            return None
+        out.append(text)
+    return out
+
+
+def _v2_number(value: Any) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(float(value)))
+
+
+def _v2_seal(body: Dict[str, Any], prefix: str) -> Optional[Dict[str, Any]]:
+    identity_hash = _v2_hash(body)
+    if identity_hash is None:
+        return None
+    rec = dict(body)
+    rec["id"] = f"{prefix}-{identity_hash[:24]}"
+    integrity_hash = _v2_hash(rec)
+    if integrity_hash is None:
+        return None
+    rec["integrityHash"] = integrity_hash
+    return rec
+
+
+def _v2_verify_seal(rec: Any, *, prefix: str,
+                    record_type: str) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    if rec.get("schemaVersion") != PREDICTION_LEDGER_V2_SCHEMA or \
+            rec.get("recordType") != record_type:
+        return False
+    integrity_hash = rec.get("integrityHash")
+    record_id = rec.get("id")
+    if not isinstance(integrity_hash, str) or not isinstance(record_id, str):
+        return False
+    sealed = {k: v for k, v in rec.items() if k != "integrityHash"}
+    if _v2_hash(sealed) != integrity_hash:
+        return False
+    body = {k: v for k, v in sealed.items() if k != "id"}
+    identity_hash = _v2_hash(body)
+    return bool(identity_hash and record_id == f"{prefix}-{identity_hash[:24]}")
+
+
+def point_in_time_truth_ref(*, snapshot_id: str, source_id: str,
+                            as_of: str, known_at: str, content_hash: str,
+                            observation_kind: str,
+                            observed_fields: List[str],
+                            target_session_id: str = "",
+                            provider: str = "", revision: str = "") \
+        -> Optional[Dict[str, Any]]:
+    """Provider-neutral immutable reference to what was knowable at a cutoff.
+
+    ``provider`` is descriptive provenance only.  Identity and matching use the
+    neutral source/snapshot/content/session fields, never a provider schema.
+    """
+    sid = _v2_string(snapshot_id, 160, required=True)
+    source = _v2_string(source_id, 120, required=True)
+    digest = _v2_string(content_hash, 160, required=True)
+    kind = _v2_string(observation_kind, 80, required=True)
+    session_id = _v2_string(target_session_id, 160)
+    provider_text = _v2_string(provider, 120)
+    revision_text = _v2_string(revision, 120)
+    fields = _v2_string_list(observed_fields, 32, 80)
+    as_ep, known_ep = _ep(as_of), _ep(known_at)
+    if None in (sid, source, digest, kind, session_id, provider_text,
+                revision_text, fields) or not fields:
+        return None
+    if as_ep is None or known_ep is None or as_ep > known_ep:
+        return None
+    return {
+        "schemaVersion": PIT_TRUTH_REF_SCHEMA,
+        "snapshotId": sid,
+        "sourceId": source,
+        "provider": provider_text,
+        "asOf": as_of,
+        "knownAt": known_at,
+        "revision": revision_text,
+        "contentHash": digest,
+        "observationKind": kind,
+        "observedFields": fields,
+        "targetSessionId": session_id,
+    }
+
+
+truth_reference = point_in_time_truth_ref
+
+
+def _normalize_truth_ref(value: Any, *, cutoff_at: Optional[str] = None,
+                         require_target_session: bool = False) \
+        -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict) or value.get("schemaVersion") != PIT_TRUTH_REF_SCHEMA:
+        return None
+    normalized = point_in_time_truth_ref(
+        snapshot_id=value.get("snapshotId"), source_id=value.get("sourceId"),
+        as_of=value.get("asOf"), known_at=value.get("knownAt"),
+        content_hash=value.get("contentHash"),
+        observation_kind=value.get("observationKind"),
+        observed_fields=value.get("observedFields"),
+        target_session_id=value.get("targetSessionId") or "",
+        provider=value.get("provider") or "",
+        revision=value.get("revision") or "")
+    if normalized is None or normalized != value:
+        return None
+    if require_target_session and not normalized.get("targetSessionId"):
+        return None
+    if cutoff_at is not None:
+        cutoff_ep = _ep(cutoff_at)
+        if cutoff_ep is None or _ep(normalized["knownAt"]) > cutoff_ep:
+            return None
+    return normalized
+
+
+def session_maturity_contract(*, calendar_id: str, target_session_id: str,
+                              target_at: str, maturity_at: str,
+                              horizon: str, session_kind: str = "regular") \
+        -> Optional[Dict[str, Any]]:
+    """Independent trading-calendar/session contract; contains no provider IDs."""
+    calendar = _v2_string(calendar_id, 120, required=True)
+    session_id = _v2_string(target_session_id, 160, required=True)
+    kind = _v2_string(session_kind, 60, required=True)
+    target_ep, maturity_ep = _ep(target_at), _ep(maturity_at)
+    if calendar is None or session_id is None or kind is None or \
+            horizon not in HORIZONS or target_ep is None or maturity_ep is None \
+            or maturity_ep < target_ep:
+        return None
+    return {
+        "schemaVersion": SESSION_MATURITY_SCHEMA,
+        "calendarId": calendar,
+        "targetSessionId": session_id,
+        "sessionKind": kind,
+        "horizon": horizon,
+        "targetAt": target_at,
+        "maturityAt": maturity_at,
+    }
+
+
+maturity_contract = session_maturity_contract
+
+
+def _normalize_maturity(value: Any, *, horizon: str,
+                        cutoff_at: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict) or value.get("schemaVersion") != SESSION_MATURITY_SCHEMA:
+        return None
+    normalized = session_maturity_contract(
+        calendar_id=value.get("calendarId"),
+        target_session_id=value.get("targetSessionId"),
+        target_at=value.get("targetAt"), maturity_at=value.get("maturityAt"),
+        horizon=value.get("horizon"), session_kind=value.get("sessionKind"))
+    if normalized is None or normalized != value or normalized["horizon"] != horizon:
+        return None
+    cutoff_ep = _ep(cutoff_at)
+    if cutoff_ep is None or _ep(normalized["targetAt"]) <= cutoff_ep:
+        return None
+    return normalized
+
+
+def _normalize_policy(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    if set(value) - {"policyId", "policyVersion", "parametersHash"}:
+        return None
+    policy_id = _v2_string(value.get("policyId"), 120, required=True)
+    version = _v2_string(value.get("policyVersion"), 80, required=True)
+    parameters_hash = _v2_string(value.get("parametersHash") or "", 160)
+    if None in (policy_id, version, parameters_hash):
+        return None
+    return {"policyId": policy_id, "policyVersion": version,
+            "parametersHash": parameters_hash}
+
+
+def _normalize_engine(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    engine_id = _v2_string(value.get("engineId"), 120, required=True)
+    version = _v2_string(value.get("engineVersion"), 120, required=True)
+    build_sha = _v2_string(value.get("buildSha"), 160, required=True)
+    if None in (engine_id, version, build_sha):
+        return None
+    normalized = {"engineId": engine_id, "engineVersion": version,
+                  "buildSha": build_sha}
+    return normalized if normalized == value else None
+
+
+def _normalize_embedded_dict(value: Any, *, allow_none: bool = True) -> Any:
+    if value is None and allow_none:
+        return None
+    copied = _v2_json_copy(value)
+    return copied if isinstance(copied, dict) else None
+
+
+_V2_COMPARATORS = ("", ">", ">=", "<", "<=", "==", "touch")
+
+
+def target_ladder_entry(*, target_id: str, value: float, unit: str,
+                        comparator: str = "touch",
+                        target_at: str = "") -> Optional[Dict[str, Any]]:
+    target = _v2_string(target_id, 120, required=True)
+    unit_text = _v2_string(unit, 40, required=True)
+    if target is None or unit_text is None or not _v2_number(value) or \
+            comparator not in _V2_COMPARATORS or \
+            (target_at and _ep(target_at) is None):
+        return None
+    row = {"targetId": target, "value": float(value), "unit": unit_text}
+    if comparator:
+        row["comparator"] = comparator
+    if target_at:
+        row["targetAt"] = target_at
+    return row
+
+
+def invalidation_rule(*, rule_id: str, value: float, unit: str,
+                      comparator: str = "touch",
+                      target_at: str = "") -> Optional[Dict[str, Any]]:
+    rule = _v2_string(rule_id, 120, required=True)
+    unit_text = _v2_string(unit, 40, required=True)
+    if rule is None or unit_text is None or not _v2_number(value) or \
+            comparator not in _V2_COMPARATORS or \
+            (target_at and _ep(target_at) is None):
+        return None
+    row = {"ruleId": rule, "value": float(value), "unit": unit_text}
+    if comparator:
+        row["comparator"] = comparator
+    if target_at:
+        row["targetAt"] = target_at
+    return row
+
+
+def _normalize_target_ladder(value: Any,
+                             maturity: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    if not isinstance(value, (list, tuple)) or len(value) > 12:
+        return None
+    out = []
+    seen = set()
+    allowed = {"targetId", "value", "unit", "comparator", "targetAt"}
+    for raw in value:
+        if not isinstance(raw, dict) or set(raw) - allowed:
+            return None
+        target = _v2_string(raw.get("targetId"), 120, required=True)
+        unit = _v2_string(raw.get("unit"), 40, required=True)
+        comparator = raw.get("comparator") or ""
+        target_at = raw.get("targetAt") or ""
+        if target is None or target in seen or unit is None or \
+                not _v2_number(raw.get("value")) or \
+                comparator not in _V2_COMPARATORS or \
+                (target_at and _ep(target_at) != _ep(maturity.get("targetAt"))):
+            return None
+        seen.add(target)
+        out.append(_v2_json_copy(raw, 1024))
+    return out
+
+
+def _normalize_invalidation(value: Any,
+                            maturity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    allowed = {"ruleId", "value", "unit", "comparator", "targetAt"}
+    if not isinstance(value, dict) or set(value) - allowed:
+        return None
+    rule = _v2_string(value.get("ruleId"), 120, required=True)
+    unit = _v2_string(value.get("unit"), 40, required=True)
+    comparator = value.get("comparator") or ""
+    target_at = value.get("targetAt") or ""
+    if rule is None or unit is None or not _v2_number(value.get("value")) or \
+            comparator not in _V2_COMPARATORS or \
+            (target_at and _ep(target_at) != _ep(maturity.get("targetAt"))):
+        return None
+    return _v2_json_copy(value, 1024)
+
+
+def forecast_distribution(*, class_labels: List[str],
+                          probabilities: List[float],
+                          class_order_version: str) \
+        -> Optional[Dict[str, Any]]:
+    """Bounded categorical forecast whose class order is explicit and sealed.
+
+    Probabilities use the unit interval.  Evaluation policies may select a
+    scoring rule, but may not reinterpret the sealed label order.
+    """
+    if not isinstance(class_labels, (list, tuple)) or \
+            not isinstance(probabilities, (list, tuple)) or \
+            not 2 <= len(class_labels) <= _V2_MAX_DISTRIBUTION_CLASSES or \
+            len(class_labels) != len(probabilities):
+        return None
+    version = _v2_string(class_order_version, 80, required=True)
+    if version is None:
+        return None
+    labels: List[str] = []
+    seen = set()
+    for raw_label in class_labels:
+        label = _v2_string(raw_label, 80, required=True)
+        if label is None or not _V2_CLASS_LABEL_RE.fullmatch(label) or \
+                label in seen:
+            return None
+        labels.append(label)
+        seen.add(label)
+    values: List[float] = []
+    for probability in probabilities:
+        if not _v2_number(probability) or \
+                not 0.0 <= float(probability) <= 1.0:
+            return None
+        values.append(float(probability))
+    if not math.isclose(math.fsum(values), 1.0, rel_tol=0.0,
+                        abs_tol=_V2_DISTRIBUTION_SUM_TOLERANCE):
+        return None
+    return {
+        "schemaVersion": FORECAST_DISTRIBUTION_SCHEMA,
+        "classOrderVersion": version,
+        "classLabels": labels,
+        "probabilities": values,
+    }
+
+
+def _normalize_forecast_distribution(value: Any) \
+        -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict) or set(value) != {
+            "schemaVersion", "classOrderVersion", "classLabels",
+            "probabilities"} or \
+            value.get("schemaVersion") != FORECAST_DISTRIBUTION_SCHEMA:
+        return None
+    normalized = forecast_distribution(
+        class_labels=value.get("classLabels"),
+        probabilities=value.get("probabilities"),
+        class_order_version=value.get("classOrderVersion"))
+    return normalized if normalized == value else None
+
+
+def prediction_record_v2(*, mode: str, symbol: str, market: str,
+                         issued_at: str, horizon: str, target_type: str,
+                         forecast_value: str, truth_ref: Dict[str, Any],
+                         maturity: Dict[str, Any], engine_id: str,
+                         engine_version: str, build_sha: str,
+                         evaluation_policy: Dict[str, Any],
+                         now_iso: str, confidence: Optional[float] = None,
+                         candidate_action: str = "",
+                         target_ladder: Optional[List[Dict[str, Any]]] = None,
+                         invalidation: Optional[Dict[str, Any]] = None,
+                         evidence_refs: Optional[List[str]] = None,
+                         missing_evidence: Optional[List[str]] = None,
+                         dissent: Optional[List[str]] = None,
+                         forecast_distribution: Optional[Dict[str, Any]] = None,
+                         replay_cutoff_at: str = "",
+                         supersedes_prediction_id: str = "",
+                         **extra: Any) -> Optional[Dict[str, Any]]:
+    """Create a sealed immutable IssuedDecision in the one Prediction Ledger."""
+    if mode not in PREDICTION_MODES or horizon not in HORIZONS or \
+            target_type not in TARGET_TYPES:
+        return None
+    if any(key in _V2_FORBIDDEN_PREDICTION_FIELDS for key in extra):
+        return None
+    if extra:                         # v2 rejects unsealed/unknown extensions
+        return None
+    issued_ep, created_ep = _ep(issued_at), _ep(now_iso)
+    if issued_ep is None or created_ep is None or issued_ep > created_ep:
+        return None
+    if mode == "historical_replay":
+        cutoff_ep = _ep(replay_cutoff_at)
+        if cutoff_ep is None or cutoff_ep != issued_ep:
+            return None
+        cutoff_at = replay_cutoff_at
+    else:
+        if replay_cutoff_at:
+            return None
+        cutoff_at = issued_at
+    normalized_truth = _normalize_truth_ref(truth_ref, cutoff_at=cutoff_at)
+    normalized_maturity = _normalize_maturity(maturity, horizon=horizon,
+                                               cutoff_at=cutoff_at)
+    engine = {"engineId": engine_id, "engineVersion": engine_version,
+              "buildSha": build_sha}
+    normalized_engine = _normalize_engine(engine)
+    normalized_policy = _normalize_policy(evaluation_policy)
+    if normalized_truth is None or normalized_maturity is None or \
+            normalized_engine is None or normalized_policy is None:
+        return None
+    symbol_text = _v2_string(symbol, 80, required=True)
+    market_text = _v2_string(market, 40, required=True)
+    forecast_text = _v2_string(forecast_value, 240, required=True)
+    action_text = _v2_string(candidate_action, 80)
+    supersedes = _v2_string(supersedes_prediction_id, 160)
+    evidence = _v2_string_list(evidence_refs, _V2_MAX_EVIDENCE_REFS, 200)
+    missing = _v2_string_list(missing_evidence, 16, 200)
+    dissent_rows = _v2_string_list(dissent, 16, 240)
+    if None in (symbol_text, market_text, forecast_text, action_text,
+                supersedes, evidence, missing, dissent_rows):
+        return None
+    if confidence is not None and (not _v2_number(confidence)
+                                   or not 0.0 <= float(confidence) <= 1.0):
+        return None
+    ladder = _normalize_target_ladder(target_ladder or [], normalized_maturity)
+    invalidation_copy = _normalize_invalidation(invalidation, normalized_maturity)
+    if ladder is None or \
+            (invalidation is not None and invalidation_copy is None):
+        return None
+    distribution_copy = None
+    if forecast_distribution is not None:
+        distribution_copy = _normalize_forecast_distribution(
+            forecast_distribution)
+        if distribution_copy is None:
+            return None
+    body = {
+        "schemaVersion": PREDICTION_LEDGER_V2_SCHEMA,
+        "recordType": "issued_decision",
+        "mode": mode,
+        "symbol": symbol_text.upper(),
+        "market": market_text.upper(),
+        "issuedAt": issued_at,
+        "informationCutoffAt": cutoff_at,
+        "replayCutoffAt": replay_cutoff_at or None,
+        "forecastHorizon": horizon,
+        "targetType": target_type,
+        "forecastValue": forecast_text,
+        "confidence": (float(confidence) if confidence is not None else None),
+        "candidateAction": action_text.upper(),
+        "targetLadder": ladder,
+        "invalidation": invalidation_copy,
+        "truthRef": normalized_truth,
+        "maturity": normalized_maturity,
+        "engine": normalized_engine,
+        "evaluationPolicy": normalized_policy,
+        "evidenceRefs": evidence,
+        "missingEvidence": missing,
+        "dissent": dissent_rows,
+        "supersedesPredictionId": supersedes or None,
+        "immutableCreatedAt": now_iso,
+    }
+    # Omitting the optional field preserves identities of already-sealed v2
+    # records created before categorical distributions were introduced.
+    if distribution_copy is not None:
+        body["forecastDistribution"] = distribution_copy
+    return _v2_seal(body, "pd")
+
+
+prediction_record = prediction_record_v2
+
+
+def verify_prediction_record_v2(rec: Any) -> bool:
+    if not _v2_verify_seal(rec, prefix="pd", record_type="issued_decision"):
+        return False
+    if rec.get("mode") not in PREDICTION_MODES or \
+            rec.get("forecastHorizon") not in HORIZONS or \
+            rec.get("targetType") not in TARGET_TYPES:
+        return False
+    if any(key in rec for key in _V2_FORBIDDEN_PREDICTION_FIELDS):
+        return False
+    issued_ep, created_ep = _ep(rec.get("issuedAt")), _ep(rec.get("immutableCreatedAt"))
+    if issued_ep is None or created_ep is None or issued_ep > created_ep:
+        return False
+    cutoff_at = rec.get("informationCutoffAt")
+    if rec.get("mode") == "historical_replay":
+        if _ep(rec.get("replayCutoffAt")) != issued_ep or \
+                rec.get("replayCutoffAt") != cutoff_at:
+            return False
+    elif rec.get("replayCutoffAt") is not None or cutoff_at != rec.get("issuedAt"):
+        return False
+    if _normalize_truth_ref(rec.get("truthRef"), cutoff_at=cutoff_at) is None or \
+            _normalize_maturity(rec.get("maturity"),
+                                horizon=rec.get("forecastHorizon"),
+                                cutoff_at=cutoff_at) is None or \
+            _normalize_engine(rec.get("engine")) is None or \
+            _normalize_policy(rec.get("evaluationPolicy")) is None:
+        return False
+    if _normalize_target_ladder(rec.get("targetLadder"),
+                                rec.get("maturity")) != rec.get("targetLadder"):
+        return False
+    if rec.get("invalidation") is not None and \
+            _normalize_invalidation(rec.get("invalidation"),
+                                    rec.get("maturity")) != rec.get("invalidation"):
+        return False
+    if "forecastDistribution" in rec and \
+            _normalize_forecast_distribution(
+                rec.get("forecastDistribution")) != rec.get(
+                    "forecastDistribution"):
+        return False
+    confidence = rec.get("confidence")
+    if confidence is not None and (not _v2_number(confidence)
+                                   or not 0.0 <= float(confidence) <= 1.0):
+        return False
+    for key, limit, chars in (("evidenceRefs", _V2_MAX_EVIDENCE_REFS, 200),
+                              ("missingEvidence", 16, 200),
+                              ("dissent", 16, 240)):
+        if _v2_string_list(rec.get(key), limit, chars) != rec.get(key):
+            return False
+    return True
+
+
+verify_prediction_integrity = verify_prediction_record_v2
+
+
+def classify_prediction_record(rec: Any) -> Dict[str, Any]:
+    """Read old v1 records without trusting their mutable ``origin`` field."""
+    if isinstance(rec, dict) and rec.get("schemaVersion") == PREDICTION_LEDGER_V2_SCHEMA:
+        valid = verify_prediction_record_v2(rec)
+        return {"recordClass": "sealed_v2" if valid else "invalid_v2",
+                "mode": rec.get("mode") if valid else LEGACY_PREDICTION_MODE,
+                "modeSealed": bool(valid), "integrityValid": bool(valid),
+                "id": rec.get("id")}
+    legacy = isinstance(rec, dict) and bool(rec.get("id") or rec.get("issuedAt"))
+    return {"recordClass": "legacy_v1" if legacy else "invalid",
+            "mode": LEGACY_PREDICTION_MODE,
+            "modeSealed": False, "integrityValid": False,
+            "id": rec.get("id") if isinstance(rec, dict) else None}
+
+
+def prediction_mode(rec: Any) -> str:
+    return classify_prediction_record(rec)["mode"]
+
+
+classify_prediction_mode = prediction_mode
+
+
+def evaluation_metric(*, metric_type: str, family: str, value: Any = None,
+                      unit: str, metric_version: str, method_version: str,
+                      polarity: str = "contextual", window: str = "",
+                      observed_at: str = "", first_observed_at: str = "",
+                      observation_ref: str = "", target_ref: str = "",
+                      comparator_ref: str = "",
+                      evidence_refs: Optional[List[str]] = None,
+                      missing_reason: str = "") -> Optional[Dict[str, Any]]:
+    """Typed, versioned metric; opportunity names remain extensible/namespaced."""
+    metric_name = _v2_string(metric_type, 96, required=True)
+    version = _v2_string(metric_version, 80, required=True)
+    method = _v2_string(method_version, 120, required=True)
+    unit_text = _v2_string(unit, 40, required=True)
+    window_text = _v2_string(window, 80)
+    observation = _v2_string(observation_ref, 200)
+    target = _v2_string(target_ref, 160)
+    comparator = _v2_string(comparator_ref, 200)
+    missing = _v2_string(missing_reason, 200)
+    evidence = _v2_string_list(evidence_refs, _V2_MAX_EVIDENCE_REFS, 200)
+    if None in (metric_name, version, method, unit_text, window_text,
+                observation, target, comparator, missing, evidence):
+        return None
+    if not _V2_METRIC_TYPE_RE.match(metric_name) or family not in METRIC_FAMILIES \
+            or polarity not in METRIC_POLARITIES:
+        return None
+    if observed_at and _ep(observed_at) is None:
+        return None
+    if first_observed_at and _ep(first_observed_at) is None:
+        return None
+    if observed_at and first_observed_at and \
+            _ep(first_observed_at) > _ep(observed_at):
+        return None
+    if family == "missing":
+        if value is not None or not missing:
+            return None
+    else:
+        if value is None or missing:
+            return None
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if family in ("mfe", "mae", "end", "opportunity", "benchmark", "score") \
+                and not _v2_number(value):
+            return None
+        if family in ("target", "invalidation") and \
+                not isinstance(value, (bool, int, float, str)):
+            return None
+        if family in ("target", "invalidation") and not target:
+            return None
+        if family in ("target", "invalidation") and value is True and \
+                not (observation or first_observed_at):
+            return None
+        if isinstance(value, str) and len(value) > 120:
+            return None
+        if _v2_json_copy(value, 512) is None:
+            return None
+    return {
+        "schemaVersion": EVALUATION_METRIC_SCHEMA,
+        "metricType": metric_name,
+        "metricVersion": version,
+        "family": family,
+        "value": value,
+        "unit": unit_text,
+        "polarity": polarity,
+        "window": window_text,
+        "observedAt": observed_at or None,
+        "firstObservedAt": first_observed_at or None,
+        "observationRef": observation or None,
+        "targetRef": target or None,
+        "comparatorRef": comparator or None,
+        "methodVersion": method,
+        "evidenceRefs": evidence,
+        "missingReason": missing or None,
+    }
+
+
+metric_record = evaluation_metric
+
+
+def _normalize_metric(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict) or value.get("schemaVersion") != EVALUATION_METRIC_SCHEMA:
+        return None
+    normalized = evaluation_metric(
+        metric_type=value.get("metricType"), family=value.get("family"),
+        value=value.get("value"), unit=value.get("unit"),
+        metric_version=value.get("metricVersion"),
+        method_version=value.get("methodVersion"),
+        polarity=value.get("polarity"), window=value.get("window") or "",
+        observed_at=value.get("observedAt") or "",
+        first_observed_at=value.get("firstObservedAt") or "",
+        observation_ref=value.get("observationRef") or "",
+        target_ref=value.get("targetRef") or "",
+        comparator_ref=value.get("comparatorRef") or "",
+        evidence_refs=value.get("evidenceRefs"),
+        missing_reason=value.get("missingReason") or "")
+    return normalized if normalized == value else None
+
+
+def _normalize_metrics(values: Any) -> Optional[List[Dict[str, Any]]]:
+    if not isinstance(values, (list, tuple)) or not values or \
+            len(values) > _V2_MAX_METRICS:
+        return None
+    out = []
+    for value in values:
+        metric = _normalize_metric(value)
+        if metric is None:
+            return None
+        out.append(metric)
+    return out
+
+
+def _same_bar_ambiguous(metrics: List[Dict[str, Any]]) -> bool:
+    targets = [m for m in metrics if m.get("family") == "target"
+               and m.get("value") is True]
+    invalidations = [m for m in metrics if m.get("family") == "invalidation"
+                     and m.get("value") is True]
+    for target in targets:
+        for invalidation in invalidations:
+            left = target.get("observationRef") or target.get("firstObservedAt")
+            right = (invalidation.get("observationRef")
+                     or invalidation.get("firstObservedAt"))
+            if left and left == right:
+                return True
+    return False
+
+
+def _outcome_metric_contract(prediction: Dict[str, Any], status: str,
+                             truth_ref: Dict[str, Any],
+                             metrics: List[Dict[str, Any]],
+                             missing_reasons: List[str]) -> bool:
+    families = {m.get("family") for m in metrics}
+    metric_types = {m.get("metricType") for m in metrics}
+    ambiguous = _same_bar_ambiguous(metrics)
+    if ambiguous != (status == "AMBIGUOUS"):
+        return False
+    if status == "UNSCORABLE":
+        if not (missing_reasons and families == {"missing"}):
+            return False
+        if str(prediction.get("candidateAction") or "").upper() == "WAIT":
+            return {_WAIT_AVOIDED_MAE, _WAIT_MISSED_MFE}.issubset(metric_types)
+        return True
+    if truth_ref.get("observationKind") != "target_session_ohlc":
+        return False
+    fields = {str(f).lower() for f in truth_ref.get("observedFields") or []}
+    if not {"open", "high", "low", "close"}.issubset(fields):
+        return False                   # MFE/MAE must use actual target-session OHLC
+    if not {"mfe", "mae", "end"}.issubset(families):
+        return False
+    if prediction.get("targetLadder") and "target" not in families:
+        return False
+    if prediction.get("invalidation") is not None and "invalidation" not in families:
+        return False
+    if status == "OBSERVED" and ambiguous:
+        return False
+    if str(prediction.get("candidateAction") or "").upper() == "WAIT":
+        if not {_WAIT_AVOIDED_MAE, _WAIT_MISSED_MFE}.issubset(metric_types):
+            return False
+    return not missing_reasons
+
+
+def outcome_resolution_event(*, prediction: Dict[str, Any], recorded_at: str,
+                             truth_ref: Dict[str, Any], status: str,
+                             metrics: List[Dict[str, Any]],
+                             method_version: str, sequence: int = 1,
+                             previous_event_id: str = "",
+                             missing_reasons: Optional[List[str]] = None) \
+        -> Optional[Dict[str, Any]]:
+    """Append-only resolution event; a retry creates another event and ID."""
+    if not verify_prediction_record_v2(prediction) or \
+            status not in OUTCOME_RESOLUTION_STATUSES or \
+            not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
+        return None
+    recorded_ep = _ep(recorded_at)
+    maturity = prediction.get("maturity") or {}
+    if recorded_ep is None or recorded_ep < _ep(maturity.get("maturityAt")):
+        return None
+    previous = _v2_string(previous_event_id, 160)
+    if previous is None or (sequence == 1 and previous) or \
+            (sequence > 1 and not previous):
+        return None
+    method = _v2_string(method_version, 120, required=True)
+    missing = _v2_string_list(missing_reasons, 16, 200)
+    normalized_truth = _normalize_truth_ref(
+        truth_ref, cutoff_at=recorded_at, require_target_session=True)
+    normalized_metrics = _normalize_metrics(metrics)
+    if method is None or missing is None or normalized_truth is None or \
+            normalized_metrics is None:
+        return None
+    if normalized_truth.get("targetSessionId") != maturity.get("targetSessionId") \
+            or _ep(normalized_truth.get("asOf")) != _ep(maturity.get("targetAt")):
+        return None                     # never substitute today's/latest observation
+    if not _outcome_metric_contract(prediction, status, normalized_truth,
+                                    normalized_metrics, missing):
+        return None
+    body = {
+        "schemaVersion": PREDICTION_LEDGER_V2_SCHEMA,
+        "recordType": "outcome_resolution",
+        "predictionId": prediction.get("id"),
+        "predictionIntegrityHash": prediction.get("integrityHash"),
+        "mode": prediction.get("mode"),
+        "symbol": prediction.get("symbol"),
+        "market": prediction.get("market"),
+        "forecastHorizon": prediction.get("forecastHorizon"),
+        "candidateAction": prediction.get("candidateAction"),
+        "targetSessionId": maturity.get("targetSessionId"),
+        "targetAt": maturity.get("targetAt"),
+        "recordedAt": recorded_at,
+        "sequence": sequence,
+        "previousEventId": previous or None,
+        "status": status,
+        "truthRef": normalized_truth,
+        "metrics": normalized_metrics,
+        "missingReasons": missing,
+        "methodVersion": method,
+        "immutableCreatedAt": recorded_at,
+    }
+    return _v2_seal(body, "or")
+
+
+outcome_event_record = outcome_resolution_event
+outcome_event = outcome_resolution_event
+
+
+def verify_outcome_resolution_event(rec: Any,
+                                    prediction: Optional[Dict[str, Any]] = None) -> bool:
+    if not _v2_verify_seal(rec, prefix="or", record_type="outcome_resolution") \
+            or rec.get("mode") not in PREDICTION_MODES \
+            or rec.get("status") not in OUTCOME_RESOLUTION_STATUSES:
+        return False
+    if not isinstance(rec.get("sequence"), int) or isinstance(rec.get("sequence"), bool) \
+            or rec.get("sequence") < 1:
+        return False
+    if (rec.get("sequence") == 1 and rec.get("previousEventId") is not None) or \
+            (rec.get("sequence") > 1 and not rec.get("previousEventId")):
+        return False
+    truth = _normalize_truth_ref(rec.get("truthRef"), cutoff_at=rec.get("recordedAt"),
+                                 require_target_session=True)
+    metrics = _normalize_metrics(rec.get("metrics"))
+    missing = _v2_string_list(rec.get("missingReasons"), 16, 200)
+    if truth is None or metrics is None or missing is None or \
+            truth.get("targetSessionId") != rec.get("targetSessionId") or \
+            _ep(truth.get("asOf")) != _ep(rec.get("targetAt")):
+        return False
+    if prediction is not None:
+        if not verify_prediction_record_v2(prediction) or \
+                rec.get("predictionId") != prediction.get("id") or \
+                rec.get("predictionIntegrityHash") != prediction.get("integrityHash") or \
+                rec.get("mode") != prediction.get("mode") or \
+                rec.get("targetSessionId") != \
+                (prediction.get("maturity") or {}).get("targetSessionId") or \
+                not _outcome_metric_contract(prediction, rec.get("status"), truth,
+                                             metrics, missing):
+            return False
+    else:
+        if not _outcome_metric_contract(
+                {"candidateAction": rec.get("candidateAction")},
+                rec.get("status"), truth,
+                                        metrics, missing):
+            return False
+    return _ep(rec.get("recordedAt")) is not None
+
+
+verify_outcome_event = verify_outcome_resolution_event
+
+
+def evaluation_event_record(*, prediction: Dict[str, Any],
+                            outcome: Dict[str, Any], evaluated_at: str,
+                            metrics: List[Dict[str, Any]],
+                            scoring_policy: Dict[str, Any],
+                            evaluator_id: str, evaluator_version: str,
+                            build_sha: str) -> Optional[Dict[str, Any]]:
+    """Append-only evaluation bound to one immutable prediction and resolution."""
+    if not verify_prediction_record_v2(prediction) or \
+            not verify_outcome_resolution_event(outcome, prediction):
+        return None
+    evaluated_ep = _ep(evaluated_at)
+    if evaluated_ep is None or evaluated_ep < _ep(outcome.get("recordedAt")):
+        return None
+    normalized_metrics = _normalize_metrics(metrics)
+    policy = _normalize_policy(scoring_policy)
+    evaluator = _normalize_engine({"engineId": evaluator_id,
+                                    "engineVersion": evaluator_version,
+                                    "buildSha": build_sha})
+    if normalized_metrics is None or policy is None or evaluator is None:
+        return None
+    outcome_scoreable = outcome.get("status") == "OBSERVED"
+    if not outcome_scoreable and any(m.get("family") != "missing"
+                                     for m in normalized_metrics):
+        return None
+    if outcome_scoreable and all(m.get("family") == "missing"
+                                 for m in normalized_metrics):
+        return None
+    body = {
+        "schemaVersion": PREDICTION_LEDGER_V2_SCHEMA,
+        "recordType": "evaluation",
+        "predictionId": prediction.get("id"),
+        "predictionIntegrityHash": prediction.get("integrityHash"),
+        "outcomeEventId": outcome.get("id"),
+        "outcomeIntegrityHash": outcome.get("integrityHash"),
+        "mode": prediction.get("mode"),
+        "evaluationStatus": "SCORED" if outcome_scoreable else "UNSCORABLE",
+        "evaluatedAt": evaluated_at,
+        "truthRef": outcome.get("truthRef"),
+        "scoringPolicy": policy,
+        "evaluator": evaluator,
+        "metrics": normalized_metrics,
+        "immutableCreatedAt": evaluated_at,
+    }
+    return _v2_seal(body, "ev")
+
+
+evaluation_event = evaluation_event_record
+
+
+def verify_evaluation_event(rec: Any,
+                            prediction: Optional[Dict[str, Any]] = None,
+                            outcome: Optional[Dict[str, Any]] = None) -> bool:
+    if not _v2_verify_seal(rec, prefix="ev", record_type="evaluation") or \
+            rec.get("mode") not in PREDICTION_MODES or \
+            rec.get("evaluationStatus") not in ("SCORED", "UNSCORABLE"):
+        return False
+    if _normalize_truth_ref(rec.get("truthRef"), cutoff_at=rec.get("evaluatedAt"),
+                            require_target_session=True) is None or \
+            _normalize_policy(rec.get("scoringPolicy")) is None or \
+            _normalize_engine(rec.get("evaluator")) is None or \
+            _normalize_metrics(rec.get("metrics")) is None:
+        return False
+    if rec.get("evaluationStatus") == "UNSCORABLE" and any(
+            m.get("family") != "missing" for m in rec.get("metrics") or []):
+        return False
+    if prediction is not None:
+        if not verify_prediction_record_v2(prediction) or \
+                rec.get("predictionId") != prediction.get("id") or \
+                rec.get("predictionIntegrityHash") != prediction.get("integrityHash") or \
+                rec.get("mode") != prediction.get("mode"):
+            return False
+    if outcome is not None:
+        if not verify_outcome_resolution_event(outcome, prediction) or \
+                rec.get("outcomeEventId") != outcome.get("id") or \
+                rec.get("outcomeIntegrityHash") != outcome.get("integrityHash") or \
+                rec.get("truthRef") != outcome.get("truthRef") or \
+                ((outcome.get("status") == "OBSERVED") !=
+                 (rec.get("evaluationStatus") == "SCORED")):
+            return False
+    return _ep(rec.get("evaluatedAt")) is not None
+
+
+def aggregate_evaluation_events(events: List[Dict[str, Any]], *, mode: str,
+                                purpose: str = "diagnostic") -> Dict[str, Any]:
+    """Bounded, explicit-mode aggregate; calibration is forward-live only."""
+    if mode not in PREDICTION_MODES:
+        raise ValueError("an explicit canonical prediction mode is required")
+    if purpose not in ("diagnostic", "calibration"):
+        raise ValueError("unsupported aggregate purpose")
+    if purpose == "calibration" and mode != "forward_live":
+        raise ValueError("calibration aggregates require forward_live mode")
+    if not isinstance(events, (list, tuple)) or len(events) > _V2_MAX_AGGREGATE_EVENTS:
+        raise ValueError("aggregate input must be a bounded sequence")
+    rows: Dict[str, Dict[str, Any]] = {}
+    included = excluded_mode = excluded_invalid = unscorable = 0
+    for event in events:
+        if not verify_evaluation_event(event):
+            excluded_invalid += 1
+            continue
+        if event.get("mode") != mode:
+            excluded_mode += 1
+            continue
+        included += 1
+        if event.get("evaluationStatus") != "SCORED":
+            unscorable += 1
+        for metric in event.get("metrics") or []:
+            if purpose == "calibration" and metric.get("family") != "score":
+                continue
+            key = "|".join((metric.get("metricType"), metric.get("metricVersion"),
+                            metric.get("unit"), metric.get("methodVersion")))
+            row = rows.setdefault(key, {
+                "metricType": metric.get("metricType"),
+                "metricVersion": metric.get("metricVersion"),
+                "family": metric.get("family"), "unit": metric.get("unit"),
+                "methodVersion": metric.get("methodVersion"),
+                "count": 0, "missingCount": 0, "numericCount": 0,
+                "sum": 0.0, "minimum": None, "maximum": None,
+                "trueCount": 0, "falseCount": 0,
+            })
+            row["count"] += 1
+            value = metric.get("value")
+            if metric.get("family") == "missing":
+                row["missingCount"] += 1
+            elif isinstance(value, bool):
+                row["trueCount" if value else "falseCount"] += 1
+            elif _v2_number(value):
+                number = float(value)
+                row["numericCount"] += 1
+                row["sum"] += number
+                row["minimum"] = number if row["minimum"] is None else min(row["minimum"], number)
+                row["maximum"] = number if row["maximum"] is None else max(row["maximum"], number)
+    output = []
+    for key in sorted(rows):
+        row = rows[key]
+        numeric_count = row.pop("numericCount")
+        total = row.pop("sum")
+        row["mean"] = (round(total / numeric_count, 8)
+                       if numeric_count else None)
+        row["numericCount"] = numeric_count
+        output.append(row)
+    return {
+        "schemaVersion": PREDICTION_LEDGER_V2_SCHEMA,
+        "recordType": "mode_scoped_evaluation_aggregate",
+        "mode": mode, "purpose": purpose,
+        "calibrationEligible": purpose == "calibration" and mode == "forward_live",
+        "evaluationCount": included, "unscorableCount": unscorable,
+        "excludedOtherMode": excluded_mode,
+        "excludedInvalid": excluded_invalid, "metrics": output,
+    }
+
+
+mode_scoped_aggregate = aggregate_evaluation_events

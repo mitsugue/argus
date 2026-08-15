@@ -26,6 +26,27 @@ on:
       - "scripts/remote_recovery_resource_probe.py"
       - "scripts/recovery_measurement_benchmark.py"
       - "scripts/recovery_measurement_retention_benchmark.py"
+      - "argus_market_clock.py"
+      - "argus_market_data_truth.py"
+      - "argus_market_replay.py"
+      - "argus_chart_intelligence.py"
+      - "argus_today_intelligence.py"
+      - "argus_decision_evidence_bundle.py"
+      - "argus_decision_ledger.py"
+      - "scripts/run_prediction_ledger.py"
+      - "scripts/truth_ledger_benchmark.py"
+      - "test_argus_market_data_truth.py"
+      - "test_argus_market_replay_pit.py"
+      - "test_argus_chart_intelligence.py"
+      - "test_argus_today_intelligence.py"
+      - "test_argus_decision_evidence_bundle.py"
+      - "test_argus_prediction_ledger_v2.py"
+      - "test_run_prediction_ledger.py"
+      - "test_prediction_ledger_workflow.py"
+      - "test_truth_ledger_benchmark.py"
+      - ".github/workflows/prediction-ledger.yml"
+      - ".github/workflows/closepin-pin.yml"
+      - ".github/workflows/event-ledger.yml"
       - "test_argus_memory_attribution.py"
       - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
@@ -79,6 +100,27 @@ on:
       - "scripts/memory_attribution_probe.py"
       - "scripts/normalized_hash_resource_probe.py"
       - "scripts/remote_recovery_resource_probe.py"
+      - "argus_market_clock.py"
+      - "argus_market_data_truth.py"
+      - "argus_market_replay.py"
+      - "argus_chart_intelligence.py"
+      - "argus_today_intelligence.py"
+      - "argus_decision_evidence_bundle.py"
+      - "argus_decision_ledger.py"
+      - "scripts/run_prediction_ledger.py"
+      - "scripts/truth_ledger_benchmark.py"
+      - "test_argus_market_data_truth.py"
+      - "test_argus_market_replay_pit.py"
+      - "test_argus_chart_intelligence.py"
+      - "test_argus_today_intelligence.py"
+      - "test_argus_decision_evidence_bundle.py"
+      - "test_argus_prediction_ledger_v2.py"
+      - "test_run_prediction_ledger.py"
+      - "test_prediction_ledger_workflow.py"
+      - "test_truth_ledger_benchmark.py"
+      - ".github/workflows/prediction-ledger.yml"
+      - ".github/workflows/closepin-pin.yml"
+      - ".github/workflows/event-ledger.yml"
       - "test_argus_memory_attribution.py"
       - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
@@ -428,5 +470,113 @@ jobs:
         with:
           name: normalized-hash-resource-proof-${{ github.sha }}
           path: artifacts/normalized-hash-resource-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-truth-ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify exact checked-out head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Truth and ledger proof in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 128 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'set -eu
+              test "$(cat /sys/fs/cgroup/memory.max)" = "4294967296"
+              test "$(cat /sys/fs/cgroup/memory.swap.max)" = "0"
+              pip install --quiet pytest
+              python3 -B -m pytest -q \
+                test_argus_market_data_truth.py \
+                test_argus_market_replay_pit.py \
+                test_argus_chart_intelligence.py \
+                test_argus_today_intelligence.py \
+                test_argus_decision_evidence_bundle.py \
+                test_argus_prediction_ledger_v2.py \
+                test_run_prediction_ledger.py \
+                test_prediction_ledger_workflow.py \
+                test_truth_ledger_benchmark.py
+              python3 -B scripts/truth_ledger_benchmark.py \
+                --require-exact-4g \
+                > artifacts/truth-ledger-benchmark.json'
+      - name: Exact-head truth and ledger terminal gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path("artifacts")
+          report = json.loads((
+              root / "truth-ledger-benchmark.json").read_text(
+                  encoding="utf-8"))
+          cgroup = report["resources"]["cgroup"]
+          counts = report["counts"]
+          sizes = report["canonicalJsonBytes"]
+          caps = report["caps"]["marketTruth"]
+          expected_digest = (
+              "666772a616074f2f26bad8c8c3f881cbaee4f629e1f5bb633936801b67c5d347")
+          assert report["schemaVersion"] == \
+              "argus-truth-ledger-benchmark-v1"
+          assert report["mode"] == "bounded"
+          assert report["deterministicDigest"] == expected_digest
+          assert report["passed"] is True
+          assert counts["requestCount"] == 32
+          assert counts["selectedCount"] == 32
+          assert counts["predictionCount"] == 32
+          assert counts["outcomeCount"] == 32
+          assert counts["evaluationCount"] == 32
+          assert sizes["decisionSnapshot"] <= caps["maxSnapshotBytes"]
+          assert cgroup["required"] is True
+          assert cgroup["enforcementStatus"] == "PASS"
+          assert cgroup["memoryMaxBytes"] == 4294967296
+          assert cgroup["swapMaxBytes"] == 0
+          assert cgroup["memoryPeakBytes"] < cgroup["memoryMaxBytes"]
+          assert cgroup["oomDelta"] == 0
+          assert cgroup["oomKillDelta"] == 0
+          assert cgroup["passed"] is True
+
+          proof = {
+              "schemaVersion": "argus-round2-truth-ledger-ci-proof-v1",
+              "headSha": os.environ["GITHUB_SHA"],
+              "benchmarkDigest": report["deterministicDigest"],
+              "requestCount": counts["requestCount"],
+              "selectedCount": counts["selectedCount"],
+              "predictionCount": counts["predictionCount"],
+              "outcomeCount": counts["outcomeCount"],
+              "evaluationCount": counts["evaluationCount"],
+              "snapshotBytes": sizes["decisionSnapshot"],
+              "memoryMaxBytes": cgroup["memoryMaxBytes"],
+              "swapMaxBytes": cgroup["swapMaxBytes"],
+              "memoryPeakBytes": cgroup["memoryPeakBytes"],
+              "oomDelta": cgroup["oomDelta"],
+              "oomKillDelta": cgroup["oomKillDelta"],
+              "passed": True,
+          }
+          (root / "round2-truth-ledger-ci-proof.json").write_text(
+              json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8")
+          PY
+      - name: Publish exact-head Round 2 truth and ledger proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round2-truth-ledger-proof-${{ github.sha }}
+          path: |
+            artifacts/truth-ledger-benchmark.json
+            artifacts/round2-truth-ledger-ci-proof.json
           if-no-files-found: error
           retention-days: 14

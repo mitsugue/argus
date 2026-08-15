@@ -18,7 +18,7 @@ SOURCE_OF_TRUTH = [
     ("jp_intraday_tick", "J-Quants minute/tick add-on", "none", "intraday", "provider", "not_contracted", "source_unavailable"),
     ("jp_current_price", "moomoo", "J-Quants previous official close", "session", "realtime", "entitlement", "entitlement_unavailable"),
     ("us_price", "moomoo US", "Twelve Data", "intraday", "provider", "contracted", "live"),
-    ("fx", "Twelve Data/FRED", "provider cache", "intraday/daily", "provider", "contracted", "live"),
+    ("fx", "Yahoo overlay", "FRED daily base", "intraday/daily", "source-specific timestamp", "mixed/free", "partial"),
     ("crypto", "CoinGecko", "Coinbase", "intraday", "provider", "free", "live"),
     ("credit_two_market", "JPX 二市場合計", "admin CSV", "weekly", "publication schedule", "official/free", "manual_csv"),
     ("investor_types", "J-Quants investor-types: TokyoNagoya", "admin CSV", "weekly", "published date", "contracted", "backfill_available"),

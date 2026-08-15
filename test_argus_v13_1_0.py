@@ -36,7 +36,13 @@ def provider_history(count=420, start=100.0):
 
 @contextmanager
 def price_cache(fake):
-    fresh = {"data": fake, "expires": 9_999_999_999.0}
+    # The synthetic cache has a deliberately distant expiry; bind the actual
+    # provider revision to a truthful, deterministic acquisition instant so
+    # strict point-in-time filtering does not interpret expiry-minus-TTL as a
+    # future knowledge timestamp.
+    acquired_at = f"{max(fake['dates'])}T23:59:59Z"
+    fresh = {"data": fake, "expires": 9_999_999_999.0,
+             "acquiredAt": acquired_at}
     jp = {code: dict(fresh) for code in ("7203", "1321", "1306", "2644", "2516")}
     us = {symbol: dict(fresh) for symbol in ("SPY", "QQQ", "USD/JPY")}
     with mock.patch.dict(scanner._JQ_HISTORY_CACHE, jp, clear=True), \

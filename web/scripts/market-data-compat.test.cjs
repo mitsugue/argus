@@ -62,6 +62,17 @@ assert.equal(proven.ageSec, 30);
 assert.equal(proven.session, 'UNKNOWN');
 assert.equal(proven.entitlement, 'unknown');
 
+const futureTimestamp = live.normalizeLiveQuote({
+  price: 700,
+  status: 'live',
+  delayClass: 'LIVE',
+  realtimeEvidence: true,
+  exchangeTs: new Date(nowMs + 1_000).toISOString(),
+  provider: 'moomoo-rt',
+}, options);
+assert.equal(futureTimestamp.ageSec, null);
+assert.equal(futureTimestamp.delayClass, 'UNKNOWN');
+
 const stale = live.normalizeLiveQuote({
   price: 700,
   status: 'live',
