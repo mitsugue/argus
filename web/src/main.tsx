@@ -17,15 +17,31 @@ import './styles/theme.css';
 // guarded (sessionStorage counter) so it can never brick or reload-loop the app.
 const RUNNING = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '';
 const TRIES_KEY = 'argus_update_tries';
+const PWA_STEP_TIMEOUT_MS = 12_000;
+const PWA_RECONCILE_TIMEOUT_MS = 36_000;
+
+function waitAtMost<T>(promise: Promise<T>, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => resolve(false), timeoutMs);
+    promise.then(
+      () => { window.clearTimeout(timeout); resolve(true); },
+      (error: unknown) => { window.clearTimeout(timeout); reject(error); },
+    );
+  });
+}
 
 async function fetchDeployedVersion(): Promise<string | null> {
+  const ctrl = new AbortController();
+  const timeout = window.setTimeout(() => ctrl.abort(), PWA_STEP_TIMEOUT_MS);
   try {
     const url = `${import.meta.env.BASE_URL}index.html?cb=${Date.now()}`;
-    const html = await fetch(url, { cache: 'no-store' }).then((r) => r.text());
+    const html = await fetch(url, { cache: 'no-store', signal: ctrl.signal }).then((r) => r.text());
     const m = html.match(/__ARGUS_VERSION__\s*=\s*"([^"]+)"/);
     return m ? m[1] : null;
   } catch {
     return null;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -42,10 +58,11 @@ async function selfHeal(): Promise<void> {
   }
 }
 
+let registeredServiceWorker: ServiceWorkerRegistration | undefined;
 const updateSW = registerSW({
   immediate: true,
   onRegisteredSW(_url, r) {
-    if (r) setInterval(() => { r.update().catch(() => {}); }, 60_000);
+    registeredServiceWorker = r;
   },
 });
 
@@ -66,15 +83,62 @@ async function reconcileVersion(): Promise<void> {
     return;
   }
   try {
-    await updateSW(true); // installs waiting SW + reloads
+    const completed = await waitAtMost(updateSW(true), PWA_STEP_TIMEOUT_MS);
+    if (!completed) window.location.reload();
   } catch {
     window.location.reload();
   }
 }
 
-// Check shortly after first paint, then alongside the 60s SW poll.
-window.setTimeout(() => { reconcileVersion().catch(() => {}); }, 4_000);
-window.setInterval(() => { reconcileVersion().catch(() => {}); }, 60_000);
+let versionReconcileInFlight: Promise<void> | null = null;
+function reconcileVersionOnce(): Promise<void> {
+  if (versionReconcileInFlight) return versionReconcileInFlight;
+  const current = reconcileVersion().finally(() => {
+    if (versionReconcileInFlight === current) versionReconcileInFlight = null;
+  });
+  versionReconcileInFlight = current;
+  return current;
+}
+
+let serviceWorkerUpdateInFlight: Promise<void> | null = null;
+function updateServiceWorkerOnce(): Promise<void> {
+  if (!registeredServiceWorker) return Promise.resolve();
+  if (serviceWorkerUpdateInFlight) return serviceWorkerUpdateInFlight;
+  const current = registeredServiceWorker.update()
+    .then(() => undefined)
+    .catch(() => {})
+    .finally(() => {
+      if (serviceWorkerUpdateInFlight === current) serviceWorkerUpdateInFlight = null;
+    });
+  serviceWorkerUpdateInFlight = current;
+  return current;
+}
+
+let pwaPollInFlight: Promise<void> | null = null;
+function pollPwaState(checkServiceWorker = true): Promise<void> {
+  if (pwaPollInFlight) return pwaPollInFlight;
+  const current = (async () => {
+    if (checkServiceWorker) {
+      // ServiceWorkerRegistration.update() has no AbortSignal. Keep its own
+      // single-flight promise, but do not let a stalled browser operation block
+      // deployed-version reconciliation forever.
+      await waitAtMost(updateServiceWorkerOnce(), PWA_STEP_TIMEOUT_MS);
+    }
+    // A defensive outer bound also covers browser cache/self-heal APIs that do
+    // not accept AbortSignal. Their tracked promise remains single-flight even
+    // if this cycle proceeds after the bound.
+    await waitAtMost(reconcileVersionOnce(), PWA_RECONCILE_TIMEOUT_MS);
+  })().finally(() => {
+    if (pwaPollInFlight === current) pwaPollInFlight = null;
+  });
+  pwaPollInFlight = current;
+  return current;
+}
+
+// Check shortly after first paint, then use one 60s scheduler for both the SW
+// update check and deployed-version reconciliation.
+window.setTimeout(() => { pollPwaState(false).catch(() => {}); }, 4_000);
+window.setInterval(() => { pollPwaState().catch(() => {}); }, 60_000);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

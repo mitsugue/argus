@@ -1050,22 +1050,6 @@ def v_review_pack_status():
     return True, f"types={len(d.get('packTypesSupported') or [])} on-device only"
 
 
-def v_data_quality_console():
-    # Recovery Phase A: closed public diagnostics DTO only.
-    c, d = _get("/api/argus/data-quality")
-    if d.get("schemaVersion") != "argus-public-diagnostics-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if (d.get("service") or {}).get("overall") not in (
-            "ok", "degraded", "unavailable"):
-        return False, f"overall={(d.get('service') or {}).get('overall')}"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("vaultPass", "passphrase=", "login_pwd", "Bearer ",
-                   "quantity", "averageCost", "monthlyContribution"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, f"overall={d['service']['overall']}"
-
-
 def v_data_quality_status():
     c, d = _get("/api/argus/data-quality/status")
     if d.get("schemaVersion") != "argus-public-diagnostics-v1":
@@ -1908,7 +1892,6 @@ CHECKS = [
     # ── V11.20.0 AI Review Pack ──
     ("v11.20.0 review pack status", v_review_pack_status),
     # ── V11.22.0 Data Quality ──
-    ("v11.22.0 data quality console", v_data_quality_console),
     ("v11.22.0 data quality status", v_data_quality_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),

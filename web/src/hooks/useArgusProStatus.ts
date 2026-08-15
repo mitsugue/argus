@@ -16,6 +16,7 @@ export interface CalibrationV4Status {
 export interface DecisionValueStatus {
   schemaVersion?: string;
   phase?: 'not_configured' | 'engine_ready_no_records_yet' | 'shadow_recording_active' | 'scoring_active';
+  cacheFreshness?: 'fresh' | 'stale' | 'missing';
   privateStoreConfigured?: boolean;
   totalRecords?: number;
   scoredCount?: number;

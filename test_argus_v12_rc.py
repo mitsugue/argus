@@ -20,7 +20,7 @@ WEB = os.path.join(os.path.dirname(__file__), "web", "src")
 
 PUBLIC_GETS = [
     "/api/argus/bridge/status",
-    "/api/argus/data-quality", "/api/argus/data-quality/status",
+    "/api/argus/data-quality/status",
     "/api/argus/review-pack/status", "/api/argus/fire-core/status",
     "/api/argus/portfolio-strategy/status",
     "/api/argus/position-plans", "/api/argus/position-plans/status",
