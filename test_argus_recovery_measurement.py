@@ -174,6 +174,57 @@ def test_policy_digest_mismatch_invalidates_artifact_without_reinterpretation(
         measurement.MeasurementAccumulator(artifact)
 
 
+def test_live_policy_drift_blocks_every_mutating_boundary_until_new_generation(
+        monkeypatch):
+    policy_state = {"sha256": registry.registry_policy_sha256()}
+    monkeypatch.setattr(
+        registry, "registry_policy_sha256",
+        lambda: policy_state["sha256"])
+    artifact = _empty()
+    accumulator = measurement.MeasurementAccumulator(artifact)
+    assert accumulator.record_mutation(
+        "core.batch_cursor", estimated_plaintext_bytes=1, record_count=1,
+        latency_micros=1, success=True,
+        coverage_classification="UNKNOWN", observed_at=START) == "recorded"
+    before_drift = measurement._canonical_bytes_unchecked(artifact)
+    policy_b = "f" * 64
+    policy_state["sha256"] = policy_b
+
+    assert accumulator.record_mutation(
+        "core.batch_cursor", estimated_plaintext_bytes=2, record_count=1,
+        latency_micros=2, success=True,
+        coverage_classification="UNKNOWN",
+        observed_at=START + dt.timedelta(minutes=5)) == \
+        "registry_policy_mismatch"
+    assert accumulator.record_checkpoint(
+        "checkpoint-after-drift", observed_at=START, success=True,
+        detailed=False, detail_reason="NONE",
+        checkpoint_serialized_bytes=10,
+        section_serialized_bytes={},
+        serialization_duration_micros=1,
+        section_accounting_duration_micros=1,
+        write_seal_duration_micros=1,
+        fsync_readback_duration_micros=1,
+        peak_rss_bytes=None, local_wal_bytes=0,
+        local_wal_records=0, local_wal_high_water=0,
+        legacy_remote_ack_sequence=None,
+        legacy_remote_ack_at=None) == "registry_policy_mismatch"
+    assert measurement._canonical_bytes_unchecked(artifact) == before_drift
+
+    generation_b = measurement.new_artifact(
+        measurement_generation_id="measurement-generation-policy-b",
+        producer_build_sha=BUILD_SHA,
+        instrumentation_coverage_sha256=COVERAGE_SHA,
+        created_at=START)
+    assert generation_b["registryPolicySha256"] == policy_b
+    replacement = measurement.MeasurementAccumulator(generation_b)
+    assert replacement.record_mutation(
+        "core.batch_cursor", estimated_plaintext_bytes=2, record_count=1,
+        latency_micros=2, success=True,
+        coverage_classification="UNKNOWN", observed_at=START) == "recorded"
+    assert measurement.validate_artifact(generation_b).valid
+
+
 def test_recording_rejects_before_mutation_and_handles_clock_jump():
     artifact = _empty()
     accumulator = measurement.MeasurementAccumulator(artifact)

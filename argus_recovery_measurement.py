@@ -19,6 +19,7 @@ import argus_recovery_registry as registry
 
 
 UTC = dt.timezone.utc
+_REGISTRY_POLICY_PROVIDER = registry.registry_policy_sha256
 
 SCHEMA_VERSION = "argus-recovery-measurement-shadow-v1"
 RETENTION_POLICY_VERSION = "argus-recovery-measurement-retention-v1"
@@ -845,11 +846,30 @@ class MeasurementAccumulator:
         if not validation.valid:
             raise ValueError(validation.code)
         self.artifact = artifact
-        self._registry_policy_sha256 = registry.registry_policy_sha256()
+        self._registry_policy_sha256 = artifact["registryPolicySha256"]
         self._mutations = registry.mutation_by_id()
         self._mutation_ids = frozenset(self._mutations)
         self._registered_checkpoint_keys = frozenset(
             registry.registered_checkpoint_keys())
+
+    def _live_registry_policy_matches_generation(self) -> bool:
+        """Fail closed if this generation is no longer bound to live policy."""
+        try:
+            provider = registry.registry_policy_sha256
+            # Registry Core's production declarations are immutable and its
+            # exported digest is the current process policy identity.  An
+            # alternate/live provider is evaluated on every boundary, which
+            # also makes in-process policy transitions fail closed in tests.
+            if provider is _REGISTRY_POLICY_PROVIDER:
+                live_policy = registry.REGISTRY_POLICY_SHA256
+            else:
+                live_policy = provider()
+        except Exception:
+            return False
+        return type(self.artifact) is dict and \
+            live_policy == self._registry_policy_sha256 and \
+            self.artifact.get("registryPolicySha256") == \
+            self._registry_policy_sha256
 
     def record_mutation(
             self, mutation_class_id: str, *, estimated_plaintext_bytes: int,
@@ -857,6 +877,8 @@ class MeasurementAccumulator:
             coverage_classification: str, observed_at: dt.datetime,
             local_sequence: Optional[int] = None) -> str:
         """Record only typed scalar metadata; no payload parameter exists."""
+        if not self._live_registry_policy_matches_generation():
+            return "registry_policy_mismatch"
         mutation = self._mutations.get(mutation_class_id) \
             if type(mutation_class_id) is str else None
         try:
@@ -874,9 +896,6 @@ class MeasurementAccumulator:
         observed = _parse_timestamp(observed_text)
         if created is None or observed is None or observed < created:
             return "invalid_observation"
-        if self.artifact["registryPolicySha256"] != \
-                self._registry_policy_sha256:
-            return "registry_policy_mismatch"
         candidate_bytes = _checked_add(
             estimated_plaintext_bytes,
             record_count * FUTURE_WAL_RECORD_FRAMING_ESTIMATE_BYTES)
@@ -1044,6 +1063,8 @@ class MeasurementAccumulator:
             local_wal_records: int, local_wal_high_water: int,
             legacy_remote_ack_sequence: Optional[int],
             legacy_remote_ack_at: Optional[dt.datetime]) -> str:
+        if not self._live_registry_policy_matches_generation():
+            return "registry_policy_mismatch"
         try:
             observed_text = canonical_timestamp(observed_at)
             ack_text = None if legacy_remote_ack_at is None else \
@@ -1085,12 +1106,8 @@ class MeasurementAccumulator:
         created = _parse_timestamp(self.artifact["createdAt"])
         observed = _parse_timestamp(observed_text)
         updated = _parse_timestamp(self.artifact["updatedAt"])
-        if created is None or observed is None or observed < created or \
-                self.artifact["registryPolicySha256"] != \
-                self._registry_policy_sha256:
-            return "registry_policy_mismatch" if \
-                self.artifact["registryPolicySha256"] != \
-                self._registry_policy_sha256 else "invalid_observation"
+        if created is None or observed is None or observed < created:
+            return "invalid_observation"
         new_updated = max(observed, updated or observed)
         if not _valid_checkpoint(
                 sample, self._registered_checkpoint_keys,

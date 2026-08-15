@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import dataclasses
 import errno
 import json
 import os
@@ -74,6 +75,12 @@ def test_authoritative_plan_covers_all_required_families(tmp_path):
         "nonce_history", "nonce_history_head", "nonce_reservation_lock",
         "nonce_reservation_anchor", "predictions", "foundation_sidecar",
         "checkpoint_v2", "checkpoint_v2_writer_lock",
+        "checkpoint_v2_runtime", "checkpoint_v2_manifest",
+        "checkpoint_v2_manifest_temp",
+        "checkpoint_v2_manifest_writer_lock",
+        "checkpoint_v2_runtime_writer_lock",
+        "checkpoint_v2_pending_generation", "checkpoint_v2_generation",
+        "checkpoint_v2_isolated_job",
         "known_temporary_store",
     }
     assert required <= families
@@ -110,6 +117,71 @@ def test_v2_subtree_ancestor_descendant_and_temp_prefix_collisions(tmp_path):
         protected_paths=(storage.ProtectedPath(
             "checkpoint_v2", str(v2), "subtree"),))
     assert not decision.accepted
+
+
+def test_real_checkpoint_v2_family_and_aliases_are_immutable(tmp_path):
+    authority = tmp_path / "authority"
+    v2 = authority / "argus_checkpoint_v2"
+    pending = v2 / (".v2-pending-" + "1" * 32)
+    generation = v2 / ("v2-generation-" + "2" * 32)
+    job = v2 / (".v2-isolated-job-" + "3" * 32)
+    for directory in (pending, generation, job):
+        directory.mkdir(parents=True, exist_ok=True)
+    sentinels = {
+        v2 / "checkpoint-v2-manifest.json": b"MANIFEST-SENTINEL",
+        v2 / "checkpoint-v2.writer.lock": b"LOCK-SENTINEL",
+        v2 / "checkpoint-v2-manifest.json.writer.lock":
+            b"MANIFEST-LOCK-SENTINEL",
+        v2 / "checkpoint-v2-manifest.json.7.token.v1338-tmp":
+            b"TEMP-SENTINEL",
+        pending / "measurement-v1.json": b"PENDING-SENTINEL",
+        generation / "measurement-v1.json": b"GENERATION-SENTINEL",
+        job / "measurement-v1.json": b"JOB-SENTINEL",
+    }
+    for path, payload in sentinels.items():
+        path.write_bytes(payload)
+    before = {
+        path: (path.read_bytes(), path.stat().st_ino)
+        for path in sentinels
+    }
+    plan = storage.authoritative_path_plan(
+        persistent_root=str(authority),
+        temporary_root=str(tmp_path / "temporary"))
+
+    attempts = [
+        storage.resolve_measurement_path(
+            diagnostics_root=str(v2), override=path.name,
+            protected_paths=plan)
+        for path in sentinels if path.parent == v2
+    ]
+    attempts.extend(storage.resolve_measurement_path(
+        diagnostics_root=str(directory), protected_paths=plan)
+        for directory in (v2, pending, generation, job))
+    attempts.append(storage.resolve_measurement_path(
+        diagnostics_root=str(authority),
+        override="argus_checkpoint_v2", protected_paths=plan))
+    for decision in attempts:
+        assert not decision.accepted
+        assert decision.status == "configuration_rejected"
+        assert storage.persist_artifact(
+            decision, _artifact(), now=NOW).status == \
+            "configuration_rejected"
+
+    alias_root = tmp_path / "alias-diagnostics"
+    alias_root.mkdir()
+    alias = alias_root / "measurement-v1.json"
+    manifest = v2 / "checkpoint-v2-manifest.json"
+    os.link(manifest, alias)
+    alias_before = (alias.read_bytes(), alias.stat().st_ino)
+    alias_decision = storage.resolve_measurement_path(
+        diagnostics_root=str(alias_root), protected_paths=plan)
+    assert not alias_decision.accepted
+    assert alias_decision.status == "configuration_rejected"
+    assert (alias.read_bytes(), alias.stat().st_ino) == alias_before
+    assert {
+        path: (path.read_bytes(), path.stat().st_ino)
+        for path in sentinels
+    } == before
     root = tmp_path / "diagnostics"
     root.mkdir()
     decision = storage.resolve_measurement_path(
@@ -216,6 +288,47 @@ class _FailSecondDirectoryFsync(storage.FileOperations):
         super().fsync_directory(descriptor)
 
 
+class _FailPostFsyncAndRollbackReplace(storage.FileOperations):
+    def __init__(self):
+        self.directory_fsync_calls = 0
+        self.replace_calls = 0
+
+    def fsync_directory(self, descriptor):
+        self.directory_fsync_calls += 1
+        if self.directory_fsync_calls == 2:
+            raise OSError(errno.EIO, "post-replace fsync failed")
+        super().fsync_directory(descriptor)
+
+    def replace(self, source, destination, directory_fd):
+        self.replace_calls += 1
+        if self.replace_calls == 2:
+            raise OSError(errno.EIO, "rollback replace failed")
+        super().replace(source, destination, directory_fd)
+
+
+class _FailPostAndRollbackDirectoryFsync(storage.FileOperations):
+    def __init__(self):
+        self.calls = 0
+
+    def fsync_directory(self, descriptor):
+        self.calls += 1
+        if self.calls in (2, 3):
+            raise OSError(errno.EIO, "directory fsync failed")
+        super().fsync_directory(descriptor)
+
+
+class _FailRecoveryCleanup(storage.FileOperations):
+    def unlink(self, name, directory_fd):
+        if name.endswith(storage.RECOVERY_FILE_SUFFIX):
+            raise OSError(errno.EIO, "recovery cleanup failed")
+        super().unlink(name, directory_fd)
+
+
+class _FailInstallAndRecoveryCleanup(_FailRecoveryCleanup):
+    def replace(self, source, destination, directory_fd):
+        raise OSError(errno.EIO, "install replace failed")
+
+
 @pytest.mark.parametrize("operations", [
     _FailWrite(), _FailFileFsync(), _FailReplace(),
     _FailSecondDirectoryFsync(),
@@ -252,6 +365,126 @@ def test_serializer_or_plan_failure_performs_no_io_and_preserves_previous(
     result = storage.persist_artifact(decision, invalid, now=NOW)
     assert result.status == "invalid_artifact"
     assert (path.read_bytes(), path.stat().st_ino) == before
+
+
+def test_retention_plan_bytes_are_bound_before_any_filesystem_mutation(
+        tmp_path, monkeypatch):
+    decision = _decision(tmp_path)
+    original = _artifact("generation-original")
+    assert _persist(decision, original).status == "persisted"
+    path = pathlib.Path(decision.artifact_path)
+    before = (path.read_bytes(), path.stat().st_ino)
+    artifact = _artifact("generation-replacement")
+    correct = measurement.plan_retention(artifact, now=NOW)
+    different = measurement.plan_retention(
+        _artifact("generation-different"), now=NOW)
+    hostile = (
+        b"arbitrary <=12MiB payload",
+        different.canonical_bytes,
+        correct.canonical_bytes[:-1] + bytes([
+            correct.canonical_bytes[-1] ^ 1]),
+    )
+    real_open = storage._open_directory_chain
+
+    def forbidden_open(*_args, **_kwargs):
+        raise AssertionError("mismatched bytes reached filesystem")
+
+    monkeypatch.setattr(storage, "_open_directory_chain", forbidden_open)
+    for encoded in hostile:
+        bad_plan = dataclasses.replace(correct, canonical_bytes=encoded)
+        result = storage.persist_retention_plan(decision, bad_plan)
+        assert result.status == "serialization_failure"
+        assert (path.read_bytes(), path.stat().st_ino) == before
+    monkeypatch.setattr(storage, "_open_directory_chain", real_open)
+    assert storage.persist_retention_plan(decision, correct).status == \
+        "persisted"
+    assert path.read_bytes() == correct.canonical_bytes
+
+
+@pytest.mark.parametrize("operations,expected_recovery", [
+    (_FailPostFsyncAndRollbackReplace(), True),
+    (_FailPostAndRollbackDirectoryFsync(), False),
+    (_FailRecoveryCleanup(), True),
+    (_FailInstallAndRecoveryCleanup(), True),
+])
+def test_failure_matrix_never_deletes_last_known_good(
+        tmp_path, operations, expected_recovery):
+    decision = _decision(tmp_path)
+    original = _artifact("generation-original")
+    assert _persist(decision, original).status == "persisted"
+    path = pathlib.Path(decision.artifact_path)
+    previous_bytes = path.read_bytes()
+    recovery = path.parent / (
+        f".{path.name}{storage.RECOVERY_FILE_SUFFIX}")
+    result = _persist(
+        decision, _artifact("generation-replacement"),
+        operations=operations)
+    assert result.status == "persistence_failed"
+    assert path.read_bytes() == previous_bytes or \
+        recovery.read_bytes() == previous_bytes
+    assert recovery.exists() is expected_recovery
+    if recovery.exists():
+        assert recovery.read_bytes() == previous_bytes
+        loaded = storage.load_artifact(decision)
+        assert loaded.status == "loaded"
+        assert loaded.artifact == original
+        assert path.read_bytes() == previous_bytes
+        assert not recovery.exists()
+
+
+def test_recovery_slot_rejects_user_destination_and_unsafe_substitution(
+        tmp_path, monkeypatch):
+    decision = _decision(tmp_path)
+    assert not storage.resolve_measurement_path(
+        diagnostics_root=decision.diagnostics_root,
+        override=f".measurement-v1.json{storage.RECOVERY_FILE_SUFFIX}",
+        protected_paths=decision.protected_paths).accepted
+    assert _persist(decision, _artifact("generation-original")).status == \
+        "persisted"
+    path = pathlib.Path(decision.artifact_path)
+    previous = path.read_bytes()
+    recovery = path.parent / (
+        f".{path.name}{storage.RECOVERY_FILE_SUFFIX}")
+    external = tmp_path / "external"
+    external.write_bytes(previous)
+    attacks = ("symlink", "hardlink", "fifo", "directory")
+    for attack in attacks:
+        if os.path.lexists(recovery):
+            if recovery.is_dir() and not recovery.is_symlink():
+                recovery.rmdir()
+            else:
+                recovery.unlink()
+        if attack == "symlink":
+            recovery.symlink_to(external)
+        elif attack == "hardlink":
+            os.link(external, recovery)
+        elif attack == "fifo":
+            os.mkfifo(recovery)
+        else:
+            recovery.mkdir()
+        assert _persist(
+            decision, _artifact(f"generation-{attack}")).status == \
+            "persistence_failed"
+        assert path.read_bytes() == previous
+        assert external.read_bytes() == previous
+    recovery.rmdir()
+    real_stat = storage.os.stat
+    socket_stat = os.stat_result((
+        stat.S_IFSOCK | 0o600, 99, 99, 1, 0, 0, 0, 0, 0, 0))
+
+    def fake_stat(name, *args, **kwargs):
+        return socket_stat if name == "recovery.sock" else \
+            real_stat(name, *args, **kwargs)
+
+    monkeypatch.setattr(storage.os, "stat", fake_stat)
+    with pytest.raises(OSError):
+        storage._raw_leaf_stat(0, "recovery.sock", frozenset())
+    device_fd = os.open("/dev", os.O_RDONLY)
+    try:
+        with pytest.raises(OSError):
+            storage._raw_leaf_stat(device_fd, "null", frozenset())
+    finally:
+        os.close(device_fd)
 
 
 class _SwapToAuthorityHardlink(storage.FileOperations):

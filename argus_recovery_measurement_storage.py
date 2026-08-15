@@ -23,6 +23,7 @@ DIAGNOSTICS_DIRECTORY_MODE = 0o700
 ARTIFACT_FILE_MODE = 0o600
 MAX_PATH_CHARS = 4096
 MAX_FILE_NAME_CHARS = 160
+RECOVERY_FILE_SUFFIX = ".measurement-recovery"
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,11 @@ def authoritative_path_plan(
     def exact(family: str, name: str) -> ProtectedPath:
         return ProtectedPath(family, _normal(os.path.join(root, name)))
 
+    def exact_at(family: str, parent: str, name: str) -> ProtectedPath:
+        return ProtectedPath(family, _normal(os.path.join(parent, name)))
+
+    checkpoint_v2_root = _normal(os.path.join(root, "argus_checkpoint_v2"))
+
     entries = [
         exact("sealed_checkpoint", "argus_osint_memory.json"),
         exact("checkpoint_file_seal",
@@ -104,6 +110,35 @@ def authoritative_path_plan(
               "argus_remote_recovery_nonce_state.json.reservation.lock.anchor"),
         exact("predictions", "predictions.jsonl"),
         exact("foundation_sidecar", "argus_foundation_jobs.json"),
+        # Current runtime family from scanner._CHECKPOINT_V2_ROOT and the
+        # bounded V2/isolated-writer implementations.  The subtree entry is
+        # authoritative; explicit companions make repository drift auditable.
+        ProtectedPath("checkpoint_v2_runtime", checkpoint_v2_root, "subtree"),
+        exact_at("checkpoint_v2_manifest", checkpoint_v2_root,
+                 "checkpoint-v2-manifest.json"),
+        ProtectedPath(
+            "checkpoint_v2_manifest_temp",
+            _normal(os.path.join(
+                checkpoint_v2_root, "checkpoint-v2-manifest.json.")),
+            "prefix"),
+        exact_at("checkpoint_v2_manifest_writer_lock", checkpoint_v2_root,
+                 "checkpoint-v2-manifest.json.writer.lock"),
+        exact_at("checkpoint_v2_runtime_writer_lock", checkpoint_v2_root,
+                 "checkpoint-v2.writer.lock"),
+        ProtectedPath(
+            "checkpoint_v2_pending_generation",
+            _normal(os.path.join(checkpoint_v2_root, ".v2-pending-")),
+            "prefix"),
+        ProtectedPath(
+            "checkpoint_v2_generation",
+            _normal(os.path.join(checkpoint_v2_root, "v2-generation-")),
+            "prefix"),
+        ProtectedPath(
+            "checkpoint_v2_isolated_job",
+            _normal(os.path.join(checkpoint_v2_root, ".v2-isolated-job-")),
+            "prefix"),
+        # Retain the pre-current reserved family so a downgrade cannot reuse
+        # it for diagnostics.
         ProtectedPath("checkpoint_v2", _normal(os.path.join(
             root, "checkpoint-v2")), "subtree"),
         exact("checkpoint_v2_writer_lock", "checkpoint-v2.writer.lock"),
@@ -315,6 +350,88 @@ def _revalidate_leaf(
     return details
 
 
+def _raw_leaf_stat(
+        directory_fd: int, name: str,
+        protected_identities: frozenset[Tuple[int, int]]) -> Optional[os.stat_result]:
+    try:
+        details = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(details.st_mode) or details.st_nlink not in (1, 2) or \
+            (details.st_dev, details.st_ino) in protected_identities:
+        raise OSError(errno.EPERM, "measurement_recovery_unsafe")
+    return details
+
+
+class _DuplicateKey(ValueError):
+    pass
+
+
+def _closed_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateKey("duplicate_key")
+        result[key] = value
+    return result
+
+
+def _reject_constant(_value):
+    raise ValueError("non_finite_number")
+
+
+def _read_leaf_bytes(
+        directory_fd: int, name: str, before: os.stat_result) -> bytes:
+    descriptor = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or \
+                (opened.st_dev, opened.st_ino, opened.st_nlink) != \
+                (before.st_dev, before.st_ino, before.st_nlink) or \
+                opened.st_size > measurement.MAX_PERSISTED_BYTES:
+            raise OSError(errno.EPERM, "measurement_recovery_unsafe")
+        chunks = []
+        remaining = measurement.MAX_PERSISTED_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(descriptor)
+        encoded = b"".join(chunks)
+        if len(encoded) > measurement.MAX_PERSISTED_BYTES or \
+                (after.st_dev, after.st_ino, after.st_size,
+                 after.st_mtime_ns, after.st_nlink) != \
+                (opened.st_dev, opened.st_ino, opened.st_size,
+                 opened.st_mtime_ns, opened.st_nlink):
+            raise OSError(errno.EPERM, "measurement_recovery_changed")
+        return encoded
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _decode_artifact(encoded: bytes, *, live_policy: bool
+                     ) -> Tuple[str, Optional[Dict[str, Any]]]:
+    try:
+        value = json.loads(
+            encoded.decode("utf-8"), object_pairs_hook=_closed_object,
+            parse_constant=_reject_constant)
+        expected = None if live_policy else (
+            value.get("registryPolicySha256") if type(value) is dict else "")
+        validation = measurement.validate_artifact(
+            value, expected_registry_policy_sha256=expected)
+        return (
+            "loaded" if validation.valid else validation.code,
+            value if validation.valid else None)
+    except (_DuplicateKey, UnicodeDecodeError, json.JSONDecodeError,
+            RecursionError, TypeError, ValueError):
+        return "invalid_artifact", None
+
+
 class FileOperations:
     """Small injectable surface for deterministic fault tests."""
 
@@ -339,6 +456,65 @@ class FileOperations:
 
     def unlink(self, name: str, directory_fd: int) -> None:
         os.unlink(name, dir_fd=directory_fd)
+
+
+def _reconcile_incomplete_transaction(
+        operations: FileOperations, directory_fd: int, artifact_name: str,
+        recovery_name: str,
+        protected_identities: frozenset[Tuple[int, int]]) -> bool:
+    """Restore a validated last-known-good copy or remove a duplicate link."""
+    recovery = _raw_leaf_stat(
+        directory_fd, recovery_name, protected_identities)
+    if recovery is None:
+        return True
+    canonical = _raw_leaf_stat(
+        directory_fd, artifact_name, protected_identities)
+    same_inode = canonical is not None and \
+        (canonical.st_dev, canonical.st_ino) == \
+        (recovery.st_dev, recovery.st_ino)
+    if same_inode:
+        # A crash after backup-link durability but before replacement leaves
+        # exactly two names for the prior canonical inode.
+        if canonical.st_nlink != 2 or recovery.st_nlink != 2:
+            return False
+    elif recovery.st_nlink != 1 or \
+            (canonical is not None and canonical.st_nlink != 1):
+        return False
+    try:
+        encoded = _read_leaf_bytes(directory_fd, recovery_name, recovery)
+    except OSError:
+        return False
+    if _decode_artifact(encoded, live_policy=False)[0] != "loaded":
+        return False
+    try:
+        recovery_after = _raw_leaf_stat(
+            directory_fd, recovery_name, protected_identities)
+        canonical_after = _raw_leaf_stat(
+            directory_fd, artifact_name, protected_identities)
+        if recovery_after is None or \
+                (recovery_after.st_dev, recovery_after.st_ino,
+                 recovery_after.st_size, recovery_after.st_mtime_ns,
+                 recovery_after.st_nlink) != \
+                (recovery.st_dev, recovery.st_ino, recovery.st_size,
+                 recovery.st_mtime_ns, recovery.st_nlink) or \
+                ((canonical_after is None) != (canonical is None)) or \
+                (canonical is not None and
+                 (canonical_after.st_dev, canonical_after.st_ino,
+                  canonical_after.st_size, canonical_after.st_mtime_ns,
+                  canonical_after.st_nlink) !=
+                 (canonical.st_dev, canonical.st_ino, canonical.st_size,
+                  canonical.st_mtime_ns, canonical.st_nlink)):
+            return False
+        if same_inode:
+            operations.unlink(recovery_name, directory_fd)
+        else:
+            # A distinct recovery inode means a prior replacement was not
+            # reported durable.  Deterministically restore the prior artifact.
+            operations.replace(recovery_name, artifact_name, directory_fd)
+        operations.fsync_directory(directory_fd)
+    except OSError:
+        return False
+    return True
 
 
 def _cleanup(operations: FileOperations, directory_fd: int,
@@ -366,30 +542,40 @@ def persist_retention_plan(
         return PersistenceResult(
             plan.status if type(plan) is measurement.RetentionPlan else
             "serialization_failure")
-    if len(plan.canonical_bytes) > measurement.MAX_PERSISTED_BYTES or \
-            not measurement.validate_artifact(plan.artifact).valid:
+    try:
+        # The artifact is the sole persistence authority.  A precomputed plan
+        # buffer is only accepted when it is exactly that canonical encoding.
+        canonical_bytes = measurement.canonical_artifact_bytes(plan.artifact)
+    except (RecursionError, TypeError, ValueError):
+        return PersistenceResult("serialization_failure")
+    if plan.canonical_bytes != canonical_bytes:
         return PersistenceResult("serialization_failure")
     ops = operations or FileOperations()
     directory_fd = temp_fd = None
-    temp_name = backup_name = None
-    replaced = backup_created = False
+    temp_name = None
+    recovery_name = \
+        f".{decision.artifact_name}{RECOVERY_FILE_SUFFIX}"
+    replaced = recovery_created = False
     previous_existed = False
     try:
         directory_fd = _open_directory_chain(
             decision.diagnostics_root, create=False)
         protected = _protected_identities(decision.protected_paths)
+        if not _reconcile_incomplete_transaction(
+                ops, directory_fd, decision.artifact_name, recovery_name,
+                protected):
+            return PersistenceResult("persistence_failed")
         previous = _revalidate_leaf(
             directory_fd, decision.artifact_name, protected)
         previous_existed = previous is not None
         token = secrets.token_hex(12)
         temp_name = f".{decision.artifact_name}.measurement-tmp-{token}"
-        backup_name = f".{decision.artifact_name}.measurement-previous-{token}"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | \
             getattr(os, "O_NOFOLLOW", 0)
         temp_fd = os.open(
             temp_name, flags, ARTIFACT_FILE_MODE, dir_fd=directory_fd)
         os.fchmod(temp_fd, ARTIFACT_FILE_MODE)
-        view = memoryview(plan.canonical_bytes)
+        view = memoryview(canonical_bytes)
         written = 0
         while written < len(view):
             count = ops.write(temp_fd, view[written:])
@@ -403,32 +589,53 @@ def persist_retention_plan(
         # Close the validation/write race immediately before touching the leaf.
         _revalidate_leaf(directory_fd, decision.artifact_name, protected)
         if previous_existed:
-            ops.link(decision.artifact_name, backup_name, directory_fd)
-            backup_created = True
+            ops.link(decision.artifact_name, recovery_name, directory_fd)
+            recovery_created = True
             ops.fsync_directory(directory_fd)
         ops.replace(temp_name, decision.artifact_name, directory_fd)
         temp_name = None
         replaced = True
         installed = _revalidate_leaf(
             directory_fd, decision.artifact_name, protected)
-        if installed is None or installed.st_size != len(plan.canonical_bytes):
+        if installed is None or installed.st_size != len(canonical_bytes):
             raise OSError(errno.EIO, "measurement_install_invalid")
         ops.fsync_directory(directory_fd)
-        if backup_created:
-            ops.unlink(backup_name, directory_fd)
-            backup_name = None
-        return PersistenceResult("persisted", len(plan.canonical_bytes))
+        if recovery_created:
+            try:
+                ops.unlink(recovery_name, directory_fd)
+            except OSError:
+                # The new artifact is durable, but report failure while the
+                # deterministic prior copy remains.  A later operation will
+                # restore it, making this failed call externally atomic.
+                return PersistenceResult("persistence_failed")
+            recovery_created = False
+            # The replacement was already durably committed.  Failure to
+            # persist removal of the now-unlinked recovery name is harmless.
+            try:
+                ops.fsync_directory(directory_fd)
+            except OSError:
+                pass
+        return PersistenceResult("persisted", len(canonical_bytes))
     except (OSError, TypeError, ValueError):
-        # A failure after replace restores the exact prior inode/bytes when one
-        # existed; otherwise it restores absence.  Rollback remains diagnostic.
+        # After replacement, preserve the recovery name unless restoring the
+        # previous-valid inode and its directory entry both succeed.
         if directory_fd is not None and replaced:
             try:
-                if backup_created and backup_name is not None:
-                    ops.replace(backup_name, decision.artifact_name,
+                if recovery_created:
+                    ops.replace(recovery_name, decision.artifact_name,
                                 directory_fd)
-                    backup_name = None
+                    recovery_created = False
                 elif not previous_existed:
                     ops.unlink(decision.artifact_name, directory_fd)
+                ops.fsync_directory(directory_fd)
+            except OSError:
+                pass
+        elif directory_fd is not None and recovery_created:
+            # Canonical still names the previous inode.  Cleanup is safe, but
+            # failure leaves a second recoverable name rather than losing it.
+            try:
+                ops.unlink(recovery_name, directory_fd)
+                recovery_created = False
                 ops.fsync_directory(directory_fd)
             except OSError:
                 pass
@@ -437,7 +644,9 @@ def persist_retention_plan(
         if temp_fd is not None:
             os.close(temp_fd)
         if directory_fd is not None:
-            _cleanup(ops, directory_fd, (temp_name, backup_name))
+            # Never generically clean the deterministic recovery slot: it may
+            # be the only last-known-good inode after a failed rollback.
+            _cleanup(ops, directory_fd, (temp_name,))
             os.close(directory_fd)
 
 
@@ -448,73 +657,35 @@ def persist_artifact(
     return persist_retention_plan(decision, plan, operations=operations)
 
 
-class _DuplicateKey(ValueError):
-    pass
-
-
-def _closed_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise _DuplicateKey("duplicate_key")
-        result[key] = value
-    return result
-
-
-def _reject_constant(_value):
-    raise ValueError("non_finite_number")
-
-
 def load_artifact(decision: PathDecision) -> LoadResult:
     if type(decision) is not PathDecision or not decision.accepted or \
             decision.artifact_name is None:
         return LoadResult("configuration_rejected", None)
-    descriptor = file_descriptor = None
+    descriptor = None
     try:
         descriptor = _open_directory_chain(
             decision.diagnostics_root, create=False)
         protected = _protected_identities(decision.protected_paths)
+        recovery_name = \
+            f".{decision.artifact_name}{RECOVERY_FILE_SUFFIX}"
+        if not _reconcile_incomplete_transaction(
+                FileOperations(), descriptor, decision.artifact_name,
+                recovery_name, protected):
+            return LoadResult("io_failure", None)
         before = _revalidate_leaf(
             descriptor, decision.artifact_name, protected)
         if before is None:
             return LoadResult("not_found", None)
         if before.st_size > measurement.MAX_PERSISTED_BYTES:
             return LoadResult("invalid_artifact", None)
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        file_descriptor = os.open(
-            decision.artifact_name, flags, dir_fd=descriptor)
-        opened = os.fstat(file_descriptor)
-        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or \
-                (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-            return LoadResult("configuration_rejected", None)
-        chunks = []
-        remaining = measurement.MAX_PERSISTED_BYTES + 1
-        while remaining:
-            chunk = os.read(file_descriptor, min(1024 * 1024, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        encoded = b"".join(chunks)
-        if len(encoded) > measurement.MAX_PERSISTED_BYTES:
-            return LoadResult("invalid_artifact", None)
-        value = json.loads(
-            encoded.decode("utf-8"), object_pairs_hook=_closed_object,
-            parse_constant=_reject_constant)
-        validation = measurement.validate_artifact(value)
-        return LoadResult(
-            "loaded" if validation.valid else validation.code,
-            value if validation.valid else None)
+        encoded = _read_leaf_bytes(descriptor, decision.artifact_name, before)
+        status, value = _decode_artifact(encoded, live_policy=True)
+        return LoadResult(status, value)
     except FileNotFoundError:
         return LoadResult("not_found", None)
-    except (_DuplicateKey, UnicodeDecodeError, json.JSONDecodeError,
-            RecursionError, TypeError, ValueError):
-        return LoadResult("invalid_artifact", None)
     except OSError:
         return LoadResult("io_failure", None)
     finally:
-        if file_descriptor is not None:
-            os.close(file_descriptor)
         if descriptor is not None:
             os.close(descriptor)
 

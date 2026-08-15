@@ -50,11 +50,20 @@ The resolver is pure/configurable and does not read runtime environment. It
 allows only a direct JSON child of the dedicated namespace, rejects authority
 ancestor/descendant/prefix collisions, and rejects traversal, outside paths,
 symlinks, hardlinks, non-regular files, and temp/lock names.
+The explicit authority inventory includes the current `argus_checkpoint_v2`
+subtree, `checkpoint-v2-manifest.json`, its atomic-write/global locks and
+temporary prefix, pending/immutable generation prefixes, and isolated-job
+prefix. The older reserved `checkpoint-v2` family remains protected as well.
 
 The storage adapter uses no-follow directory/file descriptors, a same-directory
 0600 temporary, file fsync, pre-replace destination revalidation, atomic replace,
-and parent-directory fsync. A same-directory rollback link restores the exact
-prior measurement inode/bytes if a post-replace fsync fails. Authority paths are
+and parent-directory fsync. Before any filesystem mutation it independently
+derives the exact canonical encoding of the validated plan artifact and rejects
+any precomputed-byte mismatch. A deterministic hidden recovery link keeps the
+prior measurement inode recoverable until commit durability or durable rollback;
+failed rollback never triggers generic recovery cleanup. A later load/persist
+validates and restores a leftover recovery artifact before using it. The temp
+and recovery names cannot be selected as destinations, and authority paths are
 never opened for writing.
 
 ## Checkpoint accounting and sampling
