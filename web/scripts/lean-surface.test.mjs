@@ -86,7 +86,7 @@ assert.match(notificationPanel, /timeZone: 'Asia\/Tokyo'/);
 assert.doesNotMatch(notificationPanel, /createdAt\.slice\(11, 16\)/);
 assert.match(notificationEngine, /migrateLegacyNotification/);
 assert.match(notificationEngine, /delete lastByDedupe\.vault/);
-assert.match(notificationEngine, /Settings \/ Recovery → バックアップJSONを書き出す/);
+assert.match(notificationEngine, /Settings \/ Recovery → 完全バックアップJSONを書き出す/);
 assert.equal(notificationEngine.match(/Positions & Risk/g)?.length, 1,
   'legacy surface name may appear only in the local notification migration');
 assert.doesNotMatch(app, /useActionLabels/);
@@ -131,7 +131,7 @@ assert.match(startCloudSync, /cloudSyncNow\(\{ rawFallback: true \}\)/);
 assert.match(startCloudSync, /visibilitychange/);
 assert.doesNotMatch(startCloudSync, /setInterval|setTimeout/);
 assert.match(backupCard, /公開ブラウザからのクラウド送信と端末間ライブ同期は利用できません/);
-assert.match(backupCard, /今すぐエクスポート/);
+assert.match(backupCard, /完全バックアップJSONを書き出す/);
 assert.match(backupCard, /クラウドから復元/);
 assert.doesNotMatch(backupCard, /今すぐ送信|cloudBackupNow/);
 

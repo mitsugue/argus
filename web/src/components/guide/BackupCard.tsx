@@ -2,8 +2,8 @@ import React, { useRef, useState } from 'react';
 import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
 import { cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
 
-// Device-data backup UI (v10.3.2; auto-weekly added in v10.3.3 — see
-// lib/backup.ts). Export/restore the only two device-local keys.
+// Complete device-data backup UI. Only this full export advances global
+// backup-protection state; portfolio-only tools remain separately labelled.
 
 export const BackupCard: React.FC = () => {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -34,8 +34,8 @@ export const BackupCard: React.FC = () => {
   function doExport() {
     const n = downloadBackup(false);
     setMsg(n > 0
-      ? `エクスポートしました(${n}項目)。iCloud Drive等の安全な場所に保存してください。`
-      : 'まだ保存するデータがありません。');
+      ? `完全バックアップをエクスポートしました(${n}項目)。iCloud Drive等の安全な場所に保存してください。`
+      : '完全バックアップを作成できませんでした。保存データの形式を確認してください。');
   }
 
   function doImport(file: File) {
@@ -58,11 +58,11 @@ export const BackupCard: React.FC = () => {
     <div className="card guide-card">
       <p className="backup__lead">
         保有、判断記録、通知、学習履歴はこの端末に保存されます。
-        「今すぐエクスポート」でバックアップJSONを安全な場所へ保存し、新しい端末では「インポート」で復元できます。
+        「完全バックアップJSONを書き出す」で全対象データを安全な場所へ保存し、新しい端末では「インポート」で復元できます。
       </p>
       <div className="backup__actions">
         <button className="asset-btn asset-btn--primary" onClick={doExport}>
-          今すぐエクスポート
+          完全バックアップJSONを書き出す
         </button>
         <button className="asset-btn" onClick={() => fileRef.current?.click()}>
           インポート(バックアップから復元)

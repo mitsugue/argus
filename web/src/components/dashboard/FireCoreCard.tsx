@@ -123,7 +123,7 @@ export const FireCoreCard: React.FC<{
         )}
         <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
           ファンド名・口数・評価額・積立額・口座区分はこの端末内だけに保存されます(サーバー送信なし)。
-          新しい変更を守るにはSettings / RecoveryでJSONを書き出してください。
+          新しい変更を守るにはSettings / Recoveryで完全バックアップJSONを書き出してください。
           証券会社ログイン・口座連携はありません。将来見込みの精密計算もしません。
         </p>
       </div>

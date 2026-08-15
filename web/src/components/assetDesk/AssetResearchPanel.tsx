@@ -108,7 +108,7 @@ export const AssetResearchPanel: React.FC<{
   return (
     <>
       <div className="asset-detail__note">
-        <span className="asset-detail__k">📝 リサーチメモ(Gemini/GPTの回答を貼り付け・端末内のみ。保護はJSON書き出し)</span>
+        <span className="asset-detail__k">📝 リサーチメモ(Gemini/GPTの回答を貼り付け・端末内のみ。保護は完全バックアップJSON書き出し)</span>
         <textarea
           className="asset-detail__note-area"
           value={note}

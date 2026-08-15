@@ -70,7 +70,7 @@ export const TradeJournalCard: React.FC<{ assets: AssetItem[] }> = ({ assets }) 
           </div>
         )}
         {openTrades.length === 0 && closedTrades.length === 0 && !open && (
-          <div className="tj__empty">自分の売買と根拠を記録すると、ここで損益と「あなたの判断 vs 結果」を追えます(この端末内のみ。保護にはJSON書き出しが必要です)。</div>
+          <div className="tj__empty">自分の売買と根拠を記録すると、ここで損益と「あなたの判断 vs 結果」を追えます(この端末内のみ。保護には完全バックアップJSONの書き出しが必要です)。</div>
         )}
         {openTrades.map((t) => {
           const pnl = tradePnlPct(t, priceOf(t));

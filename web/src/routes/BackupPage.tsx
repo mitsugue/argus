@@ -33,7 +33,7 @@ export const BackupSettingsPanel: React.FC<{ initiallyOpen?: boolean }> = ({ ini
         <BackupCard />
       </section>
 
-      {/* ② JSONエクスポート/インポート・スナップショット・復元ドリル — Core Portfolioから移設 */}
+      {/* ② portfolio-only export/import plus complete-backup protection/drill status */}
       <PortfolioSyncCard assetsApi={assetsApi} appVersion={__APP_VERSION__} />
 
       <p style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>

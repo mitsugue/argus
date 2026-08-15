@@ -76,7 +76,7 @@ function migrateLegacyNotification(item: AppNotification): AppNotification {
       titleJa: 'JSONバックアップを更新',
       bodyJa: '最近のローカルJSONエクスポートを確認し、端末故障やサイトデータ消去に備えて保存してください。',
       whyJa: '公開ブラウザから新しいクラウド復旧点は送信できません。',
-      checkNextJa: 'Settings / Recovery → バックアップJSONを書き出す',
+      checkNextJa: 'Settings / Recovery → 完全バックアップJSONを書き出す',
       dedupeKey: 'local-export' };
   }
   if (item.eventType === 'restore_not_verified'
@@ -346,7 +346,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'sync_backup_warning', severity: 'low', symbol: null, assetName: null,
         titleJa: 'JSONバックアップを更新',
         bodyJa: '最近30日以内のローカルJSONエクスポートが確認できません。端末故障やサイトデータ消去に備えて保存してください。',
-        whyJa: '公開ブラウザから新しいクラウド復旧点は送信できません。', checkNextJa: 'Settings / Recovery → バックアップJSONを書き出す',
+        whyJa: '公開ブラウザから新しいクラウド復旧点は送信できません。', checkNextJa: 'Settings / Recovery → 完全バックアップJSONを書き出す',
         dedupeKey: 'local-export', isPrivate: true });
     }
   }

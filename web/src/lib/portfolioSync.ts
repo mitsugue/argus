@@ -15,6 +15,9 @@
 import type { AssetItem } from '../types/assetItem';
 import type { PortfolioExposure } from '../domain/positionExposure';
 import { markLocalEdit } from './vault';
+import {
+  BACKUP_META_KEY, certifiedCompleteExportAt, patchBackupMeta, readBackupMeta, type BackupMeta,
+} from './backupMeta';
 
 export const SYNC_SCHEMA_VERSION = 'portfolio-sync-v1';
 export const SNAPSHOT_SCHEMA_VERSION = 'portfolio-snapshot-v1';
@@ -22,7 +25,7 @@ export const AUDIT_SCHEMA_VERSION = 'decision-audit-v1';
 
 export const SNAPSHOTS_KEY = 'argus.portfolio.snapshots.v1';
 export const AUDIT_KEY = 'argus.decision.audit.v1';
-export const SYNC_META_KEY = 'argus.portfolioSync.meta.v1';
+export const SYNC_META_KEY = BACKUP_META_KEY;
 const SNAPSHOT_CAP = 60;      // ~2 months of dailies in localStorage
 const AUDIT_CAP = 800;
 
@@ -110,7 +113,7 @@ export interface PortfolioBackupFile {
   decisionAudit: DecisionAuditRecord[];
 }
 
-interface SyncMeta { lastExportAt?: string; lastImportAt?: string; lastSnapshotAt?: string; lastSnapshotDay?: string; }
+export type SyncMeta = BackupMeta;
 
 // ── storage helpers (never throw) ───────────────────────────────────────────
 
@@ -124,8 +127,8 @@ function writeJson(key: string, v: unknown, recordsLocalEdit = true): void {
     if (recordsLocalEdit) markLocalEdit();
   } catch { /* quota — keep app alive */ }
 }
-export function syncMeta(): SyncMeta { return readJson<SyncMeta>(SYNC_META_KEY, {}); }
-function patchMeta(p: Partial<SyncMeta>): void { writeJson(SYNC_META_KEY, { ...syncMeta(), ...p }, false); }
+export function syncMeta(): SyncMeta { return readBackupMeta(); }
+function patchMeta(p: Partial<SyncMeta>): void { patchBackupMeta(p); }
 
 export function listSnapshots(): PortfolioSnapshot[] { return readJson<PortfolioSnapshot[]>(SNAPSHOTS_KEY, []); }
 export function listAudit(): DecisionAuditRecord[] { return readJson<DecisionAuditRecord[]>(AUDIT_KEY, []); }
@@ -278,7 +281,7 @@ export function downloadPortfolioBackup(assets: AssetItem[], appVersion: string)
   a.download = `argus-portfolio-${jstDay()}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
-  patchMeta({ lastExportAt: new Date().toISOString() });
+  patchMeta({ lastPortfolioExportAt: file.exportedAt });
 }
 
 export interface ImportPreview {
@@ -288,6 +291,7 @@ export interface ImportPreview {
   withQuantity: number;
   watchOnly: number;
   snapshots: number;
+  decisions: number;
   symbols: string[];
 }
 
@@ -296,29 +300,30 @@ export interface ImportPreview {
 export function previewImport(text: string): ImportPreview {
   let parsed: unknown;
   try { parsed = JSON.parse(text); }
-  catch { return { ok: false, errorJa: 'JSONとして読めませんでした。', withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] }; }
+  catch { return { ok: false, errorJa: 'JSONとして読めませんでした。', withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] }; }
   const f = parsed as Partial<PortfolioBackupFile>;
   if (f?.app !== 'argus' || f?.kind !== 'portfolio-backup' || !Array.isArray(f?.positions)) {
-    return { ok: false, errorJa: 'ARGUSのポートフォリオバックアップ形式ではありません。', withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] };
+    return { ok: false, errorJa: 'ARGUSのポートフォリオバックアップ形式ではありません。', withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] };
   }
   if (f.schemaVersion !== SYNC_SCHEMA_VERSION) {
-    return { ok: false, errorJa: `スキーマ版数が未対応です(${String(f.schemaVersion)})。`, withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] };
+    return { ok: false, errorJa: `スキーマ版数が未対応です(${String(f.schemaVersion)})。`, withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] };
   }
   const bad = f.positions.some((p) => !p || typeof p.symbol !== 'string'
     || (p.quantity != null && typeof p.quantity !== 'number')
     || (p.avgCost != null && typeof p.avgCost !== 'number'));
-  if (bad) return { ok: false, errorJa: 'positionsの形式が壊れています。', withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] };
+  if (bad) return { ok: false, errorJa: 'positionsの形式が壊れています。', withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] };
   const withQ = f.positions.filter((p) => (p.quantity ?? 0) > 0);
   return {
     ok: true, file: f as PortfolioBackupFile,
     withQuantity: withQ.length,
     watchOnly: f.positions.length - withQ.length,
     snapshots: Array.isArray(f.snapshots) ? f.snapshots.length : 0,
+    decisions: Array.isArray(f.decisionAudit) ? f.decisionAudit.length : 0,
     symbols: withQ.slice(0, 8).map((p) => (/^\d/.test(p.symbol) && p.name ? `${p.symbol} ${p.name.slice(0, 8)}` : p.symbol)),
   };
 }
 
-export interface ApplyResult { updated: number; added: number; snapshotsMerged: number; }
+export interface ApplyResult { updated: number; added: number; snapshotsMerged: number; decisionAuditMerged: number; }
 
 /** Apply a previewed import. merge = fill/update only symbols in the file;
  *  replace = same but also CLEARS quantity on assets NOT in the file (deleting
@@ -366,8 +371,22 @@ export function applyImport(
     writeJson(SNAPSHOTS_KEY, [...incoming, ...listSnapshots()]
       .sort((a, b) => (a.asOf < b.asOf ? 1 : -1)).slice(0, SNAPSHOT_CAP));
   }
+  // decision audit: merge by stable record id so the exported history is
+  // actually restorable instead of merely present in the JSON preview.
+  const existingAudit = listAudit();
+  const auditIds = new Set(existingAudit.map((record) => record.id));
+  const incomingAudit: DecisionAuditRecord[] = [];
+  for (const record of file.decisionAudit ?? []) {
+    if (!record?.id || auditIds.has(record.id)) continue;
+    auditIds.add(record.id);
+    incomingAudit.push(record);
+  }
+  if (incomingAudit.length) {
+    writeJson(AUDIT_KEY, [...incomingAudit, ...existingAudit]
+      .sort((a, b) => (a.asOf < b.asOf ? 1 : -1)).slice(0, AUDIT_CAP));
+  }
   patchMeta({ lastImportAt: new Date().toISOString() });
-  return { updated, added, snapshotsMerged: incoming.length };
+  return { updated, added, snapshotsMerged: incoming.length, decisionAuditMerged: incomingAudit.length };
 }
 
 // ── private-cloud adapter (interface now; enabled later) ────────────────────
@@ -402,12 +421,13 @@ export const disabledCloudAdapter: PortfolioCloudAdapter = {
 /** Handoff / AI Review Sheet — one honest line about where the data lives. */
 export function backupStatusTextJa(): string {
   const m = syncMeta();
+  const completeExportAt = certifiedCompleteExportAt(m);
   const vaultOn = !!localStorage.getItem('argus.vaultPass.v1');
   const parts = [
     vaultOn ? '保有データ: この端末内のみ(既存の暗号化復旧点は読み取り復元のみ)'
             : '保有データ: この端末内のみ(JSONバックアップ推奨)',
     m.lastSnapshotAt ? `最終スナップショット: ${m.lastSnapshotAt.slice(0, 16).replace('T', ' ')}` : 'スナップショット未作成',
   ];
-  if (!m.lastExportAt) parts.push('新しい変更の保護にはJSONエクスポートが必要');
+  if (!completeExportAt) parts.push('新しい変更の保護には完全バックアップJSONのエクスポートが必要');
   return parts.join(' / ');
 }

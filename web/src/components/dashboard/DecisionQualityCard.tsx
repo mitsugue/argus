@@ -93,7 +93,7 @@ export const DecisionQualityCard: React.FC = () => {
           </div>
         ))}
         <p className="cmd-alloc__note" style={{ fontSize: 10 }}>
-          記録・結果・あなたの行動注釈はこの端末内だけに保存されます。新しい変更を守るにはSettings / RecoveryでJSONを書き出してください。
+          記録・結果・あなたの行動注釈はこの端末内だけに保存されます。新しい変更を守るにはSettings / Recoveryで完全バックアップJSONを書き出してください。
           売買の成績計算ではなく「ARGUSのラベルの後に何が起きたか」の記録です。
         </p>
       </div>

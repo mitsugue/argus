@@ -6,6 +6,7 @@ import {
   previewImport, syncMeta, type ImportPreview,
 } from '../../lib/portfolioSync';
 import { assessBackupSafety, runRecoveryDrill, drillMeta, LEVEL_TONE } from '../../lib/backupSafety';
+import { certifiedCompleteExportAt } from '../../lib/backupMeta';
 
 // Owner-facing LOCAL BACKUP & RESTORE: where holdings live plus
 // export/import/snapshot tools. Browser cloud push remains unavailable.
@@ -21,6 +22,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
   const fileRef = React.useRef<HTMLInputElement>(null);
 
   const meta = syncMeta();
+  const completeExportAt = certifiedCompleteExportAt(meta);
   const snaps = listSnapshots();
   const safety = assessBackupSafety(assets);
   const [drillMsg, setDrillMsg] = React.useState<string | null>(drillMeta().lastDrillResultJa ?? null);
@@ -29,7 +31,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
   const onFile = async (f: File | undefined) => {
     setApplied(null);
     if (!f) return;
-    if (f.size > 5_000_000) { setPreview({ ok: false, errorJa: 'ファイルが大きすぎます(5MB上限)。', withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] }); return; }
+    if (f.size > 5_000_000) { setPreview({ ok: false, errorJa: 'ファイルが大きすぎます(5MB上限)。', withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] }); return; }
     const text = await f.text();
     setPreview(previewImport(text));
   };
@@ -39,7 +41,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
     if (mode === 'replace' && !window.confirm(
       '置換モード: ファイルに無い銘柄の保有数量はクリアされます(銘柄自体は残ります)。実行しますか?')) return;
     const r = applyImport(preview.file, assets, mode, { updateHolding, add: add as never });
-    setApplied(`${mode === 'merge' ? '統合' : '置換'}完了: 更新${r.updated}件 / 追加${r.added}件 / スナップショット取込${r.snapshotsMerged}件`);
+    setApplied(`${mode === 'merge' ? '統合' : '置換'}完了: 更新${r.updated}件 / 追加${r.added}件 / スナップショット取込${r.snapshotsMerged}件 / 判断記録取込${r.decisionAuditMerged}件`);
     setPreview(null);
     if (fileRef.current) fileRef.current.value = '';
     bump();
@@ -94,13 +96,13 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
           クラウド送信・端末間ライブ同期は無効です。既存暗号文の読み取り/復元と、ローカルexport/importだけ利用できます。
         </div>
         <div className="cmd-alloc__note">
-          最終スナップショット: {fmtTs(meta.lastSnapshotAt)}(計{snaps.length}件) / 最終エクスポート: {fmtTs(meta.lastExportAt)} / 最終インポート: {fmtTs(meta.lastImportAt)}
+          最終スナップショット: {fmtTs(meta.lastSnapshotAt)}(計{snaps.length}件) / 最終完全バックアップ: {fmtTs(completeExportAt)} / ポートフォリオのみ書出: {fmtTs(meta.lastPortfolioExportAt)} / ポートフォリオ取込: {fmtTs(meta.lastImportAt)}
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '8px 0 4px' }}>
           <button type="button" onClick={() => { downloadPortfolioBackup(assets, appVersion); bump(); }}
-                  style={btn}>バックアップJSONを書き出す</button>
-          <button type="button" onClick={() => fileRef.current?.click()} style={btn}>JSONを読み込む</button>
+                  style={btn}>ポートフォリオのみJSONを書き出す</button>
+          <button type="button" onClick={() => fileRef.current?.click()} style={btn}>ポートフォリオJSONを読み込む</button>
           <button type="button" onClick={onSnapshot} style={btn}>今すぐスナップショット作成</button>
           <button type="button" style={btn}
                   onClick={() => { const r = runRecoveryDrill(assets, appVersion); setDrillMsg(r.resultJa); bump(); }}>
@@ -109,7 +111,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
                  onChange={(e) => void onFile(e.target.files?.[0])} />
         </div>
         <p className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>
-          このファイルには保有数量・取得単価などの個人投資情報が含まれます。iCloud Drive等の安全な場所に保管してください。
+          これは保有・スナップショット・判断記録だけの部分ファイルです。取引・調査・FIRE Core・通知等の完全保護には、上の「完全バックアップJSONを書き出す」を使用してください。
         </p>
 
         {preview && !preview.ok && (
@@ -118,7 +120,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         {preview?.ok && (
           <div className="cmd-alloc__note" style={{ border: '1px solid var(--line)', borderRadius: 6, padding: 8 }}>
             <b>インポート内容の確認</b> — 保有あり{preview.withQuantity}件 / 監視のみ{preview.watchOnly}件 /
-            スナップショット{preview.snapshots}件
+            スナップショット{preview.snapshots}件 / 判断記録{preview.decisions}件
             {preview.symbols.length > 0 && <> ・銘柄例: {preview.symbols.join(' / ')}</>}
             <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
               <button type="button" style={btn} onClick={() => onApply('merge')}>統合(ファイルの銘柄だけ更新)</button>
@@ -138,7 +140,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
           <div className="cmd-alloc__note">
             スナップショット履歴: {snaps.slice(0, 5).map((s) => s.asOf).join(' / ')}{snaps.length > 5 ? ` 他${snaps.length - 5}件` : ''}
             <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>
-              (復元 = バックアップJSONを書き出して新端末で「JSONを読み込む」)
+              (部分復元 = ポートフォリオのみJSONを書き出して新端末で読み込む)
             </span>
           </div>
         )}
