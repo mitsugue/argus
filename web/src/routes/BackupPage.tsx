@@ -1,5 +1,4 @@
 import React from 'react';
-import { PageShell } from './PageShell';
 import { useAssets } from '../hooks/useAssets';
 import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
 import { BackupCard } from '../components/guide/BackupCard';
@@ -45,14 +44,3 @@ export const BackupSettingsPanel: React.FC<{ initiallyOpen?: boolean }> = ({ ini
     </section>
   );
 };
-
-export const BackupPage: React.FC = () => (
-  <PageShell
-    title="Backup"
-    subtitle="保有・判断記録・通知・学習履歴のバックアップ操作をここに集約。"
-  >
-    <BackupSettingsPanel />
-  </PageShell>
-);
-
-export default BackupPage;

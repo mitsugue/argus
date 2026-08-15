@@ -1,7 +1,9 @@
 """Recovery Phase A PR B trust-boundary contract tests."""
 from __future__ import annotations
 
+import ast
 import copy
+from collections import Counter
 import inspect
 import json
 from pathlib import Path
@@ -20,13 +22,16 @@ ADMIN_HEADER = {"X-ARGUS-ADMIN-TOKEN": "boundary-test-admin"}
 
 
 PUBLIC_KEYS = {
-    "schemaVersion", "generatedAt", "service", "freshness", "recovery",
+    "schemaVersion", "generatedAt", "service", "freshness", "systemHealth",
+    "recovery",
 }
 SERVICE_KEYS = {
     "liveness", "readiness", "overall", "backendVersion", "buildSha",
 }
 FRESHNESS_KEYS = {"overall", "sourceCounts", "expectedDisabledCount"}
 SOURCE_COUNT_KEYS = {"fresh", "aging", "stale", "unknown"}
+SYSTEM_HEALTH_KEYS = {"asOf", "overall", "lamps", "noteJa"}
+HEALTH_LAMP_KEYS = {"key", "labelJa", "status", "detailJa"}
 RECOVERY_KEYS = {
     "mode", "measurement", "exactColdRecovery", "hardRpoClaimPermitted",
 }
@@ -35,6 +40,98 @@ OPERATIONAL_KEYS = {
     "durability", "remoteJournal", "features", "scheduler", "registry",
     "osint", "costPolicy",
 }
+
+RETIRED_PUBLIC_GET_PATHS = frozenset(
+    f"/api/argus/{path}" for path in """
+backup-safety/status
+decision-quality/status
+fire-core/status
+learning-review/status
+notifications/status
+portfolio-strategy/status
+position-exposure/status
+review-pack/status
+portfolio-sync/status
+action-priority
+action-priority/status
+scenarios
+scenarios/status
+position-plans
+position-plans/status
+session-brief
+session-brief/status
+flow-attribution/status
+supply-demand/status
+decision-value/policies
+decision-value/status
+decision-value/summary
+calibration
+calibration/clock
+calibration/cohorts
+calibration/epochs
+calibration/ops
+calibration/posture
+calibration/v4/status
+calibration/watchlist-sync-status
+caos/audit
+caos/deep-research/status
+caos/patrol-plan
+caos/source-universe
+event-analysis
+event-dossier
+event-log
+events/cards
+events/cards/<card_id>
+events/<symbol>/research-mission
+evidence-pack
+decision-spine/status
+research-missions
+learning-memory
+learning-memory/lesson/<lesson_id>
+learning-memory/status
+integrations
+source-registry
+source-coverage
+market-depth
+market-depth/proof
+provider-diagnostics/public
+runtime-manifest
+ledger-health
+institutional-intel/signals
+institutional-intel/status
+institutional-intelligence
+institutional-intelligence/brief
+institutional-intelligence/institutions
+institutional-intelligence/source-health
+institutional-intelligence/positioning/<symbol>
+institutional-intelligence/relationship-graph
+institutional-intelligence/missed
+investment-universe
+market-movers
+jp-market-movers
+attribution-history
+downside-history
+rotation-history
+buy-candidates
+macro-event-analysis/<eid>
+macro-event-analysis/status
+macro-events/result-status
+market-confirmation
+mover-causes
+mover-causes/<market>/<symbol>
+mover-causes/refresh-queue
+mover-causes/status
+news-radar
+news/translation-status
+osint/canary
+picks/today
+research-benchmark/v2
+tdnet-recent
+event-backbone-status
+system-health
+""".split()
+)
+assert len(RETIRED_PUBLIC_GET_PATHS) == 86
 
 
 def _serialized(value):
@@ -48,6 +145,15 @@ def _assert_public_contract(body):
     assert set(body["service"]) == SERVICE_KEYS
     assert set(body["freshness"]) == FRESHNESS_KEYS
     assert set(body["freshness"]["sourceCounts"]) == SOURCE_COUNT_KEYS
+    assert set(body["systemHealth"]) == SYSTEM_HEALTH_KEYS
+    assert body["systemHealth"]["overall"] in {
+        "ok", "warning", "stopped", "off",
+    }
+    assert len(body["systemHealth"]["lamps"]) <= \
+        diagnostics.PUBLIC_HEALTH_MAX_LAMPS
+    for lamp in body["systemHealth"]["lamps"]:
+        assert set(lamp) == HEALTH_LAMP_KEYS
+        assert lamp["status"] in {"ok", "warning", "stopped", "off"}
     assert set(body["recovery"]) == RECOVERY_KEYS
     assert body["schemaVersion"] == diagnostics.PUBLIC_SCHEMA
     assert body["recovery"] == {
@@ -69,7 +175,13 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual) == 244
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 158
+    assert Counter(row.trustDomain for row in catalog.ROUTE_CATALOG) == {
+        "PUBLIC": 62,
+        "AUTH_OPERATIONAL": 87,
+        "OWNER_SYNC": 6,
+        "RECOVERY_PROOF": 3,
+    }
     assert not [
         row for row in catalog.ROUTE_CATALOG
         if row.trustDomain == "PUBLIC" and row.mutatesState
@@ -91,25 +203,81 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
                for path in moved)
 
 
+def test_smoke_literal_routes_are_catalogued_or_explicit_safety_negatives():
+    source = Path("smoke_test.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    assignment = next(
+        node for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name)
+                and target.id == "EXPLICIT_NEGATIVE_PATHS"
+                for target in node.targets)
+    )
+    negative_paths = frozenset(ast.literal_eval(assignment.value))
+    assert negative_paths == {
+        "/api/argus/decision-value/order",
+        "/api/argus/decision-value/execute",
+        "/api/argus/downside/order",
+        "/api/argus/downside/execute",
+    }
+
+    endpoints = set()
+
+    class SmokeEndpointVisitor(ast.NodeVisitor):
+        @staticmethod
+        def _record(value):
+            if value == "/healthz" or value == "/readyz" \
+                    or value.startswith("/api/"):
+                endpoints.add(value)
+
+        def visit_Constant(self, node):
+            if isinstance(node.value, str):
+                self._record(node.value)
+
+        def visit_JoinedStr(self, node):
+            value = "".join(
+                part.value if isinstance(part, ast.Constant)
+                and isinstance(part.value, str) else "__SMOKE_DYNAMIC__"
+                for part in node.values
+            )
+            self._record(value)
+            # Do not visit the component constants: they are only fragments of
+            # the complete f-string endpoint collected above.
+
+    SmokeEndpointVisitor().visit(tree)
+
+    def catalog_matches(endpoint):
+        path = endpoint.split("?", 1)[0].rstrip("/") or "/"
+        path_parts = path.strip("/").split("/") if path != "/" else []
+        for row in catalog.ROUTE_CATALOG:
+            rule = row.route.rstrip("/") or "/"
+            rule_parts = rule.strip("/").split("/") if rule != "/" else []
+            if len(rule_parts) != len(path_parts):
+                continue
+            if all(
+                    (rule_part.startswith("<") and rule_part.endswith(">"))
+                    or "__SMOKE_DYNAMIC__" in path_part
+                    or rule_part == path_part
+                    for rule_part, path_part in zip(rule_parts, path_parts)):
+                return True
+        return False
+
+    assert negative_paths <= endpoints
+    assert not any(catalog_matches(path) for path in negative_paths)
+    assert sorted(
+        endpoint for endpoint in endpoints - negative_paths
+        if not catalog_matches(endpoint)
+    ) == []
+
+
 def test_public_cache_only_consumer_manifest_is_exact_and_pinned():
     assert catalog.PUBLIC_CACHE_ONLY_VALIDATION_ERRORS == ()
     expected = {
         "/api/argus/action-labels",
         "/api/argus/ai-judgment",
-        "/api/argus/calibration/v4/status",
-        "/api/argus/decision-value/status",
-        "/api/argus/event-backbone-status",
+        "/api/argus/data-quality/status",
         "/api/argus/events-active",
-        "/api/argus/integrations",
         "/api/argus/japan-watchlist",
-        "/api/argus/learning-memory/status",
-        "/api/argus/market-depth",
-        "/api/argus/market-depth/proof",
-        "/api/argus/provider-diagnostics/public",
-        "/api/argus/runtime-manifest",
-        "/api/argus/source-coverage",
-        "/api/argus/source-registry",
-        "/api/argus/system-health",
         "/api/argus/us-watchlist",
         "/api/argus/visibility-guard",
     }
@@ -126,6 +294,71 @@ def test_public_diagnostics_canonical_route_is_bounded_and_alias_is_retired():
     assert retired.status_code == 404
     assert canonical.status_code == 200
     _assert_public_contract(canonical.get_json())
+
+
+def test_system_health_is_a_closed_field_on_canonical_diagnostics(monkeypatch):
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: FIXED_NOW)
+    monkeypatch.setattr(scanner, "_system_health", lambda **_kwargs: {
+        "asOf": FIXED_NOW,
+        "overall": "warning",
+        "lamps": [{
+            "key": "bridge",
+            "labelJa": "ブリッジ",
+            "status": "warning",
+            "detailJa": "確認中",
+            "futurePrivateField": "PRIVATE-LAMP-SENTINEL",
+        }],
+        "noteJa": "公開可能な要約",
+        "futurePrivateField": "PRIVATE-HEALTH-SENTINEL",
+    })
+    client = scanner.app.test_client()
+    response = client.get("/api/argus/data-quality/status")
+    assert response.status_code == 200
+    body = response.get_json()
+    _assert_public_contract(body)
+    assert body["systemHealth"] == {
+        "asOf": FIXED_NOW,
+        "overall": "warning",
+        "lamps": [{
+            "key": "bridge", "labelJa": "ブリッジ",
+            "status": "warning", "detailJa": "確認中",
+        }],
+        "noteJa": "公開可能な要約",
+    }
+    assert "PRIVATE" not in response.get_data(as_text=True)
+    assert client.get("/api/argus/system-health").status_code == 404
+
+
+def test_events_active_includes_only_product_backbone_status(monkeypatch):
+    monkeypatch.setattr(scanner, "_EVENTS_ACTIVE", {
+        "active": {
+            "eventId": "active", "severity": 4,
+            "expiresAt": "2099-01-01T00:00:00Z",
+        },
+        "expired": {
+            "eventId": "expired", "severity": 5,
+            "expiresAt": "2000-01-01T00:00:00Z",
+        },
+    })
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda: True)
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: False)
+    monkeypatch.setitem(scanner._EVENT_STATE, "lastDetectionAt", FIXED_NOW)
+    monkeypatch.setitem(scanner._EVENT_STATE, "lastEventAt", FIXED_NOW)
+    client = scanner.app.test_client()
+    response = client.get("/api/argus/events-active")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert set(body) == {
+        "enabled", "asOf", "schemaVersion", "count", "events",
+        "activeCount", "ntfyConfigured", "sessionJp", "sessionUs",
+        "lastDetectionAt", "lastEventAt",
+    }
+    assert body["count"] == 1
+    assert body["activeCount"] == 2
+    assert [event["eventId"] for event in body["events"]] == ["active"]
+    assert body["sessionJp"] is True
+    assert body["sessionUs"] is False
+    assert client.get("/api/argus/event-backbone-status").status_code == 404
 
 
 def test_public_liveness_and_readiness_are_minimal_and_preserve_truth(
@@ -273,27 +506,14 @@ def test_named_public_status_routes_are_cache_only_even_when_cold(monkeypatch):
     for path in (
             "/api/argus/action-labels?jp=8058&us=NVDA",
             "/api/argus/ai-judgment",
-            "/api/argus/calibration/v4/status",
-            "/api/argus/decision-value/status",
-            "/api/argus/event-backbone-status",
+            "/api/argus/data-quality/status",
             "/api/argus/events-active",
-            "/api/argus/integrations",
             "/api/argus/japan-watchlist?symbols=8058",
-            "/api/argus/learning-memory/status",
-            "/api/argus/market-depth",
-            "/api/argus/market-depth/proof",
-            "/api/argus/provider-diagnostics/public",
-            "/api/argus/source-coverage",
-            "/api/argus/source-registry",
-            "/api/argus/system-health",
+            "/api/argus/learning-memory/snapshot",
             "/api/argus/us-watchlist?symbols=NVDA",
-            "/api/argus/runtime-manifest",
             "/api/argus/visibility-guard"):
         response = client.get(path)
         assert response.status_code == 200, path
-        if path == "/api/argus/runtime-manifest":
-            assert response.get_json()["activeRoutes"] == [
-                "Today", "Holdings / Watchlist", "Notifications", "Settings"]
     assert all(cache.get("data") is None for cache in protected_caches)
 
 
@@ -639,13 +859,7 @@ def test_expired_status_and_evidence_components_fail_conservatively(monkeypatch)
         "nPredictions": 99, "updated": old})
     monkeypatch.setitem(scanner._CALIB_V4_CACHE, "expires", 0.0)
 
-    client = scanner.app.test_client()
-    calibration = client.get("/api/argus/calibration/v4/status").get_json()
-    assert calibration["artifactFound"] is False
-    assert calibration["v3HeadlineDays"] == 0
-    runtime = client.get("/api/argus/runtime-manifest").get_json()
-    assert runtime["downside"]["activeIncidents"] == 0
-    assert runtime["tdnet"]["count"] == 0
+    assert scanner._calibration_v4_summary(allow_ledger_fetch=False) is None
     registry = scanner._source_registry(allow_provider_fetch=False)
     tdnet = next(row for row in registry["sources"]
                  if row["capability"] == "企業開示(TDnet 公式)")
@@ -681,17 +895,17 @@ def test_expired_status_and_evidence_components_fail_conservatively(monkeypatch)
     assert "cache:decision-value:stale" in markers
 
 
-def test_learning_memory_cache_only_change_is_status_scoped(monkeypatch):
+def test_learning_memory_snapshot_is_cache_only(monkeypatch):
     restore_calls = []
     monkeypatch.setitem(scanner._LEARNING_MEMORY, "doc", None)
     monkeypatch.setattr(
         scanner, "_learning_memory_restore_once",
         lambda: restore_calls.append("restore"))
     client = scanner.app.test_client()
-    assert client.get("/api/argus/learning-memory/status").status_code == 200
+    assert client.get("/api/argus/learning-memory/status").status_code == 404
+    snapshot = client.get("/api/argus/learning-memory/snapshot")
+    assert snapshot.status_code == 200
     assert restore_calls == []
-    assert client.get("/api/argus/learning-memory").status_code == 200
-    assert restore_calls == ["restore"]
 
 
 def test_authenticated_and_internal_refresh_paths_remain_live_capable(monkeypatch):
@@ -748,6 +962,32 @@ def _public_probe_path(rule):
         r"<(?:(?:string|path|int):)?([^>]+)>",
         lambda match: values.get(match.group(1), "missing"), rule,
     )
+
+
+def test_round1_retired_public_get_contracts_are_exactly_absent(monkeypatch):
+    catalog_gets = {
+        row.route for row in catalog.ROUTE_CATALOG if "GET" in row.methods
+    }
+    assert RETIRED_PUBLIC_GET_PATHS.isdisjoint(catalog_gets)
+
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "boundary-test-admin")
+    client = scanner.app.test_client()
+    for route in sorted(RETIRED_PUBLIC_GET_PATHS):
+        response = client.get(_public_probe_path(route))
+        expected = 405 if route == \
+            "/api/argus/institutional-intelligence/missed" else 404
+        assert response.status_code == expected, route
+
+    retained = [
+        row for row in catalog.ROUTE_CATALOG
+        if row.route == "/api/argus/institutional-intelligence/missed"
+    ]
+    assert len(retained) == 1
+    assert retained[0].methods == ("POST",)
+    assert retained[0].trustDomain == "AUTH_OPERATIONAL"
+    assert client.post(
+        "/api/argus/institutional-intelligence/missed", json={}
+    ).status_code == 401
 
 
 def test_every_catalogued_public_route_rejects_private_domain_sentinels(
@@ -922,7 +1162,6 @@ def test_frontend_has_no_admin_secret_or_moved_public_posts():
         (web / path).read_text(encoding="utf-8")
         for path in (
             "src/hooks/useOsintInvestigation.ts",
-            "src/lib/queueRequests.ts",
             "src/lib/vault.ts",
             "src/routes/CommandCenter.tsx",
             "src/routes/DataQualityPage.tsx",

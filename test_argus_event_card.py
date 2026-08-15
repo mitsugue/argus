@@ -122,17 +122,3 @@ def test_fallback_tdnet_does_not_set_official(monkeypatch):
     ctx = scanner._event_card_context([env])["e-8058"]
     assert ctx["has_official"] is False
     assert "official:tdnet" not in (ctx["source_ids"] or [])
-
-
-# ── endpoint shape ───────────────────────────────────────────────────────────
-def test_event_cards_endpoint_shape():
-    with scanner.app.test_client() as cl:
-        d = cl.get("/api/argus/events/cards").get_json()
-    assert d["schemaVersion"] == "event-card-v2"
-    assert "items" in d and isinstance(d["items"], list)
-
-
-def test_event_cards_missing_id_is_404_json():
-    with scanner.app.test_client() as cl:
-        r = cl.get("/api/argus/events/cards/does-not-exist")
-    assert r.status_code == 404 and r.is_json

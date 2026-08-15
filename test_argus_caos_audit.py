@@ -61,12 +61,6 @@ def test_snapshot_filters_by_symbol():
     assert CA.snapshot(symbol="AAA")["count"] == 1
 
 
-def test_caos_audit_endpoint_shape():
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/caos/audit").get_json()
-    assert d["schemaVersion"] == "caos-link-v1" and "items" in d
-
-
 def test_live_association_populates_audit_and_dedups():
     # the live association path must actually RECORD (not leave the trail empty),
     # and a repeated identical lead must not flood the buffer.

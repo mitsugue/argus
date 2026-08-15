@@ -54,7 +54,15 @@ const us = read('src/hooks/useUSWatchlist.ts');
 const pwa = read('src/main.tsx');
 const command = read('src/routes/CommandCenter.tsx');
 const diagnostics = read('src/routes/DataQualityPage.tsx');
-const manifest = read('../docs/ARGUS_B2B_SHAPEUP_MANIFEST.md');
+const systemHealth = read('src/hooks/useSystemHealth.ts');
+const activeEvents = read('src/hooks/useEventsActive.ts');
+const assetsStore = read('src/hooks/useAssets.ts');
+const assetIntel = read('src/hooks/useAssetIntel.ts');
+const fundNav = read('src/hooks/useFundNav.ts');
+const holdings = read('src/routes/Watchlist.tsx');
+const assetDesk = read('src/components/assetDesk/AssetDeskList.tsx');
+const portfolio = read('src/routes/CorePortfolio.tsx');
+const trades = read('src/components/dashboard/TradeJournalCard.tsx');
 
 for (const source of [important, ledger, actions, japan, us]) {
   assert.match(source, /useSyncExternalStore/);
@@ -87,18 +95,33 @@ assert.match(pwa, /waitAtMost\(reconcileVersionOnce\(\), PWA_RECONCILE_TIMEOUT_M
 assert.match(pwa, /if \(pwaPollInFlight\) return pwaPollInFlight/);
 assert.match(pwa, /pollPwaState\(false\)/);
 
-// Both reachable diagnostics consumers use the canonical endpoint, not its
-// former compatibility alias.
-for (const source of [command, diagnostics]) {
-  assert.match(source, /\/api\/argus\/data-quality\/status/);
-  assert.doesNotMatch(source, /\/api\/argus\/data-quality['"`]/);
-}
-assert.match(manifest, /Catalogued HTTP contracts: `245 -> 244`/);
-assert.match(manifest, /Important Events `2 -> 1`/);
-assert.match(manifest, /Market\n\s+Ledger `3 -> 1`/);
-assert.match(manifest, /Action Labels `2 -> 1`/);
-assert.match(manifest, /`4 -> 2`/);
-assert.match(manifest, /PWA timers `2 -> 1`/);
-assert.match(manifest, /Route deletions: `1`/);
+// System health is nested in the canonical public diagnostics response. The
+// module-level request is shared and deliberately has no persistent timer.
+assert.match(systemHealth, /\/api\/argus\/data-quality\/status/);
+assert.doesNotMatch(systemHealth, /\/api\/argus\/system-health|setInterval/);
+assert.match(command, /usePublicDiagnostics/);
+assert.match(diagnostics, /usePublicDiagnostics/);
 
-console.log('polling-singleton.test: ok (events 2→1, ledger 3→1, actions 2→1, quotes 4→2, PWA 2→1)');
+// Event list and status share one 15-second endpoint read.
+assert.match(activeEvents, /\/api\/argus\/events-active/);
+assert.doesNotMatch(activeEvents, /event-backbone-status|Promise\.all/);
+assert.equal((activeEvents.match(/fetch\(/g) ?? []).length, 1);
+
+// The protected asset store has one provider-owned persistence/sync lifecycle.
+assert.match(assetsStore, /function useAssetsStore/);
+assert.match(assetsStore, /export function AssetsProvider/);
+assert.match(pwa, /<AssetsProvider>/);
+
+// Holdings mounts one intelligence pipeline. Its children are prop-driven;
+// Fund NAV is acquired once inside that pipeline and Trade owns no quote loop.
+assert.equal((holdings.match(/useAssetIntel\(/g) ?? []).length, 1);
+assert.doesNotMatch(assetIntel, /useAssets\(/);
+assert.equal((assetIntel.match(/useFundNav\(/g) ?? []).length, 1);
+assert.equal((fundNav.match(/\/api\/argus\/fund-nav/g) ?? []).length, 1);
+for (const source of [assetDesk, portfolio]) {
+  assert.doesNotMatch(source, /useAssetIntel\(|useFundNav\(/);
+}
+assert.doesNotMatch(trades, /useJapanWatchlist|useUSWatchlist|setInterval/);
+assert.match(trades, /priceBySymbol/);
+
+console.log('polling-singleton.test: ok (assets/intel/NAV 1, Trade loops 0, event read 1, health timer 0)');

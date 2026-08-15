@@ -880,12 +880,6 @@ def test_build_event_dossier_orchestration(monkeypatch):
     assert "自動売買" in d["disclaimerJa"]
 
 
-def test_event_dossier_endpoint_http_semantics():
-    with scanner.app.test_client() as c:
-        assert c.get("/api/argus/event-dossier").status_code == 400          # missing eventId
-        assert c.get("/api/argus/event-dossier?eventId=nope").status_code == 404
-
-
 def test_notification_test_requires_admin():
     with scanner.app.test_client() as c:
         r = c.post("/api/argus/event-test-notify")           # no admin token

@@ -1,9 +1,9 @@
 """A.R.G.U.S. prediction ledger.
 
 Append-only JSON Lines store. Each line is a single PredictionEntry whose
-shape matches the TS PredictionEntry on the React frontend, so the
-/api/argus/calibration endpoint can return the aggregate directly with
-no shape conversion in between.
+shape matches the TS PredictionEntry on the React frontend, so retained
+calibration and background consumers can aggregate it without an additional
+shape conversion. The legacy public calibration read model is retired.
 
 Storage path is controlled by the ARGUS_LEDGER_PATH env var so a
 persistent disk (e.g. Render Disk mounted at /data) can be plugged in

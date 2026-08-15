@@ -50,21 +50,12 @@ assert.deepEqual(
 assert.deepEqual(navigation.parseLocationHash('#asset/5803/evidence'), {
   route: 'watchlist', asset: { symbol: '5803', section: 'evidence' },
 });
-assert.deepEqual(navigation.parseLocationHash('#positions'), {
-  route: 'watchlist', portfolioOpen: true,
-});
-assert.deepEqual(navigation.parseLocationHash('#quality'), {
-  route: 'settings', settingsSection: 'status',
-});
-assert.deepEqual(navigation.parseLocationHash('#backup'), {
-  route: 'settings', settingsSection: 'recovery',
-});
-assert.deepEqual(navigation.parseLocationHash('#guide:market'), {
-  route: 'settings', settingsSection: 'help',
-});
-assert.deepEqual(navigation.parseLocationHash('#review'), {
-  route: 'settings', settingsSection: 'help',
-});
+for (const retired of ['#assets', '#positions', '#quality', '#backup', '#guide',
+  '#guide:market', '#review', '#market']) {
+  assert.equal(navigation.parseLocationHash(retired), undefined);
+}
+assert.deepEqual(Object.keys(navigation.HASH_ROUTES).sort(),
+  ['#holdings', '#notifications', '#settings', '#today']);
 assert.equal(navigation.assetDetailHash(' nvda ', 'chart'), '#asset/NVDA/chart');
 
 assert.match(app, /<NotificationsPage/);
@@ -76,6 +67,7 @@ assert.match(app, /historyHashRef/);
 assert.match(app, /\.\.\.currentHistoryState\(\)/);
 assert.doesNotMatch(app, /from '\.\/routes\/(Guide|CorePortfolio|DataQualityPage|BackupPage)'/);
 assert.doesNotMatch(app, /AIReview|#review/);
+assert.doesNotMatch(app, /MarketRegime|#market/);
 assert.doesNotMatch(app, /useImportantEvents/);
 assert.doesNotMatch(command, /ImportantEventsCard/);
 assert.match(notifications, /<NotificationPanel \/>/);
@@ -94,7 +86,8 @@ assert.doesNotMatch(app, /useActionLabels/);
 assert.match(app, /#settings\/\$\{settingsSection\}/);
 
 // Expensive detail/support trees mount only after the owner opens them.
-assert.match(watchlist, /\{portfolioOpen && <CorePortfolio embedded \/>\}/);
+assert.match(watchlist, /\{portfolioOpen && <CorePortfolio assetsApi=\{assetsApi\}/);
+assert.equal((watchlist.match(/useAssetIntel\(/g) ?? []).length, 1);
 assert.match(watchlist, /setPortfolioOpen\(initialPortfolioOpen\)/);
 assert.doesNotMatch(watchlist, /if \(initialPortfolioOpen\) setPortfolioOpen/);
 assert.match(watchlist, /\{supportOpen && <div className="ad-support__body">/);
@@ -142,11 +135,11 @@ assert.match(backupCard, /完全バックアップJSONを書き出す/);
 assert.match(backupCard, /クラウドから復元/);
 assert.doesNotMatch(backupCard, /今すぐ送信|cloudBackupNow/);
 
-assert.match(deferredManifest, /Unreachable UI modules \(47\)/);
-assert.match(deferredManifest, /still deferred after B2b \(15\)/);
-assert.match(deferredManifest, /62 unreachable component\/route TSX/);
+assert.match(deferredManifest, /Round 1 deletion completed/);
+assert.match(deferredManifest, /66 TSX/);
+assert.match(deferredManifest, /159 TS\/TSX/);
 assert.doesNotMatch(deferredManifest, /- `web\/src\/components\/guide\/Layer2BSyncCard\.tsx`/);
-assert.match(deferredManifest, /No domain engine, polling hook, storage format/);
+assert.match(deferredManifest, /protected stores and background engines remain/);
 assert.doesNotMatch(locales, /Asset Deskで銘柄カード/);
 
 console.log('lean-surface.test: ok (4-nav, contextual detail, disclosure, recovery boundary)');

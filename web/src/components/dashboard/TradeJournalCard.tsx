@@ -1,14 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { readTrades, addTrade, closeTrade, removeTrade, tradePnlPct, type TradeEntry } from '../../lib/tradeJournal';
-import { useJapanWatchlist } from '../../hooks/useJapanWatchlist';
-import { useUSWatchlist } from '../../hooks/useUSWatchlist';
 import type { AssetItem } from '../../types/assetItem';
 
 // My Trade Journal card (v10.23): record YOUR own trades + the rationale, see
 // live P/L, and build the human side of the learning loop. Device-local;
 // protect newer records with a local JSON export. Born from the 9984 @6450 trade.
 
-export const TradeJournalCard: React.FC<{ assets: AssetItem[] }> = ({ assets }) => {
+export const TradeJournalCard: React.FC<{
+  assets: AssetItem[];
+  priceBySymbol: ReadonlyMap<string, number>;
+}> = ({ assets, priceBySymbol }) => {
   const [trades, setTrades] = useState<TradeEntry[]>(() => readTrades());
   const [open, setOpen] = useState(false);
   const [sym, setSym] = useState('');
@@ -17,17 +18,9 @@ export const TradeJournalCard: React.FC<{ assets: AssetItem[] }> = ({ assets }) 
   const [qty, setQty] = useState('');
   const [why, setWhy] = useState('');
 
-  // Live prices for open JP/US trades → unrealized P/L.
-  const jpSyms = useMemo(() => [...new Set(trades.filter((t) => t.market === 'JP' && t.status === 'open').map((t) => t.symbol))], [trades]);
-  const usSyms = useMemo(() => [...new Set(trades.filter((t) => t.market === 'US' && t.status === 'open').map((t) => t.symbol))], [trades]);
-  const jp = useJapanWatchlist(jpSyms);
-  const us = useUSWatchlist(usSyms);
-  const priceOf = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const s of jp.data?.stocks ?? []) if (s.status === 'live') m.set(s.symbol, s.price);
-    for (const s of us.data?.stocks ?? []) if (s.status === 'live') m.set(s.symbol, s.price);
-    return (t: TradeEntry) => m.get(t.symbol);
-  }, [jp.data, us.data]);
+  // Reuse Holdings' canonical quote map. A trade whose symbol is no longer in
+  // Holdings honestly shows no live P/L instead of starting another poll loop.
+  const priceOf = (trade: TradeEntry) => priceBySymbol.get(trade.symbol.toUpperCase());
 
   const refresh = () => setTrades(readTrades());
 

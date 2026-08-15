@@ -196,20 +196,6 @@ def test_translate_visible_drains_queue_first(monkeypatch):
     assert len(scanner._NEWS_JA_VQUEUE) == 0                   # pruned after translate
 
 
-def test_translation_status_includes_visible_queue(monkeypatch):
-    _forbid(monkeypatch)
-    _restore(monkeypatch)
-    NI.visible_queue_add(scanner._NEWS_JA_VQUEUE,
-                         [{"titleOriginal": "CPI runs hotter than expected", "source": "Reuters"}],
-                         scanner._NEWS_JA_CACHE, now_iso=scanner._ai_now_iso())
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/news/translation-status").get_json()
-    vq = d["visibleQueue"]
-    assert vq["queuedCount"] >= 1 and vq["durable"] is False
-    assert "visibleQueuedPct" in d["coverage"]
-    assert "pendingVisible" in d["samples"] and "translatedRecent" in d["samples"]
-
-
 # ── IONQ-like cause-attribution regression ───────────────────────────────────
 
 def test_cause_attribution_ionq_pending_then_translated(monkeypatch):
@@ -245,21 +231,3 @@ def test_cause_attribution_ionq_pending_then_translated(monkeypatch):
     n2 = [x for x in (d2.get("news") or []) if x.get("titleOriginal", "").startswith("IonQ shares soar")][0]
     assert n2["translationStatus"] == "translated"
     assert "アイオンキュー" in n2["displayTitleJa"]           # real JA replaces the fallback
-
-
-def test_no_forbidden_keys_and_no_bodies(monkeypatch):
-    _forbid(monkeypatch)
-    _restore(monkeypatch)
-    NI.visible_queue_add(scanner._NEWS_JA_VQUEUE, [{"titleOriginal": "Tesla cuts prices again", "source": "AP"}],
-                         scanner._NEWS_JA_CACHE, now_iso=scanner._ai_now_iso())
-    scanner._mc_explain_req_add("IONQ", "US", "cause-stack", scanner._ai_now_iso())
-    with scanner.app.test_client() as c:
-        for path in ("/api/argus/news/translation-status",):
-            blob = json.dumps(c.get(path).get_json(), ensure_ascii=False).lower()
-            for bad in ('"prompt":', '"messages":', '"rawproviderbody":', '"holdings":',
-                        '"apikey":', '"api_key":', '"pnl":', '"costbasis":'):
-                assert bad not in blob, f"{bad} in {path}"
-    # queue entries themselves carry only minimal, public-safe fields
-    for e in scanner._NEWS_JA_VQUEUE.values():
-        assert set(e) <= {"hash", "titleOriginal", "source", "publishedAt", "context",
-                          "symbol", "market", "queuedAt", "lastSeenAt"}

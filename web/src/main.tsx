@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
+import { AssetsProvider } from './hooks/useAssets';
 import './styles/theme.css';
 
 // ── PWA update reliability (v10.70) ─────────────────────────────────────────
@@ -142,6 +143,8 @@ window.setInterval(() => { pollPwaState().catch(() => {}); }, 60_000);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <AssetsProvider>
+      <App />
+    </AssetsProvider>
   </React.StrictMode>
 );

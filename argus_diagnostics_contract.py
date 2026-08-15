@@ -32,6 +32,8 @@ PUBLIC_LIVENESS = frozenset({"ok", "unavailable"})
 PUBLIC_READINESS = frozenset({"ready", "not_ready"})
 PUBLIC_OVERALL = frozenset({"ok", "degraded", "unavailable"})
 PUBLIC_FRESHNESS = frozenset({"fresh", "aging", "stale", "unknown", "mixed"})
+PUBLIC_HEALTH = frozenset({"ok", "warning", "stopped", "off"})
+PUBLIC_HEALTH_MAX_LAMPS = 32
 
 
 class DiagnosticsContractError(ValueError):
@@ -92,6 +94,12 @@ def _enum(value: Any, allowed: frozenset[str], default: str) -> str:
     return value if isinstance(value, str) and value in allowed else default
 
 
+def _bounded_text(value: Any, *, limit: int, default: str = "") -> str:
+    if not isinstance(value, str):
+        return default
+    return value[:limit]
+
+
 def serialized_size(value: Mapping[str, Any]) -> int:
     return len(json.dumps(value, ensure_ascii=False, sort_keys=True,
                           separators=(",", ":"), allow_nan=False).encode("utf-8"))
@@ -101,8 +109,25 @@ def build_public_diagnostics(
         *, generated_at: str, backend_version: Any, build_sha: Any,
         liveness: Any, readiness: Any, overall: Any,
         freshness_overall: Any, source_counts: Mapping[str, Any],
-        expected_disabled_count: Any) -> dict[str, Any]:
+        expected_disabled_count: Any,
+        system_health: Mapping[str, Any]) -> dict[str, Any]:
     """Build the exact recursive ``PublicDiagnosticsDTO v1`` allowlist."""
+    if not isinstance(system_health, Mapping):
+        raise DiagnosticsContractError("system_health_invalid")
+    raw_lamps = system_health.get("lamps")
+    if not isinstance(raw_lamps, list) or \
+            len(raw_lamps) > PUBLIC_HEALTH_MAX_LAMPS:
+        raise DiagnosticsContractError("system_health_lamps_invalid")
+    lamps = []
+    for raw_lamp in raw_lamps:
+        if not isinstance(raw_lamp, Mapping):
+            raise DiagnosticsContractError("system_health_lamp_invalid")
+        lamps.append({
+            "key": _bounded_text(raw_lamp.get("key"), limit=40),
+            "labelJa": _bounded_text(raw_lamp.get("labelJa"), limit=80),
+            "status": _enum(raw_lamp.get("status"), PUBLIC_HEALTH, "off"),
+            "detailJa": _bounded_text(raw_lamp.get("detailJa"), limit=240),
+        })
     result = {
         "schemaVersion": PUBLIC_SCHEMA,
         "generatedAt": _timestamp(generated_at),
@@ -123,6 +148,14 @@ def build_public_diagnostics(
                 "unknown": _count(source_counts.get("unknown", 0)),
             },
             "expectedDisabledCount": _count(expected_disabled_count),
+        },
+        "systemHealth": {
+            "asOf": _timestamp(system_health.get("asOf")),
+            "overall": _enum(
+                system_health.get("overall"), PUBLIC_HEALTH, "off"),
+            "lamps": lamps,
+            "noteJa": _bounded_text(
+                system_health.get("noteJa"), limit=400),
         },
         "recovery": {
             "mode": "LEGACY_ONLY",
@@ -154,6 +187,12 @@ def public_diagnostics_fallback(generated_at: str) -> dict[str, Any]:
                 "fresh": 0, "aging": 0, "stale": 0, "unknown": 0,
             },
             "expectedDisabledCount": 0,
+        },
+        "systemHealth": {
+            "asOf": _timestamp(generated_at),
+            "overall": "off",
+            "lamps": [],
+            "noteJa": "システム健全性を取得できませんでした。",
         },
         "recovery": {
             "mode": "LEGACY_ONLY",

@@ -238,8 +238,9 @@ check('Today removes FIRE and duplicate concentration card', !panel.includes('fi
 check('Today has required prediction graphic', panel.includes('at-proj-actual') && panel.includes('at-proj-base')
   && panel.includes('at-proj-up') && panel.includes('at-proj-down') && panel.includes('at-proj-inv')
   && panel.includes('at-proj-boundary'));
-check('forecast supports 1D 5D 20D and replay deep-link', panel.includes('([1, 5, 20] as const)')
-  && panel.includes('argus.replayContext') && panel.includes("onNavigate('regime')"));
+check('forecast supports 1D 5D 20D and expands evidence in Today', panel.includes('([1, 5, 20] as const)')
+  && panel.includes('onActivate={() => setDetail(true)}')
+  && !panel.includes('argus.replayContext') && !panel.includes("onNavigate('regime')"));
 check('mobile nav is the four-destination Lean v13 surface',
   nav.includes('PRIMARY_NAVIGATION.map') && !nav.includes('SYSTEM_NAVIGATION')
   && navigation.includes("mobileLabel: 'Today'")
@@ -250,7 +251,8 @@ check('mobile nav is the four-destination Lean v13 surface',
 check('actual line alone is white', css.includes('.at-proj-actual { fill:none; stroke:#fff')
   && css.includes('.at-proj-up { stroke:#22c55e') && css.includes('.at-proj-down { stroke:#ef4444'));
 check('market card renamed MACRO and VIX retained', panel.includes('title="MACRO"') && route.includes("addRate('vix'"));
-check('JP positioning deep-links to canonical ledger', panel.includes("argus.scrollTo', 'market-ledger'") && panel.includes("onNavigate('regime')"));
+check('JP positioning remains visible in Today without an engine deep-link', panel.includes('className="at-positioning"')
+  && !panel.includes("argus.scrollTo', 'market-ledger'") && !panel.includes("onNavigate('regime')"));
 check('zero-news state preserves card and last check', panel.includes('at-news-zero')
   && panel.includes('現在なし') && panel.includes('ニュース確認要') && panel.includes('最終確認'));
 check('seven action stages have seven distinct colors', [1,2,3,4,5,6,7].every((n) => css.includes(`nth-child(${n})`)));

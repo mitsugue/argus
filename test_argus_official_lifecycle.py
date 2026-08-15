@@ -118,8 +118,7 @@ def test_ingest_and_endpoints_are_store_only(monkeypatch):
 
 def test_evidence_pack_includes_official_event_refs():
     _ingest()
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/evidence-pack?symbol=8058&market=JP").get_json()
+    d = scanner._build_evidence_pack("8058", "JP")
     refs = d.get("officialEventRefs") or []
     assert refs and refs[0]["officialEventId"].startswith("oe-8058-")
     assert refs[0]["causeStatus"] == "probable_catalyst"

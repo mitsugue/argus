@@ -1,29 +1,8 @@
 import React from 'react';
-import { PageShell } from './PageShell';
 import { publishDataQuality } from '../lib/positionExposureShare';
-
-interface PublicDiagnostics {
-  schemaVersion: 'argus-public-diagnostics-v1';
-  generatedAt: string;
-  service: {
-    liveness: 'ok' | 'unavailable';
-    readiness: 'ready' | 'not_ready';
-    overall: 'ok' | 'degraded' | 'unavailable';
-    backendVersion: string;
-    buildSha: string | null;
-  };
-  freshness: {
-    overall: 'fresh' | 'aging' | 'stale' | 'unknown' | 'mixed';
-    sourceCounts: { fresh: number; aging: number; stale: number; unknown: number };
-    expectedDisabledCount: number;
-  };
-  recovery: {
-    mode: 'LEGACY_ONLY';
-    measurement: 'SHADOW_INCOMPLETE';
-    exactColdRecovery: 'NOT_PROVEN';
-    hardRpoClaimPermitted: false;
-  };
-}
+import {
+  usePublicDiagnostics, type PublicDiagnostics,
+} from '../hooks/useSystemHealth';
 
 const SERVICE_JA: Record<PublicDiagnostics['service']['overall'], string> = {
   ok: '稼働中',
@@ -40,45 +19,20 @@ const FRESHNESS_JA: Record<PublicDiagnostics['freshness']['overall'], string> = 
 };
 
 export const PublicDiagnosticsPanel: React.FC = () => {
-  const [diagnostics, setDiagnostics] = React.useState<PublicDiagnostics | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [failed, setFailed] = React.useState(false);
-  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
-
-  const load = React.useCallback(() => {
-    setLoading(true);
-    if (!backend) {
-      setFailed(true);
-      setLoading(false);
-      return;
-    }
-    fetch(backend.replace(/\/$/, '') + '/api/argus/data-quality/status')
-      .then((response) => {
-        if (!response.ok) throw new Error('public_diagnostics_unavailable');
-        return response.json() as Promise<PublicDiagnostics>;
-      })
-      .then((value) => {
-        if (value.schemaVersion !== 'argus-public-diagnostics-v1') {
-          throw new Error('public_diagnostics_schema_invalid');
-        }
-        setDiagnostics(value);
-        setFailed(false);
-        publishDataQuality({
-          overallStatus: value.service.overall,
-          overallStatusJa: SERVICE_JA[value.service.overall],
-          topIssuesJa: value.service.overall === 'ok' ? [] : [
-            `公開診断: ${SERVICE_JA[value.service.overall]} / 鮮度 ${FRESHNESS_JA[value.freshness.overall]}`,
-          ],
-          expectedDisabledJa: value.freshness.expectedDisabledCount
-            ? [`仕様上無効なソース ${value.freshness.expectedDisabledCount}件`]
-            : [],
-        });
-      })
-      .catch(() => setFailed(true))
-      .finally(() => setLoading(false));
-  }, [backend]);
-
-  React.useEffect(() => { load(); }, [load]);
+  const { diagnostics, loading, failed, refresh } = usePublicDiagnostics();
+  React.useEffect(() => {
+    if (!diagnostics) return;
+    publishDataQuality({
+      overallStatus: diagnostics.service.overall,
+      overallStatusJa: SERVICE_JA[diagnostics.service.overall],
+      topIssuesJa: diagnostics.service.overall === 'ok' ? [] : [
+        `公開診断: ${SERVICE_JA[diagnostics.service.overall]} / 鮮度 ${FRESHNESS_JA[diagnostics.freshness.overall]}`,
+      ],
+      expectedDisabledJa: diagnostics.freshness.expectedDisabledCount
+        ? [`仕様上無効なソース ${diagnostics.freshness.expectedDisabledCount}件`]
+        : [],
+    });
+  }, [diagnostics]);
 
   return (
     <section id="settings-status" aria-label="Data quality status">
@@ -86,7 +40,7 @@ export const PublicDiagnosticsPanel: React.FC = () => {
       {failed && !loading && (
         <div className="card cmd-alloc">
           <p className="cmd-alloc__note">公開診断を取得できません。再読込してください。</p>
-          <button type="button" onClick={load}>再読込</button>
+          <button type="button" onClick={() => void refresh()}>再読込</button>
         </div>
       )}
       {diagnostics && !loading && (
@@ -144,14 +98,3 @@ export const PublicDiagnosticsPanel: React.FC = () => {
     </section>
   );
 };
-
-export const DataQualityPage: React.FC = () => (
-  <PageShell
-    title="Data Quality"
-    subtitle="公開画面では固定スキーマの稼働・鮮度・復旧ステータスだけを表示します。詳細な運用診断はサーバー間認証された管理経路へ移動しました。"
-  >
-    <PublicDiagnosticsPanel />
-  </PageShell>
-);
-
-export default DataQualityPage;

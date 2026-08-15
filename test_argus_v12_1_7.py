@@ -211,7 +211,9 @@ def test_dq_shows_plan_readiness_benchmark():
 
 def test_fe_dq_shows_progress():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "argus-public-diagnostics-v1" in src
+    hook = _read("hooks", "useSystemHealth.ts")
+    assert "usePublicDiagnostics" in src
+    assert "argus-public-diagnostics-v1" in hook
     assert "calibrationPlan" not in src
     assert "twoXReadiness" not in src
 

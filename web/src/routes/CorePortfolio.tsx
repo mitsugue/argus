@@ -1,20 +1,12 @@
 import React, { useMemo } from 'react';
-import { PageShell } from './PageShell';
 import { AlertCard } from '../components/dashboard/AlertCard';
 import { useActionAlerts } from '../hooks/useActionAlerts';
-import { useAssets } from '../hooks/useAssets';
-import { useAssetIntel } from '../hooks/useAssetIntel';
+import type { UseAssets } from '../hooks/useAssets';
+import type { AssetIntel } from '../hooks/useAssetIntel';
 import { DecisionQualityCard } from '../components/dashboard/DecisionQualityCard';
 import { LearningDashboardCard } from '../components/dashboard/LearningDashboardCard';
-import { useFundNav } from '../hooks/useFundNav';
-import { useCatalysts } from '../hooks/useCatalysts';
 import { PortfolioExposureCard } from '../components/dashboard/PortfolioExposureCard';
 import { PortfolioDecisionOverview } from '../components/dashboard/PortfolioDecisionOverview';
-import { WhatIfPanel } from '../components/dashboard/WhatIfPanel';
-import type { QuoteLite } from '../lib/assetStrategy';
-import type { ActionLabel } from '../types/actionLabels';
-import type { CatalystItem } from '../types/catalysts';
-import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
 import { buildPortfolioDecisionOverview } from '../domain/portfolioDecisionView';
 import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
@@ -27,7 +19,7 @@ import { genreOf } from '../types/assetItem';
 import type { CorePosition } from '../types/dashboard';
 import { SignedValue } from '../components/common/SignedValue';
 import { getNumericTone, TONE_VAR } from '../lib/numericTone';
-import { useLocale, t, tEn } from '../i18n';
+import { useLocale, t } from '../i18n';
 import '../components/dashboard/Dashboard.css';
 
 // 資産クラス司令室 (command-center-v1, v10.13 — user-approved 案A):
@@ -40,65 +32,16 @@ import '../components/dashboard/Dashboard.css';
 
 const fmtJpy = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 
-export const CorePortfolio: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
+export const CorePortfolio: React.FC<{
+  assetsApi: UseAssets;
+  portfolioIntel: AssetIntel;
+}> = ({ assetsApi, portfolioIntel }) => {
   useLocale();   // re-render on locale switch
-  const { cards, posture, phase } = useActionAlerts();
-  const assetsApi = useAssets();
+  const { cards, posture } = useActionAlerts();
   const { assets } = assetsApi;
-  // Compute and publish the canonical device-local portfolio pipeline on this
-  // route. Direct navigation must not depend on Today having mounted first.
-  const portfolioIntel = useAssetIntel({ publish: true, assets });
-  const { funds: navFunds } = useFundNav();   // 投信 基準価額(NAV) follow
-  const rates = portfolioIntel.rates;
-  const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
-
-  const jp = portfolioIntel.jpQuotes;
-  const us = portfolioIntel.usQuotes;
-  const cryptoPairs = useMemo(
-    () => assets
-      .filter((a) => a.market === 'CRYPTO')
-      .map((a) => ({ symbol: a.symbol, id: coingeckoIdOf(a) }))
-      .filter((p) => p.id),
-    [assets],
-  );
-  const crypto = portfolioIntel.cryptoWatch;
+  const navFunds = portfolioIntel.fundNav.funds;
   const pe = portfolioIntel.positionExposure;
   const exp = pe.base;
-  // V12.2.12: What-if用のQuoteLite/ラベル/材料マップ(旧AssetStrategySectionの
-  // maps相当・計算不変)。数量/単価は端末内のみ。
-  const al = portfolioIntel.al;
-  const cat = useCatalysts();
-  const mountTs = useMemo(() => Date.now(), []);
-  const whatIfMaps = useMemo(() => {
-    const quotes = new Map<string, QuoteLite>();
-    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
-    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
-    for (const p of cryptoPairs) {
-      const q = crypto.byId[p.id];
-      if (q) quotes.set(p.symbol, { price: q.priceUsd, changePct: q.changePct, volume: q.volume, date: q.date, status: q.status });
-    }
-    const labels = new Map<string, ActionLabel>();
-    for (const l of al.data?.labels ?? []) labels.set(l.symbol, l);
-    const cats = new Map<string, CatalystItem>();
-    for (const c of cat.data?.items ?? []) cats.set(c.symbol, c);
-    // 投信(基準価額)もWhat-if候補に含める(旧実装のname寄せそのまま)
-    for (const a of assets) {
-      if (genreOf(a) !== 'funds') continue;
-      const sym = (a.symbol || '').toUpperCase();
-      const nm = `${a.displayName || ''} ${a.displayNameJa || ''}`.toLowerCase();
-      const want = (kw: string) => sym.includes(kw) || nm.includes(kw.toLowerCase());
-      for (const f of navFunds) {
-        const fn = (f.name || '').toLowerCase();
-        if ((fn.includes('全世界') && (want('ACWI') || nm.includes('全世界') || nm.includes('オルカン') || nm.includes('オール')))
-          || (fn.includes('s&p500') && (want('SP500') || want('S&P') || nm.includes('米国')))
-          || (fn.includes('国内') && (want('N225') || want('NIKKEI') || nm.includes('国内') || nm.includes('日経')))) {
-          quotes.set(a.symbol, { price: f.navYen, changePct: f.changePct ?? 0, volume: 0, date: f.date, status: 'live' });
-          break;
-        }
-      }
-    }
-    return { quotes, labels, cats };
-  }, [jp.data, us.data, crypto.byId, cryptoPairs, al.data, cat.data, assets, navFunds]);
   // 積立方針 — ユーザーの実ファンド + 姿勢連動アクション(Action Alertsと同一ロジック)。
   const funds: CorePosition[] = useMemo(() => {
     const act = coreActionFor(posture ?? undefined);
@@ -173,11 +116,8 @@ export const CorePortfolio: React.FC<{ embedded?: boolean }> = ({ embedded = fal
         </div>
       </section>
 
-      {/* V12.2.12: Portfolio Exposure + What-if(旧Watchlistから移設・計算不変)。
-          ポートフォリオ横断機能はこの領域に集約(銘柄詳細は個別判断専用)。 */}
+      {/* Portfolio exposure remains contextual inside Holdings. */}
       <PortfolioExposureCard assets={assets} exp={exp} />
-      <WhatIfPanel assets={assets} quotes={whatIfMaps.quotes} labels={whatIfMaps.labels}
-                   cats={whatIfMaps.cats} exp={exp} usdJpy={usdJpy} mountTs={mountTs} />
 
       {/* PORTFOLIO SCENARIO (v11.17.0) — 保有全体の条件付き分岐(端末内合成)。
           このrouteの正本フックから直接合成。単一予測・売買指示なし。 */}
@@ -450,18 +390,5 @@ export const CorePortfolio: React.FC<{ embedded?: boolean }> = ({ embedded = fal
     </>
   );
 
-  if (embedded) return <div className="cp-embedded">{content}</div>;
-  return (
-    <PageShell
-      title={tEn('nav.corePortfolio')}
-      subtitle={
-        <span>
-          資産クラス司令室 — 配分の現在地と、クラスごとの「いま取るべき構え」。
-          <span className="today-phase"> - {phase === 'connecting' ? 'connecting...' : phase}{posture ? ` · posture ${posture}` : ''}</span>
-        </span>
-      }
-    >
-      {content}
-    </PageShell>
-  );
+  return <div className="cp-embedded">{content}</div>;
 };

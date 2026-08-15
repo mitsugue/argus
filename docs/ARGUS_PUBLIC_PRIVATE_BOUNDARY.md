@@ -17,13 +17,21 @@ The current catalog contains four trust domains:
 - `RECOVERY_PROOF`: legacy proof transport recorded explicitly for later PR D.
   PR B does not promote or redesign recovery authority.
 
+After V13 Compression Round 1 the catalog is exactly 158 contracts:
+`PUBLIC=62`, `AUTH_OPERATIONAL=87`, `OWNER_SYNC=6`, and
+`RECOVERY_PROOF=3`. Round 1 removed 84 approved obsolete public GET contracts
+and the two public aliases absorbed by the status merges below. No
+authenticated operator, owner-sync, or recovery-proof contract was removed.
+
 ## Public diagnostics
 
 `GET /api/argus/data-quality/status` is the canonical route returning the
 closed `argus-public-diagnostics-v1` DTO. The former byte-identical
 `GET /api/argus/data-quality` compatibility alias is retired. `/healthz` and
-`/readyz` return separate minimal fixed DTOs. The public contract contains service identity,
-coarse freshness counts, and conservative recovery claims only:
+`/readyz` return separate minimal fixed DTOs. The public contract contains
+service identity, coarse freshness counts, the closed `systemHealth` lamp
+allowlist formerly served by `/api/argus/system-health`, and conservative
+recovery claims only:
 
 - `mode=LEGACY_ONLY`
 - `measurement=SHADOW_INCOMPLETE`
@@ -34,13 +42,11 @@ No runtime dictionary is copied into these DTOs. Unknown future fields are
 dropped by construction. Public builder failure returns a fixed content-free
 fallback. Public responses are capped at 8 KiB.
 
-The cached OSINT investigation and research-mission status APIs remain public
-product routes, but no longer copy their internal records. The former exposes
-an explicit verified-source/research-status projection and suppresses owner
-terms, unverified agent claims, raw model payloads, and private-mode detail.
-The latter exposes trigger/status scalars only and suppresses synthesis and
-owner relevance. A bounded hostile test requests every catalogued public GET
-and rejects any of eleven private-domain sentinel classes.
+The cached OSINT investigation API remains a public product route, but does
+not copy its internal record. It exposes an explicit verified-source/research
+status projection and suppresses owner terms, unverified agent claims, raw
+model payloads, and private-mode detail. A bounded hostile test requests every
+catalogued public GET and rejects private-domain sentinel classes.
 
 ## Operational diagnostics
 
@@ -76,18 +82,22 @@ its existing admin secret to verify operational truth before acting.
 Historical Guide entries describe the behavior of their named releases; this
 document and the route catalog are authoritative for the current boundary.
 
-The route catalog also pins repository browser consumers of selected public
-Action Label, JP/US quote, AI, integration, source, provider,
-market-depth/VWAP, visibility, source-coverage, runtime, Learning Memory,
-calibration, Decision Value, and event status DTOs.
-Some consumers are intentionally unmounted after
-B2a but remain catalogued until the deferred deletion review. Those public GETs
-read existing in-process caches only, including on cold-cache fallback. Live
-probes, private/remote-ledger restoration, and provider-cache refresh remain
-authenticated or background responsibilities. JP quote queries are state-free:
-they neither fetch J-Quants nor change the EC2 push target set. Dynamic JP
-realtime membership remains the existing authenticated OWNER_SYNC → private
+The route catalog pins the remaining browser cache-only consumers for Action
+Labels, AI judgment, canonical Data Quality, active events, JP/US quotes, and
+visibility. The workflow-facing Learning Memory snapshot is also cache-only
+and has a dedicated no-restore contract test. These public GETs read only
+existing process state, including on cold-cache fallback. Live probes,
+private/remote-ledger restoration, and provider-cache refresh remain
+authenticated or background responsibilities. `/events-active` now includes
+only the product-facing event-backbone fields needed by its browser hook;
+`/event-backbone-status` is retired. JP quote queries remain state-free and
+dynamic JP realtime membership remains the authenticated OWNER_SYNC → private
 Layer-2B → admin-gated bridge-code path.
+
+The exact obsolete GET set is pinned by
+`test_round1_retired_public_get_contracts_are_exactly_absent`. The similarly
+named authenticated POST at `/institutional-intelligence/missed` is retained;
+only its GET sibling was removed.
 
 ## Non-authority guarantee
 

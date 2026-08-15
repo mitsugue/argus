@@ -8,18 +8,9 @@ import scanner
 import argus_evidence_pack as EP
 
 
-# ── endpoint ─────────────────────────────────────────────────────────────────
-def test_evidence_pack_missing_symbol_is_400():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/evidence-pack")
-        r2 = c.get("/api/argus/evidence-pack?symbol=%20")
-    assert r.status_code == 400 and r.get_json()["error"] == "symbol_required"
-    assert r2.status_code == 400
-
-
+# ── internal evidence adapter ────────────────────────────────────────────────
 def test_evidence_pack_returns_v1_schema_with_empty_arrays():
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/evidence-pack?symbol=8058&market=JP").get_json()
+    d = scanner._build_evidence_pack("8058", "JP")
     assert d["schemaVersion"] == "evidence-pack-v1"
     assert d["evidencePackId"].startswith("ep-8058-")
     assert isinstance(d["eventCards"], list) and isinstance(d["caosLinks"], list)
@@ -27,9 +18,8 @@ def test_evidence_pack_returns_v1_schema_with_empty_arrays():
     assert set(d["allowedUse"]) == {"canGroundJudgment", "canConfirmCause", "canAffectTodayCall"}
 
 
-def test_evidence_pack_get_is_strictly_cached_only(monkeypatch):
-    """v11.2.1 hard gate: with EVERY fetch-capable function replaced by a raiser, the
-    public evidence-pack GET must still 200 using cached/empty data + cache markers."""
+def test_evidence_pack_builder_is_strictly_cached_only(monkeypatch):
+    """With every fetch-capable function replaced, the internal adapter stays cached-only."""
     def boom(*a, **k):
         raise AssertionError("FORBIDDEN call from public evidence-pack GET")
     for name in ("_jquants_tdnet_fetch", "_get_tdnet_yanoshin", "get_tdnet_recent",
@@ -40,11 +30,8 @@ def test_evidence_pack_get_is_strictly_cached_only(monkeypatch):
                  "_gh_private_get", "_learning_memory_restore_once",
                  "_official_events_restore_once"):
         monkeypatch.setattr(scanner, name, boom)
-    with scanner.app.test_client() as c:
-        r1 = c.get("/api/argus/evidence-pack?symbol=MU")
-        r2 = c.get("/api/argus/evidence-pack?symbol=8058&market=JP")
-    assert r1.status_code == 200 and r2.status_code == 200
-    d = r2.get_json()
+    scanner._build_evidence_pack("MU", "US")
+    d = scanner._build_evidence_pack("8058", "JP")
     assert d["schemaVersion"] == "evidence-pack-v1"
     # cold caches must be stated honestly, not silently fetched
     markers = {m for m in d["missingConfirmations"] if m.startswith("cache:")}
@@ -54,38 +41,8 @@ def test_evidence_pack_get_is_strictly_cached_only(monkeypatch):
         assert k in d, k
 
 
-def test_decision_spine_status_shape():
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/decision-spine/status").get_json()
-    assert d["schemaVersion"] == "decision-spine-v1"
-    ep = d["evidencePack"]
-    assert ep["endpointAvailable"] is True and ep["publicReadCachedOnly"] is True
-    assert set(d["safety"].values()) == {True}
-    assert "actionLabels" in d and "aiJudgment" in d
-    assert isinstance(d["limitationsJa"], list)
-
-
-def test_decision_spine_status_does_not_acquire_action_labels(monkeypatch):
-    def boom(*_args, **_kwargs):
-        raise AssertionError("status attempted live action-label acquisition")
-
-    monkeypatch.setattr(scanner, "get_action_labels", boom)
-    with scanner.app.test_client() as client:
-        response = client.get("/api/argus/decision-spine/status")
-    assert response.status_code == 200
-    assert response.get_json()["safety"]["publicFetchBlocked"] is True
-
-
-def test_decision_spine_status_no_secrets():
-    with scanner.app.test_client() as c:
-        blob = json.dumps(c.get("/api/argus/decision-spine/status").get_json()).lower()
-    for bad in ("apikey", "x-api-key", "subscription-key", "netr", "holdings", "costbasis"):
-        assert bad not in blob, bad
-
-
 def test_evidence_pack_no_secret_material():
-    with scanner.app.test_client() as c:
-        blob = json.dumps(c.get("/api/argus/evidence-pack?symbol=8058&market=JP").get_json()).lower()
+    blob = json.dumps(scanner._build_evidence_pack("8058", "JP")).lower()
     for bad in ("apikey", "api_key", "x-api-key", "token=", "costbasis", "netr", "holdings"):
         assert bad not in blob, bad
 

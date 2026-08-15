@@ -18,27 +18,6 @@ def _forbid(monkeypatch):
             monkeypatch.setattr(scanner, name, boom)
 
 
-def test_result_status_includes_all_codes(monkeypatch):
-    _forbid(monkeypatch)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/macro-events/result-status").get_json()
-    assert d["schemaVersion"] == "macro-result-status-v1"
-    codes = {s["eventCode"]: s for s in d["sources"]}
-    for code in ("NFP", "CPI", "PPI", "FOMC", "PCE", "GDP", "JOLTS", "BOJ", "TREASURY_AUCTION"):
-        assert code in codes, code
-        assert codes[code]["status"] in ("live", "partial", "not_implemented", "unavailable",
-                                         "parse_error", "source_unreachable", "not_run", "rate_limited")
-        assert "metricsAvailable" in codes[code]
-    assert codes["BOJ"]["status"] == "partial"
-    assert codes["TREASURY_AUCTION"]["status"] == "not_implemented"
-
-
-def test_result_status_public_no_provider(monkeypatch):
-    _forbid(monkeypatch)
-    with scanner.app.test_client() as c:
-        assert c.get("/api/argus/macro-events/result-status").status_code == 200
-
-
 def test_refresh_market_reaction_requires_token():
     with scanner.app.test_client() as c:
         assert c.post("/api/argus/admin/macro-event-analysis/refresh-market-reaction").status_code in (401, 503)
@@ -47,15 +26,6 @@ def test_refresh_market_reaction_requires_token():
 def test_news_translate_requires_token():
     with scanner.app.test_client() as c:
         assert c.post("/api/argus/admin/news/translate").status_code in (401, 503)
-
-
-def test_translation_status_public_no_llm(monkeypatch):
-    _forbid(monkeypatch)
-    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/news/translation-status").get_json()
-    assert d["schemaVersion"] == "news-translation-status-v1"
-    assert isinstance(d["cachedCount"], int)
 
 
 def test_headline_ja_cached_only(monkeypatch):
@@ -111,14 +81,3 @@ def test_dashboard_reaction_numeric_when_present(monkeypatch):
     assert cpi["caos"]["marketReactionJa"]                       # summary flows through
     # event-specific impact fallback (CPI cool → 支援)
     assert "支援" in cpi["caos"]["impactCommentJa"] or "限定的" in cpi["caos"]["impactCommentJa"]
-
-
-def test_no_forbidden_keys(monkeypatch):
-    _forbid(monkeypatch)
-    with scanner.app.test_client() as c:
-        for path in ("/api/argus/dashboard-events", "/api/argus/macro-events/result-status",
-                     "/api/argus/news/translation-status"):
-            blob = json.dumps(c.get(path).get_json(), ensure_ascii=False).lower()
-            for bad in ('"prompt":', '"messages":', '"rawproviderbody":', '"holdings":',
-                        '"apikey":', '"api_key":'):
-                assert bad not in blob, f"{bad} in {path}"

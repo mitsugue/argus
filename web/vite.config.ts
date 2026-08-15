@@ -48,7 +48,7 @@ export default defineConfig({
       // Provide the virtual:pwa-register module in dev too, so `vite dev` (preview)
       // doesn't fail to resolve it. Zero production impact (build already emits it).
       devOptions: { enabled: true },
-      includeAssets: ['favicon.svg', 'countries.geojson'],
+      includeAssets: ['favicon.svg'],
       manifest: {
         name: 'A.R.G.U.S.',
         short_name: 'ARGUS',
@@ -115,22 +115,7 @@ export default defineConfig({
     }),
   ],
   resolve: {
-    dedupe: ['three', 'react', 'react-dom'],
-  },
-  optimizeDeps: {
-    include: ['three'],
-  },
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          three: ['three'],
-          globe: ['react-globe.gl'],
-          motion: ['framer-motion'],
-          rnd: ['react-rnd'],
-        },
-      },
-    },
+    dedupe: ['react', 'react-dom'],
   },
   server: {
     host: '127.0.0.1',

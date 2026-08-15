@@ -36,23 +36,18 @@ def _forbid_fetches(monkeypatch):
             monkeypatch.setattr(scanner, name, boom)
 
 
-def test_learning_memory_route_schema(monkeypatch):
+def test_learning_memory_materialized_document_schema(monkeypatch):
     _seed(monkeypatch)
-    _forbid_fetches(monkeypatch)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/learning-memory").get_json()
+    d = scanner._learning_memory_status_doc_cached_only()
     assert d["schemaVersion"] == "learning-memory-v1"
     assert isinstance(d["lessons"], list) and isinstance(d["cohorts"], dict)
     assert "capsAndHints" in d and "limitationsJa" in d
 
 
-def test_status_route_counts(monkeypatch):
+def test_materialized_document_counts(monkeypatch):
     _seed(monkeypatch)
-    _forbid_fetches(monkeypatch)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/learning-memory/status").get_json()
-    assert d["schemaVersion"] == "learning-memory-status-v1"
-    assert d["status"] in ("ready", "not_ready", "building", "stale", "error")
+    d = scanner._learning_memory_status_doc_cached_only()
+    assert d["schemaVersion"] == "learning-memory-v1"
     assert d["sampleStage"] in ("none", "burn_in", "early_signal", "usable", "mature")
     for k in ("lessons", "usableLessons", "officialEventSamples", "macroEventSamples",
               "moverCauseSamples", "decisionValueSamples", "calibrationSamples"):
@@ -69,17 +64,13 @@ def test_public_gets_never_fetch_or_call_llm(monkeypatch):
     _seed(monkeypatch)
     _forbid_fetches(monkeypatch)
     with scanner.app.test_client() as c:
-        assert c.get("/api/argus/learning-memory").status_code == 200
-        assert c.get("/api/argus/learning-memory/status").status_code == 200
         assert c.get("/api/argus/learning-memory/snapshot").status_code == 200
-        assert c.get("/api/argus/evidence-pack?symbol=5801&market=JP").status_code == 200
 
 
 def test_evidence_pack_includes_learning_memory(monkeypatch):
     _seed(monkeypatch)
     _forbid_fetches(monkeypatch)
-    with scanner.app.test_client() as c:
-        ep = c.get("/api/argus/evidence-pack?symbol=5801&market=JP").get_json()
+    ep = scanner._build_evidence_pack("5801", "JP")
     lm = ep.get("learningMemory")
     assert lm and lm["schemaVersion"] == "learning-memory-compact-v1"
     assert lm["cautionOnly"] is True
@@ -99,11 +90,10 @@ def test_snapshot_has_no_forbidden_keys(monkeypatch):
 
 
 def test_burn_in_stage_does_not_overclaim(monkeypatch):
-    # tiny sample must report burn_in — never mature — even though route works.
+    # Tiny sample must remain burn_in — never mature.
     _seed(monkeypatch, obs=[{"cohortType": "macroEventCode", "cohortKey": "NFP", "outcome": "hit"}
                             for _ in range(4)])
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/learning-memory/status").get_json()
+    d = scanner._learning_memory_status_doc_cached_only()
     assert d["sampleStage"] == "burn_in"
 
 

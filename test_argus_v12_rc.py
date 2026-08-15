@@ -21,29 +21,16 @@ WEB = os.path.join(os.path.dirname(__file__), "web", "src")
 PUBLIC_GETS = [
     "/api/argus/bridge/status",
     "/api/argus/data-quality/status",
-    "/api/argus/review-pack/status", "/api/argus/fire-core/status",
-    "/api/argus/portfolio-strategy/status",
-    "/api/argus/position-plans", "/api/argus/position-plans/status",
-    "/api/argus/scenarios", "/api/argus/scenarios/status",
-    "/api/argus/backup-safety/status", "/api/argus/learning-review/status",
-    "/api/argus/notifications/status", "/api/argus/session-brief/status",
-    "/api/argus/action-priority", "/api/argus/action-priority/status",
-    "/api/argus/supply-demand/status", "/api/argus/decision-quality/status",
-    "/api/argus/position-exposure/status", "/api/argus/flow-attribution/status",
-    "/api/argus/institutional-intel/status", "/api/argus/pro-handoff",
+    "/api/argus/pro-handoff",
     # v12.0.7 (監査P1-4): データ本体ルートを追加 — v12.0.6で改修した2本+主要データ系。
     # ここに載せる条件: 公開GET・cached-only(networkを叩かない)・200を返す。
     "/api/argus/supply-demand",
     "/api/argus/supply-demand?symbols=6965,7011",
     "/api/argus/events/7011/institutional-intelligence",
     "/api/argus/flow-attribution",
-    "/api/argus/session-brief",
     "/api/argus/price-history?symbol=NVDA&market=US",
-    "/api/argus/runtime-manifest",
-    "/api/argus/institutional-intelligence/missed",
     # v12.1.0: OSINTエンジンの公開GET(cached-only・redacted設計)
     "/api/argus/osint/investigation?symbol=6965",
-    "/api/argus/osint/canary",
 ]
 
 EXEC_WORDS = ("今すぐ買", "今すぐ売", "buy now", "sell now", "place order",
@@ -144,8 +131,10 @@ def test_mobile_nav_reaches_backup_and_data_quality():
     assert "<Settings settingsSection=" in app
     settings = open(os.path.join(WEB, "routes", "Settings.tsx"), encoding="utf-8").read()
     assert "PublicDiagnosticsPanel" in settings and "BackupSettingsPanel" in settings
-    assert "#backup" in navigation and "settingsSection: 'recovery'" in navigation
-    assert "#quality" in navigation and "settingsSection: 'status'" in navigation
+    assert "#settings/" in navigation and "settingsSection" in navigation
+    # Round 1 removed old global hashes; status/recovery are contextual Settings sections.
+    for retired in ("#backup", "#quality", "#assets", "#positions", "#guide", "#review", "#market"):
+        assert retired not in navigation
 
 
 def test_backend_landing_is_clearly_not_the_app(monkeypatch):

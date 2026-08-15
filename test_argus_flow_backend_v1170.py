@@ -34,22 +34,6 @@ def test_flow_attribution_single_symbol(monkeypatch):
         assert "断定" in rec["complianceNote"]
 
 
-def test_flow_attribution_list_and_status(monkeypatch):
-    _no_fetch(monkeypatch)
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/flow-attribution")
-        assert r.status_code == 200
-        d = r.get_json()
-        assert "records" in d and d["disclaimerJa"]
-        r2 = c.get("/api/argus/flow-attribution/status")
-        assert r2.status_code == 200
-        st = r2.get_json()
-        assert st["schemaVersion"] == "flow-attribution-status-v1"
-        # JP moomoo flow off is INTENTIONAL, reported as availability not error
-        assert st["sourceAvailability"]["flow_jp_bridge"] is False
-        assert "意図的に無効" in st["noteJa"]
-
-
 def test_flow_with_pushed_quote_classifies(monkeypatch):
     _no_fetch(monkeypatch)
     scanner._PUSHED_QUOTES.setdefault("US", {})["FLOWTEST"] = {
