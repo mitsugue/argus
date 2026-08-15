@@ -1,5 +1,4 @@
 import { useMemo, useSyncExternalStore } from 'react';
-import { useAssets } from './useAssets';
 import { useAIJudgment } from './useAIJudgment';
 import { useActionLabels } from './useActionLabels';
 import { useCryptoWatchlist } from './useCryptoWatchlist';
@@ -12,6 +11,7 @@ import { useImportantEvents } from './useImportantEvents';
 import { useRatesSnapshot } from './useRatesSnapshot';
 import { useJapanWatchlist } from './useJapanWatchlist';
 import { useUSWatchlist } from './useUSWatchlist';
+import { fundNavForAsset, useFundNav } from './useFundNav';
 import { useFlowAttributionList } from './useFlowAttribution';
 import { useSupplyDemandList } from './useSupplyDemand';
 import { useMarketLedger } from './useMarketLedger';
@@ -36,6 +36,7 @@ import {
   type LocalFireCore,
 } from '../lib/fireCore';
 import { deriveTodayJudgment, combinePhase, type TodayPhase } from '../lib/todayCall';
+import type { AssetItem } from '../types/assetItem';
 
 // ── V12.2.12: Asset Intelligence(TodayとAsset Deskの共有データ組み立て) ──────
 //
@@ -50,7 +51,7 @@ import { deriveTodayJudgment, combinePhase, type TodayPhase } from '../lib/today
 // この層は新しい投資判断を生成しない — 既存レイヤーの出力の組み立てのみ。
 
 export interface AssetIntel {
-  assets: ReturnType<typeof useAssets>['assets'];
+  assets: AssetItem[];
   aiJ: ReturnType<typeof useAIJudgment>;
   al: ReturnType<typeof useActionLabels>;
   guard: ReturnType<typeof useVisibilityGuard>;
@@ -63,6 +64,9 @@ export interface AssetIntel {
   jpQuotes: ReturnType<typeof useJapanWatchlist>;
   usQuotes: ReturnType<typeof useUSWatchlist>;
   cryptoWatch: ReturnType<typeof useCryptoWatchlist>;
+  fundNav: ReturnType<typeof useFundNav>;
+  /** Canonical live/EOD price map shared with contextual owner tools. */
+  priceBySymbol: ReadonlyMap<string, number>;
   flowRecords: ReturnType<typeof useFlowAttributionList>['records'];
   sdSignals: ReturnType<typeof useSupplyDemandList>['signals'];
   cardGroups: ReturnType<typeof groupAssetCards>;
@@ -91,12 +95,11 @@ export interface AssetIntel {
 
 export function useAssetIntel(opts: {
   publish: boolean;
-  /** A page that owns holding edits can supply its live device-local asset state. */
-  assets?: ReturnType<typeof useAssets>['assets'];
+  /** The single AssetsProvider supplies the live protected asset state. */
+  assets: AssetItem[];
 }): AssetIntel {
   const publish = opts.publish;
-  const localAssets = useAssets();
-  const assets = opts.assets ?? localAssets.assets;
+  const assets = opts.assets;
   const fireCoreMetaRevision = useSyncExternalStore(
     subscribeFireCoreMeta,
     fireCoreMetaSnapshot,
@@ -179,14 +182,34 @@ export function useAssetIntel(opts: {
   // the same real quote hooks Core Portfolio uses (delayed close = real data).
   const peJp = useJapanWatchlist(jpSyms);
   const peUs = useUSWatchlist(usSyms);
-  const positionExposure = useMemo(() => {
-    const priceMap = new Map<string, number>();
-    const okSt = (st?: string) => st != null && st !== 'mock';
-    for (const s of peJp.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
-    for (const s of peUs.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
-    for (const c of [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]) {
-      if (c.price != null && Number.isFinite(c.price)) priceMap.set(c.symbol.toUpperCase(), c.price);
+  const fundNav = useFundNav();
+  const priceBySymbol = useMemo(() => {
+    const prices = new Map<string, number>();
+    const usable = (status?: string) => status != null && status !== 'mock';
+    for (const quote of peJp.data?.stocks ?? []) {
+      if (usable(quote.status) && Number.isFinite(quote.price)) {
+        prices.set(quote.symbol.toUpperCase(), quote.price);
+      }
     }
+    for (const quote of peUs.data?.stocks ?? []) {
+      if (usable(quote.status) && Number.isFinite(quote.price)) {
+        prices.set(quote.symbol.toUpperCase(), quote.price);
+      }
+    }
+    for (const card of [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]) {
+      if (card.price != null && Number.isFinite(card.price)) {
+        prices.set(card.symbol.toUpperCase(), card.price);
+      }
+    }
+    for (const asset of assets) {
+      const fund = fundNavForAsset(asset, fundNav.funds);
+      if (fund && Number.isFinite(fund.navYen)) {
+        prices.set(asset.symbol.toUpperCase(), fund.navYen);
+      }
+    }
+    return prices;
+  }, [assets, cardGroups, fundNav.funds, peJp.data, peUs.data]);
+  const positionExposure = useMemo(() => {
     const flowBySymbol: Record<string, string> = {};
     for (const r of flowRecords) flowBySymbol[r.symbol.toUpperCase()] = r.flowClass;
     const eventSymbols = new Set<string>();
@@ -200,14 +223,14 @@ export function useAssetIntel(opts: {
     for (const s of sdSignals) sdRankBySymbol[s.symbol.toUpperCase()] = s.supplyDemandRank;
     const pe = buildPositionExposure(
       assets,
-      (a) => priceMap.get(a.symbol.toUpperCase()),
+      (a) => priceBySymbol.get(a.symbol.toUpperCase()),
       rates.data?.usdJpy?.latestValue ?? null,
       { regimeLabel: regLabel, riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
         flowBySymbol, eventSymbols, sdRankBySymbol },
     );
     if (publish) publishExposure(pe);   // Pro Handoff / AI Review read this at copy time (device-local)
     return pe;
-  }, [assets, cardGroups, rates.data, flowRecords, sdSignals, impEvents, regime.data, peJp.data, peUs.data, publish]);
+  }, [assets, rates.data, flowRecords, sdSignals, impEvents, regime.data, priceBySymbol, publish]);
 
   // v11.12.0: ACTION PRIORITY — 全レイヤーを「今日これを見る」に統合(端末内・保有加味)。
   const apItems: APItem[] = useMemo(() => {
@@ -529,7 +552,7 @@ export function useAssetIntel(opts: {
 
   return {
     assets, aiJ, al, guard, regime, downside, events247, impEvents, rates,
-    jpQuotes: peJp, usQuotes: peUs, cryptoWatch: cw,
+    jpQuotes: peJp, usQuotes: peUs, cryptoWatch: cw, fundNav, priceBySymbol,
     flowRecords, sdSignals,
     cardGroups, cardBySym, ownerCritical,
     positionExposure, apItems, sessionBrief, scenarioSets,

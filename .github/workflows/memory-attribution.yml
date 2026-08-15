@@ -9,6 +9,9 @@ on:
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
+      - "argus_recovery_measurement.py"
+      - "argus_recovery_measurement_storage.py"
+      - "argus_recovery_phase_a_adapter.py"
       - "argus_remote_journal.py"
       - "argus_remote_nonce_anchor.py"
       - "argus_remote_recovery.py"
@@ -21,10 +24,15 @@ on:
       - "scripts/memory_attribution_probe.py"
       - "scripts/normalized_hash_resource_probe.py"
       - "scripts/remote_recovery_resource_probe.py"
+      - "scripts/recovery_measurement_benchmark.py"
+      - "scripts/recovery_measurement_retention_benchmark.py"
       - "test_argus_memory_attribution.py"
       - "test_argus_normalized_hash.py"
       - "test_argus_asset_chart_cache.py"
       - "test_argus_verified_snapshot.py"
+      - "test_argus_recovery_measurement.py"
+      - "test_argus_recovery_measurement_storage.py"
+      - "test_argus_recovery_phase_a_adapter.py"
       # Remote Journal recurrence changes must receive fresh exact-head
       # normalized-hash, contributor #2 and exact-4-GiB regression evidence.
       - ".github/workflows/caos-watchtower.yml"
@@ -246,6 +254,110 @@ jobs:
         with:
           name: encrypted-recovery-resource-proof-${{ github.sha }}
           path: artifacts/encrypted-recovery-resource-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-recovery-measurement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Measurement accounting and retention in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'set -u
+              test "$(cat /sys/fs/cgroup/memory.max)" = "4294967296"
+              test "$(cat /sys/fs/cgroup/memory.swap.max)" = "0"
+              cp /sys/fs/cgroup/memory.events artifacts/round1-memory-events-before.txt
+              pip install --quiet -r requirements.txt pytest
+              workload_status=0
+              python3 -B -m pytest -q \
+                test_argus_recovery_registry.py \
+                test_argus_recovery_measurement.py \
+                test_argus_recovery_measurement_storage.py \
+                test_argus_recovery_phase_a_adapter.py || workload_status=$?
+              python3 -B scripts/recovery_measurement_benchmark.py \
+                > artifacts/recovery-measurement-benchmark.json || workload_status=$?
+              python3 -B scripts/recovery_measurement_retention_benchmark.py \
+                > artifacts/recovery-measurement-retention-benchmark.json || workload_status=$?
+              cp /sys/fs/cgroup/memory.current artifacts/round1-memory-current.txt
+              cp /sys/fs/cgroup/memory.peak artifacts/round1-memory-peak.txt
+              cp /sys/fs/cgroup/memory.max artifacts/round1-memory-max.txt
+              cp /sys/fs/cgroup/memory.swap.max artifacts/round1-memory-swap-max.txt
+              cp /sys/fs/cgroup/memory.events artifacts/round1-memory-events-after.txt
+              printf "%s\n" "$workload_status" \
+                > artifacts/round1-workload-exit-code.txt
+              exit "$workload_status"'
+      - name: Exact-cgroup and benchmark terminal gates
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json
+          import pathlib
+
+          root = pathlib.Path("artifacts")
+          accounting = json.loads((
+              root / "recovery-measurement-benchmark.json").read_text())
+          retention = json.loads((
+              root / "recovery-measurement-retention-benchmark.json").read_text())
+
+          def scalar(name):
+              return int((root / name).read_text().strip())
+
+          def events(name):
+              return {
+                  key: int(value)
+                  for key, value in (
+                      line.split() for line in (
+                          root / name).read_text().splitlines())
+              }
+
+          before = events("round1-memory-events-before.txt")
+          after = events("round1-memory-events-after.txt")
+          report = {
+              "schemaVersion": "argus-round1-recovery-measurement-cgroup-v1",
+              "memoryMaxBytes": scalar("round1-memory-max.txt"),
+              "swapMaxBytes": scalar("round1-memory-swap-max.txt"),
+              "memoryCurrentBytes": scalar("round1-memory-current.txt"),
+              "memoryPeakBytes": scalar("round1-memory-peak.txt"),
+              "workloadExitCode": scalar("round1-workload-exit-code.txt"),
+              "oomDelta": after.get("oom", 0) - before.get("oom", 0),
+              "oomKillDelta": (
+                  after.get("oom_kill", 0) - before.get("oom_kill", 0)),
+              "accountingPassed": accounting.get("passed") is True,
+              "retentionPassed": retention.get("passed") is True,
+          }
+          report["passed"] = all((
+              report["memoryMaxBytes"] == 4 * 1024 ** 3,
+              report["swapMaxBytes"] == 0,
+              report["memoryPeakBytes"] < report["memoryMaxBytes"],
+              report["workloadExitCode"] == 0,
+              report["oomDelta"] == 0,
+              report["oomKillDelta"] == 0,
+              report["accountingPassed"],
+              report["retentionPassed"],
+          ))
+          (root / "round1-recovery-measurement-cgroup.json").write_text(
+              json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n")
+          assert report["passed"] is True, report
+          PY
+      - name: Publish Round 1 measurement resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round1-recovery-measurement-proof-${{ github.sha }}
+          path: |
+            artifacts/recovery-measurement-benchmark.json
+            artifacts/recovery-measurement-retention-benchmark.json
+            artifacts/round1-recovery-measurement-cgroup.json
           if-no-files-found: error
           retention-days: 14
 

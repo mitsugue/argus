@@ -262,7 +262,9 @@ def test_fe_superiority_and_progress_ui():
 
 def test_fe_dq_superiority_fields():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "argus-public-diagnostics-v1" in src
+    hook = _read("hooks", "useSystemHealth.ts")
+    assert "usePublicDiagnostics" in src
+    assert "argus-public-diagnostics-v1" in hook
     for needle in ("Gemini超過", "未回収Gemini-only合計",
                    "benchmarkWarnJa"):
         assert needle not in src, needle

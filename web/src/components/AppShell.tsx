@@ -57,7 +57,8 @@ function formatLastUpdated(d: Date): string {
 // Slim header (brand + status + last-updated) on top,
 // sidebar + main below. No clock, no UPLINK MOCK, no crosshairs.
 export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, overscrollNext, overscrollPrev, pageKey, pageDirection = 1, marketStatusLabel }) => {
-  // System-health beacon on the brand: one poll shared by the dot + popover.
+  // System-health beacon on the brand: one canonical diagnostics snapshot is
+  // shared by the dot + popover, with no persistent health polling loop.
   const health = useSystemHealth();
   const backendIdentity = useProductionBackendIdentity();
   const versionLabel = runtimeVersionLabel(__APP_VERSION__, backendIdentity);

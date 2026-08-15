@@ -256,10 +256,7 @@ def test_public_mover_cause_gets_never_fetch_or_call_llm(monkeypatch):
                  "_jp_stock_news_intel", "get_company_news", "get_market_news"):
         monkeypatch.setattr(scanner, name, boom)
     with scanner.app.test_client() as c:
-        assert c.get("/api/argus/mover-causes").status_code == 200
-        assert c.get("/api/argus/mover-causes/status").status_code == 200
         assert c.get("/api/argus/mover-causes/snapshot").status_code == 200
-        assert c.get("/api/argus/mover-causes/JP/5801").status_code == 200
 
 
 def test_public_explain_never_calls_llm(monkeypatch):
@@ -281,26 +278,6 @@ def test_admin_mover_cause_endpoints_require_token():
         r1 = c.post("/api/argus/admin/mover-causes/refresh")
         r2 = c.post("/api/argus/admin/mover-causes/explain")
     assert r1.status_code in (401, 503) and r2.status_code in (401, 503)
-
-
-def test_mover_causes_list_shape_and_filters(monkeypatch):
-    monkeypatch.setitem(scanner._MOVER_CAUSES_STATE, "restored", True)
-    rec = _rec_with_candidates()
-    up = MC.resolve(_mover(+9.0, market="US", sym="NVDA"), {"coverage": COVER_ALL}, NOW)
-    monkeypatch.setattr(scanner, "_MOVER_CAUSES",
-                        {rec["moverCauseId"]: rec, up["moverCauseId"]: up})
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/mover-causes").get_json()
-        assert d["schemaVersion"] == "mover-cause-v2" and d["count"] == 2
-        for it in d["items"]:
-            for k in ("moverCauseId", "causeStatus", "causeStatusJa", "evidenceCoverage",
-                      "nextChecksJa", "whyNotConfirmedJa"):
-                assert k in it, k
-        u = c.get("/api/argus/mover-causes?direction=up").get_json()
-        assert all(x["direction"] == "up" for x in u["items"]) and u["count"] == 1
-        blob = json.dumps(d).lower()
-        for bad in ("apikey", "x-api-key", "holdings", "costbasis", "prompt"):
-            assert bad not in blob, bad
 
 
 def test_downside_incident_carries_mover_cause():

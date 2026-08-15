@@ -37,8 +37,10 @@ check('market score excludes holder risk overlay',
   && !command.includes('ownerPolicyLimit:'));
 check('canonical event review lives once on Notifications',
   !command.includes('<ImportantEventsCard')
-  && notifications.includes('<ImportantEventsCard onNavigate={onNavigate} />')
-  && today.includes("onNavigate('notifications')"));
+  && notifications.includes('<ImportantEventsCard />')
+  && today.includes("onNavigate('notifications')")
+  && events.includes('setShowAll') && events.includes('is-expanded')
+  && eventCss.includes('.ie-card:not(.is-expanded)'));
 check('Today market view does not render portfolio-wide commands',
   !today.includes('保有確認') && !today.includes('新規 <b>')
   && !today.includes('買増 <b>') && !today.includes('保有 <b>'));

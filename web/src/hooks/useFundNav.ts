@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { AssetItem } from '../types/assetItem';
 
 // 投信(基準価額) follow (v10.60) — daily NAV + 前日比 for JP mutual funds by
 // 協会コード, from the 投信総合ライブラリー (free). Twelve Data does NOT cover
@@ -10,6 +11,26 @@ export interface FundNav {
   changePct: number | null;
   date: string;
   status: string;
+}
+
+/** Deterministic catalog match shared by Holdings, exposure, and FIRE views. */
+export function fundNavForAsset(asset: AssetItem, funds: FundNav[]): FundNav | null {
+  const symbol = asset.symbol.toUpperCase();
+  const name = `${asset.displayName || ''} ${asset.displayNameJa || ''}`.toLowerCase();
+  const matches = (keyword: string) =>
+    symbol.includes(keyword) || name.includes(keyword.toLowerCase());
+  for (const fund of funds) {
+    const fundName = (fund.name || '').toLowerCase();
+    if (fundName.includes('全世界')
+      && (matches('ACWI') || name.includes('全世界') || name.includes('オルカン')
+        || name.includes('オール'))) return fund;
+    if (fundName.includes('s&p500')
+      && (matches('SP500') || matches('S&P') || name.includes('米国'))) return fund;
+    if (fundName.includes('国内')
+      && (matches('N225') || matches('NIKKEI') || name.includes('国内')
+        || name.includes('日経'))) return fund;
+  }
+  return null;
 }
 
 export function useFundNav(codes?: string[]) {

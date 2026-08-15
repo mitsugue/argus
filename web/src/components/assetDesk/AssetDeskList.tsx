@@ -7,9 +7,9 @@ import {
   SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useAssetIntel } from '../../hooks/useAssetIntel';
+import type { AssetIntel } from '../../hooks/useAssetIntel';
 import { useCatalysts } from '../../hooks/useCatalysts';
-import { useFundNav } from '../../hooks/useFundNav';
+import { fundNavForAsset } from '../../hooks/useFundNav';
 import { coingeckoIdOf } from '../../lib/cryptoIds';
 import { deriveStrategy, type QuoteLite } from '../../lib/assetStrategy';
 import { holderPosture } from '../../lib/holderPosture';
@@ -34,14 +34,15 @@ import { normalizeLiveQuote } from '../../domain/liveQuote';
 import './AssetDesk.css';
 
 // V12.2.12 — Asset Deskリスト(旧AssetStrategySectionの後継)。
-// データ組み立てはuseAssetIntel(publish:false — 閲覧でpublish副作用なし)+
-// 判断はdomain/assetDecision経由 — Todayと構造的に同一の判断を表示する。
+// データ組み立てはHoldings所有の共有Asset Intelをpropsで受け取り、
+// domain/assetDecision経由でTodayと構造的に同一の判断を表示する。
 // 並び: デフォルト=優先順(domain/assetDesk決定論ソート)/手動順=従来のDnD。
 
 export interface AssetFocusIntent { symbol: string; section?: string; nonce: number }
 
 interface Props {
   assets: AssetItem[];
+  intel: AssetIntel;
   onReorder: (orderedIds: string[]) => void;
   onRemove: (id: string) => void;
   onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
@@ -69,11 +70,10 @@ const SortableCardRow: React.FC<{
 };
 
 export const AssetDeskList: React.FC<Props> = ({
-  assets, onReorder, onRemove, onUpdateHolding, focus, toolbar, detailSymbol, onOpenAsset,
+  assets, intel, onReorder, onRemove, onUpdateHolding, focus, toolbar, detailSymbol, onOpenAsset,
 }) => {
-  const intel = useAssetIntel({ publish: false });
   const cat = useCatalysts();
-  const { funds: navFunds } = useFundNav();
+  const navFunds = intel.fundNav.funds;
   const mountTs = useMemo(() => Date.now(), []);
   const [nowMs] = useState(() => Date.now());
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -118,21 +118,9 @@ export const AssetDeskList: React.FC<Props> = ({
     const downsideBySym = new Map<string, DownsideIncident>();
     for (const inc of intel.downside?.incidents ?? []) downsideBySym.set(inc.symbol, inc);
     // 投信(基準価額): fund資産をカタログNAVへ名寄せ(旧実装のまま)
-    const navByName = (a: AssetItem) => {
-      const sym = (a.symbol || '').toUpperCase();
-      const nm = `${a.displayName || ''} ${a.displayNameJa || ''}`.toLowerCase();
-      const want = (kw: string) => sym.includes(kw) || nm.includes(kw.toLowerCase());
-      for (const f of navFunds) {
-        const fn = (f.name || '').toLowerCase();
-        if (fn.includes('全世界') && (want('ACWI') || nm.includes('全世界') || nm.includes('オルカン') || nm.includes('オール'))) return f;
-        if (fn.includes('s&p500') && (want('SP500') || want('S&P') || nm.includes('米国'))) return f;
-        if (fn.includes('国内') && (want('N225') || want('NIKKEI') || nm.includes('国内') || nm.includes('日経'))) return f;
-      }
-      return null;
-    };
     for (const a of assets) {
       if (genreOf(a) === 'funds') {
-        const f = navByName(a);
+        const f = fundNavForAsset(a, navFunds);
         if (f) quotes.set(a.symbol, {
           price: f.navYen, changePct: f.changePct ?? 0, volume: 0,
           date: f.date, status: 'delayed',

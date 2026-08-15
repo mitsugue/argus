@@ -192,7 +192,7 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
         <span>{projection.probabilityTruth.directionalLeanJa} · 根拠{projection.probabilityTruth.evidenceStrength}
           · 実効n={projection.probabilityTruth.effectiveN ?? projection.effectiveSampleCount}
           · {projection.probabilityTruth.uncertaintyJa} · {projection.probabilityTruth.label}</span></div>}
-    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>タップでMarket Context</small></div>
+    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>タップで根拠を展開</small></div>
   </div>;
 };
 
@@ -295,25 +295,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           <button type="button" key={value} aria-pressed={horizon === value}
             onClick={() => onHorizon(value)}>{value}D</button>)}</div>
       </div>
-      {projection ? <ProjectionChart projection={projection} onActivate={() => {
-        try { sessionStorage.setItem('argus.replayContext', JSON.stringify({ route: 'market-context',
-          schemaVersion: 'argus-replay-deeplink-v1',
-          selectedTab: 'OVERVIEW', market: view.selectedMarket,
-          instrumentId: projection.instrumentId, symbol: projection.symbol,
-          horizon: projection.horizonDays, forecastId: projection.forecastId,
-          finalAction: view.finalAction, actionScore: view.actionScore,
-          forecastAsOf: projection.asOf,
-          directionProbabilities: projection.directionProbabilities,
-          priceLevels: { current: projection.current, upper: projection.upside,
-            baseLow: projection.baseLow, baseHigh: projection.baseHigh,
-            lower: projection.downside, invalidation: projection.invalidation },
-          brierSkill: projection.brierSkill,
-          effectiveSample: projection.effectiveSampleCount,
-          signalEpisodeIds: projection.signalEpisodeIds,
-          supportResistanceIds: projection.supportResistanceIds,
-          eventIds: projection.eventIds })); } catch { /* best effort */ }
-        onNavigate('regime');
-      }} /> : <div className="at-projection-missing" aria-busy={chartLoad.loading}>
+      {projection ? <ProjectionChart projection={projection}
+        onActivate={() => setDetail(true)} /> : <div className="at-projection-missing" aria-busy={chartLoad.loading}>
         {chartLoad.loaderVisible
           ? <TriangleStepLoader label={chartLoad.slowInitial
             ? '初回データを準備中' : 'データ確認中'} />
@@ -381,26 +364,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {view.macroMoves.map((move) => <div key={move.id}><b>{move.label}</b><span>{fmtMove(move.value, move.suffix)}</span><em>{move.directionLabel ?? '→'} · {shortDate(move.asOf)}</em></div>)}
     </div></Compact>}
 
-    {view.positioning.length > 0 && <Compact title={`${view.selectedMarket} 需給`} className="at-positioning"
-      onActivate={() => {
-        try { sessionStorage.setItem('argus.replayContext', JSON.stringify({
-          schemaVersion: 'argus-replay-deeplink-v1', route: 'market-context',
-          selectedTab: 'LEDGER', market: view.selectedMarket,
-          instrumentId: projection?.instrumentId,
-          symbol: projection?.symbol, horizon: projection?.horizonDays ?? 5,
-          forecastId: projection?.forecastId,
-          finalAction: view.finalAction, actionScore: view.actionScore,
-          forecastAsOf: projection?.asOf,
-          directionProbabilities: projection?.directionProbabilities,
-          priceLevels: projection ? { current: projection.current, upper: projection.upside,
-            baseLow: projection.baseLow, baseHigh: projection.baseHigh,
-            lower: projection.downside, invalidation: projection.invalidation } : undefined,
-          brierSkill: projection?.brierSkill,
-          effectiveSample: projection?.effectiveSampleCount,
-        })); } catch { /* best effort */ }
-        try { sessionStorage.setItem('argus.scrollTo', 'market-ledger'); } catch { /* legacy deep-link compatibility */ }
-        onNavigate('regime');
-      }}><div className="at-position-rows">
+    {view.positioning.length > 0 && <Compact title={`${view.selectedMarket} 需給`}
+      className="at-positioning"><div className="at-position-rows">
       {view.positioning.map((row) => <div key={row.key} className={`is-${row.tone ?? 'neutral'}`}>
         <b>{row.label}</b><span>{row.value}</span>{row.detail && <em>{row.detail}</em>}</div>)}
     </div></Compact>}

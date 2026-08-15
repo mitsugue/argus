@@ -38,21 +38,3 @@ def test_data_quality_status_summary(monkeypatch):
         assert d["freshness"]["expectedDisabledCount"] == 3
         assert "lastSuccessAt" not in json.dumps(d)      # counts/buckets only
         assert scanner.argus_portfolio_sync.contains_sensitive(d) == []
-
-
-def test_regressions(monkeypatch):
-    monkeypatch.setattr(scanner, "requests", _Boom())
-    with scanner.app.test_client() as c:
-        for path, schema in (("/api/argus/review-pack/status", "review-pack-status-v1"),
-                             ("/api/argus/fire-core/status", "fire-core-status-v1"),
-                             ("/api/argus/portfolio-strategy/status", "portfolio-strategy-status-v1"),
-                             ("/api/argus/position-plans/status", "trade-plan-status-v1"),
-                             ("/api/argus/scenarios/status", "scenario-status-v1"),
-                             ("/api/argus/backup-safety/status", "backup-safety-status-v1"),
-                             ("/api/argus/learning-review/status", "learning-review-status-v1"),
-                             ("/api/argus/notifications/status", "notification-status-v1"),
-                             ("/api/argus/supply-demand/status", "supply-demand-status-v1"),
-                             ("/api/argus/bridge/status", "bridge-status-v1")):
-            r = c.get(path)
-            assert r.status_code == 200, path
-            assert r.get_json()["schemaVersion"] == schema

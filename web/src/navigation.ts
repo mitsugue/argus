@@ -2,10 +2,9 @@ export type RouteKey =
   | 'command'
   | 'watchlist'
   | 'notifications'
-  | 'settings'
-  | 'regime';
+  | 'settings';
 
-export type PrimaryRouteKey = Exclude<RouteKey, 'regime'>;
+export type PrimaryRouteKey = RouteKey;
 export type SettingsSection = 'status' | 'recovery' | 'help';
 
 export interface NavigationDefinition {
@@ -23,8 +22,8 @@ export interface ParsedLocation {
   settingsSection?: SettingsSection;
 }
 
-// Lean v13: one small, owner-facing navigation model. Market replay remains a
-// contextual destination, not a fifth workspace door.
+// Lean v13: one small, owner-facing navigation model. Asset Detail and
+// Settings subsections remain contextual hashes, not extra workspace doors.
 export const NAVIGATION: readonly NavigationDefinition[] = [
   { route: 'command', desktopLabel: 'Today', mobileLabel: 'Today',
     hash: '#today', swipeOrder: 0 },
@@ -39,29 +38,20 @@ export const NAVIGATION: readonly NavigationDefinition[] = [
 export const PRIMARY_NAVIGATION = [...NAVIGATION]
   .sort((left, right) => left.swipeOrder - right.swipeOrder);
 
-// Explicit route hashes keep contextual routes addressable without putting
-// them in NAVIGATION.
 const ROUTE_HASHES: Record<RouteKey, string> = {
   command: '#today',
   watchlist: '#holdings',
   notifications: '#notifications',
   settings: '#settings',
-  regime: '#market',
 };
 
-// Legacy hashes remain read-compatible. They resolve into the smaller surface
-// rather than keeping duplicate pages alive.
+// Only canonical surface hashes are routable. Retired engine/deep-link aliases
+// deliberately do not redirect.
 export const HASH_ROUTES: Readonly<Record<string, RouteKey>> = {
   '#today': 'command',
   '#holdings': 'watchlist',
-  '#assets': 'watchlist',
-  '#positions': 'watchlist',
   '#notifications': 'notifications',
   '#settings': 'settings',
-  '#quality': 'settings',
-  '#backup': 'settings',
-  '#guide': 'settings',
-  '#market': 'regime',
 };
 
 const safeDecode = (value: string) => {
@@ -82,12 +72,6 @@ export function parseLocationHash(hash: string): ParsedLocation | undefined {
       ? value : 'status';
     return { route: 'settings', settingsSection };
   }
-  if (hash.startsWith('#guide:')) return { route: 'settings', settingsSection: 'help' };
-  if (hash === '#review') return { route: 'settings', settingsSection: 'help' };
-  if (hash === '#positions') return { route: 'watchlist', portfolioOpen: true };
-  if (hash === '#backup') return { route: 'settings', settingsSection: 'recovery' };
-  if (hash === '#quality') return { route: 'settings', settingsSection: 'status' };
-  if (hash === '#guide') return { route: 'settings', settingsSection: 'help' };
   const route = HASH_ROUTES[hash];
   return route ? { route } : undefined;
 }
@@ -102,7 +86,6 @@ export function routeHash(route: RouteKey) {
 }
 
 export function routeLabel(route: RouteKey) {
-  if (route === 'regime') return 'Market Context';
   return NAVIGATION.find((item) => item.route === route)?.desktopLabel ?? route;
 }
 

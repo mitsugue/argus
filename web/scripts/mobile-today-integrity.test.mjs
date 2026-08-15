@@ -27,7 +27,6 @@ const command = read('src/routes/CommandCenter.tsx');
 const today = read('src/components/today/ArgusTodayPanel.tsx');
 const todayCss = read('src/components/today/ArgusToday.css');
 const hook = read('src/hooks/useChartIntelligence.ts');
-const replay = read('src/components/marketReplay/MarketContextReplay.tsx');
 const loaderCss = read('src/components/common/TriangleStepLoader.css');
 const acceptance = read('scripts/mobile-today-acceptance.mjs');
 const vite = read('vite.config.ts');
@@ -41,14 +40,13 @@ assert.deepEqual(
   ['command', 'watchlist', 'notifications', 'settings'],
 );
 assert.equal(navigation.HASH_ROUTES['#today'], 'command');
-assert.equal(navigation.HASH_ROUTES['#assets'], 'watchlist');
-assert.equal(navigation.HASH_ROUTES['#positions'], 'watchlist');
-assert.equal(navigation.HASH_ROUTES['#market'], 'regime');
 assert.equal(navigation.HASH_ROUTES['#notifications'], 'notifications');
 assert.equal(navigation.HASH_ROUTES['#settings'], 'settings');
+for (const retired of ['#assets', '#positions', '#quality', '#backup', '#guide',
+  '#review', '#market']) assert.equal(navigation.parseLocationHash(retired), undefined);
 assert.equal(navigation.pageDirection('command', 'watchlist'), 1);
 assert.equal(navigation.pageDirection('settings', 'notifications'), -1);
-assert.equal(navigation.primaryRouteIndex('regime'), -1);
+assert.equal(navigation.primaryRouteIndex('settings'), 3);
 
 assert.match(nav, /PRIMARY_NAVIGATION\.map/);
 assert.doesNotMatch(nav, /SYSTEM_NAVIGATION/);
@@ -96,8 +94,7 @@ assert.match(hook, /instrument:\s*symbol!\.toUpperCase\(\)/);
 assert.match(hook, /scope:\s*'market'.*snapshot:\s*'verified'/s);
 assert.match(hook, /requestSequence !== sequence\.current/);
 assert.match(hook, /inflight\.get\(url\)/);
-assert.match(replay, /MARKET_INSTRUMENTS\.map/);
-assert.doesNotMatch(replay, /const INSTRUMENTS:/);
+assert.doesNotMatch(app + command + today, /MarketRegime|MarketContextReplay|#market/);
 
 assert.match(today, /chartLoad\.loaderVisible/);
 assert.match(today, /TriangleStepLoader compact/);

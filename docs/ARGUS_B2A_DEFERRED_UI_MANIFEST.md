@@ -1,14 +1,24 @@
-# B2a deferred UI cleanup manifest
+# B2a deferred UI cleanup manifest — Round 1 completion ledger
 
-This manifest records modules that were unreachable from `web/src/main.tsx` at
-the PR #156 public-boundary baseline. B2a changes the mounted product surface,
-but deletion is deliberately deferred so the route/mount change can be reviewed
-and rolled back independently from a broad mechanical removal.
+## Round 1 deletion completed
 
-No domain engine, polling hook, storage format, recovery authority, or server
-workflow is authorized for deletion by this list.
+The V13 Round 1 coordinated cut physically removed the historical candidate
+tree after its route-policy and test-only references were migrated. Repository
+truth at the cut head is:
 
-## Unreachable UI modules (47)
+- 66 TSX modules removed (the 62 deferred modules below plus Market,
+  Market Context Replay, global AI Review, and WhatIf surfaces)
+- 36 orphan TS modules removed
+- 35 dead CSS files removed
+- `countries.geojson` and its PWA include removed
+- 159 TS/TSX modules remain, including 56 TSX and 20 CSS files
+- four route keys and zero retired hash aliases remain
+
+The protected stores and background engines remain. This ledger does not
+authorize deletion of acquisition, replay/calibration, FIRE, recovery,
+OWNER_SYNC, storage-schema, or server authority code.
+
+## Removed baseline UI modules (47)
 
 - `web/src/components/AlertSystem.tsx`
 - `web/src/components/CalibrationTracker.tsx`
@@ -58,11 +68,11 @@ workflow is authorized for deletion by this list.
 - `web/src/components/today/TodayStanceCard.tsx`
 - `web/src/components/today/YourExposureCard.tsx`
 
-## Newly unreachable after B2a, still deferred after B2b (15)
+## Additional modules removed after route cuts (15)
 
-Removing the standalone Guide and AI Review routes also makes these operator/support modules
-unreachable from `main.tsx`. They remain deferred for the same rollback and
-test-import reasons as the baseline 47.
+Removing the standalone Guide and AI Review routes also made these
+operator/support modules unreachable from `main.tsx`; Round 1 removed them
+after their test-only imports and owner-capability dependencies were migrated.
 
 - `web/src/components/guide/ArgusProAboutCard.tsx`
 - `web/src/components/guide/ArgusProStatusCard.tsx`
@@ -81,19 +91,19 @@ test-import reasons as the baseline 47.
 - `web/src/routes/AIReview.tsx`
 
 B2a originally made `web/src/components/guide/Layer2BSyncCard.tsx` unreachable.
-B2b reactivates that existing OWNER_SYNC control only inside the conditionally
+B2b reactivated that existing OWNER_SYNC control only inside the conditionally
 mounted Holdings / Watchlist Supporting tools disclosure, replacing anonymous
 JP-interest registration with an explicit owner-authorized path.
 
-The current B2b static graph therefore has 62 unreachable component/route TSX
-modules (47 baseline + 15 newly unreachable modules still deferred). This is an
-audit result, not authorization to delete their engines or their server-side
-producers.
+The 62 entries above are the approved deferred manifest inventory that Round 1
+physically removed. Their names remain here as an auditable deletion ledger,
+not as live source paths and not as authorization to delete their background
+engines or server-side producers.
 
-## Preconditions for a later deletion-only PR
+## Completed gates
 
-1. Re-run the static module graph from `web/src/main.tsx` after B2a merge.
-2. Migrate `web/scripts/market-ledger.test.mjs`, which currently reads
-   `MarketLedgerPanel.tsx` directly despite that panel being unreachable.
-3. Confirm no CSS/assets are referenced only by one of the modules above.
-4. Run `npm run build`, the complete frontend lint suite, and public acceptance.
+1. Static module graph re-run from `web/src/main.tsx`.
+2. Market ledger and verified market acceptance migrated to Today.
+3. Route-policy consumer sentinels migrated without weakening cache-only policy.
+4. Dead CSS, asset, dependency, and import graphs reconciled.
+5. Protected data keys and all six OWNER_SYNC contracts retained.

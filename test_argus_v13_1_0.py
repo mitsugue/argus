@@ -171,7 +171,8 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         route = pathlib.Path("web/src/routes/CommandCenter.tsx").read_text()
         panel = pathlib.Path("web/src/components/today/ArgusTodayPanel.tsx").read_text()
         self.assertIn("argus.today.selectedInstrument.v1", route)
-        self.assertIn("argus.replayContext", panel)
+        self.assertNotIn("argus.replayContext", panel)
+        self.assertIn("onActivate={() => setDetail(true)}", panel)
         self.assertIn("([1, 5, 20] as const)", panel)
         self.assertNotIn("method: 'POST'", route + panel)
 
@@ -185,8 +186,9 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertEqual(scanner._semantic_app_version(), backend["version"])
         self.assertEqual(scanner._frontend_semantic_version(), package["version"])
-        guide = pathlib.Path("web/src/routes/Guide.tsx").read_text()
-        self.assertIn("['v13.3.6'", guide)
+        self.assertFalse(pathlib.Path("web/src/routes/Guide.tsx").exists())
+        manifest = pathlib.Path("docs/ARGUS_B2A_DEFERRED_UI_MANIFEST.md").read_text()
+        self.assertIn("Round 1 deletion completed", manifest)
 
 
 if __name__ == "__main__":

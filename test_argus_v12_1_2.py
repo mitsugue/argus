@@ -286,5 +286,7 @@ def test_fe_gap_workflow_ui():
     for removed in ("未回収を再探索", "このURLを検証"):
         assert removed not in src, removed
     dq = _read("routes", "DataQualityPage.tsx")
-    assert "argus-public-diagnostics-v1" in dq
+    diagnostics = _read("hooks", "useSystemHealth.ts")
+    assert "usePublicDiagnostics" in dq
+    assert "argus-public-diagnostics-v1" in diagnostics
     assert "benchmarkVerdictJa" not in dq

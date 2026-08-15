@@ -6,7 +6,6 @@ import {
   primaryRouteIndex, routeHash, routeLabel, type ParsedLocation, type SettingsSection,
 } from './navigation';
 import { CommandCenter } from './routes/CommandCenter';
-import { MarketRegime } from './routes/MarketRegime';
 import { Watchlist } from './routes/Watchlist';
 import { NotificationsPage } from './routes/NotificationsPage';
 import { Settings } from './routes/Settings';
@@ -113,7 +112,7 @@ const App: React.FC = () => {
   };
 
   const route = location.route;
-  const contextual = !!location.asset || route === 'regime';
+  const contextual = !!location.asset;
   const curIdx = !contextual ? primaryRouteIndex(route) : -1;
   const overscrollNext = curIdx >= 0 && curIdx + 1 < PRIMARY_NAVIGATION.length
     ? { label: routeLabel(PRIMARY_NAVIGATION[curIdx + 1].route),
@@ -138,17 +137,12 @@ const App: React.FC = () => {
         onBackToHoldings={() => handleNavSelect('watchlist')}
       />
     ) : route === 'notifications' ? (
-      <NotificationsPage onNavigate={handleNavSelect} />
-    ) : route === 'settings' ? (
-      <Settings settingsSection={location.settingsSection} />
-    ) : (
-      <MarketRegime />
-    );
+      <NotificationsPage />
+    ) : <Settings settingsSection={location.settingsSection} />;
 
   return (
     <AppShell
-      sidebar={<NavRail active={route === 'regime' ? null : route}
-        onSelect={handleNavSelect} />}
+      sidebar={<NavRail active={route} onSelect={handleNavSelect} />}
       lastUpdated={lastUpdated}
       overscrollNext={overscrollNext}
       overscrollPrev={overscrollPrev}

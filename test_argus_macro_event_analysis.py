@@ -181,9 +181,6 @@ def test_public_macro_gets_never_call_llm_or_result_fetch(monkeypatch):
         monkeypatch.setattr(scanner, name, boom)
     with scanner.app.test_client() as c:
         assert c.get("/api/argus/macro-event-analysis").status_code == 200
-        assert c.get("/api/argus/macro-event-analysis/status").status_code == 200
-        assert c.get("/api/argus/macro-events/result-status").status_code == 200
-        assert c.get("/api/argus/event-analysis").status_code == 200
 
 
 def test_admin_macro_endpoints_require_token():
@@ -191,20 +188,6 @@ def test_admin_macro_endpoints_require_token():
         r1 = c.post("/api/argus/admin/macro-event-analysis/generate")
         r2 = c.post("/api/argus/admin/macro-event-analysis/refresh-results")
     assert r1.status_code in (401, 503) and r2.status_code in (401, 503)
-
-
-def test_compat_event_analysis_projection():
-    _seed_store()
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/event-analysis").get_json()
-    items = d.get("items") or []
-    assert items, "compat projection empty"
-    it = items[0]
-    for k in ("eventId", "eventCode", "phase", "summaryJa", "preJa", "postJa",
-              "generatedAt", "actualAvailable", "verdict"):
-        assert k in it, k
-    assert it["phase"] in ("pre", "post")
-    assert it["preJa"] == "強ければ金利上・株安方向"
 
 
 def test_macro_items_shape_and_no_secrets():

@@ -273,7 +273,9 @@ def test_fe_shows_research_power_ratio():
 
 def test_fe_dq_shows_source_universe():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "argus-public-diagnostics-v1" in src
+    hook = _read("hooks", "useSystemHealth.ts")
+    assert "usePublicDiagnostics" in src
+    assert "argus-public-diagnostics-v1" in hook
     assert "sourceUniverse" not in src
 
 

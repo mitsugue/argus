@@ -773,19 +773,15 @@ def test_semantic_version_format():
 def test_version_consistency_dynamic():
     """Frontendとbackendの版は別正本で、それぞれ内部整合する。"""
     import json as _j
-    import re as _re
     pj = _j.load(open(os.path.join(ROOT, "web", "package.json")))["version"]
     bj = _j.load(open(os.path.join(ROOT, "backend-version.json")))["version"]
     lock = _j.load(open(os.path.join(ROOT, "web", "package-lock.json")))
     assert lock["version"] == pj
     assert lock["packages"][""]["version"] == pj
-    guide = open(os.path.join(ROOT, "web", "src", "routes", "Guide.tsx"),
-                 encoding="utf-8").read()
-    m = _re.search(
-        r"const RECENT_UPDATES: \[string, string\]\[\] = \[\s*\n\s*\['v([0-9.]+)'",
-        guide)
-    assert m, "RECENT_UPDATES先頭エントリが見つからない"
-    assert m.group(1) == pj, (m.group(1), pj)
+    assert not os.path.exists(os.path.join(ROOT, "web", "src", "routes", "Guide.tsx"))
+    manifest = open(os.path.join(ROOT, "docs", "ARGUS_B2A_DEFERRED_UI_MANIFEST.md"),
+                    encoding="utf-8").read()
+    assert "Round 1 deletion completed" in manifest
     assert scanner._semantic_app_version() == bj
     assert scanner._frontend_semantic_version() == pj
 

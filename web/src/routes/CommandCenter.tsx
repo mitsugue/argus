@@ -30,6 +30,8 @@ import {
 } from '../domain/marketInstruments';
 import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
+import { useAssets } from '../hooks/useAssets';
+import { usePublicDiagnostics } from '../hooks/useSystemHealth';
 
 interface Props {
   onNavigate: (key: RouteKey) => void;
@@ -99,6 +101,7 @@ const oku = (value: number) => `${Math.round(value / 100_000_000).toLocaleString
 
 export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, onNavigateToSettings }) => {
   useLocale();   // re-render Today on locale switch
+  const assetsApi = useAssets();
   // V12.2.12: 個別銘柄系のデータ組み立ては useAssetIntel(Today/Asset Desk共有の
   // 正本)へ移設。Todayは publish:true — 共有ストアへのpublish副作用(Exposure/AP/
   // Brief/Scenarios/Plans/Strategy/FireCore)は従来どおりTodayだけが実行する。
@@ -108,13 +111,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     apItems, sessionBrief, scenarioSets, portfolioStrategy, positionPlans,
     phase, judgment, isPartial, visLimited, cappedConf,
     overlay,
-  } = useAssetIntel({ publish: true });
+  } = useAssetIntel({ publish: true, assets: assetsApi.assets });
   // Headline ETFs have their own backend-only quote reads. They are not added
   // to the user's watchlist and never cause a browser-side provider request.
   const headlineJpQuotes = useJapanWatchlist(['1321', '1306']);
   const headlineUsQuotes = useUSWatchlist(['SPY', 'QQQ']);
   const marketLedger = useMarketLedger();
   const marketNews = useMarketNews();
+  const { diagnostics: publicDiagnostics } = usePublicDiagnostics();
   const [marketMode, setMarketMode] = useState<MarketSelectionMode>(() => {
     try {
       const saved = localStorage.getItem('argus.today.marketSelection.v1');
@@ -269,30 +273,21 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure,
     scenarioSets, positionPlans, portfolioStrategy, assets]);
 
-  // Recovery Phase A: fixed public diagnostics only. Rich operational state is
-  // intentionally unavailable to the static browser bundle.
+  // Recovery Phase A: publish the one shared, fixed public diagnostics
+  // snapshot. AppShell and Settings consume this same request-backed store.
   useEffect(() => {
-    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
-    if (!backend) return;
-    const t = setTimeout(() => {
-      fetch(backend.replace(/\/$/, '') + '/api/argus/data-quality/status')
-        .then((r) => r.json())
-        .then((d) => {
-          const overall = d?.service?.overall ?? 'unavailable';
-          const freshness = d?.freshness?.overall ?? 'unknown';
-          publishDataQuality({
-            overallStatus: overall,
-            overallStatusJa: overall === 'ok' ? '稼働中' : '一部確認が必要',
-            topIssuesJa: overall === 'ok' ? [] : [`公開診断: ${overall} / 鮮度 ${freshness}`],
-            expectedDisabledJa: d?.freshness?.expectedDisabledCount
-              ? [`仕様上無効なソース ${d.freshness.expectedDisabledCount}件`]
-              : [],
-          });
-        })
-        .catch(() => { /* Data Qualityページ自体が疎通チェック — Todayは静かに */ });
-    }, 5000);
-    return () => clearTimeout(t);
-  }, []);
+    if (!publicDiagnostics) return;
+    const overall = publicDiagnostics.service.overall;
+    const freshness = publicDiagnostics.freshness.overall;
+    publishDataQuality({
+      overallStatus: overall,
+      overallStatusJa: overall === 'ok' ? '稼働中' : '一部確認が必要',
+      topIssuesJa: overall === 'ok' ? [] : [`公開診断: ${overall} / 鮮度 ${freshness}`],
+      expectedDisabledJa: publicDiagnostics.freshness.expectedDisabledCount
+        ? [`仕様上無効なソース ${publicDiagnostics.freshness.expectedDisabledCount}件`]
+        : [],
+    });
+  }, [publicDiagnostics]);
 
   // v11.20.0: AI Review Pack用のイベント一行群(パック内でイベント要約は1回のみ)
   useEffect(() => {

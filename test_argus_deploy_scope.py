@@ -19,7 +19,7 @@ class DeployScopeTests(unittest.TestCase):
 
     def test_react_only_deploys_pages_and_preserves_soak(self):
         result = deploy_scope.classify(
-            ["web/src/components/marketReplay/MarketContextReplay.tsx"])
+            ["web/src/components/today/ArgusTodayPanel.tsx"])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
         self.assertTrue(result["preserveBackendSoak"])
@@ -73,8 +73,8 @@ class DeployScopeTests(unittest.TestCase):
         self.assertFalse(result["preserveBackendSoak"])
         self.assertFalse(result["checkpointStage1"])
 
-    def test_guide_only_does_not_restart_backend(self):
-        result = deploy_scope.classify(["web/src/routes/Guide.tsx"])
+    def test_settings_only_does_not_restart_backend(self):
+        result = deploy_scope.classify(["web/src/routes/Settings.tsx"])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
