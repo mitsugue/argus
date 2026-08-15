@@ -63,7 +63,8 @@ def test_calibration_v4_status_shape():
 
 
 def test_calibration_v4_inactive_when_no_artifact(monkeypatch):
-    monkeypatch.setattr(scanner, "_calibration_v4_summary", lambda: None)
+    monkeypatch.setattr(
+        scanner, "_calibration_v4_summary", lambda **_kwargs: None)
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/calibration/v4/status").get_json()
     assert d["artifactFound"] is False
@@ -72,15 +73,21 @@ def test_calibration_v4_inactive_when_no_artifact(monkeypatch):
 
 
 def test_calibration_v4_inactive_when_empty_artifact(monkeypatch):
-    monkeypatch.setattr(scanner, "_calibration_v4_summary", lambda: {})
+    monkeypatch.setattr(
+        scanner, "_calibration_v4_summary", lambda **_kwargs: {})
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/calibration/v4/status").get_json()
     assert d["isActive"] is False
 
 
 def test_calibration_v4_active_requires_records(monkeypatch):
-    monkeypatch.setattr(scanner, "_calibration_v4_summary",
-                        lambda: {"nPredictions": 12, "nScored": 0, "updated": "2026-07-01T00:00:00Z"})
+    monkeypatch.setattr(
+        scanner, "_calibration_v4_summary",
+        lambda **_kwargs: {
+            "nPredictions": 12,
+            "nScored": 0,
+            "updated": "2026-07-01T00:00:00Z",
+        })
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/calibration/v4/status").get_json()
     assert d["artifactFound"] is True and d["isActive"] is True and d["nPredictions"] == 12

@@ -15,6 +15,7 @@ import { ArgusProAboutCard } from '../components/guide/ArgusProAboutCard';
 import { PaidSourceStatusCard } from '../components/guide/PaidSourceStatusCard';
 import { DecisionSpineCard } from '../components/guide/DecisionSpineCard';
 import { SourceUniverseCard } from '../components/guide/SourceUniverseCard';
+import { useAssets } from '../hooks/useAssets';
 import '../components/dashboard/Dashboard.css';
 import './Guide.css';
 
@@ -522,6 +523,7 @@ const HOWTO: string[] = [
 ];
 
 export const Guide: React.FC = () => {
+  const { assets } = useAssets();
   const [showAllUpdates, setShowAllUpdates] = React.useState(false);
   const [context, setContext] = React.useState(contextFromHash);
   const [query, setQuery] = React.useState('');
@@ -747,7 +749,7 @@ export const Guide: React.FC = () => {
           <span className="section-head__title">Layer 2B 同期(あなたのwatchlist採点)</span>
           <span className="section-head__count">private/owner限定</span>
         </div>
-        <Layer2BSyncCard />
+        <Layer2BSyncCard assets={assets} />
       </section>
 
       {/* バージョン履歴は最下部(ユーザー指示・用語/英語の役より下) */}

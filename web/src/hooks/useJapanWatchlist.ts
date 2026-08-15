@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import type { JapanWatchlistSnapshot, JapanStockQuote } from '../types/watch';
 import {
   normalizeJapanWatchSnapshot,
@@ -67,17 +68,20 @@ function sleep(ms: number): Promise<void> {
  * Dynamic mode falls back to an EMPTY mock (no fake prices); the curated mode
  * keeps the legacy plausible-mock so the shell still renders offline.
  */
-export function useJapanWatchlist(symbols?: string[]): State {
-  const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
-  const [state, setState] = useState<State>({
-    data: null,
-    error: null,
-    loading: true,
-    phase: 'connecting',
-    attempt: 0,
-  });
+const INITIAL_STATE: State = {
+  data: null,
+  error: null,
+  loading: true,
+  phase: 'connecting',
+  attempt: 0,
+};
+const japanWatchlistStores = new Map<string, SharedPollingStore<State>>();
 
-  useEffect(() => {
+function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
+  const existing = japanWatchlistStores.get(symKey);
+  if (existing) return existing;
+
+  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState) => {
     const dynamic = symKey.length > 0;
     const fallback: JapanWatchlistSnapshot = dynamic
       ? { status: 'mock', asOf: null, stocks: [] }
@@ -86,30 +90,49 @@ export function useJapanWatchlist(symbols?: string[]): State {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
       setState({ data: normalizedFallback, error: null, loading: false, phase: 'mock', attempt: 0 });
-      return;
+      return () => {};
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/japan-watchlist'
       + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
     let cancelled = false;
+    let acquisition: Promise<void> | null = null;
+    const controllers = new Set<AbortController>();
+
+    async function fetchSnapshot(): Promise<JapanTruthSnapshot> {
+      const ctrl = new AbortController();
+      controllers.add(ctrl);
+      const timer = window.setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
+      try {
+        const response = await fetch(url, { signal: ctrl.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return normalizeJapanWatchSnapshot((await response.json()) as JapanWatchlistSnapshot);
+      } finally {
+        window.clearTimeout(timer);
+        controllers.delete(ctrl);
+      }
+    }
+
+    function acquire(task: () => Promise<void>): Promise<void> {
+      if (acquisition) return acquisition;
+      const current = task().finally(() => {
+        if (acquisition === current) acquisition = null;
+      });
+      acquisition = current;
+      return current;
+    }
 
     async function run() {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         if (cancelled) return;
         setState((s) => ({ ...s, phase: 'connecting', loading: true, attempt, error: null }));
 
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
         try {
-          const r = await fetch(url, { signal: ctrl.signal });
-          clearTimeout(timer);
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = normalizeJapanWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
+          const data = await fetchSnapshot();
           if (cancelled) return;
           // Trust the payload's own status (a 200 can still be all-mock).
           setState({ data, error: null, loading: false, phase: data.status, attempt });
           return;
         } catch (err: unknown) {
-          clearTimeout(timer);
           if (cancelled) return;
           const msg = err instanceof Error ? err.message : String(err);
           if (attempt < MAX_ATTEMPTS) {
@@ -127,34 +150,35 @@ export function useJapanWatchlist(symbols?: string[]): State {
     // visible state on failure.
     async function refresh() {
       if (cancelled || document.hidden) return;
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
       try {
-        const r = await fetch(url, { signal: ctrl.signal });
-        clearTimeout(timer);
-        if (!r.ok || cancelled) return;
-        const data = normalizeJapanWatchSnapshot((await r.json()) as JapanWatchlistSnapshot);
+        const data = await fetchSnapshot();
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
-      } catch {
-        clearTimeout(timer);
-      }
+      } catch { /* keep the last good snapshot */ }
     }
-    const refreshTimer = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
     // Returning to the tab after a while → refresh immediately, don't wait out
     // the remainder of the interval.
     const onVisible = () => {
-      if (!document.hidden) void refresh();
+      if (!document.hidden) void acquire(refresh);
     };
     document.addEventListener('visibilitychange', onVisible);
 
-    void run();
+    void acquire(run);
     return () => {
       cancelled = true;
-      clearInterval(refreshTimer);
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+      window.clearInterval(refreshTimer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [symKey]);
+  });
+  japanWatchlistStores.set(symKey, store);
+  return store;
+}
 
-  return state;
+export function useJapanWatchlist(symbols?: string[]): State {
+  const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
+  const store = japanWatchlistStore(symKey);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }

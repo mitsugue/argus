@@ -223,7 +223,7 @@ def test_pack_includes_readiness():
 
 def test_dq_no_leak_with_benchmark_fields():
     with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
+        r = c.get("/api/argus/data-quality/status")
         body = r.get_data(as_text=True)
         for banned in ("quantity", "avgCost", "passphrase", "hmac",
                        "GEMINI_API_KEY", "OPENAI_API_KEY"):

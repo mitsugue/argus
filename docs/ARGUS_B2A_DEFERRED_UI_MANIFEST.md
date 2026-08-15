@@ -58,7 +58,7 @@ workflow is authorized for deletion by this list.
 - `web/src/components/today/TodayStanceCard.tsx`
 - `web/src/components/today/YourExposureCard.tsx`
 
-## Newly unreachable after B2a (16)
+## Newly unreachable after B2a, still deferred after B2b (15)
 
 Removing the standalone Guide and AI Review routes also makes these operator/support modules
 unreachable from `main.tsx`. They remain deferred for the same rollback and
@@ -72,7 +72,6 @@ test-import reasons as the baseline 47.
 - `web/src/components/guide/DecisionValueOpsCard.tsx`
 - `web/src/components/guide/EventCardsPanel.tsx`
 - `web/src/components/guide/IntegrationsPanel.tsx`
-- `web/src/components/guide/Layer2BSyncCard.tsx`
 - `web/src/components/guide/LedgerHealthCard.tsx`
 - `web/src/components/guide/MarketDepthCard.tsx`
 - `web/src/components/guide/PaidSourceStatusCard.tsx`
@@ -81,9 +80,15 @@ test-import reasons as the baseline 47.
 - `web/src/routes/Guide.tsx`
 - `web/src/routes/AIReview.tsx`
 
-The current B2a static graph therefore has 63 unreachable component/route TSX
-modules. This is an audit result, not authorization to delete their engines or
-their server-side producers.
+B2a originally made `web/src/components/guide/Layer2BSyncCard.tsx` unreachable.
+B2b reactivates that existing OWNER_SYNC control only inside the conditionally
+mounted Holdings / Watchlist Supporting tools disclosure, replacing anonymous
+JP-interest registration with an explicit owner-authorized path.
+
+The current B2b static graph therefore has 62 unreachable component/route TSX
+modules (47 baseline + 15 newly unreachable modules still deferred). This is an
+audit result, not authorization to delete their engines or their server-side
+producers.
 
 ## Preconditions for a later deletion-only PR
 

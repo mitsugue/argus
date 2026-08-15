@@ -19,10 +19,10 @@ The current catalog contains four trust domains:
 
 ## Public diagnostics
 
-`GET /api/argus/data-quality` and
-`GET /api/argus/data-quality/status` are compatibility aliases returning the
-same closed `argus-public-diagnostics-v1` DTO. `/healthz` and `/readyz` return
-separate minimal fixed DTOs. The public contract contains service identity,
+`GET /api/argus/data-quality/status` is the canonical route returning the
+closed `argus-public-diagnostics-v1` DTO. The former byte-identical
+`GET /api/argus/data-quality` compatibility alias is retired. `/healthz` and
+`/readyz` return separate minimal fixed DTOs. The public contract contains service identity,
 coarse freshness counts, and conservative recovery claims only:
 
 - `mode=LEGACY_ONLY`
@@ -75,6 +75,19 @@ its existing admin secret to verify operational truth before acting.
 
 Historical Guide entries describe the behavior of their named releases; this
 document and the route catalog are authoritative for the current boundary.
+
+The route catalog also pins repository browser consumers of selected public
+Action Label, JP/US quote, AI, integration, source, provider,
+market-depth/VWAP, visibility, source-coverage, runtime, Learning Memory,
+calibration, Decision Value, and event status DTOs.
+Some consumers are intentionally unmounted after
+B2a but remain catalogued until the deferred deletion review. Those public GETs
+read existing in-process caches only, including on cold-cache fallback. Live
+probes, private/remote-ledger restoration, and provider-cache refresh remain
+authenticated or background responsibilities. JP quote queries are state-free:
+they neither fetch J-Quants nor change the EC2 push target set. Dynamic JP
+realtime membership remains the existing authenticated OWNER_SYNC → private
+Layer-2B → admin-gated bridge-code path.
 
 ## Non-authority guarantee
 

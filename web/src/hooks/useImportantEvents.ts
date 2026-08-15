@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore } from '../lib/sharedPollingStore';
 
 // Important Events (important-events-v1, v10.138) — the owner-facing "why this
 // macro event matters" feed for the Today command area. Beginner explanation +
@@ -49,41 +50,62 @@ const REFRESH_INTERVAL_MS = 120_000;   // events move slowly; 2-min poll is plen
 
 interface State { data: ImportantEventsSnapshot | null; loading: boolean; }
 
-export function useImportantEvents(): State {
-  const [state, setState] = useState<State>({ data: null, loading: true });
-
-  useEffect(() => {
+const importantEventsStore = createSharedPollingStore<State>(
+  { data: null, loading: true },
+  (setState) => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
-    if (!backend) { setState({ data: null, loading: false }); return; }
+    if (!backend) {
+      setState({ data: null, loading: false });
+      return () => {};
+    }
     const url = backend.replace(/\/$/, '') + '/api/argus/important-events';
     let cancelled = false;
+    let acquisition: Promise<void> | null = null;
+    const controllers = new Set<AbortController>();
 
-    async function fetchOnce() {
-      if (cancelled || document.hidden) return;
+    function fetchOnce(): Promise<void> {
+      if (cancelled || document.hidden) return Promise.resolve();
+      if (acquisition) return acquisition;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12_000);
-      try {
-        const r = await fetch(url, { signal: ctrl.signal });
-        clearTimeout(timer);
-        if (!r.ok || cancelled) return;
-        const data = (await r.json()) as ImportantEventsSnapshot;
-        if (!cancelled) setState({ data, loading: false });
-      } catch {
-        clearTimeout(timer);
-        if (!cancelled) setState((s) => ({ ...s, loading: false }));
-      }
+      controllers.add(ctrl);
+      const timeout = window.setTimeout(() => ctrl.abort(), 12_000);
+      const current = (async () => {
+        try {
+          const response = await fetch(url, { signal: ctrl.signal });
+          if (!response.ok || cancelled) return;
+          const data = (await response.json()) as ImportantEventsSnapshot;
+          if (!cancelled) setState({ data, loading: false });
+        } catch {
+          if (!cancelled) setState((state) => ({ ...state, loading: false }));
+        } finally {
+          window.clearTimeout(timeout);
+          controllers.delete(ctrl);
+        }
+      })().finally(() => {
+        if (acquisition === current) acquisition = null;
+      });
+      acquisition = current;
+      return current;
     }
 
     void fetchOnce();
-    const t = setInterval(() => void fetchOnce(), REFRESH_INTERVAL_MS);
+    const timer = window.setInterval(() => void fetchOnce(), REFRESH_INTERVAL_MS);
     const onVisible = () => { if (!document.hidden) void fetchOnce(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+      window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, []);
+  },
+);
 
-  return state;
+export function useImportantEvents(): State {
+  return useSyncExternalStore(
+    importantEventsStore.subscribe,
+    importantEventsStore.getSnapshot,
+    importantEventsStore.getSnapshot,
+  );
 }
