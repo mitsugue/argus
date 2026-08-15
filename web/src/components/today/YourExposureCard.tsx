@@ -22,8 +22,8 @@ export const YourExposureCard: React.FC<{
         <p className="texp__empty-title">No positions configured</p>
         保有情報を登録すると、市場変化が自分の資産に与える影響をここに表示します。
         <div>
-          <button type="button" className="texp__cta" onClick={() => onNavigate('core')}>
-            Positions &amp; Risk で保有を登録
+          <button type="button" className="texp__cta" onClick={() => onNavigate('watchlist')}>
+            Holdings / Watchlist で保有を登録
           </button>
         </div>
       </div>

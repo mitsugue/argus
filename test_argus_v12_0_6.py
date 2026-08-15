@@ -188,8 +188,10 @@ def test_fe_investigate_button_outside_details():
 def test_fe_institutional_view_japanese_first():
     src = _read("components", "dashboard", "InstitutionalView.tsx")
     assert "displayTitleJa" in src
-    assert "autoQueueTranslations" in src
     assert "原文を見る" in src
+    # Recovery Phase A: public browser keeps the cached/read-only view and no
+    # longer advertises the now-authenticated translation mutation.
+    assert "autoQueueTranslations" not in src
 
 
 def test_review_pack_single_concise_jp_caveat():

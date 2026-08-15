@@ -28,6 +28,7 @@ interface Props {
   nowMs: number;
   dragHandle?: React.ReactNode;
   focusSection?: string;
+  collapsible?: boolean;
 }
 
 const TABS: Array<{ id: DeskTab; label: string }> = [
@@ -48,6 +49,7 @@ const Section: React.FC<{
 
 export const AssetDecisionCard: React.FC<Props> = ({
   d, open, onToggle, onRemove, onUpdateHolding, nowMs, dragHandle, focusSection,
+  collapsible = true,
 }) => {
   const [scout, setScout] = useState<ScoutState>(null);
   const [tab, setTab] = useState<DeskTab>('decision');
@@ -85,7 +87,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
     <article className={`uac ad-card uac--${open ? 'open' : 'compact'}${d.decisionFirst.held ? ' uac--held' : ''}`}
          id={sectionAnchorId(sym)} style={{ ['--uac-sig' as string]: sigColor }}>
       {dragHandle}
-      <AssetDecisionSummary d={d} open={open} onToggle={onToggle} />
+      <AssetDecisionSummary d={d} open={open} onToggle={onToggle} interactive={collapsible} />
       {open && (
         <div className="uac-body ad-expanded">
           <div className="ad-tabs" role="tablist" aria-label={`${sym} 詳細`}>
@@ -151,7 +153,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
             data-secondary-utility="research-data"
             onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
             <summary>Utility · Research &amp; Data</summary>
-            <div className="ad-research-drawer__body">
+            {supportOpen && <div className="ad-research-drawer__body">
               <Section symbol={sym} id="ai-review" title="AI REVIEW / RULE CHECK">
                 <AssetAIReview d={d} />
               </Section>
@@ -161,7 +163,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
               <Section symbol={sym} id="data-quality" title="DATA QUALITY">
                 <AssetDataQuality d={d} nowMs={nowMs} />
               </Section>
-            </div>
+            </div>}
           </details>
         </div>
       )}

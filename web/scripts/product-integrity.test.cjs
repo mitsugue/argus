@@ -141,7 +141,7 @@ const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 
 const notificationSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'NotificationPanel.tsx',
 ), 'utf8');
-const guideSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Guide.tsx'), 'utf8');
+const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Settings.tsx'), 'utf8');
 check('S12 uncalibrated AI and cause confidence never renders percent',
   aiReviewSource.includes('confidenceJa') && !aiReviewSource.includes('confidencePct')
   && scoutSource.includes('probabilityDisplay(v * 100).qualitative')
@@ -150,13 +150,16 @@ check('S12 uncalibrated AI and cause confidence never renders percent',
   && !incidentSource.includes('Math.round(b.probability * 100)')
   && researchSource.includes('probabilityDisplay(value * 100).qualitative')
   && !researchSource.includes('Math.round(p.newLongAccumulation * 100)'));
-check('S13 shared header event navigation keeps route state and URL hash canonical',
-  appSource.includes("const commandHash = routeHash('command')")
+check('S13 navigation commits route state and canonical primary or asset hashes',
+  appSource.includes('const commitLocation =')
+  && appSource.includes('routeRef.current = target.route')
   && appSource.includes('history.pushState')
-  && appSource.includes("routeRef.current = 'command'"));
+  && appSource.includes('routeHash(route)')
+  && appSource.includes('assetDetailHash(symbol, section)'));
 check('S14 shared controls expose their selected and close semantics',
-  guideSource.includes('aria-pressed={loc === l}')
-  && notificationSource.includes('aria-label="通知を閉じる"'));
+  settingsSource.includes('aria-pressed={locale === value}')
+  && notificationSource.includes('aria-label="通知"')
+  && notificationSource.includes('DEVICE LOCAL'));
 
 if (failed) {
   console.error(`\nproduct-integrity tests: ${failed} FAILED`);

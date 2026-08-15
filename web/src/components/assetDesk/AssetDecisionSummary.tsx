@@ -21,15 +21,13 @@ export function deskSignalCode(d: DeskCardData): SignalCode {
 }
 
 export const AssetDecisionSummary: React.FC<{
-  d: DeskCardData; open: boolean; onToggle: () => void;
-}> = ({ d, open, onToggle }) => {
+  d: DeskCardData; open: boolean; onToggle: () => void; interactive?: boolean;
+}> = ({ d, open, onToggle, interactive = true }) => {
   const code = deskSignalCode(d);
   const sigColor = `var(${SIGNALS[code].token})`;
   const view = d.decisionFirst;
 
-  return (
-    <button className="ad-head" onClick={onToggle} aria-expanded={open}
-      aria-label={`${view.symbol} ${view.name}, ${view.currentActionJa}`}>
+  const content = <>
       <span className="ad-l1">
         {view.held ? <span className="ad-held">保有</span> : <span className="ad-watch">WATCH</span>}
         <span className="ad-sym">{view.symbol}</span>
@@ -38,7 +36,7 @@ export const AssetDecisionSummary: React.FC<{
         <span className="ad-price">{view.priceText}</span>
         <span className="ad-chg">{view.changePct == null ? '—'
           : <SignedValue value={view.changePct} suffix="%" arrow={false} />}</span>
-        <span className="ad-chevron" aria-hidden>{open ? '−' : '+'}</span>
+        {interactive && <span className="ad-chevron" aria-hidden>{open ? '−' : '+'}</span>}
       </span>
       <span className="ad-l2">
         <span className="ad-cmd" style={{ color: sigColor }}>{view.currentActionJa}</span>
@@ -58,6 +56,13 @@ export const AssetDecisionSummary: React.FC<{
         <span>{quoteAsOf(view.quoteTruth)}</span>
         <span>{quoteAge(view.quoteTruth)}</span>
       </span>}
+    </>;
+  const label = `${view.symbol} ${view.name}, ${view.currentActionJa}`;
+  return interactive ? (
+    <button className="ad-head" onClick={onToggle} aria-expanded={open} aria-label={label}>
+      {content}
     </button>
+  ) : (
+    <div className="ad-head" aria-label={label}>{content}</div>
   );
 };

@@ -47,6 +47,10 @@ interface Props {
   onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
   focus?: AssetFocusIntent | null;
   toolbar?: React.ReactNode;
+  /** Lean v13 contextual detail: render only this asset, fully expanded. */
+  detailSymbol?: string;
+  /** List rows open the contextual Asset Detail route instead of duplicating it inline. */
+  onOpenAsset?: (symbol: string, section?: string) => void;
 }
 
 // 手動順モードの行(DnDハンドル+カード)
@@ -65,7 +69,7 @@ const SortableCardRow: React.FC<{
 };
 
 export const AssetDeskList: React.FC<Props> = ({
-  assets, onReorder, onRemove, onUpdateHolding, focus, toolbar,
+  assets, onReorder, onRemove, onUpdateHolding, focus, toolbar, detailSymbol, onOpenAsset,
 }) => {
   const intel = useAssetIntel({ publish: false });
   const cat = useCatalysts();
@@ -329,8 +333,15 @@ export const AssetDeskList: React.FC<Props> = ({
     <AssetDecisionCard
       key={r.d.asset.id}
       d={r.d}
-      open={expandedId === r.d.asset.id}
+      open={detailSymbol
+        ? r.d.asset.symbol.toUpperCase() === detailSymbol.toUpperCase()
+        : expandedId === r.d.asset.id}
       onToggle={() => {
+        if (detailSymbol) return;
+        if (onOpenAsset && expandedId !== r.d.asset.id) {
+          onOpenAsset(r.d.asset.symbol);
+          return;
+        }
         setLocalFocus(null);
         setExpandedId((cur) => (cur === r.d.asset.id ? null : r.d.asset.id));
       }}
@@ -340,8 +351,23 @@ export const AssetDeskList: React.FC<Props> = ({
       dragHandle={handle}
       focusSection={activeFocus?.symbol.toUpperCase() === r.d.asset.symbol.toUpperCase()
         ? activeFocus.section : undefined}
+      collapsible={!detailSymbol}
     />
   );
+
+  if (detailSymbol) {
+    const detail = prioritized.find((row) =>
+      row.d.asset.symbol.toUpperCase() === detailSymbol.toUpperCase());
+    return detail ? (
+      <div className="asset-groups asset-groups--detail">
+        <div className="card asset-list ad-list">{renderCard(detail)}</div>
+      </div>
+    ) : (
+      <div className="card asset-list">
+        <div className="asset-empty">{detailSymbol} はHoldings / Watchlistに登録されていません。</div>
+      </div>
+    );
+  }
 
   return (
     <div className="asset-groups">
@@ -354,6 +380,7 @@ export const AssetDeskList: React.FC<Props> = ({
         data={intel.downside}
         maxItems={4}
         onFocus={(symbol) => {
+          if (onOpenAsset) { onOpenAsset(symbol, 'why-downside'); return; }
           const row = rows.find((item) =>
             item.d.asset.symbol.toUpperCase() === symbol.toUpperCase());
           if (!row) return;

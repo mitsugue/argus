@@ -3,6 +3,7 @@ import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../..
 import { formatEventTime, quoteDisplayLabel } from '../../domain/argusTodayView';
 import { SIGNAL_ORDER, SIGNALS } from '../../domain/actionLevel';
 import type { RouteKey } from '../NavRail';
+import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
@@ -49,6 +50,8 @@ interface Props {
   onInstrument: (market: 'JP' | 'US', symbol: string) => void;
   onHorizon: (horizon: MarketHorizon) => void;
   onNavigate: (key: RouteKey) => void;
+  onNavigateToAsset?: (symbol: string, section?: string) => void;
+  onNavigateToSettings?: (section: SettingsSection) => void;
   aiButton: React.ReactNode;
 }
 
@@ -195,17 +198,12 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () =>
 
 export const ArgusTodayPanel: React.FC<Props> = ({
   view, instruments, selectedSymbol, horizon, chartLoad,
-  onMode, onInstrument, onHorizon, onNavigate, aiButton,
+  onMode, onInstrument, onHorizon, onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton,
 }) => {
   const [detail, setDetail] = React.useState(false);
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
   const currentSignal = SIGNAL_ORDER.find((code) => SIGNALS[code].level === view.actionScore);
-  const openEventDetails = () => {
-    const events = document.getElementById('important-events');
-    if (!events) return;
-    events.querySelector('details')?.setAttribute('open', '');
-    events.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  };
+  const openEventDetails = () => onNavigate('notifications');
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
@@ -354,9 +352,30 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           {projection.historyStart ? ` · ${projection.historyStart}–${projection.historyEnd ?? '現在'}` : ''}
           {projection.sourceHistoryCount < 2_000 ? ' · 10年未達' : ' · 約10年'}</span></div>}
         {view.decisions[view.selectedMarket].evidence.map((line, index) => <p key={`${index}:${line}`}>{line}</p>)}
-        <div className="at-detail-actions">{aiButton}<button type="button" onClick={() => onNavigate('quality')}>Data Quality</button><button type="button" onClick={() => onNavigate('backup')}>Backup</button></div>
+        <div className="at-detail-actions">{aiButton}<button type="button"
+          onClick={() => onNavigateToSettings
+            ? onNavigateToSettings('recovery') : onNavigate('settings')}>Settings / Recovery</button></div>
       </div>}
     </article>
+
+    {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
+      <div className="at-head"><b>OWNER PRIORITIES</b><span>MAX 3</span></div>
+      {view.holdingsReview.map((item) => {
+        const content = <>
+          <span className="at-priority-title">
+            <b>{item.symbol}</b><em>{item.isHeld ? '保有' : 'WATCH'}</em>
+            <mark className={`is-${(item.impact ?? 'Neutral').toLowerCase()}`}>{item.impact ?? 'Neutral'}</mark>
+            <strong>{item.actionJa ?? item.statusJa}</strong>
+          </span>
+          <span className="at-priority-impact">{item.reasonJa}</span>
+          <small>次に確認: {item.checkNextJa || '証拠更新待ち'}
+            {item.whatWouldChangeJa ? ` · 判断更新: ${item.whatWouldChangeJa}` : ''}</small>
+        </>;
+        return onNavigateToAsset ? <button type="button" key={item.symbol}
+          onClick={() => onNavigateToAsset(item.symbol)}>{content}</button>
+          : <div key={item.symbol}>{content}</div>;
+      })}
+    </section>}
 
     {view.macroMoves.length > 0 && <Compact title="MACRO"><div className="at-rows">
       {view.macroMoves.map((move) => <div key={move.id}><b>{move.label}</b><span>{fmtMove(move.value, move.suffix)}</span><em>{move.directionLabel ?? '→'} · {shortDate(move.asOf)}</em></div>)}

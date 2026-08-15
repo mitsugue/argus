@@ -179,8 +179,10 @@ def test_fe_partial_data_reasons():
     assert "dataStatus" in vm
     assert "要確認" in vm
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
-    assert "Data Quality" in panel
+    assert "DATA QUALITY" in panel
     assert "view.dataStatus" in panel
+    settings = _read("routes", "Settings.tsx")
+    assert "PublicDiagnosticsPanel" in settings
 
 
 def test_fe_matrix_axes_and_provisional():
@@ -282,12 +284,17 @@ def test_addendum_single_event_clock():
     assert "日時がパースできる未来のイベントだけ" in clock or "パースできる" in clock
     assert "あと${days}日" in clock or "あと" in clock
     app = _read("App.tsx")
-    assert "nextUpcomingEvent" in app                # Today以外の右上Nextチップ
-    assert "route === 'command' ? undefined : nextEvent" in app
+    # B2a: the duplicate shell event chip is gone. Today owns the compact next
+    # event and Notifications owns the full canonical event review.
+    assert "nextUpcomingEvent" not in app
+    assert "useImportantEvents" not in app
     vm = _read("domain", "argusTodayView.ts")
     assert "['RELEASED', 'RESOLVED']" in vm
     assert "future.slice(1)" in vm and "slice(0, 3)" in vm
     cc = _read("routes", "CommandCenter.tsx")
+    assert "argusToday.nextEvent" in cc
+    notifications = _read("routes", "NotificationsPage.tsx")
+    assert "ImportantEventsCard" in notifications
     # 旧「countdown === 'D'先頭拾い」ロジックが残っていない
     assert "find((e) => e.countdown === 'D' || e.countdown === 'D-1')" not in cc
 

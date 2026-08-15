@@ -3,29 +3,39 @@ import {
   compactNotificationFeed, dismissNotification, listNotifications, markAllSeen, SEV_JA, SEV_TONE,
   type CompactNotification,
 } from '../lib/notifications';
+import './NotificationPanel.css';
 
-// V11.14.0 — 通知センター(ベルのドロップダウン)。端末内保存・売買指示なし。
+// Lean v13 — a first-class page projection of the device-local notification
+// store. Detection/storage stay unchanged; this component performs no polling.
 
-export const NotificationPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+const jstFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+function jstStamp(value: string | number | Date) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return { day: '', time: '—' };
+  const parts = Object.fromEntries(jstFormatter.formatToParts(date)
+    .map((part) => [part.type, part.value]));
+  return { day: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}` };
+}
+
+export const NotificationPanel: React.FC = () => {
   const [, bump] = React.useReducer((x: number) => x + 1, 0);
   const items = compactNotificationFeed(listNotifications());
   React.useEffect(() => { markAllSeen(); }, []);
-  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const today = jstStamp(new Date()).day;
   const groups: [string, CompactNotification[]][] = [
-    ['今日', items.filter((i) => i.createdAt.slice(0, 10) === today)],
-    ['それ以前', items.filter((i) => i.createdAt.slice(0, 10) !== today)],
+    ['今日', items.filter((i) => jstStamp(i.createdAt).day === today)],
+    ['それ以前', items.filter((i) => jstStamp(i.createdAt).day !== today)],
   ];
   return (
-    <div role="dialog" aria-label="通知"
-         style={{ position: 'absolute', top: 44, right: 8, zIndex: 60, width: 340,
-                  maxHeight: '70vh', overflowY: 'auto', background: 'var(--bg-card, #0d1117)',
-                  border: '1px solid var(--line)', borderRadius: 10, padding: 10,
-                  boxShadow: '0 8px 30px rgba(0,0,0,.45)' }}>
+    <section className="notification-center card" aria-label="通知">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <b style={{ fontSize: 13 }}>通知</b>
-        <button type="button" onClick={onClose} aria-label="通知を閉じる"
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-faint)',
-                         cursor: 'pointer', fontSize: 14 }}>✕</button>
+        <b style={{ fontSize: 13 }}>端末内の変化</b>
+        <span className="notification-center__privacy">DEVICE LOCAL</span>
       </div>
       {items.length === 0 && (
         <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '8px 0' }}>
@@ -42,7 +52,7 @@ export const NotificationPanel: React.FC<{ onClose: () => void }> = ({ onClose }
                             borderRadius: 4, padding: '0 4px', fontSize: 9.5 }}>{SEV_JA[n.severity]}</b>
                 <b style={{ marginLeft: 6 }}>{n.titleJa}</b>
                 <span style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--text-faint)' }}>
-                  {n.createdAt.slice(11, 16)}{n.occurrenceCount > 1 ? ` · ${n.occurrenceCount} updates` : ''}
+                  {jstStamp(n.createdAt).time}{n.occurrenceCount > 1 ? ` · ${n.occurrenceCount} updates` : ''}
                 </span>
               </p>
               <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-sub)', lineHeight: 1.6 }}>{n.bodyJa}</p>
@@ -60,7 +70,7 @@ export const NotificationPanel: React.FC<{ onClose: () => void }> = ({ onClose }
       <p style={{ margin: '8px 0 0', fontSize: 9, color: 'var(--text-faint)' }}>
         通知タイプの有用性は学習中です(閉じた回数もノイズ指標として記録)。通知は端末内で生成・保存(サーバー送信なし)。外部push/メールは未設定のため無効。注意喚起であり売買指示ではありません。
       </p>
-    </div>
+    </section>
   );
 };
 

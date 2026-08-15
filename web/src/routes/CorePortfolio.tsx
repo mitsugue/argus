@@ -40,7 +40,7 @@ import '../components/dashboard/Dashboard.css';
 
 const fmtJpy = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 
-export const CorePortfolio: React.FC = () => {
+export const CorePortfolio: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   useLocale();   // re-render on locale switch
   const { cards, posture, phase } = useActionAlerts();
   const assetsApi = useAssets();
@@ -132,16 +132,8 @@ export const CorePortfolio: React.FC = () => {
   }), [exp.combinedJpy, exp.combinedPlJpy, exp.holdings.length, pe,
     portfolioIntel.portfolioStrategy]);
 
-  return (
-    <PageShell
-      title={tEn('nav.corePortfolio')}
-      subtitle={
-        <span>
-          資産クラス司令室 — 配分の現在地と、クラスごとの「いま取るべき構え」。
-          <span className="today-phase"> - {phase === 'connecting' ? 'connecting...' : phase}{posture ? ` · posture ${posture}` : ''}</span>
-        </span>
-      }
-    >
+  const content = (
+    <>
       <PortfolioDecisionOverview view={portfolioOverview} />
       <details className="cp-workspace">
         <summary>Allocation / Risk / Plan / History</summary>
@@ -182,7 +174,7 @@ export const CorePortfolio: React.FC = () => {
       </section>
 
       {/* V12.2.12: Portfolio Exposure + What-if(旧Watchlistから移設・計算不変)。
-          ポートフォリオ横断機能はこのページに集約(Asset Deskは個別銘柄専用)。 */}
+          ポートフォリオ横断機能はこの領域に集約(銘柄詳細は個別判断専用)。 */}
       <PortfolioExposureCard assets={assets} exp={exp} />
       <WhatIfPanel assets={assets} quotes={whatIfMaps.quotes} labels={whatIfMaps.labels}
                    cats={whatIfMaps.cats} exp={exp} usdJpy={usdJpy} mountTs={mountTs} />
@@ -204,7 +196,7 @@ export const CorePortfolio: React.FC = () => {
                 <p className="cmd-alloc__note">
                   {allSets.length === 0
                     ? '銘柄別シナリオ履歴がまだないため、ポートフォリオ分岐は未算出です。次の判断更新後に端末内で合成します。'
-                    : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Asset Deskで保有数量を入力すると端末内で合成されます。捏造しません)。'}
+                    : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Holdings / Watchlistの銘柄詳細で保有数量を入力すると端末内で合成されます。捏造しません)。'}
                 </p>
               ) : (
                 <>
@@ -213,7 +205,7 @@ export const CorePortfolio: React.FC = () => {
                     <span style={{ marginLeft: 6 }}>{ps.summaryJa}</span>
                   </p>
                   <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はAsset Deskの各カード→Decisionで。
+                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はHoldings / Watchlistの各銘柄→Decisionで。
                   </p>
                 </>
               )}
@@ -335,7 +327,7 @@ export const CorePortfolio: React.FC = () => {
                 </p>
               ))}
               <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                比率の高い銘柄は追加より先にリスク確認。詳細条件はAsset Deskの各カード→DECISIONで。
+                比率の高い銘柄は追加より先にリスク確認。詳細条件はHoldings / Watchlistの各銘柄→DECISIONで。
                 これは計画であり売買指示ではありません(注文機能はありません)。
               </p>
             </div>
@@ -343,11 +335,10 @@ export const CorePortfolio: React.FC = () => {
         );
       })()}
 
-      {/* v11.19.1 (owner request): PORTFOLIO SYNC & BACKUP moved to the new
-          Backup page — all backup ops now live in ONE place. Pointer only. */}
+      {/* Lean v13: owner backup/recovery controls live under Settings. */}
       <p className="cmd-alloc__note" style={{ margin: '2px 0 8px', fontSize: 11.5, color: 'var(--text-faint)' }}>
-        バックアップ操作(暗号化バックアップ設定・JSON書き出し/読み込み・スナップショット・復元ドリル)は
-        左ナビの「<b>Backup</b>」ページに集約しました。
+        ローカルJSONの書き出し/読み込み、保存済み暗号文の読取復元、復元ドリルは
+        「<b>Settings / Recovery</b>」に集約しました。
       </p>
 
       {/* DECISION QUALITY (v11.11.0) — 過去判断の答え合わせ(端末内・成績断定なし) */}
@@ -367,7 +358,7 @@ export const CorePortfolio: React.FC = () => {
           {pe.noHoldings ? (
             <p className="cmd-alloc__empty">
               ポジション数量・取得単価が未入力のため、保有リスクは暫定です。
-              Asset Deskの銘柄カードで入力すると、テーマ集中・通貨偏り・銘柄集中を判定します(端末内のみ)。
+              Holdings / Watchlistの銘柄詳細で入力すると、テーマ集中・通貨偏り・銘柄集中を判定します(端末内のみ)。
             </p>
           ) : (
             <>
@@ -456,6 +447,21 @@ export const CorePortfolio: React.FC = () => {
       </section>
         </div>
       </details>
+    </>
+  );
+
+  if (embedded) return <div className="cp-embedded">{content}</div>;
+  return (
+    <PageShell
+      title={tEn('nav.corePortfolio')}
+      subtitle={
+        <span>
+          資産クラス司令室 — 配分の現在地と、クラスごとの「いま取るべき構え」。
+          <span className="today-phase"> - {phase === 'connecting' ? 'connecting...' : phase}{posture ? ` · posture ${posture}` : ''}</span>
+        </span>
+      }
+    >
+      {content}
     </PageShell>
   );
 };

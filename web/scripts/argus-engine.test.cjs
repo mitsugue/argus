@@ -223,7 +223,9 @@ const navigation = fs.readFileSync(path.join(__dirname, '..', 'src/navigation.ts
 const marketNewsHook = fs.readFileSync(path.join(__dirname, '..', 'src/hooks/useMarketNews.ts'), 'utf8');
 check('single decision card', (panel.match(/at-decision card/g) || []).length === 1);
 check('Market changes and Next Check absent', !route.includes('<MarketIntelligenceChanges') && !route.includes('<NextCheckCard'));
-check('Today notification bell hidden', shell.includes('hideNotifications') && route.includes('ArgusTodayPanel'));
+check('Notifications is a first-class route with no shell polling dropdown',
+  navigation.includes("route: 'notifications'")
+  && !shell.includes('NotificationPanel') && !shell.includes('unreadCounts'));
 check('manual market local persistence', route.includes('argus.today.marketSelection.v1'));
 check('selected instrument is device-local only', route.includes('argus.today.selectedInstrument.v1')
   && !/fetch\([^)]*selectedInstrument/.test(route));
@@ -238,12 +240,13 @@ check('Today has required prediction graphic', panel.includes('at-proj-actual') 
   && panel.includes('at-proj-boundary'));
 check('forecast supports 1D 5D 20D and replay deep-link', panel.includes('([1, 5, 20] as const)')
   && panel.includes('argus.replayContext') && panel.includes("onNavigate('regime')"));
-check('mobile nav is bottom five with direct system destinations',
-  nav.includes('PRIMARY_NAVIGATION.map') && nav.includes('SYSTEM_NAVIGATION.map')
-  && nav.includes('System</summary>') && navigation.includes("mobileLabel: 'Today'")
-  && navigation.includes("mobileLabel: 'Assets'") && navigation.includes("mobileLabel: 'Review'")
-  && navigation.includes("mobileLabel: 'Market'")
-  && navCss.includes('position: fixed') && navCss.includes('grid-template-columns: repeat(5'));
+check('mobile nav is the four-destination Lean v13 surface',
+  nav.includes('PRIMARY_NAVIGATION.map') && !nav.includes('SYSTEM_NAVIGATION')
+  && navigation.includes("mobileLabel: 'Today'")
+  && navigation.includes("mobileLabel: 'Holdings'")
+  && navigation.includes("mobileLabel: 'Alerts'")
+  && navigation.includes("mobileLabel: 'Settings'")
+  && navCss.includes('position: fixed') && navCss.includes('grid-template-columns: repeat(4'));
 check('actual line alone is white', css.includes('.at-proj-actual { fill:none; stroke:#fff')
   && css.includes('.at-proj-up { stroke:#22c55e') && css.includes('.at-proj-down { stroke:#ef4444'));
 check('market card renamed MACRO and VIX retained', panel.includes('title="MACRO"') && route.includes("addRate('vix'"));

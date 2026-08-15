@@ -18,6 +18,11 @@ export interface TodayEventInput {
 }
 export interface TodayHoldingInput {
   symbol: string; name: string; rank: number; reasonJa: string; statusJa: string;
+  isHeld?: boolean;
+  impact?: 'Good' | 'Bad' | 'Neutral';
+  actionJa?: string;
+  checkNextJa?: string;
+  whatWouldChangeJa?: string;
 }
 export interface TodayMoveInput {
   id: string; label: string; value: number; previous?: number | null;

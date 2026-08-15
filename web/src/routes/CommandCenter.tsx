@@ -8,11 +8,11 @@ import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes } from '../lib/decisionQuality';
 import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
-import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
 import { runNotificationEngine } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
 import { listSnapshots } from '../lib/portfolioSync';
 import type { RouteKey } from '../components/NavRail';
+import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
 import { buildArgusTodayView, buildTodayReview, selectTodayNews,
@@ -35,6 +35,7 @@ interface Props {
   onNavigate: (key: RouteKey) => void;
   /** V12.2.12: Asset Deskの当該銘柄カードを開いてスクロール(App.tsx state経由)。 */
   onNavigateToAsset?: (symbol: string, section?: string) => void;
+  onNavigateToSettings?: (section: SettingsSection) => void;
 }
 
 // Today is a SUMMARY composed from LIVE data (action-labels + market-regime +
@@ -96,7 +97,7 @@ function reviewFor(payload: ChartIntelligencePayload | null, action: string, dat
 const signed = (value: number, digits = 0) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
 const oku = (value: number) => `${Math.round(value / 100_000_000).toLocaleString('ja-JP')}億`;
 
-export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
+export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, onNavigateToSettings }) => {
   useLocale();   // re-render Today on locale switch
   // V12.2.12: 個別銘柄系のデータ組み立ては useAssetIntel(Today/Asset Desk共有の
   // 正本)へ移設。Todayは publish:true — 共有ストアへのpublish副作用(Exposure/AP/
@@ -242,6 +243,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           planBySymbol[p.symbol] = { planType: p.planType, currentStance: p.currentStance,
             name: p.assetName, isHeld: p.isHeld, summaryJa: p.summaryJa };
         }
+        const backupSafety = assessBackupSafety(assets);
         runNotificationEngine({
           apItems, eventNames: [...new Set((impEvents?.events ?? [])
             .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
@@ -257,13 +259,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
           briefSession: sessionBrief.sessionType,
           hasHoldings: !positionExposure.noHoldings,
           snapshotAgeDays: age,
-          vaultConfigured: !!localStorage.getItem('argus.vaultPass.v1'),
-          restoreVerified: assessBackupSafety(assets).restoreVerified,
+          vaultConfigured: backupSafety.vaultConfigured,
+          localExportAgeDays: backupSafety.exportAgeDays,
+          restoreVerified: backupSafety.restoreVerified,
         });
       } catch { /* never break Today */ }
     }, 12_000);
     return () => clearTimeout(t);
-  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure, scenarioSets, positionPlans, portfolioStrategy]);
+  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure,
+    scenarioSets, positionPlans, portfolioStrategy, assets]);
 
   // Recovery Phase A: fixed public diagnostics only. Rich operational state is
   // intentionally unavailable to the static browser bundle.
@@ -469,6 +473,25 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     })), assets.map((asset) => asset.symbol));
     const backup = assessBackupSafety(assets);
     const previous = previousJudgment(judgment.date);
+    const ownerPriorities = [...apItems]
+      .filter((item) => item.priorityRank !== 'Ignore')
+      .sort((left, right) => right.priorityScore - left.priorityScore
+        || left.symbol.localeCompare(right.symbol))
+      .slice(0, 3)
+      .map((item, rank) => ({
+        symbol: item.symbol,
+        name: item.assetName,
+        rank,
+        reasonJa: item.whyJa,
+        statusJa: item.priorityRankJa,
+        isHeld: item.isHeld,
+        impact: item.actionLabel === 'SMALL_ADD_ALLOWED' ? 'Good' as const
+          : ['CHECK_NOW', 'AVOID_CHASE', 'REVIEW_POSITION', 'INVESTIGATE'].includes(item.actionLabel)
+            ? 'Bad' as const : 'Neutral' as const,
+        actionJa: item.actionLabelJa,
+        checkNextJa: item.checkNextJa,
+        whatWouldChangeJa: item.whatWouldChangeJa,
+      }));
     return buildArgusTodayView({
       now: new Date(), selectionMode: marketMode,
       calendar: marketLedger.ledger?.phase3?.calendar,
@@ -479,7 +502,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
       eventHardVeto: { JP: imminent, US: imminent },
       factors: { JP: jpFactors, US: usFactors },
       evidence: { JP: judgment.reasons, US: judgment.reasons },
-      events: eventRows, indexMoves, macroMoves, positioning, attention, news,
+      events: eventRows, indexMoves, macroMoves, positioning, attention,
+      holdings: ownerPriorities, news,
       newsCardState: {
         status: marketNews.data?.status ?? 'unavailable',
         lastChecked: marketNews.lastChecked,
@@ -504,7 +528,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
     });
   }, [judgment, overlay, isPartial, visLimited, cappedConf, marketLedger.ledger,
     regime.data, impEvents, rates.data, events247,
-    assets, al.data, marketMode,
+    assets, al.data, apItems, marketMode,
     jpChart.data, topixChart.data, sp500Chart.data, nasdaqChart.data, marketNews.data,
     marketNews.lastChecked, marketNews.failureClass,
     selectedInstrument, effectiveMarket, selectedChart.data]);
@@ -539,9 +563,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate }) => {
         selectedSymbol={selectedSymbol} horizon={chartHorizon}
         chartLoad={selectedChart} onMode={changeMarketMode}
         onInstrument={changeInstrument} onHorizon={changeChartHorizon}
-        onNavigate={onNavigate}
+        onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
+        onNavigateToSettings={onNavigateToSettings}
         aiButton={<ProHandoffButton nextEvent={argusToday.nextEvent} />} />
-      <ImportantEventsCard onNavigate={onNavigate} />
       <MobileStickyCommand text={argusToday.footerText} />
     </PageShell>
   );
