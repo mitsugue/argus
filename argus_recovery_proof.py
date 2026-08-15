@@ -905,6 +905,36 @@ def _time_is_fresh(
     return -future_skew <= age <= maximum_age
 
 
+def _verification_window_is_valid(
+        *, initial: Optional[datetime], final: Optional[datetime],
+        clock: Optional[datetime], receipt: Optional[datetime],
+        verification_moments: Tuple[Optional[datetime], ...],
+        now: datetime, policy: ProofPolicy, clock_trusted: bool) -> bool:
+    """Validate the one explicit temporal window bound by the receipt."""
+    if initial is None or final is None or clock is None or receipt is None or \
+            not clock_trusted or \
+            any(moment is None for moment in verification_moments):
+        return False
+    moments = tuple(
+        moment for moment in verification_moments if moment is not None)
+    final_to_receipt = (receipt - final).total_seconds()
+    return (
+        initial <= final <= receipt and
+        initial <= clock <= receipt and
+        all(initial <= moment <= final for moment in moments) and
+        0 <= final_to_receipt <= policy.maxReceiptAgeSeconds and
+        _time_is_fresh(
+            final, now, policy.maxReceiptAgeSeconds,
+            policy.maxFutureSkewSeconds) and
+        _time_is_fresh(
+            clock, now, policy.maxReceiptAgeSeconds,
+            policy.maxFutureSkewSeconds) and
+        _time_is_fresh(
+            receipt, now, policy.maxReceiptAgeSeconds,
+            policy.maxFutureSkewSeconds)
+    )
+
+
 def _evaluate_valid_evidence(
         evidence: VerifiedRecoveryEvidence, policy: ProofPolicy,
         now: datetime) -> ProofResult:
@@ -978,7 +1008,8 @@ def _evaluate_valid_evidence(
     evidence_ids = tuple(segment.segmentId for segment in segments)
     if manifest.walTail is WalTailDeclaration.EXPLICIT_EMPTY:
         if not (t_sequence == h_sequence and not manifest_ids and
-                not segments):
+                not segments and
+                manifest.stateRootAtT == manifest.stateRootAtH):
             reasons.add(ReasonCode.WAL_TAIL_RANGE_INVALID)
     elif manifest.walTail is WalTailDeclaration.SEGMENTS:
         if not (h_sequence > t_sequence and segments and
@@ -1143,14 +1174,8 @@ def _evaluate_valid_evidence(
             receipt.verifiedThroughSequence == h_sequence and
             receipt.verifierBuildSha == evidence.verifierBuildSha and
             evidence.verificationTime == receipt.issuedAt and
-            hard.clockTrust is ClockTrust.TRUSTED and
             receipt_time is not None and verification_time is not None and
-            clock_time is not None and
-            _time_is_fresh(
-                receipt_time, now, policy.maxReceiptAgeSeconds,
-                policy.maxFutureSkewSeconds) and
-            _time_is_not_future(
-                clock_time, now, policy.maxFutureSkewSeconds)):
+            clock_time is not None):
         reasons.add(ReasonCode.VERIFIER_RECEIPT_INVALID)
     if receipt_time is not None and not _time_is_fresh(
             receipt_time, now, policy.maxReceiptAgeSeconds,
@@ -1159,28 +1184,22 @@ def _evaluate_valid_evidence(
 
     initial_time = _parse_timestamp(initial.observedAt)
     final_time = _parse_timestamp(final.observedAt)
-    verification_moments = [
+    verification_moments = (
         _parse_timestamp(manifest.verifiedAt),
         _parse_timestamp(full.verifiedAt),
         _parse_timestamp(restore.completedAt),
-    ]
-    verification_moments.extend(
-        _parse_timestamp(segment.verifiedAt) for segment in segments)
-    verification_moments.extend(
+    ) + tuple(
+        _parse_timestamp(segment.verifiedAt) for segment in segments) + tuple(
         _parse_timestamp(reference.verifiedAt)
         for reference in evidence.externalReferences)
-    time_window_valid = (
-        initial_time is not None and final_time is not None and
-        receipt_time is not None and
-        all(moment is not None for moment in verification_moments) and
-        all(initial_time <= moment <= final_time
-            for moment in verification_moments if moment is not None) and
-        final_time <= receipt_time and
-        _time_is_not_future(
-            final_time, now, policy.maxFutureSkewSeconds) and
-        _readback_matches_manifest(final, manifest)
+    time_window_valid = _verification_window_is_valid(
+        initial=initial_time, final=final_time, clock=clock_time,
+        receipt=receipt_time, verification_moments=verification_moments,
+        now=now, policy=policy,
+        clock_trusted=hard.clockTrust is ClockTrust.TRUSTED,
     )
-    if not time_window_valid:
+    if not time_window_valid or not _readback_matches_manifest(
+            final, manifest):
         reasons.add(ReasonCode.POINTER_VERIFICATION_WINDOW_INVALID)
 
     if reasons:

@@ -82,7 +82,8 @@ and timestamps are canonical whole-second UTC values.
 9. FullGeneration expected, observed and manifest digests match;
 10. FullGeneration reducer/schema/build/key identities are compatible;
 11. FullGeneration covers exactly `T` and has `stateRootAtT`;
-12. the WAL tail covers exactly `T+1..H`, or satisfies the explicit empty rule;
+12. the WAL tail covers exactly `T+1..H`, or satisfies the explicit empty rule
+    with identical state roots at `T` and `H`;
 13. there is no WAL gap;
 14. there is no duplicate segment, digest or range;
 15. there is no overlap;
@@ -96,10 +97,10 @@ and timestamps are canonical whole-second UTC values.
 23. every declared mutation class is exactly covered through `H` with no gap;
 24. every manifest-declared immutable external reference verifies exactly;
 25. the isolated restore generation/sequence/root equals `stateRootAtH`;
-26. the verifier receipt binds the full canonical evidence transcript and is
-    fresh under explicit policy and explicit `now`;
-27. all verification observations occur between the initial read and stable
-    final reread, and the receipt is issued after that final observation.
+26. the verifier receipt binds the full canonical evidence transcript;
+27. one explicit verification window orders the initial read, object
+    observations, stable final reread, trusted clock observation, receipt and
+    explicit `now`, with each required freshness bound satisfied.
 
 Any failure makes the status `NOT_PROVEN`.
 
@@ -123,7 +124,8 @@ An empty tail is valid only when both conditions are explicit:
 
 - `T == H`; and
 - the manifest enum is `EXPLICIT_EMPTY` with zero declared and observed WAL
-  segments.
+  segments; and
+- `stateRootAtT == stateRootAtH`.
 
 Missing segment data never implies an empty tail. `SEGMENTS` requires `H > T`
 and exact contiguous coverage of `T+1..H`.
@@ -141,13 +143,19 @@ producer build.
 Gap, duplicate, overlap, fork, reorder, predecessor mismatch, regression,
 cross-generation data, wrong baseline and final-root mismatch all deny proof.
 
-## Pointer TOCTOU and generation binding
+## Unified verification window and generation binding
 
 The package carries an initial pinned readback and a final reread. The final
 manifest identity, digest, pointer, authority epoch and generation must equal
 the initial observation and the manifest. All object/reference/restore
 verification timestamps must fall after the initial observation and before the
-final reread. The verifier receipt must be issued after the final reread.
+final reread. The final reread must be fresh relative to explicit `now`, and
+the final-reread-to-receipt gap cannot exceed the typed receipt-age limit. The
+trusted clock observation must be fresh, must not precede the initial read, and
+must exist before or exactly when the receipt is issued. The receipt itself
+must be fresh. Future observations are rejected according to the explicit
+typed skew policy; no hidden clock is read. A fresh receipt therefore cannot
+refresh stale authority or clock evidence.
 
 Pointer movement or generation mixing is always `NOT_PROVEN`.
 

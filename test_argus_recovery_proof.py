@@ -625,6 +625,115 @@ def test_empty_wal_must_be_explicit_and_only_when_t_equals_h():
     assert_not_proven(advanced)
 
 
+def test_empty_wal_root_continuity_hostile_matrix():
+    valid = make_evidence()
+    assert proof.evaluate_recovery_proof(
+        valid, make_policy(), NOW).status is proof.ProofStatus.PROVEN
+
+    other_root = digest("impossible-empty-tail-root-transition")
+    changed_manifest = _alter_manifest(
+        valid, recompute_contract=True, stateRootAtH=other_root).manifest
+    root_mismatch = _trusted_replace(
+        valid, manifest=changed_manifest,
+        isolatedRestore=replace(valid.isolatedRestore, stateRoot=other_root))
+    result = assert_not_proven(root_mismatch)
+    assert proof.ReasonCode.WAL_TAIL_RANGE_INVALID in result.reasonCodes
+
+    segmented = make_evidence(((11, 11),))
+    explicit_with_segments = _alter_manifest(
+        segmented, recompute_contract=True,
+        walTail=proof.WalTailDeclaration.EXPLICIT_EMPTY)
+    assert proof.ReasonCode.WAL_TAIL_RANGE_INVALID in \
+        assert_not_proven(explicit_with_segments).reasonCodes
+
+    empty_after_advance_manifest = _alter_manifest(
+        segmented, recompute_contract=True,
+        walTail=proof.WalTailDeclaration.EXPLICIT_EMPTY,
+        walSegmentIds=()).manifest
+    empty_after_advance = _trusted_replace(
+        segmented, manifest=empty_after_advance_manifest, walSegments=())
+    assert proof.ReasonCode.WAL_TAIL_RANGE_INVALID in \
+        assert_not_proven(empty_after_advance).reasonCodes
+
+
+def _with_verification_times(
+        evidence, *, initial=INITIAL_TIME, verification=VERIFY_TIME,
+        final=FINAL_TIME, clock=RECEIPT_TIME, receipt=RECEIPT_TIME):
+    return _trusted_replace(
+        evidence,
+        manifest=replace(evidence.manifest, verifiedAt=verification),
+        initialManifestReadback=replace(
+            evidence.initialManifestReadback, observedAt=initial),
+        finalManifestReadback=replace(
+            evidence.finalManifestReadback, observedAt=final),
+        fullGeneration=replace(
+            evidence.fullGeneration, verifiedAt=verification),
+        walSegments=tuple(replace(segment, verifiedAt=verification)
+                          for segment in evidence.walSegments),
+        externalReferences=tuple(replace(reference, verifiedAt=verification)
+                                 for reference in evidence.externalReferences),
+        isolatedRestore=replace(
+            evidence.isolatedRestore, completedAt=verification),
+        hardRpoEvidence=replace(
+            evidence.hardRpoEvidence, clockObservedAt=clock),
+        verificationTime=receipt,
+        verifierReceipt=replace(evidence.verifierReceipt, issuedAt=receipt),
+    )
+
+
+def test_final_readback_freshness_hostile_matrix():
+    evidence = make_evidence()
+    assert proof.evaluate_recovery_proof(
+        _with_verification_times(evidence), make_policy(), NOW).status is \
+        proof.ProofStatus.PROVEN
+
+    hostile_windows = (
+        {
+            "initial": "2026-08-15T00:53:00Z",
+            "verification": "2026-08-15T00:54:00Z",
+            "final": "2026-08-15T00:54:59Z",
+            "clock": "2026-08-15T00:55:00Z",
+            "receipt": "2026-08-15T00:55:00Z",
+        },  # final is stale while receipt age is exactly 300 seconds
+        {
+            "initial": "2026-08-15T00:51:00Z",
+            "verification": "2026-08-15T00:52:00Z",
+            "final": "2026-08-15T00:52:59Z",
+            "clock": RECEIPT_TIME,
+            "receipt": RECEIPT_TIME,
+        },  # final -> receipt gap is 301 seconds
+        {
+            "final": "2026-08-15T01:00:01Z",
+        },  # future final readback
+    )
+    for changes in hostile_windows:
+        result = assert_not_proven(
+            _with_verification_times(evidence, **changes))
+        assert proof.ReasonCode.POINTER_VERIFICATION_WINDOW_INVALID in \
+            result.reasonCodes
+
+
+@pytest.mark.parametrize("clock,proven", [
+    ("2026-08-15T00:57:30Z", True),
+    (RECEIPT_TIME, True),
+    ("2026-08-15T00:59:00Z", False),
+    ("2026-08-15T00:50:00Z", False),
+    ("2026-08-15T01:01:00Z", False),
+])
+def test_clock_receipt_ordering_and_freshness_hostile_matrix(clock, proven):
+    result = proof.evaluate_recovery_proof(
+        _with_verification_times(make_evidence(), clock=clock),
+        make_policy(), NOW)
+    if proven:
+        assert result.status is proof.ProofStatus.PROVEN
+        assert result.hardRpoClaimPermitted is True
+    else:
+        assert result.status is proof.ProofStatus.NOT_PROVEN
+        assert result.hardRpoClaimPermitted is False
+        assert proof.ReasonCode.POINTER_VERIFICATION_WINDOW_INVALID in \
+            result.reasonCodes
+
+
 def test_coverage_and_policy_drift_matrix(monkeypatch):
     evidence = make_evidence(((11, 12),))
     missing_state = _trusted_replace(
