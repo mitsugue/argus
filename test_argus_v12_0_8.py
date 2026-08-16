@@ -219,18 +219,19 @@ def test_fe_osint_pack_and_ui():
 
 
 def test_fe_unified_stance_chip_everywhere():
-    # v13.3.2: Asset Deskは共有正本をdecision-first viewへ正規化して表示する。
-    # ガード意図(単一の構えが全カード+APで同一ソース)は不変。
+    # Round 2: Asset DeskはSDA v2正本をdecision-first viewへ正規化して表示する。
+    # 旧Primary Stanceは選択権を持たず、互換表示もSDA結果からのみ派生する。
     details = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
     assert "d.decisionFirst" in details and "view.ownerActionJa" in details
     intel = _read("hooks", "useAssetIntel.ts")
-    assert "resolvePrimaryStance" in intel and "stanceBySymbol" in intel
+    assert "evaluateSingleDecisionAuthority" in intel and "sdaBySymbol" in intel
+    assert "resolvePrimaryStance" not in intel
     vm = _read("domain", "argusTodayView.ts")
-    assert "decisions" in vm and "finalAction" in vm          # Todayの単一最終判断
+    assert "canonicalDecision" in vm and "finalAction" in vm  # Todayの単一最終判断
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
     assert "view.finalAction" in panel
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
-    assert "stanceBySymbol.get(sym)" in desk                  # Asset Desk正規化入力
+    assert "intel.sdaBySymbol.get(sym)" in desk               # Asset Desk正規化入力
     assert "buildDecisionFirstView" in desk
     assert not os.path.exists(os.path.join(
         WEB, "components", "dashboard", "ActionPrioritySection.tsx"))
@@ -261,9 +262,12 @@ def test_addendum_risk_chips_split_in_fe():
     assert "保有銘柄に要確認あり" in intel
     assert "保有数量未入力" in intel
     cc = _read("routes", "CommandCenter.tsx")
-    # Market Today は端末ローカルの保有状態から独立する。保有リスクは
-    # Positions & Risk / Asset Desk に残し、市場スコアへ混ぜない。
-    assert "positionRisk" not in cc
+    # Todayへ渡す保有文脈は端末内で粗い区分へ落とし、数量・平均単価・P/Lを
+    # 市場証拠やバックエンドへ混ぜない。未計算のリスク帯はUNKNOWNで閉じる。
+    assert "privacyClass: 'DEVICE_LOCAL'" in cc
+    assert "positionRiskBand: 'UNKNOWN'" in cc
+    for private_field in ("avgCost", "profitLoss", "pnlPct"):
+        assert private_field not in cc
     portfolio = _read("domain", "portfolioDecisionView.ts")
     assert "input.risks" in portfolio and "actionQueue" in portfolio
 

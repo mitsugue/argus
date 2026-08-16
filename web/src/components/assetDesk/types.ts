@@ -5,7 +5,6 @@ import type { AssetItem } from '../../types/assetItem';
 import type { AssetCardModel } from '../../domain/assetCard';
 import type { AssetDecisionView, AiMeta } from '../../domain/assetDecision';
 import type { AssetStrategy, QuoteLite } from '../../lib/assetStrategy';
-import type { HolderPosture } from '../../lib/holderPosture';
 import type { DownsideIncident } from '../../hooks/useDownsideIncidents';
 import type { PositionNote } from '../../domain/positionExposure';
 import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
@@ -30,7 +29,6 @@ export interface DeskCardData {
   quote?: QuoteLite;
   liveName?: string | null;
   incident?: DownsideIncident;
-  hp: HolderPosture | null;
   pn?: PositionNote;
   sdg?: SupplyDemandSignal;
   apx?: APItem;

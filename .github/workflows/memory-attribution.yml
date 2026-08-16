@@ -33,7 +33,13 @@ on:
       - "argus_today_intelligence.py"
       - "argus_decision_evidence_bundle.py"
       - "argus_decision_ledger.py"
+      - "argus_sho.py"
+      - "argus_research_compute.py"
+      - "argus_risk_discipline.py"
+      - "argus_single_decision.py"
       - "scripts/run_prediction_ledger.py"
+      - "scripts/run_round2_research.py"
+      - "scripts/round2_resource_probe.py"
       - "scripts/truth_ledger_benchmark.py"
       - "test_argus_market_data_truth.py"
       - "test_argus_market_replay_pit.py"
@@ -41,6 +47,11 @@ on:
       - "test_argus_today_intelligence.py"
       - "test_argus_decision_evidence_bundle.py"
       - "test_argus_prediction_ledger_v2.py"
+      - "test_argus_sho.py"
+      - "test_argus_research_compute.py"
+      - "test_argus_risk_discipline.py"
+      - "test_argus_single_decision.py"
+      - "test_round2_macro_authority.py"
       - "test_run_prediction_ledger.py"
       - "test_prediction_ledger_workflow.py"
       - "test_truth_ledger_benchmark.py"
@@ -107,7 +118,13 @@ on:
       - "argus_today_intelligence.py"
       - "argus_decision_evidence_bundle.py"
       - "argus_decision_ledger.py"
+      - "argus_sho.py"
+      - "argus_research_compute.py"
+      - "argus_risk_discipline.py"
+      - "argus_single_decision.py"
       - "scripts/run_prediction_ledger.py"
+      - "scripts/run_round2_research.py"
+      - "scripts/round2_resource_probe.py"
       - "scripts/truth_ledger_benchmark.py"
       - "test_argus_market_data_truth.py"
       - "test_argus_market_replay_pit.py"
@@ -115,6 +132,11 @@ on:
       - "test_argus_today_intelligence.py"
       - "test_argus_decision_evidence_bundle.py"
       - "test_argus_prediction_ledger_v2.py"
+      - "test_argus_sho.py"
+      - "test_argus_research_compute.py"
+      - "test_argus_risk_discipline.py"
+      - "test_argus_single_decision.py"
+      - "test_round2_macro_authority.py"
       - "test_run_prediction_ledger.py"
       - "test_prediction_ledger_workflow.py"
       - "test_truth_ledger_benchmark.py"
@@ -499,6 +521,8 @@ jobs:
             sh -c 'set -eu
               test "$(cat /sys/fs/cgroup/memory.max)" = "4294967296"
               test "$(cat /sys/fs/cgroup/memory.swap.max)" = "0"
+              cp /sys/fs/cgroup/memory.events \
+                artifacts/round2-macro-memory-events-before.txt
               pip install --quiet pytest
               python3 -B -m pytest -q \
                 test_argus_market_data_truth.py \
@@ -507,12 +531,29 @@ jobs:
                 test_argus_today_intelligence.py \
                 test_argus_decision_evidence_bundle.py \
                 test_argus_prediction_ledger_v2.py \
+                test_argus_sho.py \
+                test_argus_research_compute.py \
+                test_argus_risk_discipline.py \
+                test_argus_single_decision.py \
+                test_round2_macro_authority.py \
                 test_run_prediction_ledger.py \
                 test_prediction_ledger_workflow.py \
                 test_truth_ledger_benchmark.py
+              python3 -B scripts/round2_resource_probe.py \
+                --require-exact-4g \
+                --output artifacts/round2-macro-resource-proof.json \
+                --quiet
               python3 -B scripts/truth_ledger_benchmark.py \
                 --require-exact-4g \
-                > artifacts/truth-ledger-benchmark.json'
+                > artifacts/truth-ledger-benchmark.json
+              cp /sys/fs/cgroup/memory.events \
+                artifacts/round2-macro-memory-events-after.txt
+              cp /sys/fs/cgroup/memory.peak \
+                artifacts/round2-macro-memory-peak.txt
+              cp /sys/fs/cgroup/memory.max \
+                artifacts/round2-macro-memory-max.txt
+              cp /sys/fs/cgroup/memory.swap.max \
+                artifacts/round2-macro-memory-swap-max.txt'
       - name: Exact-head truth and ledger terminal gate
         if: always()
         shell: bash
@@ -526,6 +567,9 @@ jobs:
           root = pathlib.Path("artifacts")
           report = json.loads((
               root / "truth-ledger-benchmark.json").read_text(
+                  encoding="utf-8"))
+          macro = json.loads((
+              root / "round2-macro-resource-proof.json").read_text(
                   encoding="utf-8"))
           cgroup = report["resources"]["cgroup"]
           counts = report["counts"]
@@ -553,6 +597,90 @@ jobs:
           assert cgroup["oomKillDelta"] == 0
           assert cgroup["passed"] is True
 
+          allowed_macro = {
+              "schemaVersion", "fixtureVersion", "mode",
+              "researchIdentity", "inputIdentity", "artifactId",
+              "artifactDigest",
+              "workloadDigest", "barCount", "eventCount",
+              "artifactBytes", "artifactCapBytes", "eventDetailCount",
+              "eventDetailCap", "counterfactualDetailCount",
+              "counterfactualDetailCap", "turtleSignalDetailCount",
+              "turtleSignalDetailCap", "proofCapBytes", "reportBytes",
+              "deterministicRebuild", "artifactVerified",
+              "rawOhlcRetained", "ownerPnlPresent", "cgroupRequired",
+              "cgroupEnforcementStatus", "memoryMaxBytes",
+              "swapMaxBytes", "memoryPeakBytes", "oomDelta",
+              "oomKillDelta", "passed",
+          }
+          assert set(macro) == allowed_macro
+          assert all(not isinstance(value, (dict, list, tuple, set))
+                     for value in macro.values())
+          assert macro["schemaVersion"] == \
+              "argus-round2-macro-resource-proof-v1"
+          assert macro["mode"] == "bounded"
+          assert macro["barCount"] == 201
+          assert macro["eventCount"] == 3
+          assert len(macro["artifactDigest"]) == 64
+          assert all(char in "0123456789abcdef"
+                     for char in macro["artifactDigest"])
+          assert macro["artifactId"] == \
+              "ra-" + macro["artifactDigest"][:32]
+          assert len(macro["workloadDigest"]) == 64
+          assert all(char in "0123456789abcdef"
+                     for char in macro["workloadDigest"])
+          assert macro["researchIdentity"].startswith("rr-")
+          assert macro["inputIdentity"].startswith("ri-")
+          assert macro["deterministicRebuild"] is True
+          assert macro["artifactVerified"] is True
+          assert macro["rawOhlcRetained"] is False
+          assert macro["ownerPnlPresent"] is False
+          assert macro["artifactBytes"] <= macro["artifactCapBytes"]
+          assert macro["eventDetailCount"] <= macro["eventDetailCap"]
+          assert macro["counterfactualDetailCount"] <= \
+              macro["counterfactualDetailCap"]
+          assert macro["turtleSignalDetailCount"] <= \
+              macro["turtleSignalDetailCap"]
+          assert macro["reportBytes"] <= macro["proofCapBytes"]
+          assert macro["reportBytes"] == (
+              root / "round2-macro-resource-proof.json").stat().st_size
+          assert macro["cgroupRequired"] is True
+          assert macro["cgroupEnforcementStatus"] == "PASS"
+          assert macro["memoryMaxBytes"] == 4294967296
+          assert macro["swapMaxBytes"] == 0
+          assert macro["memoryPeakBytes"] < macro["memoryMaxBytes"]
+          assert macro["oomDelta"] == 0
+          assert macro["oomKillDelta"] == 0
+          assert macro["passed"] is True
+
+          def scalar(name):
+              return int((root / name).read_text(encoding="ascii").strip())
+
+          def events(name):
+              return {
+                  key: int(value)
+                  for key, value in (
+                      line.split() for line in (
+                          root / name).read_text(
+                              encoding="ascii").splitlines())
+              }
+
+          overall_before = events(
+              "round2-macro-memory-events-before.txt")
+          overall_after = events("round2-macro-memory-events-after.txt")
+          overall_oom_delta = (
+              overall_after.get("oom", 0) - overall_before.get("oom", 0))
+          overall_oom_kill_delta = (
+              overall_after.get("oom_kill", 0)
+              - overall_before.get("oom_kill", 0))
+          overall_memory_max = scalar("round2-macro-memory-max.txt")
+          overall_swap_max = scalar("round2-macro-memory-swap-max.txt")
+          overall_memory_peak = scalar("round2-macro-memory-peak.txt")
+          assert overall_memory_max == 4294967296
+          assert overall_swap_max == 0
+          assert overall_memory_peak < overall_memory_max
+          assert overall_oom_delta == 0
+          assert overall_oom_kill_delta == 0
+
           proof = {
               "schemaVersion": "argus-round2-truth-ledger-ci-proof-v1",
               "headSha": os.environ["ROUND2_HEAD_SHA"],
@@ -568,6 +696,14 @@ jobs:
               "memoryPeakBytes": cgroup["memoryPeakBytes"],
               "oomDelta": cgroup["oomDelta"],
               "oomKillDelta": cgroup["oomKillDelta"],
+              "macroArtifactDigest": macro["artifactDigest"],
+              "macroInputIdentity": macro["inputIdentity"],
+              "macroWorkloadDigest": macro["workloadDigest"],
+              "macroArtifactBytes": macro["artifactBytes"],
+              "macroReportBytes": macro["reportBytes"],
+              "overallMemoryPeakBytes": overall_memory_peak,
+              "overallOomDelta": overall_oom_delta,
+              "overallOomKillDelta": overall_oom_kill_delta,
               "passed": True,
           }
           (root / "round2-truth-ledger-ci-proof.json").write_text(
@@ -581,6 +717,7 @@ jobs:
           name: round2-truth-ledger-proof-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             artifacts/truth-ledger-benchmark.json
+            artifacts/round2-macro-resource-proof.json
             artifacts/round2-truth-ledger-ci-proof.json
           if-no-files-found: error
           retention-days: 14

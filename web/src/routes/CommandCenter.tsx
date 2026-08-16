@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { useLocale, tEn } from '../i18n';
-import { previousJudgment, recordJudgment } from '../lib/judgmentLog';
+import { previousJudgment } from '../lib/judgmentLog';
 import { useAssetIntel } from '../hooks/useAssetIntel';
 import { latestActionPriorities, latestSessionBrief, latestFireCore, publishEventsJa, publishDataQuality, latestDataQuality } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
@@ -32,6 +32,11 @@ import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
 import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useAssets } from '../hooks/useAssets';
 import { usePublicDiagnostics } from '../hooks/useSystemHealth';
+import {
+  buildDataGatedInputV2, evaluateSingleDecisionAuthority,
+  SINGLE_DECISION_AUTHORITY_V2_POLICY,
+  type SingleDecisionAuthorityResultV2,
+} from '../domain/singleDecisionAuthority';
 
 interface Props {
   onNavigate: (key: RouteKey) => void;
@@ -99,6 +104,24 @@ function reviewFor(payload: ChartIntelligencePayload | null, action: string, dat
 const signed = (value: number, digits = 0) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
 const oku = (value: number) => `${Math.round(value / 100_000_000).toLocaleString('ja-JP')}億`;
 
+function missingTodayDecision(symbol: string, market: 'JP' | 'US', assets: ReturnType<typeof useAssets>['assets']):
+  SingleDecisionAuthorityResultV2 {
+  const now = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString().replace('.000Z', 'Z');
+  const local = assets.find((asset) => asset.symbol.toUpperCase() === symbol.toUpperCase());
+  const positionState = local?.quantity == null ? 'UNKNOWN'
+    : local.quantity > 0 ? 'HELD' : 'NOT_HELD';
+  return evaluateSingleDecisionAuthority(buildDataGatedInputV2({
+    subject: { kind: 'ASSET', instrumentId: symbol.toUpperCase(), market, horizon: 'FIVE_DAY' },
+    decisionAt: now, informationCutoffAt: now,
+    authorityPolicy: SINGLE_DECISION_AUTHORITY_V2_POLICY,
+    ownerContext: {
+      schemaVersion: 'owner-decision-context-v1', privacyClass: 'DEVICE_LOCAL', asOf: now,
+      positionState, positionRiskBand: 'UNKNOWN', concentrationBand: 'UNKNOWN',
+      addPermission: 'UNKNOWN',
+    },
+  }));
+}
+
 export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, onNavigateToSettings }) => {
   useLocale();   // re-render Today on locale switch
   const assetsApi = useAssets();
@@ -110,7 +133,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     flowRecords, sdSignals, positionExposure,
     apItems, sessionBrief, scenarioSets, portfolioStrategy, positionPlans,
     phase, judgment, isPartial, visLimited, cappedConf,
-    overlay,
+    overlay, sdaBySymbol,
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
   // Headline ETFs have their own backend-only quote reads. They are not added
   // to the user's watchlist and never cause a browser-side provider request.
@@ -310,23 +333,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   }, []);
 
 
-  // ── Judgment log (device-local memory) ──
-  // Record today's LIVE/PARTIAL call (mock is never logged — no fake history).
-  useEffect(() => {
-    if (phase !== 'live' && phase !== 'partial') return;
-    recordJudgment({
-      date: judgment.date,
-      overall: judgment.overall,
-      risk: judgment.risk,
-      posture: al.data?.marketPosture?.label ?? '—',
-      confidence: cappedConf,
-      summary: judgment.summary,
-      phase,
-      updatedAt: judgment.updatedAt,
-    });
-  }, [phase, judgment, al.data, regime.data]);
-
-
   const argusToday = useMemo(() => {
     // Todayの7段階は市場判断専用。端末ローカルの保有状況や
     // holderRiskOverlayを混ぜると、同じ市場でも端末ごとに点数が変わるため
@@ -478,22 +484,28 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       .sort((left, right) => right.priorityScore - left.priorityScore
         || left.symbol.localeCompare(right.symbol))
       .slice(0, 3)
-      .map((item, rank) => ({
+      .map((item, rank) => {
+        const canonical = sdaBySymbol.get(item.symbol.toUpperCase());
+        const action = canonical?.primaryAction ?? 'WAIT';
+        return {
         symbol: item.symbol,
         name: item.assetName,
         rank,
         reasonJa: item.whyJa,
         statusJa: item.priorityRankJa,
         isHeld: item.isHeld,
-        impact: item.actionLabel === 'SMALL_ADD_ALLOWED' ? 'Good' as const
-          : ['CHECK_NOW', 'AVOID_CHASE', 'REVIEW_POSITION', 'INVESTIGATE'].includes(item.actionLabel)
-            ? 'Bad' as const : 'Neutral' as const,
-        actionJa: item.actionLabelJa,
+        impact: action === 'BUY' ? 'Good' as const
+          : action === 'REDUCE' || action === 'EXIT' ? 'Bad' as const : 'Neutral' as const,
+        actionJa: `${action} · SDA${canonical?.status === 'DATA_GATED' ? ' DATA GATED' : ''}`,
         checkNextJa: item.checkNextJa,
         whatWouldChangeJa: item.whatWouldChangeJa,
-      }));
+      }; });
+    const selectedSymbol = selectedInstrument[effectiveMarket];
+    const canonicalDecision = sdaBySymbol.get(selectedSymbol)
+      ?? missingTodayDecision(selectedSymbol, effectiveMarket, assets);
+    const now = new Date();
     return buildArgusTodayView({
-      now: new Date(), selectionMode: marketMode,
+      now, selectionMode: marketMode,
       calendar: decisionCalendar,
       baseSignal: jpSummary.signalCode,
       jpSignal: jpSummary.signalCode,
@@ -524,7 +536,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       } : undefined,
       selectedInstrument,
       systemStatus: { data: jpSummary.dataQuality, backup: backup.protectionLevelJa,
-        rule: al.data?.status === 'live' ? 'DETERMINISTIC' : 'RULE TEMPORARY' },
+        rule: `SDA ${canonicalDecision.status}` },
+      canonicalDecision,
     });
   }, [judgment, overlay, isPartial, visLimited, cappedConf, marketLedger.ledger,
     regime.data, impEvents, rates.data, events247,
@@ -532,7 +545,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     jpChart.decisionData, topixChart.decisionData,
     sp500Chart.decisionData, nasdaqChart.decisionData, marketNews.data,
     marketNews.lastChecked, marketNews.failureClass,
-    selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar]);
+    selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
+    sdaBySymbol]);
 
   const todayInstruments = useMemo(() => {
     const charts = {

@@ -9,8 +9,9 @@ require.extensions['.ts'] = (mod, filename) => {
   }).outputText;
   mod._compile(output, filename);
 };
-const { synthesizeArgusDecision, finalActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
-const { buildArgusTodayView, buildTodayProjection: buildTodayProjectionRaw,
+const { synthesizeArgusDecision, finalActionForScore,
+  legacyEvidenceActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
+const { buildArgusTodayView: buildArgusTodayViewRaw, buildTodayProjection: buildTodayProjectionRaw,
   buildTodayReview, selectTodayNews,
   selectAutoMarket, quoteDisplayLabel } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
 const { evaluateProbabilityTruth } = require(path.join(__dirname, '..', 'src/domain/probabilityTruth.ts'));
@@ -19,10 +20,27 @@ function check(name, condition) { if (condition) console.log(`  ok  ${name}`); e
 const PROJECTION_NOW = Date.parse('2026-07-22T12:00:00Z');
 const buildTodayProjection = (input, action, horizon = 5, nowMs = PROJECTION_NOW) =>
   buildTodayProjectionRaw(input, action, horizon, nowMs);
+const canonicalDecision = (primaryAction = 'WAIT', candidateLevel = 4, status = 'EVALUATED') => ({
+  primaryAction, status, confidence: { valueBps: 5000, status: 'BOUNDED' },
+  decisionId: `sda-${'1'.repeat(64)}`,
+  identities: { authorityPolicyId: 'argus-single-decision-authority-v2' },
+  sevenSign: { status: candidateLevel == null ? 'DATA_GATED' : 'SHADOW', candidateLevel, productionLevel: null },
+  missingReasonCodes: [], dissentReasonCodes: [],
+});
+const buildArgusTodayView = (input) => buildArgusTodayViewRaw({
+  ...input, canonicalDecision: input.canonicalDecision ?? canonicalDecision(),
+});
 
-check('BUY/WAIT/SELL mapping', finalActionForScore(1) === 'SELL' && finalActionForScore(2) === 'SELL'
-  && finalActionForScore(3) === 'WAIT' && finalActionForScore(6) === 'WAIT' && finalActionForScore(7) === 'BUY');
+check('legacy BUY/WAIT/SELL evidence mapping remains compatible',
+  legacyEvidenceActionForScore(1) === 'SELL' && legacyEvidenceActionForScore(2) === 'SELL'
+  && legacyEvidenceActionForScore(3) === 'WAIT' && legacyEvidenceActionForScore(6) === 'WAIT'
+  && legacyEvidenceActionForScore(7) === 'BUY' && finalActionForScore(7) === 'BUY');
 const base = { market: 'JP', baseSignal: 'ENTER', confidence: .9, dataQuality: 'LIVE', calculatedAt: '2026-07-22T00:00:00Z' };
+check('legacy engine is explicitly non-authoritative evidence', (() => {
+  const result = synthesizeArgusDecision(base);
+  return result.authorityRole === 'EVIDENCE_ONLY'
+    && result.finalDecisionAuthorityActive === false;
+})());
 check('closing window is integrated', synthesizeArgusDecision({ ...base, closingWindowSignal: 'PAUSE' }).finalAction === 'WAIT');
 check('owner policy only constrains', synthesizeArgusDecision({ ...base, ownerPolicyLimit: 'DEFEND' }).finalAction === 'SELL'
   && synthesizeArgusDecision({ ...base, baseSignal: 'DEFEND', ownerPolicyLimit: 'ENTER' }).finalAction === 'SELL');
@@ -81,10 +99,19 @@ check('Attention max 3', view.attention.length === 3);
 check('NEXT EVENT is not duplicated in Attention', !view.attention.some((row) => row.id === view.nextEvent?.id));
 check('holdings max 3 and deduped', view.holdingsReview.length === 2 && view.holdingsReview[0].reasonJa === 'y');
 check('FIRE is outside the Today view contract', !Object.prototype.hasOwnProperty.call(view, 'fireProgress'));
-check('footer mirrors decision', view.footerText.startsWith('JP WAIT 6/7'));
+check('footer mirrors canonical decision', view.footerText.startsWith('JP WAIT SDA'));
+const sevenSignDataGated = buildArgusTodayView({
+  now: new Date('2026-07-22T00:00:00Z'), selectionMode: 'JP',
+  baseSignal: 'ENTER', confidence: .8, dataQuality: 'LIVE',
+  canonicalDecision: canonicalDecision('WAIT', null, 'DATA_GATED'),
+});
+check('Seven Sign null remains null and visibly DATA_GATED',
+  sevenSignDataGated.actionScore === null
+  && sevenSignDataGated.footerText.includes('Seven DATA_GATED/DATA_GATED')
+  && !sevenSignDataGated.footerText.includes('/4'));
 const manual = buildArgusTodayView({ ...view, now: new Date('2026-07-22T00:00:00Z'), selectionMode: 'US', baseSignal: 'ENTER',
   jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8, dataQuality: 'LIVE' });
-check('manual US selection', manual.selectedMarket === 'US' && manual.finalAction === 'SELL');
+check('manual US selection cannot replace canonical action', manual.selectedMarket === 'US' && manual.finalAction === 'WAIT');
 check('manual JP selection', buildArgusTodayView({ ...manual, now: new Date('2026-07-22T00:00:00Z'),
   selectionMode: 'JP', baseSignal: 'ENTER', jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8,
   dataQuality: 'LIVE' }).selectedMarket === 'JP');
@@ -222,16 +249,17 @@ const buyWithStaleProjection = buildArgusTodayView({ now: new Date('2026-07-22T0
   selectionMode: 'JP', baseSignal: 'ENTER', jpSignal: 'ENTER', confidence: .8,
   dataQuality: 'LIVE', calendar: { JP: state('JP', 'MORNING_SESSION') },
   projection: { JP: { ...buyProjectionInput, authorityState: 'stale' } } });
-check('stale-cache projection cannot preserve BUY authority',
-  buyWithCurrentProjection.finalAction === 'BUY'
+check('projection cache cannot create canonical BUY authority',
+  buyWithCurrentProjection.finalAction === 'WAIT'
   && buyWithStaleProjection.finalAction === 'WAIT'
   && buyWithStaleProjection.projection === null);
 
-const todayWithSession = (market, session, trading = true, signal = 'ENTER') =>
+const todayWithSession = (market, session, trading = true, signal = 'ENTER', canonical = 'WAIT') =>
   buildArgusTodayView({ now: new Date(CAL_NOW), selectionMode: market,
     baseSignal: signal, jpSignal: signal, usSignal: signal, confidence: .8,
     dataQuality: 'LIVE', calendar: { [market]: state(market, session, trading) },
-    projection: { [market]: buyProjectionInput } });
+    projection: { [market]: buyProjectionInput },
+    canonicalDecision: canonicalDecision(canonical, canonical === 'BUY' ? 5 : canonical === 'EXIT' ? 1 : 4) });
 const positiveSessionVetoed = (market, session, trading = true) => {
   const result = todayWithSession(market, session, trading);
   return result.finalAction === 'WAIT'
@@ -249,17 +277,17 @@ check('canonical closed/post/after-hours/overnight sessions veto Today entry/add
   && positiveSessionVetoed('US', 'AFTER_HOURS')
   && positiveSessionVetoed('US', 'OVERNIGHT_CLOSED')
   && positiveSessionVetoed('US', 'CLOSED'));
-const regularSessionBuy = todayWithSession('US', 'REGULAR');
-check('canonical US regular session preserves otherwise-valid Today BUY authority',
+const regularSessionBuy = todayWithSession('US', 'REGULAR', true, 'ENTER', 'BUY');
+check('canonical US regular session presents the SDA BUY authority',
   regularSessionBuy.finalAction === 'BUY'
   && regularSessionBuy.decisions.US.internalAction === 'ENTER'
   && regularSessionBuy.permissions.newEntry === true
   && regularSessionBuy.permissions.add === true);
-const afterHoursDefend = todayWithSession('US', 'AFTER_HOURS', true, 'DEFEND');
-check('closed session preserves defensive held-position risk action',
-  afterHoursDefend.finalAction === 'SELL'
+const afterHoursDefend = todayWithSession('US', 'AFTER_HOURS', true, 'DEFEND', 'EXIT');
+check('closed session preserves canonical defensive action',
+  afterHoursDefend.finalAction === 'EXIT'
   && afterHoursDefend.decisions.US.internalAction === 'DEFEND'
-  && afterHoursDefend.permissions.hold === true);
+  && afterHoursDefend.permissions.hold === false);
 const forgedOpenInput = { now: new Date(CAL_NOW), selectionMode: 'JP',
   baseSignal: 'ENTER', jpSignal: 'ENTER', confidence: .8, dataQuality: 'LIVE',
   projection: { JP: buyProjectionInput } };
@@ -321,6 +349,9 @@ const navCss = fs.readFileSync(path.join(__dirname, '..', 'src/components/NavRai
 const navigation = fs.readFileSync(path.join(__dirname, '..', 'src/navigation.ts'), 'utf8');
 const marketNewsHook = fs.readFileSync(path.join(__dirname, '..', 'src/hooks/useMarketNews.ts'), 'utf8');
 check('single decision card', (panel.match(/at-decision card/g) || []).length === 1);
+check('Today renders Seven Sign null as DATA GATED without imputing level four',
+  panel.includes("view.actionScore == null ? '— / 7'")
+  && panel.includes("view.actionScore ?? 'DATA GATED'"));
 check('Market changes and Next Check absent', !route.includes('<MarketIntelligenceChanges') && !route.includes('<NextCheckCard'));
 check('Notifications is a first-class route with no shell polling dropdown',
   navigation.includes("route: 'notifications'")

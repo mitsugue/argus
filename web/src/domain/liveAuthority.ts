@@ -371,7 +371,9 @@ const POSITIVE_ALERT_ACTIONS = new Set(['BUY_DIP', 'ADD', 'ENTER', 'BUY']);
 
 export function deauthorizeActionAlerts<T extends {
   action: string; confidence: string; risk: string; reason: string;
-}>(cards: T[], reason: DeauthorityReason): T[] {
+}>(cards: T[], reason: DeauthorityReason): Array<T & {
+  authorityRole: 'EVIDENCE_ONLY'; finalDecisionAuthorityActive: false;
+}> {
   const note = reasonJa(reason);
   return cards.map((card) => {
     const positive = POSITIVE_ALERT_ACTIONS.has(card.action);
@@ -383,7 +385,9 @@ export function deauthorizeActionAlerts<T extends {
       reason: `${note}。${card.reason}`,
       decisionUsable: false,
       authorityStatus: reason,
-    } as T;
+      authorityRole: 'EVIDENCE_ONLY',
+      finalDecisionAuthorityActive: false,
+    } as T & { authorityRole: 'EVIDENCE_ONLY'; finalDecisionAuthorityActive: false };
   });
 }
 

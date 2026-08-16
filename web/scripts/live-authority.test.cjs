@@ -157,7 +157,9 @@ const alertCards = authority.deauthorizeActionAlerts([
 ], 'snapshot_expired');
 check('ancient Core Portfolio positives become WAIT while defense remains',
   alertCards[0].action === 'WAIT' && alertCards[0].confidence === 'low'
-  && alertCards[1].action === 'TRIM');
+  && alertCards[1].action === 'TRIM'
+  && alertCards.every((card) => card.authorityRole === 'EVIDENCE_ONLY'
+    && card.finalDecisionAuthorityActive === false));
 
 const ai = (asOf) => ({ status: 'live', freshness: 'fresh', asOf,
   models: { primary: 'primary', checker: 'checker' },

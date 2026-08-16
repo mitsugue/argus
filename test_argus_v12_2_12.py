@@ -21,11 +21,14 @@ def _read(*parts):
 
 def test_single_source_of_judgment():
     dec = _read("domain", "assetDecision.ts")
-    # AI主条件(live/partial + fresh/persisted)は正本にのみ存在
-    assert "'live'" in dec and "'partial'" in dec
-    assert "'fresh'" in dec and "'persisted'" in dec
+    # AI/旧ルールは異議・証拠として残るが、表示する主判断はSDA v2だけ。
+    assert "projectCanonicalAssetDecision" in dec
+    assert "SDA PRIMARY" in dec
     intel = _read("hooks", "useAssetIntel.ts")
-    assert "mergeAiPrimary" in intel
+    assert "evaluateSingleDecisionAuthority" in intel
+    assert "sdaBySymbol" in intel
+    assert "mergeAiPrimary" not in intel
+    assert "resolvePrimaryStance" not in intel
     # 旧CommandCenterのインラインAI優先マージが復活していない
     cc = _read("routes", "CommandCenter.tsx")
     assert "aiFinalAction" not in cc
@@ -41,8 +44,11 @@ def test_single_source_of_judgment():
 
 def test_ai_honesty_vocabulary():
     dec = _read("domain", "assetDecision.ts")
-    # RULE TEMPORARYの正確な理由+次回実行予定は構造的に必ず埋まる
-    assert "RULE TEMPORARY" in dec
+    # AI/旧ルールは証拠のみ。退役したRULE TEMPORARYを主判断として復活させない。
+    assert "RULE TEMPORARY" not in dec
+    assert "EVIDENCE_ONLY" in dec
+    assert "finalDecisionAuthorityActive: false" in dec
+    assert "SDA PRIMARY" in dec
     assert "16:05" in dec
     # v12.2.12是正: 16:05の案内は実行を保証できる状態のみ(状態別の正確な文言)
     assert "無効化中" in dec                       # disabled=約束しない
@@ -168,7 +174,9 @@ def test_migrated_features_present():
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
     downside = _read("components", "dashboard", "DownsideIncidentCard.tsx")
     assert "判断支援のみ" not in card
-    assert downside.count("決定支援のみ・自動売買は行いません。") == 1
+    assert downside.count(
+        "EVIDENCE ONLY · SDAのPrimary Actionを上書きしません。自動売買なし。"
+    ) == 1
 
 
 def test_portfolio_wide_features_moved_to_core():

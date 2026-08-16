@@ -81,7 +81,6 @@ import argus_data_quality  # Data Quality Console (pure, v11.22.0 — 鮮度捏�
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_osint_attribution  # OSINT/catalyst帰属レビュー — 直接/テーマ/マクロ分離+確度 (pure, v12.0.8)
 import argus_osint_engine  # マルチエージェントOSINTエンジン(計画/検証/採点/ベンチ) (pure, v12.1.0)
-import argus_primary_stance  # 銘柄ごとの単一の構え(カード間矛盾の根治・TS版と同期) (pure, v12.0.8)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
 import argus_market_confirmation  # Market Confirmation v1.5 from existing data (pure, v11.3.4)
@@ -128,6 +127,14 @@ from collections import deque
 import hashlib
 import hmac
 import argus_ledger  # Local — A.R.G.U.S. prediction ledger
+
+# Round 2 macro convergence: the legacy scanner classifiers remain available as
+# bounded evidence generators only.  They cannot issue the canonical five-action
+# decision, consume owner holdings for a server-side action, notify an action, or
+# append a prediction as final authority.  The device-local Single Decision
+# Authority is the sole owner-aware action reducer.
+LEGACY_DECISION_AUTHORITY_ROLE = "EVIDENCE_ONLY"
+LEGACY_DECISION_AUTHORITY_ACTIVE = False
 try:
     from flask_cors import CORS  # optional; only needed for /api/argus/* cross-origin
 except Exception:
@@ -1655,11 +1662,13 @@ def phase1_broad_scan():
     for alert in finnhub.get("alerts", []): add_log(f"  {alert}")
     news = get_news(); sentinel = sentinel_check(news)
     state["sentinel"] = sentinel; state["news"] = [{"title": n.get("title","")} for n in news[:15]]
-    if sentinel.get("action") == "SELL_ALL" and not DRY_RUN_MODE:
-        add_log("🚨 SENTINEL: SELL_ALL"); push_notify(
-            "🚨 SELL ALL", sentinel.get("reason", ""), priority="urgent",
-            notification_scope="portfolio")
-        state["phase"] = 1; save_state(state); return
+    if sentinel.get("action") == "SELL_ALL":
+        # Legacy emergency keywords remain risk evidence.  They no longer emit
+        # a portfolio action, halt the evidence scan, or notify SELL_ALL; only
+        # the canonical SDA may turn verified risk into REDUCE/EXIT for a
+        # device-local HELD position.
+        add_log("⚠️ SENTINEL risk evidence detected (EVIDENCE_ONLY)")
+        state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
     leaks = detect_leaks(news)
     if leaks: add_log(f"  🔍 {len(leaks)} leak signals")
     movers_text = "\n".join([f"{m['symbol']}: {m.get('change_pct',0):+.2f}% (${m.get('current',0):.2f})" for m in movers[:50]])
@@ -1821,12 +1830,9 @@ def phase4_final_top3():
             ob = analyze_order_book(sym); ob_results[sym] = ob
             if ob.get("decisionUsable") is True:
                 add_log(f"    AR:{ob.get('absorption_ratio','-')} Vacuum:{ob.get('downside_efficiency','-')} {'🐳WHALE' if ob.get('whale_detected') else ''}")
+    # Owner account/position state is deliberately excluded.  The legacy rank
+    # is public evidence only; owner exposure joins later on the device.
     margin_info = None
-    account = get_account_info(); positions = get_positions()
-    if account and positions:
-        syms = [s.get("symbol","") for s in top5]; cp = get_quotes_batch(syms)
-        margin_info = _calc_margin_deadzone(account, positions, cp)
-        if margin_info: add_log(f"  💰 Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}% {margin_info['alert_level']}")
     scored = []
     for s in top5:
         sym = s.get("symbol", ""); ob = ob_results.get(sym, {})
@@ -1842,48 +1848,43 @@ def phase4_final_top3():
     top3 = scored[:3]
     if not top3:
         add_log("⏭️ All killed. Skip today.")
-        push_notify("⏭️ Skip", "No candidates passed.", priority="default",
-                    notification_scope="system")
-        state["phase"] = 4; state["top3_final"] = []; save_state(state); return
+        state["phase"] = 4; state["top3_final"] = []
+        state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+        save_state(state); return
     medal = ["🥇","🥈","🥉"]
     for i, s in enumerate(top3):
         sym = s.get("symbol",""); grade = s.get("grade", classify_catalyst_grade(s.get("reason",""))); s["grade"] = grade
         margin_str = f"\n⚠️ Margin 20%: -${s.get('margin_drop_pct',0):.1f}% (${s.get('margin_deadline','')})" if s.get("margin_deadline") else ""
         msg = f"{medal[i]} {sym}\nScore:{s.get('final_score',0)} Grade:{grade}\n{s.get('reason','')}\nStop: {s.get('sell_trigger','')}{margin_str}"
         add_log(f"  {medal[i]} {sym} Score:{s.get('final_score',0)} Grade:{grade}")
-        push_notify(f"{medal[i]} TOP3 #{i+1}: {sym}", msg,
-                    priority="high" if i==0 else "default",
-                    subject_symbol=sym, notification_scope="individual_security")
-    if margin_info and margin_info.get("alert_level") in ("URGENT","HIGH"):
-        push_notify("⚠️ MARGIN ALERT", f"Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}%",
-            priority="urgent" if margin_info["alert_level"]=="URGENT" else "high",
-            notification_scope="portfolio")
+        s["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+        s["finalDecisionAuthorityActive"] = False
     state["phase"] = 4; state["top3_final"] = top3; state["dry_run"] = DRY_RUN_MODE
+    state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
     state["order_book"] = {s.get("symbol",""): ob_results.get(s.get("symbol",""),{}) for s in top3}
     if margin_info: state["margin_alert"] = f"Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}% {margin_info['alert_level']}"
     if DRY_RUN_MODE: state["market_condition"] = "🔬 DRY RUN (Closed Market) — Simulation complete"
-    # A.R.G.U.S. ledger — best-effort log of each pick so calibration
-    # endpoints accumulate real history. Never break the scan flow.
-    if not DRY_RUN_MODE:
-        try:
-            for s in top3:
-                argus_ledger.log_prediction(
-                    code=str(s.get("symbol", "")),
-                    name=s.get("name") or s.get("company_name"),
-                    direction="up",
-                    probability=argus_ledger.score_to_probability(s.get("final_score")),
-                    horizon="1d",
-                    price_at_prediction=float(s.get("price") or s.get("last_price") or 0),
-                    reason_code=str(s.get("grade") or s.get("reason") or "TOP3")[:32],
-                )
-        except Exception as _e:
-            add_log("⚠️ ledger.log_prediction failed: " + str(_e)[:120])
-    save_state(state); add_log(f"✅ Ph.4 complete: TOP3 confirmed{' [DRY RUN]' if DRY_RUN_MODE else ''}")
+    # Legacy ranks never enter forward-live calibration as predictions.
+    save_state(state); add_log(f"✅ Ph.4 evidence ranking complete{' [DRY RUN]' if DRY_RUN_MODE else ''} (EVIDENCE_ONLY)")
 # ━━━ Phase 5: Dynamic Exit Engine ━━━
 def phase5_post_open():
     add_log("📈 Ph.5: Dynamic Exit Engine...")
     state = load_state(); top3 = state.get("top3_final", [])
     if not top3: add_log("[WARN] No TOP3"); return
+    # The old dynamic exit state machine is retained below as bounded research
+    # evidence, but it is no longer an action/notification authority and never
+    # reads owner positions.  Round 2's canonical owner-aware SDA replaces it.
+    state["phase"] = 5
+    state["post_open_result"] = {
+        "status": "evidence_only",
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
+        "evaluations": [],
+        "overall": "Legacy dynamic-exit action authority is retired.",
+    }
+    save_state(state)
+    add_log("⏭️ Ph.5 action authority retired; canonical SDA required")
+    return
     finnhub = state.get("finnhub_macro", {}); codes = [s.get("symbol","") for s in top3 if s.get("symbol")]
     contexts, ob_history = {}, {}
     for s in top3:
@@ -7582,25 +7583,24 @@ def _entity_profile_restore():
         pass
 
 
-# ── §y Buy candidates (v10.177) — "本日の注目候補" ───────────────────────────
-# Elevate the raw surge feed into a HIGH-BAR, AI-screened watch list of non-watchlist
-# names with a genuine constructive setup (catalyst/theme-driven via the association
-# engine, not pure momentum). Decision-support only — never advice, never auto-trade;
-# most days few or zero qualify.
-_BUY_CANDIDATES = {"items": [], "asOf": None}
-_BUY_CANDIDATES_FILE = "/tmp/argus_buy_candidates.json"
+# ── §y Legacy buy-candidates route: scheduled AI research evidence ────────────
+# The route name remains compatible, but its output is a non-persistent research
+# shortlist. It cannot issue/push/persist an action or enter the Prediction Ledger.
+_BUY_CANDIDATES = {
+    "items": [], "asOf": None,
+    "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+    "finalDecisionAuthorityActive": False,
+}
 
 _BUY_CANDIDATE_SYSTEM = (
-    "You screen TODAY's market movers for an individual investor and flag ONLY names where NOW looks "
-    "like a genuinely GOOD ENTRY to BUY — a constructive, still-actionable setup (not a pure momentum / "
-    "blow-off / already-extended spike you'd be chasing). This is DECISION-SUPPORT, NOT investment "
-    "advice and NOT a guarantee. Be STRICT: most days only a few or ZERO qualify; omit weak ones "
-    "entirely. Prefer names with an identifiable catalyst/theme driver (given as driverJa) and where "
-    "the risk/reward of entering today is favorable. conviction = how strong a BUY-NOW this is (0..1). "
+    "You screen TODAY's market movers only for follow-up research evidence. Flag names whose observed "
+    "move has a concrete catalyst/theme driver worth verifying; omit weak or pure-momentum names. "
+    "Never recommend or classify BUY/SELL/HOLD/WAIT, never give an entry instruction, and never imply "
+    "final-action authority. evidenceStrength (0..1) measures only the quality of the research lead. "
     "Return STRICT JSON: {\"candidates\": "
-    "[{\"symbol\": str, \"market\": str, \"thesisJa\": str (why constructive — read the driver), "
-    "\"entryJa\": str (what to CONFIRM before buying: 押し目/出来高/地合い等), \"riskJa\": str (what "
-    "kills the thesis), \"conviction\": number 0..1}]}. Use ONLY the given symbols; never invent one."
+    "[{\"symbol\": str, \"market\": str, \"thesisJa\": str (why the lead merits research), "
+    "\"confirmationJa\": str (what evidence should be verified), \"riskJa\": str (what invalidates "
+    "the research thesis), \"evidenceStrength\": number 0..1}]}. Use ONLY the given symbols; never invent one."
 )
 
 
@@ -7639,10 +7639,15 @@ def _mover_universe(cap=14):
 
 
 def _buy_candidates_generate(limit=4):
-    """Admin/cron — screen today's movers into high-conviction buy candidates (>=0.6)."""
+    """Admin/cron compatibility path: non-persistent AI research evidence."""
     uni = _mover_universe()
     if not uni:
-        return {"generated": 0, "total": len(_BUY_CANDIDATES["items"])}
+        return {
+            "generated": 0, "total": len(_BUY_CANDIDATES["items"]),
+            "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+            "finalDecisionAuthorityActive": False,
+            "persisted": False,
+        }
     try:
         news_rel = [n for n in (get_market_news().get("items") or [])
                     if n.get("relevant") and n.get("decisionUsable") is True]
@@ -7659,9 +7664,10 @@ def _buy_candidates_generate(limit=4):
         posture = (get_action_labels().get("marketPosture") or {}).get("label")
     except Exception:
         posture = None
-    pr = _openai_prose(f"地合い: {posture}\n本日の上昇銘柄(候補母集団):\n"
+    pr = _openai_prose(f"地合い: {posture}\n本日の上昇銘柄(調査母集団):\n"
                        + json.dumps(rows, ensure_ascii=False)
-                       + "\nこの中から、買い候補として注目に値するものだけを厳選して返せ(無理に出さない)。",
+                       + "\nこの中から、追加調査に値する証拠候補だけを厳選して返せ。"
+                       + "売買アクションは返すな(無理に候補を出さない)。",
                        max_out=900, system=_BUY_CANDIDATE_SYSTEM)
     by = {r["symbol"]: r for r in rows}
     out = []
@@ -7669,41 +7675,29 @@ def _buy_candidates_generate(limit=4):
         sym = str(c.get("symbol") or "").upper()
         if sym not in by:                                   # never accept an invented symbol
             continue
-        conv = c.get("conviction")
-        if not isinstance(conv, (int, float)) or conv < 0.6:
+        strength = c.get("evidenceStrength")
+        if not isinstance(strength, (int, float)) or strength < 0.6:
             continue
         src = by[sym]
         out.append({"symbol": sym, "name": src.get("name") or sym,
                     "market": c.get("market") or src.get("market"), "changePct": src.get("changePct"),
-                    "thesisJa": str(c.get("thesisJa") or "")[:240], "entryJa": str(c.get("entryJa") or "")[:160],
-                    "riskJa": str(c.get("riskJa") or "")[:160], "conviction": round(float(conv), 2),
-                    "driverJa": src.get("driverJa")})
-    out.sort(key=lambda x: -x["conviction"])
+                    "thesisJa": str(c.get("thesisJa") or "")[:240],
+                    "confirmationJa": str(c.get("confirmationJa") or "")[:160],
+                    "riskJa": str(c.get("riskJa") or "")[:160],
+                    "evidenceStrength": round(float(strength), 2),
+                    "driverJa": src.get("driverJa"),
+                    "classification": "RESEARCH_CANDIDATE",
+                    "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                    "finalDecisionAuthorityActive": False})
+    out.sort(key=lambda x: -x["evidenceStrength"])
     _BUY_CANDIDATES["items"] = out[:limit]
     _BUY_CANDIDATES["asOf"] = _ai_now_iso()
-    _buy_candidates_persist()
-    return {"generated": len(out[:limit]), "total": len(out)}
-
-
-def _buy_candidates_persist():
-    try:
-        tmp = f"{_BUY_CANDIDATES_FILE}.{os.getpid()}.tmp"
-        with open(tmp, "w") as f:
-            json.dump(_BUY_CANDIDATES, f, ensure_ascii=False, default=str)
-        os.replace(tmp, _BUY_CANDIDATES_FILE)
-    except Exception:
-        pass
-
-
-def _buy_candidates_restore():
-    try:
-        with open(_BUY_CANDIDATES_FILE) as f:
-            blob = json.load(f)
-        if isinstance(blob, dict) and isinstance(blob.get("items"), list):
-            _BUY_CANDIDATES["items"] = blob["items"]
-            _BUY_CANDIDATES["asOf"] = blob.get("asOf")
-    except Exception:
-        pass
+    return {
+        "generated": len(out[:limit]), "total": len(out),
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
+        "persisted": False,
+    }
 
 
 def _intel_link_assets(title):
@@ -12120,6 +12114,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None, *, allow_provider_fetch=
             labels.append({
                 "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
                 "action": "HOLD", "confidence": 0.2, "risk": "low",
+                "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                "legacyShadow": True,
                 "reasonJa": "価格データが未取得のため中立で保留。",
                 "supportingData": {
                     "price": None, "changePct": None, "volume": None,
@@ -12183,6 +12179,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None, *, allow_provider_fetch=
         labels.append({
             "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
             "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
+            "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+            "legacyShadow": True,
             "supportingData": {"price": q.get("price"), "changePct": chg, "volume": q.get("volume", 0),
                                "eventEscalation": esc or "normal", "ratesPosture": posture,
                                "marketRegime": reg_label or "n/a",
@@ -12258,6 +12256,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None, *, allow_provider_fetch=
         "status": status,
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "engineVersion": "action-v0",
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
         "signalSchemaVersion": argus_signal.SIGNAL_SCHEMA_VERSION,
         "marketPosture": {"label": mp, "rationaleJa": mp_ja},
         "visibility": {
@@ -14364,19 +14364,21 @@ def api_argus_entity_profiles_edit():
 
 @app.route("/api/argus/buy-candidates/generate", methods=["POST"])
 def api_argus_buy_candidates_generate():
-    """Admin/cron — screen today's movers into high-conviction buy candidates."""
+    """Admin/cron compatibility route — generate research evidence only."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     skipped = _scheduled_ai_skip("openai", "buy_candidates")
     if skipped:
+        skipped["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+        skipped["finalDecisionAuthorityActive"] = False
+        skipped["persisted"] = False
         return jsonify(skipped)
     return jsonify(_buy_candidates_generate())
 
 
 _caos_event_restore()       # reload persisted analyses at startup
 _entity_profile_restore()   # load entity profiles (seed + persisted) at startup
-_buy_candidates_restore()   # load persisted buy candidates at startup
 
 
 # ━━━ Security Gate v1 (protects future expensive AI runs) ━━━
@@ -15812,6 +15814,8 @@ def get_action_alerts():
 
     def add(asset_class, name, action, conf, risk, reason, points, nxt, status):
         cards.append({"assetClass": asset_class, "displayName": name, "action": action,
+                      "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                      "legacyShadow": True,
                       "confidence": conf, "risk": risk, "reasonJa": reason,
                       "dataPoints": points, "nextConditionJa": nxt, "status": status})
 
@@ -15820,20 +15824,24 @@ def get_action_alerts():
         ls = [l for l in al.get("labels", []) if l["market"] == mkt
               and l.get("status") in ("live", "delayed", "partial")]
         if ls:
-            from collections import Counter
             sstatus = "live" if all(l.get("status") == "live" for l in ls) else "partial"
-            dominant, votes = Counter(l["action"] for l in ls).most_common(1)[0]
             chgs = [l["supportingData"]["changePct"] for l in ls]
             avg = sum(chgs) / len(chgs)
             flows = [l["supportingData"].get("bigFlowRatio") for l in ls
                      if l["supportingData"].get("bigFlowRatio") is not None]
-            conf = "high" if votes / len(ls) >= 0.7 else "med"
+            distribution = {}
+            for label in ls:
+                key = str(label.get("action") or "UNKNOWN")
+                distribution[key] = distribution.get(key, 0) + 1
             risk = "high" if avg <= -2 or cautious else ("low" if abs(avg) < 1 else "med")
-            pts = [f"監視{len(ls)}銘柄 平均{avg:+.2f}%", f"多数派ラベル: {dominant} ({votes}/{len(ls)})"]
+            dist_text = " / ".join(
+                f"{key}:{distribution[key]}" for key in sorted(distribution))
+            pts = [f"監視{len(ls)}銘柄 平均{avg:+.2f}%",
+                   f"旧ラベル分布(監査用): {dist_text}"]
             if flows:
                 pts.append(f"大口フロー平均 {sum(flows)/len(flows):+.1%} ({len(flows)}銘柄)")
-            add(f"{mkt}_STOCK", name, dominant, conf, risk,
-                f"ウォッチ銘柄の多数派は{dominant}。姿勢は{posture}。",
+            add(f"{mkt}_STOCK", name, "WAIT", "low", risk,
+                f"ウォッチ銘柄の分布と地合い({posture})を証拠として表示。",
                 pts, "個別はAsset Deskの銘柄カードで確認。", sstatus)
         else:
             add(f"{mkt}_STOCK", name, "WAIT", "low", "med",
@@ -15927,6 +15935,8 @@ def get_action_alerts():
         "status": "live" if live_n == len(cards) else ("partial" if live_n else "mock"),
         "asOf": _ai_now_iso(),
         "engineVersion": "alerts-v1",
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
         "posture": posture,
         "cards": cards,
     }
@@ -34565,6 +34575,16 @@ def _entry_history_source_usable(history, market, *, now_epoch=None):
 # in-house. Not a buy/sell order: a framing of the decision.
 
 
+def _entry_scout_evidence_only(payload):
+    """Seal the legacy weighted scout as diagnostic evidence, never an action."""
+    if not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    out["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+    out["finalDecisionAuthorityActive"] = False
+    return out
+
+
 def get_entry_scout(sym, market="JP"):
     now = time.time()
     ck = f"{market}:{sym}"
@@ -34575,17 +34595,17 @@ def get_entry_scout(sym, market="JP"):
     cached_credit_ok = _entry_cached_credit_dates_usable(
         c, market, now_epoch=now)
     if c and cached_history_ok and cached_credit_ok:
-        return c["data"]
+        return _entry_scout_evidence_only(c["data"])
     is_us = (market == "US")
     hist = _td_price_history(sym) if is_us else _jq_price_history(sym)
     if not hist:
-        return {"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+        return _entry_scout_evidence_only({"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
                 "status": "unavailable",
-                "noteJa": "価格履歴を取得できませんでした(コード違いか一時的な障害)。"}
+                "noteJa": "価格履歴を取得できませんでした(コード違いか一時的な障害)。"})
     history_usable, history_reason = _entry_history_source_usable(
         hist, market, now_epoch=now)
     if not history_usable:
-        return {
+        return _entry_scout_evidence_only({
             "engineVersion": "entry-scout-v1", "symbol": sym,
             "market": market, "status": "unavailable",
             "freshness": "stale", "latestDate": (
@@ -34593,12 +34613,12 @@ def get_entry_scout(sym, market="JP"):
                 if isinstance(hist.get("dates"), list) else None),
             "sourceTimeReason": history_reason,
             "noteJa": "最新日足の取引日が現在の市場セッションと整合しないため、診断を停止しました。",
-        }
+        })
     m = _entry_metrics(hist["closes"], hist["volumes"], hist.get("highs"), hist.get("lows"))
     if not m:
-        return {"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+        return _entry_scout_evidence_only({"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
                 "status": "unavailable",
-                "noteJa": "履歴が20営業日未満のため診断できません(上場直後など)。"}
+                "noteJa": "履歴が20営業日未満のため診断できません(上場直後など)。"})
     # Flow remains non-authoritative until it carries an independent source
     # timestamp; receipt/price exchangeTs cannot be borrowed for it.
     pushed = (_PUSHED_QUOTES.get(market) or {}).get(sym)
@@ -34696,6 +34716,8 @@ def get_entry_scout(sym, market="JP"):
                                  short_disclosed=short_disclosed)
     out = {
         "engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
         "name": (sym if is_us else (_jq_name_for(sym) or sym)),
         "asOf": _ai_now_iso(), "status": "live",
         "lastClose": hist["closes"][0], "lastDate": hist["dates"][0],
@@ -34751,6 +34773,7 @@ def get_entry_scout(sym, market="JP"):
     out["callJa"], out["narrativeJa"] = _scout_narrative(
         assess, out["flowInference"], out["context"], jsf_sig, short_disclosed,
         m, out["scoreTrackRecord"], out["engineCalibration"], out["postureCalibration"], is_us)
+    out["legacyCallJa"] = out.pop("callJa")
     # If a credit/short source was momentarily down, cache only briefly so the
     # next diagnosis self-heals instead of showing a 30-min gap (検証で確認).
     src_down = jsf_status == "source_unavailable" or short_status == "source_unavailable"
@@ -34770,7 +34793,7 @@ def get_entry_scout(sym, market="JP"):
                          ("ok", "none_disclosed") else None),
         } if not is_us else {},
     }
-    return out
+    return _entry_scout_evidence_only(out)
 
 @app.route("/api/argus/entry-scout")
 def api_argus_entry_scout():
@@ -36111,7 +36134,7 @@ def get_daily_digest():
     posture_ja = (al.get("marketPosture", {}) or {}).get("rationaleJa", "")
     rg = reg.get("regime", {}) if isinstance(reg, dict) else {}
     rb = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
-    call, call_ja = _POSTURE_CALL_JA.get(posture, ("WAIT", "中立"))
+    legacy_call, call_ja = _POSTURE_CALL_JA.get(posture, ("WAIT", "中立"))
     date_jst = datetime.now(TZ_JST).strftime("%Y-%m-%d")
     dow = "月火水木金土日"[datetime.now(TZ_JST).weekday()]
 
@@ -36124,7 +36147,9 @@ def get_daily_digest():
                   for e in events]
 
     # Notable labels: anything that is not a plain HOLD, or carries high risk.
-    highlights = [{"symbol": l["symbol"], "name": l["name"], "action": l["action"],
+    highlights = [{"symbol": l["symbol"], "name": l["name"],
+                   "legacyLabel": l["action"],
+                   "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
                    "changePct": (l.get("supportingData", {}) or {}).get("changePct"),
                    "reasonJa": l.get("reasonJa", "")[:80]}
                   for l in al.get("labels", [])
@@ -36143,7 +36168,8 @@ def get_daily_digest():
     # Short lines, emoji section markers, blank lines between blocks — designed
     # for the ntfy notification view (no markdown dependence).
     conf_pct = int(round((rg.get("confidence") or 0) * 100))
-    L = [f"今日の姿勢: {call}", f"{posture}・{call_ja}・確信度{conf_pct}%"]
+    L = [f"今日の市場状況: {posture}",
+         f"証拠分類(EVIDENCE ONLY)・{call_ja}・確信度{conf_pct}%"]
     if posture_ja:
         L += ["", posture_ja[:100]]
     # AI second opinion (when a fresh admin/cron run is cached — never run here).
@@ -36165,8 +36191,9 @@ def get_daily_digest():
             when = "本日" if e["daysUntil"] == 0 else f"あと{e['daysUntil']}日"
             L.append(f"・{e['title']} — {when}")
     if highlights:
-        L += ["", "👀 注目銘柄"]
-        L.append(" ／ ".join(f"{h['symbol']} {h['action']}" for h in highlights[:4]))
+        L += ["", "👀 注目銘柄(旧ラベルは証拠のみ)"]
+        L.append(" ／ ".join(
+            f"{h['symbol']} {h['legacyLabel']}" for h in highlights[:4]))
     if rotations:
         L += ["", "🔄 資金の流れ", " ／ ".join(r.get("label", "") for r in rotations)]
     if news.get("status") == "live" and news.get("level") in ("elevated", "high"):
@@ -36189,7 +36216,12 @@ def get_daily_digest():
         "asOf": _ai_now_iso(),
         "dateJst": date_jst,
         "engineVersion": "digest-v1",
-        "posture": {"label": posture, "call": call, "rationaleJa": posture_ja,
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
+        "posture": {"label": posture, "call": None,
+                    "legacyCall": legacy_call,
+                    "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                    "rationaleJa": posture_ja,
                     "confidence": rg.get("confidence")},
         "ratesBackdrop": _bounded_rates_backdrop_projection(rb),
         "volatility": vol,
@@ -36207,6 +36239,7 @@ def get_daily_digest():
         "dataLimitations": [
             "ルールベース合成(LLM不使用)。day-over-dayの厳密な差分は端末側ログが担当。",
             "サーバ側の前日比較はin-memoryのベストエフォート(再起動で消える)。",
+            "市場姿勢と旧callは証拠分類のみ。Primary ActionはSingle Decision Authorityのみが発行する。",
         ],
     }
     _DIGEST_PREV["dateJst"] = date_jst
@@ -37283,7 +37316,9 @@ def _residency_ai_tick():
     RECOMMEND — self-gated by the SAME budget / 14-min interval / daily cap as the
     /ai-judgment/run route, so it's idempotent with any cron still firing (double
     fire → the gate blocks the second). Never raises (that would kill the scheduler
-    thread). Decision-support only — no order/broker path is created here."""
+    thread). The legacy buy-candidates call below produces non-persistent
+    EVIDENCE_ONLY research leads; no order, notification, prediction, or final
+    decision path is created here."""
     try:
         nowt = time.time()
         if nowt - _LAST_INTEL_REFRESH[0] > 600:      # free public RSS; ≤ every 10 min
@@ -37303,6 +37338,8 @@ def _residency_ai_tick():
             return
         _execute_ai_judgment(run_mode="scheduled", checker="flash")
         try:
+            # Route-name compatibility only: this is EVIDENCE_ONLY and does not
+            # persist, push, notify, or append a final-action prediction.
             _buy_candidates_generate()
         except Exception:
             pass

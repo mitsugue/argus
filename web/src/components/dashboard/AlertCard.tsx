@@ -1,6 +1,5 @@
 import React from 'react';
 import type { AssetActionCard } from '../../types/dashboard';
-import { ActionPill } from '../action/ActionBadge';
 
 interface Props {
   card: AssetActionCard;
@@ -8,19 +7,13 @@ interface Props {
 
 const CONFIDENCE_LABEL = { low: 'Low', med: 'Med', high: 'High' } as const;
 const RISK_LABEL = { low: 'Low', med: 'Med', high: 'High', extreme: 'Extreme' } as const;
-// CASH is not a security — "ADD"→"買い増し" reads as "buy more cash" (nonsense).
-// Relabel the CASH card's actions to allocation language (v10.191).
-const CASH_LABEL: Record<string, string> = {
-  ADD: '現金比率を上げる', HOLD: '現金比率を維持', TRIM: '現金比率を下げる',
-};
 
 export const AlertCard: React.FC<Props> = ({ card }) => {
-  const labelOverride = card.assetClass === 'CASH' ? CASH_LABEL[card.action] : undefined;
   return (
-    <article className="alert-card">
+    <article className="alert-card" data-authority-role="EVIDENCE_ONLY">
       <header className="alert-card__head">
         <span className="alert-card__class">{card.displayName}</span>
-        <ActionPill action={card.action} size="sm" labelOverride={labelOverride} />
+        <span className="action-pill action-pill--wait">EVIDENCE ONLY</span>
       </header>
       <p className="alert-card__reason">{card.reason}</p>
       <div className="alert-card__meta">

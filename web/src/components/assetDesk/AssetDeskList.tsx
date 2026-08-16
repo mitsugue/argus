@@ -12,7 +12,6 @@ import { useCatalysts } from '../../hooks/useCatalysts';
 import { fundNavForAsset } from '../../hooks/useFundNav';
 import { coingeckoIdOf } from '../../lib/cryptoIds';
 import { deriveStrategy, type QuoteLite } from '../../lib/assetStrategy';
-import { holderPosture } from '../../lib/holderPosture';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
 import type { CatalystItem } from '../../types/catalysts';
@@ -21,7 +20,8 @@ import {
   buildDecisionFirstView, buildPortfolioCommand, deskRank, DESK_RANK_JA,
   type DeskRankInput, type DeskGenre,
 } from '../../domain/assetDesk';
-import { resolveSignal, type OwnerState } from '../../domain/actionLevel';
+import type { SignalCode } from '../../domain/actionLevel';
+import type { PrimaryAction } from '../../domain/singleDecisionAuthority';
 import type { DeskCardData, DeskEventTag, DeskSection } from './types';
 import { sectionAnchorId, DESK_SECTIONS } from './types';
 import { AssetDecisionCard } from './AssetDecisionCard';
@@ -32,6 +32,10 @@ import { DownsideIncidentQueue } from '../dashboard/DownsideIncidentCard';
 import { t } from '../../i18n';
 import { normalizeLiveQuote } from '../../domain/liveQuote';
 import './AssetDesk.css';
+
+const SDA_SIGNAL_CODE: Record<PrimaryAction, SignalCode> = {
+  BUY: 'ENTER', HOLD: 'HOLD_ONLY', WAIT: 'PAUSE', REDUCE: 'DEFEND', EXIT: 'EXIT',
+};
 
 // V12.2.12 — Asset Deskリスト(旧AssetStrategySectionの後継)。
 // データ組み立てはHoldings所有の共有Asset Intelをpropsで受け取り、
@@ -167,7 +171,8 @@ export const AssetDeskList: React.FC<Props> = ({
       const strat = deriveStrategy(a, maps.labels.get(a.symbol), quote, maps.cats.get(a.symbol), mountTs);
       const incident = maps.downsideBySym.get(a.symbol);
       const card = intel.cardBySym.get(sym);
-      const decision = (genre === 'jp' || genre === 'us') ? intel.decisionBySym.get(sym) : undefined;
+      const decision = intel.decisionBySym.get(sym);
+      const sda = intel.sdaBySymbol.get(sym);
       const apx = apBySym.get(sym);
       const pn = intel.positionExposure.notes[sym];
       const themeConcentrationPct = pn
@@ -185,19 +190,16 @@ export const AssetDeskList: React.FC<Props> = ({
         eventSoon: eventTags.some((e) => e.countdown === 'D' || e.countdown === 'D-1'),
       };
       const rank = deskRank(rankInput);
-      const signalCode = card?.signalCode ?? resolveSignal(strat.action, {
-        downsideOverride: incident?.actionOverride,
-        dataQuality: strat.status === 'live' ? 'LIVE'
-          : strat.status === 'mock' ? 'MOCK' : 'PARTIAL',
-        materialDownside: !!incident,
-        ownerState: (incident?.ownerState as OwnerState) || undefined,
-      }).code;
+      const signalCode = SDA_SIGNAL_CODE[sda?.primaryAction ?? 'WAIT'];
       const name = bestAssetName(a, quote?.name ?? card?.name);
       const priceShown = strat.status === 'mock' ? null : (strat.price ?? card?.price);
       const changePct = strat.status === 'mock' ? null : (strat.changePct ?? card?.changePct);
       const decisionFirst = buildDecisionFirstView({
         symbol: sym, name, market: a.market, held, signalCode,
-        actionOverride: incident?.actionOverride,
+        canonicalPrimaryAction: sda?.primaryAction ?? 'WAIT',
+        canonicalDecisionId: sda?.decisionId ?? null,
+        canonicalDecisionStatus: sda?.status ?? 'DATA_GATED',
+        actionOverride: null,
         ownerLabel: pn?.readinessJa ?? intel.stanceBySymbol.get(sym)?.stanceJa
           ?? plBySym.get(sym)?.currentStanceJa,
         priceText: fmtPrice(a.market, priceShown),
@@ -210,10 +212,11 @@ export const AssetDeskList: React.FC<Props> = ({
         quoteTruth: quote?.quoteTruth ?? null,
         rank,
         whyCandidates: [
-          incident?.moverCause?.bestLeadJa, incident?.reasonJa,
-          decision?.reasonJa, card?.causeOneLineJa, strat.reasonJa,
+          decision?.reasonJa, incident?.moverCause?.bestLeadJa, incident?.reasonJa,
+          card?.causeOneLineJa, strat.reasonJa,
         ],
         nextCandidates: [
+          sda?.nextReviewConditionCodes?.[0],
           incident?.moverCause?.nextChecksJa?.[0], incident?.nextConditionJa,
           card?.nextJa, plBySym.get(sym)?.nextChecksJa?.[0],
           decision?.rule.nextConditionJa, strat.nextConditionJa,
@@ -228,7 +231,6 @@ export const AssetDeskList: React.FC<Props> = ({
         card, decision, strat, quote,
         liveName: quote?.name ?? null,
         incident,
-        hp: holderPosture(a, strat, incident),
         pn,
         sdg: sdBySym.get(sym),
         apx,
@@ -244,7 +246,7 @@ export const AssetDeskList: React.FC<Props> = ({
       };
       return { d, rankInput };
     });
-  }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.aiJ.data, intel.sdSignals,
+  }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.sdaBySymbol, intel.aiJ.data, intel.sdSignals,
       intel.apItems, intel.scenarioSets, intel.positionPlans, intel.positionExposure,
       intel.stanceBySymbol, intel.aiMeta, eventTagsBySym, mountTs]);
 

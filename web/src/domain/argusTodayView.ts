@@ -1,5 +1,5 @@
 import type { DataQuality, SignalCode } from './actionLevel';
-import { synthesizeArgusDecision, type ArgusFactor, type ArgusFinalAction,
+import { synthesizeArgusDecision, type ArgusFactor, type ArgusLegacyEvidenceAction,
   type ArgusMarket, type ArgusMarketDecision } from './argusEngine';
 import type { MarketCalendarState } from '../types/marketLedger';
 import type { ChartBar, PriceZone } from '../types/chartIntelligence';
@@ -12,6 +12,9 @@ import {
 import { exactAuthorityEpoch } from './liveAuthority';
 import { calendarDateExpiresAt, exactCalendarDate } from './liveQuote';
 import { projectPlanningSession } from './positionPlan';
+import type {
+  PrimaryAction, SingleDecisionAuthorityResultV2,
+} from './singleDecisionAuthority';
 
 export type MarketSelectionMode = 'AUTO' | ArgusMarket;
 
@@ -173,6 +176,8 @@ export interface ArgusTodayInput {
   systemStatus?: { data: string; backup: string; rule: string };
   conciseAction?: string | null;
   conciseAvoid?: string | null;
+  /** Sole final-action authority. Legacy market synthesis remains evidence only. */
+  canonicalDecision: SingleDecisionAuthorityResultV2;
 }
 
 export interface ArgusTodayView {
@@ -181,8 +186,9 @@ export interface ArgusTodayView {
   sessionLamps: Array<{ key: string; label: string; active: boolean; tone: 'open' | 'standby' | 'closed' }>;
   nextEvent: TodayEventInput | null;
   comingEvents: TodayEventInput[];
-  finalAction: ArgusFinalAction;
-  actionScore: number;
+  finalAction: PrimaryAction;
+  /** Seven Sign candidate; null remains visibly DATA_GATED and is never imputed. */
+  actionScore: number | null;
   confidence: number | null;
   dataStatus: { code: DataQuality; label: string; tone: 'ok' | 'warn' | 'bad' };
   globalRisk: string | null;
@@ -217,6 +223,7 @@ export interface ArgusTodayView {
   reviewSummary: TodayReviewInput | null;
   systemStatus: { data: string; backup: string; rule: string };
   decisions: Record<ArgusMarket, ArgusMarketDecision>;
+  canonicalDecision: SingleDecisionAuthorityResultV2;
   footerText: string;
 }
 
@@ -363,17 +370,20 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     && (expected?.rewardRisk ?? 0) >= 1;
   if (decision.finalAction === 'BUY' && !forecastBuyGate) {
     decision = { ...decision, finalAction: 'WAIT', actionScore: 6,
-      evidence: [...decision.evidence, '予測Skill／期待値／下方リスクのBUY条件が未成立'].slice(0, 12) };
+      evidence: [...decision.evidence, '旧BUY証拠分類のSkill／期待値／下方リスク条件が未成立'].slice(0, 12) };
     decisions[selectedMarket] = decision;
   }
   if (selectedMarket === 'US' && decision.confidence != null && decision.confidence > .65) {
     decision = { ...decision, confidence: .65 };
     decisions[selectedMarket] = decision;
   }
+  const canonical = input.canonicalDecision;
+  const canonicalAction = canonical.primaryAction;
+  const actionScore = canonical.sevenSign.candidateLevel;
   const permissions = {
-    newEntry: decision.finalAction === 'BUY' && decision.actionScore === 7,
-    add: decision.finalAction === 'BUY' && decision.actionScore === 7,
-    hold: decision.actionScore > 1,
+    newEntry: canonical.status === 'EVALUATED' && canonicalAction === 'BUY',
+    add: canonical.status === 'EVALUATED' && canonicalAction === 'BUY',
+    hold: canonicalAction !== 'EXIT',
   };
   const evidenceCoverage = selectedMarket === 'JP'
     ? { overall: 'HIGH' as const, price: 'HIGH', breadth: 'HIGH', flow: 'HIGH',
@@ -396,8 +406,9 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
       { key: 'CRYPTO', label: 'CRYPTO 24H', active: true, tone: 'open' },
     ],
     nextEvent, comingEvents,
-    finalAction: decision.finalAction, actionScore: decision.actionScore,
-    confidence: decision.confidence, dataStatus: dataStatus(input.dataQuality),
+    finalAction: canonicalAction, actionScore,
+    confidence: canonical.confidence.valueBps / 10_000,
+    dataStatus: dataStatus(input.dataQuality),
     globalRisk: decision.globalRisk === 'normal' ? null : decision.globalRisk.toUpperCase(),
     marketPrice: projection?.current ?? null,
     range: projection ? { low: projection.baseLow, high: projection.baseHigh } : null,
@@ -439,13 +450,14 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     reviewSummary: input.review?.[selectedMarket] ?? null,
     systemStatus: input.systemStatus ?? { data: dataStatus(input.dataQuality).label, backup: '確認', rule: 'DETERMINISTIC' },
     decisions,
-    footerText: `${selectedMarket} ${decision.finalAction} ${decision.actionScore}/7   ${eventTag}`,
+    canonicalDecision: canonical,
+    footerText: `${selectedMarket} ${canonicalAction} SDA ${canonical.decisionId.slice(0, 12)} · Seven ${canonical.sevenSign.status}/${actionScore ?? 'DATA_GATED'}   ${eventTag}`,
   };
 }
 
 /** Todayの予測図は、実測OHLCVとサーバー側walk-forward校正結果だけを描く。 */
 export function buildTodayProjection(input: TodayProjectionInput | null,
-  action: ArgusFinalAction, horizonDays: 1 | 5 | 20 = 5,
+  action: ArgusLegacyEvidenceAction, horizonDays: 1 | 5 | 20 = 5,
   nowMs = Date.now()): TodayProjection | null {
   if (!todayProjectionDecisionUsable(input, nowMs)) return null;
   const bars = input.bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0).slice(-30);

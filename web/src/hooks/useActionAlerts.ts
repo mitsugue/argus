@@ -6,8 +6,8 @@ import { actionAlerts as MOCK_CARDS } from '../mock/dashboard';
 import type { AssetActionCard } from '../types/dashboard';
 import type { ActionKey } from '../types/action';
 
-// Live per-asset-class action cards from /api/argus/action-alerts (alerts-v1).
-// Backend action strings use spaces; the UI ActionKey uses underscores.
+// Legacy per-asset-class posture evidence from /api/argus/action-alerts (alerts-v1).
+// Backend action strings remain for compatibility but never become SDA authority.
 export type ConnPhase = 'connecting' | 'live' | 'partial' | 'mock';
 
 const TO_KEY: Record<string, ActionKey> = {
@@ -21,11 +21,15 @@ interface BackendCard {
   confidence: 'low' | 'med' | 'high'; risk: 'low' | 'med' | 'high';
   reasonJa: string; dataPoints: string[]; nextConditionJa: string;
   status: 'live' | 'partial';
+  authorityRole?: 'EVIDENCE_ONLY';
+  finalDecisionAuthorityActive?: false;
 }
 
 interface Snapshot {
   status: ConnPhase; asOf: string; engineVersion: string;
   posture: string; cards: BackendCard[];
+  authorityRole?: 'EVIDENCE_ONLY';
+  finalDecisionAuthorityActive?: false;
 }
 
 interface State {
@@ -90,6 +94,8 @@ const actionAlertsStore = createSharedPollingStore<State>(
         reason: c.reasonJa,
         dataPoints: c.dataPoints,
         nextCondition: c.nextConditionJa,
+        authorityRole: 'EVIDENCE_ONLY',
+        finalDecisionAuthorityActive: false,
       }));
       const authority = liveAuthorityState(data.asOf, 'actionAlerts');
       if (authority !== 'fresh') {

@@ -14,9 +14,7 @@ import { planPortfolioSummary } from '../domain/positionPlan';
 import { FIRE_TONE, BUDGET_JA, STRATEGY_COMPLIANCE_JA } from '../domain/portfolioStrategy';
 import { FireCoreCard } from '../components/dashboard/FireCoreCard';
 import { buildReviewPackMarkdown, copyPack } from '../lib/reviewPack';
-import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
-import type { CorePosition } from '../types/dashboard';
 import { SignedValue } from '../components/common/SignedValue';
 import { getNumericTone, TONE_VAR } from '../lib/numericTone';
 import { useLocale, t } from '../i18n';
@@ -37,26 +35,11 @@ export const CorePortfolio: React.FC<{
   portfolioIntel: AssetIntel;
 }> = ({ assetsApi, portfolioIntel }) => {
   useLocale();   // re-render on locale switch
-  const { cards, posture } = useActionAlerts();
+  const { cards } = useActionAlerts();
   const { assets } = assetsApi;
   const navFunds = portfolioIntel.fundNav.funds;
   const pe = portfolioIntel.positionExposure;
   const exp = pe.base;
-  // 積立方針 — ユーザーの実ファンド + 姿勢連動アクション(Action Alertsと同一ロジック)。
-  const funds: CorePosition[] = useMemo(() => {
-    const act = coreActionFor(posture ?? undefined);
-    return assets
-      .filter((a) => genreOf(a) === 'funds')
-      .slice()
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((a) => ({
-        symbol: a.symbol,
-        name: a.displayNameJa || a.displayName,
-        market: 'JP' as const,
-        action: act.action,
-        reason: act.reason,
-      }));
-  }, [assets, posture]);
   const portfolioOverview = useMemo(() => buildPortfolioDecisionOverview({
     combinedJpy: exp.combinedJpy,
     combinedPlJpy: exp.combinedPlJpy,
@@ -334,15 +317,14 @@ export const CorePortfolio: React.FC<{
 
       <section>
         <div className="section-head">
-          <span className="section-head__title">{t('cp.classCalls')}</span>
+          <span className="section-head__title">Asset-class evidence</span>
           <span className="section-head__count">{cards.length} classes</span>
         </div>
-        {/* Vocabulary legend (v10.191) — "待機/WAIT" was ambiguous ("do nothing?").
-            Spell out that holding is fine; only NEW entries wait. */}
+        {/* Legacy class cards retain observations only; they do not expose a
+            second action authority beside the canonical SDA. */}
         <p className="alert-legend">
-          <b>WAIT</b>=新規エントリーは見送り(保有は継続でOK) ・ <b>HOLD</b>=保有継続 ・
-          <b>現金比率を上げる</b>=待機資金を厚くする ・ <b>TRIM/EXIT</b>=縮小/撤退。
-          「待機」は“何もするな”ではなく“今は新規を入れない・持ち高は維持”の意味です。
+          資産クラスのモメンタム・リスク証拠です。旧ラベルは監査用に保持しますが、
+          BUY / HOLD / WAIT / REDUCE / EXIT を選ぶのは Single Decision Authority だけです。
         </p>
         <div className="alert-grid">
           {cards.map((c) => (
@@ -360,21 +342,19 @@ export const CorePortfolio: React.FC<{
         </div>
         <div className="card core-list">
           {navFunds.length > 0 ? navFunds.map((f) => {
-            const act = coreActionFor(posture ?? undefined);
-            const isCont = act.action === 'CONTINUE';
             return (
               <div className="core-row" key={f.code}>
                 <div className="core-row__body">
                   <span className="core-row__top">{f.name}</span>
-                  <span className="core-row__reason">{f.code} · {f.date} — {t(isCont ? 'cp.dca.continueReason' : 'cp.dca.deferReason')}</span>
+                  <span className="core-row__reason">{f.code} · {f.date} — 日次NAV証拠(積立アクションはSDAに未接続)</span>
                 </div>
                 <div style={{ textAlign: 'right', flex: 'none' }}>
                   <div style={{ fontWeight: 700 }}>¥{Math.round(f.navYen).toLocaleString('en-US')}</div>
                   <div style={{ fontSize: 12 }}>
                     {t('cp.dayChange')} {f.changePct == null ? '—' : <SignedValue value={f.changePct} suffix="%" arrow={false} />}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--value-positive)', marginTop: 2 }}>
-                    ● {t(isCont ? 'cp.dca.continue' : 'cp.dca.deferLump')}
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                    EVIDENCE ONLY
                   </div>
                 </div>
               </div>

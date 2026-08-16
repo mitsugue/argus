@@ -1,6 +1,9 @@
 import { SIGNALS, type DataQuality, type SignalCode } from './actionLevel';
 
-export type ArgusFinalAction = 'BUY' | 'WAIT' | 'SELL';
+/** Legacy three-way market classifier. It is evidence, never the final action. */
+export type ArgusLegacyEvidenceAction = 'BUY' | 'WAIT' | 'SELL';
+/** @deprecated Compatibility alias; use ArgusLegacyEvidenceAction. */
+export type ArgusFinalAction = ArgusLegacyEvidenceAction;
 export type ArgusMarket = 'JP' | 'US';
 
 export interface ArgusFactor {
@@ -25,7 +28,10 @@ export interface ArgusMarketDecisionInput {
 
 export interface ArgusMarketDecision {
   market: ArgusMarket;
-  finalAction: ArgusFinalAction;
+  /** @deprecated Legacy classifier output retained for route compatibility. */
+  finalAction: ArgusLegacyEvidenceAction;
+  authorityRole: 'EVIDENCE_ONLY';
+  finalDecisionAuthorityActive: false;
   actionScore: number;
   internalAction: SignalCode;
   confidence: number | null;
@@ -42,10 +48,15 @@ const DATA_CAP: Record<DataQuality, number> = {
   MOCK: 0.35, UNKNOWN: 0.4, UNAVAILABLE: 0.3,
 };
 
-export function finalActionForScore(score: number): ArgusFinalAction {
+export function legacyEvidenceActionForScore(score: number): ArgusLegacyEvidenceAction {
   if (score <= 2) return 'SELL';
   if (score >= 7) return 'BUY';
   return 'WAIT';
+}
+
+/** @deprecated Compatibility alias for the retired three-way evidence mapping. */
+export function finalActionForScore(score: number): ArgusLegacyEvidenceAction {
+  return legacyEvidenceActionForScore(score);
 }
 
 function moreDefensive(a: SignalCode, b?: SignalCode | null): SignalCode {
@@ -54,9 +65,10 @@ function moreDefensive(a: SignalCode, b?: SignalCode | null): SignalCode {
 }
 
 /**
- * The deterministic A.R.G.U.S. Engine display synthesis.
+ * The deterministic legacy A.R.G.U.S. market-evidence synthesis.
  * Every overlay is a one-way safety constraint: none can make the result more
- * bullish than the existing seven-stage action. No network or AI call occurs.
+ * bullish than the existing seven-stage evidence label. No network or AI call
+ * occurs. This result cannot replace the canonical SDA primaryAction.
  */
 export function synthesizeArgusDecision(input: ArgusMarketDecisionInput): ArgusMarketDecision {
   let signal = input.baseSignal;
@@ -73,7 +85,9 @@ export function synthesizeArgusDecision(input: ArgusMarketDecisionInput): ArgusM
 
   return {
     market: input.market,
-    finalAction: finalActionForScore(score),
+    finalAction: legacyEvidenceActionForScore(score),
+    authorityRole: 'EVIDENCE_ONLY',
+    finalDecisionAuthorityActive: false,
     actionScore: score,
     internalAction: signal,
     confidence,

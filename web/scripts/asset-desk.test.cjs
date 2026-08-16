@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* V12.2.12 — Asset Desk 行動テスト(実入出力検証・grepではない)。
-   ①assessAi/mergeAiPrimary=AI主判定の12ケース(Todayと Asset Deskの判断一致の正本)
-   ②resolveAssetDecision=カード表示ビュー(RULE TEMPORARY理由・source追跡)14ケース
+   ①assessAi/mergeAiPrimary=AI証拠互換面の12ケース(主判断にしない)
+   ②resolveAssetDecision=旧カードのEVIDENCE_ONLY/source追跡 14ケース
    ③deskRank/sortDesk=デフォルト並びの決定論(順序不変)
    既存typescriptパッケージのrequire hookでTSを直接実行 — 新npm依存なし。 */
 'use strict';
@@ -41,10 +41,14 @@ const aiData = (o) => Object.assign({
 
 // ── ① AI主判定(12ケース) ──────────────────────────────────────────────────
 // 1. live+fresh → AI主
-check('A1 live+fresh => AI primary', dec.assessAi(aiData(), NOW).primary === true);
+check('A1 live+fresh => AI evidence available only', (() => {
+  const meta = dec.assessAi(aiData(), NOW);
+  return meta.evidenceAvailable === true && meta.primary === true
+    && meta.authorityRole === 'EVIDENCE_ONLY' && meta.finalDecisionAuthorityActive === false;
+})());
 // 2. partial+persisted → AI主(従来条件そのまま)
-check('A2 partial+persisted => AI primary',
-  dec.assessAi(aiData({ status: 'partial', freshness: 'persisted' }), NOW).primary === true);
+check('A2 partial+persisted => AI evidence available',
+  dec.assessAi(aiData({ status: 'partial', freshness: 'persisted' }), NOW).evidenceAvailable === true);
 // 3. stale → ルール暫定+正確な理由
 { const m = dec.assessAi(aiData({ freshness: 'stale' }), NOW);
   check('A3 stale => rule temporary with reason',
@@ -70,12 +74,14 @@ check('A7c mock => 取得できません + no 16:05 promise',
     return m.nextRunJa === null && /取得できません/.test(m.unavailableReasonJa || ''); })());
 check('A7d stale => 16:05 promised (schedule real)',
   /16:05/.test(dec.assessAi(aiData({ freshness: 'stale' }), NOW).nextRunJa || ''));
-// 8. AI主のとき対象銘柄はaction/理由/確度/sourceがAI側
+// 8. AIが新鮮でも旧ルール行を上書きせず、理由だけを証拠として保持
 { const { labels } = dec.mergeAiPrimary(aiData(), [rule()], NOW);
-  check('A8 merge swaps to AI action/reason/conf/source',
-    labels[0].action === 'WAIT' && labels[0].reasonJa === 'AI理由'
-    && labels[0].confidence === 0.7 && labels[0].judgmentSource === 'ai'
-    && labels[0].aiReasonJa === 'AI理由'); }
+  check('A8 merge preserves rule action/reason/conf and attaches AI evidence',
+    labels[0].action === 'HOLD' && labels[0].reasonJa === 'ルール理由'
+    && labels[0].confidence === 0.55 && labels[0].judgmentSource === 'rule'
+    && labels[0].aiReasonJa === 'AI理由'
+    && labels[0].authorityRole === 'EVIDENCE_ONLY'
+    && labels[0].finalDecisionAuthorityActive === false); }
 // 9. AI主でも「その銘柄のAIラベルが無い」行はルールのまま
 { const { labels } = dec.mergeAiPrimary(aiData(), [rule({ symbol: '9984' })], NOW);
   check('A9 symbol without ai label stays rule',
@@ -87,8 +93,8 @@ check('A7d stale => 16:05 promised (schedule real)',
 // 11. AI理由欠落: 表示文はルール理由へフォールバックするがaiReasonJaはnull(sourceを偽らない)
 { const d = aiData(); d.labels[0].reasonJa = '';
   const { labels } = dec.mergeAiPrimary(d, [rule()], NOW);
-  check('A11 missing ai reason tracked (aiReasonJa=null, display falls back)',
-    labels[0].judgmentSource === 'ai' && labels[0].aiReasonJa === null && labels[0].reasonJa === 'ルール理由'); }
+  check('A11 missing ai reason leaves rule evidence unchanged',
+    labels[0].judgmentSource === 'rule' && labels[0].aiReasonJa === null && labels[0].reasonJa === 'ルール理由'); }
 // 12. stale時はマージ自体が発生しない(全行ルール)
 { const { labels, meta } = dec.mergeAiPrimary(aiData({ freshness: 'stale' }), [rule()], NOW);
   check('A12 stale => no swap at all', labels[0].judgmentSource === 'rule' && meta.freshness === 'stale'); }
@@ -110,24 +116,29 @@ function view(aiOpt, ruleOpt, symbolHasAi = true, mutate) {
     aiLabel: d?.labels?.find((l) => l.symbol === '7203'), meta, symbolHasAi,
   });
 }
-// 1. AI主 → AI PRIMARYタグ
-check('B1 AI PRIMARY tag', view({}, {}).sourceTagEn === 'AI PRIMARY');
-// 2. AI主 → sourceDetailにage
+// 1. 旧resolverは必ず証拠タグ
+check('B1 legacy resolver is RULE EVIDENCE', (() => {
+  const v = view({}, {});
+  return v.sourceTagEn === 'RULE EVIDENCE'
+    && v.ai.authorityRole === 'EVIDENCE_ONLY'
+    && v.rule.authorityRole === 'EVIDENCE_ONLY';
+})());
+// 2. AI証拠のsourceDetailにage
 check('B2 source detail carries age', /分前|時間前/.test(view({}, {}).sourceDetailJa));
-// 3. stale → RULE TEMPORARY+理由
+// 3. stale → RULE EVIDENCE+理由
 { const v = view({ freshness: 'stale' }, {});
-  check('B3 stale => RULE TEMPORARY + reason',
-    v.sourceTagEn === 'RULE TEMPORARY' && /古い/.test(v.sourceDetailJa)); }
-// 4. AIなし → RULE TEMPORARY+未取得(取得を保証できないため16:05は約束しない)
+  check('B3 stale => RULE EVIDENCE + reason',
+    v.sourceTagEn === 'RULE EVIDENCE' && /古い/.test(v.sourceDetailJa)); }
+// 4. AIなし → RULE EVIDENCE+未取得(取得を保証できないため16:05は約束しない)
 { const v = view(null, {});
-  check('B4 no AI => RULE TEMPORARY + 未取得', v.sourceTagEn === 'RULE TEMPORARY' && /未取得/.test(v.sourceDetailJa)); }
+  check('B4 no AI => RULE EVIDENCE + 未取得', v.sourceTagEn === 'RULE EVIDENCE' && /未取得/.test(v.sourceDetailJa)); }
 // 5. AI主だが銘柄ラベルなし → 「この銘柄のAI判断なし」
 { const d = aiData(); d.labels = [{ symbol: '9984', aiFinalAction: 'HOLD', reasonJa: 'x', confidence: 0.5 }];
   const { labels, meta } = dec.mergeAiPrimary(d, [rule()], NOW);
   const v = dec.resolveAssetDecision({ symbol: '7203', merged: labels[0], ruleLabel: rule(),
     aiLabel: undefined, meta, symbolHasAi: false });
   check('B5 primary but symbol lacks ai => この銘柄のAI判断なし',
-    v.sourceTagEn === 'RULE TEMPORARY' && /この銘柄のAI判断なし/.test(v.sourceDetailJa)); }
+    v.sourceTagEn === 'RULE EVIDENCE' && /この銘柄のAI判断なし/.test(v.sourceDetailJa)); }
 // 5b. 銘柄ラベルなしは「次回実行がこの銘柄を含む」保証がない → 16:05を約束しない
 { const d = aiData(); d.labels = [{ symbol: '9984', aiFinalAction: 'HOLD', reasonJa: 'x', confidence: 0.5 }];
   const { labels, meta } = dec.mergeAiPrimary(d, [rule()], NOW);
@@ -139,7 +150,7 @@ check('B2 source detail carries age', /分前|時間前/.test(view({}, {}).sourc
   const v = dec.resolveAssetDecision({ symbol: '7203', merged: undefined, ruleLabel: undefined,
     aiLabel: aiData().labels[0], meta, symbolHasAi: true });
   check('B5c ai fresh but rule label cold => ルール判定ラベル未取得',
-    v.sourceTagEn === 'RULE TEMPORARY' && /ルール判定ラベル未取得/.test(v.sourceDetailJa)); }
+    v.sourceTagEn === 'RULE EVIDENCE' && /ルール判定ラベル未取得/.test(v.sourceDetailJa)); }
 // 6. AI欄は非表示にならない: unavailable理由+nextRunが必ず入る
 { const v = view({ freshness: 'stale' }, {});
   check('B6 ai panel never silent (reason + next run)',
@@ -147,8 +158,8 @@ check('B2 source detail carries age', /分前|時間前/.test(view({}, {}).sourc
 // 7. AI理由欠落 → reasonMissing=true・ai.reasonJa=null(ルール理由を混ぜない)
 { const v = view({}, {}, true, (d) => { d.labels[0].reasonJa = ''; });
   check('B7 missing ai reason honest', v.ai.reasonMissing === true && v.ai.reasonJa === null); }
-// 8. reasonSource追跡: AI理由ありはai
-check('B8 reasonSource=ai', view({}, {}).reasonSource === 'ai');
+// 8. 旧resolverの表示理由はAIで上書きしない
+check('B8 legacy resolver reasonSource remains rule', view({}, {}).reasonSource === 'rule');
 // 9. reasonSource追跡: AI主でも理由欠落はrule
 { const v = view({}, {}, true, (d) => { d.labels[0].reasonJa = ''; });
   check('B9 reasonSource=rule when ai reason missing', v.reasonSource === 'rule'); }
@@ -160,13 +171,30 @@ check('B8 reasonSource=ai', view({}, {}).reasonSource === 'ai');
   check('B11 no disagreement when equal', v.rule.disagreementJa === null); }
 // 12. 未校正の確度は疑似精度を避け、定性的に表示
 check('B12 confidence stays qualitative without calibration',
-  view({}, {}).confidenceJa === '高' && view({}, {}).ai.confidenceJa === '高');
+  view({}, {}).confidenceJa === '中' && view({}, {}).ai.confidenceJa === '高');
 // 13. aiViewの語彙変換(caution)
 check('B13 aiView vocab', view({}, {}).ai.viewJa === 'ルール判定より注意');
 // 14. RULE CHECKにルール原文(action/理由/次条件)が残る
 { const v = view({}, {});
   check('B14 rule check keeps raw rule',
     v.rule.action === 'HOLD' && v.rule.reasonJa === 'ルール理由' && v.rule.nextConditionJa === 'ルール次条件'); }
+
+// 15. Canonical SDAは反対向きのAI/旧ルール証拠に上書きされない
+{ const meta = dec.assessAi(aiData(), NOW);
+  const v = dec.projectCanonicalAssetDecision({
+    symbol: '7203', meta,
+    result: { primaryAction: 'BUY', status: 'EVALUATED',
+      confidence: { valueBps: 6400 }, decisionId: `sda-${'1'.repeat(64)}`,
+      missingReasonCodes: [], conflictReasonCodes: [], guidance: { riskConstraint: 'NORMAL' } },
+    ruleLabel: rule({ action: 'EXIT' }),
+    aiLabel: { ...aiData().labels[0], aiFinalAction: 'EXIT' },
+  });
+  check('B15 canonical projection resists AI/legacy override',
+    v.judgmentSource === 'sda' && v.sourceTagEn === 'SDA PRIMARY'
+    && /SDA BUY/.test(v.reasonJa)
+    && v.ai.finalAction === 'EXIT' && v.rule.action === 'EXIT'
+    && v.ai.finalDecisionAuthorityActive === false
+    && v.rule.finalDecisionAuthorityActive === false); }
 
 // ── ③ deskRank/sortDesk(決定論・順序不変) ──────────────────────────────────
 const ri = (o) => Object.assign({
