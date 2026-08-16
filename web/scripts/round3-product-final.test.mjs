@@ -26,6 +26,8 @@ const notificationEngine = read('src/lib/notifications.ts');
 const settings = read('src/routes/Settings.tsx');
 const shell = read('src/components/AppShell.tsx');
 const versionTruth = read('src/domain/runtimeVersionTruth.ts');
+const diagnostics = read('src/routes/DataQualityPage.tsx');
+const productVersion = JSON.parse(fs.readFileSync(path.join(repo, 'product-version.json'), 'utf8'));
 const scanner = fs.readFileSync(path.join(repo, 'scanner.py'), 'utf8');
 const routeCatalog = fs.readFileSync(path.join(repo, 'argus_route_catalog.py'), 'utf8');
 
@@ -82,7 +84,18 @@ assert.match(settings, /MATERIAL NOTIFICATIONS/);
 assert.match(shell, /A\.R\.G\.U\.S\./);
 assert.match(shell, /shell__brand-pro">Pro/);
 assert.match(shell, /\{versionLabel\}/);
-assert.match(versionTruth, /`v\$\{frontendVersion\}`/);
+assert.equal((shell.match(/shell__brand-version/g) ?? []).length, 1);
+assert.doesNotMatch(shell, /Frontend v|Backend v|backendSha|deploymentId/);
+assert.deepEqual(productVersion, {
+  schemaVersion: 'argus-product-version-v1', productVersion: 'v13',
+});
+assert.match(versionTruth, /runtimeVersionLabel\(productVersion: string\)/);
+assert.match(versionTruth, /product version unavailable/);
 assert.doesNotMatch(versionTruth, /UI v|API v/);
+assert.match(diagnostics, /Product <b>\{versions\?\.productVersion/);
+assert.match(diagnostics, /Frontend \{versions\?\.frontendVersion/);
+assert.match(diagnostics, /Backend \/ API \{versions\?\.backendVersion/);
+assert.match(diagnostics, /Build frontend \{versions\?\.frontendBuildSha/);
+assert.doesNotMatch(shell, /__APP_VERSION__|__FRONTEND_BUILD_SHA__/);
 
 console.log('round3-product-final.test: ok (one SDA, four surfaces, sparse notifications)');

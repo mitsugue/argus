@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSystemHealth, type LampStatus } from '../hooks/useSystemHealth';
 import { SystemHealthPopover } from './dashboard/SystemHealthPopover';
 import { ArgusMark } from './ArgusMark';
-import { useProductionBackendIdentity } from '../hooks/useProductionBackendIdentity';
 import { runtimeVersionLabel } from '../domain/runtimeVersionTruth';
 import './AppShell.css';
 
@@ -60,8 +59,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, over
   // System-health beacon on the brand: one canonical diagnostics snapshot is
   // shared by the dot + popover, with no persistent health polling loop.
   const health = useSystemHealth();
-  const backendIdentity = useProductionBackendIdentity();
-  const versionLabel = runtimeVersionLabel(__APP_VERSION__, backendIdentity);
+  const versionLabel = runtimeVersionLabel(__PRODUCT_VERSION__);
   const [healthOpen, setHealthOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   // The drag is driven DIRECTLY through the DOM (refs), NOT React state — a
@@ -210,9 +208,6 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, over
           <span className="shell__brand-name">A.R.G.U.S. <span className="shell__brand-pro">Pro</span></span>
           <span
             className="shell__brand-version"
-            title={backendIdentity
-              ? `Frontend v${__APP_VERSION__} · Backend v${backendIdentity.backendVersion} · ${backendIdentity.backendSha} · ${backendIdentity.deploymentId}`
-              : `Frontend v${__APP_VERSION__} · Production backend identity unavailable`}
           >
             {versionLabel}
           </span>

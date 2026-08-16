@@ -6,6 +6,7 @@ export interface BackendRuntimeIdentity {
 }
 
 const RELEASE_VERSION = /^\d+\.\d+\.\d+$/;
+const PRODUCT_VERSION = /^v[1-9]\d*$/;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/i;
 const RENDER_DEPLOYMENT_ID = /^dep-[0-9a-z]+$/;
 const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -39,9 +40,39 @@ export function parseProductionBackendIdentity(payload: unknown): BackendRuntime
   };
 }
 
-export function runtimeVersionLabel(
-  frontendVersion: string,
-  _backendIdentity: BackendRuntimeIdentity | null,
-): string {
-  return RELEASE_VERSION.test(frontendVersion) ? `v${frontendVersion}` : 'version unavailable';
+export interface RuntimeVersionTruth {
+  productVersion: string | null;
+  frontendVersion: string;
+  frontendBuildSha: string;
+  backendVersion: string;
+  backendBuildSha: string;
+}
+
+function componentVersion(value: string): string {
+  return RELEASE_VERSION.test(value) ? value : 'unknown';
+}
+
+function buildCoordinate(value: string): string {
+  return FULL_GIT_SHA.test(value) || value === 'local' ? value.toLowerCase() : 'unknown';
+}
+
+export function runtimeVersionTruth(input: {
+  productVersion: string;
+  frontendVersion: string;
+  frontendBuildSha: string;
+  backendVersion: string;
+  backendBuildSha: string;
+}): RuntimeVersionTruth {
+  return {
+    productVersion: PRODUCT_VERSION.test(input.productVersion) ? input.productVersion : null,
+    frontendVersion: componentVersion(input.frontendVersion),
+    frontendBuildSha: buildCoordinate(input.frontendBuildSha),
+    backendVersion: componentVersion(input.backendVersion),
+    backendBuildSha: buildCoordinate(input.backendBuildSha),
+  };
+}
+
+export function runtimeVersionLabel(productVersion: string): string {
+  return PRODUCT_VERSION.test(productVersion)
+    ? productVersion : 'product version unavailable';
 }

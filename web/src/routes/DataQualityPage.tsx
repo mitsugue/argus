@@ -3,6 +3,7 @@ import { publishDataQuality } from '../lib/positionExposureShare';
 import {
   usePublicDiagnostics, type PublicDiagnostics,
 } from '../hooks/useSystemHealth';
+import { runtimeVersionTruth } from '../domain/runtimeVersionTruth';
 
 const SERVICE_JA: Record<PublicDiagnostics['service']['overall'], string> = {
   ok: '稼働中',
@@ -20,6 +21,13 @@ const FRESHNESS_JA: Record<PublicDiagnostics['freshness']['overall'], string> = 
 
 export const PublicDiagnosticsPanel: React.FC = () => {
   const { diagnostics, loading, failed, refresh } = usePublicDiagnostics();
+  const versions = diagnostics ? runtimeVersionTruth({
+    productVersion: __PRODUCT_VERSION__,
+    frontendVersion: __APP_VERSION__,
+    frontendBuildSha: __FRONTEND_BUILD_SHA__,
+    backendVersion: diagnostics.service.backendVersion,
+    backendBuildSha: diagnostics.service.buildSha ?? 'unknown',
+  }) : null;
   React.useEffect(() => {
     if (!diagnostics) return;
     publishDataQuality({
@@ -50,16 +58,21 @@ export const PublicDiagnosticsPanel: React.FC = () => {
               <span className="section-head__title">PUBLIC SERVICE STATUS</span>
             </div>
             <div className="card cmd-alloc">
-              <p className="cmd-alloc__note"><b>A.R.G.U.S. Pro v{__APP_VERSION__}</b></p>
+              <p className="cmd-alloc__note">
+                Product <b>{versions?.productVersion ?? 'unavailable'}</b>
+              </p>
               <p className="cmd-alloc__note">
                 <b>{SERVICE_JA[diagnostics.service.overall]}</b>
                 {' · '}liveness {diagnostics.service.liveness}
                 {' · '}readiness {diagnostics.service.readiness}
               </p>
               <p className="cmd-alloc__note">
-                Frontend v{__APP_VERSION__}
-                {' · '}Backend v{diagnostics.service.backendVersion}
-                {' · '}backend build {diagnostics.service.buildSha?.slice(0, 12) ?? 'unknown'}
+                Frontend {versions?.frontendVersion ?? 'unknown'}
+                {' · '}Backend / API {versions?.backendVersion ?? 'unknown'}
+              </p>
+              <p className="cmd-alloc__note">
+                Build frontend {versions?.frontendBuildSha ?? 'unknown'}
+                {' · '}backend {versions?.backendBuildSha ?? 'unknown'}
               </p>
               <p className="cmd-alloc__note">生成時刻 {diagnostics.generatedAt}</p>
             </div>
