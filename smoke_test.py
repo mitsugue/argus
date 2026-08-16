@@ -111,24 +111,6 @@ def v_fund_nav():
     ok = isinstance(funds, list) and len(funds) >= 1 and isinstance(funds[0].get("navYen"), (int, float))
     return ok, f"{len(funds or [])} funds nav (e.g. {funds[0]['code']}=¥{funds[0]['navYen']})" if funds else "no funds"
 
-def v_scout_jp():
-    # The key refactor regression check: moved scoring must still produce output.
-    c, d = _get("/api/argus/entry-scout?symbol=7203")
-    # Accept 'delayed' too: when the TSE is closed (the 6-hourly cron) or 7203 is on
-    # the Yahoo/J-Quants fallback, the quote is honestly 'delayed' but the scout still
-    # produces a full assessment. Only 'mock'/error is a real failure.
-    if d.get("status") not in ("live", "delayed"):
-        return False, f"status={d.get('status')} (expected live/delayed for 7203)"
-    a = d.get("assessment") or {}
-    ok = bool(d.get("callJa")) and isinstance(a.get("reasonsJa"), list) and a.get("reasonsJa") \
-        and isinstance((d.get("metrics") or {}).get("rsi14"), (int, float))
-    return ok, f"call={str(d.get('callJa'))[:24]} reasons={len(a.get('reasonsJa') or [])}"
-
-def v_scout_us():
-    c, d = _get("/api/argus/entry-scout?symbol=AAPL&market=US")
-    # US can be transiently rate-limited; just require a valid shape + status.
-    return isinstance(d.get("status"), str), f"status={d.get('status')}"
-
 def v_scout_batch():
     c, d = _get("/api/argus/scout-batch")
     return isinstance(d.get("records"), list), f"{len(d.get('records', []))} records"
@@ -873,8 +855,6 @@ CHECKS = [
     ("us-watchlist", v_us),
     ("crypto-watchlist", v_crypto),
     ("fund-nav (投信 NAV)", v_fund_nav),
-    ("entry-scout JP (moved code)", v_scout_jp),
-    ("entry-scout US", v_scout_us),
     ("scout-batch", v_scout_batch),
     ("ai-judgment freshness", v_ai_judgment),
     ("catalysts", v_catalysts),

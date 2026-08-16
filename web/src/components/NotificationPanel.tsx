@@ -39,7 +39,7 @@ export const NotificationPanel: React.FC = () => {
       </div>
       {items.length === 0 && (
         <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '8px 0' }}>
-          新しい通知はありません。変化があった時だけ、静かにお知らせします。
+          新しい重要通知はありません。結論または重要条件が変わった時だけお知らせします。
         </p>
       )}
       {groups.map(([label, list]) => list.length > 0 && (
@@ -68,7 +68,7 @@ export const NotificationPanel: React.FC = () => {
         </div>
       ))}
       <p style={{ margin: '8px 0 0', fontSize: 9, color: 'var(--text-faint)' }}>
-        通知タイプの有用性は学習中です(閉じた回数もノイズ指標として記録)。通知は端末内で生成・保存(サーバー送信なし)。外部push/メールは未設定のため無効。注意喚起であり売買指示ではありません。
+        設定でPrimary Action、カタリスト、リスク、権限、復元の端末内通知を個別に選べます。サーバー送信や外部push/メールはありません。
       </p>
     </section>
   );

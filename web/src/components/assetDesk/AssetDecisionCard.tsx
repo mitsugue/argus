@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import type { DeskCardData, DeskTab } from './types';
 import { sectionAnchorId, tabForDeskSection } from './types';
-import { SIGNALS } from '../../domain/actionLevel';
-import { AssetDecisionSummary, deskSignalCode } from './AssetDecisionSummary';
+import { AssetDecisionSummary } from './AssetDecisionSummary';
 import { AssetDecisionDetails } from './AssetDecisionDetails';
 import { AssetAIReview } from './AssetAIReview';
 import { AssetPositionPanel } from './AssetPositionPanel';
 import { AssetWhyPanel } from './AssetWhyPanel';
 import { AssetFlowPanel } from './AssetFlowPanel';
 import { AssetEventsPanel } from './AssetEventsPanel';
-import { AssetEntryScout, fetchScout, type ScoutState } from './AssetEntryScout';
 import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
 import { AssetDataQuality } from './AssetDataQuality';
@@ -51,15 +49,12 @@ export const AssetDecisionCard: React.FC<Props> = ({
   d, open, onToggle, onRemove, onUpdateHolding, nowMs, dragHandle, focusSection,
   collapsible = true,
 }) => {
-  const [scout, setScout] = useState<ScoutState>(null);
   const [tab, setTab] = useState<DeskTab>('decision');
   const [supportOpen, setSupportOpen] = useState(false);
-  const runScout = () => {
-    setScout('loading');
-    void fetchScout(d.asset.symbol, d.asset.market).then(setScout);
-  };
   const sym = d.asset.symbol;
-  const sigColor = `var(${SIGNALS[deskSignalCode(d)].token})`;
+  const actionTone = { BUY: 'var(--value-positive)', HOLD: 'var(--accent)',
+    WAIT: 'var(--amber, #fbbf24)', REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)' } as const;
+  const sigColor = actionTone[d.decisionFirst.canonicalPrimaryAction ?? 'WAIT'];
 
   useEffect(() => {
     if (!open) { setTab('decision'); setSupportOpen(false); return; }
@@ -121,7 +116,6 @@ export const AssetDecisionCard: React.FC<Props> = ({
               <Section symbol={sym} id="technical">
                 <ChartIntelligencePanel scope="asset" symbol={sym}
                   market={d.asset.market} enabled />
-                <AssetEntryScout market={d.asset.market} scout={scout} onRun={runScout} />
               </Section>
             )}
             {tab === 'evidence' && (
@@ -158,7 +152,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
                 <AssetAIReview d={d} />
               </Section>
               <Section symbol={sym} id="research" title="RESEARCH / NOTES">
-                <AssetResearchPanel d={d} scout={scout} onRemove={onRemove} />
+                <AssetResearchPanel d={d} onRemove={onRemove} />
               </Section>
               <Section symbol={sym} id="data-quality" title="DATA QUALITY">
                 <AssetDataQuality d={d} nowMs={nowMs} />

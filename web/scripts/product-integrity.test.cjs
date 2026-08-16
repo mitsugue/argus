@@ -104,19 +104,19 @@ const counters = desk.buildPortfolioCommand(views).counters;
 check('S9 portfolio counters are mutually exclusive',
   counters.reduce((sum, counter) => sum + counter.count, 0) === views.length);
 check('S10 DecisionView contract is populated once',
-  views.every((view) => view.primaryAction === view.currentActionJa
+  views.every((view) => view.primaryAction === view.canonicalPrimaryAction
     && view.reason === view.whyJa && view.nextCheck === view.nextJa));
 check('S10b canonical views have zero duplicate primary decision keys',
   views.every((view) => semantics.duplicateDecisionViewKeys(view).length === 0));
 check('S10c canonical views have zero contradictory states',
   views.every((view) => semantics.contradictoryDecisionStates(view).length === 0));
-check('S10d incident override governs owner and entry actions',
+check('S10d legacy incident override cannot govern owner and entry actions',
   (() => {
     const view = desk.buildDecisionFirstView({
-      ...base, symbol: 'E', held: true, signalCode: 'ENTER',
+      ...base, symbol: 'E', held: true, canonicalPrimaryAction: 'EXIT', signalCode: 'ENTER',
       actionOverride: 'EXIT_WATCH', ownerLabel: '保有継続・追加可', rank: 0,
     });
-    return view.ownerAction === '撤退検討' && view.entryAction === '新規停止'
+    return view.ownerAction === 'EXIT（撤退）' && view.entryAction === '新規停止'
       && semantics.contradictoryDecisionStates(view).length === 0;
   })());
 
@@ -128,14 +128,8 @@ check('S11 scenario percent is gated by provenance',
 const aiReviewSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'assetDesk', 'AssetAIReview.tsx',
 ), 'utf8');
-const scoutSource = fs.readFileSync(path.join(
-  __dirname, '..', 'src', 'components', 'assetDesk', 'AssetEntryScout.tsx',
-), 'utf8');
 const incidentSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'dashboard', 'DownsideIncidentCard.tsx',
-), 'utf8');
-const alertCardSource = fs.readFileSync(path.join(
-  __dirname, '..', 'src', 'components', 'dashboard', 'AlertCard.tsx',
 ), 'utf8');
 const researchSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'assetDesk', 'AssetResearchPanel.tsx',
@@ -147,16 +141,11 @@ const notificationSource = fs.readFileSync(path.join(
 const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Settings.tsx'), 'utf8');
 check('S12 uncalibrated AI and cause confidence never renders percent',
   aiReviewSource.includes('confidenceJa') && !aiReviewSource.includes('confidencePct')
-  && scoutSource.includes('probabilityDisplay(v * 100).qualitative')
-  && !scoutSource.includes('Math.round(v * 100)')
   && incidentSource.includes('probabilityDisplay(b.probability * 100).qualitative')
   && !incidentSource.includes('Math.round(b.probability * 100)')
-  && researchSource.includes('probabilityDisplay(value * 100).qualitative')
   && !researchSource.includes('Math.round(p.newLongAccumulation * 100)'));
-check('S12b legacy alert and downside surfaces are visibly evidence-only',
-  alertCardSource.includes('data-authority-role="EVIDENCE_ONLY"')
-  && alertCardSource.includes('EVIDENCE ONLY')
-  && !alertCardSource.includes('<ActionPill')
+check('S12b legacy alert surface is retired and downside stays evidence-only',
+  !fs.existsSync(path.join(__dirname, '..', 'src', 'components', 'dashboard', 'AlertCard.tsx'))
   && incidentSource.includes('<b>RISK EVIDENCE:</b>')
   && incidentSource.includes('SDAのPrimary Actionを上書きしません')
   && !incidentSource.includes('<b>判断:</b>')

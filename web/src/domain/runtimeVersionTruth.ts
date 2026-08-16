@@ -41,9 +41,7 @@ export function parseProductionBackendIdentity(payload: unknown): BackendRuntime
 
 export function runtimeVersionLabel(
   frontendVersion: string,
-  backendIdentity: BackendRuntimeIdentity | null,
+  _backendIdentity: BackendRuntimeIdentity | null,
 ): string {
-  const ui = RELEASE_VERSION.test(frontendVersion) ? `v${frontendVersion}` : 'UNKNOWN';
-  const api = backendIdentity ? `v${backendIdentity.backendVersion}` : 'UNKNOWN';
-  return `UI ${ui} · API ${api}`;
+  return RELEASE_VERSION.test(frontendVersion) ? `v${frontendVersion}` : 'version unavailable';
 }

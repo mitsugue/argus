@@ -1,6 +1,4 @@
-import type { DataQuality, SignalCode } from './actionLevel';
-import { synthesizeArgusDecision, type ArgusFactor, type ArgusLegacyEvidenceAction,
-  type ArgusMarket, type ArgusMarketDecision } from './argusEngine';
+import type { DataQuality } from './actionLevel';
 import type { MarketCalendarState } from '../types/marketLedger';
 import type { ChartBar, PriceZone } from '../types/chartIntelligence';
 import {
@@ -17,6 +15,12 @@ import type {
 } from './singleDecisionAuthority';
 
 export type MarketSelectionMode = 'AUTO' | ArgusMarket;
+export type ArgusMarket = 'JP' | 'US';
+export interface ArgusFactor {
+  key: string;
+  state: '↑' | '→' | '↓' | '△' | '—' | 'JP' | 'US' | 'HIGH' | 'LOW';
+  source?: string;
+}
 
 export interface TodayEventInput {
   id: string; code: string; title: string; at: string | null;
@@ -137,11 +141,6 @@ export interface TodayProjection {
   activeTurningPoint: { id: string; date: string; direction: string; label: string } | null;
   shortSelling: TodayShortSellingSummary | null; failedRally: TodayFailedRally | null;
 }
-export interface TodayReviewInput {
-  action: string; marketLabel: string; returnPct: number | null; evaluationJa: string;
-  horizon: string; decisionDate: string; outcomeDate: string | null; matured: boolean;
-  status: 'matured' | 'immature' | 'missing_price';
-}
 export interface TodayPositioningRow {
   key: string; label: string; value: string; detail?: string;
   tone?: 'positive' | 'negative' | 'neutral';
@@ -151,16 +150,9 @@ export interface ArgusTodayInput {
   now: Date;
   selectionMode: MarketSelectionMode;
   calendar?: Record<string, MarketCalendarState> | null;
-  baseSignal: SignalCode;
-  jpSignal?: SignalCode | null;
-  usSignal?: SignalCode | null;
-  confidence: number | null;
   dataQuality: DataQuality;
-  closingSignal?: Partial<Record<ArgusMarket, SignalCode | null>>;
-  ownerPolicyLimit?: SignalCode | null;
-  eventHardVeto?: Partial<Record<ArgusMarket, boolean>>;
+  globalRisk?: string | null;
   factors?: Partial<Record<ArgusMarket, ArgusFactor[]>>;
-  evidence?: Partial<Record<ArgusMarket, string[]>>;
   events?: TodayEventInput[];
   marketMoves?: TodayMoveInput[];
   indexMoves?: TodayMoveInput[];
@@ -172,7 +164,6 @@ export interface ArgusTodayInput {
   selectedInstrument?: Partial<Record<ArgusMarket, string>>;
   attention?: TodayAttentionInput[];
   holdings?: TodayHoldingInput[];
-  review?: Partial<Record<ArgusMarket, TodayReviewInput | null>>;
   systemStatus?: { data: string; backup: string; rule: string };
   conciseAction?: string | null;
   conciseAvoid?: string | null;
@@ -220,23 +211,13 @@ export interface ArgusTodayView {
     flow: string; short: string; macro: string; replay: string };
   attention: TodayAttentionInput[];
   holdingsReview: TodayHoldingInput[];
-  reviewSummary: TodayReviewInput | null;
   systemStatus: { data: string; backup: string; rule: string };
-  decisions: Record<ArgusMarket, ArgusMarketDecision>;
   canonicalDecision: SingleDecisionAuthorityResultV2;
   footerText: string;
 }
 
 const OPEN_JP = new Set(['MORNING_SESSION', 'AFTERNOON_SESSION']);
 const ACTIVE_US = new Set(['PRE_MARKET', 'REGULAR']);
-
-function sessionAllowsPositiveTodayAction(
-  market: ArgusMarket,
-  state: MarketCalendarState | undefined,
-  nowMs: number,
-): boolean {
-  return projectCurrentCalendarState(market, state, nowMs)?.state === 'open';
-}
 
 export function quoteDisplayLabel(state: string): string {
   if (state === 'RT') return '現在 RT';
@@ -326,23 +307,8 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
   const calendar = currentDecisionCalendar(input.calendar, input.now.getTime());
   const selectedMarket = input.selectionMode === 'AUTO'
     ? selectAutoMarket(calendar, input.now.getTime()) : input.selectionMode;
-  const make = (market: ArgusMarket) => synthesizeArgusDecision({
-    market,
-    baseSignal: (market === 'JP' ? input.jpSignal : input.usSignal) ?? input.baseSignal,
-    confidence: input.confidence,
-    dataQuality: input.dataQuality,
-    closingWindowSignal: input.closingSignal?.[market],
-    ownerPolicyLimit: input.ownerPolicyLimit,
-    // Market selection is presentation only outside a canonical open session.
-    // The server-authored session projection (never a browser clock) must veto
-    // positive entry/add authority while preserving more-defensive actions.
-    eventHardVeto: input.eventHardVeto?.[market]
-      || !sessionAllowsPositiveTodayAction(market, calendar?.[market], input.now.getTime()),
-    factors: input.factors?.[market], evidence: input.evidence?.[market],
-    calculatedAt: input.now.toISOString(),
-  });
-  const decisions = { JP: make('JP'), US: make('US') };
-  let decision = decisions[selectedMarket];
+  const canonical = input.canonicalDecision;
+  const canonicalAction = canonical.primaryAction;
   const nowMs = input.now.getTime();
   const future = [...(input.events ?? [])]
     .map((event) => ({ event, at: eventEpoch(event) }))
@@ -356,29 +322,10 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
   const projectionsByHorizon: ArgusTodayView['projectionsByHorizon'] = {};
   for (const days of [1, 5, 20] as const) {
     const built = buildTodayProjection(
-      projectionInput, decision.finalAction, days, input.now.getTime());
+      projectionInput, canonicalAction, days, input.now.getTime());
     if (built) projectionsByHorizon[`${days}D` as const] = built;
   }
   const projection = projectionsByHorizon['5D'] ?? null;
-  // Forecast evidence is a one-way risk gate. It may veto an otherwise strong
-  // BUY, but an UP plurality can never create or promote a BUY.
-  const expected = projection?.expectedValue;
-  const forecastBuyGate = !!projection?.directionProbabilities
-    && (projection.brierSkill ?? 0) > 0
-    && (expected?.expectedReturn ?? 0) > 0
-    && (expected?.q10 ?? -1) > -.08
-    && (expected?.rewardRisk ?? 0) >= 1;
-  if (decision.finalAction === 'BUY' && !forecastBuyGate) {
-    decision = { ...decision, finalAction: 'WAIT', actionScore: 6,
-      evidence: [...decision.evidence, '旧BUY証拠分類のSkill／期待値／下方リスク条件が未成立'].slice(0, 12) };
-    decisions[selectedMarket] = decision;
-  }
-  if (selectedMarket === 'US' && decision.confidence != null && decision.confidence > .65) {
-    decision = { ...decision, confidence: .65 };
-    decisions[selectedMarket] = decision;
-  }
-  const canonical = input.canonicalDecision;
-  const canonicalAction = canonical.primaryAction;
   const actionScore = canonical.sevenSign.candidateLevel;
   const permissions = {
     newEntry: canonical.status === 'EVALUATED' && canonicalAction === 'BUY',
@@ -409,7 +356,8 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     finalAction: canonicalAction, actionScore,
     confidence: canonical.confidence.valueBps / 10_000,
     dataStatus: dataStatus(input.dataQuality),
-    globalRisk: decision.globalRisk === 'normal' ? null : decision.globalRisk.toUpperCase(),
+    globalRisk: input.globalRisk && input.globalRisk !== 'normal'
+      ? input.globalRisk.toUpperCase() : null,
     marketPrice: projection?.current ?? null,
     range: projection ? { low: projection.baseLow, high: projection.baseHigh } : null,
     invalidation: projection?.invalidation ?? null,
@@ -418,7 +366,7 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
       instrumentId: projection.instrumentId, label: projection.label } : null,
     shortSellingSummary: projection?.shortSelling ?? null,
     failedRallyState: projection?.failedRally ?? null,
-    factors: decision.factors.slice(0, 5), permissions,
+    factors: (input.factors?.[selectedMarket] ?? []).slice(0, 5), permissions,
     conciseAction: input.conciseAction ? input.conciseAction.slice(0, 32) : null,
     conciseAvoid: input.conciseAvoid ? input.conciseAvoid.slice(0, 32) : null,
     indexMoves: (input.indexMoves ?? input.marketMoves ?? []).slice(0, 4),
@@ -447,17 +395,16 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
       .filter((row) => row.id !== nextEvent?.id)
       .sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id)).slice(0, 3),
     holdingsReview: dedupeHoldings(input.holdings ?? []),
-    reviewSummary: input.review?.[selectedMarket] ?? null,
     systemStatus: input.systemStatus ?? { data: dataStatus(input.dataQuality).label, backup: '確認', rule: 'DETERMINISTIC' },
-    decisions,
     canonicalDecision: canonical,
-    footerText: `${selectedMarket} ${canonicalAction} SDA ${canonical.decisionId.slice(0, 12)} · Seven ${canonical.sevenSign.status}/${actionScore ?? 'DATA_GATED'}   ${eventTag}`,
+    footerText: `${canonicalAction} · ${canonical.status === 'DATA_GATED'
+      ? '判断に必要なデータを確認中' : '確認済みの根拠に基づく判断'} · ${eventTag}`,
   };
 }
 
 /** Todayの予測図は、実測OHLCVとサーバー側walk-forward校正結果だけを描く。 */
 export function buildTodayProjection(input: TodayProjectionInput | null,
-  action: ArgusLegacyEvidenceAction, horizonDays: 1 | 5 | 20 = 5,
+  action: PrimaryAction, horizonDays: 1 | 5 | 20 = 5,
   nowMs = Date.now()): TodayProjection | null {
   if (!todayProjectionDecisionUsable(input, nowMs)) return null;
   const bars = input.bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0).slice(-30);
@@ -484,7 +431,7 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     priceAt(distribution?.q25, Math.max(0.000001, current - 2 * horizonAtr)));
   const upside = Math.max(above?.center ?? current,
     priceAt(distribution?.q75, current + 2 * horizonAtr));
-  const invalidation = action === 'SELL'
+  const invalidation = action === 'EXIT' || action === 'REDUCE'
     ? priceAt(distribution?.q90, above?.upper ?? current + 2 * horizonAtr)
     : priceAt(distribution?.q10, below?.lower ?? Math.max(0.000001, current - 2 * horizonAtr));
   const activePoint = [...(input.turningPoints ?? [])].reverse()
@@ -540,7 +487,8 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     horizon: `${horizonDays}営業日`, horizonDays,
     directionLabel: candidateProbabilities
       ? probabilityTruth.directionalLeanJa
-      : action === 'BUY' ? '上方向優勢' : action === 'SELL' ? '下方向警戒' : '本線内で待機',
+      : action === 'BUY' ? '上方向優勢'
+        : action === 'REDUCE' || action === 'EXIT' ? '下方向警戒' : '本線内で待機',
     confidenceLabel: probabilityTruth.exactPercentageAllowed ? '高'
       : input.status === 'live' && bars.length >= 25 ? '中' : '低',
     directionProbabilities: probabilities,
@@ -602,33 +550,6 @@ export function todayProjectionDecisionUsable(
   }
   const asOf = exactAuthorityEpoch(input.asOf);
   return asOf != null && asOf <= nowMs && nowMs - asOf <= 5 * 24 * 60 * 60_000;
-}
-
-/** 前回判断の翌1営業日だけを採点する。翌バーが無ければ0%ではなく未成熟。 */
-export function buildTodayReview(bars: Array<{ date: string; close: number }>, symbolLabel: string,
-  action: string, decisionDate: string): TodayReviewInput {
-  const valid = bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0)
-    .slice().sort((a, b) => a.date.localeCompare(b.date));
-  const base = [...valid].reverse().find((bar) => bar.date <= decisionDate) ?? null;
-  const outcome = base ? valid.find((bar) => bar.date > base.date) ?? null : null;
-  const finalAction = ['ADD', 'BUY_DIP'].includes(action) ? 'BUY'
-    : ['EXIT', 'TRIM'].includes(action) ? 'SELL' : 'WAIT';
-  const returnPct = base && outcome
-    ? Math.round((outcome.close - base.close) / base.close * 10_000) / 100 : null;
-  let evaluationJa = '答え合わせ待ち';
-  if (returnPct != null) {
-    if (finalAction === 'BUY') evaluationJa = returnPct > 0 ? '上方向判断を支持' : '上方向判断を反証';
-    else if (finalAction === 'SELL') evaluationJa = returnPct < 0 ? '防御判断を支持' : '防御判断を反証';
-    else evaluationJa = returnPct <= -1 ? '追い買い回避は妥当'
-      : returnPct >= 2 ? '上昇を取り逃した可能性' : '待機継続は妥当';
-  }
-  const latestDate = valid.at(-1)?.date ?? null;
-  const status: TodayReviewInput['status'] = outcome ? 'matured'
-    : !base && latestDate && latestDate > decisionDate ? 'missing_price' : 'immature';
-  if (status === 'missing_price') evaluationJa = '価格取得待ち';
-  return { action: finalAction, marketLabel: symbolLabel, returnPct, evaluationJa,
-    horizon: '翌1営業日', decisionDate, outcomeDate: outcome?.date ?? null,
-    matured: !!outcome, status };
 }
 
 const INDEX_NEWS = /(日経|nikkei|topix|s&p|nasdaq|dow|株式市場|stock market|equity market)/i;

@@ -25,9 +25,12 @@ export interface DecisionFirstInput {
   canonicalPrimaryAction?: PrimaryAction | null;
   canonicalDecisionId?: string | null;
   canonicalDecisionStatus?: 'EVALUATED' | 'DATA_GATED' | null;
-  signalCode?: string | null;
-  actionOverride?: string | null;
-  ownerLabel?: string | null;
+  canonicalConfidenceBps?: number | null;
+  sevenSignStatus?: 'PRODUCTION' | 'SHADOW' | 'DATA_GATED' | null;
+  sevenSignLevel?: number | null;
+  targets?: Array<{ value: string; unit: string }>;
+  invalidation?: { value: string; unit: string } | null;
+  freshness?: string | null;
   priceText: string;
   changePct?: number | null;
   pnlPct?: number | null;
@@ -67,6 +70,13 @@ export interface DecisionFirstView extends DecisionView {
   bucket: 'exit-watch' | 'inspect' | 'hold' | 'new-stop';
   canonicalDecisionId: string | null;
   canonicalDecisionStatus: 'EVALUATED' | 'DATA_GATED' | null;
+  canonicalPrimaryAction: PrimaryAction | null;
+  canonicalConfidenceBps: number | null;
+  sevenSignStatus: 'PRODUCTION' | 'SHADOW' | 'DATA_GATED' | null;
+  sevenSignLevel: number | null;
+  targets: Array<{ value: string; unit: string }>;
+  invalidation: { value: string; unit: string } | null;
+  freshness: string | null;
 }
 
 export interface PortfolioCommandView {
@@ -75,21 +85,6 @@ export interface PortfolioCommandView {
   counters: Array<{ key: 'new-stop' | 'exit-watch' | 'inspect' | 'hold';
     labelJa: string; count: number }>;
 }
-
-const ACTION_JA: Record<string, { held: string; watch: string; entry: string }> = {
-  EXIT: { held: '撤退を検討', watch: '新規停止', entry: '新規停止' },
-  DEFEND: { held: '縮小・防衛を検討', watch: '新規停止', entry: '新規停止' },
-  REVIEW: { held: '保有を再点検', watch: '要点検・新規停止', entry: '新規停止' },
-  PAUSE: { held: '保有継続・状況待ち', watch: '待機・新規停止', entry: '新規停止' },
-  HOLD_ONLY: { held: '保有継続・買い増し禁止', watch: '新規停止', entry: '新規停止' },
-  PREPARE: { held: '保有継続・条件待ち', watch: '条件待ち', entry: '条件成立まで待機' },
-  ENTER: { held: '保有継続・追加可', watch: '条件内で新規可', entry: '条件内で新規可' },
-};
-
-const OVERRIDE_JA: Record<string, string> = {
-  EXIT_WATCH: '撤退検討', TRIM_WATCH: '縮小検討', REVIEW_REQUIRED: '要点検',
-  DO_NOT_ADD: '買い増し禁止', HOLD_CAUTION: '警戒して保有', WAIT: '待機',
-};
 
 const CANONICAL_ACTION: Record<PrimaryAction, {
   signalCode: string; held: string; watch: string; entry: string;
@@ -128,27 +123,13 @@ function firstDistinct(candidates: Array<string | null | undefined>,
 }
 
 export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirstView {
-  const canonical = input.canonicalPrimaryAction
-    ? CANONICAL_ACTION[input.canonicalPrimaryAction] : null;
-  const signalCode = canonical?.signalCode ?? (input.signalCode && ACTION_JA[input.signalCode]
-    ? input.signalCode : 'PAUSE');
-  const action = ACTION_JA[signalCode];
-  const override = !canonical && input.actionOverride
-    ? OVERRIDE_JA[input.actionOverride] ?? compactDecisionText(input.actionOverride, 24)
-    : null;
-  const currentActionJa = canonical
-    ? (input.held ? canonical.held : canonical.watch)
-    : override || (input.held ? action.held : action.watch);
+  const canonicalAction = input.canonicalPrimaryAction ?? 'WAIT';
+  const canonical = CANONICAL_ACTION[canonicalAction];
+  const signalCode = canonical.signalCode;
+  const currentActionJa = input.held ? canonical.held : canonical.watch;
   const used = new Set<string>([decisionSemanticKey(currentActionJa)].filter(Boolean));
-  const guardedOwnerAction = override
-    || (['EXIT', 'DEFEND', 'REVIEW'].includes(signalCode) ? action.held : null);
-  const ownerActionJa = canonical ? (input.held ? canonical.held : '監視のみ（保有なし）')
-    : input.held
-    // An incident override is authoritative. Keeping an older position stance
-    // here could display "撤退検討" and "保有継続" in the same DecisionView.
-    ? guardedOwnerAction || compactDecisionText(input.ownerLabel, 42) || action.held
-    : '監視のみ（保有なし）';
-  const entryActionJa = canonical?.entry ?? (override ? '新規停止' : action.entry);
+  const ownerActionJa = input.held ? canonical.held : '監視のみ（保有なし）';
+  const entryActionJa = canonical.entry;
   const whyJa = firstDistinct(input.whyCandidates, used, '検証済みの個別理由なし');
   const nextJa = firstDistinct(
     input.nextCandidates, used, '個別開示・出来高・同業差を確認');
@@ -172,7 +153,7 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
     changePct: input.changePct ?? null, pnlPct: input.pnlPct ?? null,
     priority: input.priority, dataStatus: input.dataStatus, rank: input.rank,
     bucket,
-    primaryAction: input.canonicalPrimaryAction ?? currentActionJa,
+    primaryAction: canonicalAction,
     ownerAction: ownerActionJa,
     entryAction: entryActionJa,
     reason: whyJa,
@@ -184,6 +165,13 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
     quoteTruth: input.quoteTruth ?? null,
     canonicalDecisionId: input.canonicalDecisionId ?? null,
     canonicalDecisionStatus: input.canonicalDecisionStatus ?? null,
+    canonicalPrimaryAction: canonicalAction,
+    canonicalConfidenceBps: input.canonicalConfidenceBps ?? null,
+    sevenSignStatus: input.sevenSignStatus ?? null,
+    sevenSignLevel: input.sevenSignLevel ?? null,
+    targets: input.targets ?? [],
+    invalidation: input.invalidation ?? null,
+    freshness: input.freshness ?? null,
   };
 }
 

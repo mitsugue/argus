@@ -32,7 +32,7 @@ assert.deepEqual(identity, {
   deploymentId: 'dep-d9rrkmgae00c73a9acl0',
   deployedAt: '2026-08-08T23:52:52Z',
 });
-assert.equal(truth.runtimeVersionLabel('13.3.6', identity), 'UI v13.3.6 · API v13.4.5');
+assert.equal(truth.runtimeVersionLabel('13.3.6', identity), 'v13.3.6');
 
 for (const malformed of [
   null,
@@ -46,8 +46,8 @@ for (const malformed of [
 ]) {
   assert.equal(truth.parseProductionBackendIdentity(malformed), null);
 }
-assert.equal(truth.runtimeVersionLabel('13.3.6', null), 'UI v13.3.6 · API UNKNOWN');
-assert.equal(truth.runtimeVersionLabel('malformed', identity), 'UI UNKNOWN · API v13.4.5');
+assert.equal(truth.runtimeVersionLabel('13.3.6', null), 'v13.3.6');
+assert.equal(truth.runtimeVersionLabel('malformed', identity), 'version unavailable');
 
 assert.match(hookSource, /if \(!navigator\.onLine\)[\s\S]*return;/);
 assert.ok(hookSource.indexOf('if (!navigator.onLine)') < hookSource.indexOf('await fetch('));

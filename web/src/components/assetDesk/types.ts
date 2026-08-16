@@ -11,7 +11,6 @@ import type { SupplyDemandSignal } from '../../hooks/useSupplyDemand';
 import type { APItem } from '../../domain/actionPriority';
 import type { LocalScenarioSet } from '../../domain/scenario';
 import type { LocalPlan } from '../../domain/positionPlan';
-import type { ResolvedStance } from '../../domain/primaryStance';
 import type { AIJudgmentLabel } from '../../types/aiJudgment';
 import type { DecisionFirstView, DeskGenre } from '../../domain/assetDesk';
 
@@ -34,7 +33,6 @@ export interface DeskCardData {
   apx?: APItem;
   scn?: LocalScenarioSet;
   ppl?: LocalPlan;
-  pst?: ResolvedStance;
   aiLabel?: AIJudgmentLabel;
   aiAgeMin: number | null;
   aiMeta: AiMeta;

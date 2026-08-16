@@ -50,14 +50,16 @@ export const PublicDiagnosticsPanel: React.FC = () => {
               <span className="section-head__title">PUBLIC SERVICE STATUS</span>
             </div>
             <div className="card cmd-alloc">
+              <p className="cmd-alloc__note"><b>A.R.G.U.S. Pro v{__APP_VERSION__}</b></p>
               <p className="cmd-alloc__note">
                 <b>{SERVICE_JA[diagnostics.service.overall]}</b>
                 {' · '}liveness {diagnostics.service.liveness}
                 {' · '}readiness {diagnostics.service.readiness}
               </p>
               <p className="cmd-alloc__note">
-                Backend {diagnostics.service.backendVersion}
-                {' · '}build {diagnostics.service.buildSha?.slice(0, 12) ?? 'unknown'}
+                Frontend v{__APP_VERSION__}
+                {' · '}Backend v{diagnostics.service.backendVersion}
+                {' · '}backend build {diagnostics.service.buildSha?.slice(0, 12) ?? 'unknown'}
               </p>
               <p className="cmd-alloc__note">生成時刻 {diagnostics.generatedAt}</p>
             </div>

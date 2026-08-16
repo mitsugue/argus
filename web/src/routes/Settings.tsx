@@ -4,6 +4,10 @@ import type { SettingsSection } from '../navigation';
 import { BackupSettingsPanel } from './BackupPage';
 import { PublicDiagnosticsPanel } from './DataQualityPage';
 import { PageShell } from './PageShell';
+import {
+  notificationPreferences, saveNotificationPreferences,
+  type NotificationPreferences,
+} from '../lib/notifications';
 
 interface Props { settingsSection?: SettingsSection }
 
@@ -15,7 +19,14 @@ const scrollToSection = (section: SettingsSection) => {
 
 export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
   const locale = useLocale();
+  const [notificationPrefs, setNotificationPrefs] = React.useState<NotificationPreferences>(
+    () => notificationPreferences());
   React.useEffect(() => { scrollToSection(settingsSection); }, [settingsSection]);
+  const toggleNotification = (key: keyof NotificationPreferences) => {
+    const next = { ...notificationPrefs, [key]: !notificationPrefs[key] };
+    setNotificationPrefs(next);
+    saveNotificationPreferences(next);
+  };
 
   return (
     <PageShell
@@ -34,6 +45,27 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
             </button>
           ))}
           <span className="cmd-alloc__note">設定はこの端末に保存されます。</span>
+        </div>
+      </section>
+
+      <section className="card" aria-label="Notification settings">
+        <div className="section-head">
+          <span className="section-head__title">MATERIAL NOTIFICATIONS</span>
+        </div>
+        <p className="cmd-alloc__note">結論または重要な条件が変わったときだけ、この端末に保存します。</p>
+        <div style={{ display: 'grid', gap: 7 }}>
+          {([
+            ['action', 'Primary Action・目標'],
+            ['catalyst', '重要イベント'],
+            ['risk', '保有リスク・無効化'],
+            ['authority', '判断権限の喪失'],
+            ['recovery', 'バックアップ・復元'],
+          ] as const).map(([key, label]) => <label key={key}
+            style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <span>{label}</span>
+            <input type="checkbox" checked={notificationPrefs[key]}
+              onChange={() => toggleNotification(key)} />
+          </label>)}
         </div>
       </section>
 

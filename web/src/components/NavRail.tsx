@@ -32,11 +32,6 @@ export const NavRail: React.FC<Props> = ({ active, onSelect }) => {
           {item.desktopLabel}
         </button>
         ))}
-
-      <div className="nav__footer">
-        <span className="nav__footer-dot" />
-        <span>UI v{__APP_VERSION__}</span>
-      </div>
       </div>
 
       <div className="nav__mobile" aria-label="Mobile sections">

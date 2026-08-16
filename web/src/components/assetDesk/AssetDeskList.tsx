@@ -20,8 +20,6 @@ import {
   buildDecisionFirstView, buildPortfolioCommand, deskRank, DESK_RANK_JA,
   type DeskRankInput, type DeskGenre,
 } from '../../domain/assetDesk';
-import type { SignalCode } from '../../domain/actionLevel';
-import type { PrimaryAction } from '../../domain/singleDecisionAuthority';
 import type { DeskCardData, DeskEventTag, DeskSection } from './types';
 import { sectionAnchorId, DESK_SECTIONS } from './types';
 import { AssetDecisionCard } from './AssetDecisionCard';
@@ -32,10 +30,6 @@ import { DownsideIncidentQueue } from '../dashboard/DownsideIncidentCard';
 import { t } from '../../i18n';
 import { normalizeLiveQuote } from '../../domain/liveQuote';
 import './AssetDesk.css';
-
-const SDA_SIGNAL_CODE: Record<PrimaryAction, SignalCode> = {
-  BUY: 'ENTER', HOLD: 'HOLD_ONLY', WAIT: 'PAUSE', REDUCE: 'DEFEND', EXIT: 'EXIT',
-};
 
 // V12.2.12 — Asset Deskリスト(旧AssetStrategySectionの後継)。
 // データ組み立てはHoldings所有の共有Asset Intelをpropsで受け取り、
@@ -190,18 +184,20 @@ export const AssetDeskList: React.FC<Props> = ({
         eventSoon: eventTags.some((e) => e.countdown === 'D' || e.countdown === 'D-1'),
       };
       const rank = deskRank(rankInput);
-      const signalCode = SDA_SIGNAL_CODE[sda?.primaryAction ?? 'WAIT'];
       const name = bestAssetName(a, quote?.name ?? card?.name);
       const priceShown = strat.status === 'mock' ? null : (strat.price ?? card?.price);
       const changePct = strat.status === 'mock' ? null : (strat.changePct ?? card?.changePct);
       const decisionFirst = buildDecisionFirstView({
-        symbol: sym, name, market: a.market, held, signalCode,
+        symbol: sym, name, market: a.market, held,
         canonicalPrimaryAction: sda?.primaryAction ?? 'WAIT',
         canonicalDecisionId: sda?.decisionId ?? null,
         canonicalDecisionStatus: sda?.status ?? 'DATA_GATED',
-        actionOverride: null,
-        ownerLabel: pn?.readinessJa ?? intel.stanceBySymbol.get(sym)?.stanceJa
-          ?? plBySym.get(sym)?.currentStanceJa,
+        canonicalConfidenceBps: sda?.confidence.valueBps ?? 0,
+        sevenSignStatus: sda?.sevenSign.status ?? 'DATA_GATED',
+        sevenSignLevel: sda?.sevenSign.candidateLevel ?? null,
+        targets: sda?.targets ?? [],
+        invalidation: sda?.invalidation ?? null,
+        freshness: sda?.freshness ?? 'UNKNOWN',
         priceText: fmtPrice(a.market, priceShown),
         changePct, pnlPct: pn?.pnlPct ?? null,
         priority: apx?.priorityRank && apx.priorityRank !== 'Ignore'
@@ -236,7 +232,6 @@ export const AssetDeskList: React.FC<Props> = ({
         apx,
         scn: scBySym.get(sym),
         ppl: plBySym.get(sym),
-        pst: intel.stanceBySymbol.get(sym),
         aiLabel: aiBySym.get(sym),
         aiAgeMin: intel.aiMeta.ageMin,
         aiMeta: intel.aiMeta,
@@ -248,7 +243,7 @@ export const AssetDeskList: React.FC<Props> = ({
     });
   }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.sdaBySymbol, intel.aiJ.data, intel.sdSignals,
       intel.apItems, intel.scenarioSets, intel.positionPlans, intel.positionExposure,
-      intel.stanceBySymbol, intel.aiMeta, eventTagsBySym, mountTs]);
+      intel.aiMeta, eventTagsBySym, mountTs]);
 
   const riskCount = useMemo(() => rows.filter((r) => !!r.d.incident).length, [rows]);
   const keep = (r: { d: DeskCardData }) => filter === 'all' ? true

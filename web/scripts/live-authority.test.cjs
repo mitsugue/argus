@@ -164,15 +164,15 @@ check('ancient Core Portfolio positives become WAIT while defense remains',
 const ai = (asOf) => ({ status: 'live', freshness: 'fresh', asOf,
   models: { primary: 'primary', checker: 'checker' },
   labels: [{ symbol: 'AAPL', aiFinalAction: 'ADD', reasonJa: 'AI', confidence: .9 }] });
-const rule = [{ symbol: 'AAPL', action: 'HOLD', reasonJa: 'rule', confidence: .5 }];
 check('pure AI boundary rejects ancient timestamp',
-  !decision.assessAi(ai(isoAgo(72 * 60 * 60_000 + 1)), NOW).primary);
+  !decision.assessAi(ai(isoAgo(72 * 60 * 60_000 + 1)), NOW).evidenceAvailable);
 check('pure AI boundary rejects future timestamp',
-  !decision.assessAi(ai(new Date(NOW + 1).toISOString()), NOW).primary);
+  !decision.assessAi(ai(new Date(NOW + 1).toISOString()), NOW).evidenceAvailable);
 check('pure AI boundary rejects malformed timestamp',
-  !decision.assessAi(ai('2026-08-16T03:00:00Zjunk'), NOW).primary);
-check('AI merge falls back to rule when timestamp is invalid',
-  decision.mergeAiPrimary(ai('bad'), rule, NOW).labels[0].judgmentSource === 'rule');
+  !decision.assessAi(ai('2026-08-16T03:00:00Zjunk'), NOW).evidenceAvailable);
+check('AI evidence never exposes a merge action API',
+  typeof decision.mergeAiPrimary === 'undefined'
+  && typeof decision.resolveAssetDecision === 'undefined');
 
 const missingQuotePriority = priorities.buildItem({
   symbol: '7203', market: 'JP', assetName: 'Toyota', isHeld: false,
@@ -207,7 +207,7 @@ const hookDir = path.join(__dirname, '..', 'src', 'hooks');
 for (const file of ['useMarketRegime.ts', 'useActionLabels.ts', 'useAIJudgment.ts',
   'useFlowAttribution.ts', 'useSupplyDemand.ts', 'useVisibilityGuard.ts',
   'useDownsideIncidents.ts', 'useCryptoWatchlist.ts', 'useImportantEvents.ts',
-  'useEventRadar.ts', 'useActionAlerts.ts']) {
+  'useEventRadar.ts']) {
   const source = fs.readFileSync(path.join(hookDir, file), 'utf8');
   check(`${file} uses one shared acquisition store`, source.includes('createSharedPollingStore'));
   check(`${file} revalidates retained authority on remount`,

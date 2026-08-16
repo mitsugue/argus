@@ -156,9 +156,8 @@ def test_desk_sections_fixed_order():
 
 def test_migrated_features_present():
     # 旧Watchlist行の機能
-    scout = _read("components", "assetDesk", "AssetEntryScout.tsx")
-    assert "/api/argus/entry-scout" in scout
-    assert "押した時だけ" in scout                    # オンデマンドのみ(自動AIなし)
+    assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetEntryScout.tsx"))
+    assert "AssetEntryScout" not in _read("components", "assetDesk", "AssetDecisionCard.tsx")
     research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
     assert "saveNote" in research and "buildReviewPackMarkdown" in research
     assert "OsintDeepDive" in research and "decisionHistoryFor" in research

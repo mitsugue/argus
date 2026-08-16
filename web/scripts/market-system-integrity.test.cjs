@@ -90,7 +90,7 @@ const settingsSource = src('src', 'routes', 'Settings.tsx');
 const pageShellSource = src('src', 'routes', 'PageShell.tsx');
 const appSource = src('src', 'App.tsx');
 check('U1 Today exposes chart, positioning, news and evidence details',
-  ['at-projection', 'at-positioning', '重大ニュース', '判断の根拠・システム詳細']
+  ['at-projection', 'at-positioning', '重大ニュース', '根拠・市場データ・システム情報']
     .every((label) => todayPanelSource.includes(label)));
 check('U2 independent Market/Replay/Ledger surface is absent',
   !appSource.includes('MarketRegime') && !appSource.includes("'#market'"));
