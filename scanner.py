@@ -15945,11 +15945,6 @@ def get_action_alerts():
         _ALERTS_CACHE["expires"] = now + _ALERTS_TTL
     return payload
 
-@app.route("/api/argus/action-alerts")
-def api_argus_action_alerts():
-    return jsonify(get_action_alerts())
-
-
 # ━━━ Downside Incident Response + cause attribution (v10.98) ━━━
 # When a held/watched name drops materially (or the JP tape deteriorates), turn
 # the old generic "急落" into an explained incident: classification, likely-cause
@@ -34794,17 +34789,6 @@ def get_entry_scout(sym, market="JP"):
         } if not is_us else {},
     }
     return _entry_scout_evidence_only(out)
-
-@app.route("/api/argus/entry-scout")
-def api_argus_entry_scout():
-    sym = (request.args.get("symbol") or "").strip().upper()
-    mkt = (request.args.get("market") or "").strip().upper()
-    if _JP_SYM_RE.match(sym) and mkt != "US":
-        return jsonify(get_entry_scout(sym, "JP"))
-    if _US_SYM_RE.match(sym) and (mkt == "US" or not _JP_SYM_RE.match(sym)):
-        return jsonify(get_entry_scout(sym, "US"))
-    return jsonify({"error": "bad_symbol",
-                    "noteJa": "日本株4桁コード、または米国ティッカー(?market=US)に対応。"}), 400
 
 # ── Scout calibration (scout-ledger-v1, v10.24) — Phase 3 ────────────────────
 # The learning loop's final piece: record each day's entry-scout score +

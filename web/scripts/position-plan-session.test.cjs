@@ -16,7 +16,6 @@ const { buildPlan, projectPlanningSession, PTS_WARNING_JA, SESSION_UNKNOWN_WARNI
   require(path.join(root, 'src/domain/positionPlan.ts'));
 const { buildLocalBrief, resolveSessionJst } =
   require(path.join(root, 'src/domain/sessionBrief.ts'));
-const { resolvePrimaryStance } = require(path.join(root, 'src/domain/primaryStance.ts'));
 const source = fs.readFileSync(path.join(root, 'src/domain/positionPlan.ts'), 'utf8');
 const briefSource = fs.readFileSync(path.join(root, 'src/domain/sessionBrief.ts'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
@@ -170,10 +169,9 @@ check('missing quote suppresses improving-heavy entry before its positive branch
   missingQuotePlan.planType === 'unknown'
   && missingQuotePlan.currentStance === 'unknown'
   && missingQuotePlan.blockingReasons.includes('decision_evidence_missing'));
-check('partial stance boundary downgrades pullback-only authority',
-  resolvePrimaryStance({ isHeld: false, apLabel: 'UNKNOWN',
-    planStance: 'add_only_on_pullback', sdCondition: 'improving_but_heavy',
-    dataPartial: true }).primaryStance === 'unknown');
+check('duplicate primary stance resolver is retired',
+  !fs.existsSync(path.join(root, 'src/domain/primaryStance.ts'))
+  && !hook.includes('stanceBySymbol'));
 const closedPlan = buildAt('2026-08-17T03:00:02Z', {
   ...favorable, marketSession: project('JP', jp('LUNCH_BREAK', true,
   '2026-08-17T03:00:00Z', '2026-08-17T03:30:00Z')),

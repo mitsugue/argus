@@ -41,7 +41,6 @@ import {
   buildPlan, projectPlanningSession, type LocalPlan,
   type PlanningSessionAuthority,
 } from '../domain/positionPlan';
-import type { ResolvedStance } from '../domain/primaryStance';
 import {
   buildDataGatedInputV2, buildPredictionLedgerV2Adapter, buildRiskKernel,
   evaluateSingleDecisionAuthority, verifyDecisionEvidence,
@@ -49,7 +48,6 @@ import {
   type PrimaryAction, type RiskContributionV1, type SingleDecisionAuthorityResultV2,
   type PredictionLedgerSdaAdapterV2,
 } from '../domain/singleDecisionAuthority';
-import { resolveCommandSummary, SIGNALS as CS_SIGNALS } from '../domain/commandSummary';
 import { classifyRole, buildStrategy, type LocalStrategy } from '../domain/portfolioStrategy';
 import {
   buildLocalFireCore, fireCoreMetaSnapshot, subscribeFireCoreMeta,
@@ -81,30 +79,6 @@ const riskBand = (value: string | null | undefined):
   const upper = String(value ?? 'UNKNOWN').toUpperCase();
   return ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(upper)
     ? upper as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' : 'UNKNOWN';
-};
-
-/** Presentation compatibility only; this never re-decides the SDA action. */
-const projectSdaStance = (result: SingleDecisionAuthorityResultV2): ResolvedStance => {
-  const projection = {
-    BUY: ['small_add_allowed', 'BUY'],
-    HOLD: ['hold', 'HOLD'],
-    WAIT: ['unknown', 'WAIT'],
-    REDUCE: ['trim_consideration', 'REDUCE'],
-    EXIT: ['risk_review', 'EXIT'],
-  } as const;
-  const [primaryStance, stanceJa] = projection[result.primaryAction];
-  return {
-    primaryStance,
-    stanceJa,
-    confidence: Math.round(result.confidence.valueBps / 100) / 100,
-    reasonsJa: [
-      `SDA ${result.decisionId.slice(0, 16)}…`,
-      ...result.missingReasonCodes,
-      ...result.conflictReasonCodes,
-    ].slice(0, 4),
-    capNotesJa: result.status === 'DATA_GATED'
-      ? ['必要な正本証拠が未接続のためWAIT'] : [],
-  };
 };
 
 // ── V12.2.12: Asset Intelligence(TodayとAsset Deskの共有データ組み立て) ──────
@@ -154,10 +128,7 @@ export interface AssetIntel {
   isPartial: boolean;
   visLimited: boolean;
   cappedConf: number | null;
-  commandSummary: ReturnType<typeof resolveCommandSummary>;
-  globalAddProhibited: boolean;
   positionRisk: { alert: boolean; ja: string };
-  stanceBySymbol: Map<string, ResolvedStance>;
   aiMeta: AiMeta;
   decisionBySym: Map<string, AssetDecisionView>;
   /** Sole device-local five-action result. */
@@ -690,20 +661,6 @@ export function useAssetIntel(opts: {
   const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
   const visLimited = !!guard && guard.visibilityLevel !== 'full';
 
-  // v12.0.8追補: ヒーローと同じ解決器で総合コマンドを一度だけ解決 —
-  // Today's Stanceカードとadd可否判定が同一のsummaryを共有する。
-  const commandSummary = useMemo(() => resolveCommandSummary({
-    legacyAction: judgment.overall, globalRegime: overlay?.globalRegime,
-    jpOverlay: overlay?.jpIntradayOverlay, ownerRisk: overlay?.holderRiskOverlay,
-    risk: judgment.risk, isPartial: isPartial || visLimited,
-    confidence: cappedConf, nextConditionJa: judgment.nextCondition,
-  }), [judgment, overlay, isPartial, visLimited, cappedConf]);
-  const globalAddProhibited = useMemo(() => {
-    try {
-      return CS_SIGNALS[commandSummary.signalCode].permissions.add === 'BLOCKED';
-    } catch { return false; }
-  }, [commandSummary]);
-
   // v12.0.8追補: 保有リスクチップ(市場リスクと分離) — 保有×P0/P1件数から。
   const positionRisk = useMemo(() => {
     if (positionExposure.noHoldings) return { alert: false, ja: '保有数量未入力' };
@@ -718,7 +675,6 @@ export function useAssetIntel(opts: {
   const canonicalDecision = useMemo(() => {
     const sda = new Map<string, SingleDecisionAuthorityResultV2>();
     const bindings = new Map<string, PredictionLedgerSdaAdapterV2>();
-    const stances = new Map<string, ResolvedStance>();
     const views = new Map<string, AssetDecisionView>();
     const ruleBySym = new Map((al.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const aiBySym = new Map((aiJ.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
@@ -754,7 +710,7 @@ export function useAssetIntel(opts: {
       });
       const missingQuote = (market === 'JP' || market === 'US') && !priceBySymbol.has(sym);
       const addPermission: 'UNKNOWN' | 'BLOCKED' | 'ALLOWED' = positionState === 'UNKNOWN' ? 'UNKNOWN'
-        : globalAddProhibited || missingQuote || sessionAuthorityMissing
+        : missingQuote || sessionAuthorityMissing
           || positionBand === 'HIGH' || positionBand === 'CRITICAL'
           ? 'BLOCKED' : 'ALLOWED';
       const ownerContext = {
@@ -839,14 +795,13 @@ export function useAssetIntel(opts: {
       const adapter = buildPredictionLedgerV2Adapter(result);
       sda.set(sym, result);
       bindings.set(sym, adapter);
-      stances.set(sym, projectSdaStance(result));
       views.set(sym, projectCanonicalAssetDecision({
         symbol: sym, result, ruleLabel: rule, aiLabel: ai, meta: aiMeta,
       }));
     }
-    return { sda, bindings, stances, views };
+    return { sda, bindings, views };
   }, [assets, al.data, aiJ.data, aiMeta, positionExposure, impEvents,
-    importantEventsUnknown, priceBySymbol, globalAddProhibited,
+    importantEventsUnknown, priceBySymbol,
     sessionAuthorityMissing, isPartial, visLimited]);
   useEffect(() => {
     for (const [symbol, result] of canonicalDecision.sda) {
@@ -856,7 +811,6 @@ export function useAssetIntel(opts: {
   }, [canonicalDecision]);
   const sdaBySymbol = canonicalDecision.sda;
   const sdaLedgerBindingBySymbol = canonicalDecision.bindings;
-  const stanceBySymbol = canonicalDecision.stances;
   const decisionBySym = canonicalDecision.views;
 
   return {
@@ -867,7 +821,7 @@ export function useAssetIntel(opts: {
     positionExposure, apItems, sessionBrief, scenarioSets,
     portfolioStrategy, fireCore, positionPlans,
     phase, judgment, overlay, isPartial, visLimited, cappedConf,
-    commandSummary, globalAddProhibited, positionRisk, stanceBySymbol,
+    positionRisk,
     aiMeta, decisionBySym, sdaBySymbol, sdaLedgerBindingBySymbol,
   };
 }

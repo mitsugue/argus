@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { useLocale, tEn } from '../i18n';
-import { previousJudgment } from '../lib/judgmentLog';
 import { useAssetIntel } from '../hooks/useAssetIntel';
 import { latestActionPriorities, latestSessionBrief, latestFireCore, publishEventsJa, publishDataQuality, latestDataQuality } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
@@ -15,10 +14,9 @@ import type { RouteKey } from '../components/NavRail';
 import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
-import { buildArgusTodayView, buildTodayReview, selectTodayNews,
+import { buildArgusTodayView, selectTodayNews,
   selectAutoMarket, type MarketSelectionMode, type TodayMoveInput,
   type TodayPositioningRow } from '../domain/argusTodayView';
-import { resolveCommandSummary } from '../domain/commandSummary';
 import { useMarketLedger } from '../hooks/useMarketLedger';
 import { useChartIntelligence } from '../hooks/useChartIntelligence';
 import { useMarketNews } from '../hooks/useMarketNews';
@@ -97,10 +95,6 @@ function marketMove(payload: ChartIntelligencePayload | null, id: string): Today
     history: bars.slice(-12).map((bar) => ({ date: bar.date, value: bar.close })) };
 }
 
-function reviewFor(payload: ChartIntelligencePayload | null, action: string, date: string) {
-  return buildTodayReview(payload?.indicators.bars ?? [], payload ? instrumentLabel(payload) : '対象価格', action, date);
-}
-
 const signed = (value: number, digits = 0) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
 const oku = (value: number) => `${Math.round(value / 100_000_000).toLocaleString('ja-JP')}億`;
 
@@ -129,10 +123,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   // 正本)へ移設。Todayは publish:true — 共有ストアへのpublish副作用(Exposure/AP/
   // Brief/Scenarios/Plans/Strategy/FireCore)は従来どおりTodayだけが実行する。
   const {
-    assets, al, regime, impEvents, rates, events247,
+    assets, regime, impEvents, rates, events247,
     flowRecords, sdSignals, positionExposure,
     apItems, sessionBrief, scenarioSets, portfolioStrategy, positionPlans,
-    phase, judgment, isPartial, visLimited, cappedConf,
+    judgment, isPartial, visLimited,
     overlay, sdaBySymbol,
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
   // Headline ETFs have their own backend-only quote reads. They are not added
@@ -274,6 +268,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
             name: p.assetName, isHeld: p.isHeld, summaryJa: p.summaryJa };
         }
         const backupSafety = assessBackupSafety(assets);
+        const canonicalDecisions = Object.fromEntries([...sdaBySymbol.entries()].map(([symbol, result]) => {
+          const asset = assets.find((row) => row.symbol.toUpperCase() === symbol);
+          return [symbol, { action: result.primaryAction, status: result.status,
+            name: asset?.displayNameJa ?? asset?.displayName, isHeld: (asset?.quantity ?? 0) > 0 }];
+        }));
         runNotificationEngine({
           apItems, eventNames: [...new Set((impEvents?.events ?? [])
             .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
@@ -292,12 +291,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
           vaultConfigured: backupSafety.vaultConfigured,
           localExportAgeDays: backupSafety.exportAgeDays,
           restoreVerified: backupSafety.restoreVerified,
+          canonicalDecisions,
         });
       } catch { /* never break Today */ }
     }, 12_000);
     return () => clearTimeout(t);
   }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure,
-    scenarioSets, positionPlans, portfolioStrategy, assets]);
+    scenarioSets, positionPlans, portfolioStrategy, assets, sdaBySymbol]);
 
   // Recovery Phase A: publish the one shared, fixed public diagnostics
   // snapshot. AppShell and Settings consume this same request-backed store.
@@ -334,27 +334,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
 
 
   const argusToday = useMemo(() => {
-    // Todayの7段階は市場判断専用。端末ローカルの保有状況や
-    // holderRiskOverlayを混ぜると、同じ市場でも端末ごとに点数が変わるため
-    // 市場サマリでは明示的にownerRiskを渡さない。
-    const jpSummary = resolveCommandSummary({
-      legacyAction: judgment.overall,
-      globalRegime: overlay.globalRegime,
-      jpOverlay: overlay.jpIntradayOverlay,
-      risk: judgment.risk,
-      isPartial: isPartial || visLimited,
-      confidence: cappedConf,
-      nextConditionJa: judgment.nextCondition,
-    });
-    const usSummary = resolveCommandSummary({
-      legacyAction: judgment.overall,
-      globalRegime: overlay.globalRegime,
-      jpOverlay: 'NORMAL',
-      risk: judgment.risk,
-      isPartial: isPartial || visLimited,
-      confidence: cappedConf,
-      nextConditionJa: judgment.nextCondition,
-    });
+    const dataQuality = isPartial || visLimited ? 'PARTIAL' as const : 'LIVE' as const;
     const summary = marketLedger.ledger?.summary ?? {};
     const factorState = (value: string | undefined): '↑' | '→' | '↓' | '△' | '—' | 'JP' | 'US' | 'HIGH' | 'LOW' => {
       if (['INFLOW', 'RISING', 'OVERHEAT_CANDIDATE'].includes(value ?? '')) return '↑';
@@ -400,9 +380,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       impact: event.displayImpact, lifecycle: event.lifecycle,
       descriptionJa: event.rationaleJa,
     }));
-    const imminent = (impEvents?.events ?? []).some((event) =>
-      (event.daysUntil ?? 99) <= 1 && ['critical', 'high'].includes(event.displayImpact)
-      && !['RELEASED', 'RESOLVED'].includes(event.lifecycle));
     const indexMoves: TodayMoveInput[] = [];
     for (const move of [
       marketMove(jpChart.decisionData, 'nikkei'), marketMove(topixChart.decisionData, 'topix'),
@@ -478,7 +455,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       linkedSymbols: item.linkedSymbols,
     })), assets.map((asset) => asset.symbol));
     const backup = assessBackupSafety(assets);
-    const previous = previousJudgment(judgment.date);
     const ownerPriorities = [...apItems]
       .filter((item) => item.priorityRank !== 'Ignore')
       .sort((left, right) => right.priorityScore - left.priorityScore
@@ -507,13 +483,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     return buildArgusTodayView({
       now, selectionMode: marketMode,
       calendar: decisionCalendar,
-      baseSignal: jpSummary.signalCode,
-      jpSignal: jpSummary.signalCode,
-      usSignal: usSummary.signalCode,
-      confidence: cappedConf, dataQuality: jpSummary.dataQuality,
-      eventHardVeto: { JP: imminent, US: imminent },
+      dataQuality,
+      globalRisk: overlay.globalRegime,
       factors: { JP: jpFactors, US: usFactors },
-      evidence: { JP: judgment.reasons, US: judgment.reasons },
       events: eventRows, indexMoves, macroMoves, positioning, attention,
       holdings: ownerPriorities, news,
       newsCardState: {
@@ -530,18 +502,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         JP: projectionInput(selectedJpChart),
         US: projectionInput(selectedUsChart),
       },
-      review: previous ? {
-        JP: reviewFor(selectedJpChart, previous.overall, previous.date),
-        US: reviewFor(selectedUsChart, previous.overall, previous.date),
-      } : undefined,
       selectedInstrument,
-      systemStatus: { data: jpSummary.dataQuality, backup: backup.protectionLevelJa,
+      systemStatus: { data: dataQuality, backup: backup.protectionLevelJa,
         rule: `SDA ${canonicalDecision.status}` },
       canonicalDecision,
     });
-  }, [judgment, overlay, isPartial, visLimited, cappedConf, marketLedger.ledger,
+  }, [judgment, overlay, isPartial, visLimited, marketLedger.ledger,
     regime.data, impEvents, rates.data, events247,
-    assets, al.data, apItems, marketMode,
+    assets, apItems, marketMode,
     jpChart.decisionData, topixChart.decisionData,
     sp500Chart.decisionData, nasdaqChart.decisionData, marketNews.data,
     marketNews.lastChecked, marketNews.failureClass,

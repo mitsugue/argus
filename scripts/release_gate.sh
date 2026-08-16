@@ -9,6 +9,7 @@ SHA=$(git rev-parse HEAD)
 SHORT=$(git rev-parse --short HEAD)
 FRONTEND_VERSION=$(python3 -c "import json;print(json.load(open('web/package.json'))['version'])")
 BACKEND_VERSION=$(python3 -c "import json;print(json.load(open('backend-version.json'))['version'])")
+PRODUCT_VERSION=$(python3 -c "import argus_release_identity as i; v=i.product_version(); assert v; print(v)")
 # クリーンツリー判定を最初に行う(artifacts/はgitignoreで除外される)
 DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
 PY=fail; TS=fail; BUILD=fail
@@ -27,7 +28,7 @@ REASONS=""
 [ "$BUILD" = pass ] || REASONS="$REASONS build_failed"
 [ "$DIRTY" = "0" ]  || REASONS="$REASONS dirty_tree($DIRTY files)"
 cat > artifacts/release_manifest.json <<EOF
-{"version": "$FRONTEND_VERSION",
+{"productVersion": "$PRODUCT_VERSION",
  "frontendVersion": "$FRONTEND_VERSION", "frontendBuildSha": "$SHA",
  "backendVersion": "$BACKEND_VERSION", "backendBuildShaCandidate": "$SHA",
  "commitSha": "$SHA", "commitShaShort": "$SHORT", "dirtyFiles": $DIRTY,

@@ -160,13 +160,14 @@ def test_fe_collapse_persistence_local_only():
     assert "fetch(" not in src                       # 端末内のみ(サーバー送信なし)
     assert "resetTodayLayout" in src
     # v13: Todayは単一view modelと単一decision cardへ縮約。
-    # 市場選択は端末内だけに保存し、判断詳細は同カード内で開閉する。
+    # 市場選択は端末内だけに保存し、判断詳細はnative detailsで閉じる。
     cc = _read("routes", "CommandCenter.tsx")
     assert "argus.today.marketSelection.v1" in cc
     assert "localStorage" in cc
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
-    assert "useState(false)" in panel
-    assert "aria-expanded={detail}" in panel
+    assert '<details className="at-evidence card">' in panel
+    assert "useState(false)" not in panel
+    assert "setDetail" not in panel
 
 
 def test_fe_fire_core_manual_update_wording():

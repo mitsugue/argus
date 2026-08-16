@@ -89,7 +89,8 @@ def test_today_contract_keeps_one_probability_language_and_price_only_levels():
     assert "signalEpisodeIds" in domain
     assert "supportResistanceIds" in domain
     assert "eventIds" in domain
-    assert "an UP plurality can never create or promote a BUY" in domain
+    assert "const canonicalAction = canonical.primaryAction" in domain
+    assert "forecastBuyGate" not in domain
 
 
 def test_today_acceptance_uses_strict_truth_gate_and_honest_price_time():

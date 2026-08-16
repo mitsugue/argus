@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import type { DeskCardData } from './types';
-import type { ScoutState, ScoutData } from './AssetEntryScout';
 import { getNote, saveNote } from '../../lib/researchNotes';
 import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
 import { bestAssetName } from '../../lib/assetStrategy';
@@ -8,7 +7,6 @@ import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import { decisionHistoryFor } from '../../lib/decisionQuality';
 import { pastPatternLineJa } from '../../lib/learningReview';
 import { refreshMarketLedger } from '../../hooks/useMarketLedger';
-import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — RESEARCH & NOTES(§7-9)。旧Watchlistのリサーチメモ/AI相談/Removeと
 // 旧TodayのReview Packコピー/OSINT Deep Dive/DECISION HISTORYを統合。
@@ -20,10 +18,9 @@ const aiBtn: React.CSSProperties = { fontSize: 10.5, cursor: 'pointer', marginLe
 
 // LLM相談 (v10.30): ONE handoff prompt — ARGUSにしか見えない情報(大口フロー/
 // 日証金/開示空売り/校正実績)を先頭に置くモート起点プロンプト。移設のみ。
-async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
+async function buildAndCopyConsult(d: DeskCardData,
                                    provider: 'ChatGPT' | 'Gemini'): Promise<boolean> {
   const name0 = bestAssetName(d.asset, d.liveName ?? d.card?.name);
-  const sc = (scoutState && typeof scoutState === 'object' && scoutState.status === 'live') ? scoutState as ScoutData : null;
   const strat = d.strat;
   const L: string[] = [];
   const [market, chart] = await Promise.all([
@@ -43,24 +40,9 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
   L.push('大前提: ニュースや一般的な地合いはあなたの方が詳しい。だからここでは、ARGUSが掴んでいる「Web検索だけでは取れない情報」を軸に判断してほしい。');
   L.push('');
   L.push('【ARGUSにしか見えない情報 — これを最重視して】');
-  const flow = sc?.flow?.bigNetRatio ?? strat.bigFlowRatio;
+  const flow = strat.bigFlowRatio;
   if (flow != null) L.push(`■ 大口資金フロー(moomoo板・純流入率): ${(flow * 100).toFixed(0)}%`);
-  if (sc?.nisshokin?.ratio != null) L.push(`■ 日証金倍率: ${sc.nisshokin.ratio}（1未満=売り長=踏み上げ燃料）`);
-  if (sc?.shortDisclosed) L.push(`■ 機関の大口空売り(JPX開示): ${sc.shortDisclosed.ratioPct}%（${sc.shortDisclosed.reporters}社）`);
-  if (sc?.flowInference && sc.flowInference.classification !== 'UNCONFIRMED') {
-    const p = sc.flowInference.probabilities;
-    const q = (value: number) => probabilityDisplay(value * 100).qualitative;
-    L.push(`■ フロー推定(誰が動かしているか): 新規買い=${q(p.newLongAccumulation)} / 買い戻し=${q(p.shortCovering)} / 分配=${q(p.distribution)} / ノイズ=${q(p.retailNoise)}（確度${sc.flowInference.confidence}）`);
-  }
-  if (sc?.scoreTrackRecord && sc.scoreTrackRecord.n >= 5) {
-    const t = sc.scoreTrackRecord;
-    L.push(`■ ARGUS校正: このscore水準は過去${t.n}件・${t.upRate != null ? `上昇${probabilityDisplay(t.upRate * 100).qualitative}` : '方向判定保留'}${t.avgRetPct != null ? `(平均${t.avgRetPct >= 0 ? '+' : ''}${t.avgRetPct}%)` : ''}`);
-  }
-  if (sc?.postureCalibration?.hitRate != null) L.push(`■ この地合い(${sc.postureCalibration.posture})のエンジン実績: ${probabilityDisplay(sc.postureCalibration.hitRate * 100).qualitative}（n=${sc.postureCalibration.n}）`);
-  else if (sc?.engineCalibration?.hitRate != null) L.push(`■ ARGUSエンジン全体の実績: ${probabilityDisplay(sc.engineCalibration.hitRate * 100).qualitative}（n=${sc.engineCalibration.n}）`);
-  const legacyScout = sc?.legacyCallJa ?? sc?.callJa;
-  if (legacyScout) L.push(`■ 旧Entry Scout分類(EVIDENCE ONLY): ${legacyScout}`);
-  L.push(`■ 旧構え/ルール(EVIDENCE ONLY): ${d.pst?.stanceJa ?? d.decision?.rule.action ?? strat.action ?? '未確認'}`);
+  L.push(`■ 旧ルール(EVIDENCE ONLY): ${d.decision?.rule.action ?? strat.action ?? '未確認'}`);
   L.push(`■ 保有情報(端末内から手動コピー): ${d.pn?.held ? `保有中・数量${d.pn.quantity ?? '未入力'}・取得単価${d.pn.avgCost ?? '未入力'}・損益${d.pn.pnlPct ?? '未計算'}%` : '未保有/監視'}`);
   if (d.eventTags.length) L.push(`■ 主要イベント: ${d.eventTags.map((e) => `${e.code} ${e.countdown}`).join(' / ')}`);
   if (market) L.push(`■ Market Ledger要約: ${Object.entries(market.summary).map(([k, v]) => `${k}=${v}`).join(' / ')}`);
@@ -68,9 +50,8 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
   L.push('');
   L.push('【参考(あなたの方が詳しいはず)】');
   if (strat.status !== 'mock' && strat.price != null) L.push(`■ 現在値 ${strat.price}（前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}）`);
-  if (sc?.metrics) L.push(`■ テクニカル: RSI14=${sc.metrics.rsi14}・25日線乖離${sc.metrics.ma25DiffPct ?? '—'}%`);
   L.push(`■ Chart Intelligence: ${chart?.critique?.map((x) => `${x.label}: ${x.text}`).join(' / ') || '未取得'}`);
-  L.push(`■ データ品質: quote=${strat.status} / scout=${sc?.status ?? '未取得'} / market-ledger=${market ? market.remoteReadBack.verificationStatus : '未取得'}`);
+  L.push(`■ データ品質: quote=${strat.status} / market-ledger=${market ? market.remoteReadBack.verificationStatus : '未取得'}`);
   if (strat.catalystNoteJa) L.push(`■ 直近の材料(ARGUS把握分): ${strat.catalystNoteJa}`);
   L.push('');
   L.push('依頼:');
@@ -91,9 +72,8 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
 
 export const AssetResearchPanel: React.FC<{
   d: DeskCardData;
-  scout: ScoutState;
   onRemove: (id: string) => void;
-}> = ({ d, scout, onRemove }) => {
+}> = ({ d, onRemove }) => {
   const [note, setNote] = useState(() => getNote(d.asset.symbol)?.text ?? '');
   const [noteSaved, setNoteSaved] = useState(false);
   const [llmCopied, setLlmCopied] = useState<string | null>(null);
@@ -127,7 +107,7 @@ export const AssetResearchPanel: React.FC<{
         <button type="button" style={aiBtn} onClick={() => void doCopyPack('redacted', 'full')}>redacted</button>
         {(['ChatGPT', 'Gemini'] as const).map((provider) => <button key={provider} type="button" style={aiBtn}
                 title={`${provider}用の相談文をコピーします。APIは呼びません。`}
-                onClick={() => void buildAndCopyConsult(d, scout, provider).then((ok) => {
+                onClick={() => void buildAndCopyConsult(d, provider).then((ok) => {
                   if (ok) { setLlmCopied(provider); window.setTimeout(() => setLlmCopied(null), 2500); }
                 })}>
           {llmCopied === provider ? '✓ コピー完了' : `${provider}に相談`}

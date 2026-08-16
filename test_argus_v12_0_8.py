@@ -139,13 +139,12 @@ def test_stance_partial_data_caps_confidence_and_demotes_bullish():
 
 
 def test_stance_py_ts_parity():
-    ts = _read("domain", "primaryStance.ts")
-    for ja in ps.STANCE_JA.values():
-        assert ja in ts, ja
-    # ハードルールの構造がTS側にも存在
-    for marker in ("risk_review", "wait_event", "improving_but_heavy",
-                   "squeeze_prone", "PARTIAL_CONF_CAP"):
-        assert marker in ts, marker
+    # Round 3: duplicate browser stance authority is physically retired. The
+    # Python reducer remains evidence-only for backend compatibility.
+    assert not os.path.exists(os.path.join(WEB, "domain", "primaryStance.ts"))
+    hook = _read("hooks", "useAssetIntel.ts")
+    assert "resolvePrimaryStance" not in hook
+    assert "stanceBySymbol" not in hook
 
 
 # ── Part B: イベント日付真実 ─────────────────────────────────────────────────
@@ -433,7 +432,7 @@ def test_addendum_screenshot_fixture_no_small_add_visible_on_prohibited_day():
 
 
 def test_addendum_stance_ts_parity_new_rules():
-    ts = _read("domain", "primaryStance.ts")
-    assert "deferred_today" in ts and "候補だが今日は保留" in ts
-    assert "globalAddProhibited" in ts
-    assert "対応不要にはしない" in ts
+    assert not os.path.exists(os.path.join(WEB, "domain", "primaryStance.ts"))
+    hook = _read("hooks", "useAssetIntel.ts")
+    assert "globalAddProhibited" not in hook
+    assert "evaluateSingleDecisionAuthority" in hook

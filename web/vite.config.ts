@@ -9,8 +9,19 @@ import { readFileSync } from 'node:fs';
 const base = process.env.DEPLOY_BASE ?? '/';
 
 const packageJsonUrl = new URL('./package.json', import.meta.url);
+const productVersionUrl = new URL('../product-version.json', import.meta.url);
 const readVersion = (): string =>
   (JSON.parse(readFileSync(packageJsonUrl, 'utf-8')) as { version: string }).version;
+const readProductVersion = (): string => {
+  const value = JSON.parse(readFileSync(productVersionUrl, 'utf-8')) as Record<string, unknown>;
+  if (Object.keys(value).sort().join(',') !== 'productVersion,schemaVersion'
+      || value.schemaVersion !== 'argus-product-version-v1'
+      || typeof value.productVersion !== 'string'
+      || !/^v[1-9]\d*$/.test(value.productVersion)) {
+    throw new Error('invalid canonical product-version.json');
+  }
+  return value.productVersion;
+};
 const frontendBuildSha = process.env.VITE_ARGUS_BUILD_SHA ?? 'local';
 
 // `__APP_VERSION__` resolves to a runtime global that this plugin injects fresh
@@ -28,6 +39,7 @@ const argusVersionInjector = {
       injectTo: 'head-prepend' as const,
       children: [
         `globalThis.__ARGUS_VERSION__=${JSON.stringify(readVersion())};`,
+        `globalThis.__ARGUS_PRODUCT_VERSION__=${JSON.stringify(readProductVersion())};`,
         `globalThis.__ARGUS_BUILD_SHA__=${JSON.stringify(frontendBuildSha)};`,
       ].join(''),
     }];
@@ -38,6 +50,7 @@ export default defineConfig({
   base,
   define: {
     __APP_VERSION__: 'globalThis.__ARGUS_VERSION__',
+    __PRODUCT_VERSION__: 'globalThis.__ARGUS_PRODUCT_VERSION__',
     __FRONTEND_BUILD_SHA__: 'globalThis.__ARGUS_BUILD_SHA__',
   },
   plugins: [

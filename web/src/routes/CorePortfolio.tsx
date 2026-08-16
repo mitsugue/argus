@@ -1,6 +1,4 @@
 import React, { useMemo } from 'react';
-import { AlertCard } from '../components/dashboard/AlertCard';
-import { useActionAlerts } from '../hooks/useActionAlerts';
 import type { UseAssets } from '../hooks/useAssets';
 import type { AssetIntel } from '../hooks/useAssetIntel';
 import { DecisionQualityCard } from '../components/dashboard/DecisionQualityCard';
@@ -35,7 +33,6 @@ export const CorePortfolio: React.FC<{
   portfolioIntel: AssetIntel;
 }> = ({ assetsApi, portfolioIntel }) => {
   useLocale();   // re-render on locale switch
-  const { cards } = useActionAlerts();
   const { assets } = assetsApi;
   const navFunds = portfolioIntel.fundNav.funds;
   const pe = portfolioIntel.positionExposure;
@@ -312,24 +309,6 @@ export const CorePortfolio: React.FC<{
               </div>
             </>
           )}
-        </div>
-      </section>
-
-      <section>
-        <div className="section-head">
-          <span className="section-head__title">Asset-class evidence</span>
-          <span className="section-head__count">{cards.length} classes</span>
-        </div>
-        {/* Legacy class cards retain observations only; they do not expose a
-            second action authority beside the canonical SDA. */}
-        <p className="alert-legend">
-          資産クラスのモメンタム・リスク証拠です。旧ラベルは監査用に保持しますが、
-          BUY / HOLD / WAIT / REDUCE / EXIT を選ぶのは Single Decision Authority だけです。
-        </p>
-        <div className="alert-grid">
-          {cards.map((c) => (
-            <AlertCard key={c.assetClass} card={c} />
-          ))}
         </div>
       </section>
 

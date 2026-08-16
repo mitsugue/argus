@@ -82,7 +82,6 @@ PUBLIC_CACHE_ONLY_CONSUMERS = (
 
 ROUTE_CATALOG = (
     RouteCatalogEntry("/", ("GET",), "index", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
-    RouteCatalogEntry("/api/argus/action-alerts", ("GET",), "api_argus_action_alerts", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/action-labels", ("GET",), "api_argus_action_labels", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/admin/ai/capability-probe", ("POST",), "api_argus_admin_ai_capability_probe", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/bridge/diagnostic", ("GET",), "api_argus_admin_bridge_diagnostic", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
@@ -158,7 +157,6 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/entity-profiles", ("GET",), "api_argus_entity_profiles", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/entity-profiles/edit", ("POST",), "api_argus_entity_profiles_edit", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/entity-profiles/generate", ("POST",), "api_argus_entity_profiles_generate", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
-    RouteCatalogEntry("/api/argus/entry-scout", ("GET",), "api_argus_entry_scout", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/event-analysis/generate", ("POST",), "api_argus_event_analysis_generate", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/event-snapshot", ("GET",), "api_argus_event_snapshot", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/event-test-notify", ("POST",), "api_argus_event_test_notify", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),

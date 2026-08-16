@@ -6,7 +6,7 @@ import { PageShell } from './PageShell';
 export const NotificationsPage: React.FC = () => (
   <PageShell
     title="Notifications"
-    subtitle="重要な変化、次のイベント、端末内の注意を一か所で確認します。"
+    subtitle="Primary Action、重要カタリスト、リスク条件の重大な変化だけを確認します。"
   >
     <NotificationPanel />
     <ImportantEventsCard />
