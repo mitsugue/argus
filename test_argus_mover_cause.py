@@ -66,7 +66,7 @@ def test_single_source_direct_news_is_candidate():
 
 def test_entity_association_is_candidate_never_more():
     lead = {"titleJa": "OpenAI関連の報道", "via": "entity", "relationJa": "出資先",
-            "corroboration": "single"}
+            "corroboration": "single", "publishedAt": "2026-07-01T23:30:00Z"}
     rec = MC.resolve(_mover(-6.0, sym="9984"), {"caosLead": lead, "coverage": COVER_ALL}, NOW)
     assert rec["causeStatus"] == "candidate_catalyst"
     assert any("連想" in (c["limitationsJa"][0] if c["limitationsJa"] else "")
@@ -74,7 +74,8 @@ def test_entity_association_is_candidate_never_more():
 
 
 def test_theme_only_never_confirms():
-    lead = {"titleJa": "AI半導体テーマ", "via": "theme", "corroboration": "single"}
+    lead = {"titleJa": "AI半導体テーマ", "via": "theme", "corroboration": "single",
+            "publishedAt": "2026-07-01T23:30:00Z"}
     rec = MC.resolve(_mover(-6.0), {"caosLead": lead, "coverage": COVER_ALL}, NOW)
     assert rec["causeStatus"] in ("candidate_catalyst",)
     assert rec["causeStatus"] != "confirmed_cause"
@@ -267,6 +268,11 @@ def test_public_explain_never_calls_llm(monkeypatch):
         raise _ForbiddenCall("FORBIDDEN LLM call from public GET")
     for name in ("_openai_prose", "_openai_research", "_cause_explain", "_openai_judge"):
         monkeypatch.setattr(scanner, name, boom)
+    # The public route may only attach a current mover cause during a real
+    # trading session; freeze a canonical JP session for this positive control.
+    monkeypatch.setattr(scanner, "_ai_now_iso",
+                        lambda: "2026-08-14T01:00:00Z")
+    monkeypatch.setattr(scanner.time, "time", lambda: 1_786_669_200.0)
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/cause-attribution?symbol=5801&market=JP&explain=1").get_json()
     assert d.get("explanationStatus") in ("cached", "not_generated")

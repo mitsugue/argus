@@ -83,6 +83,13 @@ def build_fixture(target_mib: int) -> Dict[str, object]:
 
 def run(target_mib: int, samples: int, *, smoke: bool) -> Dict[str, object]:
     fixture = build_fixture(target_mib)
+    # Prime interpreter/canonical-walker caches before comparing the two passes.
+    # A single-sample smoke run otherwise measures one-time import/dispatch noise
+    # and can fail nondeterministically without any accounting regression.
+    warm_size = measurement.streaming_canonical_size(fixture)
+    warm_accounting = measurement.streaming_checkpoint_accounting(fixture)
+    if warm_accounting.total_serialized_bytes != warm_size:
+        raise RuntimeError("streaming_warmup_count_mismatch")
     before_rss = _rss_bytes()
     baseline_seconds = []
     accounting_seconds = []

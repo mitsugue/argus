@@ -43,9 +43,11 @@ def test_flow_with_pushed_quote_classifies(monkeypatch):
         "ts": 9e12}
     try:
         rec = scanner._flow_attribution_for("FLOWTEST", "US")
-        assert rec["evidence"]["priceActionEvidence"]
-        assert rec["flowClass"] != "unknown"
-        # measured US flow present → can be direct, but never assertive wording
+        assert rec["evidence"]["priceActionEvidence"] is None
+        assert rec["flowClass"] == "unknown"
+        assert rec["actionImplication"] == "no_action"
+        assert rec["sourceUpdatedAt"] is None
+        # Receipt time and bridge flow have no independent source-time authority.
         assert "大口が買っている" not in rec["ownerReadableWhyJa"]
     finally:
         scanner._PUSHED_QUOTES["US"].pop("FLOWTEST", None)

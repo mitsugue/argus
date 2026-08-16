@@ -140,9 +140,9 @@ export function resolvePrimaryStance(i: StanceInputs): ResolvedStance {
   if (partial) {
     conf = Math.min(conf, PARTIAL_CONF_CAP);
     capNotes.push('部分データのため確度に上限(0.55)');
-    if (stance === 'small_add_allowed') {
+    if (stance === 'small_add_allowed' || stance === 'add_only_on_pullback') {
       stance = 'unknown';
-      capNotes.push('部分データ下の買い増し可は判定保留へ降格');
+      capNotes.push('部分データ下の新規・買い増し候補は判定保留へ降格');
     }
   }
   if (eventWait && (stance === 'small_add_allowed' || stance === 'add_only_on_pullback')) {

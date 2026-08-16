@@ -1,19 +1,16 @@
-# ARGUS Prediction Ledger — the self-scoring loop (v10.3).
+# ARGUS canonical Prediction Ledger v2 writer.
 #
 # Every JP trading day at 16:05 JST:
 #   1. (optional) trigger a fresh AI judgment run so AI views are recorded
 #      (needs the ARGUS_ADMIN_TOKEN repo secret; skipped gracefully without it)
-#   2. record today's falsifiable predictions  -> ledger/days/YYYY-MM-DD.json
-#   3. score past unscored snapshots against realized moves
-#                                              -> ledger/scores/YYYY-MM-DD.json
-#   4. rebuild the running accuracy summary    -> ledger/summary.json
+#   2. fetch a bounded canonicalPredictionLedger snapshot
+#   3. append immutable IssuedDecision / OutcomeResolution segments under
+#      ledger/prediction/v2 using the exact workflow-triggering source SHA
 #
 # Data lives on the `ledger` BRANCH (not main) so daily commits never trigger
-# the Pages/Render deploys. The ledger covers the curated engine symbols and
-# market context only — NO personal holdings ever.
-# Scoring: realized next-session move vs the predicted scenario distribution
-# (argmax hit + Brier score), recorded separately for the RULE engine and the
-# AI views so their accuracy can be compared per market context over time.
+# the Pages/Render deploys. Historical ledger/days, ledger/scores and
+# ledger/summary.json are read-only compatibility artifacts: this workflow
+# never writes or overwrites them.
 
 name: prediction-ledger
 
@@ -23,57 +20,56 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'full = 記録+採点(当日未記録のときのみ) / ai-only = AI実行+診断のみ(台帳に触らない) / force = 当日記録を強制上書き'
+        description: 'full = 正本への追記+評価 / ai-only = AI実行+診断のみ(台帳に触らない)'
         required: false
         default: 'full'
+        type: choice
+        options:
+          - full
+          - ai-only
 
 permissions:
   contents: write
 
-# Serialize every writer of the `ledger` branch (this workflow + vault-sync.yml)
-# so two runs never push concurrently. cancel-in-progress:false = queue, don't
-# kill — losing a half-done ledger run would be worse than waiting.
+# Serialize the ordinary `ledger` branch writers (including event, closepin,
+# learning, mover, macro, and vault workflows) so two plain pushes never race.
+# cancel-in-progress:false = queue, don't kill a half-done ledger run.
 concurrency:
   group: ledger-branch-writer
   cancel-in-progress: false
 
 jobs:
-  # Dedupe gate (cron-reliability-v1): GitHub's free cron runs HOURS late, so
-  # the punctual trigger is an external workflow_dispatch (user's EC2 at 16:05
-  # JST). When the delayed schedule run finally fires after today was already
-  # recorded, it must NOT re-run the AI / overwrite the close-pin record with
-  # evening prices. Manual/external dispatch always proceeds.
-  gate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    outputs:
-      skip: ${{ steps.check.outputs.skip }}
-    steps:
-      - name: Skip if today is already recorded (unless ai-only/force)
-        id: check
-        run: |
-          MODE="${{ github.event.inputs.mode }}"
-          if [ "$MODE" = "ai-only" ] || [ "$MODE" = "force" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"   # ai-only never touches the
-            exit 0                                  # ledger; force is explicit
-          fi
-          TODAY=$(TZ=Asia/Tokyo date +%F)
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/days/$TODAY.json?cb=$RANDOM")
-          if [ "$CODE" = "200" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "today ($TODAY) already recorded — run exits (use mode=force to overwrite)"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
   record-and-score:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+      - name: Stage exact triggering-commit canonical ledger runtime
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          install -d "$RUNTIME"
+          test -f scripts/run_prediction_ledger.py
+          install -m 0644 scripts/run_prediction_ledger.py \
+            "$RUNNER_TEMP/run_prediction_ledger.py"
+          for path in \
+            argus_calibration.py \
+            argus_decision_ledger.py \
+            argus_market_data_truth.py \
+            argus_market_clock.py
+          do
+            test -f "$path"
+            install -m 0644 "$path" "$RUNTIME/$path"
+          done
+          printf '%s\n' "$GITHUB_SHA" > "$RUNTIME/SOURCE_SHA"
+          sha256sum \
+            "$RUNNER_TEMP/run_prediction_ledger.py" \
+            "$RUNTIME/argus_calibration.py" \
+            "$RUNTIME/argus_decision_ledger.py" \
+            "$RUNTIME/argus_market_data_truth.py" \
+            "$RUNTIME/argus_market_clock.py" \
+            > "$RUNTIME/SHA256SUMS"
       - name: Trigger AI judgment run (skipped without ARGUS_ADMIN_TOKEN secret)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -93,8 +89,8 @@ jobs:
             --url "$BE/api/argus/security-status")
           echo "gate: $GATE"
           echo "🔐 gate: \`${GATE}\`" >> "$GITHUB_STEP_SUMMARY"
-          # checker=pro: the daily run is the AUTHORITATIVE judgment that gets scored
-          # into the ledger (the learning "textbook"), so it uses the strong tier.
+          # checker=pro supplies bounded candidate evidence. It is not final action
+          # authority; canonical issuance remains governed by the snapshot contract.
           RESP=$(python3 scripts/workflow_http.py --name ledger-ai-run --method POST --timeout 240 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status disabled --expected-status budget_exceeded \
@@ -150,11 +146,6 @@ jobs:
             --url "$BE/api/argus/decision-value/shadow-run")
           echo "🎛️ DV shadow: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Checkout ledger branch
-        if: github.event.inputs.mode != 'ai-only'
-        uses: actions/checkout@v5
-        with:
-          ref: main
       - name: Switch to ledger branch (create if missing)
         if: github.event.inputs.mode != 'ai-only'
         run: |
@@ -174,11 +165,9 @@ jobs:
             git checkout --orphan ledger
             git rm -rq --cached . 2>/dev/null || true
             find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
-            mkdir -p ledger/days ledger/scores
+            mkdir -p ledger/prediction/v2
           fi
-          test -f ledger/days/*.json 2>/dev/null \
-            && echo "ledger branch ready: $(ls ledger/days | wc -l) day file(s)" \
-            || echo "ledger branch ready: (no day files yet)"
+          echo "ledger branch ready; historical compatibility artifacts remain untouched"
 
       - name: Persist backup vault (client-side-encrypted envelopes)
         if: github.event.inputs.mode != 'ai-only'
@@ -396,370 +385,42 @@ jobs:
               print('no AI cost to persist (admin gate / no run)')
           PY
 
-      - name: Record today's predictions + score the past
+      - name: Append canonical Prediction Ledger v2 records
         if: github.event.inputs.mode != 'ai-only'
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
-          for i in 1 2 3 4 5 6; do
+          for attempt in 1 2 3 4 5 6; do
             curl -sf --max-time 60 "$BE/api/argus/prediction-snapshot" -o snap.json && break
-            echo "retry $i"; sleep 20
+            echo "prediction snapshot retry $attempt"
+            sleep 20
           done
           test -s snap.json
-          curl -sf --max-time 60 "$BE/api/argus/japan-watchlist" -o jp.json || echo '{}' > jp.json
-          curl -sf --max-time 60 "$BE/api/argus/us-watchlist"   -o us.json || echo '{}' > us.json
-          curl -sf --max-time 90 "$BE/api/argus/class-quotes"    -o cls.json || echo '{}' > cls.json
-          curl -sf --max-time 90 "$BE/api/argus/sensor-quotes"   -o sens.json || echo '{}' > sens.json
-          curl -sf --max-time 60 "$BE/api/argus/crypto-watchlist" -o cw.json || echo '{}' > cw.json
           python3 - <<'PY'
-          import json, os, glob, datetime
-
-          snap = json.load(open('snap.json'))
-          today = snap['dateJst']
-          os.makedirs('ledger/days', exist_ok=True)
-          os.makedirs('ledger/scores', exist_ok=True)
-
-          # 1. Record today's snapshot (idempotent — last run of the day wins).
-          json.dump(snap, open(f'ledger/days/{today}.json', 'w'),
-                    ensure_ascii=False, indent=1)
-          print('recorded', today, len(snap['predictions']), 'predictions')
-
-          # 2. Current live prices for scoring (stocks + class proxies + crypto).
-          now_price = {}
-          for f in ('jp.json', 'us.json'):
-              for s in (json.load(open(f)).get('stocks') or []):
-                  if s.get('status') == 'live':
-                      now_price[s['symbol']] = float(s['price'])
-          cls_price = {sym: q['price'] for sym, q in
-                       ((json.load(open('cls.json')).get('quotes')) or {}).items()}
-          for q in (json.load(open('cw.json')).get('quotes') or []):
-              if q.get('status') == 'live':
-                  cls_price[q['id']] = float(q['priceUsd'])
-
-          def bucket(pct):
-              if pct < -2: return 'downside_continuation'
-              if pct > 2:  return 'rebound_attempt'
-              return 'sideways_stabilization'
-
-          DIRECTIONAL = {'BUY DIP': 'up', 'ADD': 'up', 'TRIM': 'down', 'EXIT': 'down'}
-
-          # 3. Score unscored snapshots that are 1..7 days old.
-          for path in sorted(glob.glob('ledger/days/*.json')):
-              d = os.path.basename(path)[:-5]
-              if d >= today: continue
-              spath = f'ledger/scores/{d}.json'
-              if os.path.exists(spath): continue
-              age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(d)).days
-              if age > 7: continue
-              day = json.load(open(path))
-              if day.get('engineVersion') == 'ledger-v3': continue  # scored by the v3 loop below
-              rows, hits, briers = [], 0, []
-              ai_hits, ai_total = 0, 0
-              for p in day.get('predictions', []):
-                  cur = now_price.get(p['symbol'])
-                  if cur is None or not p.get('price'): continue
-                  realized = (cur / p['price'] - 1) * 100
-                  b = bucket(realized)
-                  probs = {s['label']: s['p'] / 100 for s in p['scenarios']}
-                  argmax = max(probs, key=lambda k: probs[k])
-                  hit = (argmax == b)
-                  brier = sum((probs.get(k, 0) - (1.0 if k == b else 0.0)) ** 2
-                              for k in ('downside_continuation', 'sideways_stabilization', 'rebound_attempt'))
-                  hits += hit; briers.append(brier)
-                  ai = p.get('ai') or {}
-                  ai_dir = DIRECTIONAL.get(ai.get('action') or '')
-                  ai_hit = None
-                  if ai_dir:
-                      ai_total += 1
-                      ai_hit = (ai_dir == 'up' and realized > 0) or (ai_dir == 'down' and realized < 0)
-                      ai_hits += bool(ai_hit)
-                  rows.append({'symbol': p['symbol'], 'predPrice': p['price'], 'curPrice': cur,
-                               'realizedPct': round(realized, 2), 'bucket': b,
-                               'argmax': argmax, 'hit': hit, 'brier': round(brier, 4),
-                               'action': p['action'], 'aiAction': ai.get('action'),
-                               'aiDirectionalHit': ai_hit})
-              # Asset-class predictions (ledger-v2): same buckets/metrics.
-              crows, chits, cbriers = [], 0, []
-              for p in day.get('classPredictions', []):
-                  cur = cls_price.get(p['symbol'])
-                  if cur is None or not p.get('price'): continue
-                  realized = (cur / p['price'] - 1) * 100
-                  b = bucket(realized)
-                  probs = {s['label']: s['p'] / 100 for s in p['scenarios']}
-                  argmax = max(probs, key=lambda k: probs[k])
-                  hit = (argmax == b)
-                  brier = sum((probs.get(k, 0) - (1.0 if k == b else 0.0)) ** 2
-                              for k in ('downside_continuation', 'sideways_stabilization', 'rebound_attempt'))
-                  chits += hit; cbriers.append(brier)
-                  crows.append({'assetClass': p['assetClass'], 'symbol': p['symbol'],
-                                'realizedPct': round(realized, 2), 'bucket': b,
-                                'argmax': argmax, 'hit': hit, 'brier': round(brier, 4)})
-              # Posture call: graded by its own self-describing rule vs SPY.
-              posture_row = None
-              pp = day.get('posturePrediction')
-              if pp and pp.get('rule') and cls_price.get(pp.get('proxy', 'SPY')):
-                  move = (cls_price[pp['proxy']] / pp['price'] - 1) * 100
-                  r = pp['rule']
-                  ok = ((move > 0) if (r['type'] == 'direction' and r['sign'] > 0) else
-                        (move < 0) if (r['type'] == 'direction') else
-                        (abs(move) >= r.get('minPct', 1.0)))
-                  posture_row = {'posture': pp['posture'], 'movePct': round(move, 2), 'hit': bool(ok)}
-              if not rows and not crows and not posture_row: continue
-              score = {'date': d, 'scoredOn': today, 'ageDays': age,
-                       'context': day.get('context', {}),
-                       'n': len(rows), 'argmaxHits': hits,
-                       'hitRate': round(hits / len(rows), 3) if rows else None,
-                       'brierMean': round(sum(briers) / len(briers), 4) if briers else None,
-                       'aiDirectional': {'n': ai_total, 'hits': ai_hits},
-                       'classes': {'n': len(crows), 'hits': chits,
-                                   'hitRate': round(chits / len(crows), 3) if crows else None,
-                                   'brierMean': round(sum(cbriers) / len(cbriers), 4) if cbriers else None,
-                                   'rows': crows},
-                       'postureRow': posture_row,
-                       'rows': rows}
-              json.dump(score, open(spath, 'w'), ensure_ascii=False, indent=1)
-              print('scored', d, f"hit {hits}/{len(rows)} brier {score['brierMean']}")
-
-          # 3b. ledger-v3 (decided 2026-06-11): layer-separated scoring at
-          # 1/3/5 TRADING-day horizons. Layer 1 = the fixed 16 sensors
-          # (scored vs /sensor-quotes, per-row bandPct buckets); tactical
-          # stock rows split by their .layer field; Layer 3 never mixes into
-          # Layer-1 stats. A day's score file fills horizon slots
-          # progressively across runs (re-opened until all horizons done).
-          sens_now = (json.load(open('sens.json')).get('quotes') or {})
-
-          def tdays(d0, d1):
-              n = 0
-              c = datetime.date.fromisoformat(d0)
-              end = datetime.date.fromisoformat(d1)
-              while c < end:
-                  c += datetime.timedelta(days=1)
-                  if c.weekday() < 5:
-                      n += 1
-              return n
-
-          def score_rows(pred_rows, price_of, key_field):
-              rows, hits, briers = [], 0, []
-              for p in pred_rows:
-                  cur = price_of(p)
-                  if cur is None or not p.get('price'):
-                      continue
-                  realized = (cur / p['price'] - 1) * 100
-                  band = float(p.get('bandPct') or 2.0)
-                  b = ('downside_continuation' if realized < -band else
-                       'rebound_attempt' if realized > band else 'sideways_stabilization')
-                  probs = {s['label']: s['p'] / 100 for s in p['scenarios']}
-                  argmax = max(probs, key=lambda k: probs[k])
-                  hit = (argmax == b)
-                  brier = sum((probs.get(k, 0) - (1.0 if k == b else 0.0)) ** 2 for k in probs)
-                  hits += hit
-                  briers.append(brier)
-                  rows.append({key_field: p.get(key_field) or p.get('symbol'),
-                               'realizedPct': round(realized, 2), 'bucket': b,
-                               'argmax': argmax, 'hit': hit, 'brier': round(brier, 4)})
-              return {'n': len(rows), 'hits': hits,
-                      'hitRate': round(hits / len(rows), 3) if rows else None,
-                      'brierMean': round(sum(briers) / len(briers), 4) if briers else None,
-                      'rows': rows}
-
-          HORIZONS = (1, 3, 5)
-          for path in sorted(glob.glob('ledger/days/*.json')):
-              d = os.path.basename(path)[:-5]
-              if d >= today:
-                  continue
-              day = json.load(open(path))
-              if day.get('engineVersion') != 'ledger-v3':
-                  continue
-              cal_age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(d)).days
-              if cal_age > 14:
-                  continue
-              ta = tdays(d, today)
-              spath = f'ledger/scores/{d}.json'
-              sc = {'date': d, 'engine': 'ledger-v3',
-                    'context': day.get('context', {}), 'horizons': {}}
-              if os.path.exists(spath):
-                  prev = json.load(open(spath))
-                  if prev.get('engine') == 'ledger-v3':
-                      sc = prev
-              if all(str(h) in sc['horizons'] for h in HORIZONS):
-                  continue
-              stock_price = lambda p: now_price.get(p['symbol'])
-              preds = day.get('predictions') or []
-              changed = False
-              for h in HORIZONS:
-                  hk = str(h)
-                  if hk in sc['horizons'] or ta < h:
-                      continue
-                  block = {
-                      'scoredOn': today, 'tradingAge': ta,
-                      'layer1': {
-                          'sensors': score_rows(day.get('sensors') or [],
-                                                lambda p: sens_now.get(p.get('sensor')), 'sensor'),
-                          'stocks': score_rows([p for p in preds if p.get('layer') == 1],
-                                               stock_price, 'symbol'),
-                      },
-                      'layer2': score_rows([p for p in preds if p.get('layer', 2) == 2],
-                                           stock_price, 'symbol'),
-                      'layer3': score_rows([p for p in preds if p.get('layer') == 3],
-                                           stock_price, 'symbol'),
-                  }
-                  if h == 1:
-                      # Legacy-continuity sections live on the 1D horizon: the
-                      # class proxies, AI directional grading and the posture call.
-                      block['classes'] = score_rows(day.get('classPredictions') or [],
-                                                    lambda p: cls_price.get(p['symbol']), 'assetClass')
-                      ai_total = ai_hits = 0
-                      for p in preds:
-                          cur = now_price.get(p['symbol'])
-                          ai_dir = DIRECTIONAL.get(((p.get('ai') or {}).get('action')) or '')
-                          if cur is None or not p.get('price') or not ai_dir:
-                              continue
-                          realized = (cur / p['price'] - 1) * 100
-                          ai_total += 1
-                          ai_hits += bool((ai_dir == 'up' and realized > 0) or
-                                          (ai_dir == 'down' and realized < 0))
-                      block['aiDirectional'] = {'n': ai_total, 'hits': ai_hits}
-                      pp = day.get('posturePrediction')
-                      spy_now = sens_now.get('SPY') or cls_price.get('SPY')
-                      if pp and pp.get('rule') and spy_now and pp.get('price'):
-                          move = (spy_now / pp['price'] - 1) * 100
-                          r = pp['rule']
-                          ok = ((move > 0) if (r['type'] == 'direction' and r['sign'] > 0) else
-                                (move < 0) if (r['type'] == 'direction') else
-                                (abs(move) >= r.get('minPct', 1.0)))
-                          block['posture'] = {'posture': pp['posture'],
-                                              'movePct': round(move, 2), 'hit': bool(ok)}
-                  sc['horizons'][hk] = block
-                  changed = True
-              if changed:
-                  json.dump(sc, open(spath, 'w'), ensure_ascii=False, indent=1)
-                  print('scored-v3', d, 'horizons', sorted(sc['horizons'].keys()),
-                        f'(tradingAge {ta})')
-
-          # 4. Rebuild the running summary (overall + by posture + by VIX zone).
-          # v3 score files contribute their 1D-horizon Layer1+Layer2 results to
-          # the legacy aggregates so posture calibration keeps feeding; Layer 3
-          # is EXCLUDED from those by design (high-noise, separate bucket).
-          rawscores = [json.load(open(p)) for p in sorted(glob.glob('ledger/scores/*.json'))]
-          v3scores = [s for s in rawscores if s.get('engine') == 'ledger-v3']
-
-          def legacy_item(sc):
-              h1 = (sc.get('horizons') or {}).get('1')
-              if not h1:
-                  return None
-              parts = [h1['layer1']['sensors'], h1['layer1']['stocks'], h1['layer2']]
-              n = sum(p['n'] for p in parts)
-              hh = sum(p['hits'] for p in parts)
-              wb = [(p['brierMean'], p['n']) for p in parts
-                    if p.get('brierMean') is not None and p['n']]
-              bm = sum(b * w for b, w in wb) / sum(w for _, w in wb) if wb else None
-              return {'n': n, 'argmaxHits': hh, 'brierMean': bm,
-                      'context': sc.get('context', {}),
-                      'classes': h1.get('classes'),
-                      'postureRow': h1.get('posture'),
-                      'aiDirectional': h1.get('aiDirectional') or {'n': 0, 'hits': 0}}
-
-          allscores = ([s for s in rawscores if s.get('engine') != 'ledger-v3'] +
-                       [x for x in (legacy_item(s) for s in v3scores) if x])
-          def agg(items):
-              n = sum(s['n'] for s in items); h = sum(s['argmaxHits'] for s in items)
-              wb = [(s['brierMean'], s['n']) for s in items if s.get('brierMean') is not None]
-              bm = sum(b * w for b, w in wb) / sum(w for _, w in wb) if wb else None
-              return {'days': len(items), 'n': n, 'hitRate': round(h / n, 3) if n else None,
-                      'brierMean': round(bm, 4) if bm is not None else None}
-          def agg_classes(items):
-              cs = [s.get('classes') or {} for s in items]
-              n = sum(c.get('n', 0) for c in cs); h = sum(c.get('hits', 0) for c in cs)
-              wb = [(c['brierMean'], c['n']) for c in cs if c.get('brierMean') is not None and c.get('n')]
-              bm = sum(b * w for b, w in wb) / sum(w for _, w in wb) if wb else None
-              # Per-class accumulation — the actual learning table.
-              per = {}
-              for c in cs:
-                  for r in c.get('rows', []):
-                      e = per.setdefault(r['assetClass'], {'n': 0, 'hits': 0})
-                      e['n'] += 1; e['hits'] += bool(r['hit'])
-              for k, e in per.items():
-                  e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
-              return {'n': n, 'hits': h, 'hitRate': round(h / n, 3) if n else None,
-                      'brierMean': round(bm, 4) if bm is not None else None, 'byClass': per}
-          def agg_posture(items):
-              ps = [s.get('postureRow') for s in items if s.get('postureRow')]
-              by = {}
-              for r in ps:
-                  e = by.setdefault(r['posture'], {'n': 0, 'hits': 0})
-                  e['n'] += 1; e['hits'] += bool(r['hit'])
-              for k, e in by.items():
-                  e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
-              n = len(ps); h = sum(bool(r['hit']) for r in ps)
-              return {'n': n, 'hits': h, 'hitRate': round(h / n, 3) if n else None, 'byPosture': by}
-          by_posture, by_vix = {}, {}
-          for s in allscores:
-              by_posture.setdefault(s['context'].get('posture') or '?', []).append(s)
-              by_vix.setdefault(s['context'].get('vixZone') or '?', []).append(s)
-          ai_n = sum(s['aiDirectional']['n'] for s in allscores)
-          ai_h = sum(s['aiDirectional']['hits'] for s in allscores)
-          # ledger-v3: layer × horizon learning table (the new primary axis).
-          def agg_block(blocks):
-              blocks = [b for b in blocks if b]
-              n = sum(b['n'] for b in blocks)
-              hh = sum(b['hits'] for b in blocks)
-              wb = [(b['brierMean'], b['n']) for b in blocks
-                    if b.get('brierMean') is not None and b['n']]
-              bm = sum(x * w for x, w in wb) / sum(w for _, w in wb) if wb else None
-              per = {}
-              for b in blocks:
-                  for r in b.get('rows', []):
-                      key = r.get('sensor') or r.get('symbol') or r.get('assetClass')
-                      e = per.setdefault(key, {'n': 0, 'hits': 0})
-                      e['n'] += 1
-                      e['hits'] += bool(r['hit'])
-              for k, e in per.items():
-                  e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
-              return {'n': n, 'hits': hh,
-                      'hitRate': round(hh / n, 3) if n else None,
-                      'brierMean': round(bm, 4) if bm is not None else None,
-                      'byMember': per}
-
-          layers = {}
-          for lname in ('layer1', 'layer2', 'layer3'):
-              byh = {}
-              for hk in ('1', '3', '5'):
-                  blocks, hdays = [], 0
-                  for s in v3scores:
-                      hb = (s.get('horizons') or {}).get(hk)
-                      if not hb:
-                          continue
-                      hdays += 1
-                      if lname == 'layer1':
-                          blocks += [hb['layer1']['sensors'], hb['layer1']['stocks']]
-                      else:
-                          blocks.append(hb[lname])
-                  a = agg_block(blocks)
-                  a['days'] = hdays
-                  byh[hk] = a
-              layers[lname] = {'byHorizon': byh}
-
-          summary = {
-              'updated': today, 'engineVersion': 'ledger-v3',
-              'overall': agg(allscores) if allscores else None,
-              'byPosture': {k: agg(v) for k, v in by_posture.items()},
-              'byVixZone': {k: agg(v) for k, v in by_vix.items()},
-              'aiDirectional': {'n': ai_n, 'hits': ai_h,
-                                'hitRate': round(ai_h / ai_n, 3) if ai_n else None},
-              'classes': agg_classes(allscores),
-              'posture': agg_posture(allscores),
-              'layers': layers,
-              'noteJa': 'シナリオ分布のargmax的中率とBrierスコア(低いほど良い)。v3: 3層×1/3/5営業日ホライズン(Layer1=固定16センサー・bandPct=資産種別の日次σ単位)。成績は分類の校正度であり、将来の利益を保証しない。',
-          }
-          json.dump(summary, open('ledger/summary.json', 'w'), ensure_ascii=False, indent=1)
-          print('summary:', summary.get('overall'))
+          import json
+          snapshot = json.load(open("snap.json", encoding="utf-8"))
+          canonical = snapshot.get("canonicalPredictionLedger")
+          if not isinstance(canonical, dict):
+              raise SystemExit("canonicalPredictionLedger is missing")
+          if canonical.get("schemaVersion") != "argus-prediction-ledger-v2":
+              raise SystemExit("unexpected canonical Prediction Ledger schema")
+          if canonical.get("mode") != "forward_live":
+              raise SystemExit("canonical Prediction Ledger mode is not forward_live")
           PY
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          test "$(cat "$RUNTIME/SOURCE_SHA")" = "$GITHUB_SHA"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          export PYTHONPATH="$RUNTIME${PYTHONPATH:+:$PYTHONPATH}"
+          python3 "$RUNNER_TEMP/run_prediction_ledger.py" \
+            --snapshot snap.json \
+            --ledger-root ledger/prediction/v2 \
+            --expected-mode forward_live \
+            --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --runner-build-sha "$GITHUB_SHA"
 
-      # closepin-v1: score today's 14:30 pin against the actual 15:30 close
-      # (same-day feedback). Close prices come from the moomoo bridge, which
-      # keeps pushing the final price after the cash close — rows whose quote
-      # is not a fresh same-day moomoo price are left unscored (honesty over
-      # coverage: a T-1 J-Quants value is NOT today's close at 16:05).
-      - name: Score today's close pin
+      # closepin-v1 is retained only as a SHADOW/DERIVED compatibility artifact.
+      # It is not canonical Prediction Ledger evidence and is never eligible for
+      # forward-live calibration or final action authority.
+      - name: SHADOW DERIVED — evaluate today's close pin compatibility artifact
         if: github.event.inputs.mode != 'ai-only'
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
@@ -809,6 +470,8 @@ jobs:
               hits += hit; briers.append(brier)
           n = sum(1 for r in rows if r.get('scored'))
           out = {'date': today, 'engineVersion': 'closepin-v1',
+                 'mode': 'shadow', 'authority': 'SHADOW_DERIVED',
+                 'canonicalPredictionLedger': False, 'calibrationEligible': False,
                  'posture': pin.get('marketPosture'), 'n': n, 'hits': hits,
                  'hitRate': round(hits / n, 3) if n else None,
                  'brierMean': round(sum(briers) / n, 4) if n else None, 'rows': rows}
@@ -834,19 +497,20 @@ jobs:
               for e in d.values():
                   e['hitRate'] = round(e['hits'] / e['n'], 3) if e['n'] else None
           summary = {'updated': today, 'engineVersion': 'closepin-v1',
+                     'mode': 'shadow', 'authority': 'SHADOW_DERIVED',
+                     'canonicalPredictionLedger': False, 'calibrationEligible': False,
                      'overall': agg(allsc) if allsc else None,
                      'byPosture': {k: agg(v) for k, v in by_p.items()},
                      'byLayer': by_l, 'byMember': by_m,
-                     'noteJa': '14:30ピン vs 同日15:30終値のバケット採点。リアルタイム価格が取れた行のみ。日次台帳とは独立の系統。'}
+                     'noteJa': 'SHADOW/DERIVED互換診断。正本Prediction Ledger、forward-live校正、最終判断権限には使用しない。'}
           json.dump(summary, open('ledger/closepin/summary.json', 'w'), ensure_ascii=False, indent=1)
           print(f"closepin scored: n={n} hits={hits}")
           PY
 
-      # scout-ledger-v1 (Phase 3): record today's entry-scout scores + flow
-      # classifications, then score past days vs the realized move so estimates
-      # become calibrated hit rates. JP active names; realized prices from the
-      # bridge/J-Quants watchlist.
-      - name: Record + score entry-scout (calibration)
+      # scout-ledger-v1 is retained only as a SHADOW/DERIVED compatibility
+      # diagnostic. Its approximate latest-price evaluation cannot enter the
+      # canonical Prediction Ledger or forward-live calibration.
+      - name: SHADOW DERIVED — record + evaluate entry-scout compatibility artifacts
         if: github.event.inputs.mode != 'ai-only'
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
@@ -862,6 +526,10 @@ jobs:
           if not recs:
               print('no scout records — skip'); raise SystemExit(0)
           today = sb.get('dateJst') or datetime.datetime.now().strftime('%Y-%m-%d')
+          sb = dict(sb)
+          sb.update({'mode': 'shadow', 'authority': 'SHADOW_DERIVED',
+                     'canonicalPredictionLedger': False,
+                     'calibrationEligible': False})
           os.makedirs('ledger/scout/days', exist_ok=True)
           json.dump(sb, open(f'ledger/scout/days/{today}.json', 'w'), ensure_ascii=False, indent=1)
           # realized prices now (bridge realtime or J-Quants close)
@@ -882,9 +550,10 @@ jobs:
           # Simple approach: for each past day, forward return = now_px vs that
           # day's lastClose (horizon ≈ days between then and now in file count).
           summary = {'updated': today, 'engineVersion': 'scout-ledger-v1',
+                     'mode': 'shadow', 'authority': 'SHADOW_DERIVED',
+                     'canonicalPredictionLedger': False, 'calibrationEligible': False,
                      'byBucket': {}, 'byFlowClass': {}, 'n': 0,
-                     'noteJa': 'entry-scoutのスコア/フロー分類を実現リターンで採点。scoreが高い局面ほど上がったか、'
-                               '買い戻し主導と推定した時に失速したか等を蓄積(校正)。最低20件貯まるまで参考。'}
+                     'noteJa': 'SHADOW/DERIVED互換診断。正本Prediction Ledger、forward-live校正、最終判断権限には使用しない。'}
           bucket = {}; flowc = {}
           for p in days[:-1]:                      # exclude today (no outcome yet)
               dd = os.path.basename(p)[:-5]
@@ -922,35 +591,18 @@ jobs:
           print(f"scout recorded {today} ({len(recs)} names); scored n={summary['n']}")
           PY
 
-      - name: Calibration v4 dry-run (parallel epoch — never touches v3)
-        if: github.event.inputs.mode != 'ai-only'
-        run: |
-          # Pure scorer modules from main (raw GitHub — no git-ref dependency).
-          # They land at the repo root as UNTRACKED files; the commit below only
-          # does `git add ledger/`, so they are never committed. The dry-run
-          # writes ONLY to ledger/calibration_v1/ — v3 (ledger/days, ledger/
-          # scores, ledger/summary.json) is never touched.
-          for f in argus_calibration.py argus_ledger_v4.py argus_v4_dryrun.py; do
-            curl -fsSL -o "$f" "https://raw.githubusercontent.com/mitsugue/argus/main/$f" || true
-          done
-          if [ -s snap.json ] && [ -f argus_v4_dryrun.py ]; then
-            python3 argus_v4_dryrun.py snap.json ledger/calibration_v1 \
-              && echo "v4 dry-run ok" >> "$GITHUB_STEP_SUMMARY" \
-              || echo "::warning::v4 dry-run failed (non-fatal — v3 unaffected)"
-          else
-            echo "no snap.json — skip v4 dry-run"
-          fi
-
       - name: Commit to ledger branch
         if: github.event.inputs.mode != 'ai-only'
         run: |
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
+          # The v1/v2/v3 paths are immutable historical compatibility inputs.
+          test -z "$(git status --porcelain -- ledger/days ledger/scores ledger/summary.json)"
           git add ledger/
           if git diff --cached --quiet; then
             echo "nothing to commit"
           else
-            git commit -m "ledger: $(date -u +%F) record + score"
+            git commit -m "ledger: $(date -u +%F) append + evaluate"
             git push origin HEAD:ledger
           fi
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import type { DeskCardData } from './types';
-import { SIGNALS, resolveSignal, type OwnerState, type SignalCode } from '../../domain/actionLevel';
+import { SIGNALS, type SignalCode } from '../../domain/actionLevel';
 import { SignedValue } from '../common/SignedValue';
 import { quoteAge, quoteAsOf } from '../../domain/liveQuote';
 
@@ -10,14 +10,9 @@ import { quoteAge, quoteAsOf } from '../../domain/liveQuote';
 const GENRE_TAG: Record<string, string> = { jp: 'JP', us: 'US', funds: '投信', crypto: 'CRYPTO' };
 
 export function deskSignalCode(d: DeskCardData): SignalCode {
-  if (d.card) return d.card.signalCode;
-  const sig = resolveSignal(d.strat.action, {
-    downsideOverride: d.incident?.actionOverride,
-    dataQuality: d.strat.status === 'live' ? 'LIVE' : d.strat.status === 'mock' ? 'MOCK' : 'PARTIAL',
-    materialDownside: !!d.incident,
-    ownerState: (d.incident?.ownerState as OwnerState) || undefined,
-  });
-  return sig.code;
+  // Compatibility color only. The decision itself is the SDA action already
+  // projected into decisionFirst; legacy card/incident/rule fields cannot win.
+  return d.decisionFirst.signalCode as SignalCode;
 }
 
 export const AssetDecisionSummary: React.FC<{
@@ -40,6 +35,9 @@ export const AssetDecisionSummary: React.FC<{
       </span>
       <span className="ad-l2">
         <span className="ad-cmd" style={{ color: sigColor }}>{view.currentActionJa}</span>
+        {view.canonicalDecisionStatus && <span className="ad-data">
+          SDA {view.canonicalDecisionStatus}
+        </span>}
         <span className="ad-owner-state">
           {view.held
             ? `保有損益 ${view.pnlPct == null ? '未計算'

@@ -126,15 +126,19 @@ def test_official_event_probable_catalyst_is_pending_not_miss(monkeypatch):
 def test_action_label_carries_learning_memory_used(monkeypatch):
     # a usable lesson for a watchlist symbol → decisionRefs.learningMemoryUsed True
     # and confidence never exceeds the applicable cap. Uses the real label builder.
+    now = "2026-08-16T03:00:00Z"
+    fixed_epoch = 1_786_849_200.0
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: now)
+    monkeypatch.setattr(scanner.time, "time", lambda: fixed_epoch)
     _seed(monkeypatch, obs=[{"cohortType": "market", "cohortKey": "JP", "outcome": "miss"}
                             for _ in range(40)])
     _forbid_fetches(monkeypatch)
     quote = {"symbol": "8058", "name": "三菱商事", "status": "delayed",
              "price": 3200.0, "changePct": -1.0, "volume": 1_000_000,
-             "date": "2026-07-14"}
+             "source": "jquants", "date": "2026-08-14"}
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
                         lambda symbols=None: {"status": "delayed",
-                                              "asOf": "2026-07-14",
+                                              "asOf": now,
                                               "stocks": [quote]})
     monkeypatch.setattr(scanner, "get_us_watchlist_snapshot",
                         lambda symbols=None: {"status": "delayed", "stocks": []})

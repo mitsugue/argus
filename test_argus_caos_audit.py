@@ -67,7 +67,8 @@ def test_live_association_populates_audit_and_dedups():
     CA.clear()
     scanner._CAOS_AUDIT_SEEN.clear()
     news = [{"title": "三菱商事、通期予想を上方修正", "sourceId": "reuters_public",
-             "symbolHint": "8058", "corroboration": "single"}]
+             "symbolHint": "8058", "corroboration": "single",
+             "publishedAt": scanner._ai_now_iso()}]
     best = scanner._caos_catalyst_for("8058", news, [])
     assert best is not None
     snap = CA.snapshot(symbol="8058")

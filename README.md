@@ -38,11 +38,20 @@ web/                  React + TypeScript + Vite frontend (deployed to GitHub Pag
     types/            Public DTO and retained background-engine contracts
   .env.production     VITE_ARGUS_BACKEND_URL → live backend (not a secret)
 
-scanner.py            Flask backend (Render). Serves /api/argus/* — FRED rates, J-Quants Japan watchlist, ledger, picks.
-argus_ledger.py       Prediction-calibration ledger (JSONL).
+scanner.py            Flask backend (Render). Serves /api/argus/* cached/public and authenticated operational contracts.
+argus_market_data_truth.py  Provider-neutral Market Data Truth, PIT selection, and bounded decision snapshots.
+argus_decision_ledger.py    Canonical immutable Prediction Ledger v2 record contracts.
+scripts/run_prediction_ledger.py  Offline append-only ledger runner (no provider/network access).
+argus_ledger.py       Legacy JSONL compatibility facade; never forward-live calibration authority.
 render.yaml           Render Blueprint (deploys from main, autoDeploy).
 DEPLOY_BACKEND.md     Backend deploy + env-var guide.
 ```
+
+Round 2A convergence is documented in
+[`docs/ops/round2a-market-truth-prediction-ledger.md`](docs/ops/round2a-market-truth-prediction-ledger.md).
+Its future five-action Single Decision Authority interface is deliberately
+inactive; SHO, production action authority, and new UI are not part of this
+branch.
 
 ## Verified chart startup (v13.3.0)
 

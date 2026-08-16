@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from 'react';
+import { deauthorizeImportantEvents, liveAuthorityState,
+  scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 
 // Important Events (important-events-v1, v10.138) — the owner-facing "why this
@@ -48,20 +50,57 @@ export interface ImportantEventsSnapshot {
 
 const REFRESH_INTERVAL_MS = 120_000;   // events move slowly; 2-min poll is plenty
 
-interface State { data: ImportantEventsSnapshot | null; loading: boolean; }
+interface State {
+  data: ImportantEventsSnapshot | null;
+  loading: boolean;
+  error: string | null;
+  authority: LiveAuthorityState | 'unavailable' | 'refresh_failed';
+}
 
 const importantEventsStore = createSharedPollingStore<State>(
-  { data: null, loading: true },
-  (setState) => {
+  { data: null, loading: true, error: null, authority: 'unavailable' },
+  (setState, getState) => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: null, loading: false });
+      setState({ data: null, loading: false, error: null, authority: 'unavailable' });
       return () => {};
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/important-events';
     let cancelled = false;
     let acquisition: Promise<void> | null = null;
+    let cancelExpiry = () => {};
     const controllers = new Set<AbortController>();
+
+    function accept(data: ImportantEventsSnapshot) {
+      cancelExpiry();
+      const authority = liveAuthorityState(data.asOf, 'importantEvents');
+      if (authority !== 'fresh') {
+        setState({ data: deauthorizeImportantEvents(data,
+          authority === 'expired' ? 'snapshot_expired' : 'invalid_as_of'),
+        loading: false, error: null, authority });
+        return;
+      }
+      setState({ data, loading: false, error: null, authority: 'fresh' });
+      cancelExpiry = scheduleLiveAuthorityExpiry(data.asOf, 'importantEvents', () => {
+        const current = getState();
+        if (!current.data || current.authority !== 'fresh') return;
+        setState({ ...current,
+          data: deauthorizeImportantEvents(current.data, 'snapshot_expired'),
+          authority: 'expired' });
+      });
+    }
+
+    function fail(message: string) {
+      cancelExpiry();
+      const current = getState();
+      if (current.data) {
+        setState({ ...current,
+          data: deauthorizeImportantEvents(current.data, 'refresh_failed'),
+          loading: false, error: message, authority: 'refresh_failed' });
+      } else {
+        setState({ data: null, loading: false, error: message, authority: 'unavailable' });
+      }
+    }
 
     function fetchOnce(): Promise<void> {
       if (cancelled || document.hidden) return Promise.resolve();
@@ -72,11 +111,12 @@ const importantEventsStore = createSharedPollingStore<State>(
       const current = (async () => {
         try {
           const response = await fetch(url, { signal: ctrl.signal });
-          if (!response.ok || cancelled) return;
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (cancelled) return;
           const data = (await response.json()) as ImportantEventsSnapshot;
-          if (!cancelled) setState({ data, loading: false });
-        } catch {
-          if (!cancelled) setState((state) => ({ ...state, loading: false }));
+          if (!cancelled) accept(data);
+        } catch (err: unknown) {
+          if (!cancelled) fail(err instanceof Error ? err.message : String(err));
         } finally {
           window.clearTimeout(timeout);
           controllers.delete(ctrl);
@@ -88,12 +128,15 @@ const importantEventsStore = createSharedPollingStore<State>(
       return current;
     }
 
+    const retained = getState();
+    if (retained.data && retained.authority === 'fresh') accept(retained.data);
     void fetchOnce();
     const timer = window.setInterval(() => void fetchOnce(), REFRESH_INTERVAL_MS);
     const onVisible = () => { if (!document.hidden) void fetchOnce(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
+      cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
       window.clearInterval(timer);

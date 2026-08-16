@@ -9,16 +9,38 @@ require.extensions['.ts'] = (mod, filename) => {
   }).outputText;
   mod._compile(output, filename);
 };
-const { synthesizeArgusDecision, finalActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
-const { buildArgusTodayView, buildTodayProjection, buildTodayReview, selectTodayNews,
+const { synthesizeArgusDecision, finalActionForScore,
+  legacyEvidenceActionForScore } = require(path.join(__dirname, '..', 'src/domain/argusEngine.ts'));
+const { buildArgusTodayView: buildArgusTodayViewRaw, buildTodayProjection: buildTodayProjectionRaw,
+  buildTodayReview, selectTodayNews,
   selectAutoMarket, quoteDisplayLabel } = require(path.join(__dirname, '..', 'src/domain/argusTodayView.ts'));
 const { evaluateProbabilityTruth } = require(path.join(__dirname, '..', 'src/domain/probabilityTruth.ts'));
 let failed = 0;
 function check(name, condition) { if (condition) console.log(`  ok  ${name}`); else { failed++; console.error(`FAIL  ${name}`); } }
+const PROJECTION_NOW = Date.parse('2026-07-22T12:00:00Z');
+const buildTodayProjection = (input, action, horizon = 5, nowMs = PROJECTION_NOW) =>
+  buildTodayProjectionRaw(input, action, horizon, nowMs);
+const canonicalDecision = (primaryAction = 'WAIT', candidateLevel = 4, status = 'EVALUATED') => ({
+  primaryAction, status, confidence: { valueBps: 5000, status: 'BOUNDED' },
+  decisionId: `sda-${'1'.repeat(64)}`,
+  identities: { authorityPolicyId: 'argus-single-decision-authority-v2' },
+  sevenSign: { status: candidateLevel == null ? 'DATA_GATED' : 'SHADOW', candidateLevel, productionLevel: null },
+  missingReasonCodes: [], dissentReasonCodes: [],
+});
+const buildArgusTodayView = (input) => buildArgusTodayViewRaw({
+  ...input, canonicalDecision: input.canonicalDecision ?? canonicalDecision(),
+});
 
-check('BUY/WAIT/SELL mapping', finalActionForScore(1) === 'SELL' && finalActionForScore(2) === 'SELL'
-  && finalActionForScore(3) === 'WAIT' && finalActionForScore(6) === 'WAIT' && finalActionForScore(7) === 'BUY');
+check('legacy BUY/WAIT/SELL evidence mapping remains compatible',
+  legacyEvidenceActionForScore(1) === 'SELL' && legacyEvidenceActionForScore(2) === 'SELL'
+  && legacyEvidenceActionForScore(3) === 'WAIT' && legacyEvidenceActionForScore(6) === 'WAIT'
+  && legacyEvidenceActionForScore(7) === 'BUY' && finalActionForScore(7) === 'BUY');
 const base = { market: 'JP', baseSignal: 'ENTER', confidence: .9, dataQuality: 'LIVE', calculatedAt: '2026-07-22T00:00:00Z' };
+check('legacy engine is explicitly non-authoritative evidence', (() => {
+  const result = synthesizeArgusDecision(base);
+  return result.authorityRole === 'EVIDENCE_ONLY'
+    && result.finalDecisionAuthorityActive === false;
+})());
 check('closing window is integrated', synthesizeArgusDecision({ ...base, closingWindowSignal: 'PAUSE' }).finalAction === 'WAIT');
 check('owner policy only constrains', synthesizeArgusDecision({ ...base, ownerPolicyLimit: 'DEFEND' }).finalAction === 'SELL'
   && synthesizeArgusDecision({ ...base, baseSignal: 'DEFEND', ownerPolicyLimit: 'ENTER' }).finalAction === 'SELL');
@@ -26,20 +48,33 @@ check('data quality caps confidence', synthesizeArgusDecision({ ...base, dataQua
 check('event hard veto', synthesizeArgusDecision({ ...base, eventHardVeto: true }).finalAction === 'WAIT');
 check('deterministic', JSON.stringify(synthesizeArgusDecision(base)) === JSON.stringify(synthesizeArgusDecision(base)));
 
-const state = (market, session, trading = true, next = '2026-07-23') => ({ market, marketDate: '2026-07-22', isTradingDay: trading, session,
-  holidayName: trading ? null : 'Holiday', nextTradingDay: next, timezone: market === 'JP' ? 'Asia/Tokyo' : 'America/New_York' });
-check('AUTO JP open', selectAutoMarket({ JP: state('JP', 'MORNING_SESSION'), US: state('US', 'PRE_MARKET') }) === 'JP');
-check('AUTO JP lunch', selectAutoMarket({ JP: state('JP', 'LUNCH_BREAK'), US: state('US', 'CLOSED') }) === 'JP');
-check('AUTO JP holiday + US pre', selectAutoMarket({ JP: state('JP', 'HOLIDAY_CLOSED', false), US: state('US', 'PRE_MARKET') }) === 'US');
-check('AUTO US holiday + JP pre', selectAutoMarket({ JP: state('JP', 'PRE_OPEN'), US: state('US', 'HOLIDAY_CLOSED', false) }) === 'JP');
-check('AUTO US open', selectAutoMarket({ JP: state('JP', 'CLOSED'), US: state('US', 'REGULAR') }) === 'US');
-check('AUTO US after => next JP', selectAutoMarket({ JP: state('JP', 'CLOSED'), US: state('US', 'AFTER_HOURS') }) === 'JP');
-check('AUTO JP/US closed uses next session', selectAutoMarket({ JP: state('JP', 'CLOSED', true, '2026-07-24'), US: state('US', 'CLOSED', true, '2026-07-23') }) === 'US');
-check('AUTO uses calendar-normalized DST session', selectAutoMarket({ JP: state('JP', 'CLOSED'),
+const CAL_NOW = Date.parse('2026-07-22T00:00:00Z');
+const state = (market, session, trading = true, next = '2026-07-23') => ({
+  market: market === 'JP' ? 'JP_EQUITY' : 'US_EQUITY',
+  marketDate: '2026-07-22', isTradingDay: trading, session,
+  holidayName: trading ? null : 'Holiday', nextTradingDay: next, timezone: market === 'JP' ? 'Asia/Tokyo' : 'America/New_York',
+  calendarVersion: 'argus-market-calendar-2026.2',
+  officialCalendar: market === 'JP' ? 'JPX_TSE' : 'NYSE_NASDAQ',
+  sessionObservedAt: '2026-07-21T23:55:00Z', sessionValidUntil: '2026-07-22T00:15:00Z' });
+const autoMarket = (calendar) => selectAutoMarket(calendar, CAL_NOW);
+check('AUTO JP open', autoMarket({ JP: state('JP', 'MORNING_SESSION'), US: state('US', 'PRE_MARKET') }) === 'JP');
+check('AUTO JP lunch', autoMarket({ JP: state('JP', 'LUNCH_BREAK'), US: state('US', 'CLOSED') }) === 'JP');
+check('AUTO JP holiday + US pre', autoMarket({ JP: state('JP', 'HOLIDAY_CLOSED', false), US: state('US', 'PRE_MARKET') }) === 'US');
+check('AUTO US holiday + JP pre', autoMarket({ JP: state('JP', 'PRE_MARKET'), US: state('US', 'HOLIDAY_CLOSED', false) }) === 'JP');
+check('AUTO US open', autoMarket({ JP: state('JP', 'CLOSED'), US: state('US', 'REGULAR') }) === 'US');
+check('AUTO US after => next JP', autoMarket({ JP: state('JP', 'CLOSED'), US: state('US', 'AFTER_HOURS') }) === 'JP');
+check('AUTO JP/US outside-regular uses next session', autoMarket({ JP: state('JP', 'POST_MARKET', true, '2026-07-24'), US: state('US', 'OVERNIGHT_CLOSED', true, '2026-07-23') }) === 'US');
+check('AUTO uses calendar-normalized DST session', autoMarket({ JP: state('JP', 'CLOSED'),
   US: { ...state('US', 'PRE_MARKET'), timezone: 'America/New_York', regularOpenJst: '2026-07-22T22:30:00+09:00' } }) === 'US');
-check('AUTO respects early-close regular session', selectAutoMarket({ JP: state('JP', 'CLOSED'),
+check('AUTO respects early-close regular session', autoMarket({ JP: state('JP', 'CLOSED'),
   US: { ...state('US', 'REGULAR'), earlyClose: true, regularCloseJst: '2026-11-28T03:00:00+09:00' } }) === 'US');
-check('AUTO holidays use next date', selectAutoMarket({ JP: state('JP', 'HOLIDAY_CLOSED', false, '2026-07-24'), US: state('US', 'HOLIDAY_CLOSED', false, '2026-07-23') }) === 'US');
+check('AUTO holidays use next date', autoMarket({ JP: state('JP', 'HOLIDAY_CLOSED', false, '2026-07-24'), US: state('US', 'HOLIDAY_CLOSED', false, '2026-07-23') }) === 'US');
+check('expired MORNING session cannot remain active',
+  (() => { const expiredView = buildArgusTodayView({ now: new Date('2026-07-22T00:15:00Z'), selectionMode: 'AUTO',
+    calendar: { JP: state('JP', 'MORNING_SESSION'), US: state('US', 'REGULAR') },
+    baseSignal: 'ENTER', confidence: .8, dataQuality: 'LIVE' });
+  return expiredView.finalAction === 'WAIT'
+    && expiredView.sessionLamps.every((lamp) => lamp.key === 'FX' || lamp.key === 'CRYPTO' || !lamp.active); })());
 
 const view = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'), selectionMode: 'AUTO',
   calendar: { JP: state('JP', 'MORNING_SESSION'), US: state('US', 'CLOSED') },
@@ -64,10 +99,19 @@ check('Attention max 3', view.attention.length === 3);
 check('NEXT EVENT is not duplicated in Attention', !view.attention.some((row) => row.id === view.nextEvent?.id));
 check('holdings max 3 and deduped', view.holdingsReview.length === 2 && view.holdingsReview[0].reasonJa === 'y');
 check('FIRE is outside the Today view contract', !Object.prototype.hasOwnProperty.call(view, 'fireProgress'));
-check('footer mirrors decision', view.footerText.startsWith('JP WAIT 6/7'));
+check('footer mirrors canonical decision', view.footerText.startsWith('JP WAIT SDA'));
+const sevenSignDataGated = buildArgusTodayView({
+  now: new Date('2026-07-22T00:00:00Z'), selectionMode: 'JP',
+  baseSignal: 'ENTER', confidence: .8, dataQuality: 'LIVE',
+  canonicalDecision: canonicalDecision('WAIT', null, 'DATA_GATED'),
+});
+check('Seven Sign null remains null and visibly DATA_GATED',
+  sevenSignDataGated.actionScore === null
+  && sevenSignDataGated.footerText.includes('Seven DATA_GATED/DATA_GATED')
+  && !sevenSignDataGated.footerText.includes('/4'));
 const manual = buildArgusTodayView({ ...view, now: new Date('2026-07-22T00:00:00Z'), selectionMode: 'US', baseSignal: 'ENTER',
   jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8, dataQuality: 'LIVE' });
-check('manual US selection', manual.selectedMarket === 'US' && manual.finalAction === 'SELL');
+check('manual US selection cannot replace canonical action', manual.selectedMarket === 'US' && manual.finalAction === 'WAIT');
 check('manual JP selection', buildArgusTodayView({ ...manual, now: new Date('2026-07-22T00:00:00Z'),
   selectionMode: 'JP', baseSignal: 'ENTER', jpSignal: 'ENTER', usSignal: 'DEFEND', confidence: .8,
   dataQuality: 'LIVE' }).selectedMarket === 'JP');
@@ -89,7 +133,7 @@ check('quote time semantics never call prior close current', quoteDisplayLabel('
   && quoteDisplayLabel('D20') === '現在 D20' && quoteDisplayLabel('RT') === '現在 RT'
   && quoteDisplayLabel('STALE') === '最終値 STALE');
 const d20Projection = buildTodayProjection({ symbol: '1321', label: '日経225 ETF',
-  asOf: '2026-07-23T10:20:00+09:00', status: 'live', quoteState: 'D20', bars, zones: [] }, 'WAIT');
+  asOf: '2026-07-22T10:20:00+09:00', status: 'live', quoteState: 'D20', bars, zones: [] }, 'WAIT');
 check('D20 is displayed only from an explicit authoritative state',
   d20Projection?.quoteState === 'D20' && quoteDisplayLabel(d20Projection.quoteState) === '現在 D20');
 check('legacy delayed state is not promoted to D20',
@@ -187,6 +231,89 @@ check('UP 49/RANGE 29/DOWN 22 never maps WAIT to BUY',
   upPluralityView.finalAction === 'WAIT'
   && upPluralityView.directionProbabilities.UP === 49);
 
+check('pure projection boundary rejects ancient/future/malformed asOf',
+  buildTodayProjection({ ...calibratedInput, asOf: '2020-01-01' }, 'WAIT') === null
+  && buildTodayProjection({ ...calibratedInput, asOf: '2026-07-23' }, 'WAIT') === null
+  && buildTodayProjection({ ...calibratedInput, asOf: '2026-02-30' }, 'WAIT') === null);
+const buyProjectionInput = { ...upPluralityInput, authorityState: 'current',
+  calibration: { ...upPluralityInput.calibration, horizons: {
+    '5': { ...upPluralityInput.calibration.horizons['5'],
+      expectedValue: { ...upPluralityInput.calibration.horizons['5'].expectedValue,
+        q10: -.07 } },
+  } } };
+const buyWithCurrentProjection = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'),
+  selectionMode: 'JP', baseSignal: 'ENTER', jpSignal: 'ENTER', confidence: .8,
+  dataQuality: 'LIVE', calendar: { JP: state('JP', 'MORNING_SESSION') },
+  projection: { JP: buyProjectionInput } });
+const buyWithStaleProjection = buildArgusTodayView({ now: new Date('2026-07-22T00:00:00Z'),
+  selectionMode: 'JP', baseSignal: 'ENTER', jpSignal: 'ENTER', confidence: .8,
+  dataQuality: 'LIVE', calendar: { JP: state('JP', 'MORNING_SESSION') },
+  projection: { JP: { ...buyProjectionInput, authorityState: 'stale' } } });
+check('projection cache cannot create canonical BUY authority',
+  buyWithCurrentProjection.finalAction === 'WAIT'
+  && buyWithStaleProjection.finalAction === 'WAIT'
+  && buyWithStaleProjection.projection === null);
+
+const todayWithSession = (market, session, trading = true, signal = 'ENTER', canonical = 'WAIT') =>
+  buildArgusTodayView({ now: new Date(CAL_NOW), selectionMode: market,
+    baseSignal: signal, jpSignal: signal, usSignal: signal, confidence: .8,
+    dataQuality: 'LIVE', calendar: { [market]: state(market, session, trading) },
+    projection: { [market]: buyProjectionInput },
+    canonicalDecision: canonicalDecision(canonical, canonical === 'BUY' ? 5 : canonical === 'EXIT' ? 1 : 4) });
+const positiveSessionVetoed = (market, session, trading = true) => {
+  const result = todayWithSession(market, session, trading);
+  return result.finalAction === 'WAIT'
+    && result.decisions[market].internalAction === 'PAUSE'
+    && result.permissions.newEntry === false
+    && result.permissions.add === false;
+};
+check('canonical JP holiday and lunch veto Today entry/add',
+  positiveSessionVetoed('JP', 'HOLIDAY_CLOSED', false)
+  && positiveSessionVetoed('JP', 'LUNCH_BREAK'));
+check('canonical closed/post/after-hours/overnight sessions veto Today entry/add',
+  positiveSessionVetoed('JP', 'POST_MARKET')
+  && positiveSessionVetoed('JP', 'CLOSED')
+  && positiveSessionVetoed('US', 'HOLIDAY_CLOSED', false)
+  && positiveSessionVetoed('US', 'AFTER_HOURS')
+  && positiveSessionVetoed('US', 'OVERNIGHT_CLOSED')
+  && positiveSessionVetoed('US', 'CLOSED'));
+const regularSessionBuy = todayWithSession('US', 'REGULAR', true, 'ENTER', 'BUY');
+check('canonical US regular session presents the SDA BUY authority',
+  regularSessionBuy.finalAction === 'BUY'
+  && regularSessionBuy.decisions.US.internalAction === 'ENTER'
+  && regularSessionBuy.permissions.newEntry === true
+  && regularSessionBuy.permissions.add === true);
+const afterHoursDefend = todayWithSession('US', 'AFTER_HOURS', true, 'DEFEND', 'EXIT');
+check('closed session preserves canonical defensive action',
+  afterHoursDefend.finalAction === 'EXIT'
+  && afterHoursDefend.decisions.US.internalAction === 'DEFEND'
+  && afterHoursDefend.permissions.hold === false);
+const forgedOpenInput = { now: new Date(CAL_NOW), selectionMode: 'JP',
+  baseSignal: 'ENTER', jpSignal: 'ENTER', confidence: .8, dataQuality: 'LIVE',
+  projection: { JP: buyProjectionInput } };
+const freshButShapeless = buildArgusTodayView({ ...forgedOpenInput, calendar: { JP: {
+  isTradingDay: true, session: 'MORNING_SESSION',
+  sessionObservedAt: '2026-07-21T23:55:00Z', sessionValidUntil: '2026-07-22T00:15:00Z',
+} } });
+const wrongMarketOpen = buildArgusTodayView({ ...forgedOpenInput, calendar: { JP: {
+  ...state('JP', 'MORNING_SESSION'), market: 'US_EQUITY',
+} } });
+const wrongTimezoneOpen = buildArgusTodayView({ ...forgedOpenInput, calendar: { JP: {
+  ...state('JP', 'MORNING_SESSION'), timezone: 'America/New_York',
+} } });
+const wrongCalendarOpen = buildArgusTodayView({ ...forgedOpenInput, calendar: { JP: {
+  ...state('JP', 'MORNING_SESSION'), officialCalendar: 'NYSE_NASDAQ',
+} } });
+const missingVersionOpen = buildArgusTodayView({ ...forgedOpenInput, calendar: { JP: {
+  ...state('JP', 'MORNING_SESSION'), calendarVersion: '',
+} } });
+check('fresh forged open session cannot authorize Today entry/add',
+  [freshButShapeless, wrongMarketOpen, wrongTimezoneOpen, wrongCalendarOpen,
+    missingVersionOpen].every((result) => result.finalAction === 'WAIT'
+    && result.decisions.JP.internalAction === 'PAUSE'
+    && result.permissions.newEntry === false
+    && result.permissions.add === false));
+
 const reviewBars = [{ date: '2026-07-20', close: 100 }, { date: '2026-07-21', close: 101.4 }];
 const matureReview = buildTodayReview(reviewBars, '日経225 ETF（1321）', 'WAIT', '2026-07-20');
 check('previous decision uses matching instrument and one-day horizon', matureReview.marketLabel.includes('1321')
@@ -222,6 +349,9 @@ const navCss = fs.readFileSync(path.join(__dirname, '..', 'src/components/NavRai
 const navigation = fs.readFileSync(path.join(__dirname, '..', 'src/navigation.ts'), 'utf8');
 const marketNewsHook = fs.readFileSync(path.join(__dirname, '..', 'src/hooks/useMarketNews.ts'), 'utf8');
 check('single decision card', (panel.match(/at-decision card/g) || []).length === 1);
+check('Today renders Seven Sign null as DATA GATED without imputing level four',
+  panel.includes("view.actionScore == null ? '— / 7'")
+  && panel.includes("view.actionScore ?? 'DATA GATED'"));
 check('Market changes and Next Check absent', !route.includes('<MarketIntelligenceChanges') && !route.includes('<NextCheckCard'));
 check('Notifications is a first-class route with no shell polling dropdown',
   navigation.includes("route: 'notifications'")
@@ -231,6 +361,10 @@ check('selected instrument is device-local only', route.includes('argus.today.se
   && !/fetch\([^)]*selectedInstrument/.test(route));
 check('four instrument contracts are isolated', route.includes("symbol: '1306'") && route.includes("symbol: 'SPY'")
   && route.includes("symbol: 'QQQ'") && route.includes('selectedJpChart') && route.includes('selectedUsChart'));
+check('Today consumes only current chart and calendar authority',
+  route.includes('selectedChart.decisionData')
+  && route.includes('decisionCalendar')
+  && !route.includes("? selectedChart.data"));
 check('no AI POST on Today interactions', !/fetch\([^\n]+method:\s*['"]POST/.test(route + panel));
 check('unknown event time is not fabricated', !route.includes('T23:59:00+09:00'));
 check('market levels do not get a synthetic plus sign', !panel.includes("v > 0 ? '+'"));

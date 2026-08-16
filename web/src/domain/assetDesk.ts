@@ -12,6 +12,7 @@ import {
   type EvidenceState,
 } from './decisionView';
 import type { LiveQuote } from './liveQuote';
+import type { PrimaryAction } from './singleDecisionAuthority';
 
 export type DeskGenre = 'jp' | 'us' | 'funds' | 'crypto';
 
@@ -20,6 +21,10 @@ export interface DecisionFirstInput {
   name: string;
   market: string;
   held: boolean;
+  /** Sole five-action authority. Legacy signal/override fields below are evidence only. */
+  canonicalPrimaryAction?: PrimaryAction | null;
+  canonicalDecisionId?: string | null;
+  canonicalDecisionStatus?: 'EVALUATED' | 'DATA_GATED' | null;
   signalCode?: string | null;
   actionOverride?: string | null;
   ownerLabel?: string | null;
@@ -60,6 +65,8 @@ export interface DecisionFirstView extends DecisionView {
   quoteTruth: LiveQuote | null;
   rank: number;
   bucket: 'exit-watch' | 'inspect' | 'hold' | 'new-stop';
+  canonicalDecisionId: string | null;
+  canonicalDecisionStatus: 'EVALUATED' | 'DATA_GATED' | null;
 }
 
 export interface PortfolioCommandView {
@@ -82,6 +89,16 @@ const ACTION_JA: Record<string, { held: string; watch: string; entry: string }> 
 const OVERRIDE_JA: Record<string, string> = {
   EXIT_WATCH: '撤退検討', TRIM_WATCH: '縮小検討', REVIEW_REQUIRED: '要点検',
   DO_NOT_ADD: '買い増し禁止', HOLD_CAUTION: '警戒して保有', WAIT: '待機',
+};
+
+const CANONICAL_ACTION: Record<PrimaryAction, {
+  signalCode: string; held: string; watch: string; entry: string;
+}> = {
+  BUY: { signalCode: 'ENTER', held: 'BUY（追加可）', watch: 'BUY', entry: 'BUY' },
+  HOLD: { signalCode: 'HOLD_ONLY', held: 'HOLD（保有継続）', watch: 'HOLD', entry: '新規なし' },
+  WAIT: { signalCode: 'PAUSE', held: 'WAIT（保有判断を保留）', watch: 'WAIT', entry: 'WAIT' },
+  REDUCE: { signalCode: 'DEFEND', held: 'REDUCE（縮小）', watch: 'WAIT', entry: '新規停止' },
+  EXIT: { signalCode: 'EXIT', held: 'EXIT（撤退）', watch: 'WAIT', entry: '新規停止' },
 };
 
 export function compactDecisionText(value: string | null | undefined,
@@ -111,22 +128,27 @@ function firstDistinct(candidates: Array<string | null | undefined>,
 }
 
 export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirstView {
-  const signalCode = input.signalCode && ACTION_JA[input.signalCode]
-    ? input.signalCode : 'PAUSE';
+  const canonical = input.canonicalPrimaryAction
+    ? CANONICAL_ACTION[input.canonicalPrimaryAction] : null;
+  const signalCode = canonical?.signalCode ?? (input.signalCode && ACTION_JA[input.signalCode]
+    ? input.signalCode : 'PAUSE');
   const action = ACTION_JA[signalCode];
-  const override = input.actionOverride
+  const override = !canonical && input.actionOverride
     ? OVERRIDE_JA[input.actionOverride] ?? compactDecisionText(input.actionOverride, 24)
     : null;
-  const currentActionJa = override || (input.held ? action.held : action.watch);
+  const currentActionJa = canonical
+    ? (input.held ? canonical.held : canonical.watch)
+    : override || (input.held ? action.held : action.watch);
   const used = new Set<string>([decisionSemanticKey(currentActionJa)].filter(Boolean));
   const guardedOwnerAction = override
     || (['EXIT', 'DEFEND', 'REVIEW'].includes(signalCode) ? action.held : null);
-  const ownerActionJa = input.held
+  const ownerActionJa = canonical ? (input.held ? canonical.held : '監視のみ（保有なし）')
+    : input.held
     // An incident override is authoritative. Keeping an older position stance
     // here could display "撤退検討" and "保有継続" in the same DecisionView.
     ? guardedOwnerAction || compactDecisionText(input.ownerLabel, 42) || action.held
     : '監視のみ（保有なし）';
-  const entryActionJa = override ? '新規停止' : action.entry;
+  const entryActionJa = canonical?.entry ?? (override ? '新規停止' : action.entry);
   const whyJa = firstDistinct(input.whyCandidates, used, '検証済みの個別理由なし');
   const nextJa = firstDistinct(
     input.nextCandidates, used, '個別開示・出来高・同業差を確認');
@@ -150,7 +172,7 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
     changePct: input.changePct ?? null, pnlPct: input.pnlPct ?? null,
     priority: input.priority, dataStatus: input.dataStatus, rank: input.rank,
     bucket,
-    primaryAction: currentActionJa,
+    primaryAction: input.canonicalPrimaryAction ?? currentActionJa,
     ownerAction: ownerActionJa,
     entryAction: entryActionJa,
     reason: whyJa,
@@ -160,6 +182,8 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
     dataState,
     asOf: input.asOf ?? null,
     quoteTruth: input.quoteTruth ?? null,
+    canonicalDecisionId: input.canonicalDecisionId ?? null,
+    canonicalDecisionStatus: input.canonicalDecisionStatus ?? null,
   };
 }
 

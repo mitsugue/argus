@@ -5,6 +5,7 @@ import {
   normalizeJapanWatchSnapshot,
   type JapanTruthSnapshot,
 } from '../domain/watchQuoteTruth';
+import { quoteDecisionExpiresAt } from '../domain/liveQuote';
 
 // Connection phase, surfaced to the UI so a cold-starting backend reads as
 // "connecting" rather than snapping straight to "mock" — same model as
@@ -81,7 +82,7 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
   const existing = japanWatchlistStores.get(symKey);
   if (existing) return existing;
 
-  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState) => {
+  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState, getState) => {
     const dynamic = symKey.length > 0;
     const fallback: JapanWatchlistSnapshot = dynamic
       ? { status: 'mock', asOf: null, stocks: [] }
@@ -96,7 +97,47 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
       + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
     let cancelled = false;
     let acquisition: Promise<void> | null = null;
+    let cancelExpiry = () => {};
     const controllers = new Set<AbortController>();
+
+    function armExpiry(data: JapanTruthSnapshot) {
+      cancelExpiry();
+      const now = Date.now();
+      const deadlines = data.stocks.map((row) => row.quoteTruth
+        ? quoteDecisionExpiresAt(row.quoteTruth) : null)
+        .filter((value): value is number => value != null);
+      if (!deadlines.length) return;
+      const delay = Math.min(...deadlines) - now;
+      if (delay < 0) {
+        const aged = normalizeJapanWatchSnapshot(data as unknown as JapanWatchlistSnapshot);
+        setState((state) => ({ ...state, data: aged, phase: aged.status }));
+        armExpiry(aged);
+        return;
+      }
+      const handle = window.setTimeout(() => {
+        const current = getState();
+        if (!current.data) return;
+        const aged = normalizeJapanWatchSnapshot(
+          current.data as unknown as JapanWatchlistSnapshot);
+        setState({ ...current, data: aged, phase: aged.status });
+        armExpiry(aged);
+      }, Math.max(1, Math.min(delay + 1, 2_147_000_000)));
+      cancelExpiry = () => window.clearTimeout(handle);
+    }
+
+    function accept(data: JapanTruthSnapshot, attempt: number) {
+      setState({ data, error: null, loading: false, phase: data.status, attempt });
+      armExpiry(data);
+    }
+
+    function revalidateCurrent() {
+      const current = getState();
+      if (!current.data) return;
+      const aged = normalizeJapanWatchSnapshot(
+        current.data as unknown as JapanWatchlistSnapshot);
+      setState({ ...current, data: aged, phase: aged.status, loading: false });
+      armExpiry(aged);
+    }
 
     async function fetchSnapshot(): Promise<JapanTruthSnapshot> {
       const ctrl = new AbortController();
@@ -130,7 +171,7 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
           const data = await fetchSnapshot();
           if (cancelled) return;
           // Trust the payload's own status (a 200 can still be all-mock).
-          setState({ data, error: null, loading: false, phase: data.status, attempt });
+          accept(data, attempt);
           return;
         } catch (err: unknown) {
           if (cancelled) return;
@@ -146,27 +187,44 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
       }
     }
 
-    // Silent background refresh — only swaps in fresh data, never degrades the
-    // visible state on failure.
+    // A failed refresh may retain the last observed values, but it must age their
+    // source timestamps again.  In particular an old LIVE proof cannot remain
+    // LIVE merely because the transport failed before a replacement arrived.
     async function refresh() {
       if (cancelled || document.hidden) return;
       try {
         const data = await fetchSnapshot();
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
-      } catch { /* keep the last good snapshot */ }
+        armExpiry(data);
+      } catch (err: unknown) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setState((s) => {
+          if (!s.data) return { ...s, error: msg };
+          const aged = normalizeJapanWatchSnapshot(
+            s.data as unknown as JapanWatchlistSnapshot,
+          );
+          return { ...s, data: aged, error: msg, phase: aged.status };
+        });
+      }
     }
     const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
     // Returning to the tab after a while → refresh immediately, don't wait out
     // the remainder of the interval.
     const onVisible = () => {
-      if (!document.hidden) void acquire(refresh);
+      if (!document.hidden) {
+        revalidateCurrent();
+        void acquire(refresh);
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
 
+    if (getState().data) revalidateCurrent();
     void acquire(run);
     return () => {
       cancelled = true;
+      cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
       window.clearInterval(refreshTimer);

@@ -7,6 +7,8 @@ import { probabilityDisplay } from '../../domain/decisionView';
 
 export interface ScoutData {
   status: string;
+  authorityRole?: 'EVIDENCE_ONLY';
+  finalDecisionAuthorityActive?: false;
   lastClose?: number; lastDate?: string;
   metrics?: { rsi14: number; ma25DiffPct: number | null; ret5: number | null; ret20: number | null; consecDown: number; volRatio5v20: number | null };
   flow?: { bigNetRatio: number | null; ageMin: number | null };
@@ -20,8 +22,8 @@ export interface ScoutData {
   assessment?: { stance: string; score: number; reasonsJa: string[] };
   catalystContext?: { items: { kind: string; level?: string; labelJa?: string; count?: number; headline?: string | null; noteJa?: string }[]; noteJa: string };
   scoreTrackRecord?: { n: number; upRate: number | null; avgRetPct: number | null } | null;
-  // v3 (v10.30): one-line call + moat-grounded story + calibration the LLM lacks.
-  callJa?: string; narrativeJa?: string;
+  // Legacy weighted output remains audit evidence; it is not Primary Action.
+  legacyCallJa?: string; callJa?: string; narrativeJa?: string;
   engineCalibration?: { n: number; hitRate: number | null; days?: number } | null;
   postureCalibration?: { posture: string; n: number; hitRate: number | null } | null;
   dataGapsJa?: string[]; noteJa?: string;
@@ -70,9 +72,12 @@ export const AssetEntryScout: React.FC<{
       )}
       {scout && scout !== 'loading' && scout !== 'error' && scout.status === 'live' && scout.assessment && (
         <div className="scout">
-          {scout.callJa && <div className="scout__call">⚡ {scout.callJa}</div>}
+          <div className="scout__call">EVIDENCE ONLY — 旧Entry ScoutはPrimary Actionを選びません</div>
+          {(scout.legacyCallJa ?? scout.callJa) && (
+            <div className="scout__story">旧分類: {scout.legacyCallJa ?? scout.callJa}</div>
+          )}
           {scout.narrativeJa && <div className="scout__story">{scout.narrativeJa}</div>}
-          <div className="scout__stance">{scout.assessment.stance} <span className="scout__score">score {scout.assessment.score >= 0 ? '+' : ''}{scout.assessment.score}</span></div>
+          <div className="scout__stance">監査用分類 {scout.assessment.stance} <span className="scout__score">legacy score {scout.assessment.score >= 0 ? '+' : ''}{scout.assessment.score}</span></div>
           {scout.scoreTrackRecord && scout.scoreTrackRecord.n >= 5 && (
             <div className="scout__track">
               📊 この水準の実績: 過去{scout.scoreTrackRecord.n}件中

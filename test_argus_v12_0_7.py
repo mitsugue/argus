@@ -119,7 +119,7 @@ def test_intel_undated_item_excluded_from_current_view(monkeypatch):
     assert d["omittedOldCount"] == 1
 
 
-def test_intel_publishedat_missing_falls_back_to_detected(monkeypatch):
+def test_intel_publishedat_missing_never_falls_back_to_receipt(monkeypatch):
     now_iso = scanner._ai_now_iso()
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
     monkeypatch.setattr(scanner, "_INTEL_STORE", [
@@ -132,7 +132,8 @@ def test_intel_publishedat_missing_falls_back_to_detected(monkeypatch):
     ])
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/events/7011/institutional-intelligence").get_json()
-    assert d["count"] == 1                         # fallback時刻がfreshなら表示
+    assert d["count"] == 0
+    assert d["omittedOldCount"] == 1
 
 
 # ── ⑥ FEソース検査 — 安全優先展開/二重ボタン抑止/閾値同期 ────────────────────

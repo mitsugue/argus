@@ -58,16 +58,16 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
   }
   if (sc?.postureCalibration?.hitRate != null) L.push(`■ この地合い(${sc.postureCalibration.posture})のエンジン実績: ${probabilityDisplay(sc.postureCalibration.hitRate * 100).qualitative}（n=${sc.postureCalibration.n}）`);
   else if (sc?.engineCalibration?.hitRate != null) L.push(`■ ARGUSエンジン全体の実績: ${probabilityDisplay(sc.engineCalibration.hitRate * 100).qualitative}（n=${sc.engineCalibration.n}）`);
-  if (sc?.callJa) L.push(`■ ARGUSの一言コール: ${sc.callJa}`);
-  L.push(`■ ARGUS姿勢: ${d.pst?.stanceJa ?? d.decision?.rule.action ?? strat.action ?? '未確認'}`);
-  L.push(`■ ルール判断: ${d.decision?.rule.action ?? strat.action ?? '未確認'}`);
+  const legacyScout = sc?.legacyCallJa ?? sc?.callJa;
+  if (legacyScout) L.push(`■ 旧Entry Scout分類(EVIDENCE ONLY): ${legacyScout}`);
+  L.push(`■ 旧構え/ルール(EVIDENCE ONLY): ${d.pst?.stanceJa ?? d.decision?.rule.action ?? strat.action ?? '未確認'}`);
   L.push(`■ 保有情報(端末内から手動コピー): ${d.pn?.held ? `保有中・数量${d.pn.quantity ?? '未入力'}・取得単価${d.pn.avgCost ?? '未入力'}・損益${d.pn.pnlPct ?? '未計算'}%` : '未保有/監視'}`);
   if (d.eventTags.length) L.push(`■ 主要イベント: ${d.eventTags.map((e) => `${e.code} ${e.countdown}`).join(' / ')}`);
   if (market) L.push(`■ Market Ledger要約: ${Object.entries(market.summary).map(([k, v]) => `${k}=${v}`).join(' / ')}`);
   else L.push('■ Market Ledger要約: 未取得');
   L.push('');
   L.push('【参考(あなたの方が詳しいはず)】');
-  if (strat.status !== 'mock' && strat.price != null) L.push(`■ 現在値 ${strat.price}（前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}）・ARGUS判断 ${strat.action}`);
+  if (strat.status !== 'mock' && strat.price != null) L.push(`■ 現在値 ${strat.price}（前日比 ${strat.changePct != null ? `${strat.changePct >= 0 ? '+' : ''}${strat.changePct.toFixed(2)}%` : '—'}）`);
   if (sc?.metrics) L.push(`■ テクニカル: RSI14=${sc.metrics.rsi14}・25日線乖離${sc.metrics.ma25DiffPct ?? '—'}%`);
   L.push(`■ Chart Intelligence: ${chart?.critique?.map((x) => `${x.label}: ${x.text}`).join(' / ') || '未取得'}`);
   L.push(`■ データ品質: quote=${strat.status} / scout=${sc?.status ?? '未取得'} / market-ledger=${market ? market.remoteReadBack.verificationStatus : '未取得'}`);
@@ -76,9 +76,9 @@ async function buildAndCopyConsult(d: DeskCardData, scoutState: ScoutState,
   L.push('依頼:');
   L.push('(1) Web/Deep ResearchのOSINT(直近2週の開示・決算・大株主/空売り/自社株買い・業界/国策)で、上のARGUSの需給読みを「補強 or 反証」して');
   L.push('(2) 強気材料と弱気材料を対比');
-  L.push('(3) 最後に必ず:【新規買い/買い戻し/様子見/回避】の確率配分(%)・確信度(高/中/低)・根拠・出典URL・次に確認する条件。断定でなく確率で。');
+  L.push('(3) 強気/弱気/不明の証拠を分離し、確信度・根拠・出典URL・次に確認する条件を列挙して。売買アクションは選ばないで。');
   L.push(`(4) ${provider}として、上のMarket Ledgerと個別チャートが矛盾する点、不足している確認事項を列挙して。`);
-  L.push('売買指示ではなく判断材料の整理として。');
+  L.push('AI出力はSingle Decision Authorityへの挑戦/反証証拠だけで、Primary Actionを上書きしません。');
   const text = L.join('\n');
   try {
     await navigator.clipboard.writeText(text);

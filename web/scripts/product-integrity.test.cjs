@@ -134,6 +134,9 @@ const scoutSource = fs.readFileSync(path.join(
 const incidentSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'dashboard', 'DownsideIncidentCard.tsx',
 ), 'utf8');
+const alertCardSource = fs.readFileSync(path.join(
+  __dirname, '..', 'src', 'components', 'dashboard', 'AlertCard.tsx',
+), 'utf8');
 const researchSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'assetDesk', 'AssetResearchPanel.tsx',
 ), 'utf8');
@@ -150,6 +153,14 @@ check('S12 uncalibrated AI and cause confidence never renders percent',
   && !incidentSource.includes('Math.round(b.probability * 100)')
   && researchSource.includes('probabilityDisplay(value * 100).qualitative')
   && !researchSource.includes('Math.round(p.newLongAccumulation * 100)'));
+check('S12b legacy alert and downside surfaces are visibly evidence-only',
+  alertCardSource.includes('data-authority-role="EVIDENCE_ONLY"')
+  && alertCardSource.includes('EVIDENCE ONLY')
+  && !alertCardSource.includes('<ActionPill')
+  && incidentSource.includes('<b>RISK EVIDENCE:</b>')
+  && incidentSource.includes('SDAのPrimary Actionを上書きしません')
+  && !incidentSource.includes('<b>判断:</b>')
+  && !incidentSource.includes('OVERRIDE_LABEL_JA'));
 check('S13 navigation commits route state and canonical primary or asset hashes',
   appSource.includes('const commitLocation =')
   && appSource.includes('routeRef.current = target.route')

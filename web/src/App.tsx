@@ -12,6 +12,7 @@ import { Settings } from './routes/Settings';
 import { startCloudSync } from './lib/vault';
 import { useMarketLedger } from './hooks/useMarketLedger';
 import { resolveSessionJst } from './domain/sessionBrief';
+import type { PlanningSessionAuthority } from './domain/positionPlan';
 import type { AssetFocusIntent } from './components/assetDesk/AssetDeskList';
 
 const initialLocation = (): ParsedLocation =>
@@ -80,9 +81,18 @@ const App: React.FC = () => {
     const parsed = Date.parse(marketLedger.ledger?.asOf ?? '');
     return Number.isFinite(parsed) ? new Date(parsed) : new Date();
   }, [marketLedger.ledger?.asOf]);
+  const canonicalSessionAuthority = useMemo<PlanningSessionAuthority>(() => ({
+    calendar: marketLedger.ledger?.phase3?.calendar ?? null,
+    serverAsOf: marketLedger.ledger?.phase3?.asOf
+      ?? marketLedger.ledger?.asOf ?? null,
+    receivedAtMs: marketLedger.fetchedAtMs,
+    availability: marketLedger.error ? 'refresh_failed'
+      : marketLedger.loading ? 'loading'
+        : marketLedger.sessionExpired ? 'expired' : 'available',
+  }), [marketLedger.ledger, marketLedger.fetchedAtMs, marketLedger.error,
+    marketLedger.loading, marketLedger.sessionExpired]);
   const marketStatusLabel = useMemo(() => resolveSessionJst(
-    new Date(), marketLedger.ledger?.phase3?.calendar).marketStatusJa,
-  [marketLedger.ledger]);
+    canonicalSessionAuthority).marketStatusJa, [canonicalSessionAuthority]);
 
   const commitLocation = (target: ParsedLocation, hash: string) => {
     setPageEnterDirection(pageDirection(routeRef.current, target.route));

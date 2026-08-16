@@ -41,7 +41,7 @@ def test_unknown_source_is_weak():
 
 
 def test_normalize_item_carries_tier_and_grounding():
-    item = M.normalize_item({"sourceId": "reuters_public", "title": "NVDA rises",
+    item = M.normalize_item({"sourceId": "reuters_jp", "title": "NVDA rises",
                              "canonicalUrl": "https://reuters.test/a", "linkedAssets": ["NVDA"]})
     assert item["sourceTier"] == "reputable_financial_media"
     assert item["canGroundJudgment"] is True

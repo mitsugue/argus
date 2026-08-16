@@ -1,7 +1,6 @@
 import React from 'react';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel } from '../../domain/argusTodayView';
-import { SIGNAL_ORDER, SIGNALS } from '../../domain/actionLevel';
 import type { RouteKey } from '../NavRail';
 import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
@@ -55,8 +54,17 @@ interface Props {
   aiButton: React.ReactNode;
 }
 
-const ACTION_TONE = { BUY: 'var(--value-positive)', WAIT: 'var(--amber, #fbbf24)', SELL: 'var(--value-negative)' };
-const MARKET_STANCE = { BUY: '強気', WAIT: '中立・待機', SELL: '弱気・警戒' };
+const ACTION_TONE = {
+  BUY: 'var(--value-positive)', HOLD: 'var(--accent)', WAIT: 'var(--amber, #fbbf24)',
+  REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)',
+};
+const MARKET_STANCE = {
+  BUY: 'BUY', HOLD: 'HOLD', WAIT: 'WAIT', REDUCE: 'REDUCE', EXIT: 'EXIT',
+};
+const SEVEN_SIGN_MEANING: Record<number, string> = {
+  1: '強いRisk Off', 2: 'REDUCE寄り', 3: '新規回避', 4: 'WAIT',
+  5: '条件付きBUY寄り', 6: 'BUY寄り', 7: '最高クラスBUY期待値',
+};
 const fmt = (v: number) => v >= 1000 ? v.toLocaleString('ja-JP', { maximumFractionDigits: 1 }) : v.toFixed(2);
 const fmtMove = (v: number, suffix = '') => `${fmt(v)}${suffix}`;
 const shortDate = (value?: string | null) => value ? value.slice(5).replace('-', '/') : '';
@@ -202,7 +210,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 }) => {
   const [detail, setDetail] = React.useState(false);
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
-  const currentSignal = SIGNAL_ORDER.find((code) => SIGNALS[code].level === view.actionScore);
+  const sevenSignLabel = view.actionScore == null
+    ? 'DATA GATED' : (SEVEN_SIGN_MEANING[view.actionScore] ?? 'DATA GATED');
   const openEventDetails = () => onNavigate('notifications');
   React.useEffect(() => {
     try {
@@ -210,13 +219,16 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         schemaVersion: 'argus-today-decision-mirror-v1',
         market: view.selectedMarket, selectionMode: view.selectionMode,
         finalAction: view.finalAction, actionScore: view.actionScore,
+        decisionId: view.canonicalDecision.decisionId,
+        authorityPolicyId: view.canonicalDecision.identities.authorityPolicyId,
+        sevenSign: view.canonicalDecision.sevenSign,
         symbol: view.selectedInstrument?.symbol ?? projection?.symbol ?? null,
         instrumentId: projection?.instrumentId ?? null,
         horizon: projection?.horizonDays ?? 5,
         updatedAt: new Date().toISOString(),
       }));
     } catch { /* navigation mirror is best effort and contains no owner data */ }
-  }, [projection, view.actionScore, view.finalAction, view.selectedInstrument,
+  }, [projection, view.actionScore, view.canonicalDecision, view.finalAction, view.selectedInstrument,
     view.selectedMarket, view.selectionMode]);
   return <div className="argus-today">
     <section className="at-lamps" aria-label="市場セッション">
@@ -276,13 +288,17 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         })}
       </div>
       <div className="at-call">
-        <small>市場評価 · {view.selectedMarket}</small>
+        <small>PRIMARY ACTION · {view.selectedMarket} {view.selectedInstrument?.symbol ?? ''}</small>
         <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
-        <b>{view.actionScore} / 7</b><span>{currentSignal ? SIGNALS[currentSignal].labelJa : ''}</span>
+        <b>{view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}</b><span>{sevenSignLabel}</span>
       </div>
-      <div className="at-meter" aria-label={`7段階 ${view.actionScore}`}>
-        {SIGNAL_ORDER.map((code) => <i key={code} className={SIGNALS[code].level === view.actionScore ? 'active' : ''}><span>{SIGNALS[code].level}</span></i>)}
+      <div className="at-meter" aria-label={`Seven Sign ${view.actionScore ?? 'DATA GATED'} ${view.canonicalDecision.sevenSign.status}`}>
+        {[1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
+          className={level === view.actionScore ? 'active' : ''}><span>{level}</span></i>)}
       </div>
+      <p className="at-quiet">Seven Sign: {view.canonicalDecision.sevenSign.status} ·
+        {view.canonicalDecision.sevenSign.productionLevel == null
+          ? ' production calibration unavailable' : ` production ${view.canonicalDecision.sevenSign.productionLevel}`}</p>
       <div className="at-chart-controls">
         <div className="at-chart-status" data-snapshot-state={chartLoad.snapshotState}
           data-snapshot-id={chartLoad.snapshotId ?? undefined}>
@@ -317,7 +333,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {detail ? '詳細を閉じる' : '判断の根拠・システム詳細'}
       </button>
       {detail && <div className="at-details">
-        <div><b>METHOD</b><span>{view.decisions[view.selectedMarket].methodVersion}</span></div>
+        <div><b>AUTHORITY</b><span>{view.canonicalDecision.identities.authorityPolicyId ?? 'unavailable'}</span></div>
+        <div><b>DECISION ID</b><span>{view.canonicalDecision.decisionId}</span></div>
+        <div><b>LEGACY MARKET EVIDENCE</b><span>{view.decisions[view.selectedMarket].methodVersion}</span></div>
         <div><b>CALCULATED</b><span>{view.decisions[view.selectedMarket].calculatedAt}</span></div>
         <div><b>DATA QUALITY</b><span>{view.dataStatus.label}</span></div>
         <div><b>BACKUP</b><span>{view.systemStatus.backup}</span></div>
@@ -335,6 +353,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           {projection.historyStart ? ` · ${projection.historyStart}–${projection.historyEnd ?? '現在'}` : ''}
           {projection.sourceHistoryCount < 2_000 ? ' · 10年未達' : ' · 約10年'}</span></div>}
         {view.decisions[view.selectedMarket].evidence.map((line, index) => <p key={`${index}:${line}`}>{line}</p>)}
+        {view.canonicalDecision.missingReasonCodes.map((line) => <p key={`missing:${line}`}>MISSING: {line}</p>)}
+        {view.canonicalDecision.dissentReasonCodes.map((line) => <p key={`dissent:${line}`}>DISSENT: {line}</p>)}
         <div className="at-detail-actions">{aiButton}<button type="button"
           onClick={() => onNavigateToSettings
             ? onNavigateToSettings('recovery') : onNavigate('settings')}>Settings / Recovery</button></div>

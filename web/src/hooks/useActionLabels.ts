@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from 'react';
+import { deauthorizeActionSnapshot, liveAuthorityState,
+  scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import type { ActionLabelsSnapshot } from '../types/actionLabels';
 
@@ -11,6 +13,7 @@ interface State {
   loading: boolean;
   phase: ConnPhase;
   attempt: number;
+  authority: LiveAuthorityState | 'unavailable' | 'refresh_failed';
 }
 
 // Mock fallback — used only when VITE_ARGUS_BACKEND_URL is unset or every
@@ -53,6 +56,7 @@ const INITIAL_STATE: State = {
   loading: true,
   phase: 'connecting',
   attempt: 0,
+  authority: 'unavailable',
 };
 const actionLabelStores = new Map<string, SharedPollingStore<State>>();
 
@@ -61,10 +65,11 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
   const existing = actionLabelStores.get(queryKey);
   if (existing) return existing;
 
-  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState) => {
+  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState, getState) => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock', attempt: 0 });
+      setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock',
+        attempt: 0, authority: 'unavailable' });
       return () => {};
     }
     const qs: string[] = [];
@@ -74,6 +79,7 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
       + (qs.length ? `?${qs.join('&')}` : '');
     let cancelled = false;
     let acquisition: Promise<void> | null = null;
+    let cancelExpiry = () => {};
     const controllers = new Set<AbortController>();
 
     async function fetchSnapshot(): Promise<ActionLabelsSnapshot> {
@@ -99,6 +105,40 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
       return current;
     }
 
+    function accept(data: ActionLabelsSnapshot, attempt: number) {
+      cancelExpiry();
+      if (data.status === 'mock') {
+        setState({ data, error: null, loading: false, phase: 'mock', attempt,
+          authority: 'unavailable' });
+        return;
+      }
+      const authority = liveAuthorityState(data.asOf, 'actionLabels');
+      if (authority !== 'fresh') {
+        const reason = authority === 'expired' ? 'snapshot_expired' : 'invalid_as_of';
+        setState({ data: deauthorizeActionSnapshot(data, reason), error: null,
+          loading: false, phase: 'partial', attempt, authority });
+        return;
+      }
+      setState({ data, error: null, loading: false, phase: data.status, attempt,
+        authority: 'fresh' });
+      cancelExpiry = scheduleLiveAuthorityExpiry(data.asOf, 'actionLabels', () => {
+        const current = getState();
+        if (!current.data || current.authority !== 'fresh') return;
+        setState({ ...current,
+          data: deauthorizeActionSnapshot(current.data, 'snapshot_expired'),
+          phase: 'partial', authority: 'expired' });
+      });
+    }
+
+    function failRefresh(message: string) {
+      const current = getState();
+      cancelExpiry();
+      if (!current.data || current.phase === 'mock') return;
+      setState({ ...current,
+        data: deauthorizeActionSnapshot(current.data, 'refresh_failed'),
+        error: message, loading: false, phase: 'partial', authority: 'refresh_failed' });
+    }
+
     async function run() {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         if (cancelled) return;
@@ -107,7 +147,7 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
         try {
           const data = await fetchSnapshot();
           if (cancelled) return;
-          setState({ data, error: null, loading: false, phase: data.status, attempt });
+          accept(data, attempt);
           return;
         } catch (err: unknown) {
           if (cancelled) return;
@@ -117,7 +157,8 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
             await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
             continue;
           }
-          setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock', attempt });
+          setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock',
+            attempt, authority: 'unavailable' });
           return;
         }
       }
@@ -131,8 +172,14 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
       try {
         const data = await fetchSnapshot();
         if (cancelled) return;
-        setState((s) => ({ ...s, data, error: null, phase: data.status }));
-      } catch { /* keep the last good snapshot */ }
+        accept(data, getState().attempt);
+      } catch (err: unknown) {
+        if (!cancelled) failRefresh(err instanceof Error ? err.message : String(err));
+      }
+    }
+    const retained = getState();
+    if (retained.data && retained.authority === 'fresh') {
+      accept(retained.data, retained.attempt);
     }
     const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
     // Returning to the tab after a while → refresh immediately, don't wait out
@@ -145,6 +192,7 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
     void acquire(run);
     return () => {
       cancelled = true;
+      cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
       window.clearInterval(refreshTimer);
