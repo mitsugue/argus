@@ -11,6 +11,7 @@
 
 import type { AiFreshness } from './assetCard';
 import { confidenceDisplay, type ConfidenceDisplay } from './decisionView';
+import { exactAuthorityEpoch, liveAuthorityState } from './liveAuthority';
 
 // ── 入力(既存hookの形に緩く合わせる — 再計算しない) ─────────────────────────
 
@@ -73,8 +74,8 @@ export function assessAi(ai: AiDataLike | null | undefined, nowMs: number): AiMe
     return { primary: false, freshness: 'rule_only', ageMin: null, status: null,
       models: null, unavailableReasonJa: 'AI見解が未取得(接続中または取得失敗)', nextRunJa: null };
   }
-  const t = ai.asOf ? Date.parse(ai.asOf) : NaN;
-  const ageMin = Number.isFinite(t) ? Math.max(0, Math.round((nowMs - t) / 60000)) : null;
+  const t = exactAuthorityEpoch(ai.asOf);
+  const ageMin = t != null && t <= nowMs ? Math.round((nowMs - t) / 60000) : null;
   const statusOk = ai.status === 'live' || ai.status === 'partial';
   const freshOk = ai.freshness === 'fresh' || ai.freshness === 'persisted';
   const freshness: AiFreshness = ai.freshness === 'fresh' ? 'fresh'
@@ -90,6 +91,16 @@ export function assessAi(ai: AiDataLike | null | undefined, nowMs: number): AiMe
     return { primary: false, freshness, ageMin, status: st,
       models: ai.models ?? null, unavailableReasonJa: reason,
       nextRunJa: st === 'no_cached_result' ? NEXT_RUN_JA : null };
+  }
+  const timestampState = liveAuthorityState(ai.asOf, 'aiJudgment', nowMs);
+  if (timestampState !== 'fresh') {
+    const expired = timestampState === 'expired';
+    return { primary: false, freshness: expired ? 'stale' : 'unavailable', ageMin,
+      status: ai.status ?? null, models: ai.models ?? null,
+      unavailableReasonJa: expired
+        ? 'AIデータが古い(72時間の判断期限を超過)'
+        : 'AI基準時刻が不正または未来のため主判断に使わない',
+      nextRunJa: expired ? NEXT_RUN_JA : null };
   }
   if (!freshOk) {
     // staleは実行済み+スケジュール実在 — 次の定期実行での更新を案内できる。

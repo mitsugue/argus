@@ -5,6 +5,7 @@ import {
   normalizeUSWatchSnapshot,
   type USTruthSnapshot,
 } from '../domain/watchQuoteTruth';
+import { quoteDecisionExpiresAt } from '../domain/liveQuote';
 
 // connecting | live | partial | mock — same model as useJapanWatchlist.
 export type ConnPhase = 'connecting' | 'live' | 'delayed' | 'unknown' | 'partial' | 'mixed' | 'mock';
@@ -71,7 +72,7 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
   const existing = usWatchlistStores.get(symKey);
   if (existing) return existing;
 
-  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState) => {
+  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState, getState) => {
     const dynamic = symKey.length > 0;
     const fallback: USWatchlistSnapshot = dynamic
       ? { status: 'mock', asOf: null, provider: 'twelvedata', stocks: [] }
@@ -86,7 +87,47 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
       + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
     let cancelled = false;
     let acquisition: Promise<void> | null = null;
+    let cancelExpiry = () => {};
     const controllers = new Set<AbortController>();
+
+    function armExpiry(data: USTruthSnapshot) {
+      cancelExpiry();
+      const now = Date.now();
+      const deadlines = data.stocks.map((row) => row.quoteTruth
+        ? quoteDecisionExpiresAt(row.quoteTruth) : null)
+        .filter((value): value is number => value != null);
+      if (!deadlines.length) return;
+      const delay = Math.min(...deadlines) - now;
+      if (delay < 0) {
+        const aged = normalizeUSWatchSnapshot(data as unknown as USWatchlistSnapshot);
+        setState((state) => ({ ...state, data: aged, phase: aged.status }));
+        armExpiry(aged);
+        return;
+      }
+      const handle = window.setTimeout(() => {
+        const current = getState();
+        if (!current.data) return;
+        const aged = normalizeUSWatchSnapshot(
+          current.data as unknown as USWatchlistSnapshot);
+        setState({ ...current, data: aged, phase: aged.status });
+        armExpiry(aged);
+      }, Math.max(1, Math.min(delay + 1, 2_147_000_000)));
+      cancelExpiry = () => window.clearTimeout(handle);
+    }
+
+    function accept(data: USTruthSnapshot, attempt: number) {
+      setState({ data, error: null, loading: false, phase: data.status, attempt });
+      armExpiry(data);
+    }
+
+    function revalidateCurrent() {
+      const current = getState();
+      if (!current.data) return;
+      const aged = normalizeUSWatchSnapshot(
+        current.data as unknown as USWatchlistSnapshot);
+      setState({ ...current, data: aged, phase: aged.status, loading: false });
+      armExpiry(aged);
+    }
 
     async function fetchSnapshot(): Promise<USTruthSnapshot> {
       const ctrl = new AbortController();
@@ -119,7 +160,7 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
         try {
           const data = await fetchSnapshot();
           if (cancelled) return;
-          setState({ data, error: null, loading: false, phase: data.status, attempt });
+          accept(data, attempt);
           return;
         } catch (err: unknown) {
           if (cancelled) return;
@@ -143,6 +184,7 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
         const data = await fetchSnapshot();
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
+        armExpiry(data);
       } catch (err: unknown) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
@@ -159,13 +201,18 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
     // Returning to the tab after a while → refresh immediately, don't wait out
     // the remainder of the interval.
     const onVisible = () => {
-      if (!document.hidden) void acquire(refresh);
+      if (!document.hidden) {
+        revalidateCurrent();
+        void acquire(refresh);
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
 
+    if (getState().data) revalidateCurrent();
     void acquire(run);
     return () => {
       cancelled = true;
+      cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
       window.clearInterval(refreshTimer);

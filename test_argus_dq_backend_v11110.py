@@ -29,7 +29,7 @@ def test_price_history_cached_only(monkeypatch):
         scanner._US_HISTORY_CACHE.pop("TESTX", None)
 
 
-def test_us_supply_demand_signal_path(monkeypatch):
+def test_us_supply_demand_rejects_source_invalid_bridge_flow(monkeypatch):
     monkeypatch.setattr(scanner, "requests", _Boom())
     scanner._PUSHED_QUOTES.setdefault("US", {})["SDUS"] = {
         "row": {"symbol": "SDUS", "price": 100.0, "changePct": 3.0,
@@ -42,11 +42,16 @@ def test_us_supply_demand_signal_path(monkeypatch):
     try:
         sig = scanner._supply_demand_signal_for("SDUS", "US")
         assert sig["market"] == "US"
-        assert sig["directness"] == "direct_data"        # measured flow present
-        assert sig["condition"] in ("good", "slightly_good")
-        assert sig["supplyDemandRank"] in ("A", "B")
+        # Receipt freshness and an untimebound bridge flow are not market-time
+        # authority.  The row may remain diagnostic, but it cannot mint a
+        # direct-data A/B supply-demand classification.
+        assert sig["directness"] == "insufficient"
+        assert sig["condition"] == "unknown"
+        assert sig["supplyDemandRank"] == "Unknown"
+        assert sig["evidence"]["measuredFlowNetRatio"] is None
+        assert any("実測大口フロー" in m for m in sig["missingEvidence"])
         assert any("FINRA" in m for m in sig["missingEvidence"])
-        assert "簡易判定" in sig["sourceLimitNote"]
+        assert "未取得" in sig["sourceLimitNote"]
     finally:
         scanner._PUSHED_QUOTES["US"].pop("SDUS", None)
         scanner._US_HISTORY_CACHE.pop("SDUS", None)

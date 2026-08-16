@@ -177,12 +177,17 @@ def test_vix_short_history_no_crash():
 def test_rates_truth_axes_never_promote_mock_components_to_live_complete():
     exact = "2026-08-15T10:00:00Z"
     rows = {key: {"latestValue": 1.0, "status": "live",
-                  "sourceTimestamp": exact}
-            for key in ("us10y", "us2y", "usReal10y", "vix", "usdJpy")}
+                  "sourceTimestamp": exact,
+                  "freshness": scanner.argus_market_data_truth.FRESH,
+                  "completeness": scanner.argus_market_data_truth.COMPLETE}
+            for key in (
+                "us10y", "us2y", "usReal10y", "vix", "usdJpy", "hyOas")}
     full = scanner._rates_truth_axes(rows)
     assert full["status"] == "live" and full["completeness"] == "complete"
     rows["usReal10y"] = {"latestValue": 1.0, "status": "mock",
-                         "sourceTimestamp": "2026-08-15"}
+                         "sourceTimestamp": "2026-08-15",
+                         "freshness": scanner.argus_market_data_truth.UNAVAILABLE,
+                         "completeness": scanner.argus_market_data_truth.MISSING}
     partial = scanner._rates_truth_axes(rows)
     assert partial["status"] == "partial"
     assert partial["completeness"] == "partial"
@@ -301,6 +306,59 @@ def test_overlay_future_source_timestamp_is_never_live(monkeypatch):
     assert row["realtimeEvidence"] is False
 
 
+def test_overlay_p95_cannot_hide_one_stale_row_in_large_quote_set(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    monkeypatch.setattr(scanner.argus_market_clock, "market_session",
+                        lambda *_a, **_k: {"session": "REGULAR"})
+    symbols = [f"S{i:02d}" for i in range(21)]
+    pushed = {}
+    for index, symbol in enumerate(symbols):
+        pushed[symbol] = {
+            "row": {"symbol": symbol, "price": 100.0 + index,
+                    "changeAbs": 0.0, "changePct": 0.0, "volume": 1,
+                    "status": "live", "source": "moomoo-rt",
+                    "entitlement": "realtime",
+                    "exchangeTs": now - (3600 if index == 20 else 30)},
+            "ts": now - 5,
+        }
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", pushed)
+
+    out = scanner._overlay_pushed(
+        {"status": "mock", "stocks": []}, "US", symbols)
+    rows = {row["symbol"]: row for row in out["stocks"]}
+    assert out["quoteFreshness"]["sourceAgeP95Sec"] == 30.0
+    assert out["quoteFreshness"]["sourceTimestampCoverage"] == 1.0
+    assert out["quoteFreshness"]["delayClass"] == "UNKNOWN"
+    assert out["status"] == "partial"
+    assert sum(row["realtimeEvidence"] is True for row in rows.values()) == 0
+    assert all(row["status"] == "delayed" for row in rows.values())
+    assert rows["S20"]["status"] == "delayed"
+    assert rows["S20"]["ageSec"] == 3600
+    assert rows["S20"]["realtimeEvidence"] is False
+
+
+def test_overlay_61_to_599_second_unknown_band_is_never_live(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    monkeypatch.setattr(scanner.argus_market_clock, "market_session",
+                        lambda *_a, **_k: {"session": "REGULAR"})
+    for age in (61, 120, 599):
+        monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", {
+            "SPY": {"row": {
+                "symbol": "SPY", "price": 700.0, "changeAbs": 1.0,
+                "changePct": 0.1, "volume": 1, "status": "live",
+                "source": "moomoo-rt", "entitlement": "realtime",
+                "exchangeTs": now - age}, "ts": now - 5},
+        })
+        out = scanner._overlay_pushed(
+            {"status": "mock", "stocks": []}, "US", ["SPY"])
+        assert out["quoteFreshness"]["delayClass"] == "UNKNOWN"
+        assert out["status"] == "partial"
+        assert out["stocks"][0]["status"] == "delayed"
+        assert out["stocks"][0]["realtimeEvidence"] is False
+
+
 def test_formal_jp_quote_never_uses_yahoo(monkeypatch):
     monkeypatch.setattr(scanner, "_yahoo_jp_row",
                         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Yahoo formal quote")))
@@ -412,6 +470,49 @@ def test_moomoo_runtime_evidence_is_split_by_market(monkeypatch):
         "receivedTimestamp", "sourceAgeSec", "entitlementVerdict",
     ):
         assert field in row
+
+
+def test_moomoo_runtime_and_registry_cannot_hide_stale_outlier_with_p95(
+        monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda: False)
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: True)
+    monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {
+        "JP": {},
+        "US": {
+            f"S{index:02d}": {
+                "row": {"symbol": f"S{index:02d}",
+                        "exchangeTs": now - (3600 if index == 20 else 30),
+                        "entitlement": "realtime",
+                        "quoteRight": "realtime"},
+                "ts": now - 5,
+            }
+            for index in range(21)
+        },
+    })
+    monkeypatch.setattr(scanner, "_BRIDGE_HB", {"data": {}})
+    report = scanner._moomoo_capability_report()
+    us = report["markets"]["US"]
+    assert us["sourceAgeP95Sec"] == 30.0
+    assert us["sourceTimestampCoverage"] == 1.0
+    assert us["staleCount"] == 1
+    assert us["verdict"] != "realtime_proven"
+    assert report["overallEntitlement"] != "realtime_proven"
+    monkeypatch.setattr(scanner, "_moomoo_capability_report", lambda: report)
+    monkeypatch.setattr(scanner, "get_integrations_snapshot", lambda **_k: {
+        "providers": [
+            {"id": "moomoo", "runtimeStatus": "live"},
+            {"id": "jquants", "runtimeStatus": "missing"},
+            {"id": "twelvedata", "runtimeStatus": "missing"},
+            {"id": "fred", "runtimeStatus": "missing"},
+            {"id": "coingecko", "runtimeStatus": "missing"},
+        ],
+    })
+    registry = scanner._source_registry(allow_provider_fetch=False)
+    us_quote = next(row for row in registry["sources"]
+                    if row["capability"] == "米国株 価格")
+    assert us_quote["status"] != "confirmed_live"
 
 
 # ── JP symbol-search code detection (v10.1 fix) ──────────────────────
@@ -692,7 +793,9 @@ def test_closepin_snapshot_realtime_only(monkeypatch):
     fake = {"status": "live", "asOf": None, "stocks": [
         {"symbol": "8058", "name": "Mitsubishi Corporation", "price": 4600.0,
          "changePct": 1.2, "volume": 1, "date": "2026-06-11", "status": "live",
-         "source": "moomoo-rt", "flow": {"bigNetRatio": 0.3}},
+         "source": "moomoo-rt", "entitlement": "realtime",
+         "sourceTimestamp": scanner.time.time() - 30,
+         "realtimeEvidence": True, "flow": {"bigNetRatio": 0.3}},
         {"symbol": "9432", "name": "NTT", "price": 150.0, "changePct": 0.1,
          "volume": 1, "date": "2026-06-10", "status": "live", "source": "jquants"},
     ]}
@@ -877,8 +980,12 @@ def test_event_backbone_detects_limit_up(monkeypatch):
     monkeypatch.delenv("NTFY_TOPIC", raising=False)        # no real push in tests
     monkeypatch.setattr(scanner, "_EVENT_BACKBONE_ENABLED", True)
     # prev close 1000 (limit ±300) → price 1300 = S高. changeAbs = 300.
+    now = __import__("time").time()
     scanner._process_events_from_push("JP", [{"symbol": "9999", "price": 1300.0,
-                                              "changeAbs": 300.0, "changePct": 30.0}])
+                                              "changeAbs": 300.0, "changePct": 30.0,
+                                              "exchangeTs": now,
+                                              "entitlement": "realtime",
+                                              "realtimeEvidence": True}])
     active = scanner._events_active_list()
     types = {e["eventType"] for e in active}
     assert "LIMIT_UP" in types
@@ -889,7 +996,9 @@ def test_event_backbone_dedup_no_duplicate(monkeypatch):
     _clear_events()
     monkeypatch.setattr(scanner, "_jp_market_open", lambda *a, **k: True)
     monkeypatch.delenv("NTFY_TOPIC", raising=False)
-    row = [{"symbol": "9999", "price": 1300.0, "changeAbs": 300.0, "changePct": 30.0}]
+    row = [{"symbol": "9999", "price": 1300.0, "changeAbs": 300.0,
+            "changePct": 30.0, "exchangeTs": __import__("time").time(),
+            "entitlement": "realtime", "realtimeEvidence": True}]
     scanner._process_events_from_push("JP", row)
     scanner._process_events_from_push("JP", row)           # same anomaly again
     limit_ups = [e for e in scanner._events_active_list() if e["eventType"] == "LIMIT_UP"]
@@ -1047,6 +1156,18 @@ def test_dossier_edinet_extraordinary_same_day_is_catalyst(monkeypatch):
     assert cause.get("official_catalyst", 0) > 0                  # extraordinary + same day → catalyst
     facts = " ".join(f.get("claimJa") or "" for f in d["confirmedFacts"])
     assert "臨時報告書" in facts
+
+
+def test_dossier_edinet_later_same_day_is_background_not_catalyst(monkeypatch):
+    d = _edinet_dossier(monkeypatch, {
+        "docID": "D3", "filerName": "トヨタ自動車",
+        "docTypeCode": "180", "docDescription": "臨時報告書",
+        "submitDateTime": "2026-06-22 15:00",
+    })
+    cause = {c["label"]: c["probability"] for c in d["probableCause"]}
+    assert cause.get("official_catalyst", 0) == 0
+    facts = " ".join(f.get("claimJa") or "" for f in d["confirmedFacts"])
+    assert "after_event" in facts and "cause扱いせず" in facts
 
 
 # ── Weekly margin signal (信用残, entry-scout v2.2, v10.18) ──────────

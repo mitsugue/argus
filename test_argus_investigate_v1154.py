@@ -74,7 +74,12 @@ def _fresh_row(now_iso):
 def test_investigate_now_sweeps_not_queues(monkeypatch):
     _reset(monkeypatch)
     _no_llm(monkeypatch)
-    now = scanner._ai_now_iso()
+    # Freeze inside a real JP trading session.  A Sunday/holiday must not mint
+    # a current mover-cause record even when the news sweep itself succeeds.
+    now = "2026-08-14T01:00:00Z"
+    fixed_epoch = 1_786_669_200.0
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: now)
+    monkeypatch.setattr(scanner.time, "time", lambda: fixed_epoch)
     _stub_sources(monkeypatch, google_rows=[_fresh_row(now)],
                   probe=("ok", {"title": "フジクラ、増産投資を発表", "publishedAt": now,
                                 "snippet": "増産投資を発表した。", "canonicalUrl": "https://nikkei.com/x",

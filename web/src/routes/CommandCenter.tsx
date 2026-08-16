@@ -58,7 +58,7 @@ function instrumentLabel(payload: ChartIntelligencePayload): string {
 function projectionInput(payload: ChartIntelligencePayload | null): TodayProjectionInput | null {
   if (!payload) return null;
   return { symbol: payload.symbol, label: instrumentLabel(payload), asOf: payload.periodEnd,
-    status: payload.status, timeframe: payload.timeframe,
+    status: payload.status, authorityState: 'current', timeframe: payload.timeframe,
     quoteState: payload.quoteState ?? 'CLOSE',
     sourceHistoryCount: payload.indicators.bars.length,
     instrumentId: payload.instrumentMetadata?.instrumentId,
@@ -160,8 +160,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     setChartHorizon(value);
     try { localStorage.setItem('argus.today.chartHorizon.v1', String(value)); } catch { /* device-local */ }
   };
+  const decisionCalendar = !marketLedger.error && !marketLedger.loading
+    && !marketLedger.sessionExpired
+    ? marketLedger.ledger?.phase3?.calendar ?? null : null;
   const effectiveMarket = marketMode === 'AUTO'
-    ? selectAutoMarket(marketLedger.ledger?.phase3?.calendar)
+    ? selectAutoMarket(decisionCalendar)
     : marketMode;
   const selectedSymbol = selectedInstrument[effectiveMarket];
   const selectedDefinition = marketInstrument(selectedSymbol)!;
@@ -354,11 +357,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       return value && value !== 'UNKNOWN' ? '△' : '—';
     };
     const selectedJpChart = effectiveMarket === 'JP'
-      ? selectedChart.data
-      : selectedInstrument.JP === '1306' ? topixChart.data : jpChart.data;
+      ? selectedChart.decisionData
+      : selectedInstrument.JP === '1306' ? topixChart.decisionData : jpChart.decisionData;
     const selectedUsChart = effectiveMarket === 'US'
-      ? selectedChart.data
-      : selectedInstrument.US === 'QQQ' ? nasdaqChart.data : sp500Chart.data;
+      ? selectedChart.decisionData
+      : selectedInstrument.US === 'QQQ' ? nasdaqChart.decisionData : sp500Chart.decisionData;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
       { key: 'TREND' as const, state: regime.data?.regime?.label === 'RISK_ON' ? '↑' as const : regime.data?.regime?.label === 'RISK_OFF' ? '↓' as const : '△' as const, source: 'market-regime' },
@@ -396,13 +399,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       && !['RELEASED', 'RESOLVED'].includes(event.lifecycle));
     const indexMoves: TodayMoveInput[] = [];
     for (const move of [
-      marketMove(jpChart.data, 'nikkei'), marketMove(topixChart.data, 'topix'),
-      marketMove(sp500Chart.data, 'sp500'), marketMove(nasdaqChart.data, 'nasdaq'),
+      marketMove(jpChart.decisionData, 'nikkei'), marketMove(topixChart.decisionData, 'topix'),
+      marketMove(sp500Chart.decisionData, 'sp500'), marketMove(nasdaqChart.decisionData, 'nasdaq'),
     ]) if (move) indexMoves.push(move);
     const macroMoves: TodayMoveInput[] = [];
     const addRate = (id: string, label: string, point: NonNullable<typeof rates.data>['us10y'] | undefined, suffix: string, direction?: string) => {
-      if (point?.status === 'live' && Number.isFinite(point.latestValue)) macroMoves.push({ id, label,
-        value: point.latestValue, previous: point.previousValue, suffix, directionLabel: direction,
+      const value = point?.latestValue;
+      if ((point?.status === 'live' || point?.status === 'delayed')
+          && typeof value === 'number' && Number.isFinite(value)) macroMoves.push({ id, label,
+        value, previous: point.previousValue, suffix, directionLabel: direction,
         asOf: point.latestDate, status: 'close' });
     };
     addRate('usdjpy', 'USDJPY', rates.data?.usdJpy, '', (rates.data?.usdJpy?.change ?? 0) > 0 ? '円安' : '円高');
@@ -440,7 +445,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const ratio25 = metric(['breadth.prime.ratio25', 'breadth.ratio25']);
     if (ratio6 != null || ratio25 != null) jpPositioning.push({ key: 'breadth-ratios', label: '騰落比率',
       value: [ratio6 == null ? null : `6日${ratio6.toFixed(0)}`, ratio25 == null ? null : `25日${ratio25.toFixed(0)}`].filter(Boolean).join(' / ') });
-    const jpRs = jpChart.data?.relativeStrength?.nikkei_sp500?.change20Pct;
+    const jpRs = jpChart.decisionData?.relativeStrength?.nikkei_sp500?.change20Pct;
     if (jpRs != null) jpPositioning.push({ key: 'relative-numeric', label: '日米強弱',
       value: jpRs >= 0 ? 'JP優位' : 'US優位', detail: `${signed(jpRs, 1)}pt`,
       tone: jpRs >= 0 ? 'positive' : 'negative' });
@@ -450,7 +455,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       const bars = payload?.indicators.bars.filter((bar) => bar.close > 0) ?? [];
       return bars.length >= 21 ? (bars.at(-1)!.close / bars.at(-21)!.close - 1) * 100 : null;
     };
-    const qqq20 = change20(nasdaqChart.data), spy20 = change20(sp500Chart.data);
+    const qqq20 = change20(nasdaqChart.decisionData), spy20 = change20(sp500Chart.decisionData);
     if (qqq20 != null && spy20 != null) usPositioning.push({ key: 'us-relative-numeric', label: 'NASDAQ対SPY',
       value: `${signed(qqq20 - spy20, 1)}pt`, detail: qqq20 >= spy20 ? 'NASDAQ優位' : 'SPY優位',
       tone: qqq20 >= spy20 ? 'positive' : 'negative' });
@@ -489,7 +494,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       }));
     return buildArgusTodayView({
       now: new Date(), selectionMode: marketMode,
-      calendar: marketLedger.ledger?.phase3?.calendar,
+      calendar: decisionCalendar,
       baseSignal: jpSummary.signalCode,
       jpSignal: jpSummary.signalCode,
       usSignal: usSummary.signalCode,
@@ -524,9 +529,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   }, [judgment, overlay, isPartial, visLimited, cappedConf, marketLedger.ledger,
     regime.data, impEvents, rates.data, events247,
     assets, al.data, apItems, marketMode,
-    jpChart.data, topixChart.data, sp500Chart.data, nasdaqChart.data, marketNews.data,
+    jpChart.decisionData, topixChart.decisionData,
+    sp500Chart.decisionData, nasdaqChart.decisionData, marketNews.data,
     marketNews.lastChecked, marketNews.failureClass,
-    selectedInstrument, effectiveMarket, selectedChart.data]);
+    selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar]);
 
   const todayInstruments = useMemo(() => {
     const charts = {

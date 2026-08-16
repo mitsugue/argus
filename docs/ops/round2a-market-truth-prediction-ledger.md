@@ -139,19 +139,39 @@ Only `forward_live` evaluation records are accepted for calibration aggregates.
 ## Append, indexes, and workflow
 
 The canonical runner performs no network request. It consumes the bounded
-`canonicalPredictionLedger` snapshot plus the prior manifest/index/aggregate,
-verifies every sealed identity and selected Market Truth binding, and writes:
+`canonicalPredictionLedger` snapshot plus the immutable manifest-generation
+journal, segment inventory, index, and aggregate. Every load/open/append
+bounded-discovers the retained immutable segments, reconstructs the single
+exact genesis-to-head chain, requires one matching immutable manifest
+generation per committed segment, and replays retained authority before
+accepting either derived projection. It writes:
 
 - immutable, content-addressed, hash-chained run segments;
-- a bounded pending index for direct exact-target resolution;
-- forward-live-only sufficient-statistic aggregates;
-- a verified manifest commit pointer.
+- an immutable, versioned, manifest-bound complete segment inventory and root;
+- immutable versioned bounded pending-index and forward-live calibration
+  projections, whose segment-ID filenames also witness a prepared generation;
+- a contiguous immutable manifest-generation journal installed after its
+  staged segment as the sole commit point;
+- `commit-head.json` and `manifest.json` only as repairable projections.
 
 Same ID/same content is idempotent; same ID/different content is fatal. Pending
-index overflow is fatal rather than eviction. The runner does not glob or scan
-full history on each run. Publication uses staged, verified generation files and
-an atomic manifest pointer; retries recover safely after injected failures.
-Diagnostics do not become authority.
+index overflow is fatal rather than eviction. The index and calibration
+aggregate are verified derived projections: neither can survive a missing or
+invalid canonical source segment. Complete verification bounded-enumerates at
+most 8,192 files in each immutable segment, index, aggregate, inventory, and
+manifest generation family; it does not discover unbounded provider/request
+history. Their exact serialized bytes share a 1 GiB retained-authority cap that
+is checked from file metadata before segment parsing. Restoring older mutable
+projections cannot hide a surviving newer immutable generation witness.
+Publication installs the derived versions and inventory, stages the immutable
+segment, and installs its immutable manifest generation last as the commit
+point. A direct load rejects every uncommitted prepared tail. Only a retry that
+deterministically rebuilds the exact prepared segment ID (therefore the same
+run ID, run time, input digest, producer/runner identities, predecessor, and
+content) may finish it; another input or append may not adopt it. Missing,
+tampered, reordered, disconnected, or truncated segments, projection
+witnesses, inventories, and manifest generations fail closed. Diagnostics and
+mutable compatibility projections do not become authority.
 
 The workflow stages the runner and all canonical modules from the exact
 triggering SHA before switching to the ledger branch, verifies checksums, and
@@ -208,8 +228,12 @@ No credential is requested or stored by Round 2A, and env/config is unchanged.
 
 The resource benchmark exercises bounded observations, snapshots, predictions,
 outcomes, canonical hashes, and deterministic contract construction. Separate
-runner tests exercise immutable segments, bounded indexes, manifest recovery,
-and deterministic replay. The mandatory CI job runs both in an exact 4
+runner tests exercise retained-chain deletion/tamper/reorder detection while
+any local immutable generation witness remains, calibration-source replay,
+immutable segments, bounded projections, exact prepared-tail recovery,
+manifest-journal rollback/deletion detection, and deterministic replay. The
+mandatory CI job runs
+both in an exact 4
 GiB/no-swap cgroup (`memory.max=4294967296`, `memory.swap.max=0`), requires zero
 OOM/oom-kill deltas, pins the triggering head SHA, enforces the 256 KiB snapshot
 cap, and uploads a scalar proof. Browser polling count is unchanged.

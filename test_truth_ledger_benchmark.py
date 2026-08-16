@@ -12,8 +12,8 @@ from scripts import truth_ledger_benchmark as benchmark
 
 ROOT = pathlib.Path(__file__).resolve().parent
 SCRIPT = ROOT / "scripts" / "truth_ledger_benchmark.py"
-SMOKE_DIGEST = "4fd4d93967203d7bca52c4de543f9d8f84b9b2c2f80f2aaecff57b9f432117ec"
-BOUNDED_DIGEST = "666772a616074f2f26bad8c8c3f881cbaee4f629e1f5bb633936801b67c5d347"
+SMOKE_DIGEST = "ed41de1ba5cf2455293489e8bd14238232a572c03b36d7af1ddb54ba295ea29a"
+BOUNDED_DIGEST = "13556938f3259f49e2c8127c4a1b969f5b66be2aa7d3a3012c2d38ad6c348297"
 
 
 @pytest.fixture(scope="module")

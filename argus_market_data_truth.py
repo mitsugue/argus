@@ -28,6 +28,7 @@ OBSERVATION_SCHEMA_VERSION = "argus-market-observation-v1"
 SELECTION_SCHEMA_VERSION = "argus-market-selection-v1"
 SNAPSHOT_SCHEMA_VERSION = "argus-decision-market-snapshot-v1"
 ADAPTER_OUTCOME_SCHEMA_VERSION = "argus-market-adapter-outcome-v1"
+PROVENANCE_SCHEMA_VERSION = "argus-market-provenance-v1"
 
 AUTHORITY_POLICY_ID = "repo-market-provider-priority-v1"
 QUALITY_POLICY_ID = "market-truth-quality-v1"
@@ -66,9 +67,85 @@ MAX_DERIVED_EVIDENCE = 32
 MAX_EVIDENCE_INPUTS = 32
 MAX_SNAPSHOT_BYTES = 256 * 1024
 
+# Canonical records are closed schemas.  The two deliberately extensible
+# members are ``values`` (closed per fact type below) and ``provenance`` (a
+# bounded scalar/list-only extension map).  A digest authenticates bytes; it
+# never turns an unknown member into a trusted contract field.
+_OBSERVATION_FIELDS = frozenset({
+    "schemaVersion", "logicalKey", "instrument", "factType", "values",
+    "observedAt", "receivedAt", "knownAt", "periodStart", "periodEnd",
+    "freshness", "freshUntil", "completeness", "missingFields", "session",
+    "source", "provenance", "revision", "authorityPolicyId",
+    "qualityPolicyId", "pitPolicyId", "observationId",
+})
+_INSTRUMENT_FIELDS = frozenset({
+    "instrumentId", "symbol", "market", "assetType", "currency",
+})
+_SOURCE_FIELDS = frozenset({"provider", "providerKey", "adapter", "sourceRef"})
+_SESSION_FIELDS = frozenset({
+    "market", "session", "marketDate", "isTradingDay", "calendarVersion",
+    "officialCalendar", "providerStatus", "providerConflict", "providerRole",
+})
+_FACT_VALUE_FIELDS = {
+    "QUOTE": frozenset({
+        "price", "previousClose", "changeAbs", "changePct", "volume",
+    }),
+    "OHLCV_BAR": frozenset({
+        "open", "high", "low", "close", "volume", "adjustedClose",
+    }),
+    "RATE": frozenset({"rate", "previousRate", "change", "changeBp"}),
+    "INDEX_PROXY": frozenset({
+        "price", "previousClose", "changeAbs", "changePct", "volume",
+    }),
+    "NAV": frozenset({"nav", "previousNav", "changeAbs", "changePct"}),
+}
+# A COMPLETE fact must contain its semantic core, not merely some allowed
+# member.  Optional comparison/change fields do not define completeness.
+_FACT_REQUIRED_VALUE_FIELDS = {
+    "QUOTE": frozenset({"price"}),
+    "OHLCV_BAR": frozenset({"open", "high", "low", "close", "volume"}),
+    "RATE": frozenset({"rate"}),
+    "INDEX_PROXY": frozenset({"price"}),
+    "NAV": frozenset({"nav"}),
+}
+_SNAPSHOT_FIELDS = frozenset({
+    "schemaVersion", "authorityPolicyId", "qualityPolicyId", "pitPolicyId",
+    "decisionAt", "generatedAt", "buildIdentity", "datasetDigest",
+    "selections", "derivedEvidence", "qualitySummary", "bounds", "digest",
+    "snapshotId",
+})
+_SNAPSHOT_REQUEST_FIELDS = frozenset({
+    "instrumentId", "market", "factType", "currency", "required",
+})
+_QUALITY_SUMMARY_FIELDS = frozenset({
+    "completeness", "requiredCount", "selectedRequiredCount",
+    "missingRequiredCount", "freshnessCounts", "disagreementCount",
+})
+_SNAPSHOT_BOUNDS_FIELDS = frozenset({
+    "selectionCount", "derivedEvidenceCount", "candidateObservationCount",
+    "maxSelections", "maxAlternatesPerSelection",
+})
+_DERIVED_EVIDENCE_FIELDS = frozenset({
+    "evidenceId", "kind", "knownAt", "methodVersion",
+    "inputObservationIds", "summary",
+})
+_ADAPTER_OUTCOME_FIELDS = frozenset({"observations", "errors"})
+_ADAPTER_ERROR_FIELDS = frozenset({"code", "instrumentId", "retryable"})
+_PROVENANCE_FIELDS = frozenset({"schemaVersion", "attributes"})
+_PIT_PROOF_FIELDS = frozenset({
+    "policyId", "status", "cutoff", "inputCount", "includedCount",
+    "visibleRevisionCount", "supersededRevisionCount",
+    "excludedFutureCount", "excludedUnknownKnowledgeTimeCount",
+    "excludedMalformedCount", "knowledgeTimeFields", "maxKnownAt",
+    "maxObservedAt", "futureRowsAdmitted", "revisionSelection",
+    "admittedDatasetDigest", "proofDigest",
+})
+_PIT_KNOWLEDGE_TIME_FIELDS = frozenset({"knownAt", "availableFrom"})
+
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:\-/]{0,127}$")
 _SAFE_FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _BUILD_SHA = re.compile(r"^[0-9a-f]{40}$")
+_DATASET_SHA = re.compile(r"^[0-9a-f]{64}$")
 
 
 # This is the current codebase's actual authority order.  It intentionally does
@@ -124,7 +201,12 @@ def _sha(value: Any) -> str:
 
 
 def _safe_text(value: Any, field: str, *, maximum: int = 128) -> str:
-    text = str(value or "").strip()
+    # Canonical contract members are typed, not coercion surfaces.  In
+    # particular, ``123`` must never become the valid identifier ``"123"`` and
+    # a provider object must never gain meaning through ``__str__``.
+    if not isinstance(value, str):
+        raise ValueError(f"invalid_{field}")
+    text = value.strip()
     if not text or len(text) > maximum:
         raise ValueError(f"invalid_{field}")
     return text
@@ -137,8 +219,52 @@ def _safe_id(value: Any, field: str) -> str:
     return text
 
 
+def _upper_text(value: Any, field: str) -> str:
+    """Canonical uppercase text without accepting non-string coercions."""
+    return _safe_text(value, field).upper()
+
+
+def _currency(value: Any, *, required: bool) -> Optional[str]:
+    """Return a canonical currency or fail on every non-string non-null type."""
+    if value is None:
+        if required:
+            raise ValueError("currency_required")
+        return None
+    normalized = _upper_text(value, "currency")
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,15}", normalized):
+        raise ValueError("invalid_currency")
+    return normalized
+
+
+def _build_identity(value: Any) -> str:
+    """Accept only the deployed commit's canonical lowercase SHA string."""
+    if type(value) is not str or not _BUILD_SHA.fullmatch(value):
+        raise ValueError("invalid_build_identity")
+    return value
+
+
+def _selection_max_alternates(value: Any) -> int:
+    """Validate the selector bound without granting authority by coercion."""
+    if type(value) is not int or not 0 <= value <= MAX_ALTERNATES:
+        raise ValueError("invalid_max_alternates")
+    return value
+
+
+def _selection_relative_tolerance(value: Any) -> Any:
+    """Validate the finite numeric disagreement threshold without coercion."""
+    if type(value) not in (int, float) or \
+            (type(value) is float and not math.isfinite(value)) or \
+            not 0 <= value <= 1:
+        raise ValueError("invalid_relative_tolerance")
+    return value
+
+
 def _parse_time(value: Any, field: str, *, optional: bool = False) -> Optional[datetime]:
-    text = str(value or "").strip()
+    if value is None and optional:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"invalid_{field}")
+    text = value.strip()
     if not text and optional:
         return None
     if not text or len(text) == 10:
@@ -174,15 +300,39 @@ def _json_scalar(value: Any, field: str) -> Any:
     raise ValueError(f"invalid_{field}")
 
 
-def _values(value: Mapping[str, Any]) -> Dict[str, Any]:
+def _has_exact_fields(value: Any, expected: frozenset) -> bool:
+    return isinstance(value, Mapping) and set(value.keys()) == set(expected)
+
+
+def _has_closed_fields(value: Any, allowed: frozenset, *, required: frozenset) -> bool:
+    return isinstance(value, Mapping) and required <= set(value.keys()) <= allowed
+
+
+def _values(value: Mapping[str, Any], *, fact_type: Optional[str] = None) -> Dict[str, Any]:
     if not isinstance(value, Mapping) or len(value) > MAX_VALUE_FIELDS:
         raise ValueError("invalid_values")
+    if fact_type is not None and not isinstance(fact_type, str):
+        raise ValueError("invalid_fact_type")
+    allowed = _FACT_VALUE_FIELDS.get(fact_type.upper()) \
+        if fact_type is not None else None
     out: Dict[str, Any] = {}
     for raw_key, raw_value in value.items():
-        key = str(raw_key)
+        if not isinstance(raw_key, str):
+            raise ValueError("invalid_value_field")
+        key = raw_key
         if not _SAFE_FIELD.fullmatch(key):
             raise ValueError("invalid_value_field")
-        out[key] = _json_scalar(raw_value, f"value_{key}")
+        if allowed is not None and key not in allowed:
+            raise ValueError("unknown_value_field")
+        if raw_value is None:
+            out[key] = None
+        elif isinstance(raw_value, bool) or not isinstance(
+                raw_value, (int, float)):
+            raise ValueError(f"invalid_value_{key}")
+        elif not math.isfinite(float(raw_value)):
+            raise ValueError(f"non_finite_value_{key}")
+        else:
+            out[key] = raw_value
     _validate_market_values(out)
     return out
 
@@ -204,6 +354,35 @@ def _validate_market_values(values: Mapping[str, Any]) -> None:
         raise ValueError("inconsistent_ohlc")
 
 
+def _validate_completeness_shape(
+    fact_type: str, values: Mapping[str, Any], missing_fields: Sequence[str],
+    completeness: str,
+) -> None:
+    """Fail closed on semantically false COMPLETE/PARTIAL/MISSING shapes."""
+    required = _FACT_REQUIRED_VALUE_FIELDS[fact_type]
+    missing = set(missing_fields)
+    nonnull = {key for key, value in values.items() if value is not None}
+    null_fields = {key for key, value in values.items() if value is None}
+    if completeness == COMPLETE:
+        if missing or null_fields or not required <= nonnull:
+            raise ValueError("complete_observation_missing_required_values")
+        return
+    if completeness == PARTIAL:
+        if not missing or not nonnull:
+            raise ValueError("partial_observation_requires_values_and_missing_fields")
+        if null_fields - missing or any(
+                field in nonnull for field in missing):
+            raise ValueError("partial_observation_missing_fields_mismatch")
+        if not (required - nonnull) <= missing:
+            raise ValueError("partial_observation_undeclared_required_missing")
+        return
+    if completeness == MISSING:
+        if values or not required <= missing:
+            raise ValueError("missing_observation_requires_declared_core_absence")
+        return
+    raise ValueError("invalid_completeness")
+
+
 def _bounded_provenance(value: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     if value is None:
         return {}
@@ -211,10 +390,12 @@ def _bounded_provenance(value: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
         raise ValueError("invalid_provenance")
     out: Dict[str, Any] = {}
     for raw_key, raw_value in value.items():
-        key = str(raw_key)
+        if not isinstance(raw_key, str):
+            raise ValueError("invalid_provenance_field")
+        key = raw_key
         if not _SAFE_FIELD.fullmatch(key):
             raise ValueError("invalid_provenance_field")
-        if isinstance(raw_value, (list, tuple)):
+        if isinstance(raw_value, list):
             if len(raw_value) > 16:
                 raise ValueError("provenance_list_too_large")
             out[key] = [_json_scalar(item, f"provenance_{key}") for item in raw_value]
@@ -223,6 +404,21 @@ def _bounded_provenance(value: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     if len(_canonical(out).encode("utf-8")) > MAX_PROVENANCE_BYTES:
         raise ValueError("provenance_too_large")
     return out
+
+
+def _typed_provenance(value: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The sole extensible observation member, explicitly typed and bounded."""
+    if isinstance(value, Mapping) and value.get("schemaVersion") == \
+            PROVENANCE_SCHEMA_VERSION:
+        if not _has_exact_fields(value, _PROVENANCE_FIELDS):
+            raise ValueError("provenance_schema_not_closed")
+        attributes = _bounded_provenance(value.get("attributes"))
+    else:
+        attributes = _bounded_provenance(value)
+    return {
+        "schemaVersion": PROVENANCE_SCHEMA_VERSION,
+        "attributes": attributes,
+    }
 
 
 def provider_key(provider: Any) -> str:
@@ -235,7 +431,8 @@ def provider_key(provider: Any) -> str:
 
 
 def repository_provider_priority(market: str, fact_type: str) -> Tuple[str, ...]:
-    key = (str(market or "").upper(), str(fact_type or "").upper())
+    key = (_upper_text(market, "market"),
+           _upper_text(fact_type, "fact_type"))
     if key not in REPOSITORY_PROVIDER_PRIORITY:
         raise ValueError("unsupported_authority_scope")
     return REPOSITORY_PROVIDER_PRIORITY[key]
@@ -254,7 +451,7 @@ def repository_authority_policy() -> Dict[str, Any]:
 
 
 def normalize_freshness(value: Any, *, completeness: str) -> str:
-    raw = str(value or "").strip()
+    raw = _safe_text(value, "freshness")
     normalized = raw.upper() if raw.upper() in FRESHNESS_VALUES else \
         _FRESHNESS_ALIASES.get(raw.lower())
     if normalized not in FRESHNESS_VALUES:
@@ -277,9 +474,12 @@ def _clock_market(market: str) -> str:
 
 def canonical_session(market: str, at: Any, *, provider_status: Optional[str] = None
                       ) -> Dict[str, Any]:
-    normalized_market = str(market or "").upper()
+    normalized_market = _upper_text(market, "market")
     if normalized_market not in MARKETS:
         raise ValueError("invalid_market")
+    if provider_status is not None:
+        provider_status = _safe_text(
+            provider_status, "provider_status", maximum=80)
     instant = _parse_time(at, "session_at")
     assert instant is not None
     result = argus_market_clock.market_session(
@@ -340,37 +540,33 @@ def build_observation(
     have no ``observed_at`` or values and remain explicitly unavailable.
     """
     instrument_id = _safe_id(instrument_id, "instrument_id")
-    symbol = _safe_id(symbol.upper(), "symbol")
-    market = str(market or "").upper()
-    asset_type = str(asset_type or "").upper()
-    fact_type = str(fact_type or "").upper()
+    symbol = _safe_id(_upper_text(symbol, "symbol"), "symbol")
+    market = _upper_text(market, "market")
+    asset_type = _upper_text(asset_type, "asset_type")
+    fact_type = _upper_text(fact_type, "fact_type")
     if market not in MARKETS:
         raise ValueError("invalid_market")
     if asset_type not in ASSET_TYPES:
         raise ValueError("invalid_asset_type")
     if fact_type not in FACT_TYPES:
         raise ValueError("invalid_fact_type")
-    completeness = str(completeness or "").upper()
+    completeness = _upper_text(completeness, "completeness")
     if completeness not in COMPLETENESS_VALUES:
         raise ValueError("invalid_completeness")
-    normalized_values = _values(values)
+    normalized_values = _values(values, fact_type=fact_type)
     missing = []
     for raw in missing_fields:
-        field = str(raw)
-        if not _SAFE_FIELD.fullmatch(field) or field in missing:
+        if not isinstance(raw, str):
+            raise ValueError("invalid_missing_field")
+        field = raw
+        if not _SAFE_FIELD.fullmatch(field) or field in missing or \
+                field not in _FACT_VALUE_FIELDS[fact_type]:
             raise ValueError("invalid_missing_field")
         missing.append(field)
     if len(missing) > MAX_MISSING_FIELDS:
         raise ValueError("too_many_missing_fields")
-    if completeness == COMPLETE and (missing or any(v is None for v in normalized_values.values())):
-        raise ValueError("complete_observation_has_missing_values")
-    if completeness == PARTIAL and not missing and all(
-            value is not None for value in normalized_values.values()):
-        raise ValueError("partial_observation_requires_missing_fields")
-    if completeness == MISSING and any(value is not None for value in normalized_values.values()):
-        raise ValueError("missing_observation_has_values")
-    if completeness != MISSING and not normalized_values:
-        raise ValueError("observation_values_required")
+    _validate_completeness_shape(
+        fact_type, normalized_values, missing, completeness)
 
     received = _iso(received_at, "received_at")
     known = _iso(known_at, "known_at")
@@ -410,14 +606,9 @@ def build_observation(
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
         raise ValueError("invalid_revision")
 
-    currency_value = None
-    if currency is not None:
-        currency_value = str(currency).upper().strip()
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,15}", currency_value):
-            raise ValueError("invalid_currency")
-    if fact_type in {"QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV"} \
-            and currency_value is None:
-        raise ValueError("currency_required")
+    currency_value = _currency(
+        currency,
+        required=fact_type in {"QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV"})
 
     provider_display = _safe_text(provider, "provider", maximum=80)
     provider_normalized = provider_key(provider_display)
@@ -455,7 +646,7 @@ def build_observation(
             "adapter": adapter_id,
             "sourceRef": source_reference,
         },
-        "provenance": _bounded_provenance(provenance),
+        "provenance": _typed_provenance(provenance),
         "revision": revision,
         "authorityPolicyId": AUTHORITY_POLICY_ID,
         "qualityPolicyId": QUALITY_POLICY_ID,
@@ -471,6 +662,8 @@ def validate_observation(value: Any) -> Tuple[bool, str]:
     if not isinstance(value, dict):
         return False, "malformed_observation"
     try:
+        if not _has_exact_fields(value, _OBSERVATION_FIELDS):
+            return False, "observation_schema_not_closed"
         if value.get("schemaVersion") != OBSERVATION_SCHEMA_VERSION:
             return False, "wrong_schema"
         material = copy.deepcopy(value)
@@ -482,57 +675,82 @@ def validate_observation(value: Any) -> Tuple[bool, str]:
             return False, "observation_too_large"
         instrument = value.get("instrument")
         source = value.get("source")
-        if not isinstance(instrument, dict) or not isinstance(source, dict):
+        if not _has_exact_fields(instrument, _INSTRUMENT_FIELDS) or not \
+                _has_exact_fields(source, _SOURCE_FIELDS):
             return False, "invalid_observation_shape"
-        instrument_id = _safe_id(instrument.get("instrumentId"), "instrument_id")
-        _safe_id(instrument.get("symbol"), "symbol")
-        market = str(instrument.get("market") or "")
-        asset_type = str(instrument.get("assetType") or "")
-        fact_type = str(value.get("factType") or "")
+        instrument_id = _safe_id(
+            instrument.get("instrumentId"), "instrument_id")
+        symbol = _safe_id(instrument.get("symbol"), "symbol")
+        market = _safe_text(instrument.get("market"), "market")
+        asset_type = _safe_text(
+            instrument.get("assetType"), "asset_type")
+        fact_type = _safe_text(value.get("factType"), "fact_type")
+        if instrument_id != instrument.get("instrumentId") or \
+                symbol != instrument.get("symbol") or symbol != symbol.upper() or \
+                market != instrument.get("market") or \
+                asset_type != instrument.get("assetType") or \
+                fact_type != value.get("factType"):
+            return False, "invalid_instrument_types"
         if market not in MARKETS or asset_type not in ASSET_TYPES or fact_type not in FACT_TYPES:
             return False, "invalid_observation_scope"
         currency = instrument.get("currency")
-        if fact_type in {"QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV"} \
-                and not re.fullmatch(r"[A-Z][A-Z0-9_]{1,15}", str(currency or "")):
+        required_currency = fact_type in {
+            "QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV"}
+        if _currency(currency, required=required_currency) != currency:
             return False, "invalid_currency"
-        completeness = str(value.get("completeness") or "")
-        freshness = str(value.get("freshness") or "")
+        completeness = _safe_text(
+            value.get("completeness"), "completeness")
+        freshness = _safe_text(value.get("freshness"), "freshness")
+        if completeness != value.get("completeness") or \
+                freshness != value.get("freshness"):
+            return False, "invalid_quality_types"
         if completeness not in COMPLETENESS_VALUES or freshness not in FRESHNESS_VALUES:
             return False, "invalid_quality"
-        normalized_values = _values(value.get("values") or {})
-        missing = value.get("missingFields") or []
+        normalized_values = _values(value.get("values"), fact_type=fact_type)
+        missing = value.get("missingFields")
         if not isinstance(missing, list) or len(missing) > MAX_MISSING_FIELDS \
                 or len(missing) != len(set(missing)):
             return False, "invalid_missing_fields"
-        if any(not _SAFE_FIELD.fullmatch(str(field)) for field in missing):
+        if any(not isinstance(field, str) or
+               not _SAFE_FIELD.fullmatch(field) or
+               field not in _FACT_VALUE_FIELDS[fact_type]
+               for field in missing):
             return False, "invalid_missing_fields"
-        if completeness == COMPLETE and (missing or any(
-                item is None for item in normalized_values.values())):
-            return False, "invalid_complete_observation"
-        if completeness == PARTIAL and not missing and all(
-                item is not None for item in normalized_values.values()):
-            return False, "invalid_partial_observation"
-        if completeness == MISSING and (any(
-                item is not None for item in normalized_values.values())
-                or value.get("observedAt") is not None or freshness != UNAVAILABLE):
+        _validate_completeness_shape(
+            fact_type, normalized_values, missing, completeness)
+        if completeness == MISSING and (
+                value.get("observedAt") is not None or freshness != UNAVAILABLE):
             return False, "invalid_missing_observation"
-        if completeness != MISSING and not normalized_values:
-            return False, "observation_values_required"
 
         received = _parse_time(value.get("receivedAt"), "received_at")
         known = _parse_time(value.get("knownAt"), "known_at")
         observed = _parse_time(value.get("observedAt"), "observed_at", optional=True)
+        if (_iso(value.get("receivedAt"), "received_at") !=
+                value.get("receivedAt") or
+                _iso(value.get("knownAt"), "known_at") !=
+                value.get("knownAt") or
+                _iso(value.get("observedAt"), "observed_at", optional=True) !=
+                value.get("observedAt")):
+            return False, "noncanonical_observation_time"
         assert received is not None and known is not None
         if known < received or (observed is not None and observed > received):
             return False, "invalid_observation_time_order"
         if completeness != MISSING and observed is None:
             return False, "observed_at_required"
         fresh_until = _parse_time(value.get("freshUntil"), "fresh_until", optional=True)
+        if _iso(value.get("freshUntil"), "fresh_until", optional=True) != \
+                value.get("freshUntil"):
+            return False, "noncanonical_observation_time"
         if freshness in {FRESH, DELAYED} and (
                 fresh_until is None or fresh_until < known):
             return False, "invalid_fresh_until"
         period_start = _parse_time(value.get("periodStart"), "period_start", optional=True)
         period_end = _parse_time(value.get("periodEnd"), "period_end", optional=True)
+        if (_iso(value.get("periodStart"), "period_start", optional=True) !=
+                value.get("periodStart") or
+                _iso(value.get("periodEnd"), "period_end", optional=True) !=
+                value.get("periodEnd")):
+            return False, "noncanonical_observation_time"
         if period_start is not None and period_end is not None and period_start > period_end:
             return False, "invalid_period"
         if period_end is not None and observed is not None and period_end > observed:
@@ -540,11 +758,22 @@ def validate_observation(value: Any) -> Tuple[bool, str]:
         revision = value.get("revision")
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             return False, "invalid_revision"
-        if provider_key(source.get("provider")) != source.get("providerKey"):
+        provider = _safe_text(
+            source.get("provider"), "provider", maximum=80)
+        provider_normalized = _safe_id(
+            source.get("providerKey"), "provider_key")
+        adapter = _safe_id(source.get("adapter"), "adapter")
+        source_ref = _safe_text(
+            source.get("sourceRef"), "source_ref", maximum=256)
+        if provider != source.get("provider") or \
+                provider_key(provider) != provider_normalized or \
+                provider_normalized != source.get("providerKey"):
             return False, "invalid_provider_key"
-        _safe_id(source.get("adapter"), "adapter")
-        _safe_text(source.get("sourceRef"), "source_ref", maximum=256)
-        _bounded_provenance(value.get("provenance") or {})
+        if adapter != source.get("adapter") or \
+                source_ref != source.get("sourceRef"):
+            return False, "invalid_source_types"
+        if _typed_provenance(value.get("provenance")) != value.get("provenance"):
+            return False, "invalid_provenance"
         if value.get("logicalKey") != _logical_key(
                 instrument_id, fact_type, value.get("periodEnd")):
             return False, "logical_key_mismatch"
@@ -553,9 +782,21 @@ def validate_observation(value: Any) -> Tuple[bool, str]:
                 or value.get("pitPolicyId") != PIT_POLICY_ID):
             return False, "policy_identity_mismatch"
         session = value.get("session")
-        if not isinstance(session, dict) or session.get("providerRole") != "auxiliary_only" \
+        if not _has_exact_fields(session, _SESSION_FIELDS) or \
+                session.get("providerRole") != "auxiliary_only" \
                 or session.get("market") != market:
             return False, "invalid_session_authority"
+        required_session_strings = (
+            "market", "session", "marketDate", "calendarVersion",
+            "officialCalendar", "providerRole",
+        )
+        if any(not isinstance(session.get(field), str)
+               for field in required_session_strings) or \
+                not isinstance(session.get("isTradingDay"), bool) or \
+                not isinstance(session.get("providerConflict"), bool) or \
+                (session.get("providerStatus") is not None and not isinstance(
+                    session.get("providerStatus"), str)):
+            return False, "invalid_session_types"
         expected_session = canonical_session(
             market, value.get("observedAt") or value.get("receivedAt"),
             provider_status=session.get("providerStatus"))
@@ -748,16 +989,22 @@ def _select_from_candidates(
     for row in candidates:
         provider = str((row.get("source") or {}).get("providerKey") or "")
         prior = newest_by_provider.get(provider)
-        row_key = (str(row.get("observedAt") or ""), str(row.get("knownAt") or ""),
+        row_observed = (_observation_instant(row, "observedAt").timestamp()
+                        if row.get("observedAt") is not None else float("-inf"))
+        row_key = (row_observed, _observation_instant(row, "knownAt").timestamp(),
                    int(row.get("revision") or 0), str(row.get("observationId") or ""))
-        prior_key = ((str(prior.get("observedAt") or ""), str(prior.get("knownAt") or ""),
+        prior_key = (((_observation_instant(prior, "observedAt").timestamp()
+                       if prior.get("observedAt") is not None else float("-inf")),
+                      _observation_instant(prior, "knownAt").timestamp(),
                       int(prior.get("revision") or 0), str(prior.get("observationId") or ""))
                      if prior else None)
         if prior_key is None or row_key > prior_key:
             newest_by_provider[provider] = row
 
     assessed = []
-    expected = str(expected_currency).upper() if expected_currency else None
+    # Omitted/None means no currency constraint.  Every present value must be a
+    # real canonical string; falsy JSON values must never widen the selection.
+    expected = _currency(expected_currency, required=False)
     for provider, row in newest_by_provider.items():
         rank = rank_by_provider.get(provider)
         effective_freshness = freshness_at(row, as_of)
@@ -818,20 +1065,21 @@ def select_truth(
     fact_type: str, as_of: str, expected_currency: Optional[str] = None,
     max_alternates: int = MAX_ALTERNATES, relative_tolerance: float = 0.001,
 ) -> Dict[str, Any]:
-    if isinstance(max_alternates, bool) or not 0 <= int(max_alternates) <= MAX_ALTERNATES:
-        raise ValueError("invalid_max_alternates")
-    if not 0 <= float(relative_tolerance) <= 1:
-        raise ValueError("invalid_relative_tolerance")
+    max_alternates = _selection_max_alternates(max_alternates)
+    relative_tolerance = _selection_relative_tolerance(relative_tolerance)
     instrument_id = _safe_id(instrument_id, "instrument_id")
-    market, fact_type = str(market).upper(), str(fact_type).upper()
+    market = _upper_text(market, "market")
+    fact_type = _upper_text(fact_type, "fact_type")
+    expected_currency = _currency(expected_currency, required=False)
     visible = observations_as_of(values, as_of)
     candidates = [row for row in visible
                   if (row.get("instrument") or {}).get("instrumentId") == instrument_id
+                  and (row.get("instrument") or {}).get("market") == market
                   and row.get("factType") == fact_type]
     result = _select_from_candidates(
         candidates, market=market, fact_type=fact_type, as_of=as_of,
-        expected_currency=expected_currency, max_alternates=int(max_alternates),
-        relative_tolerance=float(relative_tolerance))
+        expected_currency=expected_currency, max_alternates=max_alternates,
+        relative_tolerance=relative_tolerance)
     result["instrumentId"] = instrument_id
     return result
 
@@ -840,19 +1088,28 @@ def select_history_as_of(
     values: Iterable[Mapping[str, Any]], *, instrument_id: str, market: str,
     fact_type: str, as_of: str, expected_currency: Optional[str] = None,
     max_alternates: int = MAX_ALTERNATES,
+    relative_tolerance: float = 0.001,
 ) -> List[Dict[str, Any]]:
     """Select one canonical provider revision for every period known by cutoff."""
+    max_alternates = _selection_max_alternates(max_alternates)
+    relative_tolerance = _selection_relative_tolerance(relative_tolerance)
+    instrument_id = _safe_id(instrument_id, "instrument_id")
+    market = _upper_text(market, "market")
+    fact_type = _upper_text(fact_type, "fact_type")
+    expected_currency = _currency(expected_currency, required=False)
     visible = observations_as_of(values, as_of)
     matching = [row for row in visible
                 if (row.get("instrument") or {}).get("instrumentId") == instrument_id
+                and (row.get("instrument") or {}).get("market") == market
                 and row.get("factType") == fact_type]
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for row in matching:
         groups.setdefault(str(row.get("logicalKey")), []).append(row)
     out = [_select_from_candidates(
-        rows, market=str(market).upper(), fact_type=str(fact_type).upper(), as_of=as_of,
+        rows, market=market, fact_type=fact_type, as_of=as_of,
         expected_currency=expected_currency, max_alternates=max_alternates,
-        relative_tolerance=0.001) for _, rows in sorted(groups.items(), key=lambda item: (
+        relative_tolerance=relative_tolerance) for _, rows in sorted(
+            groups.items(), key=lambda item: (
             str((item[1][0] if item[1] else {}).get("periodEnd") or ""), item[0]))]
     for row in out:
         row["instrumentId"] = instrument_id
@@ -964,18 +1221,32 @@ def verify_point_in_time_proof(value: Any) -> Tuple[bool, str]:
     if not isinstance(value, dict):
         return False, "malformed_pit_proof"
     try:
+        if not _has_exact_fields(value, _PIT_PROOF_FIELDS):
+            return False, "pit_proof_schema_not_closed"
         material = copy.deepcopy(value)
         supplied = material.pop("proofDigest", None)
+        if type(supplied) is not str or not _DATASET_SHA.fullmatch(supplied):
+            return False, "pit_proof_digest_mismatch"
         if supplied != _sha(material):
             return False, "pit_proof_digest_mismatch"
         if value.get("policyId") != PIT_POLICY_ID or value.get("status") != "PASS":
             return False, "pit_policy_not_proven"
         if value.get("futureRowsAdmitted") is not False:
             return False, "future_rows_admitted"
-        cutoff = _parse_time(value.get("cutoff"), "cutoff")
+        raw_cutoff = value.get("cutoff")
+        canonical_cutoff = _iso(raw_cutoff, "cutoff")
+        if canonical_cutoff != raw_cutoff:
+            return False, "noncanonical_pit_time"
+        cutoff = _parse_time(canonical_cutoff, "cutoff")
         assert cutoff is not None
         for field in ("maxKnownAt", "maxObservedAt"):
-            instant = _parse_time(value.get(field), field, optional=True)
+            raw_instant = value.get(field)
+            canonical_instant = _iso(
+                raw_instant, field, optional=True)
+            if canonical_instant != raw_instant:
+                return False, "noncanonical_pit_time"
+            instant = _parse_time(
+                canonical_instant, field, optional=True)
             if instant is not None and instant > cutoff:
                 return False, "future_row_in_proof"
         if value.get("revisionSelection") != "highest_visible_revision_per_period":
@@ -986,18 +1257,44 @@ def verify_point_in_time_proof(value: Any) -> Tuple[bool, str]:
             "excludedUnknownKnowledgeTimeCount", "excludedMalformedCount",
         )
         counts = {field: value.get(field) for field in count_fields}
-        if any(isinstance(item, bool) or not isinstance(item, int) or item < 0
+        if any(type(item) is not int or item < 0
                for item in counts.values()):
+            return False, "invalid_pit_counts"
+        if counts["inputCount"] > MAX_INPUT_OBSERVATIONS:
             return False, "invalid_pit_counts"
         if counts["visibleRevisionCount"] != (
                 counts["includedCount"] + counts["supersededRevisionCount"]):
+            return False, "invalid_revision_counts"
+        if ((counts["visibleRevisionCount"] > 0
+             and counts["includedCount"] == 0)
+                or (counts["visibleRevisionCount"] == 0
+                    and counts["includedCount"] != 0)):
             return False, "invalid_revision_counts"
         if counts["inputCount"] != (
                 counts["visibleRevisionCount"] + counts["excludedFutureCount"]
                 + counts["excludedUnknownKnowledgeTimeCount"]
                 + counts["excludedMalformedCount"]):
             return False, "invalid_filter_counts"
-        if not re.fullmatch(r"[0-9a-f]{64}", str(value.get("admittedDatasetDigest") or "")):
+
+        knowledge_counts = value.get("knowledgeTimeFields")
+        if type(knowledge_counts) is not dict or not _has_exact_fields(
+                knowledge_counts, _PIT_KNOWLEDGE_TIME_FIELDS) or any(
+                    type(item) is not int or item < 0
+                    for item in knowledge_counts.values()):
+            return False, "invalid_knowledge_time_counts"
+        if sum(knowledge_counts.values()) != counts["visibleRevisionCount"]:
+            return False, "invalid_knowledge_time_counts"
+
+        maxima = (value.get("maxKnownAt"), value.get("maxObservedAt"))
+        if counts["visibleRevisionCount"] > 0:
+            if any(item is None for item in maxima):
+                return False, "missing_visible_time_maxima"
+        elif any(item is not None for item in maxima):
+            return False, "unexpected_visible_time_maxima"
+
+        dataset_digest = value.get("admittedDatasetDigest")
+        if type(dataset_digest) is not str or not _DATASET_SHA.fullmatch(
+                dataset_digest):
             return False, "dataset_digest_missing"
         return True, "ok"
     except (TypeError, ValueError, OverflowError):
@@ -1011,7 +1308,8 @@ def _derived_evidence(
         raise ValueError("too_many_derived_evidence_rows")
     out = []
     for raw in values:
-        if not isinstance(raw, Mapping):
+        if type(raw) is not dict or not _has_exact_fields(
+                raw, _DERIVED_EVIDENCE_FIELDS):
             raise ValueError("invalid_derived_evidence")
         evidence_id = _safe_id(raw.get("evidenceId"), "evidence_id")
         kind = _safe_id(raw.get("kind"), "evidence_kind")
@@ -1021,12 +1319,22 @@ def _derived_evidence(
         assert known_dt is not None
         if known_dt > cutoff:
             raise ValueError("future_derived_evidence")
-        inputs = [str(item) for item in (raw.get("inputObservationIds") or [])]
-        if not inputs or len(inputs) > MAX_EVIDENCE_INPUTS or len(inputs) != len(set(inputs)):
+        raw_inputs = raw.get("inputObservationIds")
+        if type(raw_inputs) is not list or any(
+                type(item) is not str or
+                re.fullmatch(r"mdo-[0-9a-f]{32}", item) is None
+                for item in raw_inputs):
+            raise ValueError("invalid_evidence_inputs")
+        inputs = list(raw_inputs)
+        if not inputs or len(inputs) > MAX_EVIDENCE_INPUTS or \
+                len(inputs) != len(set(inputs)):
             raise ValueError("invalid_evidence_inputs")
         if any(item not in visible_ids for item in inputs):
             raise ValueError("evidence_input_not_visible")
-        summary = _bounded_provenance(raw.get("summary") or {})
+        summary_value = raw.get("summary")
+        if type(summary_value) is not dict:
+            raise ValueError("invalid_derived_evidence_summary")
+        summary = _bounded_provenance(summary_value)
         out.append({
             "evidenceId": evidence_id, "kind": kind, "knownAt": known,
             "methodVersion": method, "inputObservationIds": sorted(inputs),
@@ -1045,8 +1353,7 @@ def build_decision_snapshot(
     assert cutoff is not None and generated is not None
     if cutoff > generated:
         raise ValueError("future_decision_at")
-    if not _BUILD_SHA.fullmatch(str(build_identity or "")):
-        raise ValueError("invalid_build_identity")
+    build_identity = _build_identity(build_identity)
     if not requests or len(requests) > MAX_SNAPSHOT_REQUESTS:
         raise ValueError("invalid_snapshot_requests")
     observations = _validated_observations(values)
@@ -1056,13 +1363,20 @@ def build_decision_snapshot(
     request_keys = set()
     required_count = 0
     for raw in requests:
-        if not isinstance(raw, Mapping):
+        if not _has_closed_fields(
+                raw, _SNAPSHOT_REQUEST_FIELDS,
+                required=frozenset({"instrumentId", "market", "factType"})):
             raise ValueError("invalid_snapshot_request")
         instrument_id = _safe_id(raw.get("instrumentId"), "instrument_id")
-        market = str(raw.get("market") or "").upper()
-        fact_type = str(raw.get("factType") or "").upper()
-        currency = str(raw.get("currency") or "").upper() or None
-        required = raw.get("required") is not False
+        market = _upper_text(raw.get("market"), "market")
+        fact_type = _upper_text(raw.get("factType"), "fact_type")
+        if market not in MARKETS or fact_type not in FACT_TYPES:
+            raise ValueError("invalid_snapshot_request_scope")
+        currency = (_currency(raw.get("currency"), required=False)
+                    if "currency" in raw else None)
+        if "required" in raw and not isinstance(raw.get("required"), bool):
+            raise ValueError("invalid_snapshot_request_required")
+        required = raw.get("required", True)
         key = (instrument_id, market, fact_type, currency)
         if key in request_keys:
             raise ValueError("duplicate_snapshot_request")
@@ -1090,13 +1404,14 @@ def build_decision_snapshot(
     freshness_counts = {value: 0 for value in sorted(FRESHNESS_VALUES)}
     for row in selections:
         freshness_counts[row["freshness"]] += 1
-    evidence = _derived_evidence(
-        list(derived_evidence), cutoff=cutoff, visible_ids=visible_ids)
     selected_and_candidates = sorted({
         entry["observation"]["observationId"]
         for selection in selections
         for entry in selection.get("candidates") or []
     })
+    evidence = _derived_evidence(
+        list(derived_evidence), cutoff=cutoff,
+        visible_ids=set(selected_and_candidates))
     material: Dict[str, Any] = {
         "schemaVersion": SNAPSHOT_SCHEMA_VERSION,
         "authorityPolicyId": AUTHORITY_POLICY_ID,
@@ -1104,7 +1419,7 @@ def build_decision_snapshot(
         "pitPolicyId": PIT_POLICY_ID,
         "decisionAt": cutoff.isoformat().replace("+00:00", "Z"),
         "generatedAt": generated.isoformat().replace("+00:00", "Z"),
-        "buildIdentity": str(build_identity),
+        "buildIdentity": build_identity,
         "datasetDigest": _sha(selected_and_candidates),
         "selections": selections,
         "derivedEvidence": evidence,
@@ -1137,6 +1452,8 @@ def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:
     if not isinstance(value, dict):
         return False, "malformed_snapshot"
     try:
+        if not _has_exact_fields(value, _SNAPSHOT_FIELDS):
+            return False, "snapshot_schema_not_closed"
         if value.get("schemaVersion") != SNAPSHOT_SCHEMA_VERSION:
             return False, "wrong_schema"
         if len(_canonical(value).encode("utf-8")) > MAX_SNAPSHOT_BYTES:
@@ -1149,12 +1466,18 @@ def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:
             return False, "snapshot_digest_mismatch"
         if supplied_id != "mds-" + expected_digest[:32]:
             return False, "snapshot_id_mismatch"
-        decision = _parse_time(value.get("decisionAt"), "decision_at")
-        generated = _parse_time(value.get("generatedAt"), "generated_at")
+        raw_decision_at = value.get("decisionAt")
+        raw_generated_at = value.get("generatedAt")
+        canonical_decision_at = _iso(raw_decision_at, "decision_at")
+        canonical_generated_at = _iso(raw_generated_at, "generated_at")
+        decision = _parse_time(canonical_decision_at, "decision_at")
+        generated = _parse_time(canonical_generated_at, "generated_at")
         if decision is None or generated is None or decision > generated:
             return False, "invalid_snapshot_time"
-        if not _BUILD_SHA.fullmatch(str(value.get("buildIdentity") or "")):
-            return False, "invalid_build_identity"
+        if canonical_decision_at != raw_decision_at or \
+                canonical_generated_at != raw_generated_at:
+            return False, "noncanonical_snapshot_time"
+        _build_identity(value.get("buildIdentity"))
         selections = value.get("selections")
         if not isinstance(selections, list) or not selections or \
                 len(selections) > MAX_SNAPSHOT_REQUESTS:
@@ -1179,11 +1502,20 @@ def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:
                 return False, "unverifiable_snapshot_selection"
             instrument_id = _safe_id(
                 selection.get("instrumentId"), "instrument_id")
-            market = str(selection.get("market") or "")
-            fact_type = str(selection.get("factType") or "")
-            expected_currency = selection.get("expectedCurrency")
+            market = _safe_text(selection.get("market"), "market")
+            fact_type = _safe_text(selection.get("factType"), "fact_type")
+            if market not in MARKETS or fact_type not in FACT_TYPES or \
+                    market != market.upper() or fact_type != fact_type.upper():
+                return False, "invalid_snapshot_selection_scope"
+            raw_expected_currency = selection.get("expectedCurrency")
+            expected_currency = _currency(
+                raw_expected_currency, required=False)
+            if expected_currency != raw_expected_currency:
+                return False, "invalid_snapshot_selection_currency"
+            if not isinstance(selection.get("required"), bool):
+                return False, "invalid_snapshot_selection_required"
             request_key = (instrument_id, market, fact_type,
-                           str(expected_currency or ""))
+                           expected_currency)
             if request_key in request_keys:
                 return False, "duplicate_snapshot_selection"
             request_keys.add(request_key)
@@ -1200,6 +1532,8 @@ def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:
                 if not valid or \
                         (observation.get("instrument") or {}).get(
                             "instrumentId") != instrument_id or \
+                        (observation.get("instrument") or {}).get(
+                            "market") != market or \
                         observation.get("factType") != fact_type:
                     return False, "invalid_snapshot_candidate_observation"
                 observations.append(observation)
@@ -1209,12 +1543,13 @@ def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:
                 fact_type=fact_type, as_of=value["decisionAt"],
                 expected_currency=expected_currency,
                 max_alternates=MAX_ALTERNATES,
-                relative_tolerance=float(
-                    (selection.get("disagreement") or {}).get(
-                        "relativeTolerance", 0.001)))
-            normalized = {"required": selection.get("required") is not False,
+                relative_tolerance=(selection.get("disagreement") or {}).get(
+                    "relativeTolerance", 0.001))
+            normalized = {"required": selection.get("required"),
                           **recomputed}
-            if normalized != selection:
+            # Canonical JSON comparison is type-sensitive (`false` != `0`,
+            # `true` != `1`) unlike Python mapping equality.
+            if _canonical(normalized) != _canonical(selection):
                 return False, "snapshot_selection_mismatch"
             normalized_selections.append(normalized)
             required = normalized["required"]
@@ -1252,7 +1587,11 @@ def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:
             "freshnessCounts": freshness_counts,
             "disagreementCount": disagreement_count,
         }
-        if value.get("qualitySummary") != expected_quality:
+        if not _has_exact_fields(value.get("qualitySummary"),
+                                 _QUALITY_SUMMARY_FIELDS):
+            return False, "snapshot_quality_schema_not_closed"
+        if _canonical(value.get("qualitySummary")) != _canonical(
+                expected_quality):
             return False, "snapshot_quality_summary_mismatch"
         if value.get("datasetDigest") != _sha(
                 sorted(selected_and_candidates)):
@@ -1269,7 +1608,8 @@ def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:
             "maxSelections": MAX_SNAPSHOT_REQUESTS,
             "maxAlternatesPerSelection": MAX_ALTERNATES,
         }
-        if value.get("bounds") != expected_bounds:
+        if not _has_exact_fields(value.get("bounds"), _SNAPSHOT_BOUNDS_FIELDS) or \
+                _canonical(value.get("bounds")) != _canonical(expected_bounds):
             return False, "snapshot_bounds_mismatch"
         return True, "ok"
     except (TypeError, ValueError, OverflowError):
@@ -1300,8 +1640,13 @@ class ProviderAdapterRegistry:
             raise ValueError("duplicate_adapter")
         if not callable(normalizer):
             raise ValueError("adapter_normalizer_required")
-        markets = tuple(str(item).upper() for item in spec.markets)
-        fact_types = tuple(str(item).upper() for item in spec.fact_types)
+        if not isinstance(spec.markets, tuple) or not isinstance(
+                spec.fact_types, tuple):
+            raise ValueError("invalid_adapter_scopes")
+        markets = tuple(_upper_text(item, "adapter_market")
+                        for item in spec.markets)
+        fact_types = tuple(_upper_text(item, "adapter_fact_type")
+                           for item in spec.fact_types)
         if not markets or any(item not in MARKETS for item in markets):
             raise ValueError("invalid_adapter_markets")
         if not fact_types or any(item not in FACT_TYPES for item in fact_types):
@@ -1342,10 +1687,12 @@ class ProviderAdapterRegistry:
             raise ValueError("adapter_not_registered")
         spec, normalizer = item
         outcome = normalizer(payload, copy.deepcopy(dict(context or {})))
-        if not isinstance(outcome, Mapping):
+        if not _has_exact_fields(outcome, _ADAPTER_OUTCOME_FIELDS):
             raise ValueError("invalid_adapter_outcome")
-        observations = list(outcome.get("observations") or [])
-        errors = list(outcome.get("errors") or [])
+        observations = outcome.get("observations")
+        errors = outcome.get("errors")
+        if not isinstance(observations, list) or not isinstance(errors, list):
+            raise ValueError("invalid_adapter_outcome_types")
         if len(observations) > MAX_ADAPTER_OBSERVATIONS or len(errors) > MAX_ADAPTER_ERRORS:
             raise ValueError("adapter_outcome_unbounded")
         normalized_observations = _validated_observations(observations)
@@ -1358,14 +1705,21 @@ class ProviderAdapterRegistry:
                 raise ValueError("adapter_observation_scope_mismatch")
         normalized_errors = []
         for raw in errors:
-            if not isinstance(raw, Mapping):
+            if not _has_closed_fields(
+                    raw, _ADAPTER_ERROR_FIELDS,
+                    required=frozenset({"code", "retryable"})):
                 raise ValueError("invalid_adapter_error")
             if not isinstance(raw.get("retryable"), bool):
                 raise ValueError("invalid_adapter_retryable")
+            raw_instrument_id = raw.get("instrumentId")
+            if raw_instrument_id is not None and not isinstance(
+                    raw_instrument_id, str):
+                raise ValueError("invalid_adapter_error_instrument_id")
             normalized_errors.append({
                 "code": _safe_id(raw.get("code"), "adapter_error_code"),
-                "instrumentId": (_safe_id(raw.get("instrumentId"), "instrument_id")
-                                 if raw.get("instrumentId") else None),
+                "instrumentId": (_safe_id(
+                    raw_instrument_id, "instrument_id")
+                    if raw_instrument_id is not None else None),
                 "retryable": raw.get("retryable"),
             })
         return {

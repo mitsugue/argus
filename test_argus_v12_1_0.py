@@ -116,7 +116,8 @@ def test_verdict_theme_not_stated_as_fact():
     idx = oe.build_known_index([
         {"titleJa": "AI半導体バリューチェーンに懸念",
          "canonicalUrl": "https://n.example.com/theme",
-         "publishedAt": "2026-07-07T01:00:00Z"},
+         "publishedAt": "2026-07-07T01:00:00Z",
+         "directness": "sector_theme"},
     ])
     v = oe.verify_source({"titleJa": "AI半導体バリューチェーンに懸念",
                           "url": "https://n.example.com/theme",
@@ -180,7 +181,8 @@ def test_canary_missed_lowers_trust():
 def test_canary_degraded_caps_verdict_confidence():
     idx = oe.build_known_index([
         {"titleJa": "浜松ホトニクスの開示", "canonicalUrl": "https://n.example.com/d",
-         "publishedAt": "2026-07-07T01:00:00Z"}])
+         "publishedAt": "2026-07-07T01:00:00Z",
+         "directness": "direct_company"}])
     v = oe.verify_source({"titleJa": "浜松ホトニクスの開示",
                           "url": "https://n.example.com/d",
                           "publishedAt": "2026-07-07T01:00:00Z",

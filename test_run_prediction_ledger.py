@@ -193,6 +193,10 @@ def _read(path):
     return json.loads(path.read_text())
 
 
+def _write_canonical(path, value):
+    path.write_bytes(runner._canonical_bytes(value) + b"\n")
+
+
 def _manifest(root):
     return _read(root / "manifest.json")
 
@@ -205,6 +209,49 @@ def _index(root):
 def _aggregate(root):
     manifest = _manifest(root)
     return _read(root / manifest["aggregate"]["path"])
+
+
+def _inventory(root):
+    manifest = _manifest(root)
+    return _read(root / manifest["inventory"]["path"])
+
+
+def _reseal(value):
+    material = copy.deepcopy(value)
+    material.pop("digest", None)
+    return runner._sealed_document(material)
+
+
+def _replace_inventory_and_manifest(root, inventory, *, head=None):
+    manifest_path = root / "manifest.json"
+    manifest = _manifest(root)
+    inventory = _reseal(inventory)
+    _write_canonical(root / manifest["inventory"]["path"], inventory)
+    manifest["inventory"].update({
+        "digest": inventory["digest"],
+        "segmentCount": inventory["segmentCount"],
+        "historyRoot": inventory["historyRoot"],
+    })
+    if head is not None:
+        manifest["head"] = copy.deepcopy(head)
+    _write_canonical(manifest_path, _reseal(manifest))
+
+
+def _build_deep_history(root):
+    prediction, market_snapshot = _prediction()
+    runs = [_run(_snapshot(
+        as_of=ISSUED, decisions=[prediction],
+        market_snapshot=market_snapshot), root, "history-issue")]
+    runs.append(_run(_snapshot(as_of="2026-08-12T20:10:00Z"),
+                     root, "history-unscorable"))
+    runs.append(_run(_snapshot(
+        as_of="2026-08-12T20:20:00Z", outcomes=[_outcome_bar()]),
+        root, "history-resolve"))
+    runs.append(_run(_snapshot(as_of="2026-08-12T20:21:00Z"),
+                     root, "history-tail-1"))
+    runs.append(_run(_snapshot(as_of="2026-08-12T20:22:00Z"),
+                     root, "history-tail-2"))
+    return runs
 
 
 def _metric(event, metric_type):
@@ -344,14 +391,17 @@ def test_pending_retry_latest_outcome_must_exist_in_its_source_segment(tmp_path)
     latest_identity["sourceSegment"] = pending["sourceSegment"]
     index.pop("digest")
     index = runner._sealed_document(index)
-    index_path.write_text(json.dumps(index))
+    _write_canonical(index_path, index)
     manifest["index"]["digest"] = index["digest"]
     manifest.pop("digest")
     manifest = runner._sealed_document(manifest)
-    manifest_path.write_text(json.dumps(manifest))
+    _write_canonical(manifest_path, manifest)
 
     with pytest.raises(
-            runner.LedgerRunError, match="pending_source_outcome_mismatch"):
+                runner.LedgerRunError,
+                match="pending_source_outcome_mismatch|"
+                      "index_canonical_source_mismatch|manifest_projection_mismatch|"
+                      "committed_projection_witness_mismatch"):
         _run(_snapshot(as_of="2026-08-12T20:11:00Z"),
              tmp_path, "after-source-tamper")
 
@@ -501,11 +551,11 @@ def test_self_consistent_identity_collision_fails_closed(tmp_path):
     index["identities"][0]["integrityHash"] = "f" * 64
     index.pop("digest")
     index = runner._sealed_document(index)
-    index_path.write_text(json.dumps(index))
+    _write_canonical(index_path, index)
     manifest["index"]["digest"] = index["digest"]
     manifest.pop("digest")
     manifest = runner._sealed_document(manifest)
-    manifest_path.write_text(json.dumps(manifest))
+    _write_canonical(manifest_path, manifest)
 
     with pytest.raises(
             runner.LedgerRunError,
@@ -655,7 +705,11 @@ def test_selected_truth_quality_and_missing_evidence_are_rederived(tmp_path):
              tmp_path, "stale-selected")
 
 
-@pytest.mark.parametrize("failure_phase", ["index", "aggregate", "manifest"])
+@pytest.mark.parametrize(
+    "failure_phase", [
+        "index", "aggregate", "inventory", "segment_stage",
+        "manifest_commit", "commit_head", "manifest",
+    ])
 def test_crash_safe_publication_recovers_same_run_without_orphan_collision(
         tmp_path, monkeypatch, failure_phase):
     prediction, market_snapshot = _prediction()
@@ -667,13 +721,19 @@ def test_crash_safe_publication_recovers_same_run_without_orphan_collision(
 
     def flaky_install(*args, **kwargs):
         calls["install"] += 1
-        phase = {2: "index", 3: "aggregate"}.get(calls["install"])
+        phase = {
+            1: "index", 2: "aggregate", 3: "inventory",
+            4: "segment_stage", 5: "manifest_commit",
+        }.get(calls["install"])
         if phase == failure_phase:
             raise runner.LedgerRunError(f"injected_{phase}_failure")
         return original_install(*args, **kwargs)
 
     def flaky_atomic(*args, **kwargs):
-        if failure_phase == "manifest":
+        path = args[0] if args else kwargs.get("path")
+        if failure_phase == "commit_head" and path.name == "commit-head.json":
+            raise runner.LedgerRunError("injected_commit_head_failure")
+        if failure_phase == "manifest" and path.name == "manifest.json":
             raise runner.LedgerRunError("injected_manifest_failure")
         return original_atomic(*args, **kwargs)
 
@@ -686,9 +746,53 @@ def test_crash_safe_publication_recovers_same_run_without_orphan_collision(
     monkeypatch.setattr(runner, "_install_immutable_or_verify", original_install)
     monkeypatch.setattr(runner, "_atomic_write", original_atomic)
     recovered = _run(snapshot, tmp_path, "recoverable-run")
-    assert recovered["idempotent"] is False
+    # The immutable commit marker precedes the mutable manifest projection.
+    # A failure in that final projection therefore recovers as an already
+    # committed idempotent run; earlier failures remain uncommitted orphans.
+    assert recovered["idempotent"] is (
+        failure_phase in {"commit_head", "manifest"})
     assert _run(snapshot, tmp_path, "recoverable-run")["idempotent"] is True
     assert len(list(tmp_path.glob("segments/*/recoverable-run.json"))) == 1
+
+
+def test_missing_committed_manifest_version_fails_closed(tmp_path):
+    result = _run(_snapshot(as_of=ISSUED), tmp_path, "manifest-version-1")
+    (tmp_path / f"manifests/versions/{result['segmentId']}.json").unlink()
+    with pytest.raises(runner.LedgerRunError,
+                       match="unmanifested_segment_authority"):
+        runner._load_state(tmp_path)
+
+
+@pytest.mark.parametrize("suffix_count", [1, 2, 4])
+def test_commit_head_rejects_deleted_committed_segment_suffix(
+        tmp_path, suffix_count):
+    runs = _build_deep_history(tmp_path)
+    for offset in range(suffix_count):
+        (tmp_path / runs[-1 - offset]["segmentPath"]).unlink()
+    with pytest.raises(runner.LedgerRunError,
+                       match="committed_segment_missing"):
+        runner._load_state(tmp_path)
+
+
+def test_stale_commit_head_is_repaired_forward_without_rollback(tmp_path):
+    _run(_snapshot(as_of=ISSUED), tmp_path, "stale-head-1")
+    prior_head = (tmp_path / "commit-head.json").read_bytes()
+    prior_manifest = (tmp_path / "manifest.json").read_bytes()
+    second = _run(_snapshot(as_of="2026-08-10T20:11:00Z"),
+                  tmp_path, "stale-head-2")
+    (tmp_path / "commit-head.json").write_bytes(prior_head)
+    (tmp_path / "manifest.json").write_bytes(prior_manifest)
+
+    _, _, manifest, inventory, _, marker = runner._load_state(tmp_path)
+    assert marker["generation"] == 2
+    assert inventory["segmentCount"] == 2
+    assert manifest["head"]["path"] == second["segmentPath"]
+
+    third = _run(_snapshot(as_of="2026-08-10T20:12:00Z"),
+                 tmp_path, "stale-head-3")
+    repaired = _read(tmp_path / "commit-head.json")
+    assert repaired["generation"] == 3
+    assert _manifest(tmp_path)["head"]["path"] == third["segmentPath"]
 
 
 @pytest.mark.parametrize("tamper", ["missing", "corrupt"])
@@ -706,10 +810,497 @@ def test_manifest_head_requires_exact_direct_predecessor(tmp_path, tamper):
     else:
         predecessor.write_text("{}")
     with pytest.raises(runner.LedgerRunError,
-                       match="manifest_predecessor|invalid_immutable"):
+                       match="manifest_predecessor|invalid_immutable|"
+                             "retained_segment"):
         _run(_snapshot(
             as_of=ISSUED, generated_at="2026-08-10T20:12:00Z"),
             tmp_path, "after-tamper")
+
+
+@pytest.mark.parametrize("position", [0, 1, 2])
+def test_complete_inventory_rejects_deleted_issue_outcome_or_evaluation_segment(
+        tmp_path, position):
+    runs = _build_deep_history(tmp_path)
+    (tmp_path / runs[position]["segmentPath"]).unlink()
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_segment_file_missing"):
+        runner._load_state(tmp_path)
+
+
+@pytest.mark.parametrize("positions", [(0, 1), (0, 2)])
+def test_complete_inventory_rejects_multiple_missing_segments(
+        tmp_path, positions):
+    runs = _build_deep_history(tmp_path)
+    for position in positions:
+        (tmp_path / runs[position]["segmentPath"]).unlink()
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_segment_file_missing"):
+        runner._load_state(tmp_path)
+
+
+def test_complete_inventory_rejects_swapped_or_reordered_segments(tmp_path):
+    runs = _build_deep_history(tmp_path)
+    left = tmp_path / runs[1]["segmentPath"]
+    right = tmp_path / runs[2]["segmentPath"]
+    left_bytes, right_bytes = left.read_bytes(), right.read_bytes()
+    left.write_bytes(right_bytes)
+    right.write_bytes(left_bytes)
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_segment_mismatch"):
+        runner._load_state(tmp_path)
+
+    left.write_bytes(left_bytes)
+    right.write_bytes(right_bytes)
+    inventory = _inventory(tmp_path)
+    inventory["segments"][1], inventory["segments"][2] = (
+        inventory["segments"][2], inventory["segments"][1])
+    inventory["historyRoot"] = runner._history_root(inventory["segments"])
+    inventory["head"] = copy.deepcopy(inventory["segments"][-1])
+    _replace_inventory_and_manifest(tmp_path, inventory)
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_segment_chain_mismatch|"
+                             "manifest_projection_mismatch|"
+                             "committed_manifest_mismatch"):
+        runner._load_state(tmp_path)
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "truncate"])
+def test_complete_inventory_rejects_altered_historical_bytes(
+        tmp_path, mutation):
+    runs = _build_deep_history(tmp_path)
+    path = tmp_path / runs[1]["segmentPath"]
+    payload = path.read_bytes()
+    if mutation == "bytes":
+        path.write_bytes(payload + b" ")
+    else:
+        path.write_bytes(payload[:len(payload) // 2])
+    with pytest.raises(runner.LedgerRunError,
+                       match="invalid_immutable"):
+        runner._load_state(tmp_path)
+
+
+def test_self_consistent_inventory_truncation_is_rejected_at_genesis(tmp_path):
+    _build_deep_history(tmp_path)
+    inventory = _inventory(tmp_path)
+    inventory["segments"] = inventory["segments"][1:]
+    inventory["segmentCount"] = len(inventory["segments"])
+    inventory["head"] = copy.deepcopy(inventory["segments"][-1])
+    inventory["historyRoot"] = runner._history_root(inventory["segments"])
+    _replace_inventory_and_manifest(tmp_path, inventory)
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_history_truncated|"
+                             "manifest_projection_mismatch|"
+                             "invalid_inventory_authority_generation"):
+        runner._load_state(tmp_path)
+
+
+def test_stale_manifest_projection_cannot_bypass_commit_authority(tmp_path):
+    runs = _build_deep_history(tmp_path)
+    inventory = _inventory(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    manifest = _manifest(tmp_path)
+    manifest["head"] = copy.deepcopy(inventory["segments"][-2])
+    _write_canonical(manifest_path, _reseal(manifest))
+    _, _, authoritative_manifest, authoritative_inventory, _, marker = \
+        runner._load_state(tmp_path)
+    assert authoritative_manifest["head"] == inventory["segments"][-1]
+    assert authoritative_inventory["head"] == inventory["segments"][-1]
+    assert authoritative_manifest["head"]["path"] == runs[-1]["segmentPath"]
+    assert marker["generation"] == len(runs)
+
+
+def test_stale_index_cannot_survive_canonical_source_history(tmp_path):
+    _build_deep_history(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    manifest = _manifest(tmp_path)
+    index_path = tmp_path / manifest["index"]["path"]
+    index = _read(index_path)
+    removed = len(index["identities"])
+    index["identities"] = []
+    index["counts"]["identityCount"] = 0
+    index["retention"]["evictedIdentityCount"] += removed
+    index = _reseal(index)
+    _write_canonical(index_path, index)
+    manifest["index"].update({
+        "digest": index["digest"], "identityCount": 0,
+        "pendingCount": index["counts"]["pendingCount"],
+    })
+    _write_canonical(manifest_path, _reseal(manifest))
+    with pytest.raises(runner.LedgerRunError,
+                       match="index_canonical_source_mismatch|"
+                             "manifest_projection_mismatch|"
+                             "committed_projection_witness_mismatch"):
+        runner._load_state(tmp_path)
+
+
+def test_stale_calibration_aggregate_cannot_survive_source_evaluations(
+        tmp_path):
+    _build_deep_history(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    manifest = _manifest(tmp_path)
+    aggregate_path = tmp_path / manifest["aggregate"]["path"]
+    aggregate = runner._empty_aggregate()
+    aggregate.pop("digest")
+    aggregate["updatedAt"] = manifest["updatedAt"]
+    aggregate = runner._sealed_document(aggregate)
+    _write_canonical(aggregate_path, aggregate)
+    manifest["aggregate"].update({
+        "digest": aggregate["digest"], "evaluationCount": 0,
+        "unscorableCount": 0,
+    })
+    _write_canonical(manifest_path, _reseal(manifest))
+    with pytest.raises(runner.LedgerRunError,
+                       match="calibration_canonical_source_mismatch|"
+                             "manifest_projection_mismatch|"
+                             "committed_projection_witness_mismatch"):
+        runner._load_state(tmp_path)
+
+
+def test_prior_committed_manifest_cannot_roll_back_complete_history(tmp_path):
+    prediction, market_snapshot = _prediction()
+    first = _run(_snapshot(
+        as_of=ISSUED, decisions=[prediction],
+        market_snapshot=market_snapshot), tmp_path, "rollback-1")
+    _run(_snapshot(as_of="2026-08-12T20:10:00Z"),
+         tmp_path, "rollback-2")
+    prior_manifest = (tmp_path / "manifest.json").read_bytes()
+    third = _run(_snapshot(
+        as_of="2026-08-12T20:20:00Z", outcomes=[_outcome_bar()]),
+        tmp_path, "rollback-3")
+    latest_manifest = _manifest(tmp_path)
+
+    # Restore a complete, formerly valid older mutable pointer while leaving
+    # the newer committed immutable marker and authority files intact.
+    (tmp_path / "manifest.json").write_bytes(prior_manifest)
+    _, aggregate, manifest, inventory, _, marker = runner._load_state(tmp_path)
+    assert inventory["segmentCount"] == 3
+    assert manifest["head"]["path"] == third["segmentPath"]
+    assert aggregate["evaluationCount"] == 2
+    assert marker["generation"] == 3
+
+    appended = _run(_snapshot(as_of="2026-08-12T20:21:00Z"),
+                    tmp_path, "rollback-4")
+    assert appended["idempotent"] is False
+    repaired = _manifest(tmp_path)
+    assert repaired["generation"] == 4
+    assert repaired["head"]["path"] == appended["segmentPath"]
+    assert repaired["head"]["path"] != first["segmentPath"]
+    assert repaired["inventory"]["segmentCount"] == 4
+    assert repaired["generation"] > latest_manifest["generation"]
+
+
+def test_deleted_manifest_projection_cannot_create_second_genesis(tmp_path):
+    first = _run(_snapshot(as_of=ISSUED), tmp_path, "delete-pointer-1")
+    (tmp_path / "manifest.json").unlink()
+    _, _, manifest, inventory, _, marker = runner._load_state(tmp_path)
+    assert manifest["head"]["path"] == first["segmentPath"]
+    assert inventory["segmentCount"] == 1
+    assert marker["generation"] == 1
+
+    second = _run(_snapshot(as_of="2026-08-10T20:11:00Z"),
+                  tmp_path, "delete-pointer-2")
+    repaired = _manifest(tmp_path)
+    assert repaired["generation"] == 2
+    assert repaired["inventory"]["segmentCount"] == 2
+    assert repaired["head"]["path"] == second["segmentPath"]
+    assert (tmp_path / first["segmentPath"]).is_file()
+
+
+def test_restored_old_projections_and_deleted_segment_suffix_cannot_rollback(
+        tmp_path):
+    first = _run(_snapshot(as_of=ISSUED), tmp_path, "coordinated-rollback-1")
+    old_manifest = (tmp_path / "manifest.json").read_bytes()
+    old_head = (tmp_path / "commit-head.json").read_bytes()
+    second = _run(_snapshot(as_of="2026-08-10T20:11:00Z"),
+                  tmp_path, "coordinated-rollback-2")
+    third = _run(_snapshot(as_of="2026-08-10T20:12:00Z"),
+                 tmp_path, "coordinated-rollback-3")
+
+    (tmp_path / "manifest.json").write_bytes(old_manifest)
+    (tmp_path / "commit-head.json").write_bytes(old_head)
+    (tmp_path / second["segmentPath"]).unlink()
+    (tmp_path / third["segmentPath"]).unlink()
+    assert (tmp_path / first["segmentPath"]).is_file()
+    assert (tmp_path / f"manifests/versions/{second['segmentId']}.json").is_file()
+    assert (tmp_path / f"manifests/versions/{third['segmentId']}.json").is_file()
+    with pytest.raises(runner.LedgerRunError,
+                       match="committed_segment_missing"):
+        runner._load_state(tmp_path)
+    with pytest.raises(runner.LedgerRunError,
+                       match="committed_segment_missing"):
+        _run(_snapshot(as_of="2026-08-10T20:13:00Z"),
+             tmp_path, "coordinated-rollback-4")
+
+
+def test_unmanifested_crash_tail_requires_exact_same_run_retry(
+        tmp_path, monkeypatch):
+    snapshot = _snapshot(as_of=ISSUED)
+    original_install = runner._install_immutable_or_verify
+    calls = {"count": 0}
+
+    def fail_manifest_commit(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 5:
+            raise runner.LedgerRunError("injected_manifest_commit_failure")
+        return original_install(*args, **kwargs)
+
+    monkeypatch.setattr(
+        runner, "_install_immutable_or_verify", fail_manifest_commit)
+    with pytest.raises(runner.LedgerRunError,
+                       match="injected_manifest_commit_failure"):
+        _run(snapshot, tmp_path, "exact-crash-retry")
+    monkeypatch.setattr(
+        runner, "_install_immutable_or_verify", original_install)
+
+    with pytest.raises(runner.LedgerRunError,
+                       match="unmanifested_segment_authority"):
+        runner._load_state(tmp_path)
+    with pytest.raises(runner.LedgerRunError,
+                       match="unmanifested_segment_authority"):
+        _run(_snapshot(as_of="2026-08-10T20:11:00Z"),
+             tmp_path, "different-run-cannot-adopt")
+    with pytest.raises(runner.LedgerRunError,
+                       match="unmanifested_segment_authority"):
+        _run(_snapshot(as_of="2026-08-11T20:10:00Z"),
+             tmp_path, "exact-crash-retry")
+    assert len(list(tmp_path.glob(
+        "segments/*/exact-crash-retry.json"))) == 1
+    recovered = _run(snapshot, tmp_path, "exact-crash-retry")
+    assert recovered["idempotent"] is False
+    assert _manifest(tmp_path)["generation"] == 1
+
+
+def test_committed_run_id_cannot_be_reused_on_another_date(tmp_path):
+    first = _run(_snapshot(as_of=ISSUED), tmp_path, "date-bound-run")
+    manifest_before = (tmp_path / "manifest.json").read_bytes()
+    with pytest.raises(runner.LedgerRunError, match="duplicate_run_id"):
+        _run(_snapshot(as_of="2026-08-11T20:10:00Z"),
+             tmp_path, "date-bound-run")
+    assert (tmp_path / "manifest.json").read_bytes() == manifest_before
+    assert (tmp_path / first["segmentPath"]).is_file()
+    assert not (tmp_path /
+                "segments/2026-08-11/date-bound-run.json").exists()
+
+
+@pytest.mark.parametrize("head_mode", ["missing", "stale"])
+def test_public_manifest_witness_rejects_paired_committed_suffix_deletion(
+        tmp_path, head_mode):
+    runs = _build_deep_history(tmp_path)
+    stale_head = runner._commit_head_document(
+        _read(tmp_path /
+              f"manifests/versions/{runs[1]['segmentId']}.json"),
+        manifest_path=(
+            f"manifests/versions/{runs[1]['segmentId']}.json"))
+    for run in runs[2:]:
+        (tmp_path / run["segmentPath"]).unlink()
+        (tmp_path /
+         f"manifests/versions/{run['segmentId']}.json").unlink()
+    if head_mode == "missing":
+        (tmp_path / "commit-head.json").unlink()
+    else:
+        _write_canonical(tmp_path / "commit-head.json", stale_head)
+    # The latest valid public manifest was installed only after its immutable
+    # generation, so it is a durable monotonic witness of the deleted suffix.
+    assert _manifest(tmp_path)["generation"] == len(runs)
+    with pytest.raises(runner.LedgerRunError,
+                       match="committed_segment_suffix_missing"):
+        runner._load_state(tmp_path)
+    with pytest.raises(runner.LedgerRunError,
+                       match="committed_segment_suffix_missing"):
+        _run(_snapshot(as_of="2026-08-12T20:30:00Z"),
+             tmp_path, "cannot-fork-truncated-history")
+
+
+def test_immutable_projection_witnesses_reject_full_authority_suffix_rollback(
+        tmp_path):
+    runs = _build_deep_history(tmp_path)
+    retained_manifest = _read(
+        tmp_path / f"manifests/versions/{runs[1]['segmentId']}.json")
+    retained_head = runner._commit_head_document(
+        retained_manifest,
+        manifest_path=(
+            f"manifests/versions/{runs[1]['segmentId']}.json"))
+    for run in runs[2:]:
+        (tmp_path / run["segmentPath"]).unlink()
+        (tmp_path /
+         f"manifests/versions/{run['segmentId']}.json").unlink()
+        (tmp_path /
+         f"inventories/versions/{run['segmentId']}.json").unlink()
+    _write_canonical(tmp_path / "manifest.json", retained_manifest)
+    _write_canonical(tmp_path / "commit-head.json", retained_head)
+
+    # The immutable index/aggregate generations are installed before commit.
+    # Their surviving ids are bounded monotonic witnesses of the removed
+    # canonical suffix and may not be ignored to create a shorter journal.
+    with pytest.raises(runner.LedgerRunError,
+                       match="committed_segment_suffix_missing"):
+        runner._load_state(tmp_path)
+    with pytest.raises(runner.LedgerRunError,
+                       match="committed_segment_suffix_missing"):
+        _run(_snapshot(as_of="2026-08-12T20:30:00Z"),
+             tmp_path, "projection-witness-cannot-fork")
+
+
+def test_prepared_inventory_is_bound_to_exact_deterministic_segment(
+        tmp_path, monkeypatch):
+    original_install = runner._install_immutable_or_verify
+    calls = {"count": 0}
+
+    def fail_segment_stage(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 4:
+            raise runner.LedgerRunError("injected_segment_stage_failure")
+        return original_install(*args, **kwargs)
+
+    snapshot = _snapshot(as_of=ISSUED)
+    monkeypatch.setattr(
+        runner, "_install_immutable_or_verify", fail_segment_stage)
+    with pytest.raises(runner.LedgerRunError,
+                       match="injected_segment_stage_failure"):
+        _run(snapshot, tmp_path, "prepared-exact-segment")
+    monkeypatch.setattr(
+        runner, "_install_immutable_or_verify", original_install)
+    witness_names = tuple(sorted(
+        path.name for path in (tmp_path / "inventories/versions").iterdir()))
+
+    with pytest.raises(runner.LedgerRunError,
+                       match="prepared_segment_identity_mismatch"):
+        _run(_snapshot(as_of=ISSUED, status="INCOMPLETE"),
+             tmp_path, "prepared-exact-segment")
+    assert tuple(sorted(
+        path.name for path in
+        (tmp_path / "inventories/versions").iterdir())) == witness_names
+    assert _run(snapshot, tmp_path,
+                "prepared-exact-segment")["idempotent"] is False
+
+
+def test_exact_prepared_retry_counts_each_existing_witness_once(
+        tmp_path, monkeypatch):
+    main = tmp_path / "main"
+    reference = tmp_path / "reference"
+    base = _snapshot(as_of=ISSUED)
+    tail = _snapshot(as_of="2026-08-10T20:11:00Z")
+    _run(base, reference, "prepared-cap-base")
+    reference_tail = _run(tail, reference, "prepared-cap-tail")
+    new_segment_size = (
+        reference / reference_tail["segmentPath"]).stat().st_size
+    new_manifest_size = (
+        reference / "manifests/versions" /
+        f"{reference_tail['segmentId']}.json").stat().st_size
+
+    _run(base, main, "prepared-cap-base")
+    original_install = runner._install_immutable_or_verify
+    calls = {"count": 0}
+
+    def fail_segment_stage(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 4:
+            raise runner.LedgerRunError("injected_prepared_cap_failure")
+        return original_install(*args, **kwargs)
+
+    monkeypatch.setattr(
+        runner, "_install_immutable_or_verify", fail_segment_stage)
+    with pytest.raises(runner.LedgerRunError,
+                       match="injected_prepared_cap_failure"):
+        _run(tail, main, "prepared-cap-tail")
+    monkeypatch.setattr(
+        runner, "_install_immutable_or_verify", original_install)
+
+    retained_paths = []
+    for pattern in (
+            "segments/*/*.json", "manifests/versions/*.json",
+            "inventories/versions/*.json", "indexes/versions/*.json",
+            "aggregates/versions/*.json"):
+        retained_paths.extend(main.glob(pattern))
+    retained_bytes = sum(path.stat().st_size for path in retained_paths)
+    exact_retry_cap = retained_bytes + new_segment_size + \
+        new_manifest_size + 100
+    monkeypatch.setattr(
+        runner, "MAX_RETAINED_AUTHORITY_BYTES", exact_retry_cap)
+
+    recovered = _run(tail, main, "prepared-cap-tail")
+    assert recovered["idempotent"] is False
+    actual_bytes = 0
+    for pattern in (
+            "segments/*/*.json", "manifests/versions/*.json",
+            "inventories/versions/*.json", "indexes/versions/*.json",
+            "aggregates/versions/*.json"):
+        actual_bytes += sum(path.stat().st_size for path in main.glob(pattern))
+    assert retained_bytes < actual_bytes <= exact_retry_cap
+
+
+def test_retained_byte_bound_precedes_any_segment_json_verification(
+        tmp_path, monkeypatch):
+    runs = _build_deep_history(tmp_path)
+    smallest = min((tmp_path / run["segmentPath"]).stat().st_size
+                   for run in runs)
+    calls = {"verified": 0}
+    original = runner._verify_segment
+
+    def counted(value):
+        calls["verified"] += 1
+        return original(value)
+
+    monkeypatch.setattr(runner, "_verify_segment", counted)
+    monkeypatch.setattr(
+        runner, "MAX_RETAINED_AUTHORITY_BYTES", smallest - 1)
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_authority_byte_bound_exceeded"):
+        runner._load_state(tmp_path)
+    assert calls["verified"] == 0
+
+
+def test_append_fails_before_publication_after_deep_history_damage(tmp_path):
+    runs = _build_deep_history(tmp_path)
+    manifest_before = (tmp_path / "manifest.json").read_bytes()
+    (tmp_path / runs[0]["segmentPath"]).unlink()
+    append_path = tmp_path / "segments/2026-08-12/append-after-damage.json"
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_segment_file_missing"):
+        _run(_snapshot(as_of="2026-08-12T20:23:00Z"),
+             tmp_path, "append-after-damage")
+    assert (tmp_path / "manifest.json").read_bytes() == manifest_before
+    assert not append_path.exists()
+
+
+def test_retained_inventory_bound_fails_before_install(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "MAX_RETAINED_SEGMENTS", 1)
+    _run(_snapshot(as_of=ISSUED), tmp_path, "bounded-history-1")
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_segment_bound_exceeded"):
+        _run(_snapshot(as_of="2026-08-10T20:11:00Z"),
+             tmp_path, "bounded-history-2")
+    assert not (tmp_path / "segments/2026-08-10/bounded-history-2.json").exists()
+
+
+def test_prospective_retained_byte_bound_fails_before_any_publication(
+        tmp_path, monkeypatch):
+    first = _run(_snapshot(as_of=ISSUED), tmp_path, "byte-bound-1")
+    first_segment = tmp_path / first["segmentPath"]
+    retained_bytes = first_segment.stat().st_size
+    manifest_path = tmp_path / "manifest.json"
+    manifest_before = manifest_path.read_bytes()
+    version_directories = (
+        tmp_path / "indexes/versions",
+        tmp_path / "aggregates/versions",
+        tmp_path / "inventories/versions",
+    )
+    versions_before = {
+        directory: tuple(sorted(path.name for path in directory.iterdir()))
+        for directory in version_directories
+    }
+    monkeypatch.setattr(
+        runner, "MAX_RETAINED_AUTHORITY_BYTES", retained_bytes)
+
+    with pytest.raises(runner.LedgerRunError,
+                       match="retained_authority_byte_bound_exceeded"):
+        _run(_snapshot(as_of="2026-08-10T20:11:00Z"),
+             tmp_path, "byte-bound-2")
+
+    assert manifest_path.read_bytes() == manifest_before
+    assert not (tmp_path / "segments/2026-08-10/byte-bound-2.json").exists()
+    for directory, expected in versions_before.items():
+        assert tuple(sorted(path.name for path in directory.iterdir())) == expected
 
 
 def test_index_byte_bound_fails_before_any_immutable_install(tmp_path, monkeypatch):

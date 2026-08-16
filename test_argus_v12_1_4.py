@@ -168,7 +168,8 @@ def test_fresh_candidate_is_preliminary_not_verified():
 def test_preliminary_cannot_create_direct_cause():
     v = oe.verify_source({"titleJa": "本日発売の新製品", "url": "https://x.co/a",
                           "publishedAt": NOW}, {}, NOW)
-    assert oe.preliminary_status(v) == "fresh_candidate"
+    # claim自身の日付はsource-time authorityではない。
+    assert oe.preliminary_status(v) == "metadata_only"
     assert v["primaryEligible"] is False   # 検証されるまで主因不可
 
 

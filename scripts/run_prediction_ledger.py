@@ -6,8 +6,9 @@ The runner has no network or provider credentials.  It accepts the additive
 snapshot route, verifies every sealed input, resolves only exact target-session
 truth, and writes one immutable hash-chained segment plus bounded derived state.
 
-Historical segments are the authority.  The pending index, aggregate, and
-manifest are rebuildable bounded projections and are never scanned as history.
+Immutable manifest generations commit the complete historical segment chain.
+The pending index, aggregate, and mutable head/manifest files are bounded
+verified projections and are never allowed to replace canonical history.
 """
 from __future__ import annotations
 
@@ -38,6 +39,8 @@ SEGMENT_SCHEMA = "argus-prediction-ledger-segment-v1"
 INDEX_SCHEMA = "argus-prediction-ledger-index-v1"
 AGGREGATE_SCHEMA = "argus-prediction-ledger-aggregate-v1"
 MANIFEST_SCHEMA = "argus-prediction-ledger-manifest-v1"
+INVENTORY_SCHEMA = "argus-prediction-ledger-segment-inventory-v1"
+COMMIT_HEAD_SCHEMA = "argus-prediction-ledger-commit-head-v1"
 
 SUPPORTED_MODE = "forward_live"
 SUPPORTED_CLASS_ORDER_VERSION = (
@@ -52,6 +55,8 @@ MAX_SEGMENT_BYTES = 16 * 1024 * 1024
 MAX_INDEX_BYTES = 16 * 1024 * 1024
 MAX_AGGREGATE_BYTES = 1024 * 1024
 MAX_MANIFEST_BYTES = 128 * 1024
+MAX_INVENTORY_BYTES = 4 * 1024 * 1024
+MAX_COMMIT_HEAD_BYTES = 16 * 1024
 MAX_OUTCOME_OBSERVATIONS = 1024
 MAX_ISSUED_DECISIONS = 192
 MAX_PENDING_RECORDS = 4096
@@ -60,6 +65,8 @@ MAX_AGGREGATE_METRICS = 256
 MAX_RESOLUTION_ATTEMPTS = 8
 MAX_PENDING_SOURCE_SEGMENTS = 512
 MAX_PENDING_AUTHORITY_BYTES = 64 * 1024 * 1024
+MAX_RETAINED_SEGMENTS = 8192
+MAX_RETAINED_AUTHORITY_BYTES = 1024 * 1024 * 1024
 
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -202,6 +209,22 @@ def _read_json(path: Path, *, maximum: int = MAX_INPUT_BYTES) -> Any:
         raise LedgerRunError(f"invalid_json:{path.name}") from exc
 
 
+def _read_immutable_json(path: Path, *, maximum: int) -> Any:
+    """Read an immutable object and require its exact canonical disk bytes."""
+    try:
+        payload = path.read_bytes()
+        if len(payload) > maximum:
+            raise LedgerRunError(f"json_too_large:{path.name}")
+        value = json.loads(payload.decode("utf-8"))
+    except LedgerRunError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LedgerRunError(f"invalid_immutable_json:{path.name}") from exc
+    if payload != _canonical_bytes(value) + b"\n":
+        raise LedgerRunError(f"invalid_immutable_bytes:{path.name}")
+    return value
+
+
 def _bounded_payload(value: Any, *, maximum: int, error: str) -> bytes:
     payload = _canonical_bytes(value) + b"\n"
     if len(payload) > maximum:
@@ -272,7 +295,7 @@ def _install_immutable_or_verify(
     payload = _bounded_payload(
         value, maximum=maximum, error=overflow_error)
     if path.exists():
-        existing = _read_json(path, maximum=maximum)
+        existing = _read_immutable_json(path, maximum=maximum)
         if existing != value or _canonical_bytes(existing) + b"\n" != payload:
             raise LedgerRunError("immutable_document_collision")
         return
@@ -283,7 +306,7 @@ def _install_immutable_or_verify(
         # A concurrent identical installer may win between exists() and link().
         if str(exc) != "immutable_document_collision" or not path.exists():
             raise
-        existing = _read_json(path, maximum=maximum)
+        existing = _read_immutable_json(path, maximum=maximum)
         if existing != value or _canonical_bytes(existing) + b"\n" != payload:
             raise
 
@@ -493,12 +516,717 @@ def _segment_from_reference(root: Path, reference: Any, *, label: str) \
     path = _confined_path(root, reference.get("path"), top="segments")
     if not path.is_file():
         raise LedgerRunError(f"{label}_file_missing")
-    document = _verify_segment(_read_json(path, maximum=MAX_SEGMENT_BYTES))
+    document = _verify_segment(_read_immutable_json(
+        path, maximum=MAX_SEGMENT_BYTES))
     if document.get("digest") != reference.get("digest") or \
             document.get("segmentId") != reference.get("segmentId") or \
             document.get("runId") != reference.get("runId"):
         raise LedgerRunError(f"{label}_mismatch")
     return path, document
+
+
+def _segment_reference(segment: Mapping[str, Any], path: str) \
+        -> Dict[str, Any]:
+    return {
+        "path": path,
+        "segmentId": segment["segmentId"],
+        "digest": segment["digest"],
+        "runId": segment["runId"],
+    }
+
+
+def _history_root(references: Sequence[Mapping[str, Any]]) -> str:
+    return _digest({
+        "schemaVersion": INVENTORY_SCHEMA,
+        "orderedSegmentReferences": list(references),
+    })
+
+
+def _inventory_document(references: Sequence[Mapping[str, Any]], *,
+                        updated_at: str) -> Dict[str, Any]:
+    rows = [copy.deepcopy(dict(reference)) for reference in references]
+    if not rows or len(rows) > MAX_RETAINED_SEGMENTS:
+        raise LedgerRunError("retained_segment_bound_exceeded")
+    document = _sealed_document({
+        "schemaVersion": INVENTORY_SCHEMA,
+        "recordType": "immutable_segment_inventory",
+        "mode": SUPPORTED_MODE,
+        "updatedAt": updated_at,
+        "segmentCount": len(rows),
+        "historyRoot": _history_root(rows),
+        "head": copy.deepcopy(rows[-1]),
+        "segments": rows,
+        "bounds": {
+            "maxRetainedSegments": MAX_RETAINED_SEGMENTS,
+            "overflowPolicy": "fail_closed_no_history_pruning",
+        },
+    })
+    _bounded_payload(
+        document, maximum=MAX_INVENTORY_BYTES,
+        error="inventory_too_large")
+    return document
+
+
+def _commit_head_document(manifest: Mapping[str, Any], *,
+                          manifest_path: str) -> Dict[str, Any]:
+    document = _sealed_document({
+        "schemaVersion": COMMIT_HEAD_SCHEMA,
+        "recordType": "prediction_ledger_commit_head",
+        "mode": SUPPORTED_MODE,
+        "generation": manifest["generation"],
+        "updatedAt": manifest["updatedAt"],
+        "segment": copy.deepcopy(manifest["head"]),
+        "manifest": {
+            "path": manifest_path,
+            "digest": manifest["digest"],
+        },
+    })
+    _bounded_payload(
+        document, maximum=MAX_COMMIT_HEAD_BYTES,
+        error="commit_head_too_large")
+    return document
+
+
+def _decode_commit_head(value: Any) -> Dict[str, Any]:
+    document = _verify_document(
+        value, schema=COMMIT_HEAD_SCHEMA,
+        record_type="prediction_ledger_commit_head")
+    if set(document) != {
+            "schemaVersion", "recordType", "mode", "generation",
+            "updatedAt", "segment", "manifest", "digest"} or \
+            document.get("mode") != SUPPORTED_MODE or \
+            not isinstance(document.get("generation"), int) or \
+            isinstance(document.get("generation"), bool) or \
+            not 1 <= document.get("generation") <= MAX_RETAINED_SEGMENTS:
+        raise LedgerRunError("invalid_commit_head_shape")
+    _parse_time(document.get("updatedAt"), "commit_head_updated_at")
+    segment_ref = document.get("segment")
+    manifest_ref = document.get("manifest")
+    if not isinstance(segment_ref, dict) or set(segment_ref) != {
+            "path", "segmentId", "digest", "runId"} or \
+            not isinstance(manifest_ref, dict) or set(manifest_ref) != {
+            "path", "digest"} or \
+            Path(str(manifest_ref.get("path") or "")).parts[:2] != \
+            ("manifests", "versions") or \
+            not re.fullmatch(r"[0-9a-f]{64}", str(
+                manifest_ref.get("digest") or "")):
+        raise LedgerRunError("invalid_commit_head_reference")
+    return document
+
+
+def _preflight_retained_authority_bytes(root: Path) -> int:
+    """Reject the aggregate immutable byte bound before parsing any JSON.
+
+    Each detailed discovery pass below still validates its own exact paths and
+    schema.  This metadata-only pass exists so many individually bounded files
+    cannot force segment parsing before the complete 1 GiB authority cap is
+    known to hold.
+    """
+    groups = (
+        ("manifests", MAX_MANIFEST_BYTES),
+        ("inventories", MAX_INVENTORY_BYTES),
+        ("indexes", MAX_INDEX_BYTES),
+        ("aggregates", MAX_AGGREGATE_BYTES),
+    )
+    total = 0
+
+    def account(path: Path, maximum: int) -> None:
+        nonlocal total
+        if not path.is_file() or path.is_symlink():
+            raise LedgerRunError("invalid_retained_authority_path")
+        size = path.stat().st_size
+        if size > maximum:
+            raise LedgerRunError("retained_authority_file_bound_exceeded")
+        total += size
+        if total > MAX_RETAINED_AUTHORITY_BYTES:
+            raise LedgerRunError("retained_authority_byte_bound_exceeded")
+
+    segment_root = root / "segments"
+    try:
+        if segment_root.exists():
+            if not segment_root.is_dir() or segment_root.is_symlink():
+                raise LedgerRunError("invalid_segment_authority_directory")
+            segment_count = 0
+            for date_entry in sorted(
+                    (entry for entry in segment_root.iterdir()
+                     if not entry.name.startswith(".")),
+                    key=lambda entry: entry.name):
+                if not date_entry.is_dir() or date_entry.is_symlink():
+                    raise LedgerRunError("invalid_segment_authority_path")
+                for entry in date_entry.iterdir():
+                    if entry.name.startswith("."):
+                        continue
+                    segment_count += 1
+                    if segment_count > MAX_RETAINED_SEGMENTS:
+                        raise LedgerRunError("retained_segment_bound_exceeded")
+                    account(entry, MAX_SEGMENT_BYTES)
+        for top, maximum in groups:
+            directory = root / top / "versions"
+            if not directory.exists():
+                continue
+            if not directory.is_dir() or directory.is_symlink():
+                raise LedgerRunError(f"invalid_{top}_authority_directory")
+            count = 0
+            for entry in directory.iterdir():
+                if entry.name.startswith("."):
+                    continue
+                count += 1
+                if count > MAX_RETAINED_SEGMENTS:
+                    raise LedgerRunError(
+                        f"retained_{top}_bound_exceeded")
+                account(entry, maximum)
+        return total
+    except LedgerRunError:
+        raise
+    except OSError as exc:
+        raise LedgerRunError("retained_authority_preflight_failed") from exc
+
+
+def _discover_committed_segment_chain(root: Path) \
+        -> Tuple[List[Tuple[Dict[str, Any], Dict[str, Any]]], int]:
+    """Discover the bounded immutable segment chain that defines commits.
+
+    Publication installs every derived/versioned prerequisite first and the
+    segment last.  Therefore a visible canonical segment is itself the durable
+    commit record, while files staged without a segment are crash orphans.
+    """
+    segment_root = root / "segments"
+    if not segment_root.exists():
+        return [], 0
+    if not segment_root.is_dir() or segment_root.is_symlink():
+        raise LedgerRunError("invalid_segment_authority_directory")
+    paths: List[Path] = []
+    try:
+        date_entries = sorted(
+            (entry for entry in segment_root.iterdir()
+             if not entry.name.startswith(".")), key=lambda entry: entry.name)
+        for date_entry in date_entries:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_entry.name) or \
+                    not date_entry.is_dir() or date_entry.is_symlink():
+                raise LedgerRunError("invalid_segment_authority_path")
+            for entry in sorted(
+                    (item for item in date_entry.iterdir()
+                     if not item.name.startswith(".")), key=lambda item: item.name):
+                if not entry.is_file() or entry.is_symlink() or \
+                        not entry.name.endswith(".json"):
+                    raise LedgerRunError("invalid_segment_authority_path")
+                paths.append(entry)
+                if len(paths) > MAX_RETAINED_SEGMENTS:
+                    raise LedgerRunError("retained_segment_bound_exceeded")
+    except LedgerRunError:
+        raise
+    except OSError as exc:
+        raise LedgerRunError("segment_authority_discovery_failed") from exc
+    if not paths:
+        return [], 0
+
+    # Enforce the aggregate authority bound from filesystem metadata before
+    # parsing even one attacker-sized JSON document.  The compact metadata kept
+    # below then avoids retaining every expanded segment tree in memory.
+    authority_bytes = 0
+    path_sizes: Dict[Path, int] = {}
+    try:
+        for path in paths:
+            size = path.stat().st_size
+            path_sizes[path] = size
+            authority_bytes += size
+            if authority_bytes > MAX_RETAINED_AUTHORITY_BYTES:
+                raise LedgerRunError(
+                    "retained_authority_byte_bound_exceeded")
+    except LedgerRunError:
+        raise
+    except OSError as exc:
+        raise LedgerRunError("retained_segment_unreadable") from exc
+
+    by_path: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]] = {}
+    successor: Dict[str, str] = {}
+    genesis: List[str] = []
+    for path in paths:
+        document = _verify_segment(_read_immutable_json(
+            path, maximum=MAX_SEGMENT_BYTES))
+        relative = path.relative_to(root).as_posix()
+        expected_relative = (
+            f"segments/{document['runAt'][:10]}/{document['runId']}.json")
+        if relative != expected_relative or relative in by_path:
+            raise LedgerRunError("retained_segment_mismatch")
+        reference = _segment_reference(document, relative)
+        by_path[relative] = (reference, {
+            "runId": document["runId"],
+            "runAt": document["runAt"],
+            "inputDigest": document["inputDigest"],
+            "runnerBuildSha": document["runnerBuildSha"],
+            "producerBuildSha": document["producerBuildSha"],
+            "previousSegment": copy.deepcopy(document.get("previousSegment")),
+            "byteSize": path_sizes[path],
+        })
+        previous = document.get("previousSegment")
+        if previous is None:
+            genesis.append(relative)
+        else:
+            previous_path = str((previous or {}).get("path") or "")
+            if previous_path in successor:
+                raise LedgerRunError("retained_segment_chain_branch")
+            successor[previous_path] = relative
+    if not genesis:
+        raise LedgerRunError("retained_segment_file_missing")
+    if len(genesis) != 1:
+        raise LedgerRunError("retained_segment_genesis_mismatch")
+    for relative, (_, document) in by_path.items():
+        previous = document.get("previousSegment")
+        if previous is None:
+            continue
+        previous_path = str(previous.get("path") or "")
+        prior = by_path.get(previous_path)
+        if prior is None:
+            raise LedgerRunError("retained_segment_file_missing")
+        if previous != prior[0]:
+            raise LedgerRunError("retained_segment_chain_mismatch")
+
+    ordered: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    cursor = genesis[0]
+    seen = set()
+    while cursor:
+        if cursor in seen or cursor not in by_path:
+            raise LedgerRunError("retained_segment_chain_mismatch")
+        seen.add(cursor)
+        ordered.append(by_path[cursor])
+        cursor = successor.get(cursor, "")
+    if len(ordered) != len(by_path):
+        raise LedgerRunError("retained_segment_chain_disconnected")
+    return ordered, authority_bytes
+
+
+def _discover_manifest_versions(root: Path, *, prior_bytes: int = 0) \
+        -> Tuple[List[Dict[str, Any]], int]:
+    versions = root / "manifests" / "versions"
+    if not versions.exists():
+        return [], prior_bytes
+    if not versions.is_dir() or versions.is_symlink():
+        raise LedgerRunError("invalid_manifest_authority_directory")
+    try:
+        paths = sorted(
+            (entry for entry in versions.iterdir()
+             if not entry.name.startswith(".")), key=lambda entry: entry.name)
+    except OSError as exc:
+        raise LedgerRunError("manifest_authority_discovery_failed") from exc
+    if len(paths) > MAX_RETAINED_SEGMENTS:
+        raise LedgerRunError("retained_manifest_bound_exceeded")
+    authority_bytes = prior_bytes
+    try:
+        for path in paths:
+            authority_bytes += path.stat().st_size
+            if authority_bytes > MAX_RETAINED_AUTHORITY_BYTES:
+                raise LedgerRunError(
+                    "retained_authority_byte_bound_exceeded")
+    except LedgerRunError:
+        raise
+    except OSError as exc:
+        raise LedgerRunError("manifest_authority_unreadable") from exc
+    by_generation: Dict[int, Dict[str, Any]] = {}
+    for path in paths:
+        if not path.is_file() or path.is_symlink() or \
+                not path.name.endswith(".json"):
+            raise LedgerRunError("invalid_manifest_authority_path")
+        manifest = _verify_document(
+            _read_immutable_json(path, maximum=MAX_MANIFEST_BYTES),
+            schema=MANIFEST_SCHEMA,
+            record_type="prediction_ledger_manifest")
+        generation = manifest.get("generation")
+        head = manifest.get("head") or {}
+        if not isinstance(generation, int) or isinstance(generation, bool) or \
+                not 1 <= generation <= MAX_RETAINED_SEGMENTS or \
+                path.name != f"{head.get('segmentId')}.json" or \
+                generation in by_generation:
+            raise LedgerRunError("invalid_manifest_authority_generation")
+        by_generation[generation] = manifest
+    if sorted(by_generation) != list(range(1, len(by_generation) + 1)):
+        raise LedgerRunError("manifest_authority_generation_gap")
+    return ([by_generation[generation]
+             for generation in range(1, len(by_generation) + 1)],
+            authority_bytes)
+
+
+def _discover_inventory_witnesses(root: Path, *, prior_bytes: int = 0) \
+        -> Tuple[List[Dict[str, Any]], int]:
+    """Load compact immutable generation witnesses from versioned inventories.
+
+    Inventory versions are installed before their segment/manifest commit.  One
+    exact next-generation witness is therefore a recoverable prepared tail;
+    multiple or mismatched witnesses prove that a committed suffix was removed.
+    Keeping only compact heads avoids retaining every historical inventory tree.
+    """
+    versions = root / "inventories" / "versions"
+    if not versions.exists():
+        return [], prior_bytes
+    if not versions.is_dir() or versions.is_symlink():
+        raise LedgerRunError("invalid_inventory_authority_directory")
+    try:
+        paths = sorted(
+            (entry for entry in versions.iterdir()
+             if not entry.name.startswith(".")), key=lambda entry: entry.name)
+    except OSError as exc:
+        raise LedgerRunError("inventory_authority_discovery_failed") from exc
+    if len(paths) > MAX_RETAINED_SEGMENTS:
+        raise LedgerRunError("retained_inventory_bound_exceeded")
+    authority_bytes = prior_bytes
+    try:
+        for path in paths:
+            if not path.is_file() or path.is_symlink() or \
+                    not path.name.endswith(".json"):
+                raise LedgerRunError("invalid_inventory_authority_path")
+            authority_bytes += path.stat().st_size
+            if authority_bytes > MAX_RETAINED_AUTHORITY_BYTES:
+                raise LedgerRunError(
+                    "retained_authority_byte_bound_exceeded")
+    except LedgerRunError:
+        raise
+    except OSError as exc:
+        raise LedgerRunError("inventory_authority_unreadable") from exc
+
+    by_generation: Dict[int, Dict[str, Any]] = {}
+    for path in paths:
+        inventory = _decode_inventory(_read_immutable_json(
+            path, maximum=MAX_INVENTORY_BYTES))
+        generation = inventory["segmentCount"]
+        head = inventory["head"]
+        if path.name != f"{head.get('segmentId')}.json" or \
+                generation in by_generation:
+            raise LedgerRunError("invalid_inventory_authority_generation")
+        rows = inventory["segments"]
+        by_generation[generation] = {
+            "generation": generation,
+            "path": path.relative_to(root).as_posix(),
+            "digest": inventory["digest"],
+            "historyRoot": inventory["historyRoot"],
+            "head": copy.deepcopy(head),
+            "previousHead": (copy.deepcopy(rows[-2])
+                             if len(rows) > 1 else None),
+        }
+    if sorted(by_generation) != list(range(1, len(by_generation) + 1)):
+        raise LedgerRunError("inventory_authority_generation_gap")
+    return ([by_generation[generation]
+             for generation in range(1, len(by_generation) + 1)],
+            authority_bytes)
+
+
+def _discover_projection_witnesses(root: Path, *, prior_bytes: int = 0) \
+        -> Tuple[Dict[str, Dict[str, Any]],
+                 Dict[str, Dict[str, Any]], int]:
+    """Discover immutable index/aggregate generations without retaining them.
+
+    Derived generations are installed before inventory, segment, and manifest.
+    They therefore form a bounded prepared-commit witness.  One unmatched
+    segment id can only be completed by a retry that deterministically rebuilds
+    that exact id; multiple unmatched ids prove deletion of a committed suffix.
+    """
+
+    def discover(top: str, *, maximum: int, kind: str) \
+            -> Tuple[List[Path], int]:
+        directory = root / top / "versions"
+        if not directory.exists():
+            return [], 0
+        if not directory.is_dir() or directory.is_symlink():
+            raise LedgerRunError(f"invalid_{kind}_authority_directory")
+        try:
+            paths = sorted(
+                (entry for entry in directory.iterdir()
+                 if not entry.name.startswith(".")),
+                key=lambda entry: entry.name)
+        except OSError as exc:
+            raise LedgerRunError(f"{kind}_authority_discovery_failed") from exc
+        if len(paths) > MAX_RETAINED_SEGMENTS:
+            raise LedgerRunError(f"retained_{kind}_bound_exceeded")
+        total = 0
+        try:
+            for path in paths:
+                if not path.is_file() or path.is_symlink() or \
+                        not re.fullmatch(r"pls-[0-9a-f]{32}\.json", path.name):
+                    raise LedgerRunError(f"invalid_{kind}_authority_path")
+                size = path.stat().st_size
+                if size > maximum:
+                    raise LedgerRunError(f"{kind}_too_large")
+                total += size
+        except LedgerRunError:
+            raise
+        except OSError as exc:
+            raise LedgerRunError(f"{kind}_authority_unreadable") from exc
+        return paths, total
+
+    index_paths, index_bytes = discover(
+        "indexes", maximum=MAX_INDEX_BYTES, kind="index")
+    aggregate_paths, aggregate_bytes = discover(
+        "aggregates", maximum=MAX_AGGREGATE_BYTES, kind="aggregate")
+    authority_bytes = prior_bytes + index_bytes + aggregate_bytes
+    if authority_bytes > MAX_RETAINED_AUTHORITY_BYTES:
+        raise LedgerRunError("retained_authority_byte_bound_exceeded")
+
+    indexes: Dict[str, Dict[str, Any]] = {}
+    for path in index_paths:
+        segment_id = path.stem
+        document = _read_immutable_json(path, maximum=MAX_INDEX_BYTES)
+        _decode_index(document)
+        indexes[segment_id] = {
+            "path": path.relative_to(root).as_posix(),
+            "digest": document["digest"],
+            "updatedAt": document["updatedAt"],
+            "identityCount": document["counts"]["identityCount"],
+            "pendingCount": document["counts"]["pendingCount"],
+        }
+    aggregates: Dict[str, Dict[str, Any]] = {}
+    for path in aggregate_paths:
+        segment_id = path.stem
+        document = _read_immutable_json(path, maximum=MAX_AGGREGATE_BYTES)
+        _validate_aggregate(document)
+        aggregates[segment_id] = {
+            "path": path.relative_to(root).as_posix(),
+            "digest": document["digest"],
+            "updatedAt": document["updatedAt"],
+            "evaluationCount": document["evaluationCount"],
+            "unscorableCount": document["unscorableCount"],
+        }
+    return indexes, aggregates, authority_bytes
+
+
+def _load_commit_authority(root: Path, *,
+                           recovery_identity: Optional[Mapping[str, Any]] = None) \
+        -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Load authority from immutable manifest generations, never pointers.
+
+    Derived versions, inventory, and a segment are staged before its manifest
+    version.  Direct loads reject any uncommitted prepared generation.  Only a
+    retry that deterministically rebuilds its exact segment ID may finish one
+    crash-staged tail, so a deleted committed suffix cannot be mistaken for a
+    normal append or a new genesis.
+    """
+    _preflight_retained_authority_bytes(root)
+    ordered, segment_bytes = _discover_committed_segment_chain(root)
+    manifests, manifest_authority_bytes = _discover_manifest_versions(
+        root, prior_bytes=segment_bytes)
+    inventory_witnesses, inventory_authority_bytes = \
+        _discover_inventory_witnesses(
+        root, prior_bytes=manifest_authority_bytes)
+    indexes, aggregates, authority_bytes = _discover_projection_witnesses(
+        root, prior_bytes=inventory_authority_bytes)
+    if len(inventory_witnesses) < len(manifests):
+        raise LedgerRunError("committed_inventory_witness_missing")
+    if len(manifests) > len(ordered):
+        raise LedgerRunError("committed_segment_missing")
+
+    references: List[Dict[str, Any]] = []
+    committed_ids: List[str] = []
+    for generation, manifest in enumerate(manifests, start=1):
+        reference, segment = ordered[generation - 1]
+        references.append(reference)
+        segment_id = reference["segmentId"]
+        committed_ids.append(segment_id)
+        inventory_ref = manifest.get("inventory") or {}
+        index_ref = manifest.get("index") or {}
+        aggregate_ref = manifest.get("aggregate") or {}
+        inventory_witness = inventory_witnesses[generation - 1]
+        index_witness = indexes.get(segment_id)
+        aggregate_witness = aggregates.get(segment_id)
+        if manifest.get("generation") != generation or \
+                manifest.get("updatedAt") != segment.get("runAt") or \
+                manifest.get("head") != reference or \
+                inventory_ref.get("segmentCount") != generation or \
+                inventory_ref.get("historyRoot") != _history_root(references) or \
+                inventory_ref.get("path") != inventory_witness.get("path") or \
+                inventory_ref.get("digest") != inventory_witness.get("digest") or \
+                inventory_ref.get("historyRoot") != \
+                inventory_witness.get("historyRoot") or \
+                inventory_witness.get("head") != reference:
+            raise LedgerRunError("committed_manifest_mismatch")
+        if index_witness is None or aggregate_witness is None:
+            raise LedgerRunError("committed_projection_witness_missing")
+        if index_ref != {
+                "path": index_witness["path"],
+                "digest": index_witness["digest"],
+                "identityCount": index_witness["identityCount"],
+                "pendingCount": index_witness["pendingCount"],
+        } or aggregate_ref != {
+                "path": aggregate_witness["path"],
+                "digest": aggregate_witness["digest"],
+                "evaluationCount": aggregate_witness["evaluationCount"],
+                "unscorableCount": aggregate_witness["unscorableCount"],
+        } or index_witness["updatedAt"] != manifest.get("updatedAt") or \
+                aggregate_witness["updatedAt"] != manifest.get("updatedAt"):
+            raise LedgerRunError("committed_projection_witness_mismatch")
+
+    committed_id_set = set(committed_ids)
+    index_extras = set(indexes) - committed_id_set
+    aggregate_extras = set(aggregates) - committed_id_set
+    projection_extras = index_extras | aggregate_extras
+    if len(projection_extras) > 1:
+        raise LedgerRunError("committed_segment_suffix_missing")
+    if aggregate_extras and aggregate_extras != index_extras:
+        # Aggregate is installed strictly after its matching index.  An
+        # aggregate-only tail can only result from deletion/substitution.
+        raise LedgerRunError("unmanifested_projection_authority")
+    if len(inventory_witnesses) > len(manifests) + 1 or \
+            len(ordered) > len(manifests) + 1:
+        raise LedgerRunError("committed_segment_suffix_missing")
+
+    prepared_ids = set(projection_extras)
+    prepared_inventory = None
+    if len(inventory_witnesses) == len(manifests) + 1:
+        prepared_inventory = inventory_witnesses[-1]
+        prepared_ids.add(prepared_inventory["head"]["segmentId"])
+    prepared_segment = None
+    if len(ordered) == len(manifests) + 1:
+        _, prepared_segment = ordered[-1]
+        prepared_ids.add(ordered[-1][0]["segmentId"])
+    if len(prepared_ids) > 1:
+        raise LedgerRunError("unmanifested_segment_authority")
+    prepared_segment_id = next(iter(prepared_ids), None)
+    previous_head = (manifests[-1].get("head") if manifests else None)
+    if prepared_segment_id is not None:
+        if not isinstance(recovery_identity, Mapping):
+            raise LedgerRunError("unmanifested_segment_authority")
+        expected_path = (
+            f"segments/{str(recovery_identity.get('runAt') or '')[:10]}/"
+            f"{recovery_identity.get('runId')}.json")
+        if prepared_inventory is not None and (
+                prepared_inventory.get("head", {}).get("runId") !=
+                recovery_identity.get("runId") or
+                prepared_inventory.get("head", {}).get("path") !=
+                expected_path or
+                prepared_inventory.get("previousHead") != previous_head):
+            raise LedgerRunError("unmanifested_segment_authority")
+        if prepared_segment is not None and (
+                any(prepared_segment.get(field) != recovery_identity.get(field)
+                    for field in ("runId", "runAt", "inputDigest",
+                                  "runnerBuildSha", "producerBuildSha")) or
+                prepared_segment.get("previousSegment") != previous_head):
+            raise LedgerRunError("unmanifested_segment_authority")
+        if prepared_inventory is not None and (
+                prepared_segment_id not in index_extras or
+                prepared_segment_id not in aggregate_extras):
+            raise LedgerRunError("unmanifested_projection_authority")
+        if prepared_segment is not None and prepared_inventory is None:
+            raise LedgerRunError("unmanifested_inventory_authority")
+        for witness in (
+                indexes.get(prepared_segment_id),
+                aggregates.get(prepared_segment_id)):
+            if witness is not None and witness.get("updatedAt") != \
+                    recovery_identity.get("runAt"):
+                raise LedgerRunError("unmanifested_projection_authority")
+
+    committed_segment_bytes = sum(
+        int(document.get("byteSize") or 0)
+        for _, document in ordered[:len(manifests)])
+    authority: Optional[Dict[str, Any]] = None
+    if manifests or prepared_segment_id is not None:
+        authority = {
+            "generation": len(manifests),
+            "authorityBytes": authority_bytes,
+            "committedSegmentBytes": committed_segment_bytes,
+            "preparedSegmentId": prepared_segment_id,
+        }
+    if not manifests:
+        if prepared_segment_id is None and (
+                (root / "manifest.json").exists() or
+                (root / "commit-head.json").exists()):
+            raise LedgerRunError("committed_segment_missing")
+        return None, authority
+
+    manifest = manifests[-1]
+    generation = len(manifests)
+    # A valid mutable manifest is not commit authority, but because it is
+    # installed strictly *after* its immutable generation it is a monotonic
+    # deletion witness.  It may lag and be repaired; it may never point ahead
+    # of the surviving immutable journal.
+    projection_path = root / "manifest.json"
+    if projection_path.exists():
+        if not projection_path.is_file() or projection_path.is_symlink():
+            raise LedgerRunError("invalid_manifest_projection_file")
+        try:
+            projection = _verify_document(
+                _read_json(projection_path, maximum=MAX_MANIFEST_BYTES),
+                schema=MANIFEST_SCHEMA,
+                record_type="prediction_ledger_manifest")
+        except LedgerRunError:
+            projection = None
+        if isinstance(projection, dict):
+            witnessed_generation = projection.get("generation")
+            if isinstance(witnessed_generation, int) and not isinstance(
+                    witnessed_generation, bool) and \
+                    witnessed_generation > generation:
+                raise LedgerRunError("committed_segment_suffix_missing")
+    head_path = root / "commit-head.json"
+    if head_path.exists():
+        if not head_path.is_file() or head_path.is_symlink():
+            raise LedgerRunError("invalid_commit_head_file")
+        head = _decode_commit_head(
+            _read_json(head_path, maximum=MAX_COMMIT_HEAD_BYTES))
+        head_generation = head["generation"]
+        if head_generation > generation:
+            raise LedgerRunError("committed_segment_suffix_missing")
+        witnessed_manifest = manifests[head_generation - 1]
+        expected_head = _commit_head_document(
+            witnessed_manifest,
+            manifest_path=(
+                f"manifests/versions/"
+                f"{witnessed_manifest['head']['segmentId']}.json"))
+        if head != expected_head:
+            raise LedgerRunError("commit_head_segment_mismatch")
+    authority.update({
+        "manifestPath": (
+            f"manifests/versions/{manifest['head']['segmentId']}.json"),
+    })
+    return manifest, authority
+
+
+def _decode_inventory(value: Any) -> Dict[str, Any]:
+    document = _verify_document(
+        value, schema=INVENTORY_SCHEMA,
+        record_type="immutable_segment_inventory")
+    expected_fields = {
+        "schemaVersion", "recordType", "mode", "updatedAt",
+        "segmentCount", "historyRoot", "head", "segments", "bounds",
+        "digest",
+    }
+    if set(document) != expected_fields or \
+            document.get("mode") != SUPPORTED_MODE:
+        raise LedgerRunError("invalid_segment_inventory_shape")
+    rows = document.get("segments")
+    count = document.get("segmentCount")
+    if not isinstance(rows, list) or not rows or \
+            not isinstance(count, int) or isinstance(count, bool) or \
+            count != len(rows) or count > MAX_RETAINED_SEGMENTS:
+        raise LedgerRunError("invalid_segment_inventory_count")
+    expected_reference_fields = {"path", "segmentId", "digest", "runId"}
+    seen_paths = set()
+    seen_segment_ids = set()
+    seen_run_ids = set()
+    seen_digests = set()
+    for reference in rows:
+        if not isinstance(reference, dict) or \
+                set(reference) != expected_reference_fields:
+            raise LedgerRunError("invalid_segment_inventory_reference")
+        path = str(reference.get("path") or "")
+        segment_id = str(reference.get("segmentId") or "")
+        digest = str(reference.get("digest") or "")
+        run_id = str(reference.get("runId") or "")
+        if path in seen_paths or segment_id in seen_segment_ids or \
+                run_id in seen_run_ids or digest in seen_digests or \
+                not segment_id.startswith("pls-") or \
+                not re.fullmatch(r"[0-9a-f]{64}", digest) or \
+                not _RUN_ID_RE.fullmatch(run_id):
+            raise LedgerRunError("invalid_segment_inventory_reference")
+        seen_paths.add(path)
+        seen_segment_ids.add(segment_id)
+        seen_run_ids.add(run_id)
+        seen_digests.add(digest)
+    if document.get("head") != rows[-1] or \
+            document.get("historyRoot") != _history_root(rows):
+        raise LedgerRunError("segment_inventory_root_mismatch")
+    bounds = document.get("bounds")
+    if bounds != {
+            "maxRetainedSegments": MAX_RETAINED_SEGMENTS,
+            "overflowPolicy": "fail_closed_no_history_pruning"}:
+        raise LedgerRunError("segment_inventory_bound_mismatch")
+    _parse_time(document.get("updatedAt"), "inventory_updated_at")
+    return document
 
 
 def _validate_aggregate(value: Any) -> Dict[str, Any]:
@@ -645,34 +1373,47 @@ def _merge_aggregate(previous: Dict[str, Any],
     return document
 
 
-def _load_state(root: Path) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
-    manifest_path = root / "manifest.json"
-    # Unreferenced version files can remain after a crash.  The manifest alone
-    # is the commit pointer, and a retry verifies/reuses exact immutable files.
-    if not manifest_path.exists():
-        return _empty_index(), _empty_aggregate(), None
-    manifest = _verify_document(
-        _read_json(manifest_path, maximum=MAX_MANIFEST_BYTES),
-        schema=MANIFEST_SCHEMA,
-        record_type="prediction_ledger_manifest")
+def _load_state(root: Path, *,
+                recovery_identity: Optional[Mapping[str, Any]] = None) -> Tuple[
+        Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]],
+        Optional[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
+    # Contiguous immutable manifest generations commit the complete segment
+    # chain.  Mutable manifest/head files are compatibility projections only;
+    # neither can reset or truncate discovered immutable authority.
+    manifest, commit_authority = _load_commit_authority(
+        root, recovery_identity=recovery_identity)
+    if manifest is None:
+        return (_empty_index(), _empty_aggregate(), None, None,
+                int((commit_authority or {}).get("authorityBytes") or 0),
+                commit_authority)
     if manifest.get("mode") != SUPPORTED_MODE:
         raise LedgerRunError("manifest_mode_mismatch")
     index_ref = manifest.get("index") or {}
     aggregate_ref = manifest.get("aggregate") or {}
+    inventory_ref = manifest.get("inventory") or {}
     index_path = _confined_path(root, index_ref.get("path"), top="indexes")
     aggregate_path = _confined_path(
         root, aggregate_ref.get("path"), top="aggregates")
+    inventory_path = _confined_path(
+        root, inventory_ref.get("path"), top="inventories")
     if Path(str(index_ref.get("path"))).parts[:2] != ("indexes", "versions") or \
             Path(str(aggregate_ref.get("path"))).parts[:2] != \
-            ("aggregates", "versions"):
+            ("aggregates", "versions") or \
+            Path(str(inventory_ref.get("path"))).parts[:2] != \
+            ("inventories", "versions"):
         raise LedgerRunError("manifest_projection_path_mismatch")
-    if not index_path.is_file() or not aggregate_path.is_file():
+    if not index_path.is_file() or not aggregate_path.is_file() or \
+            not inventory_path.is_file():
         raise LedgerRunError("manifest_projection_file_missing")
-    index_document = _read_json(index_path, maximum=MAX_INDEX_BYTES)
-    aggregate_document = _read_json(
+    index_document = _read_immutable_json(
+        index_path, maximum=MAX_INDEX_BYTES)
+    aggregate_document = _read_immutable_json(
         aggregate_path, maximum=MAX_AGGREGATE_BYTES)
+    inventory_document = _read_immutable_json(
+        inventory_path, maximum=MAX_INVENTORY_BYTES)
     index = _decode_index(index_document)
     aggregate = _validate_aggregate(aggregate_document)
+    inventory = _decode_inventory(inventory_document)
     if index_ref.get("digest") != index_document.get("digest") or \
             index_ref.get("identityCount") != \
             index_document["counts"]["identityCount"] or \
@@ -682,19 +1423,19 @@ def _load_state(root: Path) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[Di
             aggregate_ref.get("evaluationCount") != \
             aggregate_document.get("evaluationCount") or \
             aggregate_ref.get("unscorableCount") != \
-            aggregate_document.get("unscorableCount"):
+            aggregate_document.get("unscorableCount") or \
+            inventory_ref.get("digest") != \
+            inventory_document.get("digest") or \
+            inventory_ref.get("segmentCount") != \
+            inventory_document.get("segmentCount") or \
+            inventory_ref.get("historyRoot") != \
+            inventory_document.get("historyRoot"):
         raise LedgerRunError("manifest_projection_mismatch")
     head = manifest.get("head")
-    head_path, head_document = _segment_from_reference(
+    if head != inventory.get("head"):
+        raise LedgerRunError("manifest_inventory_head_mismatch")
+    _, head_document = _segment_from_reference(
         root, head, label="manifest_head")
-    previous = head_document.get("previousSegment")
-    if previous is not None:
-        previous_path, previous_document = _segment_from_reference(
-            root, previous, label="manifest_predecessor")
-        if previous_path == head_path or _parse_time(
-                previous_document.get("runAt"), "predecessor_run_at") > \
-                _parse_time(head_document.get("runAt"), "head_run_at"):
-            raise LedgerRunError("invalid_manifest_predecessor_order")
     updated_at = manifest.get("updatedAt")
     watermarks = manifest.get("watermarks") or {}
     last_run_at = watermarks.get("runAt")
@@ -702,13 +1443,22 @@ def _load_state(root: Path) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[Di
     if not _same_instant(updated_at, last_run_at) or \
             not _same_instant(last_run_at, head_document.get("runAt")) or \
             index_document.get("updatedAt") != updated_at or \
-            aggregate_document.get("updatedAt") != updated_at:
+            aggregate_document.get("updatedAt") != updated_at or \
+            inventory_document.get("updatedAt") != updated_at:
         raise LedgerRunError("manifest_watermark_mismatch")
     if max_issued_at is not None and _parse_time(
             max_issued_at, "max_issued_at") > _parse_time(
                 last_run_at, "last_run_at"):
         raise LedgerRunError("invalid_manifest_issuance_watermark")
-    return index, aggregate, manifest
+    replayed_segment_bytes = _validate_authoritative_history(
+        root, inventory, expected_index=index,
+        expected_aggregate=aggregate, expected_max_issued_at=max_issued_at)
+    if replayed_segment_bytes != commit_authority.get(
+            "committedSegmentBytes"):
+        raise LedgerRunError("retained_authority_byte_mismatch")
+    return (index, aggregate, manifest, inventory,
+            int(commit_authority.get("authorityBytes") or 0),
+            commit_authority)
 
 
 def _validate_pending_authority(
@@ -740,7 +1490,7 @@ def _validate_pending_authority(
                     verified_bytes + source_bytes > \
                     MAX_PENDING_AUTHORITY_BYTES:
                 raise LedgerRunError("pending_authority_byte_bound_exceeded")
-            segment = _verify_segment(_read_json(
+            segment = _verify_segment(_read_immutable_json(
                 source_path, maximum=MAX_SEGMENT_BYTES))
             segments[source] = segment
             verified_bytes += source_bytes
@@ -1078,6 +1828,190 @@ def _pending_entry(prediction: Dict[str, Any], observation: Dict[str, Any],
         "latestOutcomeEventId": None,
         "latestOutcomeIntegrityHash": None,
     }
+
+
+def _history_decision_observation(
+        segment: Mapping[str, Any], prediction: Mapping[str, Any]) \
+        -> Dict[str, Any]:
+    snapshot = (segment.get("truthEvidence") or {}).get("decisionSnapshot")
+    if not isinstance(snapshot, dict):
+        raise LedgerRunError("history_decision_truth_missing")
+    if snapshot.get("buildIdentity") != segment.get("producerBuildSha") or \
+            (prediction.get("engine") or {}).get("buildSha") != \
+            segment.get("producerBuildSha") or \
+            not _same_instant(prediction.get("issuedAt"),
+                              snapshot.get("generatedAt")):
+        raise LedgerRunError("history_prediction_producer_mismatch")
+    truth_ref = prediction.get("truthRef") or {}
+    if truth_ref.get("snapshotId") != snapshot.get("snapshotId"):
+        raise LedgerRunError("history_prediction_snapshot_mismatch")
+    selected = _snapshot_selected_entries(snapshot).get(
+        truth_ref.get("sourceId")) or {}
+    observation = selected.get("observation")
+    values = (observation or {}).get("values") or {}
+    instrument = (observation or {}).get("instrument") or {}
+    source = (observation or {}).get("source") or {}
+    if observation is None or observation.get("factType") != "QUOTE" or \
+            not _finite_number(values.get("price")) or \
+            float(values["price"]) <= 0 or \
+            instrument.get("symbol") != prediction.get("symbol") or \
+            instrument.get("market") != prediction.get("market"):
+        raise LedgerRunError("history_prediction_truth_unbound")
+    expected_truth_ref = decision_ledger.point_in_time_truth_ref(
+        snapshot_id=snapshot["snapshotId"],
+        source_id=observation["observationId"],
+        as_of=observation.get("observedAt"),
+        known_at=observation.get("knownAt"),
+        content_hash=observation["observationId"],
+        observation_kind="decision_quote",
+        observed_fields=sorted(values),
+        provider=source.get("providerKey") or "",
+        revision=str(observation.get("revision") or ""))
+    if truth_ref != expected_truth_ref:
+        raise LedgerRunError("history_prediction_truth_mismatch")
+    return copy.deepcopy(observation)
+
+
+def _validate_authoritative_history(
+        root: Path, inventory: Mapping[str, Any], *,
+        expected_index: Mapping[str, Any],
+        expected_aggregate: Mapping[str, Any],
+        expected_max_issued_at: Optional[str]) -> int:
+    """Replay every retained immutable segment into the canonical projections.
+
+    References come only from the sealed inventory.  No directory discovery,
+    glob, or request-time history scan is used.  Replay retains only the same
+    bounded pending/identity/aggregate state as normal append processing.
+    """
+    references = inventory.get("segments") or []
+    rebuilt_index = _empty_index()
+    rebuilt_aggregate = _empty_aggregate()
+    previous_reference: Optional[Dict[str, Any]] = None
+    previous_run_at: Optional[str] = None
+    max_issued_at: Optional[str] = None
+    verified_bytes = 0
+
+    for position, reference in enumerate(references):
+        if not isinstance(reference, dict):
+            raise LedgerRunError("invalid_retained_segment_reference")
+        path = _confined_path(
+            root, reference.get("path"), top="segments")
+        if not path.is_file() or path.is_symlink():
+            raise LedgerRunError("retained_segment_file_missing")
+        try:
+            segment_bytes = path.stat().st_size
+        except OSError as exc:
+            raise LedgerRunError("retained_segment_unreadable") from exc
+        verified_bytes += segment_bytes
+        if verified_bytes > MAX_RETAINED_AUTHORITY_BYTES:
+            raise LedgerRunError("retained_authority_byte_bound_exceeded")
+        path, segment = _segment_from_reference(
+            root, reference, label="retained_segment")
+
+        run_at = segment["runAt"]
+        expected_path = (
+            f"segments/{run_at[:10]}/{segment['runId']}.json")
+        if reference.get("path") != expected_path:
+            raise LedgerRunError("retained_segment_path_mismatch")
+        if position == 0:
+            if segment.get("previousSegment") is not None:
+                raise LedgerRunError("retained_history_truncated")
+        elif segment.get("previousSegment") != previous_reference:
+            raise LedgerRunError("retained_segment_chain_mismatch")
+        if previous_run_at is not None and _parse_time(
+                run_at, "history_run_at") < _parse_time(
+                    previous_run_at, "previous_history_run_at"):
+            raise LedgerRunError("retained_segment_order_mismatch")
+
+        identities = rebuilt_index["identities"]
+        pending = rebuilt_index["pending"]
+        prior_max_issued_at = max_issued_at
+        for prediction in segment.get("issuedDecisions") or []:
+            if _parse_time(prediction.get("issuedAt"),
+                           "history_prediction_issued_at") > _parse_time(
+                               run_at, "history_run_at"):
+                raise LedgerRunError("history_prediction_issued_after_run")
+            if prior_max_issued_at is not None and _parse_time(
+                    prediction.get("issuedAt"),
+                    "history_prediction_issued_at") <= _parse_time(
+                        prior_max_issued_at,
+                        "history_previous_max_issued_at"):
+                raise LedgerRunError("stale_retained_prediction_replay")
+            observation = _history_decision_observation(segment, prediction)
+            if not _register_identity(
+                    identities, prediction,
+                    source_segment=str(reference["path"]),
+                    registered_at=run_at):
+                raise LedgerRunError("duplicate_retained_record_identity")
+            pending[prediction["id"]] = _pending_entry(
+                copy.deepcopy(prediction), observation,
+                source_segment=str(reference["path"]))
+            issued_at = prediction.get("issuedAt")
+            if max_issued_at is None or _parse_time(
+                    issued_at, "history_issued_at") > _parse_time(
+                        max_issued_at, "history_max_issued_at"):
+                max_issued_at = issued_at
+
+        outcomes = segment.get("outcomeResolutions") or []
+        evaluations = segment.get("evaluationEvents") or []
+        if len(outcomes) != len(evaluations):
+            raise LedgerRunError("history_outcome_evaluation_count_mismatch")
+        seen_predictions = set()
+        for outcome, evaluation in zip(outcomes, evaluations):
+            prediction_id = str(outcome.get("predictionId") or "")
+            row = pending.get(prediction_id)
+            prediction = (row or {}).get("prediction")
+            if prediction_id in seen_predictions or prediction is None or \
+                    not decision_ledger.verify_outcome_resolution_event(
+                        outcome, prediction) or \
+                    not decision_ledger.verify_evaluation_event(
+                        evaluation, prediction, outcome) or \
+                    not _same_instant(outcome.get("recordedAt"), run_at) or \
+                    not _same_instant(evaluation.get("evaluatedAt"), run_at) or \
+                    (evaluation.get("evaluator") or {}).get("buildSha") != \
+                    segment.get("runnerBuildSha"):
+                raise LedgerRunError("invalid_retained_resolution_pair")
+            expected_sequence = int(row.get("sequence") or 0) + 1
+            if outcome.get("sequence") != expected_sequence or \
+                    outcome.get("previousEventId") != \
+                    (row.get("latestOutcomeEventId") or None):
+                raise LedgerRunError("retained_outcome_sequence_mismatch")
+            if not _register_identity(
+                    identities, outcome,
+                    source_segment=str(reference["path"]),
+                    registered_at=run_at) or not _register_identity(
+                        identities, evaluation,
+                        source_segment=str(reference["path"]),
+                        registered_at=run_at):
+                raise LedgerRunError("duplicate_retained_record_identity")
+            row["attempts"] = int(row.get("attempts") or 0) + 1
+            row["sequence"] = outcome["sequence"]
+            row["latestOutcomeEventId"] = outcome["id"]
+            row["latestOutcomeIntegrityHash"] = outcome["integrityHash"]
+            row["state"] = ("resolved" if outcome.get("status") == "OBSERVED"
+                            else "retry_wait")
+            if row["state"] == "resolved" or \
+                    row["attempts"] >= MAX_RESOLUTION_ATTEMPTS:
+                pending.pop(prediction_id, None)
+            seen_predictions.add(prediction_id)
+
+        if segment.get("counts", {}).get("pendingAfter") != len(pending):
+            raise LedgerRunError("retained_pending_count_mismatch")
+        _prune_identities(rebuilt_index)
+        rebuilt_aggregate = _merge_aggregate(
+            rebuilt_aggregate, evaluations, updated_at=run_at)
+        previous_reference = copy.deepcopy(dict(reference))
+        previous_run_at = run_at
+
+    if rebuilt_index != expected_index:
+        raise LedgerRunError("index_canonical_source_mismatch")
+    if rebuilt_aggregate != expected_aggregate:
+        raise LedgerRunError("calibration_canonical_source_mismatch")
+    if (max_issued_at is None) != (expected_max_issued_at is None) or \
+            (max_issued_at is not None and not _same_instant(
+                max_issued_at, expected_max_issued_at)):
+        raise LedgerRunError("history_issuance_watermark_mismatch")
+    return verified_bytes
 
 
 def _expected_path_bars(horizon: str) -> Optional[int]:
@@ -1500,13 +2434,16 @@ def _resolve_pending(
 
 def _manifest_document(*, segment: Dict[str, Any], segment_path: str,
                        index: Dict[str, Any], aggregate: Dict[str, Any],
-                       index_path: str, aggregate_path: str,
+                       inventory: Dict[str, Any], index_path: str,
+                       aggregate_path: str, inventory_path: str,
+                       generation: int,
                        updated_at: str,
                        max_issued_at: Optional[str]) -> Dict[str, Any]:
     document = _sealed_document({
         "schemaVersion": MANIFEST_SCHEMA,
         "recordType": "prediction_ledger_manifest",
         "mode": SUPPORTED_MODE,
+        "generation": generation,
         "updatedAt": updated_at,
         "head": {
             "path": segment_path,
@@ -1525,12 +2462,22 @@ def _manifest_document(*, segment: Dict[str, Any], segment_path: str,
             "evaluationCount": aggregate["evaluationCount"],
             "unscorableCount": aggregate["unscorableCount"],
         },
+        "inventory": {
+            "path": inventory_path,
+            "digest": inventory["digest"],
+            "segmentCount": inventory["segmentCount"],
+            "historyRoot": inventory["historyRoot"],
+        },
         "bounds": {
             "maxPending": MAX_PENDING_RECORDS,
             "maxIssuedPerRun": MAX_ISSUED_DECISIONS,
             "maxIdentities": MAX_IDENTITY_RECORDS,
             "maxAggregateMetrics": MAX_AGGREGATE_METRICS,
-            "historyAuthority": "immutable_segment_chain",
+            "maxRetainedSegments": MAX_RETAINED_SEGMENTS,
+            "maxRetainedAuthorityBytes": MAX_RETAINED_AUTHORITY_BYTES,
+            "historyAuthority":
+            "discovered_immutable_segment_chain_and_complete_inventory",
+            "calibrationAuthority": "retained_canonical_evaluation_replay",
         },
         "watermarks": {
             "runAt": updated_at,
@@ -1556,7 +2503,51 @@ def run_prediction_ledger(snapshot: Dict[str, Any], *, ledger_root: Path,
         runner_build_sha=runner_build_sha)
     _CURRENT_RUNNER_SHA = runner_build_sha
     root = Path(ledger_root)
-    index_state, previous_aggregate, previous_manifest = _load_state(root)
+    index_state, previous_aggregate, previous_manifest, \
+        previous_inventory, retained_authority_bytes, \
+        previous_commit_authority = _load_state(
+            root, recovery_identity={
+                "runId": run_id,
+                "runAt": context["runAt"],
+                "inputDigest": context["inputDigest"],
+                "runnerBuildSha": runner_build_sha,
+                "producerBuildSha": context["producerBuildSha"],
+            })
+    # Repair a missing or stale compatibility projection from immutable commit
+    # authority before any idempotent early return.  This can only move the
+    # projection forward to the already committed generation.
+    if previous_manifest is not None:
+        expected_commit_head = _commit_head_document(
+            previous_manifest,
+            manifest_path=previous_commit_authority["manifestPath"])
+        commit_head_path = root / "commit-head.json"
+        commit_head_matches = False
+        if commit_head_path.is_file() and not commit_head_path.is_symlink():
+            try:
+                commit_head_matches = _read_json(
+                    commit_head_path, maximum=MAX_COMMIT_HEAD_BYTES) == \
+                    expected_commit_head
+            except LedgerRunError:
+                commit_head_matches = False
+        if not commit_head_matches:
+            _atomic_write(
+                commit_head_path, expected_commit_head,
+                maximum=MAX_COMMIT_HEAD_BYTES,
+                overflow_error="commit_head_too_large")
+        manifest_projection = root / "manifest.json"
+        projection_matches = False
+        if manifest_projection.is_file() and not manifest_projection.is_symlink():
+            try:
+                projection_matches = _read_json(
+                    manifest_projection, maximum=MAX_MANIFEST_BYTES) == \
+                    previous_manifest
+            except LedgerRunError:
+                projection_matches = False
+        if not projection_matches:
+            _atomic_write(
+                manifest_projection, previous_manifest,
+                maximum=MAX_MANIFEST_BYTES,
+                overflow_error="manifest_too_large")
     identities = index_state["identities"]
     pending = index_state["pending"]
     _validate_pending_authority(root, pending, identities)
@@ -1571,9 +2562,17 @@ def run_prediction_ledger(snapshot: Dict[str, Any], *, ledger_root: Path,
     run_date = run_at[:10]
     segment_relative = f"segments/{run_date}/{run_id}.json"
     segment_path = root / segment_relative
+    prior_run_reference = next((
+        reference for reference in
+        ((previous_inventory or {}).get("segments") or [])
+        if reference.get("runId") == run_id), None)
+    if prior_run_reference is not None and \
+            prior_run_reference.get("path") != segment_relative:
+        raise LedgerRunError("duplicate_run_id")
 
     if segment_path.exists():
-        existing = _verify_segment(_read_json(segment_path))
+        existing = _verify_segment(_read_immutable_json(
+            segment_path, maximum=MAX_SEGMENT_BYTES))
         head = (previous_manifest or {}).get("head") or {}
         if existing.get("runId") == run_id and \
                 existing.get("inputDigest") == context["inputDigest"] and \
@@ -1679,10 +2678,31 @@ def run_prediction_ledger(snapshot: Dict[str, Any], *, ledger_root: Path,
     }
     segment_body["segmentId"] = "pls-" + _digest(segment_body)[:32]
     segment = _sealed_document(segment_body)
-    _bounded_payload(
+    segment_payload = _bounded_payload(
         segment, maximum=MAX_SEGMENT_BYTES, error="segment_too_large")
+    prepared_segment_id = (previous_commit_authority or {}).get(
+        "preparedSegmentId")
+    if prepared_segment_id is not None and \
+            prepared_segment_id != segment["segmentId"]:
+        raise LedgerRunError("prepared_segment_identity_mismatch")
     index_relative = f"indexes/versions/{segment['segmentId']}.json"
     aggregate_relative = f"aggregates/versions/{segment['segmentId']}.json"
+    inventory_relative = f"inventories/versions/{segment['segmentId']}.json"
+    index_payload = _bounded_payload(
+        index_document, maximum=MAX_INDEX_BYTES, error="index_too_large")
+    aggregate_payload = _bounded_payload(
+        aggregate, maximum=MAX_AGGREGATE_BYTES,
+        error="aggregate_too_large")
+    segment_reference = _segment_reference(segment, segment_relative)
+    inventory_references = [
+        copy.deepcopy(reference)
+        for reference in ((previous_inventory or {}).get("segments") or [])]
+    inventory_references.append(segment_reference)
+    inventory = _inventory_document(
+        inventory_references, updated_at=run_at)
+    inventory_payload = _bounded_payload(
+        inventory, maximum=MAX_INVENTORY_BYTES,
+        error="inventory_too_large")
     issued_times = [prediction.get("issuedAt")
                     for prediction in context["decisions"]]
     max_issued_at = previous_max_issued_at
@@ -1694,15 +2714,36 @@ def run_prediction_ledger(snapshot: Dict[str, Any], *, ledger_root: Path,
     manifest = _manifest_document(
         segment=segment, segment_path=segment_relative,
         index=index_document, aggregate=aggregate,
-        index_path=index_relative, aggregate_path=aggregate_relative,
+        inventory=inventory, index_path=index_relative,
+        aggregate_path=aggregate_relative,
+        inventory_path=inventory_relative,
+        generation=((previous_commit_authority or {}).get("generation", 0) + 1),
         updated_at=run_at, max_issued_at=max_issued_at)
+    manifest_payload = _bounded_payload(
+        manifest, maximum=MAX_MANIFEST_BYTES, error="manifest_too_large")
+    manifest_relative = f"manifests/versions/{segment['segmentId']}.json"
+    # Count each immutable object exactly once.  Crash-staged objects already
+    # discovered above consume retained authority bytes; their exact retry must
+    # not double-count them, while a new append includes every new projection,
+    # witness, segment, and manifest generation before the first install.
+    prospective_bytes = retained_authority_bytes
+    for path, payload in (
+            (root / index_relative, index_payload),
+            (root / aggregate_relative, aggregate_payload),
+            (root / inventory_relative, inventory_payload),
+            (segment_path, segment_payload),
+            (root / manifest_relative, manifest_payload)):
+        if not path.exists():
+            prospective_bytes += len(payload)
+    if prospective_bytes > MAX_RETAINED_AUTHORITY_BYTES:
+        raise LedgerRunError("retained_authority_byte_bound_exceeded")
+    commit_head = _commit_head_document(
+        manifest, manifest_path=manifest_relative)
 
     # Every prospective object has passed its serialized byte bound before the
-    # first install.  Versioned projections cannot invalidate the old manifest;
-    # the atomic manifest replace is the sole commit point.
-    _install_immutable_or_verify(
-        segment_path, segment, maximum=MAX_SEGMENT_BYTES,
-        overflow_error="segment_too_large")
+    # first install.  Derived projections are installed first, then the segment
+    # is staged.  The immutable manifest generation is installed last as the
+    # sole commit point discoverable on the next load.
     _install_immutable_or_verify(
         root / index_relative, index_document, maximum=MAX_INDEX_BYTES,
         overflow_error="index_too_large")
@@ -1710,6 +2751,23 @@ def run_prediction_ledger(snapshot: Dict[str, Any], *, ledger_root: Path,
         root / aggregate_relative, aggregate,
         maximum=MAX_AGGREGATE_BYTES,
         overflow_error="aggregate_too_large")
+    _install_immutable_or_verify(
+        root / inventory_relative, inventory,
+        maximum=MAX_INVENTORY_BYTES,
+        overflow_error="inventory_too_large")
+    _install_immutable_or_verify(
+        segment_path, segment, maximum=MAX_SEGMENT_BYTES,
+        overflow_error="segment_too_large")
+    _install_immutable_or_verify(
+        root / manifest_relative, manifest,
+        maximum=MAX_MANIFEST_BYTES,
+        overflow_error="manifest_too_large")
+    # Head and manifest are repairable projections.  Segment discovery remains
+    # authoritative if either write is missing, stale, or restored backwards.
+    _atomic_write(
+        root / "commit-head.json", commit_head,
+        maximum=MAX_COMMIT_HEAD_BYTES,
+        overflow_error="commit_head_too_large")
     _atomic_write(
         root / "manifest.json", manifest, maximum=MAX_MANIFEST_BYTES,
         overflow_error="manifest_too_large")

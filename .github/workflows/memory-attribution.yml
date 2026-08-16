@@ -532,7 +532,7 @@ jobs:
           sizes = report["canonicalJsonBytes"]
           caps = report["caps"]["marketTruth"]
           expected_digest = (
-              "666772a616074f2f26bad8c8c3f881cbaee4f629e1f5bb633936801b67c5d347")
+              "13556938f3259f49e2c8127c4a1b969f5b66be2aa7d3a3012c2d38ad6c348297")
           assert report["schemaVersion"] == \
               "argus-truth-ledger-benchmark-v1"
           assert report["mode"] == "bounded"
