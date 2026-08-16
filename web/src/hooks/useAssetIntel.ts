@@ -44,7 +44,8 @@ import {
 import type { ResolvedStance } from '../domain/primaryStance';
 import {
   buildDataGatedInputV2, buildPredictionLedgerV2Adapter, buildRiskKernel,
-  evaluateSingleDecisionAuthority, SINGLE_DECISION_AUTHORITY_V2_POLICY,
+  evaluateSingleDecisionAuthority, verifyDecisionEvidence,
+  SINGLE_DECISION_AUTHORITY_V2_POLICY,
   type PrimaryAction, type RiskContributionV1, type SingleDecisionAuthorityResultV2,
   type PredictionLedgerSdaAdapterV2,
 } from '../domain/singleDecisionAuthority';
@@ -834,7 +835,7 @@ export function useAssetIntel(opts: {
       input.challengeEvidence = challenges.sort((left, right) =>
         left.challengeId.localeCompare(right.challengeId));
 
-      const result = evaluateSingleDecisionAuthority(input);
+      const result = evaluateSingleDecisionAuthority(verifyDecisionEvidence(input));
       const adapter = buildPredictionLedgerV2Adapter(result);
       sda.set(sym, result);
       bindings.set(sym, adapter);

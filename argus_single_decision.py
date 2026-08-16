@@ -1,9 +1,10 @@
 """Deterministic Single Decision Authority v2.
 
 This is a pure final-action authority over a closed, owner-local context.  It
-accepts exact content identities for Market Truth, Prediction Ledger, SHO and
-the constraint-only Risk Kernel.  AI and legacy challenges are retained as
-dissent provenance only and cannot select or override the action.
+accepts only verifier-issued evidence bundles for Market Truth, Prediction
+Ledger, SHO and the constraint-only Risk Kernel.  Reference strings and
+caller booleans are never authority.  AI and legacy challenges are retained
+as dissent provenance only and cannot select or override the action.
 """
 from __future__ import annotations
 
@@ -16,10 +17,14 @@ from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+import argus_decision_ledger as decision_ledger
+import argus_market_data_truth as market_truth
+import argus_sho as sho_authority
 from argus_risk_discipline import (
     KERNEL_SCHEMA_VERSION,
     RiskDisciplineValidationError,
     build_risk_kernel,
+    is_verifier_issued_risk_kernel,
     validate_risk_kernel,
 )
 
@@ -29,7 +34,8 @@ RESULT_SCHEMA_VERSION = "single-decision-authority-v2"
 OWNER_CONTEXT_SCHEMA_VERSION = "owner-decision-context-v1"
 SEVEN_SIGN_SCHEMA_VERSION = "seven-sign-v1"
 LEDGER_ADAPTER_SCHEMA_VERSION = "argus-prediction-ledger-sda-adapter-v2"
-AUTHORITY_POLICY_ID = "argus-single-decision-authority-v2"
+VERIFIED_EVIDENCE_SCHEMA_VERSION = "verified-decision-evidence-bundle-v1"
+AUTHORITY_POLICY_ID = "single-decision-authority-v2"
 AUTHORITY_POLICY_SHA256 = "bbd5da4bb68fed291908ff574f36a3c1c4b20bb48cf86d6a837eecf98353ea31"
 SINGLE_DECISION_AUTHORITY_V2_POLICY = MappingProxyType(
     {"policyId": AUTHORITY_POLICY_ID, "policySha256": AUTHORITY_POLICY_SHA256}
@@ -73,6 +79,26 @@ MIN_SEVEN_SIGN_SAMPLE_SIZE = 30
 # intentionally empty until a separately verified, immutable OOS calibration
 # artifact is approved and pinned here.
 VERIFIED_SEVEN_SIGN_CALIBRATIONS = MappingProxyType({})
+# A production BUY can only be enabled by a repository-pinned, independently
+# verified SHO artifact identity.  Round 2 intentionally has no such entry:
+# canonical SHO remains UNVALIDATED/DATA_GATED until a future code review pins
+# an immutable validation artifact here.
+VERIFIED_SHO_BUY_ARTIFACTS = MappingProxyType({})
+
+_BUNDLE_SEAL = object()
+_RESULT_SEAL = object()
+
+
+class _VerifiedDecisionEvidenceBundle(dict):
+    """Runtime capability issued only by ``verify_decision_evidence``."""
+
+    __slots__ = ("_authority_seal", "_bundle_id", "_body_digest", "_sho_buy_eligible")
+
+
+class _VerifiedSingleDecisionResult(dict):
+    """Runtime result capability bound to one verified evidence bundle."""
+
+    __slots__ = ("_authority_seal", "_bundle_id", "_body_digest")
 
 _INPUT_KEYS = {
     "schemaVersion",
@@ -129,7 +155,6 @@ _SHO_KEYS = {
     "policySha256",
     "state",
     "validationStatus",
-    "buyEligible",
     "primitiveFactorIds",
     "targets",
     "invalidation",
@@ -173,6 +198,7 @@ _CALIBRATION_KEYS = {
 _RESULT_KEYS = {
     "schemaVersion",
     "decisionId",
+    "verifiedEvidenceBundleId",
     "status",
     "subject",
     "issuedAt",
@@ -224,6 +250,7 @@ _ADAPTER_KEYS = {
     "appendMode",
     "mutatesExistingRows",
     "decisionId",
+    "verifiedEvidenceBundleId",
     "issuedAt",
     "informationCutoffAt",
     "subject",
@@ -254,6 +281,7 @@ _UTC_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z"
 _DECIMAL_RE = re.compile(r"-?(?:0|[1-9][0-9]{0,12})(?:\.[0-9]{1,8})?\Z")
 _DECISION_ID_RE = re.compile(r"sda-[0-9a-f]{64}\Z")
 _ADAPTER_ID_RE = re.compile(r"pla-[0-9a-f]{64}\Z")
+_BUNDLE_ID_RE = re.compile(r"vdeb-[0-9a-f]{64}\Z")
 
 
 class SingleDecisionValidationError(ValueError):
@@ -381,6 +409,42 @@ def _validate_policy(value: Any, path: str) -> Mapping[str, Any]:
     _identifier(policy["policyId"], f"{path}.policyId")
     _sha(policy["policySha256"], f"{path}.policySha256")
     return policy
+
+
+def _validate_canonical_authority_policy(value: Any, path: str) -> Mapping[str, Any]:
+    policy = _validate_policy(value, path)
+    if dict(policy) != dict(SINGLE_DECISION_AUTHORITY_V2_POLICY):
+        _fail(path, "must equal the repository-pinned SDA v2 policy")
+    return policy
+
+
+def _canonical_sha(value: Any) -> str:
+    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+
+
+def _verified_bundle_digest(value: Mapping[str, Any]) -> str:
+    return _canonical_sha(value)
+
+
+def _bundle_is_current(value: Any) -> bool:
+    return bool(
+        isinstance(value, _VerifiedDecisionEvidenceBundle)
+        and getattr(value, "_authority_seal", None) is _BUNDLE_SEAL
+        and isinstance(getattr(value, "_bundle_id", None), str)
+        and _BUNDLE_ID_RE.fullmatch(value._bundle_id)
+        and value._body_digest == _verified_bundle_digest(value)
+    )
+
+
+def _result_is_current(value: Any) -> bool:
+    return bool(
+        isinstance(value, _VerifiedSingleDecisionResult)
+        and getattr(value, "_authority_seal", None) is _RESULT_SEAL
+        and isinstance(getattr(value, "_bundle_id", None), str)
+        and _BUNDLE_ID_RE.fullmatch(value._bundle_id)
+        and value.get("verifiedEvidenceBundleId") == value._bundle_id
+        and value._body_digest == _verified_bundle_digest(value)
+    )
 
 
 def _validate_subject(value: Any, path: str = "subject") -> Mapping[str, Any]:
@@ -512,8 +576,6 @@ def _validate_sho(value: Any, cutoff: datetime) -> Mapping[str, Any]:
         _fail("sho.state", "unknown SHO state")
     if ref["validationStatus"] not in (*SHO_VALIDATION_STATUSES, None):
         _fail("sho.validationStatus", "unknown validation status")
-    if not isinstance(ref["buyEligible"], bool):
-        _fail("sho.buyEligible", "must be boolean")
     primitive_ids = _canonical_strings(
         ref["primitiveFactorIds"],
         "sho.primitiveFactorIds",
@@ -544,15 +606,11 @@ def _validate_sho(value: Any, cutoff: datetime) -> Mapping[str, Any]:
             )
         ):
             _fail("sho", "AVAILABLE requires complete artifact identity and state")
-        if ref["buyEligible"] and (
-            ref["validationStatus"] != "VALIDATED" or ref["state"] not in BUY_ELIGIBLE_SHO_STATES
-        ):
-            _fail("sho.buyEligible", "requires a validated buy-eligible SHO state")
     elif ref["status"] == "MISSING":
         if any(
             ref[field] is not None
             for field in ("artifactId", "asOf", "state", "validationStatus")
-        ) or ref["buyEligible"] or primitive_ids or targets or ref["invalidation"] is not None:
+        ) or primitive_ids or targets or ref["invalidation"] is not None:
             _fail("sho", "MISSING cannot claim state, factors, targets, or invalidation")
     return ref
 
@@ -719,7 +777,7 @@ def validate_single_decision_input_v2(value: Any) -> None:
     cutoff = _utc(top["informationCutoffAt"], "informationCutoffAt")
     if cutoff > decision_at:
         _fail("informationCutoffAt", "cannot be later than decisionAt")
-    _validate_policy(top["authorityPolicy"], "authorityPolicy")
+    _validate_canonical_authority_policy(top["authorityPolicy"], "authorityPolicy")
     _validate_market_truth(top["marketTruth"], cutoff)
     _validate_prediction_ledger(top["predictionLedger"], cutoff)
     _validate_sho(top["sho"], cutoff)
@@ -747,6 +805,230 @@ def validate_single_decision_input_v2(value: Any) -> None:
     _canonical_json_bytes(top)
 
 
+def _market_truth_reference_from_artifact(
+    artifact: Any,
+    *,
+    subject: Mapping[str, Any],
+    cutoff: str,
+) -> Dict[str, Any]:
+    if not market_truth.is_builder_issued_decision_snapshot(artifact):
+        _fail(
+            "artifacts.marketTruthSnapshot",
+            "must be an unmodified canonical-builder artifact",
+        )
+    valid, reason = market_truth.verify_decision_snapshot(artifact)
+    if not valid:
+        _fail("artifacts.marketTruthSnapshot", f"canonical verifier rejected artifact: {reason}")
+    if artifact.get("decisionAt") != cutoff:
+        _fail("artifacts.marketTruthSnapshot.decisionAt", "must equal informationCutoffAt")
+    selections = [
+        row for row in artifact.get("selections", [])
+        if row.get("instrumentId") == subject["instrumentId"]
+        and row.get("market") == subject["market"]
+    ]
+    if len(selections) != 1:
+        _fail("artifacts.marketTruthSnapshot", "must contain exactly one selected subject fact")
+    selection = selections[0]
+    selected = selection.get("selected")
+    observation = selected.get("observation") if isinstance(selected, Mapping) else None
+    if not isinstance(observation, Mapping) or selected.get("selectionEligible") is not True:
+        _fail("artifacts.marketTruthSnapshot", "subject has no authoritative selected observation")
+    if selection.get("completeness") != market_truth.COMPLETE or \
+            selection.get("freshness") != market_truth.FRESH:
+        _fail("artifacts.marketTruthSnapshot", "subject selection must be COMPLETE and FRESH")
+    return {
+        "status": "AVAILABLE",
+        "schemaVersion": artifact["schemaVersion"],
+        "snapshotId": artifact["snapshotId"],
+        "observationId": observation["observationId"],
+        "observedAt": observation["observedAt"],
+        "knownAt": observation["knownAt"],
+        "policyId": market_truth.AUTHORITY_POLICY_ID,
+        "policySha256": _canonical_sha(market_truth.repository_authority_policy()),
+    }
+
+
+def _prediction_reference_from_artifact(
+    artifact: Any,
+    *,
+    market_ref: Mapping[str, Any],
+    cutoff: str,
+) -> Dict[str, Any]:
+    if not decision_ledger.is_builder_issued_prediction_record(artifact):
+        _fail(
+            "artifacts.predictionLedgerRecord",
+            "must be an unmodified canonical-builder artifact",
+        )
+    if not decision_ledger.verify_prediction_record_v2(artifact):
+        _fail("artifacts.predictionLedgerRecord", "canonical verifier rejected artifact")
+    if artifact.get("mode") != "forward_live":
+        _fail("artifacts.predictionLedgerRecord.mode", "must equal forward_live")
+    issued_at = artifact.get("issuedAt")
+    if _utc(issued_at, "artifacts.predictionLedgerRecord.issuedAt") > _utc(
+        cutoff, "informationCutoffAt"
+    ):
+        _fail("artifacts.predictionLedgerRecord.issuedAt", "cannot be after the cutoff")
+    truth_ref = artifact.get("truthRef") or {}
+    if truth_ref.get("snapshotId") != market_ref["snapshotId"] or \
+            truth_ref.get("sourceId") != market_ref["observationId"] or \
+            truth_ref.get("knownAt") != market_ref["knownAt"]:
+        _fail("artifacts.predictionLedgerRecord.truthRef", "must bind the verified Market Truth fact")
+    policy = artifact.get("evaluationPolicy")
+    return {
+        "status": "AVAILABLE",
+        "schemaVersion": artifact["schemaVersion"],
+        "contextId": artifact["id"],
+        "mode": "FORWARD_LIVE",
+        "asOf": issued_at,
+        "policyId": policy["policyId"],
+        "policySha256": _canonical_sha(policy),
+    }
+
+
+def _sho_reference_from_artifact(
+    artifact: Any,
+    *,
+    subject: Mapping[str, Any],
+    cutoff: str,
+) -> Tuple[Dict[str, Any], bool]:
+    if not sho_authority.is_builder_issued_reversal_artifact(artifact):
+        _fail(
+            "artifacts.shoArtifact",
+            "must be an unmodified canonical-builder artifact",
+        )
+    try:
+        admitted = sho_authority.validate_reversal_artifact(artifact)
+    except (TypeError, ValueError) as exc:
+        _fail("artifacts.shoArtifact", f"canonical verifier rejected artifact: {exc}")
+    if admitted.get("informationCutoff") != cutoff:
+        _fail("artifacts.shoArtifact.informationCutoff", "must equal informationCutoffAt")
+    if admitted.get("analysisInstrument") != subject["instrumentId"]:
+        _fail("artifacts.shoArtifact.analysisInstrument", "must equal the authority subject")
+    axis = admitted["reversalAxis"]
+    factors = admitted["evidence"]
+    primitive_ids = sorted(
+        f"sho.{re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()}"
+        for name, row in factors.items()
+        if isinstance(row, Mapping) and row.get("status") == "AVAILABLE"
+    )
+    registry_key = "|".join((
+        admitted["artifactId"],
+        sho_authority.SHO_REGISTRY_SHA256,
+        admitted["canonicalRfcSha256"],
+    ))
+    buy_eligible = bool(
+        axis.get("validationStatus") == "VALIDATED"
+        and axis.get("state") in BUY_ELIGIBLE_SHO_STATES
+        and registry_key in VERIFIED_SHO_BUY_ARTIFACTS
+    )
+    return ({
+        "status": "AVAILABLE",
+        "schemaVersion": admitted["schemaVersion"],
+        "artifactId": admitted["artifactId"],
+        "asOf": cutoff,
+        "policyId": sho_authority.SHO_REGISTRY_VERSION,
+        "policySha256": sho_authority.SHO_REGISTRY_SHA256,
+        "state": axis["state"],
+        "validationStatus": axis["validationStatus"],
+        "primitiveFactorIds": primitive_ids,
+        "targets": [],
+        "invalidation": None,
+    }, buy_eligible)
+
+
+def verify_decision_evidence(
+    value: Any,
+    *,
+    market_truth_artifact: Any = None,
+    prediction_ledger_artifact: Any = None,
+    sho_artifact: Any = None,
+) -> Mapping[str, Any]:
+    """Resolve and verify every authority-relevant artifact exactly once.
+
+    This boundary issues a runtime capability; a lookalike mapping, even with
+    internally consistent hashes, is not executable by the final reducer.
+    """
+    if not isinstance(value, Mapping):
+        _fail("input", "must be an object")
+    if not is_verifier_issued_risk_kernel(value.get("riskKernel")):
+        _fail("riskKernel", "must be an unmodified canonical-builder artifact")
+    normalized = copy.deepcopy(dict(value))
+    supplied_policy = normalized.get("authorityPolicy")
+    if supplied_policy is None:
+        normalized["authorityPolicy"] = dict(SINGLE_DECISION_AUTHORITY_V2_POLICY)
+    elif dict(_validate_canonical_authority_policy(
+            supplied_policy, "authorityPolicy")) != dict(SINGLE_DECISION_AUTHORITY_V2_POLICY):
+        _fail("authorityPolicy", "does not match repository authority")
+    validate_single_decision_input_v2(normalized)
+
+    artifacts = (
+        ("marketTruth", market_truth_artifact),
+        ("predictionLedger", prediction_ledger_artifact),
+        ("sho", sho_artifact),
+    )
+    for name, artifact in artifacts:
+        status = normalized[name]["status"]
+        if status == "AVAILABLE" and artifact is None:
+            _fail(f"artifacts.{name}", "backing canonical artifact is required")
+        if status != "AVAILABLE" and artifact is not None:
+            _fail(f"artifacts.{name}", "cannot back a non-AVAILABLE reference")
+
+    verification: Dict[str, Any] = {
+        "schemaVersion": VERIFIED_EVIDENCE_SCHEMA_VERSION,
+        "authorityPolicy": dict(SINGLE_DECISION_AUTHORITY_V2_POLICY),
+        "marketTruth": None,
+        "predictionLedger": None,
+        "sho": None,
+        "riskKernelId": normalized["riskKernel"]["riskKernelId"],
+    }
+    sho_buy_eligible = False
+    if market_truth_artifact is not None:
+        expected_market = _market_truth_reference_from_artifact(
+            market_truth_artifact,
+            subject=normalized["subject"],
+            cutoff=normalized["informationCutoffAt"],
+        )
+        if normalized["marketTruth"] != expected_market:
+            _fail("marketTruth", "does not exactly match the verified canonical artifact")
+        verification["marketTruth"] = expected_market["snapshotId"]
+    if prediction_ledger_artifact is not None:
+        expected_prediction = _prediction_reference_from_artifact(
+            prediction_ledger_artifact,
+            market_ref=normalized["marketTruth"],
+            cutoff=normalized["informationCutoffAt"],
+        )
+        if normalized["predictionLedger"] != expected_prediction:
+            _fail("predictionLedger", "does not exactly match the verified canonical artifact")
+        verification["predictionLedger"] = expected_prediction["contextId"]
+    if sho_artifact is not None:
+        expected_sho, sho_buy_eligible = _sho_reference_from_artifact(
+            sho_artifact,
+            subject=normalized["subject"],
+            cutoff=normalized["informationCutoffAt"],
+        )
+        if normalized["sho"] != expected_sho:
+            _fail("sho", "does not exactly match the verified canonical artifact")
+        verification["sho"] = expected_sho["artifactId"]
+
+    if all(normalized[name]["status"] == "AVAILABLE" for name, _ in artifacts):
+        if normalized["quality"] != {
+            "status": "COMPLETE",
+            "freshness": "FRESH",
+            "missingReasonCodes": [],
+            "conflictReasonCodes": [],
+        }:
+            _fail("quality", "must be derived as COMPLETE/FRESH from verified artifacts")
+
+    identity_body = {"input": normalized, "verification": verification}
+    bundle_id = _hash_id("vdeb-", identity_body)
+    bundle = _VerifiedDecisionEvidenceBundle(copy.deepcopy(normalized))
+    bundle._authority_seal = _BUNDLE_SEAL
+    bundle._bundle_id = bundle_id
+    bundle._sho_buy_eligible = sho_buy_eligible
+    bundle._body_digest = _verified_bundle_digest(bundle)
+    return bundle
+
+
 def _unique_bounded(items: Iterable[str], cap: int) -> List[str]:
     return sorted(set(items))[:cap]
 
@@ -771,7 +1053,9 @@ def _owner_is_unknown(owner: Mapping[str, Any]) -> bool:
     )
 
 
-def _select_primary_action(top: Mapping[str, Any], *, data_gated: bool) -> str:
+def _select_primary_action(
+    top: Mapping[str, Any], *, data_gated: bool, sho_buy_eligible: bool
+) -> str:
     owner = top["ownerContext"]
     held = owner["positionState"] == "HELD"
     if data_gated:
@@ -786,16 +1070,10 @@ def _select_primary_action(top: Mapping[str, Any], *, data_gated: bool) -> str:
         return "WAIT"
     if constraint == "BLOCK_BUY":
         return "HOLD" if held else "WAIT"
-    if any(
-        row["status"] == "ACTIVE" and row["constraint"] == "WAIT_REQUIRED"
-        for row in top["contextEvidence"]
-    ):
-        return "WAIT"
-
     sho = top["sho"]
     buy_ready = (
         sho["validationStatus"] == "VALIDATED"
-        and sho["buyEligible"] is True
+        and sho_buy_eligible
         and sho["state"] in BUY_ELIGIBLE_SHO_STATES
         and owner["addPermission"] == "ALLOWED"
     )
@@ -817,9 +1095,6 @@ def _seven_candidate(action: str, top: Mapping[str, Any], *, data_gated: bool) -
             "WAIT_REQUIRED",
             "REDUCE_RISK",
             "EXIT_RISK",
-        ) or any(
-            row["status"] == "ACTIVE" and row["constraint"] == "WAIT_REQUIRED"
-            for row in top["contextEvidence"]
         )
         return 3 if defensive else 4
     if action == "HOLD":
@@ -898,7 +1173,7 @@ def _position_guidance(action: str) -> str:
     }[action]
 
 
-def _result_from_valid_input(top: Mapping[str, Any]) -> Dict[str, Any]:
+def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, Any]:
     missing: List[str] = list(top["quality"]["missingReasonCodes"])
     conflicts: List[str] = list(top["quality"]["conflictReasonCodes"])
     for name, ref in (
@@ -911,12 +1186,6 @@ def _result_from_valid_input(top: Mapping[str, Any]) -> Dict[str, Any]:
         conflicts.extend(ref_conflicts)
     missing.extend(top["riskKernel"]["missingReasonCodes"])
     conflicts.extend(top["riskKernel"]["conflictReasonCodes"])
-    for row in top["contextEvidence"]:
-        if row["status"] == "MISSING":
-            missing.append(f"context_missing.{row['primitiveFactorId']}")
-        elif row["status"] == "CONFLICT":
-            conflicts.append(f"context_conflict.{row['primitiveFactorId']}")
-
     owner_unknown = _owner_is_unknown(top["ownerContext"])
     if owner_unknown:
         missing.append("owner_context_unknown")
@@ -932,10 +1201,13 @@ def _result_from_valid_input(top: Mapping[str, Any]) -> Dict[str, Any]:
         or top["marketTruth"]["status"] != "AVAILABLE"
         or top["predictionLedger"]["status"] != "AVAILABLE"
         or top["sho"]["status"] != "AVAILABLE"
-        or any(row["status"] in ("MISSING", "CONFLICT") for row in top["contextEvidence"])
         or owner_unknown
     )
-    action = _select_primary_action(top, data_gated=data_gated)
+    action = _select_primary_action(
+        top,
+        data_gated=data_gated,
+        sho_buy_eligible=top._sho_buy_eligible,
+    )
     base_confidence = {
         "BUY": 7_000,
         "HOLD": 6_000,
@@ -963,6 +1235,13 @@ def _result_from_valid_input(top: Mapping[str, Any]) -> Dict[str, Any]:
         target_refs.append(top["sho"]["invalidation"]["sourceRef"])
 
     dissent: List[str] = []
+    for row in top["contextEvidence"]:
+        if row["status"] == "MISSING":
+            dissent.append(f"context_missing_advisory.{row['primitiveFactorId']}")
+        elif row["status"] == "CONFLICT":
+            dissent.append(f"context_conflict_advisory.{row['primitiveFactorId']}")
+        if row["constraint"] != "NONE":
+            dissent.append("context_constraint_advisory_only")
     for challenge in top["challengeEvidence"]:
         dissent.extend(challenge["dissentReasonCodes"])
         if challenge["proposedAction"] is not None:
@@ -985,6 +1264,7 @@ def _result_from_valid_input(top: Mapping[str, Any]) -> Dict[str, Any]:
 
     body: Dict[str, Any] = {
         "schemaVersion": RESULT_SCHEMA_VERSION,
+        "verifiedEvidenceBundleId": top._bundle_id,
         "status": "DATA_GATED" if data_gated else "EVALUATED",
         "subject": copy.deepcopy(top["subject"]),
         "issuedAt": top["decisionAt"],
@@ -1030,14 +1310,20 @@ def _result_from_valid_input(top: Mapping[str, Any]) -> Dict[str, Any]:
         },
         "sevenSign": _seven_sign_projection(action, top, data_gated=data_gated),
     }
-    result = {"decisionId": compute_single_decision_id(body), **body}
+    result = _VerifiedSingleDecisionResult(
+        {"decisionId": compute_single_decision_id(body), **body}
+    )
+    result._authority_seal = _RESULT_SEAL
+    result._bundle_id = top._bundle_id
+    result._body_digest = _verified_bundle_digest(result)
     validate_single_decision_result_v2(result)
-    return copy.deepcopy(result)
+    return result
 
 
 def _invalid_result() -> Dict[str, Any]:
     body: Dict[str, Any] = {
         "schemaVersion": RESULT_SCHEMA_VERSION,
+        "verifiedEvidenceBundleId": None,
         "status": "DATA_GATED",
         "subject": None,
         "issuedAt": None,
@@ -1077,7 +1363,9 @@ def _invalid_result() -> Dict[str, Any]:
 
 
 def evaluate_single_decision_authority(value: Any) -> Dict[str, Any]:
-    """Evaluate v2 input, failing closed to deterministic DATA_GATED/WAIT."""
+    """Evaluate only a verifier-issued bundle; raw mappings always fail closed."""
+    if not _bundle_is_current(value):
+        return copy.deepcopy(_invalid_result())
     try:
         validate_single_decision_input_v2(value)
     except (SingleDecisionValidationError, RiskDisciplineValidationError, TypeError, ValueError):
@@ -1101,6 +1389,11 @@ def validate_single_decision_result_v2(value: Any) -> None:
         _fail("result.schemaVersion", f"must equal {RESULT_SCHEMA_VERSION}")
     if not isinstance(result["decisionId"], str) or not _DECISION_ID_RE.fullmatch(result["decisionId"]):
         _fail("result.decisionId", "malformed content address")
+    bundle_id = result["verifiedEvidenceBundleId"]
+    if bundle_id is not None and (
+        not isinstance(bundle_id, str) or not _BUNDLE_ID_RE.fullmatch(bundle_id)
+    ):
+        _fail("result.verifiedEvidenceBundleId", "malformed verified bundle identity")
     if result["status"] not in ("EVALUATED", "DATA_GATED"):
         _fail("result.status", "unknown result status")
     _validate_result_subject(result["subject"])
@@ -1156,6 +1449,14 @@ def validate_single_decision_result_v2(value: Any) -> None:
         "result.identities.authorityPolicySha256",
         nullable=True,
     )
+    if result["status"] == "EVALUATED" and (
+        bundle_id is None
+        or identities["authorityPolicyId"] != AUTHORITY_POLICY_ID
+        or identities["authorityPolicySha256"] != AUTHORITY_POLICY_SHA256
+    ):
+        _fail("result.identities", "EVALUATED result must bind verified canonical authority")
+    if bundle_id is None and result["subject"] is not None:
+        _fail("result.verifiedEvidenceBundleId", "non-invalid result requires verified evidence")
     market = _exact_mapping(
         identities["marketTruth"], _MARKET_IDENTITY_KEYS, "result.identities.marketTruth"
     )
@@ -1228,7 +1529,7 @@ def build_data_gated_input_v2(
     subject: Mapping[str, Any],
     decision_at: str,
     information_cutoff_at: str,
-    authority_policy: Mapping[str, Any],
+    authority_policy: Optional[Mapping[str, Any]] = None,
     owner_context: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build the minimum honest input when exact upstream artifacts are absent."""
@@ -1237,7 +1538,10 @@ def build_data_gated_input_v2(
     cutoff = _utc(information_cutoff_at, "informationCutoffAt")
     if cutoff > decision_time:
         _fail("informationCutoffAt", "cannot be later than decisionAt")
-    policy = _validate_policy(authority_policy, "authorityPolicy")
+    policy = _validate_canonical_authority_policy(
+        authority_policy or SINGLE_DECISION_AUTHORITY_V2_POLICY,
+        "authorityPolicy",
+    )
     policy_value = {
         "policyId": policy["policyId"],
         "policySha256": policy["policySha256"],
@@ -1313,7 +1617,6 @@ def build_data_gated_input_v2(
             "policySha256": None,
             "state": None,
             "validationStatus": None,
-            "buyEligible": False,
             "primitiveFactorIds": [],
             "targets": [],
             "invalidation": None,
@@ -1354,12 +1657,13 @@ def build_data_gated_input_v2(
             "holdoutImmutable": False,
         },
     }
-    validate_single_decision_input_v2(value)
-    return copy.deepcopy(value)
+    return verify_decision_evidence(value)
 
 
 def build_prediction_ledger_v2_adapter(result: Any) -> Dict[str, Any]:
     """Return one append-only v2 binding row; existing ledger rows are untouched."""
+    if not _result_is_current(result):
+        _fail("result", "must come from the verified SDA admission path")
     validate_single_decision_result_v2(result)
     identities = result["identities"]
     seven = result["sevenSign"]
@@ -1369,6 +1673,7 @@ def build_prediction_ledger_v2_adapter(result: Any) -> Dict[str, Any]:
         "appendMode": "APPEND_ONLY",
         "mutatesExistingRows": False,
         "decisionId": result["decisionId"],
+        "verifiedEvidenceBundleId": result["verifiedEvidenceBundleId"],
         "issuedAt": result["issuedAt"],
         "informationCutoffAt": result["informationCutoffAt"],
         "subject": copy.deepcopy(result["subject"]),
@@ -1419,12 +1724,14 @@ __all__ = [
     "RESULT_SCHEMA_VERSION",
     "SEVEN_SIGN_SCHEMA_VERSION",
     "SINGLE_DECISION_AUTHORITY_V2_POLICY",
+    "VERIFIED_EVIDENCE_SCHEMA_VERSION",
     "SingleDecisionValidationError",
     "build_data_gated_input_v2",
     "build_prediction_ledger_v2_adapter",
     "compute_prediction_adapter_id",
     "compute_single_decision_id",
     "evaluate_single_decision_authority",
+    "verify_decision_evidence",
     "validate_single_decision_input_v2",
     "validate_single_decision_result_v2",
 ]

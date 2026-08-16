@@ -33,6 +33,14 @@ STOCK_LENS_SCHEMA = "argus-stock-sho-lens-v1"
 COVERAGE_SCHEMA = "argus-round2-sho-coverage-v1"
 CONSUMER_PROJECTION_SCHEMA = "argus-sho-today-sda-projection-v1"
 
+_REVERSAL_ARTIFACT_SEAL = object()
+
+
+class _BuilderIssuedReversalArtifact(dict):
+    """Runtime capability produced only by the canonical reversal builder."""
+
+    __slots__ = ("_authority_seal", "_body_digest")
+
 LINEAGES = (
     "SHO_ORIGINAL",
     "ARGUS_CANDIDATE",
@@ -1616,7 +1624,12 @@ def build_reversal_engine(*, cutoff: str, analysis_instrument: str,
         "action": None,
         "automaticAiCalls": 0,
     }
-    return {**body, "artifactId": "sho-reversal-" + _sha256(body)}
+    artifact = _BuilderIssuedReversalArtifact({
+        **body, "artifactId": "sho-reversal-" + _sha256(body),
+    })
+    artifact._authority_seal = _REVERSAL_ARTIFACT_SEAL
+    artifact._body_digest = _sha256(artifact)
+    return artifact
 
 
 def _sha256_text(value: Any) -> bool:
@@ -1921,6 +1934,19 @@ def validate_reversal_artifact(value: Any) -> Dict[str, Any]:
     if not _content_id_valid(artifact, "sho-reversal-"):
         raise ValueError("invalid_reversal_artifact_id")
     return artifact
+
+
+def is_builder_issued_reversal_artifact(value: Any) -> bool:
+    """Return whether ``value`` is an unmodified canonical-builder result."""
+    try:
+        return bool(
+            isinstance(value, _BuilderIssuedReversalArtifact)
+            and getattr(value, "_authority_seal", None) is _REVERSAL_ARTIFACT_SEAL
+            and getattr(value, "_body_digest", None) == _sha256(value)
+            and validate_reversal_artifact(value) == value
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _target_candidate(family: str, label: str, level: Any,
@@ -2544,6 +2570,7 @@ __all__ = [
     "normalize_complete_ohlcv",
     "point_in_time_rows",
     "project_today_sda_safe",
+    "is_builder_issued_reversal_artifact",
     "registry_canonical_bytes",
     "repository_coverage_audit",
     "reversal_evidence",

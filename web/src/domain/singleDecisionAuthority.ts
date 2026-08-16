@@ -15,7 +15,7 @@ export const SEVEN_SIGN_SCHEMA_VERSION = 'seven-sign-v1' as const;
 export const PREDICTION_LEDGER_SDA_ADAPTER_V2_SCHEMA_VERSION = 'argus-prediction-ledger-sda-adapter-v2' as const;
 /** SHA-256 of the closed v2 action/precedence/owner/AI policy descriptor. */
 export const SINGLE_DECISION_AUTHORITY_V2_POLICY = Object.freeze({
-  policyId: 'argus-single-decision-authority-v2',
+  policyId: 'single-decision-authority-v2',
   policySha256: 'bbd5da4bb68fed291908ff574f36a3c1c4b20bb48cf86d6a837eecf98353ea31',
 } as const);
 
@@ -487,6 +487,22 @@ const V2_ARTIFACT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
 const RISK_KERNEL_ID_RE = /^rk-[0-9a-f]{64}$/;
 const DECISION_ID_RE = /^sda-[0-9a-f]{64}$/;
 const ADAPTER_ID_RE = /^pla-[0-9a-f]{64}$/;
+const VERIFIED_BUNDLE_ID_RE = /^vdeb-[0-9a-f]{64}$/;
+
+interface VerifiedBundleRuntimeState {
+  readonly bundleId: string;
+  readonly canonicalInput: string;
+  readonly shoBuyEligible: boolean;
+}
+
+interface VerifiedResultRuntimeState {
+  readonly bundleId: string;
+  readonly canonicalResult: string;
+}
+
+const VERIFIED_RISK_KERNELS = new WeakMap<object, string>();
+const VERIFIED_DECISION_BUNDLES = new WeakMap<object, VerifiedBundleRuntimeState>();
+const VERIFIED_DECISION_RESULTS = new WeakMap<object, VerifiedResultRuntimeState>();
 const RISK_INPUT_KEYS = [
   'schemaVersion', 'subject', 'asOf', 'informationCutoffAt', 'policy', 'contributions',
 ] as const;
@@ -758,7 +774,9 @@ export function buildRiskKernel(request: RiskDisciplineInputV1): RiskKernelV1 {
   const kernel: RiskKernelV1 = { riskKernelId: computeRiskKernelId(body), ...body };
   const kernelValidation = validateRiskKernel(kernel);
   if (!kernelValidation.ok) throw new TypeError(kernelValidation.errors.join('; '));
-  return deepClone(kernel);
+  const admitted = deepClone(kernel);
+  VERIFIED_RISK_KERNELS.set(admitted, stableJson(admitted as unknown as JsonValue));
+  return admitted;
 }
 
 export function validateRiskKernel(value: unknown): ContractValidationResult {
@@ -888,7 +906,6 @@ export interface ShoReferenceV2 {
   policySha256: string | null;
   state: ShoState | null;
   validationStatus: ShoValidationStatus | null;
-  buyEligible: boolean;
   primitiveFactorIds: string[];
   targets: DecisionTargetV2[];
   invalidation: DecisionInvalidationV2 | null;
@@ -962,6 +979,7 @@ export interface SevenSignProjectionV1 {
 export interface SingleDecisionAuthorityResultV2 {
   schemaVersion: typeof SINGLE_DECISION_AUTHORITY_V2_SCHEMA_VERSION;
   decisionId: string;
+  verifiedEvidenceBundleId: string | null;
   status: 'EVALUATED' | 'DATA_GATED';
   subject: DecisionSubjectV2 | null;
   issuedAt: string | null;
@@ -999,6 +1017,7 @@ export interface PredictionLedgerSdaAdapterV2 {
   appendMode: 'APPEND_ONLY';
   mutatesExistingRows: false;
   decisionId: string;
+  verifiedEvidenceBundleId: string;
   issuedAt: string | null;
   informationCutoffAt: string | null;
   subject: DecisionSubjectV2 | null;
@@ -1043,7 +1062,7 @@ const PREDICTION_LEDGER_KEYS = [
 ] as const;
 const SHO_KEYS = [
   'status', 'schemaVersion', 'artifactId', 'asOf', 'policyId', 'policySha256', 'state',
-  'validationStatus', 'buyEligible', 'primitiveFactorIds', 'targets', 'invalidation',
+  'validationStatus', 'primitiveFactorIds', 'targets', 'invalidation',
 ] as const;
 const TARGET_KEYS = ['targetId', 'value', 'unit', 'sourceRef'] as const;
 const INVALIDATION_KEYS = ['invalidationId', 'value', 'unit', 'sourceRef'] as const;
@@ -1062,7 +1081,7 @@ const CALIBRATION_KEYS = [
   'sampleSizeByLevel', 'outOfSample', 'holdoutImmutable',
 ] as const;
 const SDA_RESULT_KEYS = [
-  'schemaVersion', 'decisionId', 'status', 'subject', 'issuedAt', 'informationCutoffAt',
+  'schemaVersion', 'decisionId', 'verifiedEvidenceBundleId', 'status', 'subject', 'issuedAt', 'informationCutoffAt',
   'primaryAction', 'confidence', 'guidance', 'targets', 'invalidation',
   'nextReviewConditionCodes', 'freshness', 'missingReasonCodes', 'conflictReasonCodes',
   'dissentReasonCodes', 'evidenceRefs', 'primitiveFactorIds', 'identities', 'sevenSign',
@@ -1079,6 +1098,14 @@ const SDA_RISK_IDENTITY_KEYS = ['status', 'riskKernelId'] as const;
 const SEVEN_RESULT_KEYS = [
   'schemaVersion', 'status', 'candidateLevel', 'productionLevel', 'policyId', 'policySha256',
   'calibrationArtifactId', 'reasonCodes',
+] as const;
+const SDA_ADAPTER_KEYS = [
+  'schemaVersion', 'adapterId', 'recordType', 'appendMode', 'mutatesExistingRows',
+  'decisionId', 'verifiedEvidenceBundleId', 'issuedAt', 'informationCutoffAt', 'subject',
+  'authorityPolicyRef', 'marketTruthRef', 'predictionLedgerRef', 'shoRef', 'riskRef',
+  'singleDecisionRef', 'sevenSignRef', 'primaryAction', 'confidenceBps', 'targets',
+  'invalidation', 'missingReasonCodes', 'conflictReasonCodes', 'dissentReasonCodes',
+  'evidenceRefs', 'primitiveFactorIds',
 ] as const;
 const REFERENCE_STATUSES = new Set<ArtifactReferenceStatus>([
   'AVAILABLE', 'MISSING', 'CONFLICT', 'STALE',
@@ -1202,6 +1229,11 @@ export function validateSingleDecisionAuthorityInputV2(value: unknown): Contract
     errors.push('informationCutoffAt: later than decisionAt');
   }
   validateV2Policy(value.authorityPolicy, 'authorityPolicy', errors);
+  if (isRecord(value.authorityPolicy)
+      && (value.authorityPolicy.policyId !== SINGLE_DECISION_AUTHORITY_V2_POLICY.policyId
+        || value.authorityPolicy.policySha256 !== SINGLE_DECISION_AUTHORITY_V2_POLICY.policySha256)) {
+    errors.push('authorityPolicy: must equal repository-pinned SDA v2 policy');
+  }
 
   if (!hasExactKeys(value.marketTruth, MARKET_TRUTH_KEYS)) {
     errors.push('marketTruth: keys must be exact');
@@ -1267,7 +1299,6 @@ export function validateSingleDecisionAuthorityInputV2(value: unknown): Contract
         && !SHO_VALIDATION_STATUSES.has(ref.validationStatus as ShoValidationStatus)) {
       errors.push('sho.validationStatus: unknown');
     }
-    if (typeof ref.buyEligible !== 'boolean') errors.push('sho.buyEligible: must be boolean');
     validateCanonicalStringsV2(ref.primitiveFactorIds, 'sho.primitiveFactorIds', 48, errors);
     if (!Array.isArray(ref.targets) || ref.targets.length > 4) {
       errors.push('sho.targets: must be an array of at most 4');
@@ -1285,14 +1316,8 @@ export function validateSingleDecisionAuthorityInputV2(value: unknown): Contract
           ref.state, ref.validationStatus].some((item) => item === null)) {
       errors.push('sho: AVAILABLE requires complete identity and state');
     }
-    if (ref.buyEligible === true
-        && (ref.validationStatus !== 'VALIDATED'
-          || !BUY_ELIGIBLE_SHO_STATES.has(ref.state as ShoState))) {
-      errors.push('sho.buyEligible: requires a validated positive/reversal state');
-    }
     if (ref.status === 'MISSING'
         && ([ref.artifactId, ref.asOf, ref.state, ref.validationStatus].some((item) => item !== null)
-          || ref.buyEligible !== false
           || (Array.isArray(ref.primitiveFactorIds) && ref.primitiveFactorIds.length > 0)
           || (Array.isArray(ref.targets) && ref.targets.length > 0)
           || ref.invalidation !== null)) errors.push('sho: MISSING claims evidence');
@@ -1457,6 +1482,55 @@ function ownerContextIsUnknown(owner: OwnerDecisionContext): boolean {
     || owner.concentrationBand === 'UNKNOWN' || owner.addPermission === 'UNKNOWN';
 }
 
+export type VerifiedDecisionEvidenceBundleV2 = SingleDecisionAuthorityInputV2;
+
+/**
+ * Admit an ordinary frontend request only after runtime verification.
+ *
+ * The browser has no canonical Market Truth/Ledger/SHO store or accepted
+ * verifier.  Consequently it may issue an opaque capability only for the
+ * explicit non-authoritative/missing-artifact path.  AVAILABLE references
+ * must be resolved by the backend canonical boundary in a future, separately
+ * reviewed integration; a plain object can never activate them here.
+ */
+export function verifyDecisionEvidence(
+  value: unknown,
+): VerifiedDecisionEvidenceBundleV2 {
+  if (!isRecord(value)) throw new TypeError('input: must be an object');
+  if (!Object.prototype.hasOwnProperty.call(value, 'authorityPolicy')) {
+    value.authorityPolicy = deepClone(SINGLE_DECISION_AUTHORITY_V2_POLICY);
+  }
+  const validation = validateSingleDecisionAuthorityInputV2(value);
+  if (!validation.ok) throw new TypeError(validation.errors.join('; '));
+  const input = value as unknown as SingleDecisionAuthorityInputV2;
+  if ([input.marketTruth, input.predictionLedger, input.sho]
+    .some((reference) => reference.status === 'AVAILABLE')) {
+    throw new TypeError('canonical_artifact_resolver_unavailable');
+  }
+  const riskSeal = VERIFIED_RISK_KERNELS.get(input.riskKernel);
+  if (riskSeal == null || riskSeal !== stableJson(input.riskKernel as unknown as JsonValue)) {
+    throw new TypeError('risk_kernel_not_verifier_issued');
+  }
+  const verification = {
+    schemaVersion: 'verified-decision-evidence-bundle-v1',
+    authorityPolicy: SINGLE_DECISION_AUTHORITY_V2_POLICY,
+    marketTruth: null,
+    predictionLedger: null,
+    sho: null,
+    riskKernelId: input.riskKernel.riskKernelId,
+  } as const;
+  const canonicalInput = stableJson(input as unknown as JsonValue);
+  const bundleId = `vdeb-${sha256HexSync(stableJson({
+    input, verification,
+  } as unknown as JsonValue))}`;
+  VERIFIED_DECISION_BUNDLES.set(input, {
+    bundleId,
+    canonicalInput,
+    shoBuyEligible: false,
+  });
+  return input;
+}
+
 function referenceReasons(
   prefix: string,
   status: ArtifactReferenceStatus,
@@ -1466,7 +1540,11 @@ function referenceReasons(
   return { missing: [`${prefix}_${status.toLowerCase()}`], conflicts: [] };
 }
 
-function selectPrimaryActionV2(input: SingleDecisionAuthorityInputV2, dataGated: boolean): PrimaryAction {
+function selectPrimaryActionV2(
+  input: SingleDecisionAuthorityInputV2,
+  dataGated: boolean,
+  shoBuyEligible: boolean,
+): PrimaryAction {
   const held = input.ownerContext.positionState === 'HELD';
   if (dataGated) return 'WAIT';
   switch (input.riskKernel.constraint) {
@@ -1476,10 +1554,8 @@ function selectPrimaryActionV2(input: SingleDecisionAuthorityInputV2, dataGated:
     case 'BLOCK_BUY': return held ? 'HOLD' : 'WAIT';
     default: break;
   }
-  if (input.contextEvidence.some((row) =>
-    row.status === 'ACTIVE' && row.constraint === 'WAIT_REQUIRED')) return 'WAIT';
   const buyReady = input.sho.validationStatus === 'VALIDATED'
-    && input.sho.buyEligible
+    && shoBuyEligible
     && input.sho.state !== null
     && BUY_ELIGIBLE_SHO_STATES.has(input.sho.state)
     && input.ownerContext.addPermission === 'ALLOWED';
@@ -1496,9 +1572,7 @@ function sevenCandidateV2(
   if (action === 'EXIT') return 1;
   if (action === 'REDUCE') return 2;
   if (action === 'WAIT') {
-    const defensive = input.riskKernel.constraint !== 'NONE'
-      || input.contextEvidence.some((row) =>
-        row.status === 'ACTIVE' && row.constraint === 'WAIT_REQUIRED');
+    const defensive = input.riskKernel.constraint !== 'NONE';
     return defensive ? 3 : 4;
   }
   if (action === 'HOLD') return 4;
@@ -1574,7 +1648,10 @@ export function computeSingleDecisionId(
   return `sda-${sha256HexSync(stableJson(body as unknown as JsonValue))}`;
 }
 
-function resultFromValidInputV2(input: SingleDecisionAuthorityInputV2): SingleDecisionAuthorityResultV2 {
+function resultFromValidInputV2(
+  input: SingleDecisionAuthorityInputV2,
+  runtime: VerifiedBundleRuntimeState,
+): SingleDecisionAuthorityResultV2 {
   const missing = [...input.quality.missingReasonCodes];
   const conflicts = [...input.quality.conflictReasonCodes];
   ([
@@ -1588,10 +1665,6 @@ function resultFromValidInputV2(input: SingleDecisionAuthorityInputV2): SingleDe
   });
   missing.push(...input.riskKernel.missingReasonCodes);
   conflicts.push(...input.riskKernel.conflictReasonCodes);
-  input.contextEvidence.forEach((row) => {
-    if (row.status === 'MISSING') missing.push(`context_missing.${row.primitiveFactorId}`);
-    if (row.status === 'CONFLICT') conflicts.push(`context_conflict.${row.primitiveFactorId}`);
-  });
   const ownerUnknown = ownerContextIsUnknown(input.ownerContext);
   if (ownerUnknown) missing.push('owner_context_unknown');
   if (input.quality.status !== 'COMPLETE') missing.push(`quality_${input.quality.status.toLowerCase()}`);
@@ -1603,9 +1676,8 @@ function resultFromValidInputV2(input: SingleDecisionAuthorityInputV2): SingleDe
     || input.marketTruth.status !== 'AVAILABLE'
     || input.predictionLedger.status !== 'AVAILABLE'
     || input.sho.status !== 'AVAILABLE'
-    || input.contextEvidence.some((row) => row.status === 'MISSING' || row.status === 'CONFLICT')
     || ownerUnknown;
-  const primaryAction = selectPrimaryActionV2(input, dataGated);
+  const primaryAction = selectPrimaryActionV2(input, dataGated, runtime.shoBuyEligible);
   const confidenceBase: Record<PrimaryAction, number> = {
     BUY: 7_000, HOLD: 6_000, WAIT: 4_500, REDUCE: 7_000, EXIT: 8_000,
   };
@@ -1618,6 +1690,15 @@ function resultFromValidInputV2(input: SingleDecisionAuthorityInputV2): SingleDe
   const targetRefs = input.sho.targets.map((target) => target.sourceRef);
   if (input.sho.invalidation) targetRefs.push(input.sho.invalidation.sourceRef);
   const dissent: string[] = [];
+  input.contextEvidence.forEach((row) => {
+    if (row.status === 'MISSING') {
+      dissent.push(`context_missing_advisory.${row.primitiveFactorId}`);
+    }
+    if (row.status === 'CONFLICT') {
+      dissent.push(`context_conflict_advisory.${row.primitiveFactorId}`);
+    }
+    if (row.constraint !== 'NONE') dissent.push('context_constraint_advisory_only');
+  });
   input.challengeEvidence.forEach((challenge) => {
     dissent.push(...challenge.dissentReasonCodes);
     if (challenge.proposedAction !== null) {
@@ -1639,6 +1720,7 @@ function resultFromValidInputV2(input: SingleDecisionAuthorityInputV2): SingleDe
   ], 24);
   const body: Omit<SingleDecisionAuthorityResultV2, 'decisionId'> = {
     schemaVersion: SINGLE_DECISION_AUTHORITY_V2_SCHEMA_VERSION,
+    verifiedEvidenceBundleId: runtime.bundleId,
     status: dataGated ? 'DATA_GATED' : 'EVALUATED',
     subject: deepClone(input.subject),
     issuedAt: input.decisionAt,
@@ -1677,12 +1759,17 @@ function resultFromValidInputV2(input: SingleDecisionAuthorityInputV2): SingleDe
   };
   const validation = validateSingleDecisionAuthorityResultV2(result);
   if (!validation.ok) throw new TypeError(validation.errors.join('; '));
-  return deepClone(result);
+  VERIFIED_DECISION_RESULTS.set(result, {
+    bundleId: runtime.bundleId,
+    canonicalResult: stableJson(result as unknown as JsonValue),
+  });
+  return result;
 }
 
 function invalidSingleDecisionResultV2(): SingleDecisionAuthorityResultV2 {
   const body: Omit<SingleDecisionAuthorityResultV2, 'decisionId'> = {
     schemaVersion: SINGLE_DECISION_AUTHORITY_V2_SCHEMA_VERSION,
+    verifiedEvidenceBundleId: null,
     status: 'DATA_GATED',
     subject: null,
     issuedAt: null,
@@ -1723,9 +1810,14 @@ function invalidSingleDecisionResultV2(): SingleDecisionAuthorityResultV2 {
 
 /** Active v2 final-action authority. Invalid input is never thrown to the caller. */
 export function evaluateSingleDecisionAuthority(value: unknown): SingleDecisionAuthorityResultV2 {
+  if (!isRecord(value)) return deepClone(invalidSingleDecisionResultV2());
+  const runtime = VERIFIED_DECISION_BUNDLES.get(value);
+  if (runtime == null || runtime.canonicalInput !== stableJson(value as unknown as JsonValue)) {
+    return deepClone(invalidSingleDecisionResultV2());
+  }
   const validation = validateSingleDecisionAuthorityInputV2(value);
   if (!validation.ok) return deepClone(invalidSingleDecisionResultV2());
-  return resultFromValidInputV2(value as SingleDecisionAuthorityInputV2);
+  return resultFromValidInputV2(value as unknown as SingleDecisionAuthorityInputV2, runtime);
 }
 
 export interface SingleDecisionAuthorityV2 {
@@ -1749,6 +1841,11 @@ export function validateSingleDecisionAuthorityResultV2(value: unknown): Contrac
   if (typeof value.decisionId !== 'string' || !DECISION_ID_RE.test(value.decisionId)) {
     errors.push('result.decisionId: malformed');
   }
+  if (value.verifiedEvidenceBundleId !== null
+      && (typeof value.verifiedEvidenceBundleId !== 'string'
+        || !VERIFIED_BUNDLE_ID_RE.test(value.verifiedEvidenceBundleId))) {
+    errors.push('result.verifiedEvidenceBundleId: malformed');
+  }
   if (!['EVALUATED', 'DATA_GATED'].includes(value.status as string)) errors.push('result.status: unknown');
   if (value.subject !== null) validateDecisionSubjectV2(value.subject, 'result.subject', errors);
   if (value.issuedAt !== null) {
@@ -1764,6 +1861,16 @@ export function validateSingleDecisionAuthorityResultV2(value: unknown): Contrac
   if (!PRIMARY_ACTIONS.includes(value.primaryAction as PrimaryAction)) errors.push('result.primaryAction: unknown');
   if (value.status === 'DATA_GATED' && value.primaryAction !== 'WAIT') {
     errors.push('result.primaryAction: DATA_GATED must WAIT');
+  }
+  if (value.status === 'EVALUATED'
+      && (value.verifiedEvidenceBundleId === null
+        || !isRecord(value.identities)
+        || value.identities.authorityPolicyId !== SINGLE_DECISION_AUTHORITY_V2_POLICY.policyId
+        || value.identities.authorityPolicySha256 !== SINGLE_DECISION_AUTHORITY_V2_POLICY.policySha256)) {
+    errors.push('result.identities: EVALUATED result lacks verified canonical authority');
+  }
+  if (value.verifiedEvidenceBundleId === null && value.subject !== null) {
+    errors.push('result.verifiedEvidenceBundleId: non-invalid result requires verified evidence');
   }
   if (!hasExactKeys(value.confidence, SDA_CONFIDENCE_KEYS)) {
     errors.push('result.confidence: keys must be exact');
@@ -1889,7 +1996,7 @@ export interface DataGatedInputV2Options {
   subject: DecisionSubjectV2;
   decisionAt: string;
   informationCutoffAt: string;
-  authorityPolicy: ArtifactPolicyRef;
+  authorityPolicy?: ArtifactPolicyRef;
   ownerContext?: OwnerDecisionContext;
 }
 
@@ -1897,7 +2004,12 @@ export interface DataGatedInputV2Options {
 export function buildDataGatedInputV2(options: DataGatedInputV2Options): SingleDecisionAuthorityInputV2 {
   const subjectErrors: string[] = [];
   validateDecisionSubjectV2(options.subject, 'subject', subjectErrors);
-  validateV2Policy(options.authorityPolicy, 'authorityPolicy', subjectErrors);
+  const authorityPolicy = options.authorityPolicy ?? SINGLE_DECISION_AUTHORITY_V2_POLICY;
+  validateV2Policy(authorityPolicy, 'authorityPolicy', subjectErrors);
+  if (authorityPolicy.policyId !== SINGLE_DECISION_AUTHORITY_V2_POLICY.policyId
+      || authorityPolicy.policySha256 !== SINGLE_DECISION_AUTHORITY_V2_POLICY.policySha256) {
+    subjectErrors.push('authorityPolicy: must equal repository-pinned SDA v2 policy');
+  }
   if (!isExactUtc(options.decisionAt)) subjectErrors.push('decisionAt: invalid');
   if (!isExactUtc(options.informationCutoffAt)) subjectErrors.push('informationCutoffAt: invalid');
   if (isExactUtc(options.decisionAt) && isExactUtc(options.informationCutoffAt)
@@ -1923,7 +2035,7 @@ export function buildDataGatedInputV2(options: DataGatedInputV2Options): SingleD
     },
     asOf: options.decisionAt,
     informationCutoffAt: options.informationCutoffAt,
-    policy: deepClone(options.authorityPolicy),
+    policy: deepClone(authorityPolicy),
     contributions: [{
       evidenceRef: 'discipline:risk-missing',
       primitiveFactorId: 'risk.required_evidence',
@@ -1940,7 +2052,7 @@ export function buildDataGatedInputV2(options: DataGatedInputV2Options): SingleD
     subject: deepClone(options.subject),
     decisionAt: options.decisionAt,
     informationCutoffAt: options.informationCutoffAt,
-    authorityPolicy: deepClone(options.authorityPolicy),
+    authorityPolicy: deepClone(authorityPolicy),
     marketTruth: {
       status: 'MISSING', schemaVersion: null, snapshotId: null, observationId: null,
       observedAt: null, knownAt: null, policyId: null, policySha256: null,
@@ -1952,7 +2064,7 @@ export function buildDataGatedInputV2(options: DataGatedInputV2Options): SingleD
     sho: {
       status: 'MISSING', schemaVersion: null, artifactId: null, asOf: null,
       policyId: null, policySha256: null, state: null, validationStatus: null,
-      buyEligible: false, primitiveFactorIds: [], targets: [], invalidation: null,
+      primitiveFactorIds: [], targets: [], invalidation: null,
     },
     riskKernel,
     contextEvidence: [{
@@ -1980,9 +2092,7 @@ export function buildDataGatedInputV2(options: DataGatedInputV2Options): SingleD
       outOfSample: false, holdoutImmutable: false,
     },
   };
-  const validation = validateSingleDecisionAuthorityInputV2(input);
-  if (!validation.ok) throw new TypeError(validation.errors.join('; '));
-  return deepClone(input);
+  return verifyDecisionEvidence(input);
 }
 
 export function computePredictionLedgerAdapterId(
@@ -1992,18 +2102,19 @@ export function computePredictionLedgerAdapterId(
   return `pla-${sha256HexSync(stableJson(body as unknown as JsonValue))}`;
 }
 
-/** Build one append-only binding row; no existing Prediction Ledger row is mutated. */
-export function buildPredictionLedgerV2Adapter(
+function predictionLedgerAdapterBody(
   result: SingleDecisionAuthorityResultV2,
-): PredictionLedgerSdaAdapterV2 {
-  const validation = validateSingleDecisionAuthorityResultV2(result);
-  if (!validation.ok) throw new TypeError(validation.errors.join('; '));
-  const body: Omit<PredictionLedgerSdaAdapterV2, 'adapterId'> = {
+): Omit<PredictionLedgerSdaAdapterV2, 'adapterId'> {
+  if (result.verifiedEvidenceBundleId === null) {
+    throw new TypeError('result: verified evidence bundle identity required');
+  }
+  return {
     schemaVersion: PREDICTION_LEDGER_SDA_ADAPTER_V2_SCHEMA_VERSION,
     recordType: 'canonical_decision_binding',
     appendMode: 'APPEND_ONLY',
     mutatesExistingRows: false,
     decisionId: result.decisionId,
+    verifiedEvidenceBundleId: result.verifiedEvidenceBundleId,
     issuedAt: result.issuedAt,
     informationCutoffAt: result.informationCutoffAt,
     subject: deepClone(result.subject),
@@ -2038,5 +2149,59 @@ export function buildPredictionLedgerV2Adapter(
     evidenceRefs: deepClone(result.evidenceRefs),
     primitiveFactorIds: deepClone(result.primitiveFactorIds),
   };
+}
+
+export function validatePredictionLedgerV2Adapter(
+  value: unknown,
+  result?: SingleDecisionAuthorityResultV2,
+): ContractValidationResult {
+  const errors: string[] = [];
+  if (!hasExactKeys(value, SDA_ADAPTER_KEYS)) {
+    return { ok: false, errors: Object.freeze(['adapter: keys must be exact']) };
+  }
+  if (value.schemaVersion !== PREDICTION_LEDGER_SDA_ADAPTER_V2_SCHEMA_VERSION
+      || value.recordType !== 'canonical_decision_binding'
+      || value.appendMode !== 'APPEND_ONLY' || value.mutatesExistingRows !== false) {
+    errors.push('adapter: authority or append contract mismatch');
+  }
+  if (typeof value.adapterId !== 'string' || !ADAPTER_ID_RE.test(value.adapterId)
+      || value.adapterId !== computePredictionLedgerAdapterId(
+        value as unknown as PredictionLedgerSdaAdapterV2)) {
+    errors.push('adapter.adapterId: content address mismatch');
+  }
+  if (typeof value.verifiedEvidenceBundleId !== 'string'
+      || !VERIFIED_BUNDLE_ID_RE.test(value.verifiedEvidenceBundleId)) {
+    errors.push('adapter.verifiedEvidenceBundleId: malformed');
+  }
+  if (result !== undefined) {
+    const resultValidation = validateSingleDecisionAuthorityResultV2(result);
+    if (!resultValidation.ok) errors.push(...resultValidation.errors.map((item) => `result: ${item}`));
+    try {
+      const expectedBody = predictionLedgerAdapterBody(result);
+      const { adapterId: _ignored, ...actualBody } = value as unknown as PredictionLedgerSdaAdapterV2;
+      if (stableJson(actualBody as unknown as JsonValue)
+          !== stableJson(expectedBody as unknown as JsonValue)) {
+        errors.push('adapter: does not bind the supplied SDA result');
+      }
+    } catch (error) {
+      errors.push(`adapter: ${String(error)}`);
+    }
+  }
+  return { ok: errors.length === 0, errors: Object.freeze(errors) };
+}
+
+/** Build one append-only binding row; no existing Prediction Ledger row is mutated. */
+export function buildPredictionLedgerV2Adapter(
+  result: SingleDecisionAuthorityResultV2,
+): PredictionLedgerSdaAdapterV2 {
+  const runtime = VERIFIED_DECISION_RESULTS.get(result);
+  if (runtime == null
+      || runtime.bundleId !== result.verifiedEvidenceBundleId
+      || runtime.canonicalResult !== stableJson(result as unknown as JsonValue)) {
+    throw new TypeError('result: must come from the verified SDA admission path');
+  }
+  const validation = validateSingleDecisionAuthorityResultV2(result);
+  if (!validation.ok) throw new TypeError(validation.errors.join('; '));
+  const body = predictionLedgerAdapterBody(result);
   return { adapterId: computePredictionLedgerAdapterId(body), ...body };
 }

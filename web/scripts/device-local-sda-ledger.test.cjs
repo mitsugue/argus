@@ -44,10 +44,6 @@ function pair(index = 0) {
     subject: { kind: 'ASSET', instrumentId: '7203', market: 'JP', horizon: 'FIVE_DAY' },
     decisionAt: at,
     informationCutoffAt: at,
-    authorityPolicy: {
-      policyId: 'single-decision-authority-v2',
-      policySha256: 'a'.repeat(64),
-    },
     ownerContext: {
       schemaVersion: 'owner-decision-context-v1',
       privacyClass: 'DEVICE_LOCAL',

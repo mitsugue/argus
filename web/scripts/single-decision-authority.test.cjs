@@ -67,7 +67,8 @@ const V2_SUBJECT = {
   kind: 'ASSET', instrumentId: '7203', market: 'JP', horizon: 'FIVE_DAY',
 };
 const V2_POLICY = {
-  policyId: 'single-decision-authority-v2', policySha256: 'a'.repeat(64),
+  policyId: 'single-decision-authority-v2',
+  policySha256: 'bbd5da4bb68fed291908ff574f36a3c1c4b20bb48cf86d6a837eecf98353ea31',
 };
 
 function owner(positionState = 'NOT_HELD', addPermission = 'ALLOWED') {
@@ -94,7 +95,7 @@ function riskKernel(constraint = 'NONE') {
 }
 
 function v2Fixture({
-  positionState = 'NOT_HELD', shoState = 'REVERSAL_EARLY', buyEligible = true,
+  positionState = 'NOT_HELD', shoState = 'REVERSAL_EARLY',
   constraint = 'NONE',
 } = {}) {
   return {
@@ -118,7 +119,7 @@ function v2Fixture({
     sho: {
       status: 'AVAILABLE', schemaVersion: 'argus-sho-v1', artifactId: 'sho:artifact-7203',
       asOf: '2026-08-16T08:58:00Z', policyId: 'sho-policy-v1', policySha256: 'e'.repeat(64),
-      state: shoState, validationStatus: 'VALIDATED', buyEligible,
+      state: shoState, validationStatus: 'VALIDATED',
       primitiveFactorIds: ['momentum.reversal', 'trend.market'],
       targets: [{
         targetId: 'target.primary', value: '3125.5', unit: 'PRICE',
@@ -252,7 +253,7 @@ async function main() {
   assert.equal(Object.isFrozen(noInput.blockingReasonCodes), true);
 
   assert.deepEqual(authority.SINGLE_DECISION_AUTHORITY_V2_POLICY, {
-    policyId: 'argus-single-decision-authority-v2',
+    policyId: 'single-decision-authority-v2',
     policySha256: 'bbd5da4bb68fed291908ff574f36a3c1c4b20bb48cf86d6a837eecf98353ea31',
   });
   assert.equal(Object.isFrozen(authority.SINGLE_DECISION_AUTHORITY_V2_POLICY), true);
@@ -286,34 +287,36 @@ async function main() {
   assert.equal(duplicateRisk.primitiveFactors.length, 1, 'shared primitive factors never vote twice');
   assert.equal(duplicateRisk.confidenceCapBps, 7200);
 
-  const actionCases = [
-    [v2Fixture(), 'BUY'],
-    [v2Fixture({ positionState: 'HELD', shoState: 'MIXED', buyEligible: false }), 'HOLD'],
-    [v2Fixture({ shoState: 'MIXED', buyEligible: false }), 'WAIT'],
-    [v2Fixture({ positionState: 'HELD', constraint: 'REDUCE_RISK' }), 'REDUCE'],
-    [v2Fixture({ positionState: 'HELD', constraint: 'EXIT_RISK' }), 'EXIT'],
+  const forgedMatrix = [
+    v2Fixture(),
+    v2Fixture({ positionState: 'HELD', shoState: 'MIXED' }),
+    v2Fixture({ positionState: 'HELD', constraint: 'REDUCE_RISK' }),
+    v2Fixture({ positionState: 'HELD', constraint: 'EXIT_RISK' }),
   ];
-  for (const [input, action] of actionCases) {
+  for (const input of forgedMatrix) {
     const result = authority.evaluateSingleDecisionAuthority(input);
-    assert.equal(result.status, 'EVALUATED');
-    assert.equal(result.primaryAction, action);
-    assert.equal(authority.validateSingleDecisionAuthorityResultV2(result).ok, true);
+    assert.equal(result.status, 'DATA_GATED');
+    assert.equal(result.primaryAction, 'WAIT', 'plain reference objects never execute authority');
+    assert.equal(result.verifiedEvidenceBundleId, null);
   }
   assert.equal(authority.singleDecisionAuthority.status, 'ACTIVE_V2');
-  assert.equal(authority.evaluateSingleDecisionAuthority(v2Fixture({ constraint: 'EXIT_RISK' })).primaryAction,
-    'WAIT', 'EXIT is held-only');
-  assert.equal(authority.evaluateSingleDecisionAuthority(v2Fixture({ constraint: 'REDUCE_RISK' })).primaryAction,
-    'WAIT', 'REDUCE is held-only');
 
   const completeV2 = v2Fixture();
   assert.deepEqual(authority.validateSingleDecisionAuthorityInputV2(completeV2), { ok: true, errors: [] });
-  const canonicalDecision = authority.evaluateSingleDecisionAuthority(completeV2);
-  assert.equal(canonicalDecision.decisionId,
-    'sda-d76713b5560b65fc92c179ea7cda91477a75858d1408fbd959265610477b33cb',
-    'Python/TypeScript SDA hash drifted');
-  assert.equal(canonicalDecision.primaryAction, 'BUY');
-  assert.equal(canonicalDecision.sevenSign.candidateLevel, 5);
-  assert.equal(canonicalDecision.sevenSign.productionLevel, null);
+  assert.throws(() => authority.verifyDecisionEvidence(completeV2),
+    /canonical_artifact_resolver_unavailable/,
+    'frontend cannot upgrade AVAILABLE reference strings without canonical resolvers');
+
+  const assertedBuy = clone(completeV2);
+  assertedBuy.sho.buyEligible = true;
+  assert.equal(authority.validateSingleDecisionAuthorityInputV2(assertedBuy).ok, false,
+    'caller buyEligible is outside the closed request schema');
+  assert.equal(authority.evaluateSingleDecisionAuthority(assertedBuy).primaryAction, 'WAIT');
+
+  const wrongPolicy = clone(completeV2);
+  wrongPolicy.authorityPolicy.policySha256 = 'a'.repeat(64);
+  assert.equal(authority.validateSingleDecisionAuthorityInputV2(wrongPolicy).ok, false);
+  assert.equal(authority.evaluateSingleDecisionAuthority(wrongPolicy).primaryAction, 'WAIT');
 
   const challenged = clone(completeV2);
   challenged.challengeEvidence = [{
@@ -322,9 +325,7 @@ async function main() {
     dissentReasonCodes: ['ai_downside_dissent'], evidenceRefs: ['ai:challenge-1'],
   }];
   const challengedResult = authority.evaluateSingleDecisionAuthority(challenged);
-  assert.equal(challengedResult.primaryAction, canonicalDecision.primaryAction,
-    'AI challenge cannot alter the final action');
-  assert.deepEqual(challengedResult.confidence, canonicalDecision.confidence);
+  assert.equal(challengedResult.primaryAction, 'WAIT', 'AI cannot activate unverified authority');
 
   const privateOwner = clone(completeV2);
   privateOwner.ownerContext.quantity = 100;
@@ -335,44 +336,45 @@ async function main() {
 
   const dataGatedInput = authority.buildDataGatedInputV2({
     subject: V2_SUBJECT, decisionAt: '2026-08-16T09:00:00Z',
-    informationCutoffAt: '2026-08-16T08:59:00Z', authorityPolicy: V2_POLICY,
+    informationCutoffAt: '2026-08-16T08:59:00Z',
   });
   const dataGatedResult = authority.evaluateSingleDecisionAuthority(dataGatedInput);
   assert.equal(dataGatedResult.status, 'DATA_GATED');
   assert.equal(dataGatedResult.primaryAction, 'WAIT');
+  assert.equal(dataGatedResult.verifiedEvidenceBundleId,
+    'vdeb-ab78d51a78706f53606d546c3ff22e3a400bdce89e110ef6419f8c23faef37d2',
+    'Python/TypeScript verified-bundle identity drifted');
   assert.equal(dataGatedResult.decisionId,
-    'sda-bc4d8fc1e85c6c2655475342b0193b96592ec68f8a4575afe2f49b5612431a6f',
-    'Python/TypeScript missing-artifact hash drifted');
+    'sda-b45ead9150d861e72832c0f239e2471d49a8952a9a0a148d0bb6c8d882fa68b0',
+    'Python/TypeScript SDA identity drifted');
   assert.equal(dataGatedResult.identities.marketTruth.status, 'MISSING');
   assert.equal(dataGatedResult.identities.risk.status, 'DATA_GATED');
   assert.equal(dataGatedResult.sevenSign.candidateLevel, null);
 
-  const calibrated = clone(completeV2);
-  calibrated.sevenSignCalibration = {
-    status: 'VALIDATED', artifactId: 'seven:calibration-1',
-    policyId: 'seven-sign-calibration-v1', policySha256: 'f'.repeat(64),
-    expectancyBpsByLevel: [-500, -300, -100, 0, 150, 300, 500],
-    sampleSizeByLevel: [30, 30, 30, 30, 30, 30, 30],
-    outOfSample: true, holdoutImmutable: true,
-  };
-  const unverifiedCalibration = authority.evaluateSingleDecisionAuthority(calibrated).sevenSign;
-  assert.equal(unverifiedCalibration.productionLevel, null,
-    'caller-asserted calibration cannot enter production');
-  assert.ok(unverifiedCalibration.reasonCodes.includes('calibration_artifact_not_verified'));
-  calibrated.sevenSignCalibration.expectancyBpsByLevel = [0, 100, 50, 200, 300, 400, 500];
-  assert.equal(authority.evaluateSingleDecisionAuthority(calibrated).sevenSign.productionLevel, null,
-    'non-monotonic Seven Sign calibration cannot enter production');
+  const clonedRiskInput = clone(dataGatedInput);
+  assert.throws(() => authority.verifyDecisionEvidence(clonedRiskInput),
+    /risk_kernel_not_verifier_issued/,
+    'a structurally valid cloned Risk kernel is not canonical authority');
+  assert.equal(authority.evaluateSingleDecisionAuthority(clonedRiskInput).primaryAction, 'WAIT');
 
-  const beforeAdapter = clone(canonicalDecision);
-  const adapter = authority.buildPredictionLedgerV2Adapter(canonicalDecision);
-  assert.deepEqual(canonicalDecision, beforeAdapter, 'adapter must not mutate the result');
+  const adapter = authority.buildPredictionLedgerV2Adapter(dataGatedResult);
   assert.equal(adapter.appendMode, 'APPEND_ONLY');
   assert.equal(adapter.mutatesExistingRows, false);
+  assert.equal(adapter.verifiedEvidenceBundleId, dataGatedResult.verifiedEvidenceBundleId);
+  assert.equal(adapter.singleDecisionRef.decisionId, dataGatedResult.decisionId);
   assert.equal(adapter.adapterId,
-    'pla-b4485012e3d25f7abdeeca1ea5f03afef8faa5743a5e1f5f9e19789d1b4d3492',
-    'Python/TypeScript ledger adapter hash drifted');
-  assert.equal(adapter.marketTruthRef.snapshotId, canonicalDecision.identities.marketTruth.snapshotId);
-  assert.equal(adapter.singleDecisionRef.decisionId, canonicalDecision.decisionId);
+    'pla-7291ee01bd17dfa638d53a3dfcb7da5529dfd9e1feaa71a6658b1dba4307adad',
+    'Python/TypeScript ledger-adapter identity drifted');
+  assert.equal(authority.validatePredictionLedgerV2Adapter(adapter, dataGatedResult).ok, true);
+  const fabricatedDecision = clone(dataGatedResult);
+  assert.throws(() => authority.buildPredictionLedgerV2Adapter(fabricatedDecision),
+    /verified SDA admission path/,
+    'plain self-consistent results cannot be promoted into the ledger adapter');
+
+  const tamperedBundle = dataGatedInput;
+  tamperedBundle.ownerContext.addPermission = 'ALLOWED';
+  assert.equal(authority.evaluateSingleDecisionAuthority(tamperedBundle).primaryAction, 'WAIT',
+    'post-admission mutation invalidates the runtime capability');
 
   const source = fs.readFileSync(sourcePath, 'utf8');
   assert.doesNotMatch(source, /from\s+['"]|require\s*\(/,

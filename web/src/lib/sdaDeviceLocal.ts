@@ -1,5 +1,6 @@
 import {
   buildPredictionLedgerV2Adapter,
+  validatePredictionLedgerV2Adapter,
   validateSingleDecisionAuthorityResultV2,
   type PredictionLedgerSdaAdapterV2,
   type SingleDecisionAuthorityResultV2,
@@ -179,12 +180,11 @@ export function verifyDeviceLocalSdaLedgerEntry(value: unknown): value is Device
     || typeof value.adapterId !== 'string'
     || !isRecord(value.result) || !isRecord(value.adapter)
     || containsPrivateRawField(value)) return false;
-  const rebuilt = buildEntry(
-    value.result as unknown as SingleDecisionAuthorityResultV2,
-    value.adapter as unknown as PredictionLedgerSdaAdapterV2,
-  );
-  return rebuilt !== null && rebuilt.adapterId === value.adapterId
-    && canonicalJson(rebuilt) === canonicalJson(value);
+  const result = value.result as unknown as SingleDecisionAuthorityResultV2;
+  const adapter = value.adapter as unknown as PredictionLedgerSdaAdapterV2;
+  return validateSingleDecisionAuthorityResultV2(result).ok
+    && validatePredictionLedgerV2Adapter(adapter, result).ok
+    && adapter.adapterId === value.adapterId;
 }
 
 export function verifyDeviceLocalSdaLedgerDocument(

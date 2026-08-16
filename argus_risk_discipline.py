@@ -37,6 +37,14 @@ MAX_EVIDENCE_REFS_PER_FACTOR = 8
 MAX_REASON_CODES = 16
 MAX_CANONICAL_BODY_BYTES = 64 * 1024
 
+_KERNEL_SEAL = object()
+
+
+class _VerifiedRiskKernel(dict):
+    """Runtime capability returned only by the canonical kernel builder."""
+
+    __slots__ = ("_authority_seal", "_body_digest")
+
 _INPUT_KEYS = {
     "schemaVersion",
     "subject",
@@ -351,9 +359,21 @@ def build_risk_kernel(request: Any) -> Dict[str, Any]:
         "conflictReasonCodes": sorted(set(conflicts))[:MAX_REASON_CODES],
         "finalActionAuthority": False,
     }
-    kernel = {"riskKernelId": compute_risk_kernel_id(body), **body}
+    kernel = _VerifiedRiskKernel({"riskKernelId": compute_risk_kernel_id(body), **body})
     validate_risk_kernel(kernel)
-    return copy.deepcopy(kernel)
+    kernel._authority_seal = _KERNEL_SEAL
+    kernel._body_digest = hashlib.sha256(_canonical_json_bytes(kernel)).hexdigest()
+    return kernel
+
+
+def is_verifier_issued_risk_kernel(value: Any) -> bool:
+    """Return whether the kernel is an unmodified canonical-builder result."""
+    return bool(
+        isinstance(value, _VerifiedRiskKernel)
+        and getattr(value, "_authority_seal", None) is _KERNEL_SEAL
+        and getattr(value, "_body_digest", None)
+        == hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+    )
 
 
 def validate_risk_kernel(value: Any) -> None:
@@ -483,5 +503,6 @@ __all__ = [
     "RiskDisciplineValidationError",
     "build_risk_kernel",
     "compute_risk_kernel_id",
+    "is_verifier_issued_risk_kernel",
     "validate_risk_kernel",
 ]

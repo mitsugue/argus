@@ -67,6 +67,14 @@ MAX_DERIVED_EVIDENCE = 32
 MAX_EVIDENCE_INPUTS = 32
 MAX_SNAPSHOT_BYTES = 256 * 1024
 
+_DECISION_SNAPSHOT_SEAL = object()
+
+
+class _BuilderIssuedDecisionSnapshot(dict):
+    """Runtime capability produced only by the canonical snapshot builder."""
+
+    __slots__ = ("_authority_seal", "_body_digest")
+
 # Canonical records are closed schemas.  The two deliberately extensible
 # members are ``values`` (closed per fact type below) and ``provenance`` (a
 # bounded scalar/list-only extension map).  A digest authenticates bytes; it
@@ -1445,7 +1453,20 @@ def build_decision_snapshot(
     material["snapshotId"] = "mds-" + material["digest"][:32]
     if len(_canonical(material).encode("utf-8")) > MAX_SNAPSHOT_BYTES:
         raise ValueError("snapshot_too_large")
-    return material
+    snapshot = _BuilderIssuedDecisionSnapshot(material)
+    snapshot._authority_seal = _DECISION_SNAPSHOT_SEAL
+    snapshot._body_digest = _sha(snapshot)
+    return snapshot
+
+
+def is_builder_issued_decision_snapshot(value: Any) -> bool:
+    """Return whether ``value`` is an unmodified canonical-builder result."""
+    return bool(
+        isinstance(value, _BuilderIssuedDecisionSnapshot)
+        and getattr(value, "_authority_seal", None) is _DECISION_SNAPSHOT_SEAL
+        and getattr(value, "_body_digest", None) == _sha(value)
+        and verify_decision_snapshot(value) == (True, "ok")
+    )
 
 
 def verify_decision_snapshot(value: Any) -> Tuple[bool, str]:

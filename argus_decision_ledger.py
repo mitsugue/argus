@@ -29,6 +29,14 @@ _FORBIDDEN_FORECAST_FIELDS = ("outcome", "endPrice", "absoluteReturn",
 RUBRIC_VERSION = "decision-rubric-v1"
 JST = timezone(timedelta(hours=9))
 
+_PREDICTION_RECORD_SEAL = object()
+
+
+class _BuilderIssuedPredictionRecord(dict):
+    """Runtime capability produced only by the canonical v2 record builder."""
+
+    __slots__ = ("_authority_seal", "_body_digest")
+
 
 def _hash(obj: Dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True,
@@ -1000,7 +1008,10 @@ def prediction_record_v2(*, mode: str, symbol: str, market: str,
     # records created before categorical distributions were introduced.
     if distribution_copy is not None:
         body["forecastDistribution"] = distribution_copy
-    return _v2_seal(body, "pd")
+    record = _BuilderIssuedPredictionRecord(_v2_seal(body, "pd"))
+    record._authority_seal = _PREDICTION_RECORD_SEAL
+    record._body_digest = _v2_hash(record)
+    return record
 
 
 prediction_record = prediction_record_v2
@@ -1054,6 +1065,16 @@ def verify_prediction_record_v2(rec: Any) -> bool:
         if _v2_string_list(rec.get(key), limit, chars) != rec.get(key):
             return False
     return True
+
+
+def is_builder_issued_prediction_record(value: Any) -> bool:
+    """Return whether ``value`` is an unmodified canonical-builder result."""
+    return bool(
+        isinstance(value, _BuilderIssuedPredictionRecord)
+        and getattr(value, "_authority_seal", None) is _PREDICTION_RECORD_SEAL
+        and getattr(value, "_body_digest", None) == _v2_hash(value)
+        and verify_prediction_record_v2(value)
+    )
 
 
 verify_prediction_integrity = verify_prediction_record_v2
