@@ -8,11 +8,9 @@
 > `argus_verified_snapshot.py`と`web/src/lib/verifiedSnapshot.ts`を正本とする。
 
 > **v12.0.7時点の注意(2026-07-06):** このファイルはv10.36.0で凍結された歴史的資料です。
-> **現在の一次情報**: ①アプリ内SettingsのHelp/Status/Recovery
-> ②`docs/ARGUS_B2A_DEFERRED_UI_MANIFEST.md`(Round 1 surface cut)
-> ③bridge/README.md(OpenD/EC2運用・JP復帰・再起動ランブック)
-> ④test_argus_v12_rc.py(恒久不変条件) ⑤README.md。以下の記述はv12系の実装と
-> 食い違う箇所があるため、手順としては使わないこと。
+> **現在の一次情報**: ①アプリ内Guideページ(CAPABILITIES/RECENT_UPDATES=リリース毎に自動更新)
+> ②bridge/README.md(OpenD/EC2運用・JP復帰・再起動ランブック) ③test_argus_v12_rc.py(恒久不変条件)
+> ④README.md。以下の記述はv12系の実装と食い違う箇所があるため、手順としては使わないこと。
 > セキュリティ制約・正確性の絶対制約の「精神」は現在も有効です。
 
 # ARGUS 開発引き継ぎ（HANDOFF）— v10.36.0 時点
@@ -246,8 +244,8 @@ git log --oneline -8
 # 2. 現在のフロントエンド版数（真実は package.json）
 grep '"version"' web/package.json
 
-# 3. 本番バックエンドの公開サービス/鮮度/システム健全性
-curl -s https://argus-backend-3j2m.onrender.com/api/argus/data-quality/status | python3 -m json.tool
+# 3. 本番バックエンドの全プロバイダ健全性（鍵の有無・live/partial/missing が一目で分かる）
+curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3 -m json.tool
 ```
 
 次の実装は **ニュース/ブラックスワン原因検知 or 判断ログのoutcome tracking（精度測定ループ）**（下の「ロードマップ」参照）。
@@ -290,9 +288,10 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
 - フロントのビルド: `web/` 内で `DEPLOY_BASE=/argus/ npm run build`
 - バージョンは Vite の transformIndexHtml プラグインが `globalThis.__ARGUS_VERSION__` を index.html に注入。
   **`web/package.json` の `version` が唯一の真実。**新機能ごとに必ず上げる。
-- **現行の説明更新先:** SettingsのHelp/Status/RecoveryとREADME、該当する運用契約。
-  旧Guide standalone routeはV13 Round 1で削除済み。アプリ内説明は現在の実力を
-  正確に語り、旧production semanticsを文言だけで昇格させない。
+- **📖 説明書ルール（ユーザー指示・恒久）: バージョンアップのたびに、Guide ページの
+  「ARGUS でできること」(`CAPABILITIES`) と「最近のアップデート」(`RECENT_UPDATES`)
+  （`web/src/routes/Guide.tsx` 冒頭）を必ず同時に更新する。**
+  アプリ内の説明書は常に現在の実力を正確に語ること（直近6リリース程度を保持）。
 - コミットメッセージ末尾は `Co-Authored-By: Claude ...` を付ける運用。
 
 ---
@@ -352,14 +351,14 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
 | `/catalysts` | Corporate Catalyst（SEC EDGAR + Finnhub + J-Quants） | partial(Finnhub未設定) |
 | `/pro-handoff` | GPT-5.5 Pro 用コピペ生成（**API呼び出しなし・無料**） | live |
 | `/ai-judgment` | GET=キャッシュ読みのみ（モデル呼び出さない） / POST `/run`=admin限定 | disabled |
-| `/data-quality/status` | 公開サービス/鮮度/systemHealth（closed DTO） | live |
+| `/integrations` | プロバイダ健全性（公開・secret-free、`integrations-v1`） | live |
 | `/ai-provider-status` | AI診断（admin限定、`X-ARGUS-ADMIN-TOKEN`） | 503(token未設定) |
 | `/symbol-search` | 銘柄検索 JP(J-Quants master)/US(Twelve Data)/Crypto(CoinGecko search) | live |
 | `/security-status`, `/security-unlock` | admin限定 | — |
 
 ### バックエンド実装メモ
 - キャッシュは `{"data":..., "expires":...}` の in-memory TTL パターンで統一（dyno再起動でリセット）。
-  TTL例: rates 10min / us 10min / jp 10min / market-regime **6h**。
+  TTL例: rates 10min / us 10min / jp 10min / market-regime **6h** / integrations 2min。
 - FRED: `fetch_fred_series(series_id)` + `_FRED_SERIES` dict。HY OAS = `BAMLH0A0HYM2`。
 - Market Regime: 8銘柄ETF（SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG）を Twelve Data `time_series` 1バッチ取得
   （8 credits ≤ 無料枠の毎分上限、6hキャッシュで credit-safe）。1d/5d/20d モメンタムを±10%capで正規化しスコア化。
@@ -371,9 +370,9 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
 ## 9. フロントエンド構成
 
 - ルーター: `web/src/App.tsx` の state-based `RouteKey`。
-  現行ルートは `command`(Today) / `watchlist`(Holdings) /
-  `notifications`(Alerts) / `settings` の4つ。Market evidence、portfolio、owner tools、
-  Asset DetailはそれぞれToday/Holdings/Settings内のcontextual surfaceであり、独立engine routeを持たない。
+  ルート: `command`(Today/Daily Command Center) / `alerts`(Action Alerts) / `regime`(Market Regime) /
+  `events`(Event Radar) / `watchlist`(Watchlist) / `core`(Core Portfolio) / `guide`(Glossary/Guide + API status)。
+  AIReview は `#review` ハッシュ。
 - live fetch フックの型: `{ data, error, loading, phase, attempt }`、
   `phase` = connecting/live/partial/mock、retry 3回 + mock fallback。
   バックエンドURLは `import.meta.env.VITE_ARGUS_BACKEND_URL` から構築（`.env.production` に本番URL）。
@@ -410,7 +409,7 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
   - 判断ログ: `web/src/lib/judgmentLog.ts`、localStorage `argus.judgmentLog.v1`（JST日付ごと1件、
     live/partialのみ記録・mockは記録しない）。Todayに「昨日からの変化」+直近7日ストリップ表示
   - `GET /api/argus/daily-digest`（digest-v1、ルールベース合成・LLMなし、textJa=通知用日本語）
-  - `.github/workflows/market-alerts.yml` の `push-digest`: digest を ntfy.sh へ push
+  - `.github/workflows/morning-digest.yml`: JST平日7:15に digest を ntfy.sh へ push
     （repo secret `NTFY_TOPIC` 設定時のみ。未設定なら安全にスキップ。workflow_dispatchで手動テスト可）
   - 注: サーバ側の永続DB(Postgres)はまだ。日次差分は端末ログが担当（クロスデバイス同期なし）
 - v9.10.0 変化検知アラート + ルールテスト + レート制限 + AI ping
@@ -426,7 +425,7 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
     「10分以内のpush > J-Quants(T-1)/Twelve Data」の優先で上書き(キャッシュ非破壊・自動フォールバック)
   - `bridge/` ディレクトリ: moomoo_push.py(OpenD横で常駐) + systemd unit + README(セットアップ手順)。
     ユーザーのAWS(52.195.168.61)でOpenD 24h稼働中。**ポート11111は公開しない**(ブリッジは127.0.0.1接続)
-  - 当時の `/integrations` moomoo表示はV13 Round 1で廃止。現在の公開確認は `/bridge/status`
+  - /integrations の moomoo: push鮮度で live(≤15min)/stale/pending を表示
   - 通知改善: digest文面を通知向け再設計(絵文字セクション・短い行)。morning-digestは
     JP寄り前8:30 + US寄り前22:00 の2本。market-alertsに市場ストレス急変検知
     (backdrop→stress遷移、VIX 26上抜け)。全通知にClickヘッダ(タップでアプリ起動)
@@ -443,9 +442,9 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
     (FRED DEXJPUS を /rates に `usdJpy` として追加=additive)・ジャンル配分・mock価格では評価しない
   - 戦略カード展開部に保有入力、Watchlist上部に ExposureCard(評価額/含み損益/配分バー)
   - moomooブリッジ稼働確認済み(AWS・systemd・1分毎push・全11銘柄 moomoo-rt live)。GEMINI_JUDGE_MODEL=gemini-2.5-pro
-- v10.1.0 What-if + 検索修正（歴史記録。旧What-if UI/utilityはV13 Round 1で削除）
-  - 当時は追加投資の配分変化/集中警告/損益帯を仮定表示していた。現行Holdingsは
-    検証可能なportfolio allocation/risk/scenario evidenceだけをcontextualに表示する。
+- v10.1.0 What-if + 検索修正
+  - What-if: `lib/whatif.ts`(SCENARIO_BANDS=下値-10〜-4%/横ばい±2%/反発+3〜+8%の仮定幅×シナリオ確率)。
+    Watchlist上のWhatIfPanelで追加投資の配分変化/集中警告(>30%)/損益帯/確率加重中央値。予測ではない表記必須
   - 検索修正: `_jp_query_is_code()` — `isdigit()`が「314A/285A」等の英字入りTSEコードを名前検索に
     回していたバグを修正(コードprefix照合+名前照合の併用)。pytest追加
   - 投信: J-Quantsは上場銘柄のみで投信は構造的に不在 → `lib/fundCatalog.ts`(主要26本・正式名称)の
@@ -470,7 +469,7 @@ git push origin claude/youthful-hopper:main     # ② main へ FF → Render(bac
     prediction-ledger.yml が実行後の public GET payload を ledger/ai/latest.json に永続化し、
     scanner.py の `_ai_cached_result()` が「メモリ→ledger復元(`_ai_try_restore`)」の順で解決。
     復元は10分back-off・6秒timeout・最大120h(週末耐性)・runMode="restored"。検証は `_ai_restore_validate`(pure・pytest4件)
-  - 旧 morning-digest.yml（現在はmarket-alerts.ymlのpush-digest）: GitHub無料cronの遅延対策 — 早発火し、
+  - morning-digest.yml: GitHub無料cronの2〜3.5h遅延対策 — 06:49/19:49 JSTに早発火し、
     ntfyのDelayヘッダで08:30/22:00 JSTちょうどにサーバー側配信(目標時刻超過時は即時送信)
   - 通知のClickヘッダ削除(digest+alerts) — タップでntfy内で全文表示、アプリへ飛ばない(ユーザー要望)
 - v10.8.0 校正ループ(calibration-v1)

@@ -4,6 +4,7 @@ import {
   useDownsideIncidents, type DownsideIncident, type DownsideSnapshot,
   type MoverCauseCompact,
 } from '../../hooks/useDownsideIncidents';
+import { OVERRIDE_LABEL_JA } from '../../domain/actionLevel';
 import { probabilityDisplay } from '../../domain/decisionView';
 import { AiExplanationBlock } from './AiExplanationBlock';
 import './DownsideIncidentCard.css';
@@ -35,13 +36,7 @@ export function marketConfLineJa(mc?: MoverCauseCompact): string | null {
 // incident or a JP intraday overlay that differs from the global regime — so on a
 // calm day it stays out of the way. Decision-support only; no order controls.
 
-// Legacy actionOverride is intentionally translated into risk evidence, never an
-// action label. The canonical owner-aware action is rendered only by SDA surfaces.
-const OVERRIDE_RISK_EVIDENCE_JA: Record<string, string> = {
-  HOLD_CAUTION: '保有影響の警戒証拠', WAIT: '不確実性の証拠',
-  DO_NOT_ADD: '追加リスクの証拠', REVIEW_REQUIRED: '要精査の証拠',
-  TRIM_WATCH: '高い下方リスク証拠', EXIT_WATCH: '重大な下方リスク証拠',
-};
+const OVERRIDE_JA = OVERRIDE_LABEL_JA;
 const CAUSE_JA: Record<string, string> = {
   MARKET_WIDE_SELL_OFF: '市場全体の下げ', SECTOR_SELL_OFF: 'セクターの下げ',
   THEME_PROFIT_TAKING: 'テーマ利確', STOCK_SPECIFIC_BAD_NEWS: '個別の悪材料',
@@ -89,7 +84,7 @@ export const IncidentRow: React.FC<{
         <div className="dic-row__nums">
           <span className="dic-pct">{pct}</span>
           <span className={`dic-ovr dic-ovr--${overrideTone(inc.actionOverride)}`}>
-            {OVERRIDE_RISK_EVIDENCE_JA[inc.actionOverride] ?? '分類未確定の下方リスク証拠'}
+            {OVERRIDE_JA[inc.actionOverride] ?? inc.actionOverride}
           </span>
         </div>
       </button>
@@ -105,9 +100,7 @@ export const IncidentRow: React.FC<{
       </div>
       {open && (
         <div className="dic-detail">
-          <p className="dic-line"><b>RISK EVIDENCE:</b>{' '}
-            {OVERRIDE_RISK_EVIDENCE_JA[inc.actionOverride] ?? '分類未確定の下方リスク証拠'}
-            （SDAのPrimary Actionを上書きしません）</p>
+          <p className="dic-line"><b>判断:</b> Rule {inc.currentAction} → {inc.actionOverride}</p>
           <p className="dic-line"><b>要約:</b> {inc.reasonJa}</p>
           <div className="dic-buckets">
             {inc.causeBuckets.slice(0, 4).map((b) => (
@@ -189,9 +182,9 @@ export const DownsideIncidentQueue: React.FC<{
   if (incidents.length === 0 && !overlayActive) return null;
 
   return (
-    <section className="dic-card" data-authority-role="EVIDENCE_ONLY">
+    <section className="dic-card">
       <header className="dic-card__head">
-        <h2>Downside Watch <span className="dic-jp">急落の理由とリスク証拠</span></h2>
+        <h2>Downside Watch <span className="dic-jp">急落の理由と対応</span></h2>
         {overlayActive && (
           <span className={`dic-overlay dic-overlay--${data.jpIntradayOverlay === 'RISK_OFF_WATCH' ? 'red' : 'amber'}`}>
             日本ザラ場: {jpIntradayJa(data.jpIntradayOverlay)}
@@ -200,7 +193,7 @@ export const DownsideIncidentQueue: React.FC<{
       </header>
       {overlayActive && <p className="dic-overlay-reason">{data.overlay?.reasonJa}</p>}
       {data.holderRiskOverlay === 'REVIEW_REQUIRED' && (
-        <p className="dic-holder">保有影響のリスク証拠が検出されています。SDAの再評価材料として点検してください。</p>
+        <p className="dic-holder">保有銘柄が影響を受けています。通常のHOLDとして扱わず点検してください。</p>
       )}
       {incidents.slice(0, maxItems).map((inc) => (
         <IncidentRow key={inc.incidentId} inc={inc} onFocus={onFocus} />
@@ -209,9 +202,9 @@ export const DownsideIncidentQueue: React.FC<{
         <p className="dic-more">ほか {incidents.length - maxItems}件は資産一覧で確認</p>
       )}
       {incidents.length === 0 && (
-        <p className="dic-reason">個別のインシデントはまだ無いが、日本市場の弱含みをリスク証拠として表示中。</p>
+        <p className="dic-reason">個別のインシデントはまだ無いが、日本市場の地合いが弱含み。新規追加は慎重に。</p>
       )}
-      <p className="dic-foot">EVIDENCE ONLY · SDAのPrimary Actionを上書きしません。自動売買なし。</p>
+      <p className="dic-foot">決定支援のみ・自動売買は行いません。最終判断はご自身で。</p>
     </section>
   );
 };

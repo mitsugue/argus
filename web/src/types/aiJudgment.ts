@@ -1,7 +1,6 @@
 // Mirrors the backend /api/argus/ai-judgment shape (AI Judgment Layer v1).
 
-export type AIStatus = 'live' | 'partial' | 'mock' | 'disabled'
-  | 'missing_keys' | 'no_cached_result' | 'not_run_yet';
+export type AIStatus = 'live' | 'partial' | 'mock' | 'disabled' | 'no_cached_result';
 export type AIView = 'confirm' | 'caution' | 'disagree' | 'unavailable';
 
 export interface AIJudgmentLabel {
@@ -32,11 +31,6 @@ export interface AIJudgment {
   summaryJa: string;
   marketRiskJa: string;
   labels: AIJudgmentLabel[];
-  /** Server-evaluated run freshness. `stale` is display-only/rule-only. */
-  freshness?: 'fresh' | 'persisted' | 'stale' | 'not_run_yet';
-  ageMin?: number | null;
-  decisionUsable?: boolean;
-  authorityStatus?: string;
   globalRedFlags?: string[];
   groundingSources?: GroundingSource[];
 }

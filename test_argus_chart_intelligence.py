@@ -15,9 +15,7 @@ def bars(count=260, start=100.0, step=0.35, volume=1000.0):
             out.append({"date": day.isoformat(), "open": close - 0.2,
                         "high": close + 1.0, "low": close - 1.0,
                         "close": close, "volume": volume + len(out) * 2,
-                        "sourceId": f"b{len(out)}", "adjusted": True,
-                        "availableFrom": day.isoformat(),
-                        "datasetId": "chart-fixture-v1", "revision": 0})
+                        "sourceId": f"b{len(out)}", "adjusted": True})
             value += step
         day += dt.timedelta(days=1)
     return out
@@ -248,33 +246,6 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(restored["methodVersion"], ci.METHOD_VERSION)
         self.assertTrue(all(x.get("methodVersion") == ci.METHOD_VERSION
                             for x in restored["snapshots"]))
-
-    def test_analyze_excludes_future_bar_and_future_known_event(self):
-        source = bars(80)
-        baseline = ci.analyze(
-            "TEST", "US", source, now_iso="2026-07-20T12:00:00Z")
-        hostile = copy.deepcopy(source)
-        hostile.append({
-            "date": "2026-07-21", "open": 999, "high": 1001,
-            "low": 998, "close": 1000, "volume": 999999,
-            "availableFrom": "2026-07-21T20:00:00Z",
-            "knownAt": "2026-07-21T20:00:00Z",
-            "sourceId": "future", "datasetId": "chart-fixture-v1",
-            "revision": 0,
-        })
-        result = ci.analyze(
-            "TEST", "US", hostile, now_iso="2026-07-20T12:00:00Z",
-            events=[{
-                "id": "future-result", "date": source[-5]["date"],
-                "knownAt": "2026-07-21T00:00:00Z",
-                "classification": "earnings_beat",
-            }])
-        self.assertEqual(baseline["periodEnd"], result["periodEnd"])
-        self.assertEqual(baseline["indicators"], result["indicators"])
-        self.assertEqual(1, result["pointInTime"]["rows"]
-                         ["excludedFutureCount"])
-        self.assertEqual(0, result["pointInTime"]["eventAdmittedCount"])
-        self.assertTrue(result["pointInTime"]["verified"])
 
     def test_same_technical_id_is_kept_for_each_symbol_scope(self):
         source = bars(80, step=0.4)

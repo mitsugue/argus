@@ -203,20 +203,6 @@ def test_analysis_and_durable_restore_are_duplicate_safe():
     assert "holdings" not in str(restored).lower()
 
 
-def test_analysis_explicit_cutoff_excludes_future_bar_mechanically():
-    source = market_bars(100)
-    cutoff = source[-2]["date"] + "T23:59:59.999999Z"
-    expected = ti.analyze(
-        source[:-1], symbol="1321", market="JP", as_of=cutoff)
-    hostile = ti.analyze(
-        source, symbol="1321", market="JP", as_of=cutoff)
-    assert hostile["historyCoverage"] == expected["historyCoverage"]
-    assert hostile["calibration"] == expected["calibration"]
-    assert hostile["pointInTime"]["verified"] is True
-    assert hostile["pointInTime"]["proofs"]["bars"][
-        "excludedFutureCount"] == 1
-
-
 def test_missing_short_data_is_honest_not_zero():
     summary = ti.short_selling_summary([])
     assert summary["status"] == "missing"

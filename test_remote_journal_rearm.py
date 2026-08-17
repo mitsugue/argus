@@ -45,30 +45,34 @@ def _truth(*, local_wal=LOCAL_WAL, remote_wal=REMOTE_WAL,
         "status": "ok", "backendVersion": "13.4.12", "buildSha": BUILD,
     }
     ready = {
-        "ready": True, "backendVersion": "13.4.12", "buildSha": BUILD,
+        "ready": True, "appVersion": "13.4.12", "buildSha": BUILD,
     }
     quality = {
-        "schemaVersion": "argus-operational-diagnostics-v1",
-        "service": {
-            "backendVersion": "13.4.12", "buildSha": BUILD,
+        "schemaVersion": "data-quality-v1",
+        "buildIdentity": {
+            "appVersion": "13.4.12", "backendVersion": "13.4.12",
+            "backendBuildSha": BUILD[:7],
         },
-        "durability": {
-            "integrityStatus": "ok", "journalCorruptCount": 0,
-            "missionWalCorruptCount": 0,
-            "checkpoint": {
+        "durableState": {
+            "integrityStatus": "ok", "journalCorrupt": 0,
+            "missionWalCorrupt": 0,
+            "lastCheckpoint": {
                 "verified": True, "readBackVerified": True,
                 "includedWalSequence": local_wal,
             },
         },
-        "remoteJournal": {
+        "remoteJournalVerification": {
             "readBackVerified": True, "walReadBackVerified": True,
-            "state": "verified",
+            "remoteDurabilityState": "verified",
             "remoteWalAppliedSequence": remote_wal,
             "verifiedWalSequence": remote_wal,
+            "errorClass": None, "walErrorClass": None,
+            "receiptErrorClass": None,
+        },
+        "remoteJournalTruth": {
             "localCommittedCount": pending + committed,
-            "pendingCount": pending,
-            "committedCount": committed, "failedCount": 0,
-            "errorPresent": False,
+            "remotePendingCount": pending,
+            "remoteCommittedCount": committed, "remoteFailedCount": 0,
         },
     }
     return health, ready, quality
@@ -120,9 +124,12 @@ class _Response:
 
 
 def test_verified_gap_dispatches_exactly_once_without_polling():
-    health, ready, _ = _truth()
-    assert rearm.evaluate_truth(health, ready) == {
-        "action": "dispatch", "reason": "public_ready",
+    health, ready, quality = _truth()
+    assert rearm.evaluate_truth(health, ready, quality) == {
+        "action": "dispatch", "reason": "verified_wal_gap",
+        "localIncludedWalSequence": LOCAL_WAL,
+        "remoteVerifiedWalSequence": REMOTE_WAL,
+        "walGap": LOCAL_WAL - REMOTE_WAL,
     }
     seen = []
 
@@ -137,34 +144,56 @@ def test_verified_gap_dispatches_exactly_once_without_polling():
         "ref": "main", "inputs": {"remoteJournalRearm": "true"}}
 
 
+def test_caught_up_skips_and_regression_fails_closed():
+    health, ready, caught_up = _truth(
+        local_wal=REMOTE_WAL, remote_wal=REMOTE_WAL)
+    assert rearm.evaluate_truth(health, ready, caught_up)["action"] == "skip"
+    _, _, regressed = _truth(local_wal=REMOTE_WAL - 1)
+    with pytest.raises(rearm.RearmError, match="local_wal_regressed"):
+        rearm.evaluate_truth(health, ready, regressed)
+
+
 def test_identity_gate_tracks_live_semver_without_a_frozen_version():
-    health, ready, _ = _truth()
+    health, ready, quality = _truth()
     health["backendVersion"] = "13.4.13"
-    ready["backendVersion"] = "13.4.13"
-    assert rearm.evaluate_truth(health, ready)["action"] == "dispatch"
+    ready["appVersion"] = "13.4.13"
+    quality["buildIdentity"].update({
+        "appVersion": "13.4.13", "backendVersion": "13.4.13"})
+    assert rearm.evaluate_truth(health, ready, quality)["action"] == "dispatch"
     assert "EXPECTED_BACKEND_VERSION" not in Path(
         "scripts/argus_remote_journal_rearm.py").read_text()
 
 
 @pytest.mark.parametrize("mutate,error", [
-    (lambda h, r: h.update(status="failed"), "health_not_ok"),
-    (lambda h, r: r.update(ready=False), "backend_not_ready"),
-    (lambda h, r: r.update(backendVersion="13.4.13"),
+    (lambda h, r, q: h.update(status="failed"), "health_not_ok"),
+    (lambda h, r, q: r.update(ready=False), "backend_not_ready"),
+    (lambda h, r, q: r.update(appVersion="13.4.13"),
      "health_ready_version_mismatch"),
-    (lambda h, r: r.update(buildSha="c" * 40),
-     "health_ready_identity_mismatch"),
+    (lambda h, r, q: q["durableState"].update(journalCorrupt=1),
+     "durable_corruption_detected"),
+    (lambda h, r, q: q["durableState"]["lastCheckpoint"].update(
+        verified=False), "local_checkpoint_unverified"),
+    (lambda h, r, q: q["remoteJournalVerification"].update(
+        walReadBackVerified=False), "remote_readback_unverified"),
+    (lambda h, r, q: q["remoteJournalVerification"].update(
+        remoteWalAppliedSequence=REMOTE_WAL - 1),
+     "remote_wal_identity_mismatch"),
+    (lambda h, r, q: q["remoteJournalVerification"].update(
+        errorClass="transient"), "remote_verification_error_present"),
+    (lambda h, r, q: q["buildIdentity"].update(
+        backendBuildSha="c" * 7), "data_quality_identity_mismatch"),
 ])
-def test_public_identity_or_readiness_fails_closed(mutate, error):
-    health, ready, _ = _truth()
-    mutate(health, ready)
+def test_not_ready_corrupt_identity_or_readback_fails_closed(mutate, error):
+    health, ready, quality = _truth()
+    mutate(health, ready, quality)
     with pytest.raises(rearm.RearmError, match=error):
-        rearm.evaluate_truth(health, ready)
+        rearm.evaluate_truth(health, ready, quality)
 
 
 def test_public_truth_retry_is_two_complete_rounds_max():
-    health, ready, _ = _truth()
+    health, ready, quality = _truth()
     values = [
-        urllib.error.URLError("first"), health, ready,
+        urllib.error.URLError("first"), health, ready, quality,
     ]
     calls = []
 
@@ -178,8 +207,8 @@ def test_public_truth_retry_is_two_complete_rounds_max():
     result = rearm.fetch_public_truth(
         "https://example.invalid", timeout=3, attempts=2, opener=opener)
     assert result[-1] == 2
-    assert len(calls) == 3
-    assert len(calls) <= 4
+    assert len(calls) == 4
+    assert len(calls) <= 6
 
 
 def test_public_response_size_is_bounded():
@@ -223,7 +252,7 @@ def test_non_204_dispatch_is_rejected():
 
 
 def test_missing_pat_and_logs_never_expose_secret_or_payload():
-    health, ready, _ = _truth()
+    health, ready, quality = _truth()
     output = io.StringIO()
     env = {
         "ARGUS_REMOTE_JOURNAL_REARM_PAT": "",
@@ -231,7 +260,7 @@ def test_missing_pat_and_logs_never_expose_secret_or_payload():
     }
     with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
             rearm, "fetch_public_truth",
-            return_value=(health, ready, 1)), mock.patch(
+            return_value=(health, ready, quality, 1)), mock.patch(
                 "sys.stdout", output):
         assert rearm.main() == 1
     record = json.loads(output.getvalue())
@@ -349,7 +378,8 @@ def test_exact_4694_rearm_then_next_natural_drain_advances_once():
         source = _readback(LOCAL_WAL, 2)
         ledger = _readback(REMOTE_WAL, 1)
         health, ready, quality = _truth()
-        assert rearm.evaluate_truth(health, ready)["action"] == "dispatch"
+        assert rearm.evaluate_truth(
+            health, ready, quality)["action"] == "dispatch"
         decision = publication_decision(
             source, ledger, event_name="workflow_dispatch", utc_minute=43,
             runtime_data_quality=quality, natural_rearm=True)
@@ -443,11 +473,11 @@ def test_cross_proof_mismatch_matrix_is_fail_closed():
     stale_source = _readback(REMOTE_WAL, 1)
     cases.append((stale_source, stale_source, quality))
     local_mismatch = copy.deepcopy(quality)
-    local_mismatch["durability"]["checkpoint"][
+    local_mismatch["durableState"]["lastCheckpoint"][
         "includedWalSequence"] = LOCAL_WAL + 1
     cases.append((source, ledger, local_mismatch))
     remote_above_ledger = copy.deepcopy(quality)
-    remote_above_ledger["remoteJournal"].update({
+    remote_above_ledger["remoteJournalVerification"].update({
         "remoteWalAppliedSequence": REMOTE_WAL + 1,
         "verifiedWalSequence": REMOTE_WAL + 1,
     })
