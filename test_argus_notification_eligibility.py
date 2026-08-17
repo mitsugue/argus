@@ -265,9 +265,10 @@ def test_direct_workflow_ntfy_inventory_is_non_security_only():
 def test_notification_workflow_consolidation_preserves_schedule_semantics():
     workflows = Path(".github/workflows")
     files = sorted(workflows.glob("*.yml"))
-    assert len(files) == 24
+    assert len(files) == 25
     assert not (workflows / "morning-digest.yml").exists()
     assert (workflows / "osint-check.yml").exists()
+    assert (workflows / "restore-safe-pages.yml").exists()
 
     market = (workflows / "market-alerts.yml").read_text(encoding="utf-8")
     assert market.count("- cron:") == 5
