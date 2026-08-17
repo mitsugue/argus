@@ -119,6 +119,8 @@ import argus_memory_attribution     # bounded parent-process phase telemetry
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
+import argus_recovery_registry      # Phase A shadow state/mutation declarations
+import argus_recovery_metrics       # bounded metadata-only recovery measurement
 from flask import Flask, jsonify, request, make_response, g
 from collections import deque
 import hashlib
@@ -7777,11 +7779,9 @@ def _data_quality_console():
             "soak": argus_scheduler.soak_status(
                 started_at=_SOAK["startedAt"], now_iso=_ai_now_iso(),
                 summary=argus_scheduler.ops_summary(_MISSIONS)),
-            "periodicReports": len(_PERIODIC_REPORTS),
-            "challengerRuns": [{"state": c.get("state"),
-                                "ownerDecision": c.get("ownerDecision")}
-                               for c in _CHALLENGER_RUNS[-2:]],
-            "postmortems": len(_POSTMORTEMS),
+            # Mission artifacts are telemetry-disabled registry state. Their
+            # content, owner decisions, identifiers and topology are never part
+            # of this unauthenticated public route.
             "noteJa": "見逃しミッションは検知・回収され、沈黙消失しません。",
         }
         console["dualPlane"] = argus_dual_plane.dual_plane_status(
@@ -8158,6 +8158,71 @@ def _data_quality_console():
     except Exception:
         pass
     console["formalSoakControl"] = _formal_soak_public_projection()
+    console["recoveryMeasurement"] = \
+        argus_recovery_metrics.public_recovery_measurement_unavailable()
+    try:
+        _last_checkpoint = _DURABLE_STATE.get("lastCheckpoint") or {}
+        _local_wal_high_water = int(
+            _last_checkpoint.get("includedWalSequence") or
+            _MISSION_BATCH_STATE.get("walAppliedSequence") or 0)
+        _legacy_ack_sequence = int(
+            _REMOTE_CYCLE.get("verifiedWalSequence") or 0)
+        _legacy_ack_at = (
+            _REMOTE_CYCLE.get("receiptVerifiedAt") or
+            _REMOTE_ACK.get("lastVerifiedRemoteAckAt"))
+        console["recoveryMeasurement"] = _RECOVERY_MEASUREMENTS.public_summary(
+            legacy_remote_ack_at=_legacy_ack_at,
+            legacy_remote_ack_sequence=_legacy_ack_sequence,
+            local_wal_high_water=_local_wal_high_water)
+    except Exception:
+        # Fixed, content-free and conservative. Shadow diagnostic failures
+        # never remove the field or become health/readiness failures.
+        pass
+    try:
+        _registry_status = argus_recovery_registry.registry_summary()
+        _unresolved_ids = _registry_status.pop("unresolvedStateIds", [])
+        _registry_status["unresolvedStateCount"] = len(_unresolved_ids)
+        _registry_errors = _registry_status.pop("validationErrors", [])
+        _registry_status["validationErrorCount"] = len(_registry_errors)
+        console["authoritativeStateRegistry"] = _registry_status
+    except Exception:
+        console["authoritativeStateRegistry"] = {
+            "schemaVersion": argus_recovery_registry.REGISTRY_SCHEMA,
+            "mutationSchemaVersion":
+                argus_recovery_registry.MUTATION_REGISTRY_SCHEMA,
+            "validationStatus": "unavailable",
+            "validationErrorCount": 1,
+            "unresolvedStateCount": 0,
+            "shadowOnly": True,
+        }
+    try:
+        _recovery_key_status = argus_remote_recovery.configured_keys().get(
+            "status")
+        _sidecar_status = str((
+            _DURABLE_STATE.get("remoteRecoverySidecar") or {}).get("status") or
+            ("not_configured" if _recovery_key_status != "configured"
+             else "not_issued"))
+        console["exactColdRecovery"] = \
+            argus_recovery_metrics.exact_cold_recovery_diagnostic(
+                checkpoint_mode=console["formalSoakControl"].get(
+                    "checkpointMode") or "legacy_only",
+                legacy_remote_status=(
+                    console.get("remoteJournalTruth") or {}).get(
+                        "lossWindowClaimStatus") or "unknown",
+                encrypted_sidecar_status=_sidecar_status,
+                stage1_state=str(_CHECKPOINT_V2_STATUS.get("state") or
+                                 "disabled"),
+                mutation_coverage_complete=False,
+                exact_full_generation_verified=False,
+                exact_wal_tail_verified=False,
+                exact_authority_manifest_verified=False)
+    except Exception:
+        # Additive shadow diagnostics may be degraded, but can never alter
+        # established public health/readiness behavior in Phase A.
+        console["exactColdRecovery"] = {
+            "status": "not_proven", "authoritative": False,
+            "hardRpoClaimPermitted": False,
+            "reasonCodes": ["shadow_diagnostic_unavailable"]}
     # 自己漏洩検査 — 自分のドキュメントに機微フィールドが乗ったら即critical化
     try:
         if argus_portfolio_sync.contains_sensitive(console):
@@ -15797,6 +15862,16 @@ _DURABILITY_PRODUCTION = argus_persistent_storage.production_mode()
 _DURABILITY_PATHS = argus_persistent_storage.configured_paths(
     production=_DURABILITY_PRODUCTION)
 _OSINT_PERSIST_FILE = _DURABILITY_PATHS["checkpoint"]
+_RECOVERY_MEASUREMENT_CONFIGURED_FILE = str(os.environ.get(
+    "ARGUS_RECOVERY_MEASUREMENT_FILE") or "").strip()
+_RECOVERY_MEASUREMENT_FILE = (
+    os.path.abspath(_RECOVERY_MEASUREMENT_CONFIGURED_FILE)
+    if _RECOVERY_MEASUREMENT_CONFIGURED_FILE else
+    os.path.join(_DURABILITY_PATHS["root"],
+                 "argus_recovery_measurement.json")
+    if _DURABILITY_PRODUCTION else None)
+_RECOVERY_MEASUREMENTS = argus_recovery_metrics.RecoveryMeasurementStore(
+    _RECOVERY_MEASUREMENT_FILE)
 _CHECKPOINT_V2_ROOT = os.path.join(
     _DURABILITY_PATHS["root"], "argus_checkpoint_v2")
 _CHECKPOINT_V2_STAGE1_ENABLED = str(os.environ.get(
@@ -18331,6 +18406,11 @@ def _osint_persist():
 
 def _osint_persist_locked():
     attempt_at = _ai_now_iso()
+    recovery_measurement_started = time.monotonic()
+    recovery_section_sizes = {}
+    recovery_section_accounting_ms = 0.0
+    recovery_source_assembly_ms = 0.0
+    recovery_seal_ms = 0.0
     stage = "source_snapshot_construction"
     _DURABLE_STATE["lastAttemptAt"] = attempt_at
     _DURABLE_STATE["writeCount"] = int(
@@ -18635,6 +18715,16 @@ def _osint_persist_locked():
         _memory_attribution_capture(
             "T1", {"sourceStateConstructed": True,
                    "sourceTopLevelKeys": len(blob)})
+        recovery_source_assembly_ms = round(
+            (time.monotonic() - recovery_measurement_started) * 1000, 3)
+        recovery_section_accounting_started = time.monotonic()
+        try:
+            recovery_section_sizes = \
+                argus_recovery_metrics.checkpoint_section_sizes(blob)
+        except Exception:
+            recovery_section_sizes = {}
+        recovery_section_accounting_ms = round(
+            (time.monotonic() - recovery_section_accounting_started) * 1000, 3)
         job_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                      f"checkpoint-{os.getpid()}")
         stage = "source_snapshot_seal"
@@ -18643,7 +18733,10 @@ def _osint_persist_locked():
             _MEMORY_ATTRIBUTION.update_metadata(
                 record_id, {"legacyCheckpointAttempted": True})
         _memory_attribution_capture("T2")
+        recovery_seal_started = time.monotonic()
         sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
+        recovery_seal_ms = round(
+            (time.monotonic() - recovery_seal_started) * 1000, 3)
         verified_wal_sequence = _verified_persistent_wal_sequence()
         allow_wal_compaction = bool(
             _REMOTE_CYCLE.get("readBackVerified") is True and
@@ -18716,6 +18809,32 @@ def _osint_persist_locked():
                 "requiresSealedRewrite": False,
                 "convertedAt": _DURABLE_STATE["lastWriteAt"],
             })
+        # The diagnostic file is a separate bounded, non-authoritative artifact.
+        # Its failure is swallowed inside the store and cannot change checkpoint,
+        # WAL compaction, Stage1, readiness, or restore selection.
+        try:
+            _RECOVERY_MEASUREMENTS.record_checkpoint(
+                checkpoint_bytes=int(checkpoint.get("snapshotBytes") or 0),
+                section_sizes=recovery_section_sizes,
+                source_assembly_ms=recovery_source_assembly_ms,
+                section_accounting_ms=recovery_section_accounting_ms,
+                seal_ms=recovery_seal_ms,
+                atomic_write_readback_ms=float(
+                    checkpoint.get("checkpointMs") or 0),
+                local_wal_bytes=int(wal_state.get("bytes") or 0),
+                local_wal_record_count=len(wal_state.get("records") or []),
+                local_wal_high_water=included_wal_sequence,
+                legacy_remote_ack_sequence=int(
+                    _REMOTE_CYCLE.get("verifiedWalSequence") or 0),
+                legacy_remote_ack_at=(
+                    _REMOTE_CYCLE.get("receiptVerifiedAt") or
+                    _REMOTE_ACK.get("lastVerifiedRemoteAckAt")),
+                legacy_predictions=
+                    argus_recovery_metrics.measure_jsonl_metadata(
+                        str(argus_ledger.LEDGER_PATH)),
+                success=True)
+        except Exception:
+            pass
         return checkpoint
     except Exception as exc:
         failure_at = _ai_now_iso()
@@ -21629,17 +21748,70 @@ def _journal_aggregate_patch(agg_type, agg_id, payload):
             if isinstance(record, dict) else None)
 
 
+def _record_recovery_mutation(mutation_class, *, value=None,
+                              plaintext_bytes_estimate=None,
+                              transition_count=1, record_count=1,
+                              latency_ms=0.0, success=True,
+                              local_sequence=None):
+    """Best-effort shadow accounting; never changes mutation success/authority.
+
+    ``value`` is canonicalized only to a byte count and is never handed to the
+    metrics store, persisted, logged, or returned.
+    """
+    try:
+        byte_count = (argus_recovery_metrics.serialized_size_estimate(value)
+                      if plaintext_bytes_estimate is None else
+                      max(0, int(plaintext_bytes_estimate)))
+        _RECOVERY_MEASUREMENTS.record_mutation(
+            mutation_class, plaintext_bytes_estimate=byte_count,
+            transition_count=transition_count, record_count=record_count,
+            latency_ms=latency_ms, success=success,
+            local_sequence=local_sequence)
+    except Exception:
+        # Measurement is explicitly non-authoritative and cannot reject a live
+        # transition. Registry/hostile tests surface invalid instrumentation.
+        return False
+    return True
+
+
+def _journal_domain_mutation_class(aggregate_type):
+    return {
+        "market_ledger": "market.ledger_update",
+        "market_replay": "market.analytics_refresh",
+        "asset_chart_cache": "market.asset_report_update",
+        "outcome": "decision.job_update",
+        "forecast": "decision.job_update",
+        "research_benchmark": "benchmark.lifecycle",
+        "research_benchmark_v2": "benchmark.lifecycle",
+        "cost_policy": "ai.result_and_cost",
+        "remote_journal": "durability.receipt_ack",
+        "soak": "control.soak_stage1",
+    }.get(str(aggregate_type or ""))
+
+
 def _append_tick_wal(kind, payload):
     if not _mission_tick_context_active():
         return None
     sequence = int(_MISSION_TICK_CONTEXT.get("walSequence") or 0) + 1
     started = time.monotonic()
-    record = argus_tick_durability.append_wal(
-        _MISSION_WAL_FILE, sequence=sequence, kind=kind,
-        payload=payload, job_id=str(_MISSION_TICK_CONTEXT.get("jobId") or
-                                    "mission-tick"),
-        mission_window_id=_MISSION_TICK_CONTEXT.get("missionWindowId"),
-        build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha())
+    mutation_class = {
+        "mission_transition": "core.mission_transition",
+        "batch_cursor": "core.batch_cursor",
+    }.get(str(kind or ""))
+    try:
+        record = argus_tick_durability.append_wal(
+            _MISSION_WAL_FILE, sequence=sequence, kind=kind,
+            payload=payload, job_id=str(_MISSION_TICK_CONTEXT.get("jobId") or
+                                        "mission-tick"),
+            mission_window_id=_MISSION_TICK_CONTEXT.get("missionWindowId"),
+            build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha())
+    except Exception:
+        if mutation_class:
+            _record_recovery_mutation(
+                mutation_class, value=payload,
+                latency_ms=(time.monotonic() - started) * 1000,
+                success=False, local_sequence=sequence)
+        raise
     _MISSION_TICK_CONTEXT["walSequence"] = sequence
     _MISSION_TICK_CONTEXT["walEventCount"] = int(
         _MISSION_TICK_CONTEXT.get("walEventCount") or 0) + 1
@@ -21649,6 +21821,11 @@ def _append_tick_wal(kind, payload):
     lease = _MISSION_TICK_CONTEXT.get("lease")
     if lease is not None:
         lease.heartbeat()
+    if mutation_class:
+        _record_recovery_mutation(
+            mutation_class, value=record,
+            latency_ms=(time.monotonic() - started) * 1000,
+            success=True, local_sequence=sequence)
     return record
 
 
@@ -21714,13 +21891,41 @@ def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
             occurred_at=_ai_now_iso(), payload=payload, origin=origin)
         if argus_state_journal.append(_OPS_JOURNAL, ev):
             _OPS_JOURNAL_META["totalObserved"] += 1
-            if _mission_tick_context_active():
-                _append_tick_wal("journal_transition", {
+            persistence_started = time.monotonic()
+            active_tick = _mission_tick_context_active()
+            aggregate_patch = (_journal_aggregate_patch(
+                agg_type, agg_id, payload) if active_tick else None)
+            persist_success = True
+            observed_record = {"journalEvent": ev,
+                               "observedAggregatePatch": aggregate_patch}
+            observed_sequence = None
+            if active_tick:
+                observed_record = _append_tick_wal("journal_transition", {
                     "journalEvent": copy.deepcopy(ev),
-                    "aggregatePatch": _journal_aggregate_patch(
-                        agg_type, agg_id, payload)})
+                    "aggregatePatch": aggregate_patch})
+                observed_sequence = int(observed_record.get("sequence") or 0)
             else:
-                _osint_persist()
+                try:
+                    persist_result = _osint_persist()
+                    persist_success = bool(
+                        not isinstance(persist_result, dict) or
+                        persist_result.get("verified"))
+                except Exception:
+                    persist_success = False
+                    _record_recovery_mutation(
+                        (_journal_domain_mutation_class(agg_type) or
+                         "core.ops_journal_transition"),
+                        value=observed_record,
+                        latency_ms=(time.monotonic() - persistence_started) *
+                        1000, success=False)
+                    raise
+            mutation_class = (_journal_domain_mutation_class(agg_type) or
+                              "core.ops_journal_transition")
+            if mutation_class:
+                _record_recovery_mutation(
+                    mutation_class, value=observed_record,
+                    latency_ms=(time.monotonic() - persistence_started) * 1000,
+                    success=persist_success, local_sequence=observed_sequence)
     except Exception:
         if _mission_tick_context_active():
             raise
