@@ -55,6 +55,10 @@ assert.match(today, /data-canonical-verification=\{chartLoad\.snapshotId \? 'ver
 assert.match(today, /data-canonical-instrument=\{projection\?\.symbol \?\? selectedSymbol\}/);
 assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
 assert.match(script, /\.at-projection/);
+for (const source of [script, mobileAcceptance]) {
+  assert.match(source, /getByText\('根拠・市場データ・システム情報', \{ exact: true \}\)\.click\(\)/,
+    'acceptance must deliberately open the collapsed evidence disclosure before chart interaction');
+}
 assert.match(script, /\.at-index-strip button/);
 assert.match(script, /getByRole\('group', \{ name: '予測期間' \}\)/);
 assert.match(script, /DATA_TIMEOUT_MS = 5_000/);

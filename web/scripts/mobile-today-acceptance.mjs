@@ -179,7 +179,11 @@ async function waitForShell(page) {
 async function waitForTodayChart(page, timeout = 30_000) {
   await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
-  await page.locator('.at-projection').waitFor({ state: 'visible', timeout });
+  const projection = page.locator('.at-projection');
+  if (!await projection.isVisible()) {
+    await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
+  }
+  await projection.waitFor({ state: 'visible', timeout });
 }
 
 async function geometry(page, viewport) {
