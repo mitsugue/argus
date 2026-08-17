@@ -94,17 +94,17 @@ def _stuck_proofs():
 
 def _runtime_truth(*, local=17, pending=1, committed=16, failed=0):
     return {
-        "schemaVersion": "argus-operational-diagnostics-v1",
-        "durability": {
+        "schemaVersion": "data-quality-v1",
+        "durableState": {
             "integrityStatus": "ok",
-            "journalCorruptCount": 0,
-            "missionWalCorruptCount": 0,
+            "journalCorrupt": 0,
+            "missionWalCorrupt": 0,
         },
-        "remoteJournal": {
+        "remoteJournalTruth": {
             "localCommittedCount": local,
-            "pendingCount": pending,
-            "committedCount": committed,
-            "failedCount": failed,
+            "remotePendingCount": pending,
+            "remoteCommittedCount": committed,
+            "remoteFailedCount": failed,
         },
     }
 
@@ -257,9 +257,9 @@ def test_lost_receipt_uses_runtime_truth_without_rewriting_ledger():
 
 
 @pytest.mark.parametrize("runtime, message", [
-    ({"schemaVersion": "wrong", "remoteJournal": {}},
+    ({"schemaVersion": "wrong", "remoteJournalTruth": {}},
      "runtime_data_quality_invalid"),
-    ({"schemaVersion": "argus-operational-diagnostics-v1"},
+    ({"schemaVersion": "data-quality-v1"},
      "runtime_remote_journal_truth_missing"),
     (_runtime_truth(local=17, pending=True, committed=16),
      "runtime_remote_journal_truth_invalid"),
@@ -267,9 +267,9 @@ def test_lost_receipt_uses_runtime_truth_without_rewriting_ledger():
      "runtime_remote_journal_truth_inconsistent"),
     (_runtime_truth(failed=True),
      "runtime_remote_journal_truth_invalid"),
-    ({**_runtime_truth(), "durability": {
-        "integrityStatus": "failed", "journalCorruptCount": 1,
-        "missionWalCorruptCount": 0, "checkpoint": {}}},
+    ({**_runtime_truth(), "durableState": {
+        "integrityStatus": "failed", "journalCorrupt": 1,
+        "missionWalCorrupt": 0, "lastCheckpoint": {}}},
      "runtime_durable_integrity_invalid"),
 ])
 def test_runtime_truth_is_optional_but_malformed_values_fail_closed(
@@ -305,17 +305,16 @@ def test_cumulative_remote_failures_never_latch_natural_progress_off():
 def test_rearm_wal_bool_fails_closed_without_changing_ordinary_schedule():
     _, ledger = _stuck_proofs()
     malformed = _runtime_truth(local=16, pending=0, committed=16)
-    malformed["durability"]["checkpoint"] = {
+    malformed["durableState"]["lastCheckpoint"] = {
         "verified": True, "readBackVerified": True,
         "includedWalSequence": LOCAL_WAL,
     }
-    malformed["remoteJournal"].update({
+    malformed["remoteJournalVerification"] = {
         "readBackVerified": True, "walReadBackVerified": True,
-        "state": "verified",
+        "remoteDurabilityState": "verified",
         "remoteWalAppliedSequence": True,
         "verifiedWalSequence": REMOTE_WAL,
-        "errorPresent": False,
-    })
+    }
     ordinary = publication_decision(
         ledger, ledger, event_name="schedule", utc_minute=18,
         runtime_data_quality=malformed)
@@ -504,8 +503,7 @@ def test_watchtower_wires_verified_publish_and_receipt_only_paths():
         assert step.index(f'cp scripts/{copied}' if copied !=
                           "argus_remote_journal.py" else
                           'cp argus_remote_journal.py') < checkout
-    assert "/api/argus/admin/diagnostics/operational" in text
-    assert 'X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN' in text
+    assert "/api/argus/data-quality" in text
     assert '--runtime-data-quality "$RUNNER_TEMP/data-quality.json"' in step
     assert 'DECISION_ACTION" = "receipt_only"' in step
     assert "exact proof ready" in step

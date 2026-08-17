@@ -17,7 +17,7 @@ def test_measurement_survives_via_history():
         "argusScore": 103, "geminiBaselineScore": 72,
         "epochId": scanner._current_epoch_id(), "ratio": 1.43})
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         rm = d.get("researchMeasurement") or {}
         assert rm.get("status") == "measured"          # storeが空でも履歴から復元
         assert rm.get("currentRatio") == 1.43
@@ -30,7 +30,7 @@ def test_single_run_not_stable_ratio():
         "symbol": "6965", "at": NOW, "epochId": scanner._current_epoch_id(),
         "argusScore": 103, "ratio": 1.43})
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         st = d.get("researchMeasurementStability") or {}
         assert st.get("runCount") == 1
         assert st.get("currentRatioEligible") is False
@@ -46,7 +46,7 @@ def test_three_stable_runs_eligible():
             "symbol": "6965", "at": NOW, "epochId": ep,
             "argusScore": 100, "ratio": r})
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         st = d.get("researchMeasurementStability") or {}
         assert st.get("runCount") == 3
         assert st.get("medianRatio") == 1.43
@@ -59,14 +59,14 @@ def test_other_epoch_runs_excluded_from_stability():
     scanner._OSINT_RPS_HISTORY.append({
         "symbol": "6965", "at": NOW, "epochId": "old:epoch", "ratio": 0.92})
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         st = d.get("researchMeasurementStability") or {}
         assert st.get("runCount") == 0
 
 
 def test_durable_state_status_exposed():
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         ds = d.get("durableState") or {}
         assert ds.get("schemaVersion") == "argus-durable-v3"
         assert "integrityStatus" in ds

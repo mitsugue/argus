@@ -1,13 +1,12 @@
 // V11.19.1 — Mutual Fund / FIRE Core Tracker (device-local TS port of
 // argus_fire_core.py). オーナー方針:「投資信託の合計額をFIRE用の本丸資産として
 // 扱います。個別株の利益は、将来的にこのFIRE Coreへ移す候補として見ます。」
-// 投信の詳細(口数・評価額・積立額・口座区分)は端末内のみ。
+// 投信の詳細(口数・評価額・積立額・口座区分)は端末内+暗号化バックアップのみ。
 // NAV捏造なし・リアルタイム不要(日次/手動更新)・証券会社連携なし。
 
 import type { AssetItem } from '../types/assetItem';
 import type { PortfolioExposure } from '../domain/positionExposure';
 import type { LocalAssetRole } from '../domain/portfolioStrategy';
-import { markLocalEdit } from './vault';
 
 export const FIRE_CORE_KEY = 'argus.fireCore.v1';
 const FIRE_CORE_CHANGE_EVENT = 'argus:fire-core-change';
@@ -42,7 +41,6 @@ export function saveFundMeta(symbol: string, patch: Partial<FundMeta>): void {
   all[symbol.toUpperCase()] = { ...all[symbol.toUpperCase()], ...patch };
   try {
     localStorage.setItem(FIRE_CORE_KEY, JSON.stringify(all));
-    markLocalEdit();
     window.dispatchEvent(new Event(FIRE_CORE_CHANGE_EVENT));
   } catch { /* quota */ }
 }
@@ -180,7 +178,7 @@ export function buildLocalFireCore(assets: AssetItem[], pe: PortfolioExposure,
   ].slice(0, 4);
 
   const summaryJa = fireCoreTotal == null
-    ? 'FIRE Core(投資信託)の評価額が未入力です。Holdings / Watchlistの銘柄詳細で投信の口数を入力するか、下の欄で現在評価額を手動入力してください。'
+    ? 'FIRE Core(投資信託)の評価額が未入力です。Asset Deskで投信の口数を入力するか、下の欄で現在評価額を手動入力してください。'
     : `${share != null ? `FIRE Core合計は既知資産の${share.toFixed(0)}%です。` : ''}${tacRatio != null ? `戦術枠/FIRE Core比は${tacRatio.toFixed(2)}(${RATIO_BAND_JA[tacBand]})。` : ''}投資信託はFIREの本丸資産として追跡中です。`;
 
   return {
@@ -212,7 +210,7 @@ export function fireCoreTodayNoteJa(f: LocalFireCore | null):
     return { tone: 'var(--amber, #fbbf24)', textJa: 'FIRE Coreの評価額が未更新です。投資信託の現在価値を更新すると、戦術枠の取りすぎを正確に判定できます。' };
   }
   if (f.valuationDataStatus === 'missing') {
-    return { tone: 'var(--amber, #fbbf24)', textJa: 'FIRE Core(投資信託)の評価額が未入力です。Holdings / WatchlistのAdvanced portfolio → FIRE COREで入力できます。' };
+    return { tone: 'var(--amber, #fbbf24)', textJa: 'FIRE Core(投資信託)の評価額が未入力です。Positions & Risk→FIRE COREで入力できます。' };
   }
   if (f.tacticalToCoreBand === 'stretched' || f.tacticalToCoreBand === 'exceeded') {
     return { tone: 'var(--value-negative)', textJa: `FIRE Core注意: 戦術枠がFIRE Coreの${(f.tacticalToCoreRatio ?? 0).toFixed(1)}倍に達しています。個別株の追加より本丸(投信)側の確認が先です。` };

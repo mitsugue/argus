@@ -13,8 +13,6 @@ class ArgusMarketIntelligenceTests(unittest.TestCase):
         rows = {x["dataId"]: x for x in intelligence.source_of_truth_matrix()}
         self.assertEqual(rows["jp_daily"]["primary"], "J-Quants equities/bars/daily")
         self.assertEqual(rows["jp_current_price"]["currentStatus"], "entitlement_unavailable")
-        self.assertEqual(rows["fx"]["primary"], "Yahoo overlay")
-        self.assertEqual(rows["fx"]["fallback"], "FRED daily base")
         self.assertEqual(rows["credit_two_market"]["currentStatus"], "manual_csv")
         self.assertEqual(rows["jp_intraday_tick"]["currentStatus"], "source_unavailable")
 

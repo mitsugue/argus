@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Bounded EC2 natural re-arm for Remote Journal publication.
 
-The EC2 process checks only fixed public liveness/readiness and asks Watchtower
-to run its natural durability policy.  Watchtower owns the existing backend
-admin credential and performs the authenticated operational verification.  The
-EC2 service therefore needs no backend admin secret and never fetches a memory
+The process reads only bounded public-safe metadata and asks Watchtower
+workflow to run its natural durability policy when a verified local checkpoint
+is ahead of the verified remote WAL cursor.  It never fetches a memory
 snapshot, calls a backend write endpoint, or waits for workflow completion.
 """
 from __future__ import annotations
@@ -23,8 +22,9 @@ DISPATCH_URL = (
     "https://api.github.com/repos/mitsugue/argus/actions/workflows/"
     "caos-watchtower.yml/dispatches"
 )
-MAX_PUBLIC_RESPONSE_BYTES = 64 * 1024
+MAX_PUBLIC_RESPONSE_BYTES = 256 * 1024
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+OBSERVED_SHA_RE = re.compile(r"^(?:[0-9a-f]{7}|[0-9a-f]{40})$")
 SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 
 
@@ -53,6 +53,14 @@ def _emit(**fields: object) -> None:
     print(json.dumps(safe, sort_keys=True), flush=True)
 
 
+def _integer(value: object, *, name: str, positive: bool = False) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RearmError(name + "_invalid")
+    if value < (1 if positive else 0):
+        raise RearmError(name + "_invalid")
+    return value
+
+
 def _full_sha(value: object, *, name: str) -> str:
     candidate = str(value or "").strip().lower()
     if not FULL_SHA_RE.fullmatch(candidate):
@@ -60,12 +68,21 @@ def _full_sha(value: object, *, name: str) -> str:
     return candidate
 
 
+def _observed_sha(value: object, *, name: str) -> str:
+    candidate = str(value or "").strip().lower()
+    if not OBSERVED_SHA_RE.fullmatch(candidate):
+        raise RearmError(name + "_invalid")
+    return candidate
+
+
 def evaluate_truth(
     health: Mapping[str, Any],
     ready: Mapping[str, Any],
+    data_quality: Mapping[str, Any],
 ) -> dict[str, object]:
-    """Return a dispatch decision from fixed public identity/readiness only."""
-    if not all(isinstance(value, Mapping) for value in (health, ready)):
+    """Return the scalar dispatch decision from verified public metadata."""
+    if not all(isinstance(value, Mapping)
+               for value in (health, ready, data_quality)):
         raise RearmError("public_truth_invalid")
     if health.get("status") != "ok":
         raise RearmError("health_not_ok")
@@ -77,12 +94,71 @@ def evaluate_truth(
     if health_sha != ready_sha:
         raise RearmError("health_ready_identity_mismatch")
     health_version = str(health.get("backendVersion") or "").strip()
-    ready_version = str(ready.get("backendVersion") or "").strip()
+    ready_version = str(ready.get("appVersion") or "").strip()
     if not SEMVER_RE.fullmatch(health_version) or \
             ready_version != health_version:
         raise RearmError("health_ready_version_mismatch")
 
-    return {"action": "dispatch", "reason": "public_ready"}
+    if data_quality.get("schemaVersion") != "data-quality-v1":
+        raise RearmError("data_quality_schema_invalid")
+    build = data_quality.get("buildIdentity")
+    if not isinstance(build, Mapping):
+        raise RearmError("data_quality_identity_missing")
+    projected_sha = _observed_sha(
+        build.get("backendBuildSha") or build.get("buildSha"),
+        name="data_quality_build_sha")
+    data_quality_version = str(
+        build.get("backendVersion") or build.get("appVersion") or ""
+    ).strip()
+    if not health_sha.startswith(projected_sha) or \
+            str(build.get("appVersion") or "").strip() != health_version or \
+            data_quality_version != health_version:
+        raise RearmError("data_quality_identity_mismatch")
+
+    durable = data_quality.get("durableState")
+    if not isinstance(durable, Mapping) or \
+            durable.get("integrityStatus") != "ok":
+        raise RearmError("durable_integrity_invalid")
+    for key in ("journalCorrupt", "missionWalCorrupt"):
+        if _integer(durable.get(key), name=key) != 0:
+            raise RearmError("durable_corruption_detected")
+    checkpoint = durable.get("lastCheckpoint")
+    if not isinstance(checkpoint, Mapping) or \
+            checkpoint.get("verified") is not True or \
+            checkpoint.get("readBackVerified") is not True:
+        raise RearmError("local_checkpoint_unverified")
+    local_wal = _integer(
+        checkpoint.get("includedWalSequence"),
+        name="local_checkpoint_wal", positive=True)
+
+    remote = data_quality.get("remoteJournalVerification")
+    if not isinstance(remote, Mapping) or \
+            remote.get("readBackVerified") is not True or \
+            remote.get("walReadBackVerified") is not True or \
+            remote.get("remoteDurabilityState") != "verified":
+        raise RearmError("remote_readback_unverified")
+    remote_applied = _integer(
+        remote.get("remoteWalAppliedSequence"),
+        name="remote_applied_wal", positive=True)
+    remote_verified = _integer(
+        remote.get("verifiedWalSequence"),
+        name="remote_verified_wal", positive=True)
+    if remote_applied != remote_verified:
+        raise RearmError("remote_wal_identity_mismatch")
+    if any(remote.get(key) not in (None, "") for key in (
+            "errorClass", "walErrorClass", "receiptErrorClass")):
+        raise RearmError("remote_verification_error_present")
+
+    scalar = {
+        "localIncludedWalSequence": local_wal,
+        "remoteVerifiedWalSequence": remote_verified,
+        "walGap": max(0, local_wal - remote_verified),
+    }
+    if local_wal < remote_verified:
+        raise RearmError("local_wal_regressed")
+    if local_wal == remote_verified:
+        return {"action": "skip", "reason": "remote_caught_up", **scalar}
+    return {"action": "dispatch", "reason": "verified_wal_gap", **scalar}
 
 
 def _request_json(
@@ -91,13 +167,13 @@ def _request_json(
     timeout: int,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> Mapping[str, Any]:
-    headers = {
-        "Accept": "application/json",
-        "Cache-Control": "no-cache",
-        "User-Agent": "argus-remote-journal-rearm/1",
-    }
     request = urllib.request.Request(
-        url, headers=headers,
+        url,
+        headers={
+            "Accept": "application/json",
+            "Cache-Control": "no-cache",
+            "User-Agent": "argus-remote-journal-rearm/1",
+        },
     )
     with opener(request, timeout=timeout) as response:
         if int(response.status) != 200:
@@ -117,8 +193,8 @@ def fetch_public_truth(
     timeout: int,
     attempts: int,
     opener: Callable[..., Any] = urllib.request.urlopen,
-) -> tuple[Mapping[str, Any], Mapping[str, Any], int]:
-    """Fetch only fixed public identity/readiness before dispatch."""
+) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any], int]:
+    """Fetch one complete truth set with at most two non-polling attempts."""
     bounded_attempts = min(2, max(1, attempts))
     for attempt in range(1, bounded_attempts + 1):
         try:
@@ -126,7 +202,10 @@ def fetch_public_truth(
                 base + "/healthz", timeout=timeout, opener=opener)
             ready = _request_json(
                 base + "/readyz", timeout=timeout, opener=opener)
-            return health, ready, attempt
+            quality = _request_json(
+                base + "/api/argus/data-quality",
+                timeout=timeout, opener=opener)
+            return health, ready, quality, attempt
         except (
             RearmError,
             urllib.error.HTTPError,
@@ -175,16 +254,16 @@ def main() -> int:
     try:
         try:
             timeout = min(6, max(3, int(os.environ.get(
-                "ARGUS_REMOTE_JOURNAL_REARM_TIMEOUT_SECONDS", "6"))))
+            "ARGUS_REMOTE_JOURNAL_REARM_TIMEOUT_SECONDS", "6"))))
             attempts = min(2, max(1, int(os.environ.get(
                 "ARGUS_REMOTE_JOURNAL_REARM_MAX_ATTEMPTS", "2"))))
         except ValueError:
             raise RearmError("rearm_configuration_invalid") from None
         base = os.environ.get(
             "ARGUS_BACKEND_URL", DEFAULT_BACKEND_URL).rstrip("/")
-        health, ready, public_attempts = fetch_public_truth(
+        health, ready, quality, public_attempts = fetch_public_truth(
             base, timeout=timeout, attempts=attempts)
-        decision = evaluate_truth(health, ready)
+        decision = evaluate_truth(health, ready, quality)
         scalar = {key: value for key, value in decision.items()
                   if key != "action"}
         if decision["action"] == "skip":

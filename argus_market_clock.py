@@ -207,115 +207,6 @@ def _origin_trading_date(market: str, now_utc: datetime) -> date:
     return probe
 
 
-def latest_completed_session_date(
-        market: str, now_utc: Optional[datetime] = None) -> date:
-    """Canonical latest completed exchange session for dated EOD evidence.
-
-    Provider adapters use this public clock seam instead of searching backward
-    until any historical row happens to exist.  Missing data for this exact
-    session remains unavailable; an older row is never relabelled current.
-    """
-    if market not in (JP_EQUITY, US_EQUITY, VIX_MKT, FX):
-        raise ValueError(f"unsupported market: {market}")
-    current = now_utc or datetime.now(timezone.utc)
-    if current.tzinfo is None or current.utcoffset() is None:
-        raise ValueError("now_utc must be timezone-aware")
-    return _origin_trading_date(market, current.astimezone(timezone.utc))
-
-
-def market_session_bounds(market: str, session_date: date) -> Dict[str, Any]:
-    """Canonical regular-session boundaries for one exchange trading date.
-
-    Schedulers consume this seam instead of owning fixed JST wall-clock rules.
-    A non-session date has no bounds; US DST and versioned early closes are
-    resolved by the same exchange clock used by every other consumer.
-    """
-    if market not in (JP_EQUITY, US_EQUITY, VIX_MKT):
-        raise ValueError(f"unsupported bounded market: {market}")
-    if not isinstance(session_date, date) or isinstance(session_date, datetime):
-        raise ValueError("session_date must be a date")
-    if not is_trading_day(market, session_date):
-        return {
-            "market": market,
-            "sessionDate": session_date.isoformat(),
-            "isTradingDay": False,
-            "regularOpenUtc": None,
-            "regularCloseUtc": None,
-            "regularOpenJst": None,
-            "regularCloseJst": None,
-            "earlyClose": False,
-            "calendarVersion": CALENDAR_VERSION,
-        }
-    local_tz = _JST if market == JP_EQUITY else _ET
-    opened = datetime.combine(
-        session_date,
-        dt_time(9, 0) if market == JP_EQUITY else dt_time(9, 30),
-        tzinfo=local_tz).astimezone(timezone.utc)
-    closed = _local_close(market, session_date, opened)
-    return {
-        "market": market,
-        "sessionDate": session_date.isoformat(),
-        "isTradingDay": True,
-        "regularOpenUtc": _utc_seconds(opened),
-        "regularCloseUtc": _utc_seconds(closed),
-        "regularOpenJst": opened.astimezone(_JST).isoformat(),
-        "regularCloseJst": closed.astimezone(_JST).isoformat(),
-        "earlyClose": (market in (US_EQUITY, VIX_MKT)
-                       and session_date.isoformat() in _US_EARLY_CLOSES_2026),
-        "calendarVersion": CALENDAR_VERSION,
-    }
-
-
-def _utc_seconds(value: datetime) -> str:
-    """Canonical second-precision UTC timestamp for the public session contract."""
-    return value.astimezone(timezone.utc).replace(
-        microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _session_valid_until(market: str, local_now: datetime, *,
-                         trading: bool, session: str) -> datetime:
-    """First instant at which the current canonical session label can change.
-
-    This stays inside the server clock authority. Browser consumers receive the
-    resulting instant and never reproduce exchange hours, DST, or holidays.
-    """
-    next_midnight = datetime.combine(
-        local_now.date() + timedelta(days=1), dt_time(0, 0),
-        tzinfo=local_now.tzinfo)
-    if not trading:
-        return next_midnight.astimezone(timezone.utc)
-    if market == JP_EQUITY:
-        transition = {
-            "PRE_MARKET": dt_time(9, 0),
-            "MORNING_SESSION": dt_time(11, 30),
-            "LUNCH_BREAK": dt_time(12, 30),
-            "AFTERNOON_SESSION": dt_time(15, 30),
-        }.get(session)
-        if transition is not None:
-            return datetime.combine(
-                local_now.date(), transition,
-                tzinfo=local_now.tzinfo).astimezone(timezone.utc)
-        return next_midnight.astimezone(timezone.utc)
-    if market in (US_EQUITY, VIX_MKT):
-        close_hour = (13 if local_now.date().isoformat()
-                      in _US_EARLY_CLOSES_2026 else 16)
-        transition = {
-            "PRE_MARKET": dt_time(9, 30),
-            "REGULAR": dt_time(close_hour, 0),
-            "AFTER_HOURS": dt_time(20, 0),
-        }.get(session)
-        if transition is not None:
-            return datetime.combine(
-                local_now.date(), transition,
-                tzinfo=local_now.tzinfo).astimezone(timezone.utc)
-        if session == "OVERNIGHT_CLOSED" and local_now.hour < 4:
-            return datetime.combine(
-                local_now.date(), dt_time(4, 0),
-                tzinfo=local_now.tzinfo).astimezone(timezone.utc)
-        return next_midnight.astimezone(timezone.utc)
-    return next_midnight.astimezone(timezone.utc)
-
-
 def market_session(market: str, now_utc: Optional[datetime] = None, *,
                    provider_status: Optional[str] = None,
                    extra_closures: Sequence[str] = ()) -> Dict[str, Any]:
@@ -328,9 +219,6 @@ def market_session(market: str, now_utc: Optional[datetime] = None, *,
     if now_utc.tzinfo is None:
         now_utc = now_utc.replace(tzinfo=timezone.utc)
     if market == CRYPTO:
-        valid_until = datetime.combine(
-            now_utc.date() + timedelta(days=1), dt_time(0, 0),
-            tzinfo=timezone.utc)
         return {
             "market": market, "marketDate": now_utc.date().isoformat(),
             "isTradingDay": True, "session": "CONTINUOUS",
@@ -339,8 +227,6 @@ def market_session(market: str, now_utc: Optional[datetime] = None, *,
             "officialCalendar": "CRYPTO_24_7",
             "providerStatus": provider_status, "providerConflict": False,
             "providerRole": "auxiliary_only",
-            "sessionObservedAt": _utc_seconds(now_utc),
-            "sessionValidUntil": _utc_seconds(valid_until),
         }
     local_tz = _JST if market == JP_EQUITY else _ET
     local_now = now_utc.astimezone(local_tz)
@@ -387,8 +273,6 @@ def market_session(market: str, now_utc: Optional[datetime] = None, *,
     provider_conflict = bool(provider and (
         (provider_open and not trading)
         or (provider == "CLOSED" and official_open)))
-    valid_until = _session_valid_until(
-        market, local_now, trading=trading, session=session)
     return {
         "market": market, "marketDate": key,
         "isTradingDay": trading, "session": session,
@@ -406,8 +290,6 @@ def market_session(market: str, now_utc: Optional[datetime] = None, *,
             else "FX_24_5"),
         "providerStatus": provider, "providerConflict": provider_conflict,
         "providerRole": "auxiliary_only",
-        "sessionObservedAt": _utc_seconds(now_utc),
-        "sessionValidUntil": _utc_seconds(valid_until),
     }
 
 

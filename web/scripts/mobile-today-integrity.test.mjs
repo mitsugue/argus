@@ -27,29 +27,31 @@ const command = read('src/routes/CommandCenter.tsx');
 const today = read('src/components/today/ArgusTodayPanel.tsx');
 const todayCss = read('src/components/today/ArgusToday.css');
 const hook = read('src/hooks/useChartIntelligence.ts');
+const replay = read('src/components/marketReplay/MarketContextReplay.tsx');
 const loaderCss = read('src/components/common/TriangleStepLoader.css');
 const acceptance = read('scripts/mobile-today-acceptance.mjs');
 const vite = read('vite.config.ts');
 
 assert.deepEqual(
   navigation.PRIMARY_NAVIGATION.map((item) => item.mobileLabel),
-  ['Today', 'Holdings', 'Alerts', 'Settings'],
+  ['Today', 'Assets', 'Review', 'Market'],
 );
 assert.deepEqual(
   navigation.PRIMARY_NAVIGATION.map((item) => item.route),
-  ['command', 'watchlist', 'notifications', 'settings'],
+  ['command', 'watchlist', 'core', 'regime'],
 );
 assert.equal(navigation.HASH_ROUTES['#today'], 'command');
-assert.equal(navigation.HASH_ROUTES['#notifications'], 'notifications');
-assert.equal(navigation.HASH_ROUTES['#settings'], 'settings');
-for (const retired of ['#assets', '#positions', '#quality', '#backup', '#guide',
-  '#review', '#market']) assert.equal(navigation.parseLocationHash(retired), undefined);
+assert.equal(navigation.HASH_ROUTES['#assets'], 'watchlist');
+assert.equal(navigation.HASH_ROUTES['#positions'], 'core');
+assert.equal(navigation.HASH_ROUTES['#market'], 'regime');
+assert.deepEqual(navigation.SYSTEM_NAVIGATION.map((item) => item.route),
+  ['quality', 'backup', 'guide']);
 assert.equal(navigation.pageDirection('command', 'watchlist'), 1);
-assert.equal(navigation.pageDirection('settings', 'notifications'), -1);
-assert.equal(navigation.primaryRouteIndex('settings'), 3);
+assert.equal(navigation.pageDirection('regime', 'core'), -1);
+assert.equal(navigation.primaryRouteIndex('quality'), -1);
 
 assert.match(nav, /PRIMARY_NAVIGATION\.map/);
-assert.doesNotMatch(nav, /SYSTEM_NAVIGATION/);
+assert.match(nav, /SYSTEM_NAVIGATION\.map/);
 assert.doesNotMatch(nav, /onClick=\{onReviewLink\}[^]*Review<\/button>/);
 assert.match(app, /window\.addEventListener\('popstate', onLocation\)/);
 assert.match(app, /history\.pushState/);
@@ -94,7 +96,8 @@ assert.match(hook, /instrument:\s*symbol!\.toUpperCase\(\)/);
 assert.match(hook, /scope:\s*'market'.*snapshot:\s*'verified'/s);
 assert.match(hook, /requestSequence !== sequence\.current/);
 assert.match(hook, /inflight\.get\(url\)/);
-assert.doesNotMatch(app + command + today, /MarketRegime|MarketContextReplay|#market/);
+assert.match(replay, /MARKET_INSTRUMENTS\.map/);
+assert.doesNotMatch(replay, /const INSTRUMENTS:/);
 
 assert.match(today, /chartLoad\.loaderVisible/);
 assert.match(today, /TriangleStepLoader compact/);
@@ -114,9 +117,6 @@ assert.match(acceptance, /warmLoaderLocator\.waitFor/);
 assert.match(acceptance, /warmLoaderDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS/);
 assert.match(acceptance, /warmLoaderDelayMs > WARM_LOADER_DEADLINE_MS/);
 assert.match(acceptance, /6_200 - \(Date\.now\(\) - warmStartedAt\)/);
-assert.match(acceptance, /\['Today', '#today'\], \['Holdings', '#holdings'\]/);
-assert.match(acceptance, /\['Alerts', '#notifications'\], \['Settings', '#settings'\]/);
-assert.doesNotMatch(acceptance, /nav__mobile-system|\['Assets', '#assets'\]|\['Review', '#positions'\]/);
 
 assert.match(vite, /cleanupOutdatedCaches:\s*true/);
 assert.match(vite, /clientsClaim:\s*true/);

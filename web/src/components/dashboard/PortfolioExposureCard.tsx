@@ -21,7 +21,7 @@ export const PortfolioExposureCard: React.FC<{
     return (
       <div className="card exp exp--hint">
         <span className="exp__title">Portfolio Exposure</span>
-        <p className="exp__hint">Holdings / Watchlistの銘柄詳細(OWNER POSITION)で「保有数量・平均取得単価」を入力すると、ここに評価額・含み損益・配分が表示されます(データはこの端末内のみ)。</p>
+        <p className="exp__hint">Asset Deskの銘柄カード(OWNER POSITION)で「保有数量・平均取得単価」を入力すると、ここに評価額・含み損益・配分が表示されます(データはこの端末内のみ)。</p>
       </div>
     );
   }

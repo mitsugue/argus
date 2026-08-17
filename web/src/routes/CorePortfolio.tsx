@@ -1,10 +1,20 @@
 import React, { useMemo } from 'react';
-import type { UseAssets } from '../hooks/useAssets';
-import type { AssetIntel } from '../hooks/useAssetIntel';
+import { PageShell } from './PageShell';
+import { AlertCard } from '../components/dashboard/AlertCard';
+import { useActionAlerts } from '../hooks/useActionAlerts';
+import { useAssets } from '../hooks/useAssets';
+import { useAssetIntel } from '../hooks/useAssetIntel';
 import { DecisionQualityCard } from '../components/dashboard/DecisionQualityCard';
 import { LearningDashboardCard } from '../components/dashboard/LearningDashboardCard';
+import { useFundNav } from '../hooks/useFundNav';
+import { useCatalysts } from '../hooks/useCatalysts';
 import { PortfolioExposureCard } from '../components/dashboard/PortfolioExposureCard';
 import { PortfolioDecisionOverview } from '../components/dashboard/PortfolioDecisionOverview';
+import { WhatIfPanel } from '../components/dashboard/WhatIfPanel';
+import type { QuoteLite } from '../lib/assetStrategy';
+import type { ActionLabel } from '../types/actionLabels';
+import type { CatalystItem } from '../types/catalysts';
+import { coingeckoIdOf } from '../lib/cryptoIds';
 import { jpDisplay } from '../lib/displayName';
 import { buildPortfolioDecisionOverview } from '../domain/portfolioDecisionView';
 import { buildPortfolioScenario, DOM_JA, DOM_TONE } from '../domain/scenario';
@@ -12,10 +22,12 @@ import { planPortfolioSummary } from '../domain/positionPlan';
 import { FIRE_TONE, BUDGET_JA, STRATEGY_COMPLIANCE_JA } from '../domain/portfolioStrategy';
 import { FireCoreCard } from '../components/dashboard/FireCoreCard';
 import { buildReviewPackMarkdown, copyPack } from '../lib/reviewPack';
+import { coreActionFor } from '../lib/todayCall';
 import { genreOf } from '../types/assetItem';
+import type { CorePosition } from '../types/dashboard';
 import { SignedValue } from '../components/common/SignedValue';
 import { getNumericTone, TONE_VAR } from '../lib/numericTone';
-import { useLocale, t } from '../i18n';
+import { useLocale, t, tEn } from '../i18n';
 import '../components/dashboard/Dashboard.css';
 
 // 資産クラス司令室 (command-center-v1, v10.13 — user-approved 案A):
@@ -28,15 +40,80 @@ import '../components/dashboard/Dashboard.css';
 
 const fmtJpy = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 
-export const CorePortfolio: React.FC<{
-  assetsApi: UseAssets;
-  portfolioIntel: AssetIntel;
-}> = ({ assetsApi, portfolioIntel }) => {
+export const CorePortfolio: React.FC = () => {
   useLocale();   // re-render on locale switch
+  const { cards, posture, phase } = useActionAlerts();
+  const assetsApi = useAssets();
   const { assets } = assetsApi;
-  const navFunds = portfolioIntel.fundNav.funds;
+  // Compute and publish the canonical device-local portfolio pipeline on this
+  // route. Direct navigation must not depend on Today having mounted first.
+  const portfolioIntel = useAssetIntel({ publish: true, assets });
+  const { funds: navFunds } = useFundNav();   // 投信 基準価額(NAV) follow
+  const rates = portfolioIntel.rates;
+  const usdJpy = rates.data?.usdJpy?.latestValue ?? null;
+
+  const jp = portfolioIntel.jpQuotes;
+  const us = portfolioIntel.usQuotes;
+  const cryptoPairs = useMemo(
+    () => assets
+      .filter((a) => a.market === 'CRYPTO')
+      .map((a) => ({ symbol: a.symbol, id: coingeckoIdOf(a) }))
+      .filter((p) => p.id),
+    [assets],
+  );
+  const crypto = portfolioIntel.cryptoWatch;
   const pe = portfolioIntel.positionExposure;
   const exp = pe.base;
+  // V12.2.12: What-if用のQuoteLite/ラベル/材料マップ(旧AssetStrategySectionの
+  // maps相当・計算不変)。数量/単価は端末内のみ。
+  const al = portfolioIntel.al;
+  const cat = useCatalysts();
+  const mountTs = useMemo(() => Date.now(), []);
+  const whatIfMaps = useMemo(() => {
+    const quotes = new Map<string, QuoteLite>();
+    for (const s of jp.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
+    for (const s of us.data?.stocks ?? []) quotes.set(s.symbol, { price: s.price, changePct: s.changePct, volume: s.volume, date: s.date, status: s.status, flow: s.flow ?? null, name: s.name });
+    for (const p of cryptoPairs) {
+      const q = crypto.byId[p.id];
+      if (q) quotes.set(p.symbol, { price: q.priceUsd, changePct: q.changePct, volume: q.volume, date: q.date, status: q.status });
+    }
+    const labels = new Map<string, ActionLabel>();
+    for (const l of al.data?.labels ?? []) labels.set(l.symbol, l);
+    const cats = new Map<string, CatalystItem>();
+    for (const c of cat.data?.items ?? []) cats.set(c.symbol, c);
+    // 投信(基準価額)もWhat-if候補に含める(旧実装のname寄せそのまま)
+    for (const a of assets) {
+      if (genreOf(a) !== 'funds') continue;
+      const sym = (a.symbol || '').toUpperCase();
+      const nm = `${a.displayName || ''} ${a.displayNameJa || ''}`.toLowerCase();
+      const want = (kw: string) => sym.includes(kw) || nm.includes(kw.toLowerCase());
+      for (const f of navFunds) {
+        const fn = (f.name || '').toLowerCase();
+        if ((fn.includes('全世界') && (want('ACWI') || nm.includes('全世界') || nm.includes('オルカン') || nm.includes('オール')))
+          || (fn.includes('s&p500') && (want('SP500') || want('S&P') || nm.includes('米国')))
+          || (fn.includes('国内') && (want('N225') || want('NIKKEI') || nm.includes('国内') || nm.includes('日経')))) {
+          quotes.set(a.symbol, { price: f.navYen, changePct: f.changePct ?? 0, volume: 0, date: f.date, status: 'live' });
+          break;
+        }
+      }
+    }
+    return { quotes, labels, cats };
+  }, [jp.data, us.data, crypto.byId, cryptoPairs, al.data, cat.data, assets, navFunds]);
+  // 積立方針 — ユーザーの実ファンド + 姿勢連動アクション(Action Alertsと同一ロジック)。
+  const funds: CorePosition[] = useMemo(() => {
+    const act = coreActionFor(posture ?? undefined);
+    return assets
+      .filter((a) => genreOf(a) === 'funds')
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((a) => ({
+        symbol: a.symbol,
+        name: a.displayNameJa || a.displayName,
+        market: 'JP' as const,
+        action: act.action,
+        reason: act.reason,
+      }));
+  }, [assets, posture]);
   const portfolioOverview = useMemo(() => buildPortfolioDecisionOverview({
     combinedJpy: exp.combinedJpy,
     combinedPlJpy: exp.combinedPlJpy,
@@ -55,8 +132,16 @@ export const CorePortfolio: React.FC<{
   }), [exp.combinedJpy, exp.combinedPlJpy, exp.holdings.length, pe,
     portfolioIntel.portfolioStrategy]);
 
-  const content = (
-    <>
+  return (
+    <PageShell
+      title={tEn('nav.corePortfolio')}
+      subtitle={
+        <span>
+          資産クラス司令室 — 配分の現在地と、クラスごとの「いま取るべき構え」。
+          <span className="today-phase"> - {phase === 'connecting' ? 'connecting...' : phase}{posture ? ` · posture ${posture}` : ''}</span>
+        </span>
+      }
+    >
       <PortfolioDecisionOverview view={portfolioOverview} />
       <details className="cp-workspace">
         <summary>Allocation / Risk / Plan / History</summary>
@@ -96,8 +181,11 @@ export const CorePortfolio: React.FC<{
         </div>
       </section>
 
-      {/* Portfolio exposure remains contextual inside Holdings. */}
+      {/* V12.2.12: Portfolio Exposure + What-if(旧Watchlistから移設・計算不変)。
+          ポートフォリオ横断機能はこのページに集約(Asset Deskは個別銘柄専用)。 */}
       <PortfolioExposureCard assets={assets} exp={exp} />
+      <WhatIfPanel assets={assets} quotes={whatIfMaps.quotes} labels={whatIfMaps.labels}
+                   cats={whatIfMaps.cats} exp={exp} usdJpy={usdJpy} mountTs={mountTs} />
 
       {/* PORTFOLIO SCENARIO (v11.17.0) — 保有全体の条件付き分岐(端末内合成)。
           このrouteの正本フックから直接合成。単一予測・売買指示なし。 */}
@@ -116,7 +204,7 @@ export const CorePortfolio: React.FC<{
                 <p className="cmd-alloc__note">
                   {allSets.length === 0
                     ? '銘柄別シナリオ履歴がまだないため、ポートフォリオ分岐は未算出です。次の判断更新後に端末内で合成します。'
-                    : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Holdings / Watchlistの銘柄詳細で保有数量を入力すると端末内で合成されます。捏造しません)。'}
+                    : '保有数量が未入力のため、ポートフォリオ・シナリオは表示できません(Asset Deskで保有数量を入力すると端末内で合成されます。捏造しません)。'}
                 </p>
               ) : (
                 <>
@@ -125,7 +213,7 @@ export const CorePortfolio: React.FC<{
                     <span style={{ marginLeft: 6 }}>{ps.summaryJa}</span>
                   </p>
                   <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はHoldings / Watchlistの各銘柄→Decisionで。
+                    条件付きシナリオであり予測でも売買指示でもありません(確率は帯のみ)。銘柄別の無効化条件はAsset Deskの各カード→Decisionで。
                   </p>
                 </>
               )}
@@ -247,7 +335,7 @@ export const CorePortfolio: React.FC<{
                 </p>
               ))}
               <p className="cmd-alloc__note" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
-                比率の高い銘柄は追加より先にリスク確認。詳細条件はHoldings / Watchlistの各銘柄→DECISIONで。
+                比率の高い銘柄は追加より先にリスク確認。詳細条件はAsset Deskの各カード→DECISIONで。
                 これは計画であり売買指示ではありません(注文機能はありません)。
               </p>
             </div>
@@ -255,10 +343,11 @@ export const CorePortfolio: React.FC<{
         );
       })()}
 
-      {/* Lean v13: owner backup/recovery controls live under Settings. */}
+      {/* v11.19.1 (owner request): PORTFOLIO SYNC & BACKUP moved to the new
+          Backup page — all backup ops now live in ONE place. Pointer only. */}
       <p className="cmd-alloc__note" style={{ margin: '2px 0 8px', fontSize: 11.5, color: 'var(--text-faint)' }}>
-        ローカルJSONの書き出し/読み込み、保存済み暗号文の読取復元、復元ドリルは
-        「<b>Settings / Recovery</b>」に集約しました。
+        バックアップ操作(暗号化バックアップ設定・JSON書き出し/読み込み・スナップショット・復元ドリル)は
+        左ナビの「<b>Backup</b>」ページに集約しました。
       </p>
 
       {/* DECISION QUALITY (v11.11.0) — 過去判断の答え合わせ(端末内・成績断定なし) */}
@@ -278,7 +367,7 @@ export const CorePortfolio: React.FC<{
           {pe.noHoldings ? (
             <p className="cmd-alloc__empty">
               ポジション数量・取得単価が未入力のため、保有リスクは暫定です。
-              Holdings / Watchlistの銘柄詳細で入力すると、テーマ集中・通貨偏り・銘柄集中を判定します(端末内のみ)。
+              Asset Deskの銘柄カードで入力すると、テーマ集中・通貨偏り・銘柄集中を判定します(端末内のみ)。
             </p>
           ) : (
             <>
@@ -312,6 +401,25 @@ export const CorePortfolio: React.FC<{
         </div>
       </section>
 
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">{t('cp.classCalls')}</span>
+          <span className="section-head__count">{cards.length} classes</span>
+        </div>
+        {/* Vocabulary legend (v10.191) — "待機/WAIT" was ambiguous ("do nothing?").
+            Spell out that holding is fine; only NEW entries wait. */}
+        <p className="alert-legend">
+          <b>WAIT</b>=新規エントリーは見送り(保有は継続でOK) ・ <b>HOLD</b>=保有継続 ・
+          <b>現金比率を上げる</b>=待機資金を厚くする ・ <b>TRIM/EXIT</b>=縮小/撤退。
+          「待機」は“何もするな”ではなく“今は新規を入れない・持ち高は維持”の意味です。
+        </p>
+        <div className="alert-grid">
+          {cards.map((c) => (
+            <AlertCard key={c.assetClass} card={c} />
+          ))}
+        </div>
+      </section>
+
       {/* 積立方針 + 基準価額を1つに統合 (v10.63): 各投信に「NAV・前日比」と
           「地合い連動の積立コメント」を同じ行で表示(重複セクションを解消)。 */}
       <section>
@@ -321,19 +429,21 @@ export const CorePortfolio: React.FC<{
         </div>
         <div className="card core-list">
           {navFunds.length > 0 ? navFunds.map((f) => {
+            const act = coreActionFor(posture ?? undefined);
+            const isCont = act.action === 'CONTINUE';
             return (
               <div className="core-row" key={f.code}>
                 <div className="core-row__body">
                   <span className="core-row__top">{f.name}</span>
-                  <span className="core-row__reason">{f.code} · {f.date} — 日次NAV証拠(積立アクションはSDAに未接続)</span>
+                  <span className="core-row__reason">{f.code} · {f.date} — {t(isCont ? 'cp.dca.continueReason' : 'cp.dca.deferReason')}</span>
                 </div>
                 <div style={{ textAlign: 'right', flex: 'none' }}>
                   <div style={{ fontWeight: 700 }}>¥{Math.round(f.navYen).toLocaleString('en-US')}</div>
                   <div style={{ fontSize: 12 }}>
                     {t('cp.dayChange')} {f.changePct == null ? '—' : <SignedValue value={f.changePct} suffix="%" arrow={false} />}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
-                    EVIDENCE ONLY
+                  <div style={{ fontSize: 11, color: 'var(--value-positive)', marginTop: 2 }}>
+                    ● {t(isCont ? 'cp.dca.continue' : 'cp.dca.deferLump')}
                   </div>
                 </div>
               </div>
@@ -346,8 +456,6 @@ export const CorePortfolio: React.FC<{
       </section>
         </div>
       </details>
-    </>
+    </PageShell>
   );
-
-  return <div className="cp-embedded">{content}</div>;
 };

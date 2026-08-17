@@ -34,6 +34,22 @@ def test_flow_attribution_single_symbol(monkeypatch):
         assert "断定" in rec["complianceNote"]
 
 
+def test_flow_attribution_list_and_status(monkeypatch):
+    _no_fetch(monkeypatch)
+    with scanner.app.test_client() as c:
+        r = c.get("/api/argus/flow-attribution")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "records" in d and d["disclaimerJa"]
+        r2 = c.get("/api/argus/flow-attribution/status")
+        assert r2.status_code == 200
+        st = r2.get_json()
+        assert st["schemaVersion"] == "flow-attribution-status-v1"
+        # JP moomoo flow off is INTENTIONAL, reported as availability not error
+        assert st["sourceAvailability"]["flow_jp_bridge"] is False
+        assert "意図的に無効" in st["noteJa"]
+
+
 def test_flow_with_pushed_quote_classifies(monkeypatch):
     _no_fetch(monkeypatch)
     scanner._PUSHED_QUOTES.setdefault("US", {})["FLOWTEST"] = {
@@ -43,11 +59,9 @@ def test_flow_with_pushed_quote_classifies(monkeypatch):
         "ts": 9e12}
     try:
         rec = scanner._flow_attribution_for("FLOWTEST", "US")
-        assert rec["evidence"]["priceActionEvidence"] is None
-        assert rec["flowClass"] == "unknown"
-        assert rec["actionImplication"] == "no_action"
-        assert rec["sourceUpdatedAt"] is None
-        # Receipt time and bridge flow have no independent source-time authority.
+        assert rec["evidence"]["priceActionEvidence"]
+        assert rec["flowClass"] != "unknown"
+        # measured US flow present → can be direct, but never assertive wording
         assert "大口が買っている" not in rec["ownerReadableWhyJa"]
     finally:
         scanner._PUSHED_QUOTES["US"].pop("FLOWTEST", None)

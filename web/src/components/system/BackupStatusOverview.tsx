@@ -2,7 +2,6 @@ import React from 'react';
 import type { AssetItem } from '../../types/assetItem';
 import { assessBackupSafety, drillMeta } from '../../lib/backupSafety';
 import { syncMeta } from '../../lib/portfolioSync';
-import { certifiedCompleteExportAt } from '../../lib/backupMeta';
 import { lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
 import { buildRestoreReadiness } from '../../domain/restoreReadiness';
 import './SystemDecision.css';
@@ -17,7 +16,6 @@ export const BackupStatusOverview: React.FC<{ assets: AssetItem[] }> = ({ assets
   const safety = assessBackupSafety(assets);
   const sync = lastSyncInfo();
   const local = syncMeta();
-  const completeExportAt = certifiedCompleteExportAt(local);
   const drill = drillMeta();
   const readiness = buildRestoreReadiness(safety);
   const readinessTone = readiness.state === 'ready' ? 'var(--value-positive)'
@@ -26,7 +24,7 @@ export const BackupStatusOverview: React.FC<{ assets: AssetItem[] }> = ({ assets
     : 'var(--amber, #fbbf24)';
   const recoveryTimes = [
     sync?.lastPushAt || lastCloudBackupAt(),
-    completeExportAt,
+    local.lastExportAt,
   ].map((value) => value ? new Date(value).getTime() : 0).filter((value) => Number.isFinite(value) && value > 0);
   const latestRecoveryPoint = recoveryTimes.length ? Math.max(...recoveryTimes) : null;
 
