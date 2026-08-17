@@ -36,13 +36,7 @@ def provider_history(count=420, start=100.0):
 
 @contextmanager
 def price_cache(fake):
-    # The synthetic cache has a deliberately distant expiry; bind the actual
-    # provider revision to a truthful, deterministic acquisition instant so
-    # strict point-in-time filtering does not interpret expiry-minus-TTL as a
-    # future knowledge timestamp.
-    acquired_at = f"{max(fake['dates'])}T23:59:59Z"
-    fresh = {"data": fake, "expires": 9_999_999_999.0,
-             "acquiredAt": acquired_at}
+    fresh = {"data": fake, "expires": 9_999_999_999.0}
     jp = {code: dict(fresh) for code in ("7203", "1321", "1306", "2644", "2516")}
     us = {symbol: dict(fresh) for symbol in ("SPY", "QQQ", "USD/JPY")}
     with mock.patch.dict(scanner._JQ_HISTORY_CACHE, jp, clear=True), \
@@ -177,9 +171,7 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         route = pathlib.Path("web/src/routes/CommandCenter.tsx").read_text()
         panel = pathlib.Path("web/src/components/today/ArgusTodayPanel.tsx").read_text()
         self.assertIn("argus.today.selectedInstrument.v1", route)
-        self.assertNotIn("argus.replayContext", panel)
-        self.assertIn("<ProjectionChart projection={projection} />", panel)
-        self.assertNotIn("onActivate={() => setDetail(true)}", panel)
+        self.assertIn("argus.replayContext", panel)
         self.assertIn("([1, 5, 20] as const)", panel)
         self.assertNotIn("method: 'POST'", route + panel)
 
@@ -193,9 +185,8 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         self.assertEqual(lock["packages"][""]["version"], package["version"])
         self.assertEqual(scanner._semantic_app_version(), backend["version"])
         self.assertEqual(scanner._frontend_semantic_version(), package["version"])
-        self.assertFalse(pathlib.Path("web/src/routes/Guide.tsx").exists())
-        manifest = pathlib.Path("docs/ARGUS_B2A_DEFERRED_UI_MANIFEST.md").read_text()
-        self.assertIn("Round 1 deletion completed", manifest)
+        guide = pathlib.Path("web/src/routes/Guide.tsx").read_text()
+        self.assertIn("['v13.3.6'", guide)
 
 
 if __name__ == "__main__":

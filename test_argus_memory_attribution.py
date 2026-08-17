@@ -987,10 +987,3 @@ def test_diagnostic_does_not_enter_checkpoint_or_wal_contracts():
     assert '"operationAttribution"' not in checkpoint_literal
     assert "memory-attribution" not in pathlib.Path(
         "argus_tick_durability.py").read_text(encoding="utf-8")
-
-
-def test_deep_probe_uses_canonical_public_diagnostics_route():
-    source = pathlib.Path(
-        "scripts/deep_memory_attribution_probe.py").read_text(encoding="utf-8")
-    assert '("/api/argus/data-quality/status", {})' in source
-    assert "/api/argus/system-health" not in source

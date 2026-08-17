@@ -97,10 +97,15 @@
   background: var(--blue);
 }
 
-/* Bottom-pinned version stamp. Operator/support sheets are intentionally not
-   advertised in the owner-facing navigation. */
+/* Bottom-pinned footer — version + AI review link. Visible at all sizes
+   so the user can always reach the review sheet and see the build. */
+/* The bottom group (Backup → Guide → footer) clusters at the bottom of the
+   rail. v11.20.0 (owner fix): ONLY the first bottom item (Backup) carries
+   margin-top:auto — two auto margins would split the free space and strand
+   Backup in the vertical middle. */
+.nav__btn--backup { margin-top: auto; }
+.nav__btn--guide { margin-top: 2px; }
 .nav__footer {
-  margin-top: auto;
   padding: 12px 10px 4px;
   font-size: 10px;
   color: var(--text-faint);
@@ -119,8 +124,27 @@
   background: var(--text-faint);
 }
 
+.nav__review-link {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: color 0.12s var(--ease);
+}
+.nav__review-link:hover {
+  color: var(--blue);
+}
+.nav__review-link.is-active {
+  color: var(--blue);
+}
+
 @media (max-width: 720px) {
-  /* Four owner destinations share the bottom bar. */
+  /* Today needs the full phone width.  Five primary destinations live in a
+     bottom bar; System keeps direct Data Quality/Backup access in a small menu. */
   .nav {
     position: fixed;
     z-index: 40;
@@ -138,7 +162,7 @@
   .nav__desktop { display: none; }
   .nav__mobile {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     width: 100%;
     height: var(--argus-mobile-nav-content-height);
   }
@@ -158,12 +182,41 @@
     line-height: 1;
     list-style: none;
   }
-  .nav__mobile-btn.is-active { color: var(--text-main); }
+  .nav__mobile-btn::-webkit-details-marker { display: none; }
+  .nav__mobile-btn.is-active,
+  .nav__mobile-system.is-active > .nav__mobile-btn { color: var(--text-main); }
   .nav__mobile-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: currentColor;
   }
-  .nav__mobile-btn.is-active .nav__mobile-dot { background: var(--blue); }
+  .nav__mobile-btn.is-active .nav__mobile-dot,
+  .nav__mobile-system.is-active .nav__mobile-dot { background: var(--blue); }
+  .nav__mobile-system {
+    position: relative; min-width: 0; margin:0; padding:0; border:0;
+  }
+  .nav__mobile-system > summary {
+    width:100%; height:var(--argus-mobile-nav-content-height); box-sizing:border-box;
+  }
+  .nav__mobile-system-menu {
+    position: absolute;
+    right: 4px;
+    bottom: var(--argus-mobile-nav-content-height);
+    display: grid;
+    min-width: 142px;
+    padding: 6px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  }
+  .nav__mobile-system-menu button {
+    padding: 10px;
+    color: var(--text-sub);
+    text-align: left;
+    background: transparent;
+    border-radius: 5px;
+  }
+  .nav__mobile-system-menu button:hover { background: var(--surface-soft); color: var(--text-main); }
 }

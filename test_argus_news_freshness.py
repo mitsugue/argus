@@ -19,30 +19,6 @@ def test_classify_thresholds():
     assert NF.classify("garbage", NOW)["freshness"] == "unknown_time"
 
 
-def test_future_timestamps_are_never_clamped_to_fresh():
-    for ts in ("2026-07-03T06:00:01Z", "2026-07-04T06:00:00Z"):
-        assert NF.age_hours(ts, NOW) is None
-        result = NF.classify(ts, NOW)
-        assert result["freshness"] == "future_time"
-        assert result["eligibleAsPrimaryLead"] is False
-        assert result["role"] == "background"
-
-
-def test_missing_and_malformed_timestamps_are_background_only():
-    for ts in (None, "", "not-a-timestamp"):
-        result = NF.classify(ts, NOW)
-        assert result["freshness"] == "unknown_time"
-        assert result["eligibleAsPrimaryLead"] is False
-        assert result["role"] == "background"
-
-
-def test_date_only_is_displayable_but_cannot_establish_causal_order():
-    result = NF.classify("2026-07-03", NOW)
-    assert result["freshness"] == "date_only"
-    assert result["eligibleAsPrimaryLead"] is False
-    assert result["role"] == "background"
-
-
 def test_eligibility_and_roles():
     assert NF.classify("2026-07-03T04:00:00Z", NOW)["eligibleAsPrimaryLead"] is True
     assert NF.classify("2026-07-02T10:00:00Z", NOW)["eligibleAsPrimaryLead"] is True
@@ -57,8 +33,6 @@ def test_label_ja():
     assert "過去材料" in NF.label_ja("old", 14 * 24)
     assert "日前" in NF.label_ja("old", 14 * 24)
     assert NF.label_ja("unknown_time") == "時刻不明"
-    assert NF.label_ja("future_time") == "未来時刻"
-    assert NF.label_ja("date_only") == "日付のみ"
 
 
 def _resolve_with_news(news, chg=-8.0):
@@ -116,16 +90,14 @@ def test_old_caos_association_lead_demoted():
     assert rec["causeStatus"] == "no_lead_yet"
 
 
-def test_caos_lead_without_timestamp_is_background_only():
+def test_caos_lead_without_timestamp_keeps_working():
+    """後方互換: publishedAtの無い既存リードはunknown_timeのまま候補資格を維持。"""
     mover = {"symbol": "9984", "market": "JP", "changePct": -5.0, "asOf": NOW, "direction": "down"}
     evidence = {"caosLead": {"titleJa": "関連テーマのリード", "via": "theme",
                              "corroboration": "single"},
                 "coverage": {"caosChecked": True}}
     rec = MC.resolve(mover, evidence, NOW)
-    assert rec["causeStatus"] == "no_lead_yet"
-    assert rec["bestLeadJa"] == "最新材料は未確認"
-    lead = next(c for c in rec["causeCandidates"] if c["category"] == "theme")
-    assert lead["role"] == "background_only"
+    assert rec["causeStatus"] == "candidate_catalyst"
 
 
 def test_compact_carries_news_freshness():

@@ -27,12 +27,6 @@ on:
 permissions:
   contents: write
 
-# This compatibility writer shares the ledger branch with the canonical
-# Prediction Ledger. Repository-wide serialization prevents lost branch heads.
-concurrency:
-  group: ledger-branch-writer
-  cancel-in-progress: false
-
 jobs:
   pin:
     runs-on: ubuntu-latest
@@ -94,23 +88,6 @@ jobs:
           TODAY=$(TZ=Asia/Tokyo date +%F)
           test -s "$RUNNER_TEMP/pin.json"
           cp "$RUNNER_TEMP/pin.json" "ledger/closepin/days/$TODAY.json"
-          python3 - <<'PY'
-          import json
-          import os
-
-          today = os.popen("TZ=Asia/Tokyo date +%F").read().strip()
-          path = f"ledger/closepin/days/{today}.json"
-          payload = json.load(open(path, encoding="utf-8"))
-          payload.update({
-              "mode": "shadow",
-              "authority": "SHADOW_DERIVED",
-              "canonicalPredictionLedger": False,
-              "calibrationEligible": False,
-          })
-          with open(path, "w", encoding="utf-8") as handle:
-              json.dump(payload, handle, ensure_ascii=False, indent=1)
-              handle.write("\n")
-          PY
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
           git add ledger/closepin/

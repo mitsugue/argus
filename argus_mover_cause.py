@@ -64,11 +64,8 @@ def _epoch(v: Any, naive_utc_offset_hours: float = 0.0) -> Optional[float]:
     otherwise read a pre-open 08:30 JST disclosure as 08:30 UTC = after_move)."""
     if v is None:
         return None
-    if isinstance(v, bool):
-        return None
     if isinstance(v, (int, float)):
-        import math
-        return float(v) if v > 0 and math.isfinite(float(v)) else None
+        return float(v) if v > 0 else None
     s = str(v).strip()
     if not s:
         return None
@@ -86,7 +83,7 @@ def _epoch(v: Any, naive_utc_offset_hours: float = 0.0) -> Optional[float]:
     if dt is None:
         for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d"):
             try:
-                dt = datetime.strptime(s, fmt)
+                dt = datetime.strptime(s[:len(fmt) + 2], fmt)
                 break
             except Exception:
                 continue
@@ -105,15 +102,9 @@ def timing_relation(published_at: Any, move_started_at: Any,
     during_move = published within 30min after the move started (news breaking
     alongside the move). after_move = later than that — can never be the trigger.
     naive_utc_offset_hours applies to NAIVE published_at stamps (JP feeds = +9)."""
-    if (not argus_news_freshness.has_exact_time(published_at)
-            or not argus_news_freshness.has_exact_time(move_started_at)):
-        return "unknown"
     pub = _epoch(published_at, naive_utc_offset_hours)
     move = _epoch(move_started_at)
     if pub is None or move is None:
-        return "unknown"
-    now = _epoch(now_iso) if now_iso is not None else None
-    if now_iso is not None and (now is None or pub > now):
         return "unknown"
     if pub <= move:
         # >2.5 days before the move = stale background, treated as unknown timing
@@ -170,22 +161,6 @@ def _story_tokens(title: str) -> set:
     return toks
 
 
-def _time_authority(published_at: Any, now_iso: str,
-                    naive_utc_offset_hours: float = 0.0) -> Dict[str, Any]:
-    """Canonical current-cause time gate shared by every timestamped source.
-
-    Missing, malformed, future, and older-than-24h timestamps remain visible as
-    background context, but cannot ground any rung of the current-cause ladder.
-    """
-    return argus_news_freshness.classify(
-        published_at, now_iso, naive_utc_offset_hours=naive_utc_offset_hours)
-
-
-def _attach_time_authority(candidate: Dict[str, Any], authority: Dict[str, Any]) -> Dict[str, Any]:
-    candidate["timeAuthority"] = dict(authority)
-    return candidate
-
-
 # ── candidate builders ───────────────────────────────────────────────────────
 def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
                      now_iso: str) -> List[Dict[str, Any]]:
@@ -208,101 +183,76 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
         if not isinstance(it, dict):
             continue
         official = bool(it.get("official"))
-        published_at = it.get("disclosedAt") or it.get("time")
-        time_auth = _time_authority(published_at, now_iso, naive_off)
-        time_current = bool(time_auth["eligibleAsPrimaryLead"])
-        timing = (timing_relation(published_at, move_start, now_iso,
-                                  naive_utc_offset_hours=naive_off)
-                  if time_current else "unknown")
+        timing = timing_relation(it.get("disclosedAt") or it.get("time"), move_start, now_iso,
+                                 naive_utc_offset_hours=naive_off)
         material = bool(it.get("material"))
         consistent = _sentiment_consistent(it.get("sentiment"), direction)
-        confirmed = (time_current and official and timing in ("before_move", "during_move")
-                     and big_move and consistent is True)
-        role = ("background_only" if not time_current
-                else "trigger" if (material and timing in ("before_move", "during_move"))
+        confirmed = official and timing in ("before_move", "during_move") and big_move and consistent is True
+        role = ("trigger" if (material and timing in ("before_move", "during_move"))
                 else "confirmation" if timing == "after_move" else "background_only")
-        conf = (0.15 if not time_current else 0.75 if confirmed
-                else 0.55 if (official and material and timing != "after_move")
-                else 0.35 if official else 0.25)
+        conf = 0.75 if confirmed else (0.55 if (official and material and timing != "after_move")
+                                       else 0.35 if official else 0.25)
         lims = []
-        if not time_current:
-            lims.append(time_auth["staleReasonJa"])
         if timing == "after_move":
             lims.append("値動きより後の開示のため引き金にしない")
         if consistent is None:
             lims.append("開示の方向性(好悪)が未判定")
-        out.append(_attach_time_authority(
-            _mk("official_disclosure" if official else "direct_news",
-                f"{it.get('categoryJa') or '開示'}: {it.get('title') or ''}",
-                role=role, source=it.get("provider") or ("TDnet" if official else "TDnet(補助)"),
-                source_tier="official" if official else "aggregator",
-                source_family="tdnet", rights_class="metadata_only",
-                published_at=published_at, timing=timing, link_type="direct_mention",
-                corroboration="official" if official else "single_source",
-                market_confirmed=confirmed, confidence=conf,
-                why_ja="公式開示は事実確認。価格原因の確定には時刻整合+市場反応が必要。",
-                limitations=lims), time_auth))
+        out.append(_mk("official_disclosure" if official else "direct_news",
+                       f"{it.get('categoryJa') or '開示'}: {it.get('title') or ''}",
+                       role=role, source=it.get("provider") or ("TDnet" if official else "TDnet(補助)"),
+                       source_tier="official" if official else "aggregator",
+                       source_family="tdnet", rights_class="metadata_only",
+                       published_at=it.get("disclosedAt") or it.get("time"),
+                       timing=timing, link_type="direct_mention",
+                       corroboration="official" if official else "single_source",
+                       market_confirmed=confirmed, confidence=conf,
+                       why_ja="公式開示は事実確認。価格原因の確定には時刻整合+市場反応が必要。",
+                       limitations=lims))
 
     for ev in (evidence.get("officialEvents") or [])[:6]:
         if not isinstance(ev, dict):
             continue
-        published_at = ev.get("disclosedAt")
-        time_auth = _time_authority(published_at, now_iso, naive_off)
-        time_current = bool(time_auth["eligibleAsPrimaryLead"])
-        timing = (timing_relation(published_at, move_start, now_iso,
-                                  naive_utc_offset_hours=naive_off)
-                  if time_current else "unknown")
+        timing = timing_relation(ev.get("disclosedAt"), move_start, now_iso,
+                                 naive_utc_offset_hours=naive_off)
         material = bool(ev.get("material"))
         consistent = _sentiment_consistent(ev.get("sentiment"), direction)
         # NEVER pass the lifecycle record's own causeStatus through as THIS move's
         # market confirmation — it was earned against the disclosure-day reaction,
         # not today's move/direction. Confirmation must be re-proven here.
-        confirmed = (time_current and timing in ("before_move", "during_move") and material
+        confirmed = (timing in ("before_move", "during_move") and material
                      and big_move and consistent is True)
         lims = list(ev.get("missingConfirmations") or [])[:3]
-        if not time_current:
-            lims.append(time_auth["staleReasonJa"])
         if timing == "after_move":
             lims.append("値動きより後の開示のため引き金にしない")
-        out.append(_attach_time_authority(
-            _mk("official_disclosure",
-                f"{ev.get('categoryJa') or '公式イベント'}: {ev.get('title') or ''}",
-                role="background_only" if not time_current
-                else "trigger" if (material and timing in ("before_move", "during_move"))
-                else "confirmation",
-                source=ev.get("provider") or "official", source_tier="official",
-                source_family=str(ev.get("source") or "tdnet"),
-                rights_class="metadata_only", published_at=published_at,
-                timing=timing, link_type="direct_mention", corroboration="official",
-                market_confirmed=confirmed,
-                confidence=0.15 if not time_current else 0.75 if confirmed
-                else (0.6 if (material and timing in ("before_move", "during_move"))
-                      else 0.3),
-                why_ja="公式イベントライフサイクルで追跡中。",
-                limitations=lims), time_auth))
+        out.append(_mk("official_disclosure",
+                       f"{ev.get('categoryJa') or '公式イベント'}: {ev.get('title') or ''}",
+                       role="trigger" if (material and timing in ("before_move", "during_move"))
+                       else "confirmation",
+                       source=ev.get("provider") or "official", source_tier="official",
+                       source_family=str(ev.get("source") or "tdnet"),
+                       rights_class="metadata_only", published_at=ev.get("disclosedAt"),
+                       timing=timing, link_type="direct_mention", corroboration="official",
+                       market_confirmed=confirmed,
+                       confidence=0.75 if confirmed
+                       else (0.6 if (material and timing in ("before_move", "during_move"))
+                             else 0.3),
+                       why_ja="公式イベントライフサイクルで追跡中。",
+                       limitations=lims))
 
     for f in (evidence.get("filings") or [])[:5]:
         if not isinstance(f, dict):
             continue
-        published_at = f.get("submitDateTime") or f.get("filingDate")
-        time_auth = _time_authority(published_at, now_iso, naive_off)
-        time_current = bool(time_auth["eligibleAsPrimaryLead"])
-        timing = (timing_relation(published_at, move_start, now_iso,
-                                  naive_utc_offset_hours=naive_off)
-                  if time_current else "unknown")
-        lims = [] if time_current else [time_auth["staleReasonJa"]]
-        out.append(_attach_time_authority(
-            _mk("filing", f"{f.get('form') or f.get('docTypeCode') or '提出'}: "
-                          f"{f.get('docDescription') or f.get('source') or ''}",
-                role="background_only" if not time_current
-                else "trigger" if timing in ("before_move", "during_move") else "confirmation",
-                source=str(f.get("source") or "filing"), source_tier="official",
-                source_family="edinet_sec", rights_class="metadata_only",
-                published_at=published_at, timing=timing, link_type="direct_mention",
-                corroboration="official", confidence=0.15 if not time_current
-                else 0.45 if timing != "after_move" else 0.3,
-                why_ja="公式提出書類。内容の好悪と価格因果は未確定。",
-                limitations=lims), time_auth))
+        timing = timing_relation(f.get("filingDate") or f.get("submitDateTime"), move_start,
+                                 now_iso, naive_utc_offset_hours=naive_off)
+        out.append(_mk("filing", f"{f.get('form') or f.get('docTypeCode') or '提出'}: "
+                                 f"{f.get('docDescription') or f.get('source') or ''}",
+                       role="trigger" if timing in ("before_move", "during_move") else "confirmation",
+                       source=str(f.get("source") or "filing"), source_tier="official",
+                       source_family="edinet_sec", rights_class="metadata_only",
+                       published_at=f.get("filingDate") or f.get("submitDateTime"),
+                       timing=timing, link_type="direct_mention", corroboration="official",
+                       confidence=0.45 if timing != "after_move" else 0.3,
+                       why_ja="公式提出書類。内容の好悪と価格因果は未確定。"))
 
     # B. earnings proximity (a real, honest vulnerability/candidate)
     earn = evidence.get("earnings") or {}
@@ -321,15 +271,12 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
     for n in news[:12]:
         if not isinstance(n, dict):
             continue
-        published_at = n.get("publishedAt") or n.get("datetime")
-        time_auth = _time_authority(published_at, now_iso, naive_off)
-        timing = (timing_relation(published_at, move_start, now_iso,
-                                  naive_utc_offset_hours=naive_off)
-                  if time_auth["eligibleAsPrimaryLead"] else "unknown")
+        timing = timing_relation(n.get("publishedAt") or n.get("datetime"), move_start, now_iso,
+                                 naive_utc_offset_hours=naive_off)
         title = str(n.get("headline") or n.get("titleJa") or n.get("title") or "")
         if not title:
             continue
-        fresh.append((n, timing, title, time_auth))
+        fresh.append((n, timing, title))
 
     def _is_multi(n0, t0, title0):
         """multi_source = the SAME STORY reported before/during the move by ≥2
@@ -341,7 +288,7 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
         toks0 = _story_tokens(title0)
         if not pub0 or not toks0:
             return False
-        for n1, t1, title1, _auth1 in fresh:
+        for n1, t1, title1 in fresh:
             if n1 is n0 or t1 not in ("before_move", "during_move"):
                 continue
             pub1 = str(n1.get("publisher") or n1.get("source") or "").strip()
@@ -351,7 +298,7 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
                 return True
         return False
 
-    for n, timing, title, nf in fresh[:6]:
+    for n, timing, title in fresh[:6]:
         is_analyst = any(m in title.lower() for m in _ANALYST_MARKERS)
         corro = "multi_source" if _is_multi(n, timing, title) else "single_source"
         consistent = _sentiment_consistent(n.get("sentiment"), direction)
@@ -365,10 +312,12 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
         # V11.5.3 freshness gate: old/stale news must NEVER read as the current
         # lead (the June-19-article-as-July-cause bug). Demote to background,
         # cap confidence, and record why — the ladder skips background candidates.
+        nf = argus_news_freshness.classify(n.get("publishedAt") or n.get("datetime"),
+                                           now_iso, naive_utc_offset_hours=naive_off)
         role = "trigger" if timing in ("before_move", "during_move") else "amplifier"
-        if not nf["eligibleAsPrimaryLead"]:
+        if nf["freshness"] in ("old", "stale"):
             role = "background_only"
-            conf = min(conf, 0.15)
+            conf = min(conf, 0.15 if nf["freshness"] == "old" else 0.25)
             confirmed = False
             lims.append(nf["staleReasonJa"])
         cand = _mk("analyst_action" if is_analyst else "direct_news", title,
@@ -381,7 +330,6 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
                    market_confirmed=confirmed, confidence=conf,
                    why_ja="銘柄を直接報じるニュース。", limitations=lims)
         cand["newsFreshness"] = nf
-        cand["timeAuthority"] = dict(nf)
         out.append(cand)
 
     # D. C.A.O.S. association lead (entity/theme — candidate by definition)
@@ -390,10 +338,11 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
         via = str(lead.get("via") or "theme")
         # V11.5.3: an association lead built on an OLD intel item is a past story,
         # not today's lead — same freshness demotion as direct news.
-        nf_lead = _time_authority(lead.get("publishedAt"), now_iso, naive_off)
+        nf_lead = argus_news_freshness.classify(lead.get("publishedAt"), now_iso,
+                                                naive_utc_offset_hours=naive_off)
         lead_role, lead_conf = "vulnerability", 0.3
         lead_lims = ["連想は原因ではない(候補どまり)"]
-        if not nf_lead["eligibleAsPrimaryLead"]:
+        if nf_lead["freshness"] in ("old", "stale"):
             lead_role, lead_conf = "background_only", 0.15
             lead_lims.append(nf_lead["staleReasonJa"])
         cand = _mk("entity_association" if via in ("entity", "entity_profile", "name")
@@ -407,7 +356,6 @@ def build_candidates(mover: Dict[str, Any], evidence: Dict[str, Any],
                    why_ja=str(lead.get("relationJa") or "関連企業/テーマの連想リード。"),
                    limitations=lead_lims)
         cand["newsFreshness"] = nf_lead
-        cand["timeAuthority"] = dict(nf_lead)
         out.append(cand)
 
     # E. sector/theme peers moving together
@@ -481,8 +429,6 @@ def _status_from(candidates: List[Dict[str, Any]]):
     must come from the candidate that EARNED the status, not merely the
     highest-confidence one (they can differ)."""
     for c in candidates:
-        if c["role"] == "background_only":
-            continue
         if (c["category"] in _OFFICIAL_CATEGORIES and c["corroborationLevel"] == "official"
                 and c["timingRelation"] in ("before_move", "during_move")
                 and c["marketConfirmed"]):
@@ -492,8 +438,6 @@ def _status_from(candidates: List[Dict[str, Any]]):
                 and c["marketConfirmed"]):
             return "confirmed_cause", c
     for c in candidates:
-        if c["role"] == "background_only":
-            continue
         if c["category"] in _OFFICIAL_CATEGORIES and c["confidence"] >= 0.45:
             return "probable_catalyst", c                    # official fact, causality unclear
         if (c["corroborationLevel"] == "multi_source" and c["confidence"] >= 0.45):
@@ -557,7 +501,7 @@ def _next_checks(coverage: Dict[str, Any], candidates: List[Dict[str, Any]],
         checks.append("別ソースでの裏取り(2社目の報道/公式開示)を確認")
     # V11.5.3: when the only material found is old/stale, the missing thing is the
     # PRESENT — re-check the latest news/official channel/volume, not the archive.
-    if any(not (c.get("timeAuthority") or {}).get("eligibleAsPrimaryLead", True)
+    if any((c.get("newsFreshness") or {}).get("freshness") in ("old", "stale")
            for c in candidates[:6]):
         checks.insert(0, "最新ニュース/公式開示/出来高反応を再確認")
     checks.append("次の公式開示・決算・適時開示を待つ")
@@ -594,18 +538,12 @@ def annotate_freshness(record: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     now = _epoch(now_iso)
     ttl_min = PRIORITY_TTL_MIN.get(rp.get("priority") or "normal", 120)
     if last and now:
-        if last > now:
-            fr["evidenceAgeSec"] = None
-            fr["isStale"] = True
-            fr["staleReasonJa"] = "証拠更新時刻が未来のため現在証拠として使用しない。"
-            nxt = now
-        else:
-            age = int(now - last)
-            fr["evidenceAgeSec"] = age
-            fr["isStale"] = age > ttl_min * 60
-            fr["staleReasonJa"] = (f"証拠が{age // 60}分前のもの(優先度{rp.get('priority') or 'normal'}"
-                                   f"のTTL {ttl_min}分を超過)。再確認待ち。") if fr["isStale"] else ""
-            nxt = last + ttl_min * 60
+        age = max(0, int(now - last))
+        fr["evidenceAgeSec"] = age
+        fr["isStale"] = age > ttl_min * 60
+        fr["staleReasonJa"] = (f"証拠が{age // 60}分前のもの(優先度{rp.get('priority') or 'normal'}"
+                               f"のTTL {ttl_min}分を超過)。再確認待ち。") if fr["isStale"] else ""
+        nxt = last + ttl_min * 60
         fr["nextAutoCheckAt"] = datetime.fromtimestamp(nxt, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     record["freshness"] = fr
     # a stale probable/candidate becomes AI-explain eligible again
@@ -645,13 +583,10 @@ def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
     only_past = (status == "no_lead_yet" and any(
         (c.get("newsFreshness") or {}).get("freshness") in ("old", "stale")
         for c in candidates))
-    only_time_unusable = (status == "no_lead_yet" and any(
-        not (c.get("timeAuthority") or {}).get("eligibleAsPrimaryLead", True)
-        for c in candidates))
     best = ""
     if top and status != "no_lead_yet":
         best = f"{CATEGORY_JA.get(top['category'], top['category'])}: {top['titleJa']}"
-    elif only_time_unusable:
+    elif only_past:
         best = "最新材料は未確認"
     checked_ja = "/".join(l for l, k in (
         ("TDnet", "tdnetChecked"), ("公式イベント", "officialEventsChecked"),
@@ -693,10 +628,7 @@ def resolve(mover: Dict[str, Any], evidence: Dict[str, Any],
             and "市場" not in why:
         why = (why + " 定量的な市場確認(出来高比/指数相対)が未完。").strip()
     if only_past:
-        why = ("見つかった関連ニュースは過去材料のみ(24時間超前)。現在の値動きの"
-               "主因として扱わない。 " + why).strip()
-    elif only_time_unusable:
-        why = ("候補の発表時刻が不明、不正、または未来のため現在の値動きの"
+        why = ("見つかった関連ニュースは過去材料のみ(72時間超前)。現在の値動きの"
                "主因として扱わない。 " + why).strip()
 
     # PRIVACY: owner relevance is NEVER stored or served — records/snapshots go to

@@ -12,8 +12,8 @@ sys.modules.setdefault("moomoo", types.SimpleNamespace(
 import scanner
 
 
-def utc(y, m, d, hour=0, minute=0, second=0):
-    return datetime(y, m, d, hour, minute, second, tzinfo=timezone.utc)
+def utc(y, m, d, hour=0, minute=0):
+    return datetime(y, m, d, hour, minute, tzinfo=timezone.utc)
 
 
 def test_jp_holiday_us_trading_day():
@@ -52,25 +52,6 @@ def test_both_markets_trading_and_both_closed():
 def test_jp_lunch_break():
     state = mc.market_session(mc.JP_EQUITY, utc(2026, 7, 21, 3, 0))
     assert state["session"] == "LUNCH_BREAK"
-
-
-def test_session_contract_pins_observation_and_exact_next_transition():
-    morning = mc.market_session(
-        mc.JP_EQUITY, utc(2026, 7, 21, 2, 29, 59))
-    assert morning["session"] == "MORNING_SESSION"
-    assert morning["sessionObservedAt"] == "2026-07-21T02:29:59Z"
-    assert morning["sessionValidUntil"] == "2026-07-21T02:30:00Z"
-    lunch = mc.market_session(mc.JP_EQUITY, utc(2026, 7, 21, 2, 30))
-    assert lunch["session"] == "LUNCH_BREAK"
-    assert lunch["sessionValidUntil"] == "2026-07-21T03:30:00Z"
-    us_regular = mc.market_session(
-        mc.US_EQUITY, utc(2026, 7, 21, 14, 0))
-    assert us_regular["session"] == "REGULAR"
-    assert us_regular["sessionValidUntil"] == "2026-07-21T20:00:00Z"
-    us_early = mc.market_session(
-        mc.US_EQUITY, utc(2026, 11, 27, 17, 59,))
-    assert us_early["session"] == "REGULAR"
-    assert us_early["sessionValidUntil"] == "2026-11-27T18:00:00Z"
 
 
 def test_us_dst_changes_jst_open_and_close():
@@ -141,44 +122,7 @@ def test_scheduler_uses_independent_exchange_holidays():
     us = [m for m in missions if m["market"] == "US"]
     assert jp and all(m["status"] == "skipped" for m in jp)
     assert all(m["failureReasonRedacted"] == "market_holiday" for m in jp)
-    us_pre = [m for m in us if m["missionType"] == "pre_session_forecast"]
-    us_post = [m for m in us if m["missionType"] == "post_session_snapshot"]
-    assert us_pre and all(m["status"] == "scheduled" for m in us_pre)
-    # Monday JST morning has no Sunday US close to snapshot.
-    assert us_post and all(m["status"] == "skipped" for m in us_post)
-
-
-def test_scheduler_derives_us_post_close_from_canonical_dst_boundaries():
-    summer = scanner.argus_scheduler.generate_daily_missions(
-        session_date="2026-07-10", now_iso="2026-07-10T00:00:00+09:00")
-    winter = scanner.argus_scheduler.generate_daily_missions(
-        session_date="2026-12-15", now_iso="2026-12-15T00:00:00+09:00")
-
-    def post(rows):
-        return next(row for row in rows if row["market"] == "US"
-                    and row["missionType"] == "post_session_snapshot")
-
-    assert post(summer)["scheduledFor"] == "2026-07-10T05:10:00+09:00"
-    assert post(winter)["scheduledFor"] == "2026-12-15T06:10:00+09:00"
-    assert post(winter)["status"] == "scheduled"
-
-
-def test_scheduler_derives_us_early_close_and_monday_pre_session():
-    early = scanner.argus_scheduler.generate_daily_missions(
-        session_date="2026-11-28", now_iso="2026-11-28T00:00:00+09:00")
-    monday = scanner.argus_scheduler.generate_daily_missions(
-        session_date="2026-08-17", now_iso="2026-08-17T00:05:00+09:00",
-        # Legacy caller state is Sunday ET at this instant. It must not cancel
-        # the canonical Monday target exchange session.
-        us_holiday=True)
-    early_post = next(row for row in early if row["market"] == "US"
-                      and row["missionType"] == "post_session_snapshot")
-    monday_pre = next(row for row in monday if row["market"] == "US"
-                      and row["missionType"] == "pre_session_forecast")
-    assert early_post["scheduledFor"] == "2026-11-28T03:10:00+09:00"
-    assert early_post["status"] == "scheduled"
-    assert monday_pre["scheduledFor"] == "2026-08-17T22:00:00+09:00"
-    assert monday_pre["status"] == "scheduled"
+    assert us and all(m["status"] == "scheduled" for m in us)
 
 
 def test_holiday_outcome_retry_is_suppressed():

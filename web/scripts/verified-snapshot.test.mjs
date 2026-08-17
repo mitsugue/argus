@@ -2,19 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 import ts from 'typescript';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const nodeRequire = createRequire(import.meta.url);
-nodeRequire.extensions['.ts'] = (module, filename) => {
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-    fileName: filename,
-  }).outputText;
-  module._compile(output, filename);
-};
 
 async function importTypeScriptModule(relativePath) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -32,8 +22,8 @@ const {
   calculatePayloadHash, calculateSnapshotId, memorySnapshot, resetVerifiedSnapshotMemoryForTests,
   shouldReplaceSnapshot, verifySnapshot, writeVerifiedSnapshot,
 } = await importTypeScriptModule('src/lib/verifiedSnapshot.ts');
-const { formatSnapshotStatus, snapshotFreshness } = nodeRequire(
-  path.join(root, 'src/lib/snapshotFreshness.ts'));
+const { formatSnapshotStatus, snapshotFreshness } = await
+  importTypeScriptModule('src/lib/snapshotFreshness.ts');
 
 const expectation = {
   kind: 'market-chart', instrument: '1321', horizon: '5D',
@@ -130,8 +120,8 @@ assert.match(formatSnapshotStatus('ERROR_WITH_CACHE', valid), /更新要確認/)
 assert.match(formatSnapshotStatus('CACHE_READY_REVALIDATING', valid), /更新中/);
 
 const hook = fs.readFileSync(path.join(root, 'src/hooks/useChartIntelligence.ts'), 'utf8');
-const today = fs.readFileSync(path.join(root,
-  'src/components/today/ArgusTodayPanel.tsx'), 'utf8');
+const replay = fs.readFileSync(path.join(root,
+  'src/components/marketReplay/MarketContextReplay.tsx'), 'utf8');
 const loader = fs.readFileSync(path.join(root,
   'src/components/common/TriangleStepLoader.css'), 'utf8');
 const loaderComponent = fs.readFileSync(path.join(root,
@@ -155,9 +145,9 @@ assert.match(cacheSource,
   'an IndexedDB write/read-back failure must keep the old pointer');
 assert.match(hook, /225/);
 assert.match(hook, /5_000/);
-assert.match(today, /data-snapshot-id=\{chartLoad\.snapshotId/);
-assert.match(today, /data-snapshot-state=\{chartLoad\.snapshotState/);
-assert.match(today, /<ProjectionChart projection=\{projection\}/);
+assert.match(replay, /data-snapshot-id=\{snapshotId/);
+assert.match(replay, /readDrawingState/);
+assert.match(replay, /overlaysExpanded\.v1/);
 assert.match(loaderComponent, /aria-live="polite"/);
 assert.match(loaderComponent, /aria-hidden="true"/);
 assert.doesNotMatch(loader, /\.triangle-step-loader\s*\{[^}]*animation/s,
@@ -169,4 +159,4 @@ for (const keyframe of ['19.2308%', '25%', '44.2308%', '50%',
 assert.match(loader, /prefers-reduced-motion:reduce/);
 assert.match(loader, /animation:none/);
 
-console.log('verified-snapshot.test: ok (cache, atomic swap, freshness, loader, Today UI)');
+console.log('verified-snapshot.test: ok (cache, atomic swap, freshness, loader, UI restore)');

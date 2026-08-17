@@ -1,7 +1,4 @@
-import {
-  createContext, createElement, useCallback, useContext, useEffect, useRef, useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AssetItem, AssetMarket, AssetType, AssetSource } from '../types/assetItem';
 import { markLocalEdit } from '../lib/vault';
 import { recordTombstone } from '../lib/assetMerge';
@@ -88,9 +85,7 @@ export interface UseAssets {
   reset: () => void;
 }
 
-const AssetsContext = createContext<UseAssets | null>(null);
-
-function useAssetsStore(): UseAssets {
+export function useAssets(): UseAssets {
   const [assets, setAssets] = useState<AssetItem[]>(() => (typeof window === 'undefined' ? [] : load()));
 
   const firstPersist = useRef(true);
@@ -170,20 +165,4 @@ function useAssetsStore(): UseAssets {
   }), []);
 
   return { assets, add, remove, reorderGenre, toggle, updateHolding, reset };
-}
-
-/**
- * One application-owned lifecycle for the protected asset store. Consumers
- * read the same in-memory value instead of mounting independent persistence
- * and argus:data-synced listeners.
- */
-export function AssetsProvider({ children }: { children: ReactNode }) {
-  const value = useAssetsStore();
-  return createElement(AssetsContext.Provider, { value }, children);
-}
-
-export function useAssets(): UseAssets {
-  const value = useContext(AssetsContext);
-  if (!value) throw new Error('useAssets must be used within AssetsProvider');
-  return value;
 }

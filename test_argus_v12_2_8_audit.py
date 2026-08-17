@@ -8,7 +8,7 @@ def test_app_version_is_semantic_not_sha():
     v = scanner._semantic_app_version()
     assert v and v[0].isdigit() and "." in v        # 12.2.x形式
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         assert d.get("appVersion") == v             # SHAではない
         b = d.get("buildIdentity") or {}
         assert b["appVersion"] == v

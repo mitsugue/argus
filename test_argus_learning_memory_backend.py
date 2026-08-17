@@ -36,18 +36,23 @@ def _forbid_fetches(monkeypatch):
             monkeypatch.setattr(scanner, name, boom)
 
 
-def test_learning_memory_materialized_document_schema(monkeypatch):
+def test_learning_memory_route_schema(monkeypatch):
     _seed(monkeypatch)
-    d = scanner._learning_memory_status_doc_cached_only()
+    _forbid_fetches(monkeypatch)
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/learning-memory").get_json()
     assert d["schemaVersion"] == "learning-memory-v1"
     assert isinstance(d["lessons"], list) and isinstance(d["cohorts"], dict)
     assert "capsAndHints" in d and "limitationsJa" in d
 
 
-def test_materialized_document_counts(monkeypatch):
+def test_status_route_counts(monkeypatch):
     _seed(monkeypatch)
-    d = scanner._learning_memory_status_doc_cached_only()
-    assert d["schemaVersion"] == "learning-memory-v1"
+    _forbid_fetches(monkeypatch)
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/learning-memory/status").get_json()
+    assert d["schemaVersion"] == "learning-memory-status-v1"
+    assert d["status"] in ("ready", "not_ready", "building", "stale", "error")
     assert d["sampleStage"] in ("none", "burn_in", "early_signal", "usable", "mature")
     for k in ("lessons", "usableLessons", "officialEventSamples", "macroEventSamples",
               "moverCauseSamples", "decisionValueSamples", "calibrationSamples"):
@@ -64,13 +69,17 @@ def test_public_gets_never_fetch_or_call_llm(monkeypatch):
     _seed(monkeypatch)
     _forbid_fetches(monkeypatch)
     with scanner.app.test_client() as c:
+        assert c.get("/api/argus/learning-memory").status_code == 200
+        assert c.get("/api/argus/learning-memory/status").status_code == 200
         assert c.get("/api/argus/learning-memory/snapshot").status_code == 200
+        assert c.get("/api/argus/evidence-pack?symbol=5801&market=JP").status_code == 200
 
 
 def test_evidence_pack_includes_learning_memory(monkeypatch):
     _seed(monkeypatch)
     _forbid_fetches(monkeypatch)
-    ep = scanner._build_evidence_pack("5801", "JP")
+    with scanner.app.test_client() as c:
+        ep = c.get("/api/argus/evidence-pack?symbol=5801&market=JP").get_json()
     lm = ep.get("learningMemory")
     assert lm and lm["schemaVersion"] == "learning-memory-compact-v1"
     assert lm["cautionOnly"] is True
@@ -90,10 +99,11 @@ def test_snapshot_has_no_forbidden_keys(monkeypatch):
 
 
 def test_burn_in_stage_does_not_overclaim(monkeypatch):
-    # Tiny sample must remain burn_in — never mature.
+    # tiny sample must report burn_in — never mature — even though route works.
     _seed(monkeypatch, obs=[{"cohortType": "macroEventCode", "cohortKey": "NFP", "outcome": "hit"}
                             for _ in range(4)])
-    d = scanner._learning_memory_status_doc_cached_only()
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/learning-memory/status").get_json()
     assert d["sampleStage"] == "burn_in"
 
 
@@ -126,19 +136,15 @@ def test_official_event_probable_catalyst_is_pending_not_miss(monkeypatch):
 def test_action_label_carries_learning_memory_used(monkeypatch):
     # a usable lesson for a watchlist symbol → decisionRefs.learningMemoryUsed True
     # and confidence never exceeds the applicable cap. Uses the real label builder.
-    now = "2026-08-16T03:00:00Z"
-    fixed_epoch = 1_786_849_200.0
-    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: now)
-    monkeypatch.setattr(scanner.time, "time", lambda: fixed_epoch)
     _seed(monkeypatch, obs=[{"cohortType": "market", "cohortKey": "JP", "outcome": "miss"}
                             for _ in range(40)])
     _forbid_fetches(monkeypatch)
     quote = {"symbol": "8058", "name": "三菱商事", "status": "delayed",
              "price": 3200.0, "changePct": -1.0, "volume": 1_000_000,
-             "source": "jquants", "date": "2026-08-14"}
+             "date": "2026-07-14"}
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
                         lambda symbols=None: {"status": "delayed",
-                                              "asOf": now,
+                                              "asOf": "2026-07-14",
                                               "stocks": [quote]})
     monkeypatch.setattr(scanner, "get_us_watchlist_snapshot",
                         lambda symbols=None: {"status": "delayed", "stocks": []})

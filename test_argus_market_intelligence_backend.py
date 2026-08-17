@@ -45,10 +45,6 @@ def test_public_market_intelligence_is_get_only_and_secret_safe(isolated):
     assert len(body["phase3"]["sections"]) == 16
     assert len(body["phase3"]["today"]) <= 3
     assert body["automaticAiCalls"] == 0
-    assert body["asOf"] == body["phase3"]["asOf"]
-    for state in body["phase3"]["calendar"].values():
-        assert state["sessionObservedAt"] == body["asOf"]
-        assert state["sessionValidUntil"] > state["sessionObservedAt"]
     text = json.dumps(body)
     assert "configured-not-a-real-key" not in text
     assert client.post("/api/argus/market-ledger").status_code == 405

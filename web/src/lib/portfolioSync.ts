@@ -2,22 +2,20 @@
 //
 // THREE LAYERS (mirrors argus_portfolio_sync.py, the schema source of truth):
 //   A. Local: localStorage (argus.assets.v1 etc.) — unchanged, offline-first.
-//   B. Existing encrypted recovery: the passphrase vault (lib/vault.ts) can
-//      read/decrypt an envelope already in the cloud. Browser upload and live
-//      device sync are unavailable; newer changes require a local JSON export.
+//   B. Private cloud: the EXISTING passphrase vault (lib/vault.ts) — the device
+//      encrypts, only ciphertext reaches the cloud, any device with the
+//      passphrase restores/merges. That IS today's Mac/iPhone/iPad sync path.
+//      A server-side PLAINTEXT store stays disabled until real auth exists.
 //   C. Snapshot/audit (new): append-only local snapshots + decision-audit
-//      records under the keys below. Both are listed in BACKUP_KEYS for local
-//      JSON export and for restoring a compatible existing envelope.
+//      records under the keys below. Both are listed in BACKUP_KEYS, so they
+//      ride the encrypted vault → preserved permanently AND synced, while the
+//      cloud still only ever sees ciphertext.
 //
 // No broker login, no trading, no fabricated values: a snapshot records only
 // what the engines actually computed at that moment.
 
 import type { AssetItem } from '../types/assetItem';
 import type { PortfolioExposure } from '../domain/positionExposure';
-import { markLocalEdit } from './vault';
-import {
-  BACKUP_META_KEY, certifiedCompleteExportAt, patchBackupMeta, readBackupMeta, type BackupMeta,
-} from './backupMeta';
 
 export const SYNC_SCHEMA_VERSION = 'portfolio-sync-v1';
 export const SNAPSHOT_SCHEMA_VERSION = 'portfolio-snapshot-v1';
@@ -25,7 +23,7 @@ export const AUDIT_SCHEMA_VERSION = 'decision-audit-v1';
 
 export const SNAPSHOTS_KEY = 'argus.portfolio.snapshots.v1';
 export const AUDIT_KEY = 'argus.decision.audit.v1';
-export const SYNC_META_KEY = BACKUP_META_KEY;
+export const SYNC_META_KEY = 'argus.portfolioSync.meta.v1';
 const SNAPSHOT_CAP = 60;      // ~2 months of dailies in localStorage
 const AUDIT_CAP = 800;
 
@@ -65,7 +63,7 @@ export interface PortfolioSnapshot {
     corePct: number; satellitePct: number; tacticalPct: number; hedgePct: number;
     tacticalBudget: string; themeRisk: string; singleNameRisk: string;
     roles: { symbol: string; role: string; addPolicy: string }[] };
-  /** v11.19.1: FIRE Core(投信=本丸資産)の当日状態 — 端末内のみ・JSON export対象 */
+  /** v11.19.1: FIRE Core(投信=本丸資産)の当日状態 — 端末内のみ・暗号化バックアップ同乗 */
   fireCoreSummary?: { mutualFundTotal: number | null; fireCoreTotal: number | null;
     monthlyContributionTotal: number | null; tacticalToCoreRatio: number | null;
     tacticalToCoreBand: string; contributionDataStatus: string;
@@ -113,7 +111,7 @@ export interface PortfolioBackupFile {
   decisionAudit: DecisionAuditRecord[];
 }
 
-export type SyncMeta = BackupMeta;
+interface SyncMeta { lastExportAt?: string; lastImportAt?: string; lastSnapshotAt?: string; lastSnapshotDay?: string; }
 
 // ── storage helpers (never throw) ───────────────────────────────────────────
 
@@ -121,14 +119,11 @@ function readJson<T>(key: string, fallback: T): T {
   try { const raw = localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : fallback; }
   catch { return fallback; }
 }
-function writeJson(key: string, v: unknown, recordsLocalEdit = true): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(v));
-    if (recordsLocalEdit) markLocalEdit();
-  } catch { /* quota — keep app alive */ }
+function writeJson(key: string, v: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* quota — keep app alive */ }
 }
-export function syncMeta(): SyncMeta { return readBackupMeta(); }
-function patchMeta(p: Partial<SyncMeta>): void { patchBackupMeta(p); }
+export function syncMeta(): SyncMeta { return readJson<SyncMeta>(SYNC_META_KEY, {}); }
+function patchMeta(p: Partial<SyncMeta>): void { writeJson(SYNC_META_KEY, { ...syncMeta(), ...p }); }
 
 export function listSnapshots(): PortfolioSnapshot[] { return readJson<PortfolioSnapshot[]>(SNAPSHOTS_KEY, []); }
 export function listAudit(): DecisionAuditRecord[] { return readJson<DecisionAuditRecord[]>(AUDIT_KEY, []); }
@@ -281,7 +276,7 @@ export function downloadPortfolioBackup(assets: AssetItem[], appVersion: string)
   a.download = `argus-portfolio-${jstDay()}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
-  patchMeta({ lastPortfolioExportAt: file.exportedAt });
+  patchMeta({ lastExportAt: new Date().toISOString() });
 }
 
 export interface ImportPreview {
@@ -291,7 +286,6 @@ export interface ImportPreview {
   withQuantity: number;
   watchOnly: number;
   snapshots: number;
-  decisions: number;
   symbols: string[];
 }
 
@@ -300,30 +294,29 @@ export interface ImportPreview {
 export function previewImport(text: string): ImportPreview {
   let parsed: unknown;
   try { parsed = JSON.parse(text); }
-  catch { return { ok: false, errorJa: 'JSONとして読めませんでした。', withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] }; }
+  catch { return { ok: false, errorJa: 'JSONとして読めませんでした。', withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] }; }
   const f = parsed as Partial<PortfolioBackupFile>;
   if (f?.app !== 'argus' || f?.kind !== 'portfolio-backup' || !Array.isArray(f?.positions)) {
-    return { ok: false, errorJa: 'ARGUSのポートフォリオバックアップ形式ではありません。', withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] };
+    return { ok: false, errorJa: 'ARGUSのポートフォリオバックアップ形式ではありません。', withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] };
   }
   if (f.schemaVersion !== SYNC_SCHEMA_VERSION) {
-    return { ok: false, errorJa: `スキーマ版数が未対応です(${String(f.schemaVersion)})。`, withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] };
+    return { ok: false, errorJa: `スキーマ版数が未対応です(${String(f.schemaVersion)})。`, withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] };
   }
   const bad = f.positions.some((p) => !p || typeof p.symbol !== 'string'
     || (p.quantity != null && typeof p.quantity !== 'number')
     || (p.avgCost != null && typeof p.avgCost !== 'number'));
-  if (bad) return { ok: false, errorJa: 'positionsの形式が壊れています。', withQuantity: 0, watchOnly: 0, snapshots: 0, decisions: 0, symbols: [] };
+  if (bad) return { ok: false, errorJa: 'positionsの形式が壊れています。', withQuantity: 0, watchOnly: 0, snapshots: 0, symbols: [] };
   const withQ = f.positions.filter((p) => (p.quantity ?? 0) > 0);
   return {
     ok: true, file: f as PortfolioBackupFile,
     withQuantity: withQ.length,
     watchOnly: f.positions.length - withQ.length,
     snapshots: Array.isArray(f.snapshots) ? f.snapshots.length : 0,
-    decisions: Array.isArray(f.decisionAudit) ? f.decisionAudit.length : 0,
     symbols: withQ.slice(0, 8).map((p) => (/^\d/.test(p.symbol) && p.name ? `${p.symbol} ${p.name.slice(0, 8)}` : p.symbol)),
   };
 }
 
-export interface ApplyResult { updated: number; added: number; snapshotsMerged: number; decisionAuditMerged: number; }
+export interface ApplyResult { updated: number; added: number; snapshotsMerged: number; }
 
 /** Apply a previewed import. merge = fill/update only symbols in the file;
  *  replace = same but also CLEARS quantity on assets NOT in the file (deleting
@@ -371,22 +364,8 @@ export function applyImport(
     writeJson(SNAPSHOTS_KEY, [...incoming, ...listSnapshots()]
       .sort((a, b) => (a.asOf < b.asOf ? 1 : -1)).slice(0, SNAPSHOT_CAP));
   }
-  // decision audit: merge by stable record id so the exported history is
-  // actually restorable instead of merely present in the JSON preview.
-  const existingAudit = listAudit();
-  const auditIds = new Set(existingAudit.map((record) => record.id));
-  const incomingAudit: DecisionAuditRecord[] = [];
-  for (const record of file.decisionAudit ?? []) {
-    if (!record?.id || auditIds.has(record.id)) continue;
-    auditIds.add(record.id);
-    incomingAudit.push(record);
-  }
-  if (incomingAudit.length) {
-    writeJson(AUDIT_KEY, [...incomingAudit, ...existingAudit]
-      .sort((a, b) => (a.asOf < b.asOf ? 1 : -1)).slice(0, AUDIT_CAP));
-  }
   patchMeta({ lastImportAt: new Date().toISOString() });
-  return { updated, added, snapshotsMerged: incoming.length, decisionAuditMerged: incomingAudit.length };
+  return { updated, added, snapshotsMerged: incoming.length };
 }
 
 // ── private-cloud adapter (interface now; enabled later) ────────────────────
@@ -404,12 +383,12 @@ export interface PortfolioCloudAdapter {
   restoreSnapshot(id: string): Promise<{ status: 'disabled' | 'ok' }>;
 }
 
-/** The only adapter today: server-side plaintext sync and browser upload are off.
- *  An existing client-encrypted envelope remains available for read-only restore. */
+/** The only adapter today: server-side plaintext sync is intentionally off.
+ *  Cross-device sync happens via the client-encrypted vault (lib/vault.ts). */
 export const disabledCloudAdapter: PortfolioCloudAdapter = {
   async getSyncStatus() {
     return { mode: 'disabled',
-      noteJa: 'クラウド送信と端末間同期は無効です。既存の暗号化復旧点は読み取り復元できます。新しい変更はJSONを書き出して保護してください。' };
+      noteJa: 'クラウド同期(平文)は安全な認証が整うまで無効です。端末間同期は暗号化バックアップ(パスフレーズ)をご利用ください。' };
   },
   async pullPortfolio() { return { status: 'disabled' as const }; },
   async pushPortfolio() { return { status: 'disabled' as const }; },
@@ -421,13 +400,12 @@ export const disabledCloudAdapter: PortfolioCloudAdapter = {
 /** Handoff / AI Review Sheet — one honest line about where the data lives. */
 export function backupStatusTextJa(): string {
   const m = syncMeta();
-  const completeExportAt = certifiedCompleteExportAt(m);
   const vaultOn = !!localStorage.getItem('argus.vaultPass.v1');
   const parts = [
-    vaultOn ? '保有データ: この端末内のみ(既存の暗号化復旧点は読み取り復元のみ)'
-            : '保有データ: この端末内のみ(JSONバックアップ推奨)',
+    vaultOn ? '保有データ: 端末内+パスフレーズ暗号化バックアップで端末間同期中'
+            : '保有データ: この端末内のみ(暗号化バックアップ未設定 — バックアップ推奨)',
     m.lastSnapshotAt ? `最終スナップショット: ${m.lastSnapshotAt.slice(0, 16).replace('T', ' ')}` : 'スナップショット未作成',
   ];
-  if (!completeExportAt) parts.push('新しい変更の保護には完全バックアップJSONのエクスポートが必要');
+  if (!m.lastExportAt) parts.push('エクスポート未実施');
   return parts.join(' / ');
 }

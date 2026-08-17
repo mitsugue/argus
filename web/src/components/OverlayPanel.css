@@ -1,0 +1,69 @@
+.overlay-panel__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  z-index: 70;
+}
+
+.overlay-panel {
+  position: fixed;
+  top: 50%;
+  right: max(60px, calc(env(safe-area-inset-right, 10px) + 56px));
+  transform: translateY(-50%);
+  z-index: 75;
+  width: min(420px, calc(100vw - 90px));
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 14, 22, 0.92);
+  border: 1px solid rgba(160, 180, 210, 0.35);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.overlay-panel__close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  color: var(--hud-text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  transition: color 0.15s var(--hud-ease);
+}
+.overlay-panel__close:hover {
+  color: var(--hud-danger);
+}
+
+.overlay-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 18px 0 6px;
+}
+
+/* Inner panel boxes need padding-bottom to clear the overlay */
+.overlay-panel__body > * {
+  margin-bottom: 8px;
+}
+.overlay-panel__body > *:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+  .overlay-panel {
+    right: 54px;
+    top: 50%;
+    width: calc(100vw - 70px);
+    max-height: min(78vh, 700px);
+  }
+}
